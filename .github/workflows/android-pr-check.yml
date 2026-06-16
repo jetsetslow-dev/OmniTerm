@@ -1,0 +1,43 @@
+name: PR Check
+
+on:
+  pull_request:
+    branches:
+      - main
+
+# Cancel in-progress runs for the same PR to save GitHub Actions minutes
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Set up JDK
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+
+      # Debug builds are signed with the repo debug keystore (committed as base64) — without
+      # this, assembleDebug fails at packaging with a missing keystore file.
+      - name: Decode debug keystore
+        run: base64 --decode debug.keystore.base64 > debug.keystore
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --no-daemon
+
+      # With product flavors there is no "testDebugUnitTest" umbrella task — the per-variant
+      # task names must be spelled out.
+      - name: Run Unit Tests
+        run: ./gradlew testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest --no-daemon
