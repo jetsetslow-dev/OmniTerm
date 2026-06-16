@@ -1,0 +1,49 @@
+*.iml
+.gradle
+.kotlin
+.android-sdk/
+/secrets/
+/app/build/
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+.env
+debug.keystore
+
+# Build artifacts / outputs (don't commit binaries)
+.build-outputs/
+*.apk
+*.aab
+
+# JVM crash logs (Gradle daemon OOM dumps)
+hs_err_pid*.log
+replay_pid*.log
+
+# Local design prototype (not part of the app build)
+nexuscomplete.jsx
+
+# Claude Code local agent worktrees / state (transient, never committed)
+.claude/
+*.jks
+
+# Stray dev artifacts — never commit these
+*.orig
+*.patch
+patch*.diff
+gemini.json
+Screenshot_*.jpg
+standardize_*.py
+update_play_flavor.sh
+test.txt
+*.keystore
+*.base64

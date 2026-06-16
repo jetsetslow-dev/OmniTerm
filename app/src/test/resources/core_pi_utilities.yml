@@ -1,0 +1,358 @@
+name: Core_Utilities
+
+services:
+
+  dockhand:
+    image: fnsys/dockhand:latest
+    container_name: dockhand
+    restart: unless-stopped
+    ports:
+      - 3000:3000
+    environment:
+      - DISABLE_LOCAL_LOGIN=true
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - dockhand_data:/app/data
+    networks:
+      - home_network
+
+#  portainer:
+#    image: portainer/portainer-ee:latest
+#    container_name: portainer-ee
+#    ports:
+#      - 9443:9443
+#    volumes:
+#        - ${docker_config}/portainer/data:/data
+#        - /var/run/docker.sock:/var/run/docker.sock
+#    restart: unless-stopped
+#    networks:
+#      home_network:
+#        ipv4_address: 10.6.0.50
+
+  newt:
+    image: fosrl/newt
+    container_name: newt
+    restart: unless-stopped
+    environment:
+      - PANGOLIN_ENDPOINT=https://app.pangolin.net
+      - NEWT_ID=examplenewtid000
+      - NEWT_SECRET=examplenewtsecretexamplenewtsecret00000000
+      - DOCKER_SOCKET=/var/run/docker.sock # Set environment variable
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro # Mount the socket
+    networks:
+      home_network:
+
+# portainer_agent:
+  #   ports:
+  #     - 9001:9001
+  #   container_name: portainer_agent
+  #   restart: always
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #     - /var/lib/docker/volumes:/var/lib/docker/volumes
+  #   image: portainer/agent:latest
+  #   networks:
+  #     home_network:
+  #       ipv4_address: 10.6.0.42
+
+  code-server:
+    image: lscr.io/linuxserver/code-server:latest
+    container_name: code-server
+    environment:
+      - PUID=${UID}
+      - PGID=${GID}
+      - TZ=${TZ}
+      - PROXY_DOMAIN=codeserver.jetsetslow.com
+      - DEFAULT_WORKSPACE=/data
+    volumes:
+      - ${docker_config}/vscode/config:/config
+      - /home/user/docker:/data
+    ports:
+      - 8443:8443
+    restart: unless-stopped
+    networks:
+      home_network:
+        ipv4_address: 10.6.0.43
+
+  cloudflared_tunnel:
+    container_name: cloudflared-tunnel
+    image: cloudflare/cloudflared:latest-arm64
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${cloudflared_token}
+    volumes:
+      - ${docker_config}/cloudflared:/etc/cloudflared
+    networks:
+      home_network:
+        ipv4_address: 10.6.0.44
+
+  tailscale:
+    image: tailscale/tailscale:latest
+    container_name: tailscaled
+    privileged: true
+    restart: unless-stopped
+    volumes:
+      - /var/lib:/var/lib
+      - /dev/net/tun:/dev/net/tun
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - NET_RAW
+    environment:
+      - TS_USERSPACE=false
+      - TS_EXTRA_ARGS=--accept-routes
+      - TS_SOCKET=/var/run/tailscale/tailscaled.sock
+      - TS_AUTHKEY=${tskey}
+      - TS_HOSTNAME=RPI5
+      - TS_ROUTES=192.168.11.0/24,192.168.2.0/24,10.6.0.0/24,10.5.0.0/24
+      - TS_STATE_DIR=/var/lib/tailscale
+    networks:
+      home_network:
+        ipv4_address: 10.6.0.45
+
+#  wire-pod:
+#    hostname: escapepod
+#    image: ghcr.io/kercre123/wire-pod:main
+#    container_name: escapepod
+#    restart: unless-stopped
+#    ports:
+#      - 444:443
+#      - 8081:8080
+#      - 82:80
+#      - 8084:8084
+#    volumes:
+#      - wire-pod-data:/chipper/
+#      - wire-pod-model:/vosk/
+#    networks:
+#      home_network:
+#        ipv4_address: 10.6.0.46
+
+  nginx-proxy-manager:
+    image: 'jc21/nginx-proxy-manager:latest'
+    container_name: nginx-proxy-manager
+    restart: unless-stopped
+    environment:
+      PUID: ${UID}
+      PGID: ${GID}
+    ports:
+      - 80:80
+      - 81:81
+      - 443:443
+    healthcheck:
+      test: ["CMD", "/usr/bin/check-health"]
+      interval: 10s
+      timeout: 3s
+    volumes:
+      - ${docker_config}/npm/data:/data
+      - ${docker_config}/npm/letsencrypt:/etc/letsencrypt
+    networks:
+      home_network:
+        ipv4_address: 10.6.0.47
+
+  filebrowser:
+    image: filebrowser/filebrowser
+    container_name: filebrowser
+    user: "${UID}:${GID}"
+    ports:
+      - 446:8080
+    volumes:
+      - /home/user/docker:/srv
+      - ${docker_config}/filebrowser/config:/config
+      - ${docker_config}/filebrowser/filebrowser_database:/database
+    environment:
+      - FB_BASEURL=filebrowser.jetsetslow.com
+    restart: always
+
+
+  # webserver1:
+  #   image: httpd:latest
+  #   container_name: webserver1
+  #   restart: always
+  #   ports:
+  #     - "8081:80"
+  #   volumes:
+  #     - "${docker_config}/test/website/:/usr/local/apache2/htdocs"
+
+  # webserver2:
+  #   image: httpd:latest
+  #   container_name: webserver2
+  #   restart: always
+  #   ports:
+  #     - "8082:80"
+  #   volumes:
+  #     - "${docker_config}/test/website2/:/usr/local/apache2/htdocs"
+
+
+#   postgres:
+#     image: postgres:16
+#     container_name: postgres_n8n
+#     restart: always
+#     environment:
+#       - POSTGRES_USER
+#       - POSTGRES_PASSWORD
+#       - POSTGRES_DB
+#       - POSTGRES_NON_ROOT_USER
+#       - POSTGRES_NON_ROOT_PASSWORD
+#     volumes:
+#       - db_storage:/var/lib/postgresql/data
+#       - ./init-data.sh:/docker-entrypoint-initdb.d/init-data.sh
+#     healthcheck:
+#       test: ['CMD-SHELL', 'pg_isready -h localhost -U ${POSTGRES_USER} -d ${POSTGRES_DB}']
+#       interval: 5s
+#       timeout: 5s
+#       retries: 10
+
+#   n8n:
+#     image: docker.n8n.io/n8nio/n8n
+#     restart: always
+#     depends_on:
+#       ollama:
+#         condition: service_healthy
+#       db-init:
+#         condition: service_completed_successfully
+#       postgres:
+#         condition: service_healthy
+#       model-loader:
+#         condition: service_completed_successfully
+#     container_name: n8n_automation
+#     environment:
+#       # Performance settings for RPi5
+#       - N8N_DIAGNOSTICS_ENABLED=false
+#       - N8N_METRICS=false
+#       - EXECUTIONS_DATA_SAVE_ON_ERROR=all
+#       - EXECUTIONS_DATA_SAVE_ON_SUCCESS=none
+#       - EXECUTIONS_DATA_SAVE_ON_PROGRESS=false
+#       - EXECUTIONS_DATA_MAX_AGE=24
+#       - N8N_PAYLOAD_SIZE_MAX=32
+#       - NODE_OPTIONS=--max-old-space-size=2048
+#       # Security settings
+#       - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+# #      - N8N_USER_MANAGEMENT_DISABLED=false
+# #      - N8N_BASIC_AUTH_ACTIVE=true
+# #      - N8N_BASIC_AUTH_USER=${N8N_USER:-admin}
+# #      - N8N_BASIC_AUTH_PASSWORD=${N8N_PASSWORD:-changeme}
+#       # Database settings
+# #      - DB_TYPE=sqlite
+# #      - DB_SQLITE_DATABASE=/home/node/.n8n/database.sqlite
+#       # Email configuration storage
+#       - EMAIL_ACCOUNTS=${EMAIL_ACCOUNTS}
+#       # Timezone
+# #      - GENERIC_TIMEZONE=${TZ}
+# #      - TZ=${TZ}
+#       - DB_TYPE=postgresdb
+#       - DB_POSTGRESDB_HOST=postgres
+#       - DB_POSTGRESDB_PORT=5432
+#       - DB_POSTGRESDB_DATABASE=${POSTGRES_DB}
+#       - DB_POSTGRESDB_USER=${POSTGRES_NON_ROOT_USER}
+#       - DB_POSTGRESDB_PASSWORD=${POSTGRES_NON_ROOT_PASSWORD}
+#       - N8N_SECURE_COOKIE=false
+#     ports:
+#       - 5678:5678
+#     links:
+#       - postgres
+#     volumes:
+#       - n8n_storage:/home/node/.n8n
+
+#   # Ollama service for local AI
+#   ollama:
+#     image: ollama/ollama:latest
+#     container_name: email-ai-ollama
+#     restart: unless-stopped
+#     environment:
+#       - OLLAMA_NUM_PARALLEL=2
+#       - OLLAMA_MAX_LOADED_MODELS=1
+#       - OLLAMA_KEEP_ALIVE=5m
+#     volumes:
+#       - ollama_data:/root/.ollama
+#     ports:
+#       - "11434:11434"
+#     deploy:
+#       resources:
+#         limits:
+#           memory: 4G
+#         reservations:
+#           memory: 2G
+#     healthcheck:
+#       test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+#       interval: 30s
+#       timeout: 10s
+#       retries: 3
+#       start_period: 40s
+#     networks:
+#       - home_network
+
+#   # Model loader - downloads required models on startup
+#   model-loader:
+#     image: curlimages/curl:latest
+#     container_name: email-ai-model-loader
+#     depends_on:
+#       ollama:
+#         condition: service_healthy
+#     entrypoint: ["/bin/sh", "-c"]
+#     command:
+#       - |
+#         echo "Waiting for Ollama to be ready..."
+#         sleep 10
+#         echo "Pulling Phi3 Mini model..."
+#         curl -X POST http://ollama:11434/api/pull -d '{"name": "phi3:mini"}'
+#         echo "Pulling TinyLlama model as backup..."
+#         curl -X POST http://ollama:11434/api/pull -d '{"name": "tinyllama"}'
+#         echo "Models loaded successfully!"
+#     networks:
+#       - home_network
+
+#   # SQLite database initializer
+#   db-init:
+#     image: keinos/sqlite3:latest
+#     container_name: email-db-init
+#     volumes:
+#       - ./init-db.sql:/init-db.sql
+#       - n8n_data:/data
+#     entrypoint: ["/bin/sh", "-c"]
+#     command:
+#       - |
+#         echo "Initializing SQLite database..."
+#         sqlite3 /data/email_classifier.db < /init-db.sql
+#         echo "Database initialized!"
+#         # Set permissions for n8n container
+#         chown -R 1000:1000 /data
+#     networks:
+#       - home_network
+
+  # dockflare:
+  #   image: alplat/dockflare:stable
+  #   container_name: dockflare
+  #   restart: unless-stopped
+  #   ports:
+  #     - "5001:5000"  # Web UI port
+  #   env_file:
+  #     - .env  # Load environment variables from .env file
+  #   environment:
+  #     - STATE_FILE_PATH=/app/data/state.json
+  #     - TZ=${TZ}  # Set your timezone here  
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock:ro  # Required to monitor Docker events
+  #     - dockflare_data:/app/data  # Persistent storage for state
+  #   networks:
+  #     - home_network  # Network for communication with cloudflared agent
+  #   labels: # Optional keep in mind to set access policy
+  #     - cloudflare.tunnel.enable=true
+  #     - cloudflare.tunnel.hostname=dockflare.jetsetslow.com # update your domain 
+  #     - cloudflare.tunnel.service=http://dockflare:5001
+
+volumes:
+  # dockflare_data:
+  wire-pod-data:
+    driver: local
+  wire-pod-model:
+    driver: local
+  # db_storage:
+  # n8n_storage:
+  dockhand_data:
+
+networks:
+  home_network:
+    external: true
+    name: home_network2

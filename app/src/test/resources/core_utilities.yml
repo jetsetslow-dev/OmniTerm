@@ -1,0 +1,261 @@
+version: '3.8'
+services:
+# open-webui:
+#   image: ghcr.io/open-webui/open-webui:main
+#   container_name: open-webui
+#   ports:
+#     - "3000:8080"
+#   environment:
+#     - OLLAMA_BASE_URL=http://ollama:11434
+#   volumes:
+#     - open-webui_data:/app/backend/data
+  hawser:
+    image: ghcr.io/finsys/hawser:latest
+    container_name: hawser-agent
+    environment:
+      - HAWSER_MODE=edge
+      - DOCKHAND_SERVER_URL=wss://dockhand.pub.jetsetslow.com/api/hawser/connect
+      - TOKEN=${HAWSER_TOKEN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - hawser_stacks:/data/stacks
+      - -------------------------------------------------------------------------
+      - -------------------------------------------------------------------------
+  parser-service:
+    container_name: parser-service
+    ports:
+      - "8100:8100"
+    environment:
+      - TZ=Asia/Kolkata
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ACCOUNT_CONFIG_FILE=/config/account_config.json
+      - BANK_PASSWORDS_FILE=/config/bank_passwords.json
+      - USER_DOB=${USER_DOB}
+      - USER_DOB_SBI=${USER_DOB_SBI:-}
+      - USER_PAN=${USER_PAN:-}
+      - USER_CUSTOMER_ID_HDFC=${USER_CUSTOMER_ID_HDFC:-}
+      - USER_ACCOUNT_NO_HDFC=${USER_ACCOUNT_NO_HDFC:-}
+      - USER_ACCOUNT_NO_SBI=${USER_ACCOUNT_NO_SBI:-}
+      - OLLAMA_URL=${OLLAMA_URL:-http://192.168.66.8:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-gemma4:e4b}
+      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-30}
+      - CATEGORIZE_ENABLED=${CATEGORIZE_ENABLED:-true}
+      - ACTUAL_SYNC_URL=${ACTUAL_SYNC_URL:-http://192.168.66.8:8200}
+      - ORACLE_DSN=${ORACLE_DSN:-}
+      - ORACLE_USER=${ORACLE_USER:-}
+      - ORACLE_PASSWORD=${ORACLE_PASSWORD:-}
+      - ORACLE_WALLET_LOCATION=${ORACLE_WALLET_LOCATION:-}
+      - DB_ENABLED=${DB_ENABLED:-true}
+    volumes:
+      - ./budget/config:/config:ro
+      - budget_statements:/data/statements
+      - budget_failed_pdfs:/data/failed-pdfs
+      - budget_csv_drop:/data/csv-drop
+  actual-sync:
+    container_name: actual-sync
+    ports:
+      - "8200:8200"
+    environment:
+      - TZ=Asia/Kolkata
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - ACTUAL_SERVER_URL=${ACTUAL_SERVER_URL:-http://192.168.66.8:5006}
+      - ACTUAL_PASSWORD=${ACTUAL_PASSWORD}
+      - ACTUAL_SYNC_ID=${ACTUAL_SYNC_ID}
+      - ACTUAL_ENCRYPTION_PASSWORD=${ACTUAL_ENCRYPTION_PASSWORD:-}
+      - ACCOUNT_MAP_FILE=/config/account_config.json
+    volumes:
+      - ./budget/config:/config:ro
+      - budget_actual_cache:/tmp/actual-cache
+  ollama:
+    image: amperecomputingai/ollama:latest #ollama/ollama:latest
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_KEEP_ALIVE=-1
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_NUM_PARALLEL=2
+    volumes:
+      - ollama_data:/root/.ollama
+  model-loader:
+    image: curlimages/curl:latest
+    container_name: model_loader
+  ntfy:
+    image: binwiederhier/ntfy:latest
+    container_name: ntfy
+    ports:
+      - "0.0.0.0:2586:80"
+    environment:
+      - TZ=${TZ}
+      - NTFY_BASE_URL=https://ntfy.${DOMAIN}
+      - Note=$ is doubled to $$ for docker-compose
+      - NTFY_BEHIND_PROXY=true
+      - NTFY_AUTH_FILE=/var/lib/ntfy/auth.db
+      - NTFY_AUTH_DEFAULT_ACCESS=deny-all
+      - NTFY_ENABLE_LOGIN=true
+      - NTFY_REQUIRE_LOGIN=true
+      - NTFY_ATTACHMENT_CACHE_DIR=/var/cache/ntfy/attachments
+      - NTFY_CACHE_FILE=/var/cache/ntfy/cache.db
+      - NTFY_WEB_PUSH_PUBLIC_KEY=BNCM1tm8BV6ecUHv3MbXWqPjmMUXRmAT8ytw61RsGWnhgoyCv2Z72HmeErjvtaIRu2btpim_d4pu0LPF1CBPb-U
+      - NTFY_WEB_PUSH_PRIVATE_KEY=goyCv2Z72HmeErjvtaIRu2btpim_d4pu0LPF1CBPb-U
+      - NTFY_WEB_PUSH_FILE=/var/lib/ntfy/webpush.db
+      - NTFY_WEB_PUSH_EMAIL_ADDRESS=jetsetslow@gmail.com
+      - NTFY_SMTP_SENDER_ADDR=smtp.example.com:587
+      - NTFY_SMTP_SENDER_FROM=ntfy@example.com
+      - NTFY_SMTP_SENDER_USER=yoursmtpuser
+      - NTFY_SMTP_SENDER_PASS=yoursmtppass
+      - NTFY_SMTP_SERVER_LISTEN=:25
+      - NTFY_SMTP_SERVER_DOMAIN=ntfy.example.com
+      - NTFY_AUTH_USERS=ntfyadmin:$$2b$$10$$iQj/78L7lCQ6.V3L89XVTeBiOg0d6658492jRuoh/KhUM4qOV0Ml2:admin,ntfyuser:$$2b$$10$$6zz1q5WJ6nODAYMO3Qg7u.IRrrmdsGFUl2InOGPahrkIOgyzsSeNO:user
+      - NTFY_AUTH_ACCESS=*:up*:write-only
+      - NTFY_UPSTREAM_BASE_URL=https://ntfy.sh
+    volumes:
+      - ntfy-cache:/var/cache/ntfy
+      - ntfy-config:/var/lib/ntfy
+      - /var/cache/ntfy/attachments:/var/cache/ntfy/attachments
+  memos:
+    image: neosmemo/memos:stable
+    container_name: memos
+    ports:
+      - "0.0.0.0:5230:5230"
+    environment:
+      - TZ=${TZ}
+      - MEMOS_MODE=prod
+      - MEMOS_PORT=5230
+    volumes:
+      - memos-data:/var/opt/memos
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    ports:
+      - "0.0.0.0:5678:5678"
+    environment:
+      - TZ=${TZ}
+      - GENERIC_TIMEZONE=${TZ}
+      - N8N_HOST=n8n.${DOMAIN}
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=https
+      - WEBHOOK_URL=https://n8n.${DOMAIN}
+      - N8N_EDITOR_BASE_URL=https://n8n.${DOMAIN}
+      - NODES_EXCLUDE=[]
+      - DB_TYPE=sqlite
+      - DB_SQLITE_DATABASE=/home/node/.n8n/database.sqlite
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - -- External Task Runner Config ---
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_RUNNERS_MODE=external
+      - N8N_RUNNERS_AUTH_TOKEN=${N8N_RUNNERS_AUTH_TOKEN:-my-secret-token}
+      - N8N_RUNNERS_BROKER_LISTEN_ADDRESS=0.0.0.0
+      - N8N_PROXY_HOPS=1
+      - EXPLAIN_PROXY_TRUST=true
+    volumes:
+      - n8n-data:/home/node/.n8n
+  n8n-runners:
+    image: n8nio/runners:latest
+    container_name: n8n-runners
+    environment:
+      - N8N_RUNNERS_TASK_BROKER_URI=http://n8n:5679
+      - N8N_RUNNERS_AUTH_TOKEN=${N8N_RUNNERS_AUTH_TOKEN:-my-secret-token}
+  actual-budget:
+    image: docker.io/actualbudget/actual-server:latest
+    container_name: actual-budget
+    ports:
+      - "0.0.0.0:5006:5006"
+    environment:
+      - TZ=${TZ}
+    volumes:
+      - actual-data:/data
+  guacamole:
+    image: flcontainers/guacamole:latest
+    container_name: guacamole
+    ports:
+      - ""0.0.0.0:8081:8080" # Updated port to 8081"
+    environment:
+      - TZ=${TZ}
+      - OPENID_ENABLED=true
+      - OPENID_ALLOWED_CLOCK_SKEW=60
+      - OPENID_MAX_TOKEN_VALIDITY=300
+      - OPENID_MAX_NONCE_VALIDITY=10
+      - OPENID_AUTHORIZATION_ENDPOINT=https://pocket.pub.jetsetslow.com/authorize
+      - OPENID_JWKS_ENDPOINT=https://pocket.pub.jetsetslow.com/.well-known/jwks.json
+      - OPENID_ISSUER=https://pocket.pub.jetsetslow.com
+      - OPENID_CLIENT_ID=13253846-4d57-4e6f-a8a6-6e643abf43cf
+      - OPENID_CLIENT_SECRET=fuSIs33cwyenOHZkDgFtCNGeUBlPBpof
+      - OPENID_REDIRECT_URI=https://guac.pub.jetsetslow.com
+      - OPENID_USERNAME_CLAIM_TYPE=preferred_username
+      - OPENID_GROUPS_CLAIM_TYPE=groups
+      - OPENID_SCOPE=openid email profile groups
+      - EXTENSIONS=auth-sso-openid
+      - EXTENSIONS=auth-totp
+      - EXTENSION_PRIORITY=openid
+    volumes:
+      - ./guacamole/guacamole-config:/config
+      - guacamole-config:/config
+      - ./guacamole-auth-sso-openid-1.6.0.jar:/opt/guacamole/extensions/guacamole-auth-sso-openid-1.6.0.jar
+  code-server:
+    image: kopia/kopia:latest
+    container_name: kopia
+    ports:
+      - "8443:8443"
+      - "-- Commented Out Services ---"
+      - "0.0.0.0:3000:3000"
+      - "0.0.0.0:3456:3456"
+      - "0.0.0.0:51515:51515"
+    environment:
+      - PUID=1001
+      - PGID=1001
+      - TZ=Asia/Kolkata
+      - PASSWORD=${CODE_PWD} #optional
+      - HASHED_PASSWORD=${CODE_PWD} #optional
+      - SUDO_PASSWORD=password #optional
+      - SUDO_PASSWORD_HASH= #optional
+      - PROXY_DOMAIN=code.pub.jetsetslow.com #optional
+      - DEFAULT_WORKSPACE=/home/ubuntu #optional
+      - PWA_APPNAME=code-server #optional
+      - TZ=${TZ}
+      - REDIS_HOST=karakeep-redis
+      - MEILI_ADDR=http://karakeep-meilisearch:7700
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY}
+      - DATA_DIR=/data
+      - NEXTAUTH_SECRET=${KARAKEEP_SECRET}
+      - NEXTAUTH_URL=https://karakeep.${DOMAIN}
+      - BROWSER_WEB_URL=http://karakeep-chrome:9222
+      - OPENAI_API_KEY=${ANTHROPIC_API_KEY}
+      - OPENAI_BASE_URL=https://api.anthropic.com/v1
+      - INFERENCE_TEXT_MODEL=claude-haiku-4-5-20251001
+      - INFERENCE_IMAGE_MODEL=claude-haiku-4-5-20251001
+      - MEILI_MASTER_KEY=${MEILI_MASTER_KEY}
+      - MEILI_NO_ANALYTICS=true
+      - CHROMIUM_FLAGS=--no-sandbox --disable-gpu --disable-dev-shm-usage --remote-debugging-address=0.0.0.0 --remote-debugging-port=9222 --hide-scrollbars
+      - TZ=${TZ}
+      - VIKUNJA_SERVICE_PUBLICURL=https://tasks.${DOMAIN}
+      - VIKUNJA_SERVICE_JWTSECRET=${VIKUNJA_JWT_SECRET}
+      - VIKUNJA_SERVICE_FRONTENDURL=https://tasks.${DOMAIN}
+      - VIKUNJA_DATABASE_TYPE=postgres
+      - VIKUNJA_DATABASE_HOST=${ADB_HOST}
+      - VIKUNJA_DATABASE_PORT=1521
+      - VIKUNJA_DATABASE_DATABASE=${ADB_SERVICE_NAME}
+      - VIKUNJA_DATABASE_USER=${VIKUNJA_DB_USER}
+      - VIKUNJA_DATABASE_PASSWORD=${VIKUNJA_DB_PASSWORD}
+      - VIKUNJA_DATABASE_SSLMODE=require
+      - VIKUNJA_SERVICE_ENABLEREGISTRATION=true
+      - TZ=${TZ}
+      - KOPIA_PASSWORD=${KOPIA_REPO_PASSWORD}
+    volumes:
+      - ./code-server/config:/config
+      - /home/ubuntu:/home/ubuntu
+      - /var/run/docker.sock:/var/run/docker.sock
+      - karakeep-data:/data
+      - karakeep-redis:/data
+      - karakeep-meilisearch:/meili_data
+      - vikunja-files:/app/vikunja/files
+      - kopia-config:/app/config
+      - kopia-cache:/app/cache
+      - kopia-logs:/app/logs
+    networks:
+      - stack-net
+      - stack-net
+      - stack-net
+      - stack-net
+      - stack-net
+      - stack-net

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Play Store flavor only: declares the AdMob application ID required by the Google Mobile Ads SDK.
+  Without this meta-data the SDK throws on initialization. The value is injected at build time
+  (ADMOB_APP_ID env var / gradle property, see app/build.gradle.kts); local builds fall back to
+  Google's official sample App ID, and playStore release builds fail if the sample ID is still set.
+  The open-source flavor has no manifest overlay and therefore bundles no ads SDK or App ID.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="${admobAppId}" />
+    </application>
+</manifest>

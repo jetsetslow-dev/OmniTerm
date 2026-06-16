@@ -1,0 +1,528 @@
+name: core_utilities
+###############################################################
+# OCI ARM VM — Single node (4 OCPU / 24 GB)
+# Active Services: ntfy · Memos · n8n · n8n-runners · Actual Budget · Guacamole
+#
+# Database:
+#   - n8n      → SQLite (internal)
+#   - Memos    → SQLite (file-based)
+#   - Actual   → file-based
+#   - ntfy     → SQLite (built-in)
+#   - Guacamole → internal PostgreSQL
+###############################################################
+
+x-common: &common
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+networks:
+  default:
+    name: stack-net
+    driver: bridge
+
+volumes:
+  # --- Active Volumes ---
+  ntfy-cache:
+  ntfy-config:
+  memos-data:
+  n8n-data:
+  actual-data:
+  guacamole-config:
+  actual_sync_cache:
+  statement_data:
+  csv_drop:
+  failed_pdfs:
+  budget_statements:
+  budget_failed_pdfs:
+  budget_csv_drop:
+  budget_actual_cache:
+  ollama_data:
+  hawser_stacks:
+  open-webui_data:
+  # --- Commented Volumes ---
+  # karakeep-data:
+  # karakeep-meilisearch:
+  # karakeep-redis:
+  # vikunja-files:
+  # kopia-config:
+  # kopia-cache:
+  # kopia-logs:
+
+services:
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: open-webui
+    ports:
+      - "3000:8080"
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+    volumes:
+      - open-webui_data:/app/backend/data
+    depends_on:
+      - ollama
+    # network_mode: host
+
+  hawser:
+    image: ghcr.io/finsys/hawser:latest
+    container_name: hawser-agent
+    restart: always
+    environment:
+      - HAWSER_MODE=edge
+      - DOCKHAND_SERVER_URL=wss://dockhand.pub.jetsetslow.com/api/hawser/connect
+      - TOKEN=${HAWSER_TOKEN}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - hawser_stacks:/data/stacks
+
+  # --------------------------------------------------------------------------
+  # parser-service — Python FastAPI: PDF decrypt + table extraction + normalize
+  # --------------------------------------------------------------------------
+  parser-service:
+    build:
+      context: ./budget/parser-service
+      dockerfile: Dockerfile
+    container_name: parser-service
+    restart: unless-stopped
+    ports:
+      - "8100:8100"
+    environment:
+      - TZ=Asia/Kolkata
+      - LOG_LEVEL=${LOG_LEVEL:-INFO}
+      - ACCOUNT_CONFIG_FILE=/config/account_config.json
+      - BANK_PASSWORDS_FILE=/config/bank_passwords.json
+      - USER_DOB=${USER_DOB}
+      - USER_DOB_SBI=${USER_DOB_SBI:-}
+      - USER_PAN=${USER_PAN:-}
+      - USER_CUSTOMER_ID_HDFC=${USER_CUSTOMER_ID_HDFC:-}
+      - USER_ACCOUNT_NO_HDFC=${USER_ACCOUNT_NO_HDFC:-}
+      - USER_ACCOUNT_NO_SBI=${USER_ACCOUNT_NO_SBI:-}
+      - OLLAMA_URL=${OLLAMA_URL:-http://192.168.66.8:11434}
+      - OLLAMA_MODEL=${OLLAMA_MODEL:-gemma4:e4b}
+      - OLLAMA_TIMEOUT=${OLLAMA_TIMEOUT:-30}
+      - CATEGORIZE_ENABLED=${CATEGORIZE_ENABLED:-true}
+      - ACTUAL_SYNC_URL=${ACTUAL_SYNC_URL:-http://192.168.66.8:8200}
+      - ORACLE_DSN=${ORACLE_DSN:-}
+      - ORACLE_USER=${ORACLE_USER:-}
+      - ORACLE_PASSWORD=${ORACLE_PASSWORD:-}
+      - ORACLE_WALLET_LOCATION=${ORACLE_WALLET_LOCATION:-}
+      - DB_ENABLED=${DB_ENABLED:-true}
+    volumes:
+      - ./budget/config:/config:ro
+      - budget_statements:/data/statements
+      - budget_failed_pdfs:/data/failed-pdfs
+      - budget_csv_drop:/data/csv-drop
+      # Uncomment if using Oracle wallet-based auth:
+      - ./budget/wallet:/wallet:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8100/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # --------------------------------------------------------------------------
+  # actual-sync — Node.js sidecar wrapping @actual-app/api
+  # --------------------------------------------------------------------------
+  actual-sync:
+    build:
+      context: ./budget/actual-sync
+      dockerfile: Dockerfile
+    container_name: actual-sync
+    restart: unless-stopped
+    ports:
+      - "8200:8200"
+    environment:
+      - TZ=Asia/Kolkata
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - ACTUAL_SERVER_URL=${ACTUAL_SERVER_URL:-http://192.168.66.8:5006}
+      - ACTUAL_PASSWORD=${ACTUAL_PASSWORD}
+      - ACTUAL_SYNC_ID=${ACTUAL_SYNC_ID}
+      - ACTUAL_ENCRYPTION_PASSWORD=${ACTUAL_ENCRYPTION_PASSWORD:-}
+      - ACCOUNT_MAP_FILE=/config/account_config.json
+    volumes:
+      - ./budget/config:/config:ro
+      - budget_actual_cache:/tmp/actual-cache
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8200/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+
+  # --------------------------------------------------------------------------
+  # ollama — Local LLM inference (Gemma 4) for transaction categorization
+  # --------------------------------------------------------------------------
+  ollama:
+    image: amperecomputingai/ollama:latest #ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "11434:11434"
+    environment:
+      - OLLAMA_KEEP_ALIVE=-1
+      - OLLAMA_HOST=0.0.0.0
+      - OLLAMA_NUM_PARALLEL=2
+    volumes:
+      - ollama_data:/root/.ollama
+    healthcheck:
+      test: ["CMD-SHELL", "ollama list || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 12G
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  model-loader:
+    image: curlimages/curl:latest
+    container_name: model_loader
+    depends_on:
+      - ollama
+    entrypoint: >
+      sh -c "sleep 10 && curl -s http://ollama:11434/api/generate -d '{\"model\":\"ampere-llama3.2\",\"prompt\":\"warmup\",\"stream\":false}'"
+    restart: "no"
+  # ╔══════════════════════════════════════════════════════╗
+  # ║  ntfy — self-hosted push notifications               ║
+  # ║  https://ntfy.${DOMAIN}                              ║
+  # ╚══════════════════════════════════════════════════════╝
+  ntfy:
+    image: binwiederhier/ntfy:latest
+    container_name: ntfy
+    restart: unless-stopped
+    command: serve
+    environment:
+      TZ: ${TZ}
+      NTFY_BASE_URL: https://ntfy.${DOMAIN}
+      # Note: $ is doubled to $$ for docker-compose
+      NTFY_BEHIND_PROXY: "true"
+      NTFY_AUTH_FILE: "/var/lib/ntfy/auth.db"
+      NTFY_AUTH_DEFAULT_ACCESS: "deny-all"
+      NTFY_ENABLE_LOGIN: "true"
+      NTFY_REQUIRE_LOGIN: "true"
+      NTFY_ATTACHMENT_CACHE_DIR: "/var/cache/ntfy/attachments"
+      NTFY_CACHE_FILE: "/var/cache/ntfy/cache.db"
+      NTFY_WEB_PUSH_PUBLIC_KEY: "BNCM1tm8BV6ecUHv3MbXWqPjmMUXRmAT8ytw61RsGWnhgoyCv2Z72HmeErjvtaIRu2btpim_d4pu0LPF1CBPb-U"
+      NTFY_WEB_PUSH_PRIVATE_KEY: "goyCv2Z72HmeErjvtaIRu2btpim_d4pu0LPF1CBPb-U"
+      NTFY_WEB_PUSH_FILE: "/var/lib/ntfy/webpush.db"
+      NTFY_WEB_PUSH_EMAIL_ADDRESS: "jetsetslow@gmail.com"
+#      NTFY_SMTP_SENDER_ADDR: "smtp.example.com:587"
+#      NTFY_SMTP_SENDER_FROM: "ntfy@example.com"
+#      NTFY_SMTP_SENDER_USER: "yoursmtpuser"
+#      NTFY_SMTP_SENDER_PASS: "yoursmtppass"
+#      NTFY_SMTP_SERVER_LISTEN: ":25"
+#      NTFY_SMTP_SERVER_DOMAIN: "ntfy.example.com"
+      NTFY_AUTH_USERS: "ntfyadmin:$$2b$$10$$iQj/78L7lCQ6.V3L89XVTeBiOg0d6658492jRuoh/KhUM4qOV0Ml2:admin,ntfyuser:$$2b$$10$$6zz1q5WJ6nODAYMO3Qg7u.IRrrmdsGFUl2InOGPahrkIOgyzsSeNO:user"
+      NTFY_AUTH_ACCESS: "*:up*:write-only"
+      NTFY_UPSTREAM_BASE_URL: https://ntfy.sh
+    volumes:
+      - ntfy-cache:/var/cache/ntfy
+      - ntfy-config:/var/lib/ntfy
+      - /var/cache/ntfy/attachments:/var/cache/ntfy/attachments
+    ports:
+      - "0.0.0.0:2586:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --tries=1 http://localhost:80/v1/health -O - | grep -c healthy || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+  # ╔══════════════════════════════════════════════════════╗
+  # ║  Memos — quick-capture notes (PWA, mobile-friendly)  ║
+  # ║  https://memos.${DOMAIN}                             ║
+  # ╚══════════════════════════════════════════════════════╝
+  memos:
+    image: neosmemo/memos:stable
+    container_name: memos
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      MEMOS_MODE: prod
+      MEMOS_PORT: "5230"
+    volumes:
+      - memos-data:/var/opt/memos
+    ports:
+      - "0.0.0.0:5230:5230"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --tries=1 http://localhost:5230 -O /dev/null || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+
+  # ╔══════════════════════════════════════════════════════╗
+  # ║  n8n — visual workflow automation                    ║
+  # ║  https://n8n.${DOMAIN}                               ║
+  # ╚══════════════════════════════════════════════════════╝
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      GENERIC_TIMEZONE: ${TZ}
+      N8N_HOST: n8n.${DOMAIN}
+      N8N_PORT: "5678"
+      N8N_PROTOCOL: https
+      WEBHOOK_URL: https://n8n.${DOMAIN}
+      N8N_EDITOR_BASE_URL: https://n8n.${DOMAIN}
+      NODES_EXCLUDE: "[]"
+      DB_TYPE: sqlite
+      DB_SQLITE_DATABASE: /home/node/.n8n/database.sqlite
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY}
+      # --- External Task Runner Config ---
+      # N8N_RUNNERS_ENABLED: "true"
+      N8N_RUNNERS_MODE: external
+      # Shared secret — ensure this matches in n8n-runners
+      N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN:-my-secret-token}
+      N8N_RUNNERS_BROKER_LISTEN_ADDRESS: 0.0.0.0
+      # Tells n8n to trust the headers sent by Pangolin
+      N8N_PROXY_HOPS: 1
+      # Ensures the rate limiter identifies the real user IP, not the Bastion IP
+      EXPLAIN_PROXY_TRUST: true
+    volumes:
+      - n8n-data:/home/node/.n8n
+    ports:
+      - "0.0.0.0:5678:5678"
+    depends_on:
+      - n8n-runners
+
+  # ╔══════════════════════════════════════════════════════╗
+  # ║  n8n-runners — The External Python/JS Sandbox        ║
+  # ╚══════════════════════════════════════════════════════╝
+  n8n-runners:
+    image: n8nio/runners:latest
+    container_name: n8n-runners
+    restart: unless-stopped
+    environment:
+      - N8N_RUNNERS_TASK_BROKER_URI=http://n8n:5679
+      - N8N_RUNNERS_AUTH_TOKEN=${N8N_RUNNERS_AUTH_TOKEN:-my-secret-token}
+
+  # ╔══════════════════════════════════════════════════════╗
+  # ║  Actual Budget — personal finance (local-first)      ║
+  # ║  https://budget.${DOMAIN}                            ║
+  # ╚══════════════════════════════════════════════════════╝
+  actual-budget:
+    image: docker.io/actualbudget/actual-server:latest
+    container_name: actual-budget
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+    volumes:
+      - actual-data:/data
+    ports:
+      - "0.0.0.0:5006:5006"
+ #   healthcheck:
+ #     test: ["CMD-SHELL", "wget -q --tries=1 http://localhost:5006 -O /dev/null || exit 1"]
+ #     interval: 60s
+ #     timeout: 10s
+ #     retries: 3
+
+  # ╔══════════════════════════════════════════════════════╗
+  # ║  Guacamole — browser-based RDP / SSH / VNC gateway  ║
+  # ║  https://remote.${DOMAIN}                            ║
+  # ╚══════════════════════════════════════════════════════╝
+  guacamole:
+    image: flcontainers/guacamole:latest
+    container_name: guacamole
+    restart: unless-stopped
+    environment:
+      TZ: ${TZ}
+      # OPENID_ENABLED: true
+      # OPENID_ALLOWED_CLOCK_SKEW: 60
+      # OPENID_MAX_TOKEN_VALIDITY: 300
+      # OPENID_MAX_NONCE_VALIDITY: 10
+      # OPENID_AUTHORIZATION_ENDPOINT: https://pocket.pub.jetsetslow.com/authorize
+      # OPENID_JWKS_ENDPOINT: https://pocket.pub.jetsetslow.com/.well-known/jwks.json
+      # OPENID_ISSUER: https://pocket.pub.jetsetslow.com
+      # OPENID_CLIENT_ID: "13253846-4d57-4e6f-a8a6-6e643abf43cf"
+      # OPENID_CLIENT_SECRET: fuSIs33cwyenOHZkDgFtCNGeUBlPBpof
+      # OPENID_REDIRECT_URI: https://guac.pub.jetsetslow.com
+      # OPENID_USERNAME_CLAIM_TYPE: preferred_username
+      # OPENID_GROUPS_CLAIM_TYPE: groups
+      # OPENID_SCOPE: "openid email profile groups"
+      # EXTENSIONS: "auth-sso-openid"
+      EXTENSIONS: "auth-totp"
+      # EXTENSION_PRIORITY: openid
+    volumes:
+      # - ./guacamole/guacamole-config:/config
+      - guacamole-config:/config
+      # - ./guacamole-auth-sso-openid-1.6.0.jar:/opt/guacamole/extensions/guacamole-auth-sso-openid-1.6.0.jar
+    ports:
+      - "0.0.0.0:8081:8080" # Updated port to 8081
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --tries=1 http://localhost:8080/ -O /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  code-server:
+    image: lscr.io/linuxserver/code-server:latest
+    container_name: code-server
+    environment:
+      - PUID=1001
+      - PGID=1001
+      - TZ=Asia/Kolkata
+      - PASSWORD=${CODE_PWD} #optional
+      # - HASHED_PASSWORD=${CODE_PWD} #optional
+      # - SUDO_PASSWORD=password #optional
+      # - SUDO_PASSWORD_HASH= #optional
+      - PROXY_DOMAIN=code.pub.jetsetslow.com #optional
+      - DEFAULT_WORKSPACE=/home/ubuntu #optional
+      - PWA_APPNAME=code-server #optional
+    volumes:
+      - ./code-server/config:/config
+      - /home/ubuntu:/home/ubuntu
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - 8443:8443
+    restart: unless-stopped
+
+  # --- Commented Out Services ---
+
+  # karakeep:
+  #   image: ghcr.io/karakeep-app/karakeep:release
+  #   container_name: karakeep
+  #   restart: unless-stopped
+  #   depends_on:
+  #     karakeep-redis:
+  #       condition: service_healthy
+  #     karakeep-meilisearch:
+  #       condition: service_healthy
+  #     karakeep-chrome:
+  #       condition: service_started
+  #   environment:
+  #     TZ: ${TZ}
+  #     REDIS_HOST: karakeep-redis
+  #     MEILI_ADDR: http://karakeep-meilisearch:7700
+  #     MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+  #     DATA_DIR: /data
+  #     NEXTAUTH_SECRET: ${KARAKEEP_SECRET}
+  #     NEXTAUTH_URL: https://karakeep.${DOMAIN}
+  #     BROWSER_WEB_URL: http://karakeep-chrome:9222
+  #     OPENAI_API_KEY: ${ANTHROPIC_API_KEY}
+  #     OPENAI_BASE_URL: https://api.anthropic.com/v1
+  #     INFERENCE_TEXT_MODEL: claude-haiku-4-5-20251001
+  #     INFERENCE_IMAGE_MODEL: claude-haiku-4-5-20251001
+  #   volumes:
+  #     - karakeep-data:/data
+  #   ports:
+  #     - "0.0.0.0:3000:3000"
+  #   networks:
+  #     - stack-net
+
+  # karakeep-redis:
+  #   image: redis:7-alpine
+  #   container_name: karakeep-redis
+  #   restart: unless-stopped
+  #   volumes:
+  #     - karakeep-redis:/data
+  #   networks:
+  #     - stack-net
+  #   healthcheck:
+  #     test: ["CMD", "redis-cli", "ping"]
+  #     interval: 30s
+  #     timeout: 5s
+  #     retries: 3
+
+  # karakeep-meilisearch:
+  #   image: getmeili/meilisearch:v1.11
+  #   container_name: karakeep-meilisearch
+  #   restart: unless-stopped
+  #   environment:
+  #     MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+  #     MEILI_NO_ANALYTICS: "true"
+  #   volumes:
+  #     - karakeep-meilisearch:/meili_data
+  #   networks:
+  #     - stack-net
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "wget -q --tries=1 http://localhost:7700/health -O - | grep -c available || exit 1"]
+  #     interval: 30s
+  #     timeout: 5s
+  #     retries: 3
+
+  # karakeep-chrome:
+  #   image: yukinying/chrome-headless-browser-stable:latest
+  #   container_name: karakeep-chrome
+  #   restart: unless-stopped
+  #   shm_size: 2gb
+  #   environment:
+  #     - CHROMIUM_FLAGS=--no-sandbox --disable-gpu --disable-dev-shm-usage --remote-debugging-address=0.0.0.0 --remote-debugging-port=9222 --hide-scrollbars
+  #   networks:
+  #     - stack-net
+
+  # vikunja:
+  #   image: vikunja/vikunja:latest
+  #   container_name: vikunja
+  #   restart: unless-stopped
+  #   environment:
+  #     TZ: ${TZ}
+  #     VIKUNJA_SERVICE_PUBLICURL: https://tasks.${DOMAIN}
+  #     VIKUNJA_SERVICE_JWTSECRET: ${VIKUNJA_JWT_SECRET}
+  #     VIKUNJA_SERVICE_FRONTENDURL: https://tasks.${DOMAIN}
+  #     VIKUNJA_DATABASE_TYPE: postgres
+  #     VIKUNJA_DATABASE_HOST: ${ADB_HOST}
+  #     VIKUNJA_DATABASE_PORT: "1521"
+  #     VIKUNJA_DATABASE_DATABASE: ${ADB_SERVICE_NAME}
+  #     VIKUNJA_DATABASE_USER: ${VIKUNJA_DB_USER}
+  #     VIKUNJA_DATABASE_PASSWORD: ${VIKUNJA_DB_PASSWORD}
+  #     VIKUNJA_DATABASE_SSLMODE: require
+  #     VIKUNJA_SERVICE_ENABLEREGISTRATION: "true"
+  #   volumes:
+  #     - vikunja-files:/app/vikunja/files
+  #   ports:
+  #     - "0.0.0.0:3456:3456"
+  #   networks:
+  #     - stack-net
+
+  # kopia:
+  #   image: kopia/kopia:latest
+  #   container_name: kopia
+  #   restart: unless-stopped
+  #   command:
+  #     - server
+  #     - start
+  #     - --insecure
+  #     - --address=0.0.0.0:51515
+  #     - --server-username=admin
+  #     - --server-password=${KOPIA_UI_PASSWORD}
+  #   environment:
+  #     TZ: ${TZ}
+  #     KOPIA_PASSWORD: ${KOPIA_REPO_PASSWORD}
+  #   volumes:
+  #     - kopia-config:/app/config
+  #     - kopia-cache:/app/cache
+  #     - kopia-logs:/app/logs
+  #   ports:
+  #     - "0.0.0.0:51515:51515"
+  #   networks:
+  #     - stack-net
+

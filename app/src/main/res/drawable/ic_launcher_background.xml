@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Solid backdrop matching the neon tile's edge colour; the full-bleed bitmap foreground
+     covers it almost entirely, this just guarantees seamless edges under any mask/parallax. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#141821"
+        android:pathData="M0,0h108v108h-108z" />
+</vector>
