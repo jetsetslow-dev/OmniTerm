@@ -35,7 +35,7 @@ on:
         type: boolean
         default: true
       version_code:
-        description: "Override versionCode (default: git commit count; needed when Play already has that code)"
+        description: "Override versionCode (default: 140 + git commit count; needed when Play already has that code)"
         required: false
         type: string
       version_major:
@@ -63,6 +63,7 @@ jobs:
     timeout-minutes: 45
 
     env:
+      VERSION_CODE_FLOOR: "140"
       KEYSTORE_PATH: ${{ github.workspace }}/omniterm-upload-key.jks
       STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
       KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
@@ -103,7 +104,8 @@ jobs:
           if [ -n "$INPUT_VERSION_CODE" ]; then
             VERSION_CODE_RESOLVED="$INPUT_VERSION_CODE"
           else
-            VERSION_CODE_RESOLVED="$(git rev-list --count HEAD)"
+            COMMIT_COUNT="$(git rev-list --count HEAD)"
+            VERSION_CODE_RESOLVED="$((VERSION_CODE_FLOOR + COMMIT_COUNT))"
           fi
           echo "VERSION_MAJOR=$VERSION_MAJOR" >> "$GITHUB_ENV"
           echo "VERSION_MINOR=$VERSION_MINOR" >> "$GITHUB_ENV"
@@ -232,8 +234,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          # Full history: versionCode is derived from `git rev-list --count HEAD`, and a
-          # shallow clone would stamp every published APK as versionCode 1.
+          # Full history: versionCode is derived from VERSION_CODE_FLOOR + `git rev-list --count HEAD`,
+          # and a shallow clone would undercount after the repository move.
           fetch-depth: 0
 
       - name: Set up JDK

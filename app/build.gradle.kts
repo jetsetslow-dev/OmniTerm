@@ -15,10 +15,15 @@ val gitCommitCount = try {
   8
 }
 
+// This repository moved after Play had already accepted versionCode 140. Keep an explicit floor
+// so commit-count-based auto-incrementing remains monotonic after the history reset.
+val versionCodeFloor = System.getenv("VERSION_CODE_FLOOR")?.toIntOrNull()
+    ?: (project.findProperty("VERSION_CODE_FLOOR") as String?)?.toIntOrNull()
+    ?: 140
 // Play rejects any version code it has ever seen, so rebuilding the same commit (e.g. after a
 // manual Console upload) needs a way to claim a fresh code without an empty commit.
 val versionCodeOverride = System.getenv("VERSION_CODE")?.toIntOrNull()
-val versionCodeValue = versionCodeOverride ?: gitCommitCount
+val versionCodeValue = versionCodeOverride ?: (versionCodeFloor + gitCommitCount)
 val versionMajor = System.getenv("VERSION_MAJOR")?.toIntOrNull() ?: 0
 val versionMinor = System.getenv("VERSION_MINOR")?.toIntOrNull() ?: 9
 

@@ -249,7 +249,7 @@ object RemoteCommands {
      * fail-safe so a broken YAML can never replace a working stack:
      *   1. Resolve the compose entrypoint (docker/podman).
      *   2. Write the new YAML to a temp file (never the live file yet).
-     *   3. Validate it with `compose config -q`. If it doesn't parse, abort — the live file and the
+     *   3. Validate it with `compose config`. If it doesn't parse, abort — the live file and the
      *      running stack are untouched.
      *   4. Back up the current live file (if any) to `<name>.omniterm.bak`, move the temp file into
      *      place, and `up -d`.
@@ -322,7 +322,7 @@ object RemoteCommands {
             // 3. validate the staged file with -f (abs path); abort untouched on parse error.
             //    On failure: emit the compose error and bail. On success: still emit any warnings
             //    (missing env vars, duplicate networks, etc.) so they're visible in the deploy banner.
-            append(" && { if ! \$OT_COMPOSE $stagedFlags config -q 2>\"\$err\"; then ")
+            append(" && { if ! \$OT_COMPOSE $stagedFlags config > /dev/null 2>\"\$err\"; then ")
             append("echo 'VALIDATION FAILED — stack unchanged:' >&2; cat \"\$err\" >&2; exit 1; fi; }")
             append(" && cat \"\$err\" 2>/dev/null || true")
             // 4. back up the live file, swap the validated one into its exact path

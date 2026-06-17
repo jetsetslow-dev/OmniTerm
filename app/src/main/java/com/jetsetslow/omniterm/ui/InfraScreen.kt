@@ -83,17 +83,42 @@ fun InfraScreen(viewModel: AppViewModel) {
 
 @Composable
 private fun ContainerRuntimeError(error: String) {
-    Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val scroll = rememberScrollState()
+    Column(
+        Modifier.fillMaxSize().padding(16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
         Icon(Icons.Filled.ErrorOutline, contentDescription = null, tint = Color.Red, modifier = Modifier.size(40.dp))
         Spacer(Modifier.height(8.dp))
         Text("Could not query containers", fontWeight = FontWeight.Bold)
-        Text(
-            error.take(200),
-            fontSize = 11.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            fontFamily = OmniFonts.mono,
-            modifier = Modifier.padding(top = 6.dp, start = 16.dp, end = 16.dp),
-        )
+        Box(
+            modifier = Modifier.fillMaxWidth()
+                .heightIn(min = 96.dp, max = 220.dp)
+                .padding(top = 8.dp)
+                .clip(RoundedCornerShape(6.dp))
+                .background(Color.Black)
+                .verticalScroll(scroll)
+                .padding(10.dp),
+        ) {
+            androidx.compose.foundation.text.selection.SelectionContainer {
+                Text(
+                    error,
+                    fontSize = 11.sp,
+                    color = Color.White,
+                    fontFamily = OmniFonts.mono,
+                )
+            }
+        }
+        TextButton(
+            onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(error)) },
+            modifier = Modifier.padding(top = 4.dp),
+        ) {
+            Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+            Text("Copy error")
+        }
         Text(
             "Is Docker or Podman installed, and can this user access it?",
             fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp),
@@ -263,6 +288,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
     var scaleTarget by remember { mutableStateOf<ScaleTarget?>(null) }
     var portsTarget by remember { mutableStateOf<StackSummary?>(null) }
     var editBuilderError by remember { mutableStateOf<String?>(null) }
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
     val stacks = remember(containers) {
@@ -319,7 +345,14 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                 ) {
                     Icon(Icons.Filled.ErrorOutline, contentDescription = null, tint = OmniColors.red, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text(msg, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+                    androidx.compose.foundation.text.selection.SelectionContainer(
+                        modifier = Modifier.weight(1f),
+                    ) {
+                        Text(msg, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
+                    }
+                    IconButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(msg)) }) {
+                        Icon(Icons.Filled.ContentCopy, contentDescription = "Copy error", modifier = Modifier.size(18.dp))
+                    }
                 }
             }
         }

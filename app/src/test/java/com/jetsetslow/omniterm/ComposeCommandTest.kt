@@ -35,7 +35,7 @@ class ComposeCommandTest {
         val cmd = RemoteCommands.composeDeploy(path, "core_utilities", "eA==")
         assertTrue("resolves usable docker|podman", cmd.contains("docker ps") && cmd.contains("podman ps"))
         assertTrue("falls back to standalone compose", cmd.contains("docker-compose") && cmd.contains("podman-compose"))
-        assertTrue("validates with config -q before swapping", cmd.contains("config -q"))
+        assertTrue("validates with config before swapping", cmd.contains("config > /dev/null"))
         assertTrue("backs up the live file", cmd.contains(".omniterm.bak"))
         assertTrue("restores on failure", cmd.contains("restoring previous compose file"))
         assertTrue("emits success sentinel", cmd.contains("OMNITERM_DEPLOY_OK"))
@@ -47,7 +47,7 @@ class ComposeCommandTest {
         assertTrue("removes failed new stack file", cmd.contains("removing new compose file"))
         // The new file is staged to a temp and only moved in AFTER validation.
         val stageIdx = cmd.indexOf("mktemp")
-        val validateIdx = cmd.indexOf("config -q")
+        val validateIdx = cmd.indexOf("config > /dev/null")
         val moveIdx = cmd.indexOf("mv \"\$tmp\" '$path'")
         assertTrue(stageIdx in 0 until validateIdx)
         assertTrue(validateIdx in 0 until moveIdx)
@@ -62,7 +62,7 @@ class ComposeCommandTest {
             workingDir = "/srv/app",
             configFiles = "compose.yml,compose.override.yml",
         )
-        assertTrue("base file kept in validation", cmd.contains("-f '/srv/app/compose.yml' -f \"\$tmp\" -p 'app' config -q"))
+        assertTrue("base file kept in validation", cmd.contains("-f '/srv/app/compose.yml' -f \"\$tmp\" -p 'app' config > /dev/null"))
         assertTrue("base file kept in deploy", cmd.contains("-f '/srv/app/compose.yml' -f '/srv/app/compose.override.yml' -p 'app' up -d"))
         assertValidShell(cmd)
     }

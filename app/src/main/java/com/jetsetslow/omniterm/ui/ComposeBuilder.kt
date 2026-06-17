@@ -11,6 +11,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.ExpandLess
@@ -832,6 +833,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
 
     var deploying by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
 
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
@@ -891,8 +893,15 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                     )
                     if (msg.isNotBlank()) {
                         Box(Modifier.heightIn(max = 140.dp).verticalScroll(rememberScrollState())) {
-                            Text(msg, fontFamily = OmniFonts.mono, fontSize = 11.sp, color = OmniColors.textPrimary)
+                            androidx.compose.foundation.text.selection.SelectionContainer {
+                                Text(msg, fontFamily = OmniFonts.mono, fontSize = 11.sp, color = OmniColors.textPrimary)
+                            }
                         }
+                    }
+                }
+                if (msg.isNotBlank()) {
+                    IconButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(msg)) }) {
+                        Icon(Icons.Filled.ContentCopy, contentDescription = "Copy deploy output")
                     }
                 }
                 TextButton(onClick = { result = null }) { Text("Dismiss") }

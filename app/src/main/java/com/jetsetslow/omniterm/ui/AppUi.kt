@@ -148,6 +148,7 @@ fun ServerSelectorBar(
 @Composable
 fun ActionStreamDialog(viewModel: AppViewModel) {
     if (!viewModel.actionStreamRunning && viewModel.actionStreamOutput.isBlank()) return
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
     AlertDialog(
         onDismissRequest = {
             // While still streaming, ignore back/outside-tap so ongoing output isn't lost.
@@ -176,6 +177,18 @@ fun ActionStreamDialog(viewModel: AppViewModel) {
                         Text(viewModel.actionStreamOutput, fontFamily = OmniFonts.mono, fontSize = 11.sp, color = Color.White)
                     }
                 }
+            }
+        },
+        dismissButton = {
+            TextButton(
+                enabled = viewModel.actionStreamOutput.isNotBlank(),
+                onClick = {
+                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(viewModel.actionStreamOutput))
+                },
+            ) {
+                Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("Copy")
             }
         },
         confirmButton = {
