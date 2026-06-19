@@ -764,7 +764,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     // POLLE & RETRYS TASK LIFECYCLE
     private var pollingJob: Job? = null
-    private val telemetryProbeLimiter = Semaphore(4)
+    private val telemetryProbeLimiter = kotlinx.coroutines.sync.Semaphore(16)
 
     /** Telemetry refresh cadence (user-customisable), and the wall-clock start of the most recent
      *  cycle, so the UI can show a "next refresh in N" countdown that stays in sync with the poller.
@@ -980,9 +980,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { repository.insertSetting("backup_export_selection", selection.encode()) }
     }
 
+    private val activeProbes = java.util.concurrent.ConcurrentHashMap<Int, kotlinx.coroutines.Job>()
+
     // Real telemetry: TCP reachability + SSH metrics for every reachable host, concurrently.
     private fun startTelemetryPolling() {
         pollingJob?.cancel()
+        activeProbes.values.forEach { it.cancel() }
+        activeProbes.clear()
+
         pollingJob = viewModelScope.launch(Dispatchers.IO) {
             while (isActive) {
                 // No hosts configured → don't run the refresh cycle at all (no probes, no countdown,
@@ -1000,9 +1005,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.Main) { lastTelemetryStartMs = System.currentTimeMillis() }
 
                 // Probe all hosts concurrently so a slow/unreachable host doesn't block others.
-                currentServers.map { srv ->
-                    async { telemetryProbeLimiter.withPermit { probeServer(srv) } }
-                }.awaitAll()
+                // We use independent jobs so a slow probe doesn't block the global interval tick.
+                for (srv in currentServers) {
+                    if (activeProbes[srv.id]?.isActive != true) {
+                        activeProbes[srv.id] = launch {
+                            probeServer(srv)
+                        }
+                    }
+                }
 
                 val cutoff = System.currentTimeMillis() - (metricsRetentionDays * 24L * 60 * 60 * 1000)
                 repository.pruneMetrics(cutoff)
@@ -1024,25 +1034,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun probeServer(srv: ServerEntity) {
         try {
-            probeServerInner(srv)
+            val rtt = tcpReachable(srv.host, srv.port)
+            if (rtt < 0) {
+                repository.updateConnectionState(srv.id, "offline", 0, 0)
+                return
+            }
+            telemetryProbeLimiter.withPermit {
+                probeServerInner(srv, rtt)
+            }
+        } catch (e: Exception) {
+            repository.updateConnectionState(srv.id, "offline", 0, 0)
         } finally {
             withContext(Dispatchers.Main) { probedServerIds[srv.id] = true }
         }
     }
 
-    private suspend fun probeServerInner(srv: ServerEntity) {
+    private suspend fun probeServerInner(srv: ServerEntity, rtt: Int) {
         // Capture the selected host once: the live `selectedServerId` can change on the main thread
         // while this IO poll is in flight, and we must not attribute this host's metrics to whatever
         // host happens to be selected when the (slow) probe finally completes.
         val activeServerId = selectedServerId
-        try {
-            val rtt = tcpReachable(srv.host, srv.port)
-            if (rtt < 0) {
-                // Unreachable: leave authStatus as-is, just mark offline.
-                repository.updateConnectionState(srv.id, "offline", 0, 0)
-                return
-            }
-            // Detect the remote OS once per host (cached), then run the matching metrics probe.
+        // Detect the remote OS once per host (cached), then run the matching metrics probe.
             val os = osByServer[srv.id] ?: run {
                 val probe = executeSshCommand(srv, RemoteCommands.OS_PROBE)
                 val detected = RemoteCommands.normaliseOs(probe)
@@ -1123,9 +1135,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 repository.updateConnectionState(srv.id, "online", health, rtt)
             }
-        } catch (e: Exception) {
-            repository.updateConnectionState(srv.id, "offline", 0, 0)
-        }
     }
 
     /**
