@@ -75,6 +75,7 @@ fun CodeEditor(
     var caseSensitive by remember { mutableStateOf(false) }
     var useRegex by remember { mutableStateOf(false) }
     var regexError by remember { mutableStateOf<String?>(null) }
+    var scrollToCursorTrigger by remember { mutableStateOf(0) }
 
     val matches = remember(value, query, caseSensitive, useRegex) {
         regexError = null
@@ -92,6 +93,7 @@ fun CodeEditor(
         if (matches.isEmpty()) return
         val m = matches[(index % matches.size + matches.size) % matches.size]
         field = field.copy(selection = TextRange(m.first, m.second))
+        scrollToCursorTrigger++
     }
 
     fun replaceCurrent() {
@@ -100,6 +102,7 @@ fun CodeEditor(
         val next = value.substring(0, start) + replacement + value.substring(end)
         onValueChange(next)
         field = field.copy(selection = TextRange(start + replacement.length))
+        scrollToCursorTrigger++
     }
 
     fun replaceAll() {
@@ -119,7 +122,10 @@ fun CodeEditor(
         EditorToolbar(
             showFind = showFind,
             onToggleFind = { showFind = !showFind },
-            onGoToLine = { line -> field = goToLine(field, value, line) },
+            onGoToLine = { line -> 
+                field = goToLine(field, value, line)
+                scrollToCursorTrigger++
+            },
             enabled = enabled,
         )
         if (showFind) {
@@ -140,6 +146,7 @@ fun CodeEditor(
         }
         EditorBody(
             modifier = Modifier.weight(1f),
+            scrollToCursorTrigger = scrollToCursorTrigger,
             field = field,
             onChange = { field = it; onValueChange(it.text) },
             enabled = enabled,
@@ -269,6 +276,7 @@ private fun EditorInput(value: String, onChange: (String) -> Unit, hint: String,
 @Composable
 private fun EditorBody(
     modifier: Modifier = Modifier,
+    scrollToCursorTrigger: Int,
     field: TextFieldValue,
     onChange: (TextFieldValue) -> Unit,
     enabled: Boolean,
@@ -281,6 +289,17 @@ private fun EditorBody(
     val highlight = remember(language, palette, limit) { CodeHighlightTransformation(language, palette, limit) }
     val scroll = rememberScrollState()
     val lineCount = remember(field.text) { field.text.count { it == '\n' } + 1 }
+    var textLayoutResult by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
+
+    androidx.compose.runtime.LaunchedEffect(scrollToCursorTrigger) {
+        if (scrollToCursorTrigger > 0) {
+            textLayoutResult?.let { layout ->
+                val y = layout.getCursorRect(field.selection.start).top.toInt()
+                scroll.animateScrollTo((y - 200).coerceAtLeast(0))
+            }
+        }
+    }
+
     Row(modifier = modifier.fillMaxSize().verticalScroll(scroll)) {
         // Line-number gutter, scrolling in lockstep with the text (shared verticalScroll on the Row).
         Column(
@@ -304,6 +323,7 @@ private fun EditorBody(
             onValueChange = onChange,
             enabled = enabled,
             visualTransformation = highlight,
+            onTextLayout = { textLayoutResult = it },
             textStyle = TextStyle(fontFamily = OmniFonts.mono, fontSize = fontSize, color = MaterialTheme.colorScheme.onSurface),
             cursorBrush = SolidColor(OmniColors.amber),
             modifier = Modifier
