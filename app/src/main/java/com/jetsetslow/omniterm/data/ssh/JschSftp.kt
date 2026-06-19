@@ -92,9 +92,9 @@ class JschSftp(private val creds: SshCredentials) {
                     isDirectory = attrs.isDir,
                     size = attrs.size,
                     modDate = attrs.mtimeString?.trim().orEmpty(),
+                    modTimeSeconds = attrs.mTime.toLong(),
                 )
             }
-            .sortedWith(compareByDescending<SftpFile> { it.isDirectory }.thenBy { it.name.lowercase() })
     }
 
     /** Resolve the absolute home/working directory to start the browser at. */

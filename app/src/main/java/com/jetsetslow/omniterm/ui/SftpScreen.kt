@@ -34,7 +34,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
 import com.jetsetslow.omniterm.data.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -51,7 +50,7 @@ fun SftpScreen(viewModel: AppViewModel) {
         }
         return
     }
-    LaunchedEffect(srv.id) { viewModel.sftpReset() }
+    LaunchedEffect(srv.id) { viewModel.ensureSftpLoadedForSelectedServer() }
 
     Column(modifier = Modifier.fillMaxSize()) {
         // Let the user switch hosts from SFTP itself (mirrors the other tabs).
@@ -91,7 +90,10 @@ fun SftpScreen(viewModel: AppViewModel) {
     }
 }
 
-@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@OptIn(
+    androidx.compose.foundation.ExperimentalFoundationApi::class,
+    androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
+)
 @Composable
 fun SftpFilesTab(viewModel: AppViewModel) {
     val srv = viewModel.selectedServer ?: return
@@ -109,6 +111,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
     var showCreateFolderDialog by remember { mutableStateOf(false) }
     var folderNameInput by remember { mutableStateOf("") }
     var showSudoConfirmDialog by remember { mutableStateOf(false) }
+    var sortMenuExpanded by remember { mutableStateOf(false) }
     val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
 
     // Editable path bar: tap the path to type a destination and jump straight there.
@@ -128,31 +131,23 @@ fun SftpFilesTab(viewModel: AppViewModel) {
         val activity = authContext.getActivity()
         val canBiometric = activity != null
         if (canBiometric) {
-            val executor = ContextCompat.getMainExecutor(activity)
-            val prompt = androidx.biometric.BiometricPrompt(
-                activity, executor,
-                object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
-                    override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
-                        viewModel.toggleSftpSudo()
-                        pendingSudoAuth = false
-                    }
-                    override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                        // User cancelled or no biometric/credential enrolled: fall back to PIN if set,
-                        // otherwise abandon enabling sudo (fail-closed).
-                        pendingSudoAuth = false
-                        if (viewModel.savedPin != null) { sudoPin = ""; sudoPinError = null; showSudoPinDialog = true }
-                    }
+            BiometricCryptoGate.authenticate(
+                activity = activity,
+                title = "Authenticate for sudo mode",
+                subtitle = "Confirm to run SFTP operations as root",
+                onAuthenticated = {
+                    viewModel.toggleSftpSudo()
+                    pendingSudoAuth = false
+                },
+                onUnavailable = {
+                    pendingSudoAuth = false
+                    if (viewModel.savedPin != null) { sudoPin = ""; sudoPinError = null; showSudoPinDialog = true }
+                },
+                onError = {
+                    pendingSudoAuth = false
+                    if (viewModel.savedPin != null) { sudoPin = ""; sudoPinError = null; showSudoPinDialog = true }
                 },
             )
-            val info = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
-                .setTitle("Authenticate for sudo mode")
-                .setSubtitle("Confirm to run SFTP operations as root")
-                .setAllowedAuthenticators(
-                    androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                        androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
-                )
-                .build()
-            prompt.authenticate(info)
         } else {
             pendingSudoAuth = false
             if (viewModel.savedPin != null) { sudoPin = ""; sudoPinError = null; showSudoPinDialog = true }
@@ -375,12 +370,13 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         }
                     }
 
-                    // Action buttons on their own row beneath the path; horizontally scrollable so
-                    // they never clip on narrow screens. Hidden while editing the path.
-                    if (!editingPath) Row(
+                    // Action buttons wrap only when the viewport is narrow, so the toolbar is not
+                    // unnecessarily scrollable on normal widths.
+                    if (!editingPath) FlowRow(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
+                            .fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(2.dp),
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
                         IconToggleButton(checked = viewModel.sftpSearchActive, onCheckedChange = {
                             if (viewModel.sftpSearchActive) viewModel.sftpSearchClear()
@@ -398,6 +394,34 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                 contentDescription = if (viewModel.showSftpFolderSizes) "Hide folder sizes" else "Show folder sizes",
                                 tint = if (viewModel.showSftpFolderSizes) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                        }
+                        Box {
+                            IconButton(onClick = { sortMenuExpanded = true }) {
+                                Icon(
+                                    Icons.AutoMirrored.Filled.Sort,
+                                    contentDescription = "Sort files",
+                                    tint = if (viewModel.sftpSortOption != SftpSortOption.NameAsc) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            DropdownMenu(
+                                expanded = sortMenuExpanded,
+                                onDismissRequest = { sortMenuExpanded = false },
+                            ) {
+                                SftpSortOption.entries.forEach { option ->
+                                    DropdownMenuItem(
+                                        text = { Text(option.label, fontSize = 13.sp) },
+                                        leadingIcon = {
+                                            if (viewModel.sftpSortOption == option) {
+                                                Icon(Icons.Filled.Check, contentDescription = null, tint = OmniColors.cyan)
+                                            }
+                                        },
+                                        onClick = {
+                                            viewModel.chooseSftpSortOption(option)
+                                            sortMenuExpanded = false
+                                        },
+                                    )
+                                }
+                            }
                         }
                         IconToggleButton(checked = viewModel.sftpSudo, onCheckedChange = {
                             when {

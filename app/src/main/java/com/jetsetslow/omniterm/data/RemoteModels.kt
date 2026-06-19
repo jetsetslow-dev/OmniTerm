@@ -90,6 +90,7 @@ data class SftpFile(
     val isDirectory: Boolean,
     var size: Long,
     var modDate: String,
+    var modTimeSeconds: Long = 0L,
     var content: String = "",
 )
 

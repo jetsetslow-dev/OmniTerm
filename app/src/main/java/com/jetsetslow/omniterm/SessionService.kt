@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -98,6 +99,8 @@ class SessionService : Service() {
     private fun startMainForeground() {
         // Tapping the main notification brings app to foreground without attaching a specific session.
         val openAppIntent = Intent(this, MainActivity::class.java).apply {
+            setPackage(packageName)
+            data = Uri.parse("omniterm://notification/main")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val contentPendingIntent = PendingIntent.getActivity(
@@ -108,6 +111,8 @@ class SessionService : Service() {
         // "Disconnect All" routes through MainActivity so the ViewModel can cleanly close sessions.
         val disconnectAllIntent = Intent(this, MainActivity::class.java).apply {
             action = ACTION_DISCONNECT_ALL
+            setPackage(packageName)
+            data = Uri.parse("omniterm://notification/disconnect-all")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val disconnectAllPendingIntent = PendingIntent.getActivity(
@@ -152,6 +157,8 @@ class SessionService : Service() {
             // Tap notification content → resume the session in the app.
             val resumeIntent = Intent(this, MainActivity::class.java).apply {
                 action = ACTION_RESUME
+                setPackage(packageName)
+                data = Uri.parse("omniterm://notification/session/$id/resume")
                 putExtra("SESSION_ID", id)
                 // SINGLE_TOP ensures onNewIntent is called on the existing activity instance,
                 // preserving the ViewModel and its activeSessions list.
@@ -167,6 +174,8 @@ class SessionService : Service() {
             // "Disconnect" action → disconnect this specific session via the ViewModel.
             val disconnectIntent = Intent(this, MainActivity::class.java).apply {
                 action = ACTION_DISCONNECT_SESSION
+                setPackage(packageName)
+                data = Uri.parse("omniterm://notification/session/$id/disconnect")
                 putExtra("SESSION_ID", id)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
             }

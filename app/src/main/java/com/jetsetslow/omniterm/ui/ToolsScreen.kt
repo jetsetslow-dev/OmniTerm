@@ -42,7 +42,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.core.net.toUri
 import androidx.compose.ui.platform.LocalContext
-import androidx.core.content.ContextCompat
+import com.jetsetslow.omniterm.data.BiometricCryptoGate
 import java.io.InputStream
 import java.text.DateFormat
 import java.util.Date
@@ -2267,21 +2267,12 @@ fun SettingsToolView(viewModel: AppViewModel) {
                                     checked = draftBiometrics,
                                     onCheckedChange = { on ->
                                         if (on && activity != null) {
-                                            val executor = ContextCompat.getMainExecutor(activity)
-                                            val prompt = androidx.biometric.BiometricPrompt(activity, executor, object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
-                                                override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
-                                                    draftBiometrics = true
-                                                }
-                                            })
-                                            val info = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
-                                                .setTitle("Verify Biometrics")
-                                                .setSubtitle("Authenticate to enable biometric unlock")
-                                                .setAllowedAuthenticators(
-                                                    androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                                                            androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
-                                                )
-                                                .build()
-                                            prompt.authenticate(info)
+                                            BiometricCryptoGate.authenticate(
+                                                activity = activity,
+                                                title = "Verify Biometrics",
+                                                subtitle = "Authenticate to enable biometric unlock",
+                                                onAuthenticated = { draftBiometrics = true },
+                                            )
                                         } else {
                                             draftBiometrics = false
                                         }
@@ -2624,24 +2615,12 @@ private fun SettingsSaveAuthDialog(
     LaunchedEffect(Unit) {
         if (viewModel.useBiometrics) {
             context.getActivity()?.let { activity ->
-                val executor = ContextCompat.getMainExecutor(activity)
-                val prompt = androidx.biometric.BiometricPrompt(
-                    activity, executor,
-                    object : androidx.biometric.BiometricPrompt.AuthenticationCallback() {
-                        override fun onAuthenticationSucceeded(result: androidx.biometric.BiometricPrompt.AuthenticationResult) {
-                            onAuthenticated()
-                        }
-                    },
+                BiometricCryptoGate.authenticate(
+                    activity = activity,
+                    title = "Authenticate to save settings",
+                    subtitle = "Confirm it's you",
+                    onAuthenticated = onAuthenticated,
                 )
-                val info = androidx.biometric.BiometricPrompt.PromptInfo.Builder()
-                    .setTitle("Authenticate to save settings")
-                    .setSubtitle("Confirm it's you")
-                    .setAllowedAuthenticators(
-                        androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                            androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
-                    )
-                    .build()
-                prompt.authenticate(info)
             }
         }
     }

@@ -42,7 +42,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import androidx.biometric.BiometricPrompt
 import androidx.appcompat.app.AppCompatActivity
 import android.content.Context
 import android.content.ContextWrapper
@@ -50,6 +49,7 @@ import com.jetsetslow.omniterm.billing.LicenseController
 import com.jetsetslow.omniterm.billing.LicenseState
 
 import com.jetsetslow.omniterm.billing.createLicenseController
+import com.jetsetslow.omniterm.data.BiometricCryptoGate
 import com.jetsetslow.omniterm.data.ServerEntity
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -303,21 +303,12 @@ fun SudoAuthDialog(viewModel: AppViewModel) {
     LaunchedEffect(Unit) {
         if (viewModel.useBiometrics) {
             context.getActivity()?.let { activity ->
-                val executor = ContextCompat.getMainExecutor(activity)
-                val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
-                    override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                        viewModel.confirmPendingSudoAction()
-                    }
-                })
-                val info = BiometricPrompt.PromptInfo.Builder()
-                    .setTitle("Authenticate for sudo")
-                    .setSubtitle("Confirm to run the privileged action")
-                    .setAllowedAuthenticators(
-                        androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                            androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
-                    )
-                    .build()
-                prompt.authenticate(info)
+                BiometricCryptoGate.authenticate(
+                    activity = activity,
+                    title = "Authenticate for sudo",
+                    subtitle = "Confirm to run the privileged action",
+                    onAuthenticated = { viewModel.confirmPendingSudoAction() },
+                )
             }
         }
     }
@@ -452,21 +443,12 @@ fun PinLockGateway(viewModel: AppViewModel) {
     // Single biometric trigger reused by auto-prompt and the "Use biometrics" button.
     val triggerBiometric: () -> Unit = {
         context.getActivity()?.let { activity ->
-            val executor = ContextCompat.getMainExecutor(activity)
-            val prompt = BiometricPrompt(activity, executor, object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    viewModel.biometricSuccessUnlock()
-                }
-            })
-            val info = BiometricPrompt.PromptInfo.Builder()
-                .setTitle("Unlock OmniTerm")
-                .setSubtitle("Authenticate to continue")
-                .setAllowedAuthenticators(
-                    androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG or
-                        androidx.biometric.BiometricManager.Authenticators.DEVICE_CREDENTIAL
-                )
-                .build()
-            prompt.authenticate(info)
+            BiometricCryptoGate.authenticate(
+                activity = activity,
+                title = "Unlock OmniTerm",
+                subtitle = "Authenticate to continue",
+                onAuthenticated = { viewModel.biometricSuccessUnlock() },
+            )
         }
     }
 

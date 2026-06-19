@@ -6,6 +6,7 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
@@ -85,6 +86,17 @@ enum class TermKey {
 }
 
 enum class SftpTransferStatus { InProgress, Success, Failure }
+
+enum class SftpSortOption(val label: String) {
+    NameAsc("Name A-Z"),
+    NameDesc("Name Z-A"),
+    ModifiedAsc("Modified oldest"),
+    ModifiedDesc("Modified newest"),
+    SizeAsc("Size smallest"),
+    SizeDesc("Size largest"),
+    TypeFoldersFirst("Folders first"),
+    TypeFilesFirst("Files first"),
+}
 
 data class SftpTransferItem(
     val id: String = UUID.randomUUID().toString(),
@@ -551,6 +563,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     var sftpPath by mutableStateOf(""); private set
     var sftpEntries by mutableStateOf<List<SftpFile>>(emptyList()); private set
+    var sftpSortOption by mutableStateOf(SftpSortOption.NameAsc); private set
+    private var sftpLoadedServerId: Int? = null
     
     val sftpBookmarks = mutableStateListOf<String>()
     var sftpLoading by mutableStateOf(false); private set
@@ -565,6 +579,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleSftpFolderSizes() {
         showSftpFolderSizes = !showSftpFolderSizes
         loadSftp(sftpPath, clearError = false)
+    }
+
+    fun chooseSftpSortOption(option: SftpSortOption) {
+        sftpSortOption = option
+        sftpEntries = sortSftpEntries(sftpEntries)
     }
 
     // ── Multi-select + clipboard (copy / cut / move) ──
@@ -1199,6 +1218,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         val openAppIntent = Intent(app, MainActivity::class.java).apply {
+            setPackage(app.packageName)
+            data = Uri.parse("omniterm://notification/alert/${rule.id}/${srv.id}")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
         val contentIntent = PendingIntent.getActivity(
@@ -3018,6 +3039,58 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun joinPath(base: String, name: String): String =
         if (base == "/" || base.isEmpty()) "/$name" else "$base/$name"
 
+    private fun sftpLastPathKey(serverId: Int) = "sftp_last_path_$serverId"
+
+    private fun sortSftpEntries(entries: List<SftpFile>): List<SftpFile> {
+        val nameComparator = compareBy<SftpFile> { it.name.lowercase(Locale.ROOT) }
+            .thenBy { it.name }
+        val base = when (sftpSortOption) {
+            SftpSortOption.NameAsc ->
+                compareByDescending<SftpFile> { it.isDirectory }.then(nameComparator)
+            SftpSortOption.NameDesc ->
+                compareByDescending<SftpFile> { it.isDirectory }
+                    .thenByDescending { it.name.lowercase(Locale.ROOT) }
+                    .thenByDescending { it.name }
+            SftpSortOption.ModifiedAsc ->
+                compareByDescending<SftpFile> { it.isDirectory }
+                    .thenBy { it.modTimeSeconds }
+                    .then(nameComparator)
+            SftpSortOption.ModifiedDesc ->
+                compareByDescending<SftpFile> { it.isDirectory }
+                    .thenByDescending { it.modTimeSeconds }
+                    .then(nameComparator)
+            SftpSortOption.SizeAsc ->
+                compareByDescending<SftpFile> { it.isDirectory }
+                    .thenBy { it.size }
+                    .then(nameComparator)
+            SftpSortOption.SizeDesc ->
+                compareByDescending<SftpFile> { it.isDirectory }
+                    .thenByDescending { it.size }
+                    .then(nameComparator)
+            SftpSortOption.TypeFoldersFirst ->
+                compareByDescending<SftpFile> { it.isDirectory }.then(nameComparator)
+            SftpSortOption.TypeFilesFirst ->
+                compareBy<SftpFile> { it.isDirectory }.then(nameComparator)
+        }
+        return entries.sortedWith(base)
+    }
+
+    fun ensureSftpLoadedForSelectedServer() {
+        val srv = selectedServer ?: return
+        if (sftpLoadedServerId == srv.id && (sftpPath.isNotBlank() || sftpEntries.isNotEmpty() || sftpLoading)) return
+        sftpLoadedServerId = srv.id
+        sftpPath = ""
+        sftpEntries = emptyList()
+        sftpSelected.clear()
+        sftpError = null
+        sftpSearchClear()
+        loadSftpBookmarks()
+        viewModelScope.launch {
+            val savedPath = repository.getSetting(sftpLastPathKey(srv.id))?.takeIf { it.isNotBlank() }
+            loadSftp(savedPath)
+        }
+    }
+
     fun loadSftp(path: String? = null, clearError: Boolean = true) {
         sftpJob?.cancel()
         sftpJob = viewModelScope.launch {
@@ -3035,12 +3108,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 // Navigating somewhere else invalidates the query/results; a same-path refresh
                 // (mkdir/delete/paste reloads) keeps the search bar as-is.
                 if (target != sftpPath) sftpSearchClear()
-                sftpEntries = if (showSftpFolderSizes) {
+                val entries = if (showSftpFolderSizes) {
                     enrichSftpFolderSizes(srv, target, listing)
                 } else {
                     listing
                 }
+                sftpEntries = sortSftpEntries(entries)
                 sftpPath = target
+                sftpLoadedServerId = srv.id
+                repository.insertSetting(sftpLastPathKey(srv.id), target)
                 // Drop any selection that no longer refers to entries in the new listing.
                 val names = listing.mapTo(HashSet()) { it.name }
                 sftpSelected.retainAll { it in names }
@@ -3101,6 +3177,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     /** Reset to the home directory (used when the selected server changes). */
     fun sftpReset() {
+        sftpLoadedServerId = null
         sftpPath = ""
         sftpEntries = emptyList()
         sftpSelected.clear()
