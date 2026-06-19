@@ -1256,15 +1256,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 NotificationChannel(ALERT_CHANNEL_ID, "Monitoring alerts", NotificationManager.IMPORTANCE_HIGH)
             )
         }
-        val openAppIntent = Intent(app, MainActivity::class.java).apply {
-            // Explicit component so the Intent backing this PendingIntent can never resolve to a
-            // third-party component. setComponent(ComponentName) is the form CodeQL's
-            // implicit-pendingintents query recognises as a definite explicit component.
-            component = android.content.ComponentName(app, MainActivity::class.java)
-            setPackage(app.packageName)
-            data = Uri.parse("omniterm://notification/alert/${rule.id}/${srv.id}")
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-        }
+        val openAppIntent = Intent(app, MainActivity::class.java)
+        openAppIntent.setClass(app, MainActivity::class.java)
+        openAppIntent.data = Uri.parse("omniterm://notification/alert/${rule.id}/${srv.id}")
+        openAppIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
         val contentIntent = PendingIntent.getActivity(
             app, alertNotificationId(rule.id, srv.id), openAppIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,

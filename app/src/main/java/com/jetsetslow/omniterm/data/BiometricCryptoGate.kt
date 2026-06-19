@@ -69,6 +69,7 @@ object BiometricCryptoGate {
             .setTitle(title)
             .setSubtitle(subtitle)
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
+            .setNegativeButtonText("Cancel")
             .build()
         prompt.authenticate(info, BiometricPrompt.CryptoObject(cipher))
     }

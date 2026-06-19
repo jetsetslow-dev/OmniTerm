@@ -155,36 +155,24 @@ class SessionService : Service() {
             currentIds.add(notifyId)
 
             // Tap notification content → resume the session in the app.
-            val resumeIntent = Intent(this, MainActivity::class.java).apply {
-                action = ACTION_RESUME
-                // Bind the target component explicitly so the Intent backing this PendingIntent can
-                // never resolve to a third-party component. setComponent(ComponentName) is the form
-                // CodeQL's implicit-pendingintents query recognises as a definite explicit component.
-                component = android.content.ComponentName(this@SessionService, MainActivity::class.java)
-                setPackage(packageName)
-                data = Uri.parse("omniterm://notification/session/$id/resume")
-                putExtra("SESSION_ID", id)
-                // SINGLE_TOP ensures onNewIntent is called on the existing activity instance,
-                // preserving the ViewModel and its activeSessions list.
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
-                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
-                        Intent.FLAG_ACTIVITY_CLEAR_TOP
-            }
+            val resumeIntent = Intent(this, MainActivity::class.java)
+            resumeIntent.setClass(this, MainActivity::class.java)
+            resumeIntent.action = ACTION_RESUME
+            resumeIntent.data = Uri.parse("omniterm://notification/session/$id/resume")
+            resumeIntent.putExtra("SESSION_ID", id)
+            resumeIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
             val resumePendingIntent = PendingIntent.getActivity(
                 this, notifyId, resumeIntent,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
             )
 
             // "Disconnect" action → disconnect this specific session via the ViewModel.
-            val disconnectIntent = Intent(this, MainActivity::class.java).apply {
-                action = ACTION_DISCONNECT_SESSION
-                // Explicit component (see resumeIntent) — keeps this PendingIntent non-implicit.
-                component = android.content.ComponentName(this@SessionService, MainActivity::class.java)
-                setPackage(packageName)
-                data = Uri.parse("omniterm://notification/session/$id/disconnect")
-                putExtra("SESSION_ID", id)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            }
+            val disconnectIntent = Intent(this, MainActivity::class.java)
+            disconnectIntent.setClass(this, MainActivity::class.java)
+            disconnectIntent.action = ACTION_DISCONNECT_SESSION
+            disconnectIntent.data = Uri.parse("omniterm://notification/session/$id/disconnect")
+            disconnectIntent.putExtra("SESSION_ID", id)
+            disconnectIntent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
             // Use a distinct request code offset to avoid colliding with the resume PendingIntent.
             val disconnectPendingIntent = PendingIntent.getActivity(
                 this, notifyId + 10_000, disconnectIntent,
