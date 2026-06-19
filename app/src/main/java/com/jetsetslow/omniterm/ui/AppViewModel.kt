@@ -791,6 +791,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var sftpJob: Job? = null
     private var sftpSearchJob: Job? = null
 
+    private val activeProbes = java.util.concurrent.ConcurrentHashMap<Int, kotlinx.coroutines.Job>()
+
     init {
         TerminalSessionManager.init(application)
         SshHostKeyTrust.init(application)
@@ -979,8 +981,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         backupExportSelection = selection
         viewModelScope.launch { repository.insertSetting("backup_export_selection", selection.encode()) }
     }
-
-    private val activeProbes = java.util.concurrent.ConcurrentHashMap<Int, kotlinx.coroutines.Job>()
 
     // Real telemetry: TCP reachability + SSH metrics for every reachable host, concurrently.
     private fun startTelemetryPolling() {
