@@ -139,6 +139,7 @@ fun CodeEditor(
             )
         }
         EditorBody(
+            modifier = Modifier.weight(1f),
             field = field,
             onChange = { field = it; onValueChange(it.text) },
             enabled = enabled,
@@ -267,6 +268,7 @@ private fun EditorInput(value: String, onChange: (String) -> Unit, hint: String,
 
 @Composable
 private fun EditorBody(
+    modifier: Modifier = Modifier,
     field: TextFieldValue,
     onChange: (TextFieldValue) -> Unit,
     enabled: Boolean,
@@ -279,7 +281,7 @@ private fun EditorBody(
     val highlight = remember(language, palette, limit) { CodeHighlightTransformation(language, palette, limit) }
     val scroll = rememberScrollState()
     val lineCount = remember(field.text) { field.text.count { it == '\n' } + 1 }
-    Row(modifier = Modifier.fillMaxSize().verticalScroll(scroll)) {
+    Row(modifier = modifier.fillMaxSize().verticalScroll(scroll)) {
         // Line-number gutter, scrolling in lockstep with the text (shared verticalScroll on the Row).
         Column(
             modifier = Modifier
