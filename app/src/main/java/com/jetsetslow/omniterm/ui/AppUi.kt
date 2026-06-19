@@ -839,10 +839,25 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                 HostLimitReconciliationDialog(viewModel)
             }
 
-            // Deferred first-run prompts: ask for notification access / battery exclusion only
-            // once the user has connected successfully (or turned on background keep-alive) —
-            // not as the very first thing they see before the app has shown any value.
-            if (viewModel.isFirstRun && (viewModel.hasConnectedOnce || viewModel.isBackgroundKeepAlive)) {
+            // Force permissions
+            val context = androidx.compose.ui.platform.LocalContext.current
+            var needsPermissions by remember { mutableStateOf(false) }
+            val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+            DisposableEffect(lifecycleOwner) {
+                val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                    if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                        val hasNotif = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU ||
+                            ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                        val pm = context.getSystemService(android.os.PowerManager::class.java)
+                        val hasBatt = pm?.isIgnoringBatteryOptimizations(context.packageName) == true
+                        needsPermissions = !hasNotif || !hasBatt
+                    }
+                }
+                lifecycleOwner.lifecycle.addObserver(observer)
+                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+            }
+
+            if (needsPermissions) {
                 FirstRunDialog(viewModel)
             }
         }
@@ -1003,46 +1018,45 @@ private fun AdBanner(state: LicenseState, controller: LicenseController) {
 fun FirstRunDialog(viewModel: AppViewModel) {
     val context = androidx.compose.ui.platform.LocalContext.current
     fun launchBatteryOptimizationSettings() {
-        val pm = context.getSystemService(android.os.PowerManager::class.java)
-        if (pm?.isIgnoringBatteryOptimizations(context.packageName) == true) {
-            viewModel.completeFirstRun()
-            return
-        }
-        // Open the GENERAL battery-optimization settings list. We intentionally avoid
-        // ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS (the direct allow-listing prompt), which
-        // requires the Play-restricted REQUEST_IGNORE_BATTERY_OPTIMIZATIONS permission that SSH/
-        // terminal apps are not permitted to use under Play policy. This list needs no permission.
         try {
-            context.startActivity(
-                android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
-            )
+            val intent = android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+            intent.data = android.net.Uri.parse("package:${context.packageName}")
+            context.startActivity(intent)
         } catch (e: Exception) {
-            // Fallback to the app's own settings page if the OEM lacks the battery list activity.
+            runCatching {
+                context.startActivity(
+                    android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                )
+            }
+        }
+    }
+
+    val notificationPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            launchBatteryOptimizationSettings()
+        } else {
             runCatching {
                 context.startActivity(
                     android.content.Intent(
                         android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                        android.net.Uri.parse("package:${context.packageName}"),
+                        android.net.Uri.parse("package:${context.packageName}")
                     )
                 )
             }
         }
-        viewModel.completeFirstRun()
-    }
-    val notificationPermissionLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
-        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
-    ) {
-        launchBatteryOptimizationSettings()
     }
     
     AlertDialog(
         onDismissRequest = { },
-        title = { Text("Keep sessions alive in the background?") },
+        properties = androidx.compose.ui.window.DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+        title = { Text("Permissions Required") },
         text = {
             Column {
-                Text("To keep SSH sessions and monitoring active while OmniTerm is in the background, it needs notification access and should be excluded from battery optimization.")
+                Text("To ensure the foreground service keeps SSH sessions and monitoring active, you MUST grant notification access and disable battery optimization.")
                 Spacer(Modifier.height(8.dp))
-                Text("You can skip this — everything works while the app is open. Change it later in Settings.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Please tap below to grant them.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
         confirmButton = {
@@ -1057,12 +1071,7 @@ fun FirstRunDialog(viewModel: AppViewModel) {
                     }
                 }
             ) {
-                Text("Configure & Start")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = { viewModel.completeFirstRun() }) {
-                Text("Skip")
+                Text("Grant Permissions")
             }
         }
     )

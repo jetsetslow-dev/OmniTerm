@@ -82,7 +82,9 @@ import kotlin.math.ceil
 @Composable
 private fun SessionPicker(viewModel: AppViewModel) {
     val sessions = viewModel.activeSessions
-    val restorableSessions = viewModel.restorablePersistentSessions
+    val restorableSessions = viewModel.restorablePersistentSessions.filter { r ->
+        sessions.none { it.tmuxName == r.tmuxName }
+    }
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text("Active Sessions", color = OmniColors.textPrimary, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.display, fontSize = 20.sp)
         Spacer(Modifier.height(4.dp))
@@ -233,7 +235,11 @@ fun ShellScreen(viewModel: AppViewModel) {
                         viewModel.isTerminalConnecting -> ConnectingView(viewModel.terminalConnectionPhase) { viewModel.cancelConnect() }
                         currentSession != null -> ActiveTerminal(viewModel, confirm)
                         else -> {
-                            if (viewModel.activeSessions.isNotEmpty() || viewModel.restorablePersistentSessions.isNotEmpty()) {
+                            val activeHasAny = viewModel.activeSessions.isNotEmpty()
+                            val restorableHasAny = viewModel.restorablePersistentSessions.any { r ->
+                                viewModel.activeSessions.none { it.tmuxName == r.tmuxName }
+                            }
+                            if (activeHasAny || restorableHasAny) {
                                 SessionPicker(viewModel)
                             } else {
                                 ConnectPrompt(srv, viewModel)

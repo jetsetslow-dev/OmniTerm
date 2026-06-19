@@ -8,11 +8,9 @@
     <!--
       Foreground service keeps user-initiated SSH sessions alive in the background. We use the
       `connectedDevice` type because the service exists solely to maintain an interactive connection
-      to a remote host the user explicitly connected to. We deliberately do NOT request
-      REQUEST_IGNORE_BATTERY_OPTIMIZATIONS (a Play-restricted permission limited to specific app
-      categories); the app instead opens the general battery-optimization settings list, which needs
-      no special permission.
+      to a remote host the user explicitly connected to.
     -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />

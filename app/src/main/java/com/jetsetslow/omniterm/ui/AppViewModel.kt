@@ -2421,6 +2421,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun resumePersistentSession(tmuxName: String) {
+        val existingSession = activeSessions.find { it.tmuxName == tmuxName }
+        if (existingSession != null) {
+            attachSession(existingSession.id)
+            return
+        }
         val sessionEntity = restorablePersistentSessions.find { it.tmuxName == tmuxName } ?: return
         val srv = servers.value.find { it.id == sessionEntity.serverId } ?: return
 
