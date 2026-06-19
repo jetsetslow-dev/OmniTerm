@@ -67,7 +67,10 @@ fun CodeEditor(
     // Internal TextFieldValue keeps the selection/cursor in sync so find and go-to-line can move it.
     // Kept aligned to the external [value] string whenever the parent changes it out from under us.
     var field by remember { mutableStateOf(TextFieldValue(value)) }
-    if (field.text != value) field = field.copy(text = value)
+    if (field.text != value) {
+        val newSelection = if (value.length < field.selection.start) TextRange(value.length) else field.selection
+        field = field.copy(text = value, selection = newSelection)
+    }
 
     var showFind by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
