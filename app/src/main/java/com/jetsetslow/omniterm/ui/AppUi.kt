@@ -430,6 +430,7 @@ fun MainAppScreen(viewModel: AppViewModel) {
                     viewModel.edittingSftpFilePath = ""
                 },
                 confirm = editorConfirm,
+                highlightLimit = viewModel.editorHighlightLimit,
             )
             ConfirmHost(editorConfirm)
         }

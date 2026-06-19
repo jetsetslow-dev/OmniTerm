@@ -38,7 +38,9 @@ object TerminalSessionManager {
     fun startKeepAliveService() {
         val context = app ?: return
         if (!isBackgroundKeepAlive || activeSessions.isEmpty()) return
-        val sessionData = ArrayList(activeSessions.filter { it.isConnected }.map { "${it.id}|${it.serverName}" })
+        val sessionData = ArrayList(
+            activeSessions.toList().filter { it.isConnected }.map { "${it.id}|${it.serverName}" }
+        )
         val intent = android.content.Intent(context, SessionService::class.java).apply {
             action = SessionService.ACTION_UPDATE_SESSIONS
             putStringArrayListExtra(SessionService.EXTRA_SESSIONS, sessionData)

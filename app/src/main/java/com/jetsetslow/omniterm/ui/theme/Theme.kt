@@ -72,6 +72,40 @@ private val LightColorScheme =
     outlineVariant = Color(0xFFD7DDE6),
   )
 
+// AMOLED variant of the OmniTerm dark scheme: every background/surface role is pure black so OLED
+// pixels switch fully off. Element separation comes from the (kept, slightly brightened) borders and
+// the accent colours — without them a pure-black UI collapses into a featureless void. Same accent
+// identity (cyan/purple/amber) and text colours as DarkColorScheme.
+private val AmoledColorScheme =
+  darkColorScheme(
+    primary = OmniColors.cyan,
+    onPrimary = Color.Black,
+    primaryContainer = OmniColors.cyanDim,
+    onPrimaryContainer = OmniColors.cyan,
+    secondary = OmniColors.purple,
+    onSecondary = Color.Black,
+    secondaryContainer = OmniColors.purpleDim,
+    onSecondaryContainer = OmniColors.purple,
+    tertiary = OmniColors.amber,
+    onTertiary = Color.Black,
+    background = Color.Black,
+    onBackground = OmniColors.textPrimary,
+    surface = Color.Black,
+    onSurface = OmniColors.textPrimary,
+    surfaceVariant = Color.Black,
+    onSurfaceVariant = Color(0xFF8FA2BC),
+    surfaceContainerLowest = Color.Black,
+    surfaceContainerLow = Color.Black,
+    surfaceContainer = Color.Black,
+    surfaceContainerHigh = Color.Black,
+    surfaceContainerHighest = Color.Black,
+    error = OmniColors.red,
+    onError = Color.Black,
+    // Brighter than the standard border so cards/dividers stay visible against pure black.
+    outline = OmniColors.borderHi,
+    outlineVariant = OmniColors.border,
+  )
+
 private val HighContrastDarkColorScheme =
   darkColorScheme(
     primary = Color(0xFF00FFFF),
@@ -116,6 +150,8 @@ fun MyApplicationTheme(
   // Dynamic color is available on Android 12+
   dynamicColor: Boolean = false,
   highContrast: Boolean = false,
+  /** AMOLED: pure-black surfaces in dark mode. Ignored in light or high-contrast mode. */
+  amoled: Boolean = false,
   /** App-wide font scale multiplier from the Settings "Text size" option. */
   fontScale: Float = 1f,
   content: @Composable () -> Unit,
@@ -129,6 +165,7 @@ fun MyApplicationTheme(
 
       highContrast && darkTheme -> HighContrastDarkColorScheme
       highContrast && !darkTheme -> HighContrastLightColorScheme
+      amoled && darkTheme -> AmoledColorScheme
       darkTheme -> DarkColorScheme
       else -> LightColorScheme
     }

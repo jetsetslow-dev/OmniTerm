@@ -2058,6 +2058,7 @@ private fun BackupSelectionList(
         BackupSelectionRow("Alert history", contents?.alertHistory, selection.alertHistory, { onChange(selection.copy(alertHistory = it)) }, contents == null || contents.alertHistory > 0)
         BackupSelectionRow("Wake on LAN", contents?.wolTargets, selection.wolTargets, { onChange(selection.copy(wolTargets = it)) }, contents == null || contents.wolTargets > 0)
         BackupSelectionRow("Settings & customizations", contents?.settings, selection.settings, { onChange(selection.copy(settings = it)) }, contents == null || contents.settings > 0)
+        BackupSelectionRow("Crash logs (sensitive)", contents?.crashLogs, selection.crashLogs, { onChange(selection.copy(crashLogs = it)) }, contents == null || contents.crashLogs > 0)
     }
 }
 
@@ -2135,6 +2136,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
 
     // Staged drafts for all settings; applied to the ViewModel only on Save.
     var draftDark by remember { mutableStateOf(viewModel.isDarkModeEnabled) }
+    var draftAmoled by remember { mutableStateOf(viewModel.isAmoledEnabled) }
+    var draftHighlightLimit by remember { mutableStateOf(viewModel.editorHighlightLimit) }
     var draftAccessibility by remember { mutableStateOf(viewModel.isAccessibilityEnabled) }
     var draftTextScale by remember { mutableStateOf(viewModel.textScale) }
     var draftIntervalSec by remember { mutableStateOf((viewModel.telemetryIntervalMs / 1000).toInt()) }
@@ -2155,6 +2158,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
     val draftSftpWarnGbValue = draftSftpWarnGb.toLongOrNull()?.coerceAtLeast(1L)
 
     val dirty = draftDark != viewModel.isDarkModeEnabled ||
+        draftAmoled != viewModel.isAmoledEnabled ||
+        draftHighlightLimit != viewModel.editorHighlightLimit ||
         draftAccessibility != viewModel.isAccessibilityEnabled ||
         draftTextScale != viewModel.textScale ||
         draftIntervalSec != (viewModel.telemetryIntervalMs / 1000).toInt() ||
@@ -2179,6 +2184,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
 
     fun resetDrafts() {
         draftDark = viewModel.isDarkModeEnabled
+        draftAmoled = viewModel.isAmoledEnabled
+        draftHighlightLimit = viewModel.editorHighlightLimit
         draftAccessibility = viewModel.isAccessibilityEnabled
         draftTextScale = viewModel.textScale
         draftIntervalSec = (viewModel.telemetryIntervalMs / 1000).toInt()
@@ -2198,6 +2205,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
 
     fun applyDrafts() {
         if (draftDark != viewModel.isDarkModeEnabled) viewModel.saveDarkModeToggle(draftDark)
+        if (draftAmoled != viewModel.isAmoledEnabled) viewModel.saveAmoledToggle(draftAmoled)
+        if (draftHighlightLimit != viewModel.editorHighlightLimit) viewModel.saveEditorHighlightLimit(draftHighlightLimit)
         if (draftAccessibility != viewModel.isAccessibilityEnabled) viewModel.saveAccessibilityToggle(draftAccessibility)
         if (draftTextScale != viewModel.textScale) viewModel.saveTextScale(draftTextScale)
         if (draftIntervalSec != (viewModel.telemetryIntervalMs / 1000).toInt()) viewModel.saveTelemetryInterval(draftIntervalSec)
@@ -2364,6 +2373,46 @@ fun SettingsToolView(viewModel: AppViewModel) {
                                     DropdownMenuItem(text = { Text("Dark Theme") }, onClick = { draftDark = true; expanded = false })
                                     DropdownMenuItem(text = { Text("Light Theme") }, onClick = { draftDark = false; expanded = false })
                                 }
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("AMOLED black")
+                                Text(
+                                    "Pure-black surfaces in dark mode to save power on OLED screens. No effect in Light or High-contrast mode.",
+                                    fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            // Only meaningful when dark mode can be active (System or Dark, not forced Light).
+                            Switch(
+                                checked = draftAmoled,
+                                onCheckedChange = { draftAmoled = it },
+                                enabled = draftDark != false,
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Text("Editor syntax highlighting", fontWeight = FontWeight.Bold)
+                        Text(
+                            "Max file size to colourise in the code editor (SFTP files, Compose YAML). " +
+                                "Lower it if editing large files feels slow; \"Off\" disables highlighting.",
+                            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            // 0 = off; the largest option is the enforced cap (users can only lower it).
+                            listOf(0 to "Off", 50_000 to "50 KB", 100_000 to "100 KB", HIGHLIGHT_MAX_CHARS_CAP to "Max").forEach { (value, label) ->
+                                FilterChip(
+                                    selected = draftHighlightLimit == value,
+                                    onClick = { draftHighlightLimit = value },
+                                    label = { Text(label) },
+                                )
                             }
                         }
 
@@ -2780,6 +2829,152 @@ fun AboutToolView(viewModel: AppViewModel) {
                         Text(diagFeedback, color = OmniColors.green, fontSize = 12.sp)
                     }
                 }
+            }
+
+            CrashHistoryCard()
+        }
+    }
+}
+
+/**
+ * About → Crash history. Lists past crashes recorded on-device (see [com.jetsetslow.omniterm.data.CrashLog])
+ * so a crash that didn't recur at startup can still be reviewed and sent to GitHub. Each entry can be
+ * opened to view its full trace, reported as a prefilled GitHub issue, shared (full report attached),
+ * or copied. Nothing leaves the device unless the user picks a destination.
+ */
+@Composable
+private fun CrashHistoryCard() {
+    val context = LocalContext.current
+    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    var entries by remember { mutableStateOf(com.jetsetslow.omniterm.data.CrashLog.all(context)) }
+    var expandedIndex by remember { mutableStateOf(-1) }
+    var feedback by remember { mutableStateOf("") }
+
+    OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.red) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            SectionHeader("Crash history")
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+
+            if (entries.isEmpty()) {
+                Text(
+                    "No crashes recorded. Reports appear here automatically if the app crashes.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Text(
+                    "${entries.size} recorded. Release traces are obfuscated — keep the version line so it can be decoded.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                entries.forEachIndexed { index, entry ->
+                    val expanded = expandedIndex == index
+                    val time = remember(entry.timeMs) {
+                        java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.US)
+                            .format(java.util.Date(entry.timeMs))
+                    }
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
+                            .clickable { expandedIndex = if (expanded) -1 else index }
+                            .padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                Icons.Filled.BugReport,
+                                contentDescription = null,
+                                tint = OmniColors.red,
+                                modifier = Modifier.size(18.dp),
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(time, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(
+                                    entry.headline,
+                                    fontSize = 12.sp,
+                                    fontFamily = OmniFonts.mono,
+                                    maxLines = if (expanded) Int.MAX_VALUE else 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                            Icon(
+                                if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                                contentDescription = if (expanded) "Collapse" else "Expand",
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (expanded) {
+                            Text(
+                                entry.report,
+                                fontSize = 10.sp,
+                                fontFamily = OmniFonts.mono,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedButton(
+                                    onClick = {
+                                        if (!com.jetsetslow.omniterm.data.CrashLog.openGitHubIssue(context, entry.report)) {
+                                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(entry.report))
+                                            feedback = "No browser found — report copied instead."
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                ) {
+                                    Icon(Icons.Filled.Code, null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Report", fontSize = 12.sp)
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        runCatching { com.jetsetslow.omniterm.data.CrashLog.shareReport(context, entry.report) }
+                                            .onFailure { feedback = "Couldn't open share sheet." }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                ) {
+                                    Icon(Icons.Filled.Share, null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Share", fontSize = 12.sp)
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        clipboard.setText(androidx.compose.ui.text.AnnotatedString(entry.report))
+                                        feedback = "Report copied to clipboard."
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp),
+                                ) {
+                                    Icon(Icons.Filled.ContentCopy, null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Copy", fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+                OutlinedButton(
+                    onClick = {
+                        com.jetsetslow.omniterm.data.CrashLog.clear(context)
+                        entries = emptyList()
+                        expandedIndex = -1
+                        feedback = "Crash history cleared."
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Icon(Icons.Filled.Delete, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Clear history")
+                }
+            }
+            if (feedback.isNotEmpty()) {
+                Text(feedback, color = OmniColors.green, fontSize = 12.sp)
             }
         }
     }

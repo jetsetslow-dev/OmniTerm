@@ -127,6 +127,47 @@ class TerminalEmulatorTest {
     }
 
     @Test
+    fun resizeNarrowerReflowsLongLineByWrapping() {
+        // A 12-char line on a 12-wide terminal: shrinking to 6 cols must wrap, not truncate.
+        val e = TerminalEmulator(12, 4)
+        e.feedStr("ABCDEFGHIJKL")
+        e.resize(6, 4)
+        val rows = e.snapshot().rows
+        assertEquals("ABCDEF", rows[0].spans.joinToString("") { it.text })
+        assertEquals("GHIJKL", rows[1].spans.joinToString("") { it.text })
+    }
+
+    @Test
+    fun resizeWiderRejoinsSoftWrappedLine() {
+        // Wrap a long line at 6 cols, then widen to 12: it should rejoin into one logical line.
+        val e = TerminalEmulator(6, 4)
+        e.feedStr("ABCDEFGHIJKL") // wraps to ABCDEF / GHIJKL
+        e.resize(12, 4)
+        assertEquals("ABCDEFGHIJKL", rowText(e, 0))
+    }
+
+    @Test
+    fun resizePreservesHardNewlines() {
+        // Two distinct lines (explicit CRLF) must remain two lines after a width change, never merged.
+        val e = TerminalEmulator(12, 4)
+        e.feedStr("ABC\r\nDEF")
+        e.resize(6, 4)
+        val rows = e.snapshot().rows
+        assertEquals("ABC", rows[0].spans.joinToString("") { it.text })
+        assertEquals("DEF", rows[1].spans.joinToString("") { it.text })
+    }
+
+    @Test
+    fun resizeRoundTripRestoresContent() {
+        val e = TerminalEmulator(20, 5)
+        e.feedStr("the quick brown fox jumps over") // one logical line, wraps at 20
+        e.resize(8, 5)
+        // Widen past the line length so the whole logical line fits on one row again.
+        e.resize(40, 5)
+        assertEquals("the quick brown fox jumps over", rowText(e, 0))
+    }
+
+    @Test
     fun utf8SplitAcrossChunks() {
         val e = TerminalEmulator(80, 24)
         val euro = "€".toByteArray(Charsets.UTF_8) // 3 bytes: E2 82 AC

@@ -975,12 +975,13 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                         fontSize = 11.sp, color = OmniColors.textMuted,
                     )
                 }
-                OutlinedTextField(
+                CodeEditor(
                     value = rawText,
                     onValueChange = { rawText = it },
+                    fontSize = 12.sp,
+                    language = CodeLanguage.YAML,
+                    highlightMaxChars = viewModel.editorHighlightLimit,
                     modifier = Modifier.fillMaxWidth().heightIn(min = 320.dp),
-                    textStyle = androidx.compose.ui.text.TextStyle(fontFamily = OmniFonts.mono, fontSize = 12.sp),
-                    colors = omniTextFieldColors(),
                 )
             } else {
                 // Top-level compose `name:` (project name written into the file). Optional.

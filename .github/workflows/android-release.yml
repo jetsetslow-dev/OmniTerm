@@ -167,6 +167,24 @@ jobs:
           mkdir -p playstore-artifacts
           find app/build/outputs/bundle -name "*.aab" -exec cp {} "playstore-artifacts/OmniTerm-PlayStore-${RELEASE_LABEL}.aab" \;
 
+      # R8 obfuscates release builds, so a production stack trace is undecodable without the
+      # per-variant mapping.txt produced by that exact build. Archive it (named by variant +
+      # release label) so any crash report from this build can be deobfuscated later with
+      # `retrace`. Kept in the private workflow artifact only — never attached to the public
+      # GitHub Release, since mappings reveal the obfuscation scheme.
+      - name: Collect R8 mapping files
+        run: |
+          mkdir -p mapping-artifacts
+          found=0
+          for variant in playStoreRelease openSourceRelease; do
+            mapping="app/build/outputs/mapping/$variant/mapping.txt"
+            if [ -f "$mapping" ]; then
+              cp "$mapping" "mapping-artifacts/mapping-$variant-${RELEASE_LABEL}.txt"
+              found=1
+            fi
+          done
+          test "$found" = "1" || { echo "No R8 mapping.txt found — release builds must be minified"; exit 1; }
+
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -174,6 +192,16 @@ jobs:
           path: |
             github-artifacts/*
             playstore-artifacts/*
+          if-no-files-found: error
+
+      # Separate artifact with long retention: a crash from a shipped build can surface months
+      # later, and the mapping is the only thing that makes its trace readable.
+      - name: Upload R8 mappings
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: omniterm-r8-mappings-${{ env.RELEASE_LABEL }}
+          path: mapping-artifacts/*
+          retention-days: 90
           if-no-files-found: error
 
       - name: Publish GitHub Release assets

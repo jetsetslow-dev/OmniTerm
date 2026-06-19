@@ -137,6 +137,10 @@ data class BackupSelection(
     val alertHistory: Boolean = true,
     val wolTargets: Boolean = true,
     val settings: Boolean = true,
+    // Opt-in (off by default): crash logs are device/build-specific diagnostics that can contain
+    // sensitive details (hostnames, paths, command fragments), so they're never included unless the
+    // user explicitly selects them — and when selected, [hasSensitiveData] forces encryption.
+    val crashLogs: Boolean = false,
 )
 
 data class BackupContents(
@@ -149,6 +153,7 @@ data class BackupContents(
     val alertHistory: Int = 0,
     val wolTargets: Int = 0,
     val settings: Int = 0,
+    val crashLogs: Int = 0,
 )
 
 data class BackupHostOption(
@@ -160,7 +165,9 @@ data class BackupHostOption(
 
 fun BackupSelection.hasSensitiveData(): Boolean =
     servers || sshKeys || credentialProfiles || scripts || alertRules || activeAlerts ||
-        alertHistory || wolTargets || settings
+        // Crash traces can carry hostnames, file paths, and command fragments — treat as sensitive
+        // so a backup containing them is gated behind passphrase encryption like any other secret.
+        alertHistory || wolTargets || settings || crashLogs
 
 fun BackupSelection.encode(): String = listOf(
     "servers" to servers,
@@ -172,6 +179,7 @@ fun BackupSelection.encode(): String = listOf(
     "alertHistory" to alertHistory,
     "wolTargets" to wolTargets,
     "settings" to settings,
+    "crashLogs" to crashLogs,
 ).filter { it.second }.joinToString(",") { it.first }
 
 fun decodeBackupSelection(value: String?): BackupSelection {
@@ -187,6 +195,7 @@ fun decodeBackupSelection(value: String?): BackupSelection {
         alertHistory = "alertHistory" in keys,
         wolTargets = "wolTargets" in keys,
         settings = "settings" in keys,
+        crashLogs = "crashLogs" in keys,
     )
 }
 
@@ -301,6 +310,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var isKeepScreenOnEnabled by mutableStateOf(false)
     var isBackgroundKeepAlive by mutableStateOf(false)
     var isDarkModeEnabled by mutableStateOf<Boolean?>(null)
+    // AMOLED dark variant: pure-black surfaces. Only takes effect while dark mode is active.
+    var isAmoledEnabled by mutableStateOf(false)
+    // Max chars to syntax-highlight in the code editor before falling back to plain text. User can
+    // lower it (slow devices / huge files) but never above the safe cap (clamped on load + save).
+    var editorHighlightLimit by mutableStateOf(HIGHLIGHT_MAX_CHARS_DEFAULT)
+        private set
 
     // BACK END DATA PLUMBING
     val servers = repository.serversFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
@@ -584,6 +599,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun chooseSftpSortOption(option: SftpSortOption) {
         sftpSortOption = option
         sftpEntries = sortSftpEntries(sftpEntries)
+        viewModelScope.launch { repository.insertSetting("sftp_sort", option.name) }
     }
 
     // ── Multi-select + clipboard (copy / cut / move) ──
@@ -841,6 +857,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     ?.toIntOrNull()?.coerceIn(10, 1000) ?: 100
                 list.find { it.key == "text_scale" }?.value?.let { textScale = it }
                 list.find { it.key == "accessibility" }?.value?.let { isAccessibilityEnabled = it == "true" }
+                list.find { it.key == "amoled" }?.value?.let { isAmoledEnabled = it == "true" }
+                list.find { it.key == "sftp_sort" }?.value?.let { v ->
+                    SftpSortOption.entries.firstOrNull { it.name == v }?.let { sftpSortOption = it }
+                }
+                list.find { it.key == "editor_highlight_limit" }?.value?.toIntOrNull()
+                    ?.let { editorHighlightLimit = clampHighlightLimit(it) }
                 healthConfig = HealthScoringConfig.decode(list.find { it.key == "health_scoring" }?.value)
                 list.find { it.key == "telemetry_interval" }?.value?.toIntOrNull()?.let {
                     telemetryIntervalMs = it.coerceIn(5, 300) * 1000L
@@ -996,6 +1018,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private suspend fun probeServerInner(srv: ServerEntity) {
+        // Capture the selected host once: the live `selectedServerId` can change on the main thread
+        // while this IO poll is in flight, and we must not attribute this host's metrics to whatever
+        // host happens to be selected when the (slow) probe finally completes.
+        val activeServerId = selectedServerId
         try {
             val rtt = tcpReachable(srv.host, srv.port)
             if (rtt < 0) {
@@ -1066,7 +1092,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.Main) { hostMetricsById[srv.id] = m }
                 evaluateAlertRules(srv, cpu, ram, disk, rtt, m.disks)
                 val health = healthFromMetrics(cpu, ram, disk, rtt)
-                if (srv.id == selectedServerId) {
+                if (srv.id == activeServerId) {
                     // Drive the Monitor → Overview view directly from this poller so it doesn't
                     // run its own redundant SSH metrics loop.
                     withContext(Dispatchers.Main) { hostMetrics = m }
@@ -1218,6 +1244,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         val openAppIntent = Intent(app, MainActivity::class.java).apply {
+            // Bind the target component explicitly (in addition to the constructor) so the
+            // Intent backing this PendingIntent can never be resolved to a third-party component.
+            setClassName(app, MainActivity::class.java.name)
             setPackage(app.packageName)
             data = Uri.parse("omniterm://notification/alert/${rule.id}/${srv.id}")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -3999,6 +4028,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun saveAmoledToggle(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.insertSetting("amoled", enabled.toString())
+            isAmoledEnabled = enabled
+        }
+    }
+
+    fun saveEditorHighlightLimit(limit: Int) {
+        val clamped = clampHighlightLimit(limit)
+        editorHighlightLimit = clamped
+        viewModelScope.launch { repository.insertSetting("editor_highlight_limit", clamped.toString()) }
+    }
+
     fun saveBackgroundKeepAliveToggle(enabled: Boolean) {
         viewModelScope.launch {
             repository.insertSetting("background_keep_alive", enabled.toString())
@@ -4258,9 +4300,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             SshHostKeyTrust.exportEntries().forEach { (key, value) -> knownHostsObj.put(key, value) }
         }
 
+        // Opt-in crash logs (device/build-specific diagnostics). Preserved across a same-device
+        // reinstall when the user explicitly selects them.
+        val crashArr = org.json.JSONArray()
+        if (selection.crashLogs) {
+            CrashLog.all(getApplication()).forEach { entry ->
+                crashArr.put(org.json.JSONObject().put("t", entry.timeMs).put("r", entry.report))
+            }
+        }
+
         return org.json.JSONObject()
             .put("format", "omniterm-backup")
-            .put("schema", 3)
+            .put("schema", 4)
             .put("knownHosts", knownHostsObj)
             .put("servers", serverArr)
             .put("sshKeys", keyArr)
@@ -4271,6 +4322,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             .put("alertHistory", historyArr)
             .put("wolTargets", wolArr)
             .put("settings", settingsObj)
+            .put("crashLogs", crashArr)
             .toString()
     }
 
@@ -4291,6 +4343,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         put("terminal_scrollback_limit", terminalScrollbackLimit.toString())
         put("text_scale", textScale)
         put("accessibility", isAccessibilityEnabled.toString())
+        put("amoled", isAmoledEnabled.toString())
+        put("sftp_sort", sftpSortOption.name)
+        put("editor_highlight_limit", editorHighlightLimit.toString())
         put("health_scoring", healthConfig.encode())
         put("telemetry_interval", (telemetryIntervalMs / 1000L).coerceIn(5L, 300L).toString())
         put("metrics_retention", metricsRetentionDays.toString())
@@ -4365,6 +4420,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             alertHistory = root.optJSONArray("alertHistory")?.length() ?: 0,
             wolTargets = root.optJSONArray("wolTargets")?.length() ?: 0,
             settings = settingsObj?.length() ?: 0,
+            crashLogs = root.optJSONArray("crashLogs")?.length() ?: 0,
         )
     }
 
@@ -4795,19 +4851,36 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         // Defensive: never restore device-local security keys even if an old backup carried them.
                         val securityKeys = setOf("app_pin", "app_lock_enabled", "biometrics_enabled")
                         val it = settingsObj.keys()
+                        // Per-server settings are keyed by the OLD server id; re-point them to the
+                        // restored id. If the owning server wasn't restored, skip the setting entirely
+                        // so we don't leave orphaned per-server rows pointing at a nonexistent server.
+                        val perServerPrefixes = listOf("sftp_bookmarks_", "sftp_last_path_")
                         while (it.hasNext()) {
                             val originalKey = it.next()
                             if (originalKey in securityKeys) continue
                             var newKey = originalKey
-                            if (originalKey.startsWith("sftp_bookmarks_")) {
-                                val oldSrvId = originalKey.removePrefix("sftp_bookmarks_").toIntOrNull() ?: 0
-                                if (oldSrvId != 0 && serverIdMap.containsKey(oldSrvId)) {
-                                    newKey = "sftp_bookmarks_${serverIdMap[oldSrvId]}"
-                                }
+                            val prefix = perServerPrefixes.firstOrNull { p -> originalKey.startsWith(p) }
+                            if (prefix != null) {
+                                val oldSrvId = originalKey.removePrefix(prefix).toIntOrNull() ?: 0
+                                val mapped = serverIdMap[oldSrvId]
+                                if (oldSrvId != 0 && mapped == null) continue // owning server not restored
+                                if (mapped != null) newKey = "$prefix$mapped"
                             }
                             repository.insertSetting(newKey, settingsObj.getString(originalKey))
                             importedSettings++
                         }
+                    }
+
+                    // Crash logs (opt-in). Merge into the on-device history newest-first; deduped by
+                    // timestamp so re-importing the same backup doesn't pile up duplicates.
+                    val crashArr = root.optJSONArray("crashLogs") ?: org.json.JSONArray()
+                    var importedCrashLogs = 0
+                    if (selection.crashLogs) {
+                        val restored = (0 until crashArr.length()).mapNotNull { i ->
+                            val o = crashArr.optJSONObject(i) ?: return@mapNotNull null
+                            CrashLog.Entry(o.optLong("t"), o.optString("r"))
+                        }
+                        importedCrashLogs = CrashLog.merge(getApplication(), restored)
                     }
 
                     // Report any partial restore explicitly with its reason, so a backup that
@@ -4829,7 +4902,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         true,
                         "Restored $imported server(s), $importedKeys key(s), $importedProfiles profile(s), " +
                             "$importedScripts script(s), $importedRules rule(s), $importedActiveAlerts active alert(s), $importedHistory alert history, $importedWol WoL, " +
-                            "$importedSettings setting(s)." + skippedSuffix,
+                            "$importedSettings setting(s), $importedCrashLogs crash log(s)." + skippedSuffix,
                     )
                 } catch (e: javax.crypto.AEADBadTagException) {
                     Pair(false, "Wrong passphrase or corrupted backup.")

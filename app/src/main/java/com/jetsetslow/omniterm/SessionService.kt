@@ -157,6 +157,9 @@ class SessionService : Service() {
             // Tap notification content → resume the session in the app.
             val resumeIntent = Intent(this, MainActivity::class.java).apply {
                 action = ACTION_RESUME
+                // Bind the target component explicitly (in addition to the constructor) so the
+                // Intent backing this PendingIntent can never be resolved to a third-party component.
+                setClassName(this@SessionService, MainActivity::class.java.name)
                 setPackage(packageName)
                 data = Uri.parse("omniterm://notification/session/$id/resume")
                 putExtra("SESSION_ID", id)
@@ -174,6 +177,9 @@ class SessionService : Service() {
             // "Disconnect" action → disconnect this specific session via the ViewModel.
             val disconnectIntent = Intent(this, MainActivity::class.java).apply {
                 action = ACTION_DISCONNECT_SESSION
+                // Bind the target component explicitly (in addition to the constructor) so the
+                // Intent backing this PendingIntent can never be resolved to a third-party component.
+                setClassName(this@SessionService, MainActivity::class.java.name)
                 setPackage(packageName)
                 data = Uri.parse("omniterm://notification/session/$id/disconnect")
                 putExtra("SESSION_ID", id)
@@ -216,9 +222,16 @@ class SessionService : Service() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         super.onTaskRemoved(rootIntent)
-        // Background terminal sessions are intentionally allowed to continue after the app task is
-        // swiped away. The ViewModel still owns the live SSH objects while the process remains
-        // alive; the foreground service keeps the user-visible notification and WakeLock active.
+        // Swiping the app away from Recents must NOT drop active SSH sessions. The live connections
+        // run on a process-scoped singleton (TerminalSessionManager.scope), so they survive Activity/
+        // ViewModel death — but only while the process lives. Re-assert the foreground service + renew
+        // the WakeLock here so Android keeps this process around after the task is removed.
+        //
+        // Honest limitation: a foreground service + WakeLock is the strongest mechanism Android
+        // sanctions, but aggressive OEM battery managers (Samsung, Xiaomi, etc.) can still kill the
+        // process. The user is nudged to exempt the app from battery optimization for best results.
+        refreshWakeLock()
+        runCatching { startMainForeground() }
     }
 
     private fun createNotificationChannel() {

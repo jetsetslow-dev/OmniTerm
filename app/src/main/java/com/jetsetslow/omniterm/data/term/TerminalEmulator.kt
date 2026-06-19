@@ -45,6 +45,12 @@ class TerminalEmulator(
     private val scrollback = ArrayDeque<Array<Cell>>()
     private val scrollbackSpanCache = HashMap<Array<Cell>, TermRow>()
 
+    // Rows that ended by a soft wrap (text ran off the right edge) rather than an explicit newline.
+    // Keyed by row-array identity so the flag follows a row as it moves screen→scrollback by reference
+    // (see scrollUp). Used by [resize] to reflow: only soft-wrapped runs are re-joined and re-wrapped,
+    // so genuine line breaks are preserved. IdentityHashMap because Array has no value-based equals.
+    private val softWrapped = java.util.IdentityHashMap<Array<Cell>, Boolean>()
+
     // alternate screen save slot
     private var savedScreen: Array<Array<Cell>>? = null
     private var altActive = false
@@ -88,6 +94,7 @@ class TerminalEmulator(
         screen = Array(rows) { blankRow() }
         scrollback.clear()
         scrollbackSpanCache.clear()
+        softWrapped.clear()
         savedScreen = null
         altActive = false
         curRow = 0; curCol = 0; wrapPending = false
@@ -109,6 +116,96 @@ class TerminalEmulator(
         val nc = newCols.coerceAtLeast(1)
         val nr = newRows.coerceAtLeast(1)
         if (nc == cols && nr == rows) return
+
+        // The alternate screen hosts full-screen TUIs (vim, htop, less) that own their own layout and
+        // repaint on SIGWINCH. Reflowing it would scramble that, so just clip/grow the grid and let the
+        // app repaint. Reflow only applies to the normal screen + scrollback (shell output history).
+        if (altActive) {
+            resizeGridOnly(nc, nr)
+            return
+        }
+
+        // 1. Flatten scrollback + screen into logical lines, re-joining soft-wrapped runs so a line
+        //    that only wrapped because it was too wide becomes one logical line again. Track where the
+        //    cursor falls (as an offset within its logical line) so it can be replaced after rewrap.
+        val visualRows = ArrayList<Array<Cell>>(scrollback.size + rows)
+        visualRows.addAll(scrollback)
+        for (r in 0 until rows) visualRows.add(screen[r])
+        val cursorVisualRow = scrollback.size + curRow.coerceIn(0, rows - 1)
+
+        val logicalLines = ArrayList<ArrayList<Cell>>()
+        var cursorLine = -1
+        var cursorOffset = 0
+        var r = 0
+        while (r < visualRows.size) {
+            val line = ArrayList<Cell>(cols)
+            var rr = r
+            // Join this row with every following row it soft-wrapped into.
+            while (true) {
+                val row = visualRows[rr]
+                if (rr == cursorVisualRow) { cursorLine = logicalLines.size; cursorOffset = line.size + curCol.coerceIn(0, cols - 1) }
+                for (col in row.indices) line.add(row[col])
+                if (softWrapped[row] == true && rr + 1 < visualRows.size) rr++ else break
+            }
+            logicalLines.add(line)
+            r = rr + 1
+        }
+
+        // 2. Re-wrap each logical line to the new width. Trailing blanks are trimmed first so a line
+        //    padded out to the old width doesn't force phantom wraps at the new width. Empty lines are
+        //    preserved (a blank logical line is a real newline).
+        cols = nc; rows = nr
+        softWrapped.clear()
+        scrollbackSpanCache.clear()
+        val rewrapped = ArrayList<Array<Cell>>()
+        var newCursorRow = 0
+        var newCursorCol = 0
+        for ((li, logical) in logicalLines.withIndex()) {
+            var lastReal = logical.size - 1
+            while (lastReal >= 0 && logical[lastReal].ch == ' ' && logical[lastReal].bg == DEFAULT_BG && !logical[lastReal].inverse) lastReal--
+            val content = if (lastReal < 0) emptyList() else logical.subList(0, lastReal + 1)
+            val firstChunkIndex = rewrapped.size
+            if (content.isEmpty()) {
+                rewrapped.add(blankRow())
+            } else {
+                var col = 0
+                while (col < content.size) {
+                    val end = minOf(col + nc, content.size)
+                    val chunk = Array(nc) { i -> if (col + i < end) content[col + i] else Cell() }
+                    rewrapped.add(chunk)
+                    col = end
+                    if (col < content.size) softWrapped[chunk] = true // more to come → soft wrap
+                }
+            }
+            if (li == cursorLine) {
+                // Clamp the cursor offset to the rewrapped span of this logical line so a cursor that
+                // sat in the (trimmed) trailing blanks still lands on a row that actually exists.
+                val chunksForLine = (rewrapped.size - firstChunkIndex).coerceAtLeast(1)
+                val chunkOf = (cursorOffset / nc).coerceIn(0, chunksForLine - 1)
+                newCursorRow = firstChunkIndex + chunkOf
+                newCursorCol = (cursorOffset % nc).coerceIn(0, nc - 1)
+            }
+        }
+        if (rewrapped.isEmpty()) rewrapped.add(blankRow())
+
+        // 3. The last [nr] visual rows are the live screen; everything above is scrollback (capped).
+        //    Pad with blank rows if the content is shorter than the screen.
+        while (rewrapped.size < nr) rewrapped.add(blankRow())
+        val screenStart = rewrapped.size - nr
+        screen = Array(nr) { rewrapped[screenStart + it] }
+        scrollback.clear()
+        for (i in 0 until screenStart) scrollback.addLast(rewrapped[i])
+        while (scrollback.size > scrollbackLimit) softWrapped.remove(scrollback.removeFirst())
+
+        scrollTop = 0; scrollBottom = rows - 1
+        curRow = (newCursorRow - screenStart).coerceIn(0, rows - 1)
+        curCol = newCursorCol.coerceIn(0, cols - 1)
+        wrapPending = false
+        savedScreen = null // invalidate alt save on resize
+    }
+
+    /** Plain clip/grow resize used for the alternate screen (no reflow). */
+    private fun resizeGridOnly(nc: Int, nr: Int) {
         val old = screen
         val oldRows = rows
         cols = nc; rows = nr
@@ -121,7 +218,7 @@ class TerminalEmulator(
         curRow = curRow.coerceIn(0, rows - 1)
         curCol = curCol.coerceIn(0, cols - 1)
         wrapPending = false
-        savedScreen = null // invalidate alt save on resize
+        savedScreen = null
     }
 
     /** Build an immutable, render-ready snapshot (scrollback + visible screen). */
@@ -161,6 +258,7 @@ class TerminalEmulator(
     fun rowCount(): Int = scrollback.size + rows
 
     fun clearScrollback() {
+        scrollback.forEach { softWrapped.remove(it) }
         scrollback.clear()
         scrollbackSpanCache.clear()
     }
@@ -308,6 +406,9 @@ class TerminalEmulator(
 
     private fun putChar(c: Char) {
         if (wrapPending) {
+            // The previous char filled the last column and more text follows: this row continues
+            // onto the next (soft wrap). Record it so resize() can reflow the joined logical line.
+            if (curRow in 0 until rows) softWrapped[screen[curRow]] = true
             curCol = 0
             lineFeed()
             wrapPending = false
@@ -351,7 +452,9 @@ class TerminalEmulator(
             if (!altActive && scrollTop == 0) {
                 scrollback.addLast(top)
                 while (scrollback.size > scrollbackLimit) {
-                    scrollbackSpanCache.remove(scrollback.removeFirst())
+                    val evicted = scrollback.removeFirst()
+                    scrollbackSpanCache.remove(evicted)
+                    softWrapped.remove(evicted)
                 }
             }
             for (r in scrollTop until scrollBottom) screen[r] = screen[r + 1]
@@ -593,9 +696,13 @@ class TerminalEmulator(
 
         private fun buildPalette(): IntArray {
             val p = IntArray(256)
+            // Blue (index 4) and bright blue (index 12) are lifted well above the usual ANSI values:
+            // pure-ish blue is very low luminance and reads poorly on the near-black terminal
+            // background. The brighter tones keep "blue" identity while staying legible. Other 14
+            // colours are the standard high-contrast xterm values.
             val base = intArrayOf(
-                0x000000, 0xCD0000, 0x00CD00, 0xCDCD00, 0x2929FF, 0xCD00CD, 0x00CDCD, 0xE5E5E5,
-                0x4D4D4D, 0xFF4444, 0x4DFF4D, 0xFFFF4D, 0x5C5CFF, 0xFF4DFF, 0x4DFFFF, 0xFFFFFF,
+                0x000000, 0xCD0000, 0x00CD00, 0xCDCD00, 0x5C82FF, 0xCD00CD, 0x00CDCD, 0xE5E5E5,
+                0x4D4D4D, 0xFF4444, 0x4DFF4D, 0xFFFF4D, 0x8AB4FF, 0xFF4DFF, 0x4DFFFF, 0xFFFFFF,
             )
             for (i in 0..15) p[i] = 0xFF000000.toInt() or base[i]
             var idx = 16

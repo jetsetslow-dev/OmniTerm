@@ -71,8 +71,9 @@ class MainActivity : AppCompatActivity() {
       }
       showAppContent()
     } catch (t: Throwable) {
-      val report = formatCrash(t)
+      val report = "${crashEnvironment()}\nThread: main\n${formatCrash(t)}"
       prefs.edit().putString(crashKey, report).putLong(crashTimeKey, System.currentTimeMillis()).apply()
+      runCatching { com.jetsetslow.omniterm.data.CrashLog.record(this, report) }
       showCrashReport(report)
     }
   }
@@ -189,7 +190,7 @@ class MainActivity : AppCompatActivity() {
         "large" -> 1.1f
         else -> 0.92f
       }
-      MyApplicationTheme(darkTheme = isDark, highContrast = viewModel.isAccessibilityEnabled, fontScale = textFontScale) {
+      MyApplicationTheme(darkTheme = isDark, highContrast = viewModel.isAccessibilityEnabled, amoled = viewModel.isAmoledEnabled, fontScale = textFontScale) {
         Surface(modifier = Modifier.fillMaxSize()) {
           MainAppScreen(viewModel = viewModel)
         }
@@ -200,11 +201,18 @@ class MainActivity : AppCompatActivity() {
   private fun installCrashRecorder() {
     val previous = Thread.getDefaultUncaughtExceptionHandler()
     Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+      // Prepend version/build/device: release traces are obfuscated, and deobfuscating one needs
+      // the mapping.txt from this exact build — so the version (= which mapping) must travel with
+      // every report the user copies or shares.
+      val report = "${crashEnvironment()}\nThread: ${thread.name}\n${formatCrash(throwable)}"
+      // The single key drives the on-launch crash screen; the history (About → Crash history) keeps
+      // the last N so a non-startup crash like a draw NPE can still be reviewed and sent later.
       getSharedPreferences(crashPrefsName, Context.MODE_PRIVATE)
         .edit()
-        .putString(crashKey, "Thread: ${thread.name}\n${formatCrash(throwable)}")
+        .putString(crashKey, report)
         .putLong(crashTimeKey, System.currentTimeMillis())
         .commit()
+      runCatching { com.jetsetslow.omniterm.data.CrashLog.record(this, report) }
       previous?.uncaughtException(thread, throwable)
     }
   }
@@ -331,8 +339,9 @@ class MainActivity : AppCompatActivity() {
     val visibleReport = if (BuildConfig.DEBUG) {
       report
     } else {
-      // Keep the "Thread: …" prefix and the exception line(s); cut at the first stack frame.
-      val headline = report.lines().takeWhile { !it.trimStart().startsWith("at ") }.take(3)
+      // Keep the env + "Thread: …" prefix and the exception line(s); cut at the first stack frame.
+      // (6 lines covers: 2 environment lines, the Thread line, and the exception/"Caused by" lines.)
+      val headline = report.lines().takeWhile { !it.trimStart().startsWith("at ") }.take(6)
       val hiddenLines = (report.lines().size - headline.size).coerceAtLeast(0)
       headline.joinToString("\n") +
         "\n\n($hiddenLines more lines hidden — tap Copy report for the full trace)"

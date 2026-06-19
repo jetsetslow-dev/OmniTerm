@@ -43,6 +43,11 @@ internal object SecretStore {
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(Cipher.DECRYPT_MODE, getOrCreateKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
             String(cipher.doFinal(ciphertext), Charsets.UTF_8)
+        }.onFailure {
+            // A value tagged with our PREFIX failed to decrypt — corrupted ciphertext or a rotated/
+            // lost Keystore key. Log the cause (never the secret) so silent empty values are
+            // diagnosable; callers keep their existing null fallback contract.
+            android.util.Log.w("SecretStore", "Failed to decrypt stored secret: ${it.javaClass.simpleName}")
         }.getOrNull()
     }
 

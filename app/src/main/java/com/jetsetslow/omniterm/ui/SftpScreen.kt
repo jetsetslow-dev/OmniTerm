@@ -1241,6 +1241,7 @@ fun SftpFileEditor(
     onSave: (String) -> Unit,
     onDismiss: () -> Unit,
     confirm: ConfirmController,
+    highlightLimit: Int = HIGHLIGHT_MAX_CHARS_DEFAULT,
 ) {
     var buffer by remember(file.name) { mutableStateOf(file.content) }
     val dirty = buffer != file.content
@@ -1358,22 +1359,16 @@ fun SftpFileEditor(
                 },
                 contentWindowInsets = WindowInsets.safeDrawing,
             ) { innerPadding ->
-                val scrollState = rememberScrollState()
-                BasicTextField(
+                CodeEditor(
                     value = buffer,
                     onValueChange = { buffer = it },
                     enabled = !saving,
-                    textStyle = TextStyle(
-                        fontFamily = OmniFonts.mono,
-                        fontSize = 14.sp,
-                        color = MaterialTheme.colorScheme.onSurface,
-                    ),
-                    cursorBrush = SolidColor(OmniColors.amber),
+                    fontSize = 14.sp,
+                    language = remember(file.name) { languageForFileName(file.name) },
+                    highlightMaxChars = highlightLimit,
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(innerPadding)
-                        .verticalScroll(scrollState)
-                        .padding(12.dp),
+                        .padding(innerPadding),
                 )
             }
     }

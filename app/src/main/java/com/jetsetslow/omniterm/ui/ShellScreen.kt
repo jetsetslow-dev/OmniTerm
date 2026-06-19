@@ -778,15 +778,19 @@ private fun TerminalCanvas(
         val end = rowsToDraw.coerceAtMost(snapshot.rows.size)
         drawIntoCanvas { canvas ->
             val native = canvas.nativeCanvas
+            // CENTER alignment so each glyph can be pinned to the centre of its grid cell (see the
+            // per-character draw loop below) — this is what keeps text monospaced on the cell grid.
             val regularPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 typeface = Typeface.MONOSPACE
                 textSize = fontSizePx
                 color = foregroundArgb
+                textAlign = Paint.Align.CENTER
             }
             val boldPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 typeface = Typeface.create(Typeface.MONOSPACE, Typeface.BOLD)
                 textSize = fontSizePx
                 color = foregroundArgb
+                textAlign = Paint.Align.CENTER
             }
             val bgPaint = Paint().apply { style = Paint.Style.FILL }
             val cursorPaint = Paint().apply {
@@ -813,14 +817,24 @@ private fun TerminalCanvas(
                     // guaranteed on-device), underline natively, dim as reduced alpha.
                     paint.textSkewX = if (span.italic) -0.25f else 0f
                     paint.isUnderlineText = span.underline
-                    if (span.dim) paint.alpha = 150
+                    // Reset alpha every span: dim is per-span, and the paint is shared/reused.
+                    paint.alpha = if (span.dim) 150 else 255
                     val x = col * cellWidthPx
                     val width = span.text.length * cellWidthPx
                     if (bgInt != TerminalEmulator.DEFAULT_BG || span.inverse) {
                         bgPaint.color = if (bgInt == TerminalEmulator.DEFAULT_BG) backgroundArgb else bgInt
                         native.drawRect(x, yTop, x + width, yTop + cellHeightPx, bgPaint)
                     }
-                    native.drawText(span.text, x, yTop + baselineOffset, paint)
+                    // Draw each glyph pinned to its own grid cell. Drawing a whole span in one
+                    // drawText() call lets the font advance glyphs by their intrinsic (subpixel)
+                    // widths, which drifts away from the fixed cellWidthPx grid and makes characters
+                    // look bunched up or spread out. Centering each char in its cell keeps the
+                    // terminal perfectly monospaced regardless of the font's actual advances.
+                    val baselineY = yTop + baselineOffset
+                    for (i in span.text.indices) {
+                        val cellCenterX = (col + i) * cellWidthPx + cellWidthPx / 2f
+                        native.drawText(span.text, i, i + 1, cellCenterX, baselineY, paint)
+                    }
                     col += span.text.length
                 }
                 if (cursorOn && snapshot.cursorVisible && absoluteRow == snapshot.cursorRow) {
@@ -832,7 +846,8 @@ private fun TerminalCanvas(
                         regularPaint.textSkewX = 0f
                         regularPaint.isUnderlineText = false
                         regularPaint.color = backgroundArgb
-                        native.drawText(ch.toString(), cursorX, yTop + baselineOffset, regularPaint)
+                        // regularPaint is CENTER-aligned, so draw at the cell centre (matches the grid).
+                        native.drawText(ch.toString(), cursorX + cellWidthPx / 2f, yTop + baselineOffset, regularPaint)
                     }
                 }
             }
