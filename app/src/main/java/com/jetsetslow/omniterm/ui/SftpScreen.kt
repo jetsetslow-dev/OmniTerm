@@ -1129,7 +1129,7 @@ fun SftpTransfersTab(viewModel: AppViewModel) {
             }
             Spacer(modifier = Modifier.height(12.dp))
             LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().weight(1f),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(viewModel.sftpTransfers, key = { it.id }) { item ->
@@ -1409,7 +1409,7 @@ fun SftpBookmarksTab(viewModel: AppViewModel) {
         Text("Quick-access bookmarks", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             items(bookmarks) { bmk ->

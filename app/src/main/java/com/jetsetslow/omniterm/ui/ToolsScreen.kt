@@ -198,7 +198,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         Text("No active alert incidents.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
                         item {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                                 TextButton(onClick = { viewModel.acknowledgeAllAlerts() }) { Text("Ack All") }
@@ -244,7 +244,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                     }
                 }
             } else if (activeTab == 1) {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
                     item {
                         OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.purple) {
                             Row(
@@ -321,7 +321,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         Text("No alert history yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize()) {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
                         item {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                                 TextButton(onClick = { 
@@ -970,7 +970,7 @@ fun PortScannerToolView(viewModel: AppViewModel) {
                 }
             }
 
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
                 items(viewModel.portScannerResults) { (port, status) ->
                     OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = if (status.contains("Open")) OmniColors.green else MaterialTheme.colorScheme.onSurfaceVariant) {
                         Row(
