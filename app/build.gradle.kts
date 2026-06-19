@@ -134,11 +134,31 @@ ksp {
 }
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+  maxParallelForks = 1
+  maxHeapSize = "768m"
   val isLinuxArm64 = System.getProperty("os.name").equals("Linux", ignoreCase = true) &&
       System.getProperty("os.arch").equals("aarch64", ignoreCase = true)
   if (isLinuxArm64) {
     exclude("**/ExampleRobolectricTest.class", "**/GreetingScreenshotTest.class", "**/PinHashRobolectricTest.class")
   }
+}
+
+tasks.register("rpiDebug") {
+  group = "verification"
+  description = "Low-resource debug build for Raspberry Pi and other small machines."
+  dependsOn("assembleOpenSourceDebug")
+}
+
+tasks.register("rpiTest") {
+  group = "verification"
+  description = "Low-resource unit test run for the open-source debug variant."
+  dependsOn("testOpenSourceDebugUnitTest")
+}
+
+tasks.register("rpiCheck") {
+  group = "verification"
+  description = "Low-resource build and unit test run for the open-source debug variant."
+  dependsOn("rpiDebug", "rpiTest")
 }
 
 dependencies {

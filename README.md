@@ -13,6 +13,14 @@ OmniTerm is a native Android app for managing SSH hosts, homelab servers, Docker
 - **Encrypted, selective backups** (AES-256-GCM) of your app data.
 - **On-device security**: Keystore-backed credential encryption, SSH host-key pinning, optional app lock and biometrics.
 
+## Recent Changes
+
+June 19, 2026:
+
+- `4242c66` — Added persistent terminal session recovery with tmux-backed resumable sessions, reconnect handling, and explicit resumable-vs-terminate close choices.
+- `e0aa325` — Revamped the editor, added AMOLED theme support, crash history, terminal fixes, and session keep-alive improvements.
+- `8b0a56b` — Fixed SFTP state handling and CodeQL security alerts.
+
 ## Install
 
 OmniTerm comes in two builds with the same features:
@@ -32,6 +40,41 @@ To install the open-source APK:
 4. Launch OmniTerm and add your first host.
 
 OmniTerm stores host records, credentials, SSH keys, app settings, alert rules, and backups on your device.
+
+## Build From Source
+
+This project defaults to conservative Gradle settings so local builds are usable on
+small ARM machines such as a Raspberry Pi 5:
+
+- one Gradle worker by default
+- a 2 GB Gradle heap
+- low Gradle process priority where the OS supports it
+- single-fork JVM unit tests
+
+For day-to-day development on a Pi, build and test only the open-source debug
+variant:
+
+```bash
+./gradlew rpiCheck --no-daemon
+```
+
+That runs `assembleOpenSourceDebug` and `testOpenSourceDebugUnitTest` without
+also building the Play Store flavor. If the machine is still under load, close
+other memory-heavy processes and keep using `--no-daemon`; interrupted daemon
+builds can leave Kotlin/Gradle daemons competing for CPU and RAM.
+
+On a larger workstation or CI runner, full verification is still available:
+
+```bash
+./gradlew assembleDebug test
+```
+
+For release builds or faster CI machines, override the heap/workers explicitly,
+for example:
+
+```bash
+./gradlew assembleDebug test -Dorg.gradle.jvmargs=-Xmx4g --max-workers=4
+```
 
 ## Licensing And Distribution
 
