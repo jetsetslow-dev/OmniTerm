@@ -52,7 +52,7 @@ jobs:
           dependency-caching: true
 
       - name: Build Open Source debug variant
-        run: ./gradlew clean :app:assembleOpenSourceDebug --no-daemon
+        run: ./gradlew clean :app:assembleOpenSourceDebug --no-daemon --no-build-cache
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
