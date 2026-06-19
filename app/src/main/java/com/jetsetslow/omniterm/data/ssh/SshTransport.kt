@@ -58,6 +58,12 @@ interface TerminalSession {
     /** `true` once the channel/session has been torn down (by either side). */
     val closed: StateFlow<Boolean>
 
+    /**
+     * Remote shell exit status when known. Normal shell exits are usually `0`; a transport drop
+     * commonly leaves this as `-1`, which lets callers decide whether reconnect is appropriate.
+     */
+    val exitStatus: StateFlow<Int?>
+
     /** Send raw bytes (keystrokes / escape sequences) to the remote PTY. */
     suspend fun write(bytes: ByteArray)
 

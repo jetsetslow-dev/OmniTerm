@@ -157,9 +157,10 @@ class SessionService : Service() {
             // Tap notification content → resume the session in the app.
             val resumeIntent = Intent(this, MainActivity::class.java).apply {
                 action = ACTION_RESUME
-                // Bind the target component explicitly (in addition to the constructor) so the
-                // Intent backing this PendingIntent can never be resolved to a third-party component.
-                setClassName(this@SessionService, MainActivity::class.java.name)
+                // Bind the target component explicitly so the Intent backing this PendingIntent can
+                // never resolve to a third-party component. setComponent(ComponentName) is the form
+                // CodeQL's implicit-pendingintents query recognises as a definite explicit component.
+                component = android.content.ComponentName(this@SessionService, MainActivity::class.java)
                 setPackage(packageName)
                 data = Uri.parse("omniterm://notification/session/$id/resume")
                 putExtra("SESSION_ID", id)
@@ -177,9 +178,8 @@ class SessionService : Service() {
             // "Disconnect" action → disconnect this specific session via the ViewModel.
             val disconnectIntent = Intent(this, MainActivity::class.java).apply {
                 action = ACTION_DISCONNECT_SESSION
-                // Bind the target component explicitly (in addition to the constructor) so the
-                // Intent backing this PendingIntent can never be resolved to a third-party component.
-                setClassName(this@SessionService, MainActivity::class.java.name)
+                // Explicit component (see resumeIntent) — keeps this PendingIntent non-implicit.
+                component = android.content.ComponentName(this@SessionService, MainActivity::class.java)
                 setPackage(packageName)
                 data = Uri.parse("omniterm://notification/session/$id/disconnect")
                 putExtra("SESSION_ID", id)

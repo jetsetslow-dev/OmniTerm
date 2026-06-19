@@ -57,6 +57,11 @@ private const val SFTP_SEARCH_MAX_HITS = 200
 /** How long the app may sit in background before the app lock re-engages. */
 private const val APP_RELOCK_GRACE_MS = 30_000L
 
+// Auto-reconnect backoff for dropped interactive sessions: 1s, 2s, 4s… capped at 30s, up to N tries.
+private const val RECONNECT_BASE_DELAY_MS = 1_000L
+private const val RECONNECT_MAX_DELAY_MS = 30_000L
+private const val RECONNECT_MAX_ATTEMPTS = 6
+
 enum class Screen {
     Servers,
     Fleet,
@@ -649,6 +654,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     // Parallel multi-session management
     val activeSessions get() = TerminalSessionManager.activeSessions
+    var restorablePersistentSessions by mutableStateOf<List<com.jetsetslow.omniterm.data.PersistentSessionEntity>>(emptyList()); private set
     var currentSessionId by mutableStateOf<String?>(null)
     val currentSession: ShellSession? get() = activeSessions.find { it.id == currentSessionId }
 
@@ -802,6 +808,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         // Load settings, security configs, generate examples
         loadSecuritySettings()
         startTelemetryPolling()
+
+        viewModelScope.launch {
+            restorablePersistentSessions = withContext(Dispatchers.IO) {
+                repository.getPersistentSessions()
+            }
+        }
+
         // Bind a concrete selected host as soon as servers load. Without this, selectedServerId
         // stays null on cold start while selectedServer falls back to the first host — so per-tab
         // loaders whose "host changed mid-fetch" guard compares srv.id != selectedServerId bail out
@@ -1244,9 +1257,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
         val openAppIntent = Intent(app, MainActivity::class.java).apply {
-            // Bind the target component explicitly (in addition to the constructor) so the
-            // Intent backing this PendingIntent can never be resolved to a third-party component.
-            setClassName(app, MainActivity::class.java.name)
+            // Explicit component so the Intent backing this PendingIntent can never resolve to a
+            // third-party component. setComponent(ComponentName) is the form CodeQL's
+            // implicit-pendingintents query recognises as a definite explicit component.
+            component = android.content.ComponentName(app, MainActivity::class.java)
             setPackage(app.packageName)
             data = Uri.parse("omniterm://notification/alert/${rule.id}/${srv.id}")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP
@@ -1504,7 +1518,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // CRUDS FOR SERVERS
-    fun addServer(name: String, host: String, port: Int, username: String, group: String?, authType: String, notes: String, keepAlive: Int, compression: Boolean, proxy: String, password: String? = null, keyAlias: String? = null, profileId: Int? = null, createProfile: Boolean = false, serverColor: String = "Default", sudoPassword: String = "", proxyType: String = "none", proxyHost: String = "", proxyPort: Int = 0, proxyUser: String = "", proxyPassword: String = "", proxyKeyAlias: String? = null, onResult: (String?) -> Unit) {
+    fun addServer(name: String, host: String, port: Int, username: String, group: String?, authType: String, notes: String, keepAlive: Int, compression: Boolean, proxy: String, password: String? = null, keyAlias: String? = null, profileId: Int? = null, createProfile: Boolean = false, serverColor: String = "Default", sudoPassword: String = "", proxyType: String = "none", proxyHost: String = "", proxyPort: Int = 0, proxyUser: String = "", proxyPassword: String = "", proxyKeyAlias: String? = null, persistentSession: Boolean = false, onResult: (String?) -> Unit) {
         viewModelScope.launch {
             if (name.isBlank() || host.isBlank() || username.isBlank()) {
                 onResult("Please fill in all layout fields.")
@@ -1545,6 +1559,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 notes = notes,
                 keepAlive = keepAlive,
                 sshCompression = compression,
+                persistentSession = persistentSession,
                 proxyCommand = proxy,
                 proxyType = proxyType,
                 proxyHost = proxyHost,
@@ -1588,6 +1603,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteServer(server: ServerEntity) {
         viewModelScope.launch {
             repository.deleteServer(server)
+            repository.deletePersistentSessionsForServer(server.id)
+            restorablePersistentSessions = restorablePersistentSessions.filter { it.serverId != server.id }
             SshHostKeyTrust.removeHost(server.host, server.port)
             if (selectedServerId == server.id) {
                 selectedServerId = null
@@ -2330,6 +2347,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun connectTerminal() {
         val srv = selectedServer ?: return
+        connectTerminal(srv, forceDisablePersistence = false)
+    }
+
+    private fun connectTerminal(srv: ServerEntity, forceDisablePersistence: Boolean) {
         if (isTerminalConnecting) return
         isTerminalConnecting = true
         terminalConnectError = null
@@ -2337,11 +2358,48 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
         terminalConnectJob = viewModelScope.launch {
             try {
+                val creds = buildCredentials(srv)
+                val usePersistence = srv.persistentSession && !forceDisablePersistence
+
+                // Persistent sessions need tmux on the host. On the first connect where it's missing,
+                // stop and ask the user to install it (rather than silently falling back to a normal,
+                // non-surviving shell). Checked once per host per app run to avoid a round-trip on
+                // every connect; the "Install tmux" action re-runs connect afterwards.
+                if (usePersistence && srv.id !in tmuxVerifiedServerIds) {
+                    terminalConnectionPhase = "Checking tmux…"
+                    val present = runCatching {
+                        sshTransport.exec(creds, RemoteCommands.TMUX_CHECK).trim().endsWith("yes")
+                    }.getOrDefault(true) // on probe failure, don't block the connect
+                    if (present) {
+                        tmuxVerifiedServerIds.add(srv.id)
+                    } else {
+                        isTerminalConnecting = false
+                        tmuxInstallPromptServer = srv
+                        return@launch
+                    }
+                }
+
                 val emulator = TerminalEmulator(termCols, termRows, scrollbackLimit = terminalScrollbackLimit)
-                val session = sshTransport.openShell(buildCredentials(srv), termCols, termRows) { phase ->
+                val session = sshTransport.openShell(creds, termCols, termRows) { phase ->
                     viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) { terminalConnectionPhase = phase }
                 }
                 val shellSession = ShellSession(srv.id, srv.name, session, emulator)
+                // Keep what auto-reconnect needs to reopen this exact shell without the UI.
+                shellSession.creds = creds
+                shellSession.lastCols = termCols
+                shellSession.lastRows = termRows
+                shellSession.persistent = usePersistence
+
+                // Persistent session: enter a tmux session unique to this shell so a reconnect
+                // re-attaches the SAME session (and any running command keeps going server-side),
+                // and multiple persistent shells to one host don't collide on a shared name.
+                if (usePersistence) {
+                    session.write(RemoteCommands.tmuxAttachCommand(shellSession.tmuxName).toByteArray())
+                    // Remember it so it can be re-offered after an app restart (runtime state only).
+                    repository.upsertPersistentSession(
+                        PersistentSessionEntity(shellSession.tmuxName, srv.id, srv.name)
+                    )
+                }
 
                 activeSessions.add(shellSession)
                 withContext(Dispatchers.Main) {
@@ -2352,62 +2410,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 TerminalSessionManager.updateKeepaliveCount()
                 startKeepAliveService()
 
-                // Serialize keystrokes through a single channel so writes never reorder.
-                // UNLIMITED capacity guarantees trySend always succeeds in call order; a bounded
-                // channel would force the producer onto a racing async fallback (see sendBytes),
-                // which reordered bytes and jumbled large pastes.
-                val inCh = Channel<ByteArray>(Channel.UNLIMITED)
-                shellSession.terminalInputChannel = inCh
-                shellSession.terminalInputJob = TerminalSessionManager.scope.launch(Dispatchers.IO) {
-                    for (bytes in inCh) {
-                        try { session.write(bytes) } catch (_: Exception) {}
-                    }
-                }
-
-                // Stream remote output → emulator → render snapshot (off the main thread).
-                shellSession.terminalOutputJob = TerminalSessionManager.scope.launch(Dispatchers.Default) {
-                    var cleanExit = false
-                    var lastSnapshotMs = 0L
-                    var pendingSnapshotJob: Job? = null
-                    try {
-                        session.output.collect { bytes ->
-                            synchronized(emulator) {
-                                emulator.feed(bytes)
-                            }
-                            val now = System.currentTimeMillis()
-                            val elapsed = now - lastSnapshotMs
-                            if (elapsed >= 16L) {
-                                pendingSnapshotJob?.cancel()
-                                pendingSnapshotJob = null
-                                lastSnapshotMs = now
-                                TerminalSessionManager.publishTerminalSnapshot(shellSession)
-                            } else if (pendingSnapshotJob?.isActive != true) {
-                                pendingSnapshotJob = launch {
-                                    delay(16L - elapsed)
-                                    lastSnapshotMs = System.currentTimeMillis()
-                                    TerminalSessionManager.publishTerminalSnapshot(shellSession)
-                                    pendingSnapshotJob = null
-                                }
-                            }
-                        }
-                        pendingSnapshotJob?.cancel()
-                        TerminalSessionManager.publishTerminalSnapshot(shellSession)
-                        cleanExit = true
-                    } catch (e: Exception) {
-                        if (e is kotlinx.coroutines.CancellationException) throw e
-                        // Non-cancellation: SSH connection was lost unexpectedly
-                    }
-                    withContext(Dispatchers.Main) {
-                        shellSession.isConnected = false
-                        if (!cleanExit) shellSession.disconnectError = "Connection lost."
-                        TerminalSessionManager.updateKeepaliveCount()
-                        if (cleanExit) {
-                            TerminalSessionManager.cleanupSession(shellSession)
-                        } else {
-                            TerminalSessionManager.startKeepAliveService()
-                        }
-                    }
-                }
+                wireSessionIo(shellSession)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 isTerminalConnecting = false
@@ -2418,6 +2421,247 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     terminalConnectError = cleanSshError(msg)
                 }
+            }
+        }
+    }
+
+    fun resumePersistentSession(tmuxName: String) {
+        val sessionEntity = restorablePersistentSessions.find { it.tmuxName == tmuxName } ?: return
+        val srv = servers.value.find { it.id == sessionEntity.serverId } ?: return
+
+        if (isTerminalConnecting) return
+        isTerminalConnecting = true
+        terminalConnectError = null
+        terminalConnectionPhase = "Connecting…"
+
+        terminalConnectJob = viewModelScope.launch {
+            try {
+                val creds = buildCredentials(srv)
+                val emulator = TerminalEmulator(termCols, termRows, scrollbackLimit = terminalScrollbackLimit)
+                val session = sshTransport.openShell(creds, termCols, termRows) { phase ->
+                    viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) { terminalConnectionPhase = phase }
+                }
+                val shellSession = ShellSession(srv.id, srv.name, session, emulator)
+                shellSession.creds = creds
+                shellSession.lastCols = termCols
+                shellSession.lastRows = termRows
+                shellSession.persistent = true
+                shellSession.tmuxName = tmuxName
+
+                session.write(com.jetsetslow.omniterm.data.RemoteCommands.tmuxAttachCommand(tmuxName).toByteArray())
+
+                activeSessions.add(shellSession)
+                withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    currentSessionId = shellSession.id
+                    restorablePersistentSessions = restorablePersistentSessions.filter { it.tmuxName != tmuxName }
+                }
+                isTerminalConnecting = false
+                noteSuccessfulSshSession()
+                TerminalSessionManager.updateKeepaliveCount()
+                startKeepAliveService()
+
+                wireSessionIo(shellSession)
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                isTerminalConnecting = false
+                val msg = e.message ?: "Connection failed."
+                if (msg.contains("reject HostKey", ignoreCase = true) ||
+                    msg.contains("HostKey has been changed", ignoreCase = true)) {
+                    hostKeyChangedServer = srv
+                } else {
+                    terminalConnectError = cleanSshError(msg)
+                }
+            }
+        }
+    }
+
+    /**
+     * Wire a [ShellSession]'s live [session] to the keystroke channel and output stream. On an
+     * unexpected output-stream end (network drop, not a clean shell exit or user disconnect), kick
+     * off [reconnectSession] instead of tearing the session down — the emulator/scrollback is kept
+     * so the reconnected shell continues in place. Called on first connect and after each reconnect.
+     */
+    private fun wireSessionIo(shellSession: ShellSession) {
+        val session = shellSession.session
+        val emulator = shellSession.emulator
+
+        shellSession.terminalInputJob?.cancel()
+        shellSession.terminalInputChannel?.close()
+
+        // Serialize keystrokes through a single channel so writes never reorder. UNLIMITED capacity
+        // guarantees trySend always succeeds in call order. Recreated per (re)connect so it always
+        // targets the current live channel.
+        val inCh = Channel<ByteArray>(Channel.UNLIMITED)
+        shellSession.terminalInputChannel = inCh
+        shellSession.terminalInputJob = TerminalSessionManager.scope.launch(Dispatchers.IO) {
+            for (bytes in inCh) {
+                try { shellSession.session.write(bytes) } catch (_: Exception) {}
+            }
+        }
+
+        shellSession.terminalOutputJob = TerminalSessionManager.scope.launch(Dispatchers.Default) {
+            var cleanExit = false
+            var lastSnapshotMs = 0L
+            var pendingSnapshotJob: Job? = null
+            try {
+                session.output.collect { bytes ->
+                    synchronized(emulator) { emulator.feed(bytes) }
+                    val now = System.currentTimeMillis()
+                    val elapsed = now - lastSnapshotMs
+                    if (elapsed >= 16L) {
+                        pendingSnapshotJob?.cancel(); pendingSnapshotJob = null
+                        lastSnapshotMs = now
+                        TerminalSessionManager.publishTerminalSnapshot(shellSession)
+                    } else if (pendingSnapshotJob?.isActive != true) {
+                        pendingSnapshotJob = launch {
+                            delay(16L - elapsed)
+                            lastSnapshotMs = System.currentTimeMillis()
+                            TerminalSessionManager.publishTerminalSnapshot(shellSession)
+                            pendingSnapshotJob = null
+                        }
+                    }
+                }
+                pendingSnapshotJob?.cancel()
+                TerminalSessionManager.publishTerminalSnapshot(shellSession)
+                cleanExit = session.exitStatus.value == 0
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                // Non-cancellation: connection lost unexpectedly → fall through to reconnect.
+            }
+
+            // A clean exit (shell `exit`) or a user-initiated disconnect tears the session down.
+            // An unexpected drop with credentials available triggers auto-reconnect instead.
+            val shouldReconnect = !cleanExit && !shellSession.userClosed && shellSession.creds != null
+            withContext(Dispatchers.Main) {
+                shellSession.isConnected = false
+                TerminalSessionManager.updateKeepaliveCount()
+                if (cleanExit) {
+                    if (shellSession.persistent) {
+                        viewModelScope.launch {
+                            repository.deletePersistentSession(shellSession.tmuxName)
+                            restorablePersistentSessions = restorablePersistentSessions.filter {
+                                it.tmuxName != shellSession.tmuxName
+                            }
+                        }
+                    }
+                    TerminalSessionManager.cleanupSession(shellSession)
+                } else if (shouldReconnect) {
+                    reconnectSession(shellSession)
+                } else {
+                    shellSession.disconnectError = "Connection lost."
+                    TerminalSessionManager.startKeepAliveService()
+                }
+            }
+        }
+    }
+
+    /**
+     * Auto-reconnect a dropped session with capped exponential backoff. Reopens a shell with the
+     * same credentials, re-attaches the per-session tmux (if persistent) so a long-running command
+     * resumes, writes a "— reconnected —" marker into the kept scrollback, and re-wires I/O. Gives
+     * up after [RECONNECT_MAX_ATTEMPTS], leaving a "Connection lost." session the user can retry.
+     */
+    private fun reconnectSession(shellSession: ShellSession) {
+        if (shellSession.reconnectJob?.isActive == true) return
+        val creds = shellSession.creds ?: return
+        shellSession.reconnecting = true
+        shellSession.disconnectError = null
+        shellSession.reconnectJob = TerminalSessionManager.scope.launch(Dispatchers.IO) {
+            var delayMs = RECONNECT_BASE_DELAY_MS
+            for (attempt in 1..RECONNECT_MAX_ATTEMPTS) {
+                if (shellSession.userClosed) return@launch
+                delay(delayMs)
+                delayMs = (delayMs * 2).coerceAtMost(RECONNECT_MAX_DELAY_MS)
+                val newSession = try {
+                    sshTransport.openShell(creds, shellSession.lastCols, shellSession.lastRows)
+                } catch (e: Exception) {
+                    if (e is kotlinx.coroutines.CancellationException) throw e
+                    null
+                } ?: continue
+
+                if (shellSession.userClosed) { runCatching { newSession.close() }; return@launch }
+                shellSession.session = newSession
+                if (shellSession.persistent) {
+                    runCatching { newSession.write(RemoteCommands.tmuxAttachCommand(shellSession.tmuxName).toByteArray()) }
+                }
+                // Visible marker in the kept scrollback so the user knows the stream resumed.
+                synchronized(shellSession.emulator) {
+                    shellSession.emulator.feed("\r\n\u001B[32m-- reconnected --\u001B[0m\r\n".toByteArray())
+                }
+                withContext(Dispatchers.Main) {
+                    shellSession.isConnected = true
+                    shellSession.reconnecting = false
+                    shellSession.disconnectError = null
+                    TerminalSessionManager.updateKeepaliveCount()
+                    TerminalSessionManager.startKeepAliveService()
+                }
+                wireSessionIo(shellSession)
+                return@launch
+            }
+            // Exhausted attempts.
+            withContext(Dispatchers.Main) {
+                shellSession.reconnecting = false
+                shellSession.disconnectError = "Connection lost — reconnect failed."
+                TerminalSessionManager.startKeepAliveService()
+            }
+        }
+    }
+
+    /** Manually retry a dropped session (the UI "Reconnect" button after auto-retry gives up). */
+    fun retrySession(sessionId: String) {
+        val s = activeSessions.find { it.id == sessionId } ?: return
+        if (s.isConnected || s.reconnecting) return
+        reconnectSession(s)
+    }
+
+    // ── tmux (persistent session) install gating ──
+    // Hosts whose tmux presence we've confirmed this run, so we only probe once per host.
+    private val tmuxVerifiedServerIds = mutableSetOf<Int>()
+    /** Non-null ⇒ show the "Install tmux?" dialog for this server (persistent mode, tmux missing). */
+    var tmuxInstallPromptServer by mutableStateOf<ServerEntity?>(null)
+    /** Streamed output of the tmux install, shown live in the dialog; null when not installing. */
+    var tmuxInstallOutput by mutableStateOf<String?>(null)
+    var tmuxInstalling by mutableStateOf(false)
+
+    fun dismissTmuxInstallPrompt() {
+        tmuxInstallPromptServer = null
+        tmuxInstallOutput = null
+        tmuxInstalling = false
+    }
+
+    /** Connect once without persistence — user declined installing tmux but still wants a shell. */
+    fun connectWithoutPersistence() {
+        val srv = tmuxInstallPromptServer ?: return
+        dismissTmuxInstallPrompt()
+        connectTerminal(srv, forceDisablePersistence = true)
+    }
+
+    /**
+     * Install tmux on the prompted host (with the user's confirmation), streaming progress into the
+     * dialog, then mark it verified and connect. Uses the host's sudo password via stdin when set.
+     */
+    fun installTmuxAndConnect() {
+        val srv = tmuxInstallPromptServer ?: return
+        if (tmuxInstalling) return
+        tmuxInstalling = true
+        tmuxInstallOutput = ""
+        viewModelScope.launch {
+            val creds = buildCredentials(srv)
+            val stdin = srv.sudoPassword.takeIf { it.isNotBlank() }?.let { "$it\n" }
+            val result = runCatching {
+                sshTransport.execStream(creds, RemoteCommands.tmuxInstallCommand(), stdin) { chunk ->
+                    withContext(Dispatchers.Main) { tmuxInstallOutput = (tmuxInstallOutput ?: "") + chunk }
+                }
+            }
+            tmuxInstalling = false
+            val ok = result.getOrNull()?.let { sshTransport.exec(creds, RemoteCommands.TMUX_CHECK).trim().endsWith("yes") } == true
+            if (ok) {
+                tmuxVerifiedServerIds.add(srv.id)
+                dismissTmuxInstallPrompt()
+                connectTerminal(srv, forceDisablePersistence = false)
+            } else {
+                tmuxInstallOutput = (tmuxInstallOutput ?: "") +
+                    "\n\nInstall did not complete. You can retry, connect non-resumable, or install tmux manually."
             }
         }
     }
@@ -2558,8 +2802,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun disconnectTerminal() {
         val s = currentSession ?: return
-        s.session.close()
-        cleanupSession(s)
+        disconnectSession(s.id)
     }
 
     fun sendToBackground() {
@@ -2602,12 +2845,45 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun disconnectSession(sessionId: String) {
         val s = activeSessions.find { it.id == sessionId } ?: return
+        // User-initiated: stop any auto-reconnect in flight and don't start a new one on teardown.
+        s.userClosed = true
+        s.reconnectJob?.cancel()
+        // A user-closed persistent session should also kill its tmux session server-side and forget
+        // it, so it isn't re-offered next launch. (A drop/background does NOT do this — that's the point.)
+        if (s.persistent) {
+            s.creds?.let { c ->
+                viewModelScope.launch(Dispatchers.IO) {
+                    runCatching { sshTransport.exec(c, RemoteCommands.tmuxKillCommand(s.tmuxName)) }
+                }
+            }
+            viewModelScope.launch {
+                repository.deletePersistentSession(s.tmuxName)
+                restorablePersistentSessions = restorablePersistentSessions.filter { it.tmuxName != s.tmuxName }
+            }
+        }
         s.session.close()
         cleanupSession(s)
     }
 
     fun requestDisconnectSession(sessionId: String) {
         pendingDisconnectSessionId = sessionId
+    }
+
+    fun leaveSessionResumable(sessionId: String) {
+        val s = activeSessions.find { it.id == sessionId } ?: return
+        if (!s.persistent) {
+            disconnectSession(sessionId)
+            return
+        }
+        s.userClosed = true
+        s.reconnectJob?.cancel()
+        s.session.close()
+        if (restorablePersistentSessions.none { it.tmuxName == s.tmuxName }) {
+            restorablePersistentSessions = restorablePersistentSessions +
+                PersistentSessionEntity(s.tmuxName, s.serverId, s.serverName)
+        }
+        cleanupSession(s)
+        if (currentSessionId == sessionId) currentSessionId = null
     }
 
     fun requestDisconnectAllSessions() {
@@ -2620,7 +2896,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun closeAllSessions() {
-        TerminalSessionManager.clearAll()
+        activeSessions.toList().forEach { disconnectSession(it.id) }
         currentSessionId = null
         stopKeepAliveService()
     }
@@ -4192,6 +4468,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 put("authProfileId", s.authProfileId)
                 put("notes", s.notes)
                 put("keepAlive", s.keepAlive); put("sshCompression", s.sshCompression)
+                put("persistentSession", s.persistentSession)
                 put("proxyCommand", s.proxyCommand)
                 put("proxyType", s.proxyType)
                 put("proxyHost", s.proxyHost)
@@ -4674,6 +4951,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                                 authProfileId = profileIdMap[oldProfileId],
                                 notes = o.optString("notes", ""), keepAlive = o.optInt("keepAlive", 30),
                                 sshCompression = o.optBoolean("sshCompression", false),
+                                persistentSession = o.optBoolean("persistentSession", false),
                                 proxyCommand = o.optString("proxyCommand", ""),
                                 proxyType = o.optString("proxyType", "none"),
                                 proxyHost = o.optString("proxyHost", ""),

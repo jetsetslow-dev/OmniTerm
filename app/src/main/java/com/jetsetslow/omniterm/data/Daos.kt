@@ -215,3 +215,18 @@ interface AppSettingDao {
     @Query("DELETE FROM app_settings WHERE `key` LIKE 'sftp_bookmarks_%' AND `key` NOT IN (:keepKeys)")
     suspend fun deleteSftpBookmarksExcept(keepKeys: List<String>)
 }
+
+@Dao
+interface PersistentSessionDao {
+    @Query("SELECT * FROM persistent_sessions ORDER BY createdAt ASC")
+    suspend fun getAll(): List<PersistentSessionEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(session: PersistentSessionEntity)
+
+    @Query("DELETE FROM persistent_sessions WHERE tmuxName = :tmuxName")
+    suspend fun delete(tmuxName: String)
+
+    @Query("DELETE FROM persistent_sessions WHERE serverId = :serverId")
+    suspend fun deleteForServer(serverId: Int)
+}

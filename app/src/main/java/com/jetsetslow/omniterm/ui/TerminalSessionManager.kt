@@ -60,6 +60,8 @@ object TerminalSessionManager {
 
     fun cleanupSession(s: ShellSession) {
         s.isConnected = false
+        s.userClosed = true
+        s.reconnectJob?.cancel()
         // close() is idempotent; doing it here guarantees the transport reader thread and the
         // SSH connection die with the session even if a caller forgot to close first.
         try { s.session.close() } catch (_: Exception) {}
@@ -114,6 +116,8 @@ object TerminalSessionManager {
      */
     fun clearAll() {
         activeSessions.forEach {
+            it.userClosed = true
+            it.reconnectJob?.cancel()
             try { it.session.close() } catch (_: Exception) {}
             it.isConnected = false
             it.terminalOutputJob?.cancel()

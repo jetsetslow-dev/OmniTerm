@@ -403,6 +403,9 @@ fun MainAppScreen(viewModel: AppViewModel) {
         // (Add Server's Test Connection blocks on it), so it lives here, not in ShellScreen.
         HostKeyApprovalDialog(viewModel)
 
+        // First-connect tmux install prompt for persistent-session hosts.
+        TmuxInstallDialog(viewModel)
+
         // Full-screen SFTP text editor, hosted here at the top of the Activity window rather than
         // inside SftpScreen. SftpScreen lives under AppCoreScaffold's content Box, which calls
         // consumeWindowInsets() — so any editor placed there sees a zero IME inset and its bottom
@@ -435,6 +438,65 @@ fun MainAppScreen(viewModel: AppViewModel) {
             ConfirmHost(editorConfirm)
         }
     }
+}
+
+/**
+ * First-connect prompt to install tmux on a host configured for persistent sessions. Nothing runs
+ * until the user taps Install; the install command (distro-detected, sudo via stdin) streams its
+ * output live. The user can also connect once without persistence, or cancel.
+ */
+@Composable
+fun TmuxInstallDialog(viewModel: AppViewModel) {
+    val srv = viewModel.tmuxInstallPromptServer ?: return
+    val installing = viewModel.tmuxInstalling
+    val output = viewModel.tmuxInstallOutput
+    AlertDialog(
+        onDismissRequest = { if (!installing) viewModel.dismissTmuxInstallPrompt() },
+        title = { Text("Install tmux on ${srv.name}?") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "This host is set to use persistent sessions, but tmux isn't installed. tmux lets " +
+                        "sessions survive network drops and keeps long-running commands going after a " +
+                        "reconnect.",
+                    fontSize = 13.sp,
+                )
+                Text(
+                    "Install runs the appropriate package-manager command on this host (using your sudo password if set). " +
+                        "Connecting without tmux opens a normal, non-resumable shell.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (output != null) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 180.dp)
+                            .verticalScroll(rememberScrollState())
+                            .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                            .padding(8.dp),
+                    ) {
+                        Text(output.ifEmpty { "Starting…" }, fontFamily = OmniFonts.mono, fontSize = 11.sp)
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { viewModel.installTmuxAndConnect() }, enabled = !installing) {
+                Text(if (installing) "Installing…" else "Install tmux")
+            }
+        },
+        dismissButton = {
+            Row {
+                TextButton(onClick = { viewModel.connectWithoutPersistence() }, enabled = !installing) {
+                    Text("Connect non-resumable")
+                }
+                TextButton(onClick = { viewModel.dismissTmuxInstallPrompt() }, enabled = !installing) {
+                    Text("Cancel")
+                }
+            }
+        },
+    )
 }
 
 @Composable
@@ -650,6 +712,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
 
             // Disconnect dialog safety check
             if (viewModel.showDisconnectTerminalDialog) {
+                val session = viewModel.currentSession
                 AlertDialog(
                     onDismissRequest = {
                         viewModel.showDisconnectTerminalDialog = false
@@ -672,6 +735,19 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                     },
                     dismissButton = {
                         Row {
+                            if (session?.persistent == true) {
+                                TextButton(
+                                    onClick = {
+                                        val target = viewModel.pendingNavigationScreen
+                                        viewModel.leaveSessionResumable(session.id)
+                                        viewModel.showDisconnectTerminalDialog = false
+                                        viewModel.pendingNavigationScreen = null
+                                        target?.let { viewModel.navigateTo(it) }
+                                    }
+                                ) {
+                                    Text("Leave resumable")
+                                }
+                            }
                             TextButton(
                                 onClick = {
                                     val target = viewModel.pendingNavigationScreen
@@ -700,8 +776,16 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                 val session = viewModel.activeSessions.find { it.id == sessionId }
                 AlertDialog(
                     onDismissRequest = { viewModel.cancelPendingDisconnect() },
-                    title = { Text("Disconnect session?") },
-                    text = { Text("Disconnect ${session?.serverName ?: "this terminal session"}? Anything still running in that terminal will be stopped.") },
+                    title = { Text(if (session?.persistent == true) "Close persistent session?" else "Disconnect session?") },
+                    text = {
+                        Text(
+                            if (session?.persistent == true) {
+                                "Leave ${session.serverName} resumable, or terminate its tmux session and stop anything running there?"
+                            } else {
+                                "Disconnect ${session?.serverName ?: "this terminal session"}? Anything still running in that terminal will be stopped."
+                            }
+                        )
+                    },
                     confirmButton = {
                         TextButton(
                             onClick = {
@@ -709,11 +793,23 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                                 viewModel.cancelPendingDisconnect()
                             }
                         ) {
-                            Text("Disconnect", color = Color.Red)
+                            Text(if (session?.persistent == true) "Terminate" else "Disconnect", color = Color.Red)
                         }
                     },
                     dismissButton = {
-                        TextButton(onClick = { viewModel.cancelPendingDisconnect() }) { Text("Cancel") }
+                        Row {
+                            if (session?.persistent == true) {
+                                TextButton(
+                                    onClick = {
+                                        viewModel.leaveSessionResumable(sessionId)
+                                        viewModel.cancelPendingDisconnect()
+                                    }
+                                ) {
+                                    Text("Leave resumable")
+                                }
+                            }
+                            TextButton(onClick = { viewModel.cancelPendingDisconnect() }) { Text("Cancel") }
+                        }
                     },
                 )
             }
@@ -1638,6 +1734,7 @@ fun AddServerSheet(viewModel: AppViewModel, serverToEdit: ServerEntity?, onDismi
     var notes by remember { mutableStateOf(serverToEdit?.notes ?: "") }
     var keepAlive by remember { mutableStateOf(serverToEdit?.keepAlive?.toString() ?: "30") }
     var compression by remember { mutableStateOf(serverToEdit?.sshCompression ?: false) }
+    var persistentSession by remember { mutableStateOf(serverToEdit?.persistentSession ?: false) }
     var sudoPassword by remember { mutableStateOf("") }
     var forgetSudoPassword by remember { mutableStateOf(false) }
     val hasStoredSudoPassword = !serverToEdit?.sudoPassword.isNullOrEmpty()
@@ -1716,6 +1813,7 @@ fun AddServerSheet(viewModel: AppViewModel, serverToEdit: ServerEntity?, onDismi
                     notes = notes,
                     keepAlive = keepAlive.toIntOrNull() ?: 30,
                     sshCompression = compression,
+                    persistentSession = persistentSession,
                     proxyCommand = "",
                     sudoPassword = effectiveSudoPassword(),
                     proxyType = proxyType,
@@ -1742,6 +1840,7 @@ fun AddServerSheet(viewModel: AppViewModel, serverToEdit: ServerEntity?, onDismi
                 notes = notes,
                 keepAlive = keepAlive.toIntOrNull() ?: 30,
                 compression = compression,
+                persistentSession = persistentSession,
                 proxy = "",
                 password = password,
                 keyAlias = selectedKey,
@@ -1978,6 +2077,19 @@ fun AddServerSheet(viewModel: AppViewModel, serverToEdit: ServerEntity?, onDismi
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = compression, onCheckedChange = { compression = it })
                             Text("Use SSH Payload compression")
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = persistentSession, onCheckedChange = { persistentSession = it })
+                            Column {
+                                Text("Persistent session (tmux)")
+                                Text(
+                                    "Runs shells inside tmux so a dropped connection reconnects and " +
+                                        "long-running commands keep going. Requires tmux on the host — " +
+                                        "you'll be offered to install it on first connect.",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                         StoredSecretField(
                             value = sudoPassword,

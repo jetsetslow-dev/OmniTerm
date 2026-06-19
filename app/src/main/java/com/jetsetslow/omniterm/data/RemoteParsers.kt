@@ -66,6 +66,50 @@ object RemoteCommands {
     // `|| echo Windows` fallback fires.
     const val OS_PROBE = "uname -s 2>/dev/null || echo Windows"
 
+    // ── tmux persistent-session support ───────────────────────────────────────────────────────
+    // A shell launched inside tmux survives an SSH drop: the remote process group stays attached to
+    // the tmux server, so reconnecting re-attaches the *same* session (and any long-running command
+    // keeps running). These helpers detect tmux and (with user confirmation) install it.
+
+    /** Prints "yes" if tmux is on PATH, else "no". */
+    const val TMUX_CHECK = "command -v tmux >/dev/null 2>&1 && echo yes || echo no"
+
+    /**
+     * The command run inside the interactive shell to enter a persistent session: attach to the
+     * existing session [name] or create it if absent (`new-session -A`). `exec` replaces the login
+     * shell so exiting tmux ends the shell cleanly. Guarded so a missing tmux doesn't strand the
+     * user in a half-broken prompt — it just stays a normal shell. Each app shell uses a distinct
+     * [name] so multiple persistent sessions to one host re-attach their own session on reconnect.
+     */
+    fun tmuxAttachCommand(name: String): String {
+        // Defensive: only allow our own [a-z0-9-] names through into the shell command.
+        val safe = name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
+        return "command -v tmux >/dev/null 2>&1 && exec tmux new-session -A -s $safe\n"
+    }
+
+    fun tmuxKillCommand(name: String): String {
+        val safe = name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
+        return "tmux kill-session -t $safe 2>/dev/null || true"
+    }
+
+    /**
+     * Best-effort, distro-agnostic tmux install. Tries each common package manager in turn; uses
+     * sudo when not already root. Combined stdout/stderr is surfaced to the user. [sudoPassword] is
+     * fed via stdin to `sudo -S` by the caller (never interpolated into the command string).
+     */
+    fun tmuxInstallCommand(): String =
+        "set -e; if command -v tmux >/dev/null 2>&1; then echo 'tmux already installed'; exit 0; fi; " +
+        "if [ \"\$(id -u)\" = 0 ]; then SUDO=; else SUDO='sudo -S'; fi; " +
+        "if command -v apt-get >/dev/null 2>&1; then \$SUDO apt-get update && \$SUDO apt-get install -y tmux; " +
+        "elif command -v dnf >/dev/null 2>&1; then \$SUDO dnf install -y tmux; " +
+        "elif command -v yum >/dev/null 2>&1; then \$SUDO yum install -y tmux; " +
+        "elif command -v pacman >/dev/null 2>&1; then \$SUDO pacman -Sy --noconfirm tmux; " +
+        "elif command -v apk >/dev/null 2>&1; then \$SUDO apk add tmux; " +
+        "elif command -v zypper >/dev/null 2>&1; then \$SUDO zypper install -y tmux; " +
+        "elif command -v pkg >/dev/null 2>&1; then \$SUDO pkg install -y tmux; " +
+        "else echo 'No supported package manager found; install tmux manually.' >&2; exit 1; fi; " +
+        "command -v tmux >/dev/null 2>&1 && echo 'tmux installed' || { echo 'tmux install failed' >&2; exit 1; }"
+
     /** Normalise raw [OS_PROBE] output to a family token used to pick command/parse variants. */
     fun normaliseOs(raw: String): String {
         val s = raw.trim().lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()

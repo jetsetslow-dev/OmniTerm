@@ -4,6 +4,19 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 
+/**
+ * A persistent (tmux-backed) terminal session that should be re-offered after an app restart.
+ * One row per live tmux session the app created; the [tmuxName] is how a reconnect re-attaches the
+ * exact session. Pure runtime/device state — deliberately NOT included in backup/restore.
+ */
+@Entity(tableName = "persistent_sessions")
+data class PersistentSessionEntity(
+    @PrimaryKey val tmuxName: String,
+    val serverId: Int,
+    val serverName: String,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
 @Entity(tableName = "servers")
 data class ServerEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
@@ -23,6 +36,9 @@ data class ServerEntity(
     val notes: String = "",
     val keepAlive: Int = 30, // seconds
     val sshCompression: Boolean = false,
+    // When true, interactive shells launch inside a persistent tmux session so a dropped connection
+    // can reconnect and re-attach the SAME session (long-running commands keep running server-side).
+    val persistentSession: Boolean = false,
     val proxyCommand: String = "",
     // Proxy used to reach the host. proxyType: "none", "http", "socks5", "ssh" (jump host).
     val proxyType: String = "none",

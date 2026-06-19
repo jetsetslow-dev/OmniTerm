@@ -365,9 +365,11 @@ private class JschTerminalSession(
 
     private val outChannel = Channel<ByteArray>(OUTPUT_BUFFER_CHUNKS)
     private val _closed = MutableStateFlow(false)
+    private val _exitStatus = MutableStateFlow<Int?>(null)
 
     override val output: Flow<ByteArray> = outChannel.receiveAsFlow()
     override val closed: StateFlow<Boolean> = _closed.asStateFlow()
+    override val exitStatus: StateFlow<Int?> = _exitStatus.asStateFlow()
 
     private val reader = thread(start = true, isDaemon = true, name = "ssh-shell-reader") {
         val buf = ByteArray(8192)
@@ -414,6 +416,7 @@ private class JschTerminalSession(
 
     override fun close() {
         if (_closed.compareAndSet(expect = false, update = true)) {
+            _exitStatus.value = runCatching { channel.exitStatus }.getOrNull()
             try { channel.disconnect() } catch (_: Throwable) {}
             // For a jumped session, tear down target + jump together; otherwise just this session.
             if (jumped != null) jumped.disconnect() else try { session.disconnect() } catch (_: Throwable) {}

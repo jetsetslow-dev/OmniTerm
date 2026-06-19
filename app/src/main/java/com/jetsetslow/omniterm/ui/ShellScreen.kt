@@ -25,6 +25,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.window.Dialog
@@ -53,6 +54,7 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -80,13 +82,14 @@ import kotlin.math.ceil
 @Composable
 private fun SessionPicker(viewModel: AppViewModel) {
     val sessions = viewModel.activeSessions
+    val restorableSessions = viewModel.restorablePersistentSessions
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         Text("Active Sessions", color = OmniColors.textPrimary, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.display, fontSize = 20.sp)
         Spacer(Modifier.height(4.dp))
         Text("Tap a session to resume, or start a new one.", color = OmniColors.textSecondary, fontSize = 12.sp)
         Spacer(Modifier.height(12.dp))
 
-        if (sessions.isEmpty()) {
+        if (sessions.isEmpty() && restorableSessions.isEmpty()) {
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
                 Text("No active sessions.", color = OmniColors.textMuted)
             }
@@ -95,22 +98,75 @@ private fun SessionPicker(viewModel: AppViewModel) {
                 items(sessions) { s ->
                     OmniCard(
                         modifier = Modifier.fillMaxWidth().clickable {
-                            if (s.isConnected) viewModel.attachSession(s.id)
-                            else viewModel.cleanupSession(s)
+                            // Connected → resume. Reconnecting → still resume (watch it heal in place).
+                            // Dropped → resume so the user sees the kept scrollback + Reconnect button.
+                            if (s.isConnected || s.reconnecting) viewModel.attachSession(s.id)
+                            else viewModel.attachSession(s.id)
                         },
-                        leftAccent = if (s.isConnected) OmniColors.hostColor(s.serverName) else Color.Gray
+                        leftAccent = when {
+                            s.isConnected -> OmniColors.hostColor(s.serverName)
+                            s.reconnecting -> OmniColors.amber
+                            else -> Color.Gray
+                        }
                     ) {
                         Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(s.serverName, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
                                 Text(
-                                    if (s.isConnected) "Connected" else "Disconnected${s.disconnectError?.let { " · $it" } ?: ""}",
+                                    when {
+                                        s.isConnected -> "Connected"
+                                        s.reconnecting -> "Reconnecting…"
+                                        else -> "Disconnected${s.disconnectError?.let { " · $it" } ?: ""}"
+                                    },
                                     fontSize = 12.sp,
-                                    color = if (s.isConnected) OmniColors.green else Color.Gray
+                                    color = when {
+                                        s.isConnected -> OmniColors.green
+                                        s.reconnecting -> OmniColors.amber
+                                        else -> Color.Gray
+                                    }
                                 )
+                            }
+                            // Manual reconnect for a dropped session whose auto-retry gave up.
+                            if (!s.isConnected && !s.reconnecting) {
+                                IconButton(onClick = { viewModel.retrySession(s.id) }) {
+                                    Icon(Icons.Filled.Refresh, contentDescription = "Reconnect", tint = OmniColors.cyan)
+                                }
                             }
                             IconButton(onClick = { viewModel.requestDisconnectSession(s.id) }) {
                                 Icon(Icons.Filled.Close, null, tint = OmniColors.red)
+                            }
+                        }
+                    }
+                }
+                if (restorableSessions.isNotEmpty()) {
+                    item {
+                        Text(
+                            "Saved persistent sessions",
+                            color = OmniColors.textSecondary,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = if (sessions.isEmpty()) 0.dp else 8.dp)
+                        )
+                    }
+                    items(restorableSessions, key = { it.tmuxName }) { s ->
+                        OmniCard(
+                            modifier = Modifier.fillMaxWidth().clickable {
+                                viewModel.resumePersistentSession(s.tmuxName)
+                            },
+                            leftAccent = OmniColors.amber
+                        ) {
+                            Row(
+                                Modifier.padding(12.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(s.serverName, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
+                                    Text("Tap to reattach tmux session", fontSize = 12.sp, color = OmniColors.amber)
+                                }
+                                IconButton(onClick = { viewModel.resumePersistentSession(s.tmuxName) }) {
+                                    Icon(Icons.Filled.Refresh, contentDescription = "Resume", tint = OmniColors.cyan)
+                                }
                             }
                         }
                     }
@@ -177,7 +233,7 @@ fun ShellScreen(viewModel: AppViewModel) {
                         viewModel.isTerminalConnecting -> ConnectingView(viewModel.terminalConnectionPhase) { viewModel.cancelConnect() }
                         currentSession != null -> ActiveTerminal(viewModel, confirm)
                         else -> {
-                            if (viewModel.activeSessions.isNotEmpty()) {
+                            if (viewModel.activeSessions.isNotEmpty() || viewModel.restorablePersistentSessions.isNotEmpty()) {
                                 SessionPicker(viewModel)
                             } else {
                                 ConnectPrompt(srv, viewModel)
@@ -500,67 +556,37 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
         }
 
         // Invisible input sink: captures soft-keyboard text + hardware special keys.
-        var inputField by remember { mutableStateOf(TextFieldValue("")) }
+        var inputField by remember { mutableStateOf(TextFieldValue(" ", selection = TextRange(1))) }
         BasicTextField(
             value = inputField,
             onValueChange = { tfv ->
-                val oldText = inputField.text
                 val newText = tfv.text
-                
-                if (newText != oldText) {
-                    if (newText.length > oldText.length && newText.startsWith(oldText)) {
-                        val added = newText.substring(oldText.length)
-                        if (added.length > 100) {
-                            // Large paste — confirm before sending
-                            pendingLargePaste = added
-                            inputField = TextFieldValue("")
-                            return@BasicTextField
-                        }
-                        if (added.length > 1) {
-                            viewModel.pasteText(added)
-                        } else {
-                            for (ch in added) {
-                                if (ch == '\n' || ch == '\r') viewModel.sendKey(TermKey.ENTER)
-                                else viewModel.typeText(ch.toString())
-                            }
-                        }
-                    } else if (oldText.length > newText.length && oldText.startsWith(newText)) {
-                        val removed = oldText.length - newText.length
-                        repeat(removed) { viewModel.sendKey(TermKey.BACKSPACE) }
+                if (newText.isEmpty()) {
+                    // Backspace deleted the dummy space
+                    viewModel.sendKey(TermKey.BACKSPACE)
+                } else if (newText.length > 1) {
+                    val added = newText.substring(1)
+                    if (added.length > 100) {
+                        pendingLargePaste = added
+                    } else if (added.length > 1) {
+                        viewModel.pasteText(added)
                     } else {
-                        // Complex replacement (e.g., auto-correct or paste)
-                        var common = 0
-                        while (common < oldText.length && common < newText.length && oldText[common] == newText[common]) {
-                            common++
-                        }
-                        val removed = oldText.length - common
-                        val added = newText.substring(common)
-                        if (added.length > 100) {
-                            // Large paste — confirm before sending
-                            repeat(removed) { viewModel.sendKey(TermKey.BACKSPACE) }
-                            pendingLargePaste = added
-                            inputField = TextFieldValue("")
-                            return@BasicTextField
-                        }
-                        repeat(removed) { viewModel.sendKey(TermKey.BACKSPACE) }
-                        if (added.length > 1) {
-                            viewModel.pasteText(added)
-                        } else {
-                            for (ch in added) {
-                                if (ch == '\n' || ch == '\r') viewModel.sendKey(TermKey.ENTER)
-                                else viewModel.typeText(ch.toString())
-                            }
+                        for (ch in added) {
+                            if (ch == '\n' || ch == '\r') viewModel.sendKey(TermKey.ENTER)
+                            else viewModel.typeText(ch.toString())
                         }
                     }
+                } else if (newText != " ") {
+                    // Replaced the dummy space (e.g. selection overwritten)
+                    viewModel.sendKey(TermKey.BACKSPACE)
+                    if (newText == "\n" || newText == "\r") viewModel.sendKey(TermKey.ENTER)
+                    else viewModel.typeText(newText)
                 }
 
-                // Periodically clear the field to prevent it from growing indefinitely,
-                // but do it safely without breaking composition state continuously.
-                if (newText.length > 500) {
-                    inputField = TextFieldValue("")
-                } else {
-                    inputField = tfv
-                }
+                // Always reset to a single space with cursor at the end.
+                // This prevents the field from growing, forces keyboard to stay active,
+                // and prevents local editing (like cursor movement) from sending massive backspace storms.
+                inputField = TextFieldValue(" ", selection = TextRange(1))
             },
             cursorBrush = SolidColor(Color.Transparent),
             textStyle = TerminalTextStyle.copy(color = Color.Transparent),
