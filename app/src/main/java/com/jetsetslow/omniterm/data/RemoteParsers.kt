@@ -91,6 +91,11 @@ object RemoteCommands {
             "exec tmux attach-session -t $safe\n"
     }
 
+    fun tmuxHasSessionCommand(name: String): String {
+        val safe = name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
+        return "tmux has-session -t $safe >/dev/null 2>&1 && echo yes || echo no"
+    }
+
     fun tmuxKillCommand(name: String): String {
         val safe = name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
         return "tmux kill-session -t $safe 2>/dev/null || true"

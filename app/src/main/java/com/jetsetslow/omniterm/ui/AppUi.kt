@@ -644,7 +644,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                     keepScreenOn = viewModel.isKeepScreenOnEnabled,
                     onHome = { viewModel.navigateTo(Screen.Servers) },
                     onAlerts = { viewModel.navigateTo(Screen.Alerts) },
-                    onToggleKeepScreenOn = { viewModel.saveKeepScreenOnToggle(!viewModel.isKeepScreenOnEnabled) },
+                    onToggleKeepScreenOn = { viewModel.requestKeepScreenOnToggle() },
                 )
                 if (showMonetizationUi && !licenseState.unlocked) {
                     FreePlanBanner(licenseState, licenseController)
@@ -709,6 +709,30 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
             SudoAuthDialog(viewModel)
 
             // Disconnect dialog safety check
+            if (viewModel.showKeepScreenOnBatteryWarning) {
+                AlertDialog(
+                    onDismissRequest = { viewModel.showKeepScreenOnBatteryWarning = false },
+                    title = { Text("Keep Screen On?") },
+                    text = { Text("Keeping the screen on prevents display sleep and will increase battery consumption.") },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                viewModel.saveKeepScreenOnToggle(true)
+                                viewModel.showKeepScreenOnBatteryWarning = false
+                            }
+                        ) {
+                            Text("Enable")
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { viewModel.showKeepScreenOnBatteryWarning = false }) {
+                            Text("Cancel")
+                        }
+                    },
+                )
+            }
+
+            // Disconnect dialog safety check
             if (viewModel.showDisconnectTerminalDialog) {
                 val session = viewModel.currentSession
                 AlertDialog(
@@ -717,7 +741,12 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                         viewModel.pendingNavigationScreen = null
                     },
                     title = { Text("Active SSH session") },
-                    text = { Text("Choose what to do with the active SSH terminal session.") },
+                    text = {
+                        Text(
+                            "Choose what to do with the active SSH terminal session.\n\n" +
+                                "Sending sessions to the background keeps OmniTerm active and may increase battery consumption."
+                        )
+                    },
                     confirmButton = {
                         TextButton(
                             onClick = {

@@ -58,9 +58,10 @@ private const val SFTP_SEARCH_MAX_HITS = 200
 private const val APP_RELOCK_GRACE_MS = 30_000L
 
 // Auto-reconnect backoff for dropped interactive sessions: 1s, 2s, 4s… capped at 30s, up to N tries.
+// Slow Wi-Fi -> mobile handoffs can take well over a minute before the OS has a usable route again.
 private const val RECONNECT_BASE_DELAY_MS = 1_000L
 private const val RECONNECT_MAX_DELAY_MS = 30_000L
-private const val RECONNECT_MAX_ATTEMPTS = 6
+private const val RECONNECT_MAX_ATTEMPTS = 12
 
 /**
  * Decide whether a closed shell session was a CLEAN exit (the remote shell ran `exit`, so the
@@ -283,6 +284,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     // NAVIGATION CONFIRMATION DIALOG (Tapping away from Terminal while active)
     var showDisconnectTerminalDialog by mutableStateOf(false)
+    var showKeepScreenOnBatteryWarning by mutableStateOf(false)
     var pendingDisconnectSessionId by mutableStateOf<String?>(null)
     var pendingDisconnectAllSessions by mutableStateOf(false)
     var pendingNavigationScreen by mutableStateOf<Screen?>(null)
@@ -2514,6 +2516,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 shellSession.lastCols = termCols
                 shellSession.lastRows = termRows
                 shellSession.persistent = usePersistence
+                if (usePersistence) {
+                    shellSession.tmuxName = nextTmuxSessionNameForServer(srv.id)
+                }
 
                 // Persistent session: enter a tmux session unique to this shell so a reconnect
                 // re-attaches the SAME session (and any running command keeps going server-side),
@@ -2521,10 +2526,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 if (usePersistence) {
                     emulator.setCaptureAlternateScreenScrollback(true)
                     session.write(RemoteCommands.tmuxAttachCommand(shellSession.tmuxName, terminalScrollbackLimit).toByteArray())
-                    // Remember it so it can be re-offered after an app restart (runtime state only).
-                    repository.upsertPersistentSession(
-                        PersistentSessionEntity(shellSession.tmuxName, srv.id, srv.name)
-                    )
+                    rememberRestorablePersistentSession(shellSession)
                 }
 
                 activeSessions.add(shellSession)
@@ -2568,6 +2570,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         terminalConnectJob = viewModelScope.launch {
             try {
                 val creds = buildCredentials(srv)
+                when (remoteTmuxSessionExists(creds, tmuxName)) {
+                    false -> {
+                        forgetPersistentSession(tmuxName)
+                        isTerminalConnecting = false
+                        terminalConnectError = "Server disconnected; tmux session is no longer running."
+                        return@launch
+                    }
+                    null -> {
+                        isTerminalConnecting = false
+                        terminalConnectError = "Unable to reach server; tmux session may still be running."
+                        return@launch
+                    }
+                    true -> Unit
+                }
                 val emulator = TerminalEmulator(termCols, termRows, scrollbackLimit = terminalScrollbackLimit)
                 val session = sshTransport.openShell(creds, termCols, termRows) { phase ->
                     viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) { terminalConnectionPhase = phase }
@@ -2585,7 +2601,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 activeSessions.add(shellSession)
                 withContext(kotlinx.coroutines.Dispatchers.Main) {
                     currentSessionId = shellSession.id
-                    restorablePersistentSessions = restorablePersistentSessions.filter { it.tmuxName != tmuxName }
                 }
                 isTerminalConnecting = false
                 noteSuccessfulSshSession()
@@ -2701,22 +2716,54 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 shellSession.isConnected = false
                 TerminalSessionManager.updateKeepaliveCount()
                 if (shouldReconnect) {
+                    rememberRestorablePersistentSession(shellSession)
                     reconnectSession(shellSession)
                 } else if (shouldTearDown) {
                     if (shellSession.persistent) {
-                        viewModelScope.launch {
-                            repository.deletePersistentSession(shellSession.tmuxName)
-                            restorablePersistentSessions = restorablePersistentSessions.filter {
-                                it.tmuxName != shellSession.tmuxName
-                            }
-                        }
+                        forgetPersistentSession(shellSession.tmuxName)
                     }
                     TerminalSessionManager.cleanupSession(shellSession)
                 } else {
                     shellSession.disconnectError = "Connection lost."
+                    rememberRestorablePersistentSession(shellSession)
                     TerminalSessionManager.startKeepAliveService()
                 }
             }
+        }
+    }
+
+    private fun rememberRestorablePersistentSession(shellSession: ShellSession) {
+        if (!shellSession.persistent) return
+        if (restorablePersistentSessions.none { it.tmuxName == shellSession.tmuxName }) {
+            restorablePersistentSessions = restorablePersistentSessions +
+                PersistentSessionEntity(shellSession.tmuxName, shellSession.serverId, shellSession.serverName)
+        }
+        viewModelScope.launch {
+            repository.upsertPersistentSession(
+                PersistentSessionEntity(shellSession.tmuxName, shellSession.serverId, shellSession.serverName)
+            )
+        }
+    }
+
+    private fun nextTmuxSessionNameForServer(serverId: Int): String {
+        val existingNames = buildSet {
+            activeSessions.filter { it.serverId == serverId }.forEach { add(it.tmuxName) }
+            restorablePersistentSessions.filter { it.serverId == serverId }.forEach { add(it.tmuxName) }
+        }
+        return generateUniqueTmuxSessionName(existingNames)
+    }
+
+    private fun forgetPersistentSession(tmuxName: String) {
+        restorablePersistentSessions = restorablePersistentSessions.filter { it.tmuxName != tmuxName }
+        viewModelScope.launch { repository.deletePersistentSession(tmuxName) }
+    }
+
+    private suspend fun remoteTmuxSessionExists(creds: SshCredentials, tmuxName: String): Boolean? {
+        val out = sshTransport.exec(creds, RemoteCommands.tmuxHasSessionCommand(tmuxName)).trim()
+        return when {
+            out.endsWith("yes") -> true
+            out.endsWith("no") -> false
+            else -> null
         }
     }
 
@@ -2745,6 +2792,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 } ?: continue
 
                 if (shellSession.userClosed) { runCatching { newSession.close() }; return@launch }
+                if (shellSession.persistent) {
+                    val tmuxAvailable = when (remoteTmuxSessionExists(creds, shellSession.tmuxName)) {
+                        false -> {
+                            runCatching { newSession.close() }
+                            withContext(Dispatchers.Main) {
+                                shellSession.reconnecting = false
+                                shellSession.disconnectError = "Server disconnected; tmux session is no longer running."
+                                forgetPersistentSession(shellSession.tmuxName)
+                                TerminalSessionManager.cleanupSession(shellSession)
+                                terminalConnectError = "Server disconnected; tmux session is no longer running."
+                            }
+                            return@launch
+                        }
+                        null -> {
+                            runCatching { newSession.close() }
+                            false
+                        }
+                        true -> true
+                    }
+                    if (!tmuxAvailable) continue
+                }
                 shellSession.session = newSession
                 if (shellSession.persistent) {
                     synchronized(shellSession.emulator) {
@@ -2772,7 +2840,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             withContext(Dispatchers.Main) {
                 shellSession.reconnecting = false
                 shellSession.disconnectError = "Connection lost — reconnect failed."
-                TerminalSessionManager.startKeepAliveService()
+                rememberRestorablePersistentSession(shellSession)
+                if (shellSession.persistent) {
+                    TerminalSessionManager.cleanupSession(shellSession)
+                    if (currentSessionId == shellSession.id) currentSessionId = null
+                } else {
+                    TerminalSessionManager.startKeepAliveService()
+                }
             }
         }
     }
@@ -2976,6 +3050,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendToBackground() {
+        val s = currentSession
+        if (s?.persistent == true) {
+            rememberRestorablePersistentSession(s)
+            TerminalSessionManager.cleanupSession(s)
+            if (currentSessionId == s.id) currentSessionId = null
+            return
+        }
         currentSessionId = null
         // Stay on Shell — ShellScreen shows SessionPicker when currentSession==null && activeSessions.isNotEmpty()
         // Always start the service so per-session notifications with Disconnect buttons appear
@@ -3027,10 +3108,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     runCatching { sshTransport.exec(c, RemoteCommands.tmuxKillCommand(s.tmuxName)) }
                 }
             }
-            viewModelScope.launch {
-                repository.deletePersistentSession(s.tmuxName)
-                restorablePersistentSessions = restorablePersistentSessions.filter { it.tmuxName != s.tmuxName }
-            }
+            forgetPersistentSession(s.tmuxName)
         }
         // cleanupSession closes the socket off the main thread (JSch disconnect can block on network
         // I/O — on a dead/changed network a synchronous close would freeze the UI, which is exactly
@@ -3050,10 +3128,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         s.userClosed = true
         s.reconnectJob?.cancel()
-        if (restorablePersistentSessions.none { it.tmuxName == s.tmuxName }) {
-            restorablePersistentSessions = restorablePersistentSessions +
-                PersistentSessionEntity(s.tmuxName, s.serverId, s.serverName)
-        }
+        rememberRestorablePersistentSession(s)
         // cleanupSession closes the socket off the main thread (see disconnectSession).
         cleanupSession(s)
         if (currentSessionId == sessionId) currentSessionId = null
@@ -4528,6 +4603,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             repository.insertSetting("keep_screen_on", enabled.toString())
             isKeepScreenOnEnabled = enabled
+        }
+    }
+
+    fun requestKeepScreenOnToggle() {
+        if (isKeepScreenOnEnabled) {
+            saveKeepScreenOnToggle(false)
+        } else {
+            showKeepScreenOnBatteryWarning = true
         }
     }
 

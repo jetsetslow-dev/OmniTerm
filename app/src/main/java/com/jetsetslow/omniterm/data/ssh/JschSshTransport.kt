@@ -349,6 +349,37 @@ class JschSshTransport : SshTransport {
 }
 
 /**
+ * Classify how an interactive shell channel ended.
+ *
+ * A real shell/tmux exit should tear the app session down. A transport loss should keep the app
+ * session around and reconnect, especially for tmux-backed sessions where the remote process keeps
+ * running. JSch can report channel EOF for both cases, so EOF alone is not strong enough: during a
+ * network handoff the socket/session can already be gone and no exit-status will ever arrive.
+ */
+internal fun classifyTerminalClose(
+    remoteEof: Boolean,
+    channelIsEof: Boolean,
+    sessionConnected: Boolean,
+    exitStatus: Int?,
+): TerminalCloseClassification {
+    val hasRealExitStatus = exitStatus != null && exitStatus >= 0
+    val cleanRemoteExit = remoteEof && channelIsEof && (hasRealExitStatus || sessionConnected)
+    val normalizedExitStatus = when {
+        cleanRemoteExit && !hasRealExitStatus -> 0
+        else -> exitStatus
+    }
+    return TerminalCloseClassification(
+        remoteExited = cleanRemoteExit,
+        exitStatus = normalizedExitStatus,
+    )
+}
+
+internal data class TerminalCloseClassification(
+    val remoteExited: Boolean,
+    val exitStatus: Int?,
+)
+
+/**
  * One persistent PTY shell. A dedicated daemon thread does the blocking reads (JSch streams
  * are blocking) and funnels bytes into a bounded coroutine [Channel]. If the terminal emulator
  * falls behind during very large output, the reader applies backpressure instead of growing memory
@@ -435,27 +466,25 @@ private class JschTerminalSession(
             //     cleanly EOF'd. We must NOT normalise this to 0, or a drop gets mistaken for `exit`
             //     and the session is killed instead of reconnected.
             var status = runCatching { channel.exitStatus }.getOrNull()
+            var channelIsEof = runCatching { channel.isEOF }.getOrDefault(false)
             if (remoteEof) {
                 var waited = 0
-                while (status == -1 && runCatching { channel.isEOF }.getOrDefault(false) &&
-                    waited < EXIT_STATUS_SETTLE_MS
+                while (status == -1 && channelIsEof && waited < EXIT_STATUS_SETTLE_MS
                 ) {
                     try { Thread.sleep(EXIT_STATUS_POLL_MS.toLong()) } catch (_: InterruptedException) { break }
                     waited += EXIT_STATUS_POLL_MS
                     status = runCatching { channel.exitStatus }.getOrNull()
+                    channelIsEof = runCatching { channel.isEOF }.getOrDefault(false)
                 }
-                // Only a genuine remote EOF with no in-flight status (the shell closed its stream but
-                // the server didn't send an explicit exit-status — rare but valid for a clean `exit`)
-                // is normalised to 0. A still-connected channel that never EOF'd is a transport drop,
-                // so we leave the status as -1/null and let the caller reconnect.
-                val genuineEof = runCatching { channel.isEOF }.getOrDefault(false)
-                if (genuineEof && (status == null || status == -1)) status = 0
             }
-            // The remote deliberately ended the channel ONLY if JSch saw a real channel-EOF. A socket
-            // death (WiFi off) never sets this, so it cleanly separates "user exited the shell/tmux"
-            // (tear down) from "connection dropped" (reconnect) regardless of the exit-status number.
-            _remoteExited.value = runCatching { channel.isEOF }.getOrDefault(false)
-            _exitStatus.value = status
+            val close = classifyTerminalClose(
+                remoteEof = remoteEof,
+                channelIsEof = channelIsEof,
+                sessionConnected = runCatching { session.isConnected }.getOrDefault(false),
+                exitStatus = status,
+            )
+            _remoteExited.value = close.remoteExited
+            _exitStatus.value = close.exitStatus
             try { channel.disconnect() } catch (_: Throwable) {}
             // For a jumped session, tear down target + jump together; otherwise just this session.
             if (jumped != null) jumped.disconnect() else try { session.disconnect() } catch (_: Throwable) {}

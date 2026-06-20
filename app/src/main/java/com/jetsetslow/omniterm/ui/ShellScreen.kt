@@ -105,10 +105,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                 items(sessions) { s ->
                     OmniCard(
                         modifier = Modifier.fillMaxWidth().clickable {
-                            // Connected → resume. Reconnecting → still resume (watch it heal in place).
-                            // Dropped → resume so the user sees the kept scrollback + Reconnect button.
-                            if (s.isConnected || s.reconnecting) viewModel.attachSession(s.id)
-                            else viewModel.attachSession(s.id)
+                            viewModel.attachSession(s.id)
                         },
                         leftAccent = when {
                             s.isConnected -> OmniColors.hostColor(s.serverName)
@@ -119,6 +116,14 @@ private fun SessionPicker(viewModel: AppViewModel) {
                         Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
                                 Text(s.serverName, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
+                                if (s.persistent) {
+                                    Text(
+                                        displayTmuxSessionName(s.tmuxName),
+                                        fontSize = 12.sp,
+                                        color = OmniColors.textSecondary,
+                                        fontFamily = OmniFonts.mono,
+                                    )
+                                }
                                 Text(
                                     when {
                                         s.isConnected -> "Connected"
@@ -169,6 +174,12 @@ private fun SessionPicker(viewModel: AppViewModel) {
                             ) {
                                 Column(Modifier.weight(1f)) {
                                     Text(s.serverName, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
+                                    Text(
+                                        displayTmuxSessionName(s.tmuxName),
+                                        fontSize = 12.sp,
+                                        color = OmniColors.textSecondary,
+                                        fontFamily = OmniFonts.mono,
+                                    )
                                     Text("Tap to reattach tmux session", fontSize = 12.sp, color = OmniColors.amber)
                                 }
                                 IconButton(onClick = { viewModel.resumePersistentSession(s.tmuxName) }) {
@@ -258,12 +269,19 @@ fun ShellScreen(viewModel: AppViewModel) {
                     onServerChange = {
                         val newServerId = viewModel.selectedServerId
                         if (currentSession != null && currentSession.serverId != newServerId) {
-                            viewModel.sendToBackground()
-                            val existingSession = viewModel.activeSessions.find { it.serverId == newServerId && it.isConnected }
-                            if (existingSession != null) {
-                                viewModel.attachSession(existingSession.id)
-                            } else {
-                                viewModel.connectTerminal()
+                            confirm.ask(
+                                title = "Send Session to Background?",
+                                message = "OmniTerm will keep the SSH session active while you switch hosts. This may increase battery consumption.",
+                                confirmLabel = "Send to background",
+                                destructive = false,
+                            ) {
+                                viewModel.sendToBackground()
+                                val existingSession = viewModel.activeSessions.find { it.serverId == newServerId && it.isConnected }
+                                if (existingSession != null) {
+                                    viewModel.attachSession(existingSession.id)
+                                } else {
+                                    viewModel.connectTerminal()
+                                }
                             }
                         }
                     },
@@ -275,7 +293,14 @@ fun ShellScreen(viewModel: AppViewModel) {
                             viewModel.connectTerminal()
                         }
                         TerminalHeaderAction("BG", OmniColors.cyan, enabled = connected) {
-                            viewModel.sendToBackground()
+                            confirm.ask(
+                                title = "Send Session to Background?",
+                                message = "OmniTerm will keep the SSH session active in the background. This may increase battery consumption.",
+                                confirmLabel = "Send to background",
+                                destructive = false,
+                            ) {
+                                viewModel.sendToBackground()
+                            }
                         }
                         // A dropped session that isn't already retrying gets a manual reconnect here,
                         // so a stuck/exhausted auto-reconnect can be re-kicked without leaving the
@@ -469,7 +494,8 @@ private fun ConnectingView(phase: String, onCancel: () -> Unit) {
 
 @Composable
 private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) {
-    val sessionId = viewModel.currentSession?.id
+    val currentSession = viewModel.currentSession
+    val sessionId = currentSession?.id
     val snapshot = viewModel.terminalScreen
     val palette = terminalPalette(viewModel.terminalTheme)
     val focusRequester = remember { FocusRequester() }
@@ -599,6 +625,49 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                     colors = ButtonDefaults.textButtonColors(contentColor = palette.cursor),
                 ) {
                     Text("BOTTOM", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            if (currentSession?.reconnecting == true || currentSession?.disconnectError != null) {
+                val reconnecting = currentSession.reconnecting
+                val message = if (reconnecting) {
+                    if (currentSession.persistent) {
+                        "Connection lost. Reconnecting to tmux session…"
+                    } else {
+                        "Connection lost. Reconnecting…"
+                    }
+                } else {
+                    currentSession.disconnectError ?: "Server disconnected."
+                }
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.TopCenter)
+                        .padding(top = 10.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(if (reconnecting) OmniColors.amberDim else OmniColors.redDim)
+                        .border(1.dp, if (reconnecting) OmniColors.amber else OmniColors.red, RoundedCornerShape(8.dp))
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    if (reconnecting) {
+                        CircularProgressIndicator(
+                            color = OmniColors.amber,
+                            strokeWidth = 2.dp,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    Text(
+                        message,
+                        color = if (reconnecting) OmniColors.amber else OmniColors.red,
+                        fontSize = 12.sp,
+                        fontFamily = OmniFonts.mono,
+                    )
+                    if (!reconnecting && !currentSession.isConnected) {
+                        TextButton(onClick = { viewModel.retrySession(currentSession.id) }) {
+                            Text("Retry", color = OmniColors.cyan, fontSize = 11.sp)
+                        }
+                    }
                 }
             }
         }
