@@ -371,18 +371,24 @@ private class JschTerminalSession(
     override val closed: StateFlow<Boolean> = _closed.asStateFlow()
     override val exitStatus: StateFlow<Int?> = _exitStatus.asStateFlow()
 
+    // True when the reader loop ended because the remote closed the stream gracefully (EOF), as
+    // opposed to us closing the channel from this side or the connection dropping mid-read. A
+    // graceful EOF is what `exit` on the remote shell produces, so it must be treated as a clean
+    // exit even if JSch hasn't surfaced the numeric exit-status message yet (it often lags the EOF).
+    @Volatile private var remoteEof = false
+
     private val reader = thread(start = true, isDaemon = true, name = "ssh-shell-reader") {
         val buf = ByteArray(8192)
         try {
             while (true) {
                 val n = shellIn.read(buf)
-                if (n < 0) break
+                if (n < 0) { remoteEof = true; break }
                 // trySendBlocking parks this thread when the buffer is full (backpressure — bytes
                 // must not be dropped or the emulator's escape-sequence state corrupts) without
                 // spinning up a runBlocking event loop per chunk, and fails out cleanly the moment
                 // close() closes the channel instead of blocking forever.
                 if (n > 0 && outChannel.trySendBlocking(buf.copyOf(n)).isFailure) break
-                if (channel.isClosed && shellIn.available() == 0) break
+                if (channel.isClosed && shellIn.available() == 0) { remoteEof = true; break }
             }
         } catch (_: Throwable) {
             // stream closed / connection dropped — fall through to teardown
@@ -416,7 +422,23 @@ private class JschTerminalSession(
 
     override fun close() {
         if (_closed.compareAndSet(expect = false, update = true)) {
-            _exitStatus.value = runCatching { channel.exitStatus }.getOrNull()
+            // JSch delivers the remote `exit-status` in a separate channel message that frequently
+            // arrives a few ms AFTER the data-stream EOF. Read immediately and it's often still -1,
+            // which a caller would misread as "not a clean exit" and auto-reconnect. So give it a
+            // brief window to settle when the remote closed gracefully.
+            var status = runCatching { channel.exitStatus }.getOrNull()
+            if (remoteEof) {
+                var waited = 0
+                while (status == -1 && waited < EXIT_STATUS_SETTLE_MS) {
+                    try { Thread.sleep(EXIT_STATUS_POLL_MS.toLong()) } catch (_: InterruptedException) { break }
+                    waited += EXIT_STATUS_POLL_MS
+                    status = runCatching { channel.exitStatus }.getOrNull()
+                }
+                // A graceful remote EOF IS a clean exit. If JSch never surfaced a real code (still
+                // -1, or null), normalise to 0 so the session tears down instead of reconnecting.
+                if (status == null || status == -1) status = 0
+            }
+            _exitStatus.value = status
             try { channel.disconnect() } catch (_: Throwable) {}
             // For a jumped session, tear down target + jump together; otherwise just this session.
             if (jumped != null) jumped.disconnect() else try { session.disconnect() } catch (_: Throwable) {}
@@ -426,5 +448,8 @@ private class JschTerminalSession(
 
     private companion object {
         const val OUTPUT_BUFFER_CHUNKS = 64
+        // How long to wait for JSch's lagging exit-status message after a graceful remote EOF.
+        const val EXIT_STATUS_SETTLE_MS = 250
+        const val EXIT_STATUS_POLL_MS = 10
     }
 }
