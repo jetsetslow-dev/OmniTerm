@@ -124,15 +124,22 @@ object CrashLog {
      * the destination — nothing is sent automatically. Exposed only through the app's FileProvider.
      */
     fun shareReport(context: Context, report: String) {
-        val dir = File(context.cacheDir, "crash-reports").apply { mkdirs() }
-        val file = File(dir, "omniterm-crash-report.txt")
-        file.writeText("OmniTerm crash report\n\n$report")
-        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val full = "OmniTerm crash report\n\n$report"
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
-            putExtra(Intent.EXTRA_STREAM, uri)
             putExtra(Intent.EXTRA_SUBJECT, "OmniTerm crash report")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            // Always include the FULL report as text: many share targets show/keep EXTRA_TEXT and
+            // drop the attached file, so without this they'd receive an empty body. The file
+            // attachment (below) is added best-effort for targets that prefer attachments.
+            putExtra(Intent.EXTRA_TEXT, full)
+        }
+        runCatching {
+            val dir = File(context.cacheDir, "crash-reports").apply { mkdirs() }
+            val file = File(dir, "omniterm-crash-report.txt")
+            file.writeText(full)
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            send.putExtra(Intent.EXTRA_STREAM, uri)
+            send.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(
             Intent.createChooser(send, "Share crash report").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)

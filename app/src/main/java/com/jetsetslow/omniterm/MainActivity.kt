@@ -277,21 +277,37 @@ class MainActivity : AppCompatActivity() {
    * the app's own FileProvider (see file_paths.xml).
    */
   private fun shareFullReport(report: String) {
+    // The full report (env header + thread + stack trace). `report` already begins with
+    // crashEnvironment() (see installCrashRecorder), so don't prepend it again.
+    val full = "OmniTerm crash report\n\n$report"
     try {
       val dir = java.io.File(cacheDir, "crash-reports").apply { mkdirs() }
       val file = java.io.File(dir, "omniterm-crash-report.txt")
-      file.writeText("OmniTerm crash report\n${crashEnvironment()}\n\n$report")
+      file.writeText(full)
       val uri = androidx.core.content.FileProvider.getUriForFile(this, "${packageName}.fileprovider", file)
       val send = Intent(Intent.ACTION_SEND).apply {
         type = "text/plain"
         putExtra(Intent.EXTRA_STREAM, uri)
         putExtra(Intent.EXTRA_SUBJECT, "OmniTerm crash report")
-        putExtra(Intent.EXTRA_TEXT, crashEnvironment())
+        // Put the FULL report in EXTRA_TEXT, not just the env header: many targets (Gmail,
+        // messaging, notes) show/keep EXTRA_TEXT and ignore the attached file, so a 2-line env was
+        // all that survived. The file attachment stays for targets that prefer attachments.
+        putExtra(Intent.EXTRA_TEXT, full)
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
       }
       startActivity(Intent.createChooser(send, "Share crash report"))
     } catch (e: Exception) {
-      android.widget.Toast.makeText(this, "Couldn't prepare the report file: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+      // Even if the file/provider failed, still let the user share the text itself.
+      runCatching {
+        val send = Intent(Intent.ACTION_SEND).apply {
+          type = "text/plain"
+          putExtra(Intent.EXTRA_SUBJECT, "OmniTerm crash report")
+          putExtra(Intent.EXTRA_TEXT, full)
+        }
+        startActivity(Intent.createChooser(send, "Share crash report"))
+      }.onFailure {
+        android.widget.Toast.makeText(this, "Couldn't share the report: ${e.message}", android.widget.Toast.LENGTH_LONG).show()
+      }
     }
   }
 
