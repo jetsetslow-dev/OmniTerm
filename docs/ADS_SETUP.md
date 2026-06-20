@@ -217,8 +217,12 @@ workflow handles this with **GitHub Environments**:
 
 **One-time GitHub setup** (Settings → Environments):
 1. Create environments **`testing`** and **`production`**.
-2. In **`testing`** → add secret/variable `ADMOB_TEST_DEVICE_IDS` = your release
-   build's hashed device ID(s), comma-separated.
+2. In **`testing`** → add a **variable** (not a secret — the ID isn't sensitive)
+   `ADMOB_TEST_DEVICE_IDS` = your release build's **hashed** device ID(s),
+   comma-separated. The workflow reads `vars.ADMOB_TEST_DEVICE_IDS`. The hashed ID
+   is the uppercase-hex string the SDK logs — `adb logcat | grep setTestDeviceIds`
+   → `…Arrays.asList("33BE2250B43518CCDA7DE426D04EE231")` — NOT the raw
+   advertising-id UUID.
 3. In **`production`** → do NOT add it. (Optionally add a required-reviewer
    protection rule so production releases need approval.)
 4. `ADMOB_APP_ID` / `ADMOB_BANNER_UNIT_ID` can stay as repo-level secrets (same

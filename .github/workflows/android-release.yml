@@ -82,9 +82,10 @@ jobs:
       ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
       ADMOB_BANNER_UNIT_ID: ${{ secrets.ADMOB_BANNER_UNIT_ID }}
       # Comma-separated AdMob test-device IDs so a test build can serve test ads (a new real unit
-      # returns "no fill" for unregistered devices). Resolved from the selected ENVIRONMENT above:
-      # set in `testing`, unset in `production`. Empty here → real ads served to everyone.
-      ADMOB_TEST_DEVICE_IDS: ${{ secrets.ADMOB_TEST_DEVICE_IDS }}
+      # returns "no fill" for unregistered devices). An environment VARIABLE (not a secret — the ID
+      # isn't sensitive): set in the `testing` environment, unset in `production`. Resolved from the
+      # selected ENVIRONMENT above, so empty for production → real ads served to everyone.
+      ADMOB_TEST_DEVICE_IDS: ${{ vars.ADMOB_TEST_DEVICE_IDS }}
 
     steps:
       - name: Check out repository
