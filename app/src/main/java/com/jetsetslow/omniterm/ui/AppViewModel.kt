@@ -262,14 +262,14 @@ internal fun verifyStoredPin(stored: String?, pin: String): Boolean {
 }
 
 private val builtInFleetPresets: List<QuickScriptEntity> = listOf(
-    QuickScriptEntity(0, "CPU", "CPU/RAM", "uptime && free -h", "cyan", false, "Fleet", 0, availableForQuick = false, availableForFleet = true),
-    QuickScriptEntity(0, "DSK", "Disk", "df -h | head -6", "cyan", false, "Fleet", 1, availableForQuick = false, availableForFleet = true),
-    QuickScriptEntity(0, "PRC", "Processes", "ps aux | sort -k3 -nr | head -8", "cyan", false, "Fleet", 2, availableForQuick = false, availableForFleet = true),
-    QuickScriptEntity(0, "SVC", "Failed services", "systemctl --failed", "cyan", false, "Fleet", 3, availableForQuick = false, availableForFleet = true),
-    QuickScriptEntity(0, "LOG", "Syslog errors", "journalctl -p err -n 8", "cyan", false, "Fleet", 4, availableForQuick = false, availableForFleet = true),
+    QuickScriptEntity(0, "CPU", "CPU/RAM", "uptime 2>/dev/null || powershell -NoProfile -Command \"(Get-CimInstance Win32_OperatingSystem).LastBootUpTime\"; free -h 2>/dev/null || vm_stat 2>/dev/null || powershell -NoProfile -Command \"Get-CimInstance Win32_OperatingSystem | ForEach-Object { 'TotalMB=' + [int](\$_.TotalVisibleMemorySize/1024) + ' FreeMB=' + [int](\$_.FreePhysicalMemory/1024) }\"", "cyan", false, "Fleet", 0, availableForQuick = false, availableForFleet = true),
+    QuickScriptEntity(0, "DSK", "Disk", "df -h 2>/dev/null | head -6 || powershell -NoProfile -Command \"Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Select-Object DeviceID,Size,FreeSpace\"", "cyan", false, "Fleet", 1, availableForQuick = false, availableForFleet = true),
+    QuickScriptEntity(0, "PRC", "Processes", "ps aux 2>/dev/null | sort -k3 -nr | head -8 || ps -axo pid,user,pcpu,pmem,comm 2>/dev/null | sort -k3 -nr | head -8 || powershell -NoProfile -Command \"Get-Process | Sort-Object CPU -Descending | Select-Object -First 8 Id,ProcessName,CPU,WorkingSet\"", "cyan", false, "Fleet", 2, availableForQuick = false, availableForFleet = true),
+    QuickScriptEntity(0, "SVC", "Failed services", "systemctl --failed 2>/dev/null || rc-status -c 2>/dev/null || powershell -NoProfile -Command \"Get-Service | Where-Object Status -eq Stopped | Select-Object -First 12 Name,Status\"", "cyan", false, "Fleet", 3, availableForQuick = false, availableForFleet = true),
+    QuickScriptEntity(0, "LOG", "Syslog errors", "journalctl -p err -n 8 2>/dev/null || logread 2>/dev/null | grep -iE 'error|fail|critical' | tail -8 || grep -iE 'error|fail|critical' /var/log/syslog /var/log/messages 2>/dev/null | tail -8 || powershell -NoProfile -Command \"Get-WinEvent -FilterHashtable @{LogName='System'; Level=2} -MaxEvents 8 | Select-Object TimeCreated,ProviderName,Message\"", "cyan", false, "Fleet", 4, availableForQuick = false, availableForFleet = true),
     QuickScriptEntity(0, "CTR", "Containers", "docker ps --format \"table {{.Names}}\t{{.Status}}\" 2>/dev/null || podman ps --format \"table {{.Names}}\t{{.Status}}\"", "cyan", false, "Fleet", 5, availableForQuick = false, availableForFleet = true),
-    QuickScriptEntity(0, "NET", "Listening ports", "ss -tlnp | grep LISTEN", "cyan", false, "Fleet", 6, availableForQuick = false, availableForFleet = true),
-    QuickScriptEntity(0, "KRN", "Kernel", "uname -sr", "cyan", false, "Fleet", 7, availableForQuick = false, availableForFleet = true),
+    QuickScriptEntity(0, "NET", "Listening ports", "ss -tlnp 2>/dev/null | grep LISTEN || netstat -tlnp 2>/dev/null | grep LISTEN || netstat -an 2>/dev/null | grep LISTEN || powershell -NoProfile -Command \"Get-NetTCPConnection -State Listen | Select-Object -First 25 LocalAddress,LocalPort,OwningProcess\"", "cyan", false, "Fleet", 6, availableForQuick = false, availableForFleet = true),
+    QuickScriptEntity(0, "KRN", "Kernel", "uname -sr 2>/dev/null || powershell -NoProfile -Command \"[Environment]::OSVersion.VersionString\"", "cyan", false, "Fleet", 7, availableForQuick = false, availableForFleet = true),
 )
 
 class AppViewModel(application: Application) : AndroidViewModel(application) {
@@ -3420,7 +3420,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val srv = selectedServer ?: return
         withSudoAuth(srv) {
             runStreamingAction(
-                "systemctl $action $serviceName",
+                "service $action $serviceName",
                 RemoteCommands.serviceAction(serviceName, action, srv.sudoPassword),
                 stdin = RemoteCommands.sudoStdin(srv.sudoPassword),
             ) { loadServices() }

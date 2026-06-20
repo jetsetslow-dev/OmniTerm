@@ -25,7 +25,7 @@ object RemoteCommands {
     // Tab-separated, no-trunc so parsing is unambiguous.
     const val DOCKER_PS =
         "if $CR --version | grep -qi podman; then " +
-            "$CR ps -a --no-trunc --format '{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}\\t{{index .Labels \"com.docker.compose.project\"}}\\t{{index .Labels \"com.docker.compose.service\"}}\\t{{index .Labels \"com.docker.compose.project.working_dir\"}}\\t{{index .Labels \"com.docker.compose.project.config_files\"}}\\t{{.CreatedAt}}'; " +
+            "$CR ps -a --no-trunc --format '{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}\\t{{.Label \"com.docker.compose.project\"}}\\t{{.Label \"com.docker.compose.service\"}}\\t{{.Label \"com.docker.compose.project.working_dir\"}}\\t{{.Label \"com.docker.compose.project.config_files\"}}\\t{{.CreatedAt}}'; " +
         "else " +
             "$CR ps -a --no-trunc --format '{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}\\t{{.Label \"com.docker.compose.project\"}}\\t{{.Label \"com.docker.compose.service\"}}\\t{{.Label \"com.docker.compose.project.working_dir\"}}\\t{{.Label \"com.docker.compose.project.config_files\"}}\\t{{.CreatedAt}}'; " +
         "fi"
@@ -218,8 +218,20 @@ object RemoteCommands {
     fun sudoStdin(sudoPassword: String): String? =
         if (sudoPassword.isNotBlank()) sudoPassword + "\n" else null
 
-    fun serviceAction(name: String, action: String, sudoPassword: String = "") =
-        sudoWrap("systemctl $action ${shellQuote(name)}", sudoPassword)
+    fun serviceAction(name: String, action: String, sudoPassword: String = ""): String {
+        val quotedName = shellQuote(name)
+        val openRc = when (action) {
+            "start", "stop", "restart", "status" -> "rc-service $quotedName $action"
+            "enable" -> "rc-update add $quotedName default"
+            "disable" -> "rc-update delete $quotedName -a"
+            else -> "rc-service $quotedName $action"
+        }
+        val script =
+            "if command -v systemctl >/dev/null 2>&1; then systemctl $action $quotedName; " +
+            "elif command -v rc-service >/dev/null 2>&1; then $openRc; " +
+            "else echo 'No supported service manager found' >&2; exit 1; fi"
+        return sudoShWrap(script, sudoPassword)
+    }
 
     /** Reboot the host: try sudo first, then a bare `reboot` (already root / NOPASSWD wrappers). */
     fun reboot(sudoPassword: String = "") =
@@ -259,13 +271,9 @@ object RemoteCommands {
 
     fun dockerPruneImages() = "$CR image prune -a -f 2>&1"
 
-    // `docker volume prune -f` only removes ANONYMOUS volumes since Docker 23.0 — named unused
-    // volumes survive, which looked like the prune "doing nothing". `-a/--all` prunes all unused
-    // volumes. Podman's `volume prune` already removes all unused volumes and rejects `--all`, so
-    // branch on the detected runtime (same pattern as DOCKER_PS).
-    fun dockerPruneVolumes() =
-        "if $CR --version | grep -qi podman; then $CR volume prune -f 2>&1; " +
-        "else $CR volume prune -a -f 2>&1; fi"
+    // `volume prune -f` removes only anonymous unused volumes on current Docker and Podman.
+    // `-a/--all` prunes unused named volumes too, matching the UI's "unused volumes" wording.
+    fun dockerPruneVolumes() = "$CR volume prune -a -f 2>&1"
 
     fun dockerPruneNetworks() = "$CR network prune -f 2>&1"
 

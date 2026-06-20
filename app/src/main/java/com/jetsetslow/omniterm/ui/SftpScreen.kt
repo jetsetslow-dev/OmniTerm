@@ -39,6 +39,36 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.util.Locale
 
+@Composable
+private fun CompactSftpIconButton(
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    Box(
+        modifier = modifier
+            .size(36.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center,
+        content = content,
+    )
+}
+
+@Composable
+private fun CompactSftpIconToggleButton(
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    CompactSftpIconButton(
+        onClick = { onCheckedChange(!checked) },
+        modifier = modifier,
+        content = content,
+    )
+}
 
 
 @Composable
@@ -381,20 +411,20 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         // Toolbar grouped left→right: navigate · view · create/transfer · modes.
 
                         // ── Navigate ──
-                        IconButton(onClick = { viewModel.sftpHome() }) {
+                        CompactSftpIconButton(onClick = { viewModel.sftpHome() }) {
                             Icon(Icons.Filled.Home, contentDescription = "Go to home folder")
                         }
                         if (viewModel.sftpPath.isNotEmpty() && viewModel.sftpPath != "/") {
-                            IconButton(onClick = { viewModel.sftpUp() }) {
+                            CompactSftpIconButton(onClick = { viewModel.sftpUp() }) {
                                 Icon(Icons.Filled.ArrowUpward, contentDescription = "Go up")
                             }
                         }
-                        IconButton(onClick = { viewModel.loadSftp(viewModel.sftpPath.ifBlank { null }) }) {
+                        CompactSftpIconButton(onClick = { viewModel.loadSftp(viewModel.sftpPath.ifBlank { null }) }) {
                             Icon(Icons.Filled.Refresh, contentDescription = "Reload")
                         }
 
                         // ── View ──
-                        IconToggleButton(checked = viewModel.sftpSearchActive, onCheckedChange = {
+                        CompactSftpIconToggleButton(checked = viewModel.sftpSearchActive, onCheckedChange = {
                             if (viewModel.sftpSearchActive) viewModel.sftpSearchClear()
                             else viewModel.sftpSearchActive = true
                         }) {
@@ -405,7 +435,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                             )
                         }
                         Box {
-                            IconButton(onClick = { sortMenuExpanded = true }) {
+                            CompactSftpIconButton(onClick = { sortMenuExpanded = true }) {
                                 Icon(
                                     Icons.AutoMirrored.Filled.Sort,
                                     contentDescription = "Sort files",
@@ -432,7 +462,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                 }
                             }
                         }
-                        IconToggleButton(checked = viewModel.showSftpFolderSizes, onCheckedChange = { viewModel.toggleSftpFolderSizes() }) {
+                        CompactSftpIconToggleButton(checked = viewModel.showSftpFolderSizes, onCheckedChange = { viewModel.toggleSftpFolderSizes() }) {
                             Icon(
                                 Icons.Filled.Straighten,
                                 contentDescription = if (viewModel.showSftpFolderSizes) "Hide folder sizes" else "Show folder sizes",
@@ -441,13 +471,13 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         }
 
                         // ── Create / transfer ──
-                        IconButton(onClick = { showCreateFolderDialog = true }) {
+                        CompactSftpIconButton(onClick = { showCreateFolderDialog = true }) {
                             Icon(Icons.Filled.CreateNewFolder, contentDescription = "Create folder")
                         }
-                        IconButton(onClick = { uploadLauncher.launch(arrayOf("*/*")) }) {
+                        CompactSftpIconButton(onClick = { uploadLauncher.launch(arrayOf("*/*")) }) {
                             Icon(Icons.Filled.Upload, contentDescription = "Upload files")
                         }
-                        IconButton(
+                        CompactSftpIconButton(
                             enabled = viewModel.sftpEntries.isNotEmpty(),
                             onClick = { viewModel.sftpSelectAll() },
                         ) {
@@ -455,7 +485,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         }
 
                         // ── Modes ──
-                        IconToggleButton(checked = viewModel.sftpSudo, onCheckedChange = {
+                        CompactSftpIconToggleButton(checked = viewModel.sftpSudo, onCheckedChange = {
                             when {
                                 // Turning sudo OFF needs no auth.
                                 viewModel.sftpSudo -> viewModel.toggleSftpSudo()
@@ -472,7 +502,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         }
                         run {
                             val bookmarked = viewModel.sftpPath.isNotBlank() && viewModel.sftpPath in viewModel.sftpBookmarks
-                            IconButton(
+                            CompactSftpIconButton(
                                 enabled = viewModel.sftpPath.isNotBlank(),
                                 onClick = {
                                     if (bookmarked) {

@@ -81,6 +81,41 @@ class ComposeCommandTest {
         assertValidShell(RemoteCommands.DOCKER_VOLUMES)
     }
 
+    @Test
+    fun docker_ps_uses_portable_compose_label_placeholders() {
+        assertTrue(RemoteCommands.DOCKER_PS.contains("""{{.Label "com.docker.compose.project"}}"""))
+        assertTrue(!RemoteCommands.DOCKER_PS.contains("index .Labels"))
+        assertValidShell(RemoteCommands.DOCKER_PS)
+    }
+
+    @Test
+    fun volume_prune_prunes_named_unused_volumes_on_docker_and_podman() {
+        val cmd = RemoteCommands.dockerPruneVolumes()
+        assertTrue(cmd.contains("volume prune -a -f"))
+        assertValidShell(cmd)
+    }
+
+    @Test
+    fun service_actions_support_systemd_and_openrc() {
+        val restart = RemoteCommands.serviceAction("nginx", "restart")
+        assertTrue(restart.contains("systemctl restart"))
+        assertTrue(restart.contains("rc-service"))
+        assertTrue(restart.contains("restart"))
+        assertValidShell(restart)
+
+        val enable = RemoteCommands.serviceAction("nginx", "enable")
+        assertTrue(enable.contains("systemctl enable"))
+        assertTrue(enable.contains("rc-update add"))
+        assertTrue(enable.contains("default"))
+        assertValidShell(enable)
+
+        val disable = RemoteCommands.serviceAction("nginx", "disable")
+        assertTrue(disable.contains("systemctl disable"))
+        assertTrue(disable.contains("rc-update delete"))
+        assertTrue(disable.contains("-a"))
+        assertValidShell(disable)
+    }
+
     /**
      * Runs the Podman text-fallback `awk` from DOCKER_VOLUMES against a realistic
      * `podman system df -v` capture, then feeds the result through the real parser. This pins both

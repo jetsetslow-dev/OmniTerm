@@ -968,6 +968,7 @@ private fun PingTab(viewModel: AppViewModel) {
     var pingTries by remember { mutableStateOf("4") }
 
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        LanHostPicker(viewModel)
         OutlinedTextField(
             value = viewModel.portScannerTarget,
             onValueChange = { viewModel.portScannerTarget = it },
@@ -976,7 +977,6 @@ private fun PingTab(viewModel: AppViewModel) {
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
         )
-        LanHostPicker(viewModel)
         OutlinedTextField(
             value = pingTries,
             onValueChange = { pingTries = it.filter { c -> c.isDigit() }.take(4) },
@@ -1036,6 +1036,7 @@ private fun PingTab(viewModel: AppViewModel) {
 @Composable
 private fun TracerouteTab(viewModel: AppViewModel) {
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        LanHostPicker(viewModel)
         OutlinedTextField(
             value = viewModel.portScannerTarget,
             onValueChange = { viewModel.portScannerTarget = it },
@@ -1044,7 +1045,6 @@ private fun TracerouteTab(viewModel: AppViewModel) {
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
         )
-        LanHostPicker(viewModel)
         Button(
             onClick = {
                 if (viewModel.tracerouteRunning) viewModel.stopTraceroute()
@@ -1096,6 +1096,8 @@ private fun TracerouteTab(viewModel: AppViewModel) {
 @Composable
 private fun PortScanTab(viewModel: AppViewModel) {
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        LanHostPicker(viewModel)
+
         OutlinedTextField(
             value = viewModel.portScannerTarget,
             onValueChange = { viewModel.portScannerTarget = it },
@@ -1103,8 +1105,6 @@ private fun PortScanTab(viewModel: AppViewModel) {
             modifier = Modifier.fillMaxWidth(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
         )
-
-        LanHostPicker(viewModel)
 
         OutlinedTextField(
             value = viewModel.portScannerRange,

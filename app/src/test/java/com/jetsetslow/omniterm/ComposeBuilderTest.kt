@@ -302,4 +302,51 @@ class ComposeBuilderTest {
         assertTrue(issues.contains("needs an image"))
         assertTrue(issues.contains("invalid port mapping"))
     }
+
+    @Test
+    fun commented_out_services_do_not_block_visual_validation() {
+        val yaml = """
+            services:
+              app:
+                image: busybox
+            # broken_old_service:
+            #   image:
+            #   ports:
+            #     - "99999:80"
+        """.trimIndent()
+        val draft = parseDockerComposeYaml(yaml, "stack")
+
+        assertTrue(draft.services.any { it.serviceName == "broken_old_service" && it.isCommentedOut })
+        assertTrue(validateComposeDraft(draft).isEmpty())
+    }
+
+    @Test
+    fun editing_active_service_preserves_commented_services_and_x_extensions() {
+        val yaml = """
+            x-common: &common
+              restart: unless-stopped
+
+            services:
+              app:
+                <<: *common
+                image: app:1.0
+            # old_app:
+            #   image: old/app:1.0
+            #   ports:
+            #     - "99999:80"
+        """.trimIndent()
+        val baseline = parseDockerComposeYaml(yaml, "stack")
+        val edited = baseline.copy(
+            services = baseline.services.map {
+                if (it.serviceName == "app") it.copy(image = "app:2.0") else it
+            }.toMutableList(),
+        )
+
+        val out = renderComposeYaml(edited, baseline)
+        assertTrue(out.contains("x-common: &common"))
+        assertTrue(out.contains("<<: *common"))
+        assertTrue(out.contains("image: app:2.0"))
+        assertTrue(out.contains("# old_app:"))
+        assertTrue(out.contains("#     - \"99999:80\""))
+    }
 }

@@ -190,6 +190,7 @@ fun validateComposeDraft(draft: ComposeStackDraft): List<String> {
     val names = activeServices.map { it.serviceName.trim() }
     val duplicates = names.filter { it.isNotBlank() }.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
     for ((idx, svc) in draft.services.withIndex()) {
+        if (svc.isCommentedOut) continue
         val label = svc.serviceName.ifBlank { "Service ${idx + 1}" }
         if (svc.serviceName.isBlank()) issues += "$label needs a service name."
         if (svc.serviceName.isNotBlank() && !isValidComposeName(svc.serviceName)) {

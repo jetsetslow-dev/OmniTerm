@@ -677,62 +677,22 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
         BasicTextField(
             value = inputField,
             onValueChange = { tfv ->
-                val oldText = inputField.text
-                val newText = tfv.text
-
-                fun sendAddedText(added: String): Boolean {
-                    if (added.length > 100) {
-                        pendingLargePaste = added
-                        return false
-                    }
-                    if (added.length > 1) {
-                        viewModel.pasteText(added)
+                val committed = tfv.text
+                if (committed.isNotEmpty()) {
+                    if (committed.length > 100) {
+                        pendingLargePaste = committed
+                    } else if (committed.length > 1) {
+                        viewModel.pasteText(committed)
                     } else {
-                        for (ch in added) {
-                            if (ch == '\n' || ch == '\r') viewModel.sendKey(TermKey.ENTER)
-                            else viewModel.typeText(ch.toString())
-                        }
-                    }
-                    return true
-                }
-
-                if (newText != oldText) {
-                    if (newText.length > oldText.length && newText.startsWith(oldText)) {
-                        val added = newText.substring(oldText.length)
-                        if (!sendAddedText(added)) {
-                            inputField = TextFieldValue("")
-                            return@BasicTextField
-                        }
-                    } else if (oldText.length > newText.length && oldText.startsWith(newText)) {
-                        val removed = oldText.length - newText.length
-                        repeat(removed) { viewModel.sendKey(TermKey.BACKSPACE) }
-                    } else {
-                        // Complex replacement from IME autocorrect/swipe composition.
-                        var common = 0
-                        while (common < oldText.length && common < newText.length && oldText[common] == newText[common]) {
-                            common++
-                        }
-                        val removed = oldText.length - common
-                        val added = newText.substring(common)
-                        if (added.length > 100) {
-                            repeat(removed) { viewModel.sendKey(TermKey.BACKSPACE) }
-                            pendingLargePaste = added
-                            inputField = TextFieldValue("")
-                            return@BasicTextField
-                        }
-                        repeat(removed) { viewModel.sendKey(TermKey.BACKSPACE) }
-                        sendAddedText(added)
+                        val ch = committed.first()
+                        if (ch == '\n' || ch == '\r') viewModel.sendKey(TermKey.ENTER)
+                        else viewModel.typeText(ch.toString())
                     }
                 }
-
-                // Reset the buffer once a line is committed (newline) or it grows large. Keeping the
-                // diff window inside the current line stops a later autocorrect/complex replacement
-                // from diffing across a line boundary and firing stray backspaces at the remote shell.
-                inputField = if (newText.length > 500 || '\n' in newText || '\r' in newText) {
-                    TextFieldValue("")
-                } else {
-                    tfv
-                }
+                // Keep the IME buffer empty. Retaining prior text lets keyboards apply composing
+                // replacements/autocorrect against command history, which can emit characters the
+                // user never intended to send to the terminal.
+                inputField = TextFieldValue("")
             },
             cursorBrush = SolidColor(Color.Transparent),
             textStyle = TerminalTextStyle.copy(color = Color.Transparent),
