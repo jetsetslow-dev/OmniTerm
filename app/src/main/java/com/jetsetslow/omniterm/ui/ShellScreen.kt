@@ -54,7 +54,6 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -452,6 +451,7 @@ private fun ConnectingView(phase: String, onCancel: () -> Unit) {
 
 @Composable
 private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) {
+    val sessionId = viewModel.currentSession?.id
     val snapshot = viewModel.terminalScreen
     val palette = terminalPalette(viewModel.terminalTheme)
     val focusRequester = remember { FocusRequester() }
@@ -461,10 +461,10 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
     var copyDialogTitle by remember { mutableStateOf<String?>(null) }
     var copyDialogText by remember { mutableStateOf("") }
     var pendingLargePaste by remember { mutableStateOf<String?>(null) }
-    var followTail by remember { mutableStateOf(true) }
-    var firstVisibleRow by remember { mutableStateOf(0) }
-    var visibleRowCount by remember { mutableStateOf(1) }
-    var scrollRemainderPx by remember { mutableStateOf(0f) }
+    var followTail by remember(sessionId) { mutableStateOf(true) }
+    var firstVisibleRow by remember(sessionId) { mutableStateOf(0) }
+    var visibleRowCount by remember(sessionId) { mutableStateOf(1) }
+    var scrollRemainderPx by remember(sessionId) { mutableStateOf(0f) }
 
     // Cursor blink - disabled for performance
     val cursorOn = true
@@ -485,7 +485,7 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
     }
 
     // Focus the hidden input immediately so the keyboard is available
-    LaunchedEffect(Unit) {
+    LaunchedEffect(sessionId) {
         focusRequester.requestFocus()
         keyboard?.show()
     }
@@ -562,19 +562,19 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
         }
 
         // Invisible input sink: captures soft-keyboard text + hardware special keys.
-        var inputField by remember { mutableStateOf(TextFieldValue(" ", selection = TextRange(1))) }
+        var inputField by remember(sessionId) { mutableStateOf(TextFieldValue("")) }
         BasicTextField(
             value = inputField,
             onValueChange = { tfv ->
+                val oldText = inputField.text
                 val newText = tfv.text
-                if (newText.isEmpty()) {
-                    // Backspace deleted the dummy space
-                    viewModel.sendKey(TermKey.BACKSPACE)
-                } else if (newText.length > 1) {
-                    val added = newText.substring(1)
+
+                fun sendAddedText(added: String): Boolean {
                     if (added.length > 100) {
                         pendingLargePaste = added
-                    } else if (added.length > 1) {
+                        return false
+                    }
+                    if (added.length > 1) {
                         viewModel.pasteText(added)
                     } else {
                         for (ch in added) {
@@ -582,23 +582,52 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                             else viewModel.typeText(ch.toString())
                         }
                     }
-                } else if (newText != " ") {
-                    // Replaced the dummy space (e.g. selection overwritten)
-                    viewModel.sendKey(TermKey.BACKSPACE)
-                    if (newText == "\n" || newText == "\r") viewModel.sendKey(TermKey.ENTER)
-                    else viewModel.typeText(newText)
+                    return true
                 }
 
-                // Always reset to a single space with cursor at the end.
-                // This prevents the field from growing, forces keyboard to stay active,
-                // and prevents local editing (like cursor movement) from sending massive backspace storms.
-                inputField = TextFieldValue(" ", selection = TextRange(1))
+                if (newText != oldText) {
+                    if (newText.length > oldText.length && newText.startsWith(oldText)) {
+                        val added = newText.substring(oldText.length)
+                        if (!sendAddedText(added)) {
+                            inputField = TextFieldValue("")
+                            return@BasicTextField
+                        }
+                    } else if (oldText.length > newText.length && oldText.startsWith(newText)) {
+                        val removed = oldText.length - newText.length
+                        repeat(removed) { viewModel.sendKey(TermKey.BACKSPACE) }
+                    } else {
+                        // Complex replacement from IME autocorrect/swipe composition.
+                        var common = 0
+                        while (common < oldText.length && common < newText.length && oldText[common] == newText[common]) {
+                            common++
+                        }
+                        val removed = oldText.length - common
+                        val added = newText.substring(common)
+                        if (added.length > 100) {
+                            repeat(removed) { viewModel.sendKey(TermKey.BACKSPACE) }
+                            pendingLargePaste = added
+                            inputField = TextFieldValue("")
+                            return@BasicTextField
+                        }
+                        repeat(removed) { viewModel.sendKey(TermKey.BACKSPACE) }
+                        sendAddedText(added)
+                    }
+                }
+
+                // Reset the buffer once a line is committed (newline) or it grows large. Keeping the
+                // diff window inside the current line stops a later autocorrect/complex replacement
+                // from diffing across a line boundary and firing stray backspaces at the remote shell.
+                inputField = if (newText.length > 500 || '\n' in newText || '\r' in newText) {
+                    TextFieldValue("")
+                } else {
+                    tfv
+                }
             },
             cursorBrush = SolidColor(Color.Transparent),
             textStyle = TerminalTextStyle.copy(color = Color.Transparent),
             keyboardOptions = KeyboardOptions(
-                autoCorrectEnabled = false,
-                capitalization = KeyboardCapitalization.None,
+                autoCorrectEnabled = true,
+                capitalization = KeyboardCapitalization.Sentences,
                 keyboardType = KeyboardType.Text,
                 imeAction = ImeAction.None,
             ),

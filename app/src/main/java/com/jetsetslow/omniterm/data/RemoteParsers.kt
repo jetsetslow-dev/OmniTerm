@@ -81,10 +81,14 @@ object RemoteCommands {
      * user in a half-broken prompt — it just stays a normal shell. Each app shell uses a distinct
      * [name] so multiple persistent sessions to one host re-attach their own session on reconnect.
      */
-    fun tmuxAttachCommand(name: String): String {
+    fun tmuxAttachCommand(name: String, historyLimit: Int = 10_000): String {
         // Defensive: only allow our own [a-z0-9-] names through into the shell command.
         val safe = name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
-        return "command -v tmux >/dev/null 2>&1 && exec tmux new-session -A -s $safe\n"
+        val limit = historyLimit.coerceIn(1_000, 50_000)
+        return "command -v tmux >/dev/null 2>&1 && " +
+            "(tmux has-session -t $safe 2>/dev/null || tmux new-session -d -s $safe) && " +
+            "(tmux set-option -t $safe history-limit $limit >/dev/null 2>&1 || true) && " +
+            "exec tmux attach-session -t $safe\n"
     }
 
     fun tmuxKillCommand(name: String): String {

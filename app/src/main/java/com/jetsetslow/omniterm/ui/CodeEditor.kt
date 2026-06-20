@@ -290,20 +290,25 @@ private fun EditorBody(
     val palette = rememberHighlightPalette()
     val limit = remember(highlightMaxChars) { clampHighlightLimit(highlightMaxChars) }
     val highlight = remember(language, palette, limit) { CodeHighlightTransformation(language, palette, limit) }
-    val scroll = rememberScrollState()
+    val verticalScroll = rememberScrollState()
+    val horizontalScroll = rememberScrollState()
     val lineCount = remember(field.text) { field.text.count { it == '\n' } + 1 }
     var textLayoutResult by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
 
     androidx.compose.runtime.LaunchedEffect(scrollToCursorTrigger) {
         if (scrollToCursorTrigger > 0) {
             textLayoutResult?.let { layout ->
-                val y = layout.getCursorRect(field.selection.start).top.toInt()
-                scroll.animateScrollTo((y - 200).coerceAtLeast(0))
+                val startRect = layout.getCursorRect(field.selection.min)
+                val endRect = layout.getCursorRect(field.selection.max)
+                val y = minOf(startRect.top, endRect.top).toInt()
+                val x = minOf(startRect.left, endRect.left).toInt()
+                verticalScroll.animateScrollTo((y - 200).coerceAtLeast(0))
+                horizontalScroll.animateScrollTo((x - 120).coerceAtLeast(0))
             }
         }
     }
 
-    Row(modifier = modifier.fillMaxSize().verticalScroll(scroll)) {
+    Row(modifier = modifier.fillMaxSize().verticalScroll(verticalScroll)) {
         // Line-number gutter, scrolling in lockstep with the text (shared verticalScroll on the Row).
         Column(
             modifier = Modifier
@@ -331,7 +336,7 @@ private fun EditorBody(
             cursorBrush = SolidColor(OmniColors.amber),
             modifier = Modifier
                 .fillMaxSize()
-                .horizontalScroll(rememberScrollState())
+                .horizontalScroll(horizontalScroll)
                 .padding(start = 8.dp, top = 12.dp, end = 12.dp, bottom = 12.dp),
         )
     }

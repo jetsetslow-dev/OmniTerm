@@ -981,7 +981,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                     fontSize = 12.sp,
                     language = CodeLanguage.YAML,
                     highlightMaxChars = viewModel.editorHighlightLimit,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 320.dp),
+                    modifier = Modifier.fillMaxWidth().height(420.dp),
                 )
             } else {
                 // Top-level compose `name:` (project name written into the file). Optional.

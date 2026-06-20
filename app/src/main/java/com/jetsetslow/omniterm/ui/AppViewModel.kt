@@ -730,6 +730,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun saveTerminalScrollbackLimit(limit: Int) {
         val next = limit.coerceIn(1_000, 50_000)
         terminalScrollbackLimit = next
+        // Snapshot the list first: a background reconnect can add/remove sessions concurrently, and
+        // iterating the live SnapshotStateList while it mutates would throw ConcurrentModification.
+        activeSessions.toList().forEach { session ->
+            synchronized(session.emulator) {
+                session.emulator.setScrollbackLimit(next)
+            }
+            TerminalSessionManager.publishTerminalSnapshot(session)
+        }
         viewModelScope.launch { repository.insertSetting("terminal_scrollback_limit", next.toString()) }
     }
 
@@ -2398,7 +2406,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 // re-attaches the SAME session (and any running command keeps going server-side),
                 // and multiple persistent shells to one host don't collide on a shared name.
                 if (usePersistence) {
-                    session.write(RemoteCommands.tmuxAttachCommand(shellSession.tmuxName).toByteArray())
+                    emulator.setCaptureAlternateScreenScrollback(true)
+                    session.write(RemoteCommands.tmuxAttachCommand(shellSession.tmuxName, terminalScrollbackLimit).toByteArray())
                     // Remember it so it can be re-offered after an app restart (runtime state only).
                     repository.upsertPersistentSession(
                         PersistentSessionEntity(shellSession.tmuxName, srv.id, srv.name)
@@ -2456,8 +2465,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 shellSession.lastRows = termRows
                 shellSession.persistent = true
                 shellSession.tmuxName = tmuxName
+                emulator.setCaptureAlternateScreenScrollback(true)
 
-                session.write(com.jetsetslow.omniterm.data.RemoteCommands.tmuxAttachCommand(tmuxName).toByteArray())
+                session.write(com.jetsetslow.omniterm.data.RemoteCommands.tmuxAttachCommand(tmuxName, terminalScrollbackLimit).toByteArray())
 
                 activeSessions.add(shellSession)
                 withContext(kotlinx.coroutines.Dispatchers.Main) {
@@ -2591,7 +2601,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 if (shellSession.userClosed) { runCatching { newSession.close() }; return@launch }
                 shellSession.session = newSession
                 if (shellSession.persistent) {
-                    runCatching { newSession.write(RemoteCommands.tmuxAttachCommand(shellSession.tmuxName).toByteArray()) }
+                    synchronized(shellSession.emulator) {
+                        shellSession.emulator.setCaptureAlternateScreenScrollback(true)
+                    }
+                    runCatching {
+                        newSession.write(RemoteCommands.tmuxAttachCommand(shellSession.tmuxName, terminalScrollbackLimit).toByteArray())
+                    }
                 }
                 // Visible marker in the kept scrollback so the user knows the stream resumed.
                 synchronized(shellSession.emulator) {
@@ -2846,6 +2861,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         selectedServerId = session.serverId
         currentSessionId = sessionId
+        TerminalSessionManager.publishTerminalSnapshot(session)
         screenHistory.clear()
         screenHistory.add(Screen.Servers)
         screenHistory.add(Screen.Shell)
@@ -3353,7 +3369,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun joinPath(base: String, name: String): String =
         if (base == "/" || base.isEmpty()) "/$name" else "$base/$name"
 
-    private fun sftpLastPathKey(serverId: Int) = "sftp_last_path_$serverId"
+    private val sftpSessionPaths = mutableMapOf<Int, String>()
 
     private fun sortSftpEntries(entries: List<SftpFile>): List<SftpFile> {
         val nameComparator = compareBy<SftpFile> { it.name.lowercase(Locale.ROOT) }
@@ -3399,10 +3415,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         sftpError = null
         sftpSearchClear()
         loadSftpBookmarks()
-        viewModelScope.launch {
-            val savedPath = repository.getSetting(sftpLastPathKey(srv.id))?.takeIf { it.isNotBlank() }
-            loadSftp(savedPath)
-        }
+        loadSftp(sftpSessionPaths[srv.id]?.takeIf { it.isNotBlank() })
     }
 
     fun loadSftp(path: String? = null, clearError: Boolean = true) {
@@ -3430,7 +3443,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 sftpEntries = sortSftpEntries(entries)
                 sftpPath = target
                 sftpLoadedServerId = srv.id
-                repository.insertSetting(sftpLastPathKey(srv.id), target)
+                sftpSessionPaths[srv.id] = target
                 // Drop any selection that no longer refers to entries in the new listing.
                 val names = listing.mapTo(HashSet()) { it.name }
                 sftpSelected.retainAll { it in names }
@@ -3610,6 +3623,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sftpCd(name: String) = loadSftp(joinPath(sftpPath, name))
+
+    fun sftpHome() {
+        sftpPath = ""
+        loadSftp(null)
+    }
 
     fun sftpUp() {
         if (sftpPath.isNotEmpty() && sftpPath != "/") {
@@ -4577,7 +4595,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         // Never back up device-local security settings (PIN, lock, biometrics) — they shouldn't
         // travel between devices. Everything else (theme, retention, scoring, interval, …) is kept.
         val securityKeys = setOf("app_pin", "app_lock_enabled", "biometrics_enabled")
-        if (selection.settings) for (st in settings) if (st.key !in securityKeys) settingsObj.put(st.key, st.value)
+        if (selection.settings) {
+            for (st in settings) {
+                if (st.key in securityKeys || st.key.startsWith("sftp_last_path_")) continue
+                settingsObj.put(st.key, st.value)
+            }
+        }
 
         // Pinned SSH host keys ride along with the servers they belong to, so a restored fleet
         // keeps its verified trust store instead of re-prompting TOFU for every host.
@@ -5141,7 +5164,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         // Per-server settings are keyed by the OLD server id; re-point them to the
                         // restored id. If the owning server wasn't restored, skip the setting entirely
                         // so we don't leave orphaned per-server rows pointing at a nonexistent server.
-                        val perServerPrefixes = listOf("sftp_bookmarks_", "sftp_last_path_")
+                        val perServerPrefixes = listOf("sftp_bookmarks_")
                         while (it.hasNext()) {
                             val originalKey = it.next()
                             if (originalKey in securityKeys) continue

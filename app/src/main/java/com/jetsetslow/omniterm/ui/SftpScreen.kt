@@ -462,10 +462,19 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         IconButton(onClick = { viewModel.loadSftp(viewModel.sftpPath.ifBlank { null }) }) {
                             Icon(Icons.Filled.Refresh, contentDescription = "Reload")
                         }
+                        IconButton(onClick = { viewModel.sftpHome() }) {
+                            Icon(Icons.Filled.Home, contentDescription = "Go to home folder")
+                        }
                         if (viewModel.sftpPath.isNotEmpty() && viewModel.sftpPath != "/") {
                             IconButton(onClick = { viewModel.sftpUp() }) {
                                 Icon(Icons.Filled.ArrowUpward, contentDescription = "Go up")
                             }
+                        }
+                        IconButton(
+                            enabled = viewModel.sftpEntries.isNotEmpty(),
+                            onClick = { viewModel.sftpSelectAll() },
+                        ) {
+                            Icon(Icons.Filled.SelectAll, contentDescription = "Select all")
                         }
                         IconButton(onClick = { showCreateFolderDialog = true }) {
                             Icon(Icons.Filled.CreateNewFolder, contentDescription = "Create folder")

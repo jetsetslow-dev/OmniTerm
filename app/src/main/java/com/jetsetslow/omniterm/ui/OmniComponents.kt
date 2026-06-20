@@ -52,8 +52,8 @@ import com.jetsetslow.omniterm.ui.theme.OmniFonts
  */
 fun Modifier.swipeTabs(onSwipe: (forward: Boolean) -> Unit): Modifier = this.then(
     Modifier.pointerInput(Unit) {
-        // ~64dp of horizontal travel before we treat it as a tab swipe.
-        val thresholdPx = 64.dp.toPx()
+        // Require deliberate horizontal travel before treating a drag as tab navigation.
+        val thresholdPx = 96.dp.toPx()
         var totalDx = 0f
         var totalDy = 0f
         var fired = false
@@ -66,7 +66,7 @@ fun Modifier.swipeTabs(onSwipe: (forward: Boolean) -> Unit): Modifier = this.the
             totalDx += dragAmount
             totalDy += change.positionChange().y
             // Only act on a mostly-horizontal gesture past the threshold.
-            if (kotlin.math.abs(totalDx) > thresholdPx && kotlin.math.abs(totalDx) > kotlin.math.abs(totalDy) * 1.5f) {
+            if (kotlin.math.abs(totalDx) > thresholdPx && kotlin.math.abs(totalDx) > kotlin.math.abs(totalDy) * 2.2f) {
                 fired = true
                 onSwipe(totalDx < 0)
             }

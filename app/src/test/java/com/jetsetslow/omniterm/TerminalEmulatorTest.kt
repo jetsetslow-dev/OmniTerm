@@ -115,6 +115,41 @@ class TerminalEmulatorTest {
     }
 
     @Test
+    fun changingScrollbackLimitTrimsExistingRows() {
+        val e = TerminalEmulator(10, 2, scrollbackLimit = 10)
+        e.feedStr("L0\r\nL1\r\nL2\r\nL3\r\nL4")
+
+        e.setScrollbackLimit(1)
+
+        val rows = e.snapshot().rows
+        assertEquals(3, rows.size) // 1 scrollback + 2 visible rows
+        assertEquals("L2", rows[0].spans.joinToString("") { it.text })
+        assertEquals("L4", rows[2].spans.joinToString("") { it.text })
+    }
+
+    @Test
+    fun alternateScreenDoesNotCaptureScrollbackByDefault() {
+        val e = TerminalEmulator(10, 2)
+        e.feedStr("${esc}[?1049h")
+        e.feedStr("A\r\nB\r\nC")
+
+        assertEquals(2, e.snapshot().rows.size)
+    }
+
+    @Test
+    fun alternateScreenCanCaptureScrollbackForTmuxSessions() {
+        val e = TerminalEmulator(10, 2)
+        e.setCaptureAlternateScreenScrollback(true)
+        e.feedStr("${esc}[?1049h")
+        e.feedStr("A\r\nB\r\nC")
+
+        val rows = e.snapshot().rows
+        assertEquals(3, rows.size)
+        assertEquals("A", rows[0].spans.joinToString("") { it.text })
+        assertEquals("C", rows[2].spans.joinToString("") { it.text })
+    }
+
+    @Test
     fun clearScrollbackKeepsVisibleScreen() {
         val e = TerminalEmulator(10, 2)
         e.feedStr("L0\r\nL1\r\nL2")

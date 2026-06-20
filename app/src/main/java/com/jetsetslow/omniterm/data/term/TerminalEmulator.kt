@@ -14,10 +14,11 @@ package com.jetsetslow.omniterm.data.term
 class TerminalEmulator(
     cols: Int = 80,
     rows: Int = 24,
-    private val scrollbackLimit: Int = 2000,
+    scrollbackLimit: Int = 2000,
 ) {
     var cols = cols.coerceAtLeast(1); private set
     var rows = rows.coerceAtLeast(1); private set
+    private var scrollbackLimit: Int = scrollbackLimit.coerceAtLeast(0)
 
     private class Cell(
         var ch: Char = ' ',
@@ -54,6 +55,7 @@ class TerminalEmulator(
     // alternate screen save slot
     private var savedScreen: Array<Array<Cell>>? = null
     private var altActive = false
+    private var captureAlternateScreenScrollback = false
 
     // cursor + pen
     private var curRow = 0
@@ -104,6 +106,10 @@ class TerminalEmulator(
         state = State.GROUND
         csiParams.setLength(0)
         pending = ByteArray(0)
+    }
+
+    fun setCaptureAlternateScreenScrollback(enabled: Boolean) {
+        captureAlternateScreenScrollback = enabled
     }
 
     /** Feed raw bytes from the remote. Handles UTF-8 split across chunk boundaries. */
@@ -195,7 +201,7 @@ class TerminalEmulator(
         screen = Array(nr) { rewrapped[screenStart + it] }
         scrollback.clear()
         for (i in 0 until screenStart) scrollback.addLast(rewrapped[i])
-        while (scrollback.size > scrollbackLimit) softWrapped.remove(scrollback.removeFirst())
+        trimScrollbackToLimit()
 
         scrollTop = 0; scrollBottom = rows - 1
         curRow = (newCursorRow - screenStart).coerceIn(0, rows - 1)
@@ -257,10 +263,23 @@ class TerminalEmulator(
 
     fun rowCount(): Int = scrollback.size + rows
 
+    fun setScrollbackLimit(limit: Int) {
+        scrollbackLimit = limit.coerceAtLeast(0)
+        trimScrollbackToLimit()
+    }
+
     fun clearScrollback() {
         scrollback.forEach { softWrapped.remove(it) }
         scrollback.clear()
         scrollbackSpanCache.clear()
+    }
+
+    private fun trimScrollbackToLimit() {
+        while (scrollback.size > scrollbackLimit) {
+            val evicted = scrollback.removeFirst()
+            scrollbackSpanCache.remove(evicted)
+            softWrapped.remove(evicted)
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -448,14 +467,12 @@ class TerminalEmulator(
         val count = n.coerceIn(1, scrollBottom - scrollTop + 1)
         repeat(count) {
             val top = screen[scrollTop]
-            // capture to scrollback only when scrolling the whole main screen
-            if (!altActive && scrollTop == 0) {
+            // Capture scrollback only when scrolling the whole screen. Ordinary alternate-screen
+            // apps own their display, but tmux-backed persistent sessions need app scrollback too
+            // because tmux itself runs as a full-screen terminal client.
+            if ((!altActive || captureAlternateScreenScrollback) && scrollTop == 0) {
                 scrollback.addLast(top)
-                while (scrollback.size > scrollbackLimit) {
-                    val evicted = scrollback.removeFirst()
-                    scrollbackSpanCache.remove(evicted)
-                    softWrapped.remove(evicted)
-                }
+                trimScrollbackToLimit()
             }
             for (r in scrollTop until scrollBottom) screen[r] = screen[r + 1]
             screen[scrollBottom] = blankRowWithPenBg()

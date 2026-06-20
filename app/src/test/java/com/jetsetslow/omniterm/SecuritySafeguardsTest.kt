@@ -53,6 +53,16 @@ class SecuritySafeguardsTest {
         assertTrue(RemoteCommands.sudoShWrap("ls", "").startsWith("sudo -n sh -c "))
     }
 
+    @Test
+    fun tmux_attach_sanitizes_name_and_sets_history_limit() {
+        val cmd = RemoteCommands.tmuxAttachCommand("omniterm-1;rm -rf /", 123_456)
+
+        assertTrue(cmd.contains("tmux has-session -t omniterm-1rm-rf"))
+        assertTrue(cmd.contains("history-limit 50000"))
+        assertTrue(cmd.contains("exec tmux attach-session -t omniterm-1rm-rf"))
+        assertFalse(cmd.contains(";rm -rf"))
+    }
+
     // ── Backup sensitivity classification ──
 
     private val emptySelection = BackupSelection(
