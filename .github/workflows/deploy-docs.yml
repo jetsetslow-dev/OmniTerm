@@ -35,11 +35,9 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure Pages
-        # enablement: true turns Pages on (Actions source) if it isn't already, so no manual
-        # Settings → Pages toggle is needed for the first deploy.
+        # One-time prerequisite: repo Settings → Pages → Source = "GitHub Actions".
+        # (Auto-enablement via the API is blocked by the default GITHUB_TOKEN permissions here.)
         uses: actions/configure-pages@v5
-        with:
-          enablement: true
 
       - name: Upload docs artifact
         uses: actions/upload-pages-artifact@v3
