@@ -70,7 +70,20 @@ fun FlavorAdBanner(modifier: Modifier = Modifier) {
         }
     }
 
-    if (!canShow) return
+    if (!canShow) {
+        // In debug builds, make "consent not resolved yet → no ad request" visible so a blank bottom
+        // bar isn't mistaken for the banner failing to load. Stripped from release (renders nothing).
+        if (com.jetsetslow.omniterm.BuildConfig.DEBUG) {
+            androidx.compose.material3.Text(
+                "[ads: awaiting consent — no request yet]",
+                modifier = modifier,
+                fontSize = androidx.compose.ui.unit.TextUnit(10f, androidx.compose.ui.unit.TextUnitType.Sp),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        return
+    }
 
     // Compute the adaptive banner size once for the current screen width.
     val adSize = remember {
@@ -89,6 +102,8 @@ fun FlavorAdBanner(modifier: Modifier = Modifier) {
                     FrameLayout.LayoutParams.MATCH_PARENT,
                     FrameLayout.LayoutParams.WRAP_CONTENT,
                 )
+                // Debug-only overlay surfacing load failures on-screen; never created in release.
+                var debugStatus: android.widget.TextView? = null
                 val adView = AdView(ctx).apply {
                     setAdSize(adSize)
                     adUnitId = BANNER_AD_UNIT_ID
@@ -98,15 +113,34 @@ fun FlavorAdBanner(modifier: Modifier = Modifier) {
                     adListener = object : AdListener() {
                         override fun onAdFailedToLoad(error: LoadAdError) {
                             Log.w(ADS_TAG, "Banner failed to load: code=${error.code} message=${error.message} domain=${error.domain}")
+                            // Debug builds: show the failure (code 3 = no fill is the usual culprit on a
+                            // fresh unit) on-screen so it isn't mistaken for a missing banner. Release: silent.
+                            if (com.jetsetslow.omniterm.BuildConfig.DEBUG) {
+                                debugStatus?.text = "[ads: failed code=${error.code} — ${error.message}]"
+                                debugStatus?.visibility = android.view.View.VISIBLE
+                            }
                         }
 
                         override fun onAdLoaded() {
                             Log.i(ADS_TAG, "Banner loaded ($BANNER_AD_UNIT_ID)")
+                            debugStatus?.visibility = android.view.View.GONE
                         }
                     }
                     loadAd(AdRequest.Builder().build())
                 }
                 addView(adView)
+                if (com.jetsetslow.omniterm.BuildConfig.DEBUG) {
+                    debugStatus = android.widget.TextView(ctx).apply {
+                        textSize = 10f
+                        gravity = android.view.Gravity.CENTER
+                        visibility = android.view.View.GONE
+                        layoutParams = FrameLayout.LayoutParams(
+                            FrameLayout.LayoutParams.MATCH_PARENT,
+                            FrameLayout.LayoutParams.WRAP_CONTENT,
+                        )
+                    }
+                    addView(debugStatus)
+                }
             }
         },
     )
