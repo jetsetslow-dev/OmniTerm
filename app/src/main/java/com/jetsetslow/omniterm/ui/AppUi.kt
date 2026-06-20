@@ -740,11 +740,15 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                         viewModel.showDisconnectTerminalDialog = false
                         viewModel.pendingNavigationScreen = null
                     },
-                    title = { Text("Active SSH session") },
+                    title = { Text(if (session?.persistent == true) "Persistent SSH session" else "Active SSH session") },
                     text = {
                         Text(
-                            "Choose what to do with the active SSH terminal session.\n\n" +
-                                "Sending sessions to the background keeps OmniTerm active and may increase battery consumption."
+                            if (session?.persistent == true) {
+                                "Leave ${session.serverName} resumable, or terminate its tmux session and stop anything running there?"
+                            } else {
+                                "Choose what to do with the active SSH terminal session.\n\n" +
+                                    "Sending sessions to the background keeps OmniTerm active and may increase battery consumption."
+                            }
                         )
                     },
                     confirmButton = {
@@ -774,17 +778,18 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                                 ) {
                                     Text("Leave resumable")
                                 }
-                            }
-                            TextButton(
-                                onClick = {
-                                    val target = viewModel.pendingNavigationScreen
-                                    viewModel.sendToBackground()
-                                    viewModel.showDisconnectTerminalDialog = false
-                                    viewModel.pendingNavigationScreen = null
-                                    target?.let { viewModel.navigateTo(it) }
+                            } else {
+                                TextButton(
+                                    onClick = {
+                                        val target = viewModel.pendingNavigationScreen
+                                        viewModel.sendToBackground()
+                                        viewModel.showDisconnectTerminalDialog = false
+                                        viewModel.pendingNavigationScreen = null
+                                        target?.let { viewModel.navigateTo(it) }
+                                    }
+                                ) {
+                                    Text("Send to background")
                                 }
-                            ) {
-                                Text("Send to background")
                             }
                             TextButton(
                                 onClick = {

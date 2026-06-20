@@ -3052,9 +3052,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun sendToBackground() {
         val s = currentSession
         if (s?.persistent == true) {
-            rememberRestorablePersistentSession(s)
-            TerminalSessionManager.cleanupSession(s)
-            if (currentSessionId == s.id) currentSessionId = null
+            leaveSessionResumable(s.id)
             return
         }
         currentSessionId = null
