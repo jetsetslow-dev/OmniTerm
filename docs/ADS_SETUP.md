@@ -142,4 +142,70 @@ docs/
 
 Only Play Store users who have **not** purchased ad removal or the full unlock.
 Paying users never see it — the mount is gated on `licenseState.adsRemoved` in
-`AppUi.kt`.
+`AppUi.kt`. The "Remove ads" purchase lives in the top banner next to "Unlock
+unlimited"; the bottom is just the ad + nav.
+
+---
+
+## 6. AdMob ↔ Play lifecycle (why real ads / store link don't work yet)
+
+The most confusing AdMob issues are NOT bugs — they're a consequence of the app
+not being **publicly listed and approved** yet. Walk this in order:
+
+### Test ad shows in debug but NOT in the Play (internal-testing) build
+Expected. The debug build is signed with the **debug key**; the Play build is
+signed with your **release / Play App Signing key**. To AdMob these are different
+app instances, so the test-device registration from the debug build does **not**
+carry over.
+- Find the **Play build's** hashed test-device ID: install the internal-testing
+  build, then `adb logcat | grep "setTestDeviceIds"`. It differs from the debug
+  one.
+- Rebuild with BOTH: `-PADMOB_TEST_DEVICE_IDS=<debugId>,<releaseId>`.
+
+### A new AdMob app gets "limited ad serving" until approved
+A brand-new app/unit serves few or no **real** ads until AdMob's *app readiness*
+review passes. Readiness requires the app to be **listed in a supported store and
+linked** in AdMob. Account approval itself can take up to 24h (rarely up to 2
+weeks). Until then, expect **no-fill** on real units — use test devices.
+
+### Can't link the store URL in AdMob / wrong icon & name
+AdMob links by the app's **public Play Store URL**, which must open in a browser.
+An **internal-testing-only** app is **not publicly listed**, so:
+- AdMob can't find/crawl it → you can't finish the store link → readiness can't
+  pass → limited serving.
+- The icon/name only appear once the **Store listing** (Play Console → Store
+  presence → Main store listing) is filled out AND the app reaches a publicly
+  reachable track. Use the **same app name** in AdMob as in the store listing.
+- Even after listing publicly, allow **24–48h (up to a week)** before AdMob can
+  link it.
+
+The app's own icon/label are correct (`AndroidManifest`: `@mipmap/ic_launcher`,
+`@string/app_name` = "OmniTerm"); a "wrong logo/name" in AdMob/Play is the
+listing-not-public issue above, not a manifest problem.
+
+### Can't "send for review" from the internal track — expected?
+Yes.
+- **Internal testing is NOT reviewed** — builds go live to testers immediately
+  (subject to retroactive review). There's nothing to "submit" there.
+- A **review** is triggered by promoting to **Closed → Open → Production** (or
+  pushing straight to Production). That's where "Review and publish" appears.
+- If a release is already **in review**, the button is **disabled** until it
+  finishes, and re-submitting can send you to the back of the queue.
+- New personal developer accounts must run a **Closed test with ≥12 testers for
+  14 days** before Production access is granted.
+
+### app-ads.txt
+Must resolve at the **root** of the domain in your Play listing's Website field:
+`https://omniterm.jetsetslow.com/app-ads.txt`. Served from this repo's `/docs`
+via GitHub Pages — needs Pages enabled once (Settings → Pages → Source = GitHub
+Actions). Without it, fill is throttled even after approval.
+
+### Order of operations to get real ads working
+1. Add the release device ID to `ADMOB_TEST_DEVICE_IDS` → test ads in the Play
+   build now.
+2. Complete the **Main store listing** (icon, name, description, graphics).
+3. Promote to a publicly reachable track (Closed/Open/Production) so the app gets
+   a public Play URL.
+4. **Link** that URL in AdMob and pass app readiness → limited serving lifts.
+5. Ensure `app-ads.txt` resolves at the listing domain root.
+6. Real ads serve to everyone (test devices still get test ads).

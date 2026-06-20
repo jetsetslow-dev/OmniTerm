@@ -25,6 +25,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -43,6 +44,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.key.Key
@@ -752,83 +754,100 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
         }
 
         copyDialogTitle?.let { title ->
+            val context = LocalContext.current
+            fun dismiss() {
+                copyDialogTitle = null
+                copyDialogText = ""
+                focusRequester.requestFocus()
+                keyboard?.show()
+            }
             Dialog(
-                onDismissRequest = {
-                    copyDialogTitle = null
-                    copyDialogText = ""
-                    focusRequester.requestFocus()
-                    keyboard?.show()
-                },
+                onDismissRequest = { dismiss() },
                 properties = DialogProperties(usePlatformDefaultWidth = false),
             ) {
+                // A roomy but not edge-to-edge sheet: lines WRAP (no horizontal scrolling), the font
+                // is compact, and a one-tap "Copy all" handles the common case so you rarely need to
+                // hand-select. Drag-select still works for grabbing just part of the output.
                 Surface(
-                    modifier = Modifier.fillMaxSize().padding(16.dp),
-                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth(0.96f)
+                        .fillMaxHeight(0.82f),
+                    shape = RoundedCornerShape(12.dp),
                     tonalElevation = 6.dp,
                 ) {
-                    Column(Modifier.fillMaxSize().padding(12.dp)) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Text(title, fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                            TextButton(
-                                onClick = {
-                                    copyDialogTitle = null
-                                    copyDialogText = ""
-                                    focusRequester.requestFocus()
-                                    keyboard?.show()
-                                },
-                            ) {
-                                Text("Close")
-                            }
+                    Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 12.dp)) {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
+                            Text("Drag to select, or Copy all", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Spacer(Modifier.height(8.dp))
                         val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
-                        val backgroundColor = MaterialTheme.colorScheme.surface.toArgb()
+                        val backgroundColor = OmniColors.bg2.toArgb()
+                        // Wrapping, selectable monospace text in a vertical scroller. No horizontal
+                        // scroll: long lines wrap to the dialog width, so selection is a clean vertical
+                        // drag — much easier than chasing text off the right edge.
                         AndroidView(
                             factory = { ctx ->
-                                android.widget.HorizontalScrollView(ctx).apply {
-                                    isHorizontalScrollBarEnabled = true
+                                android.widget.ScrollView(ctx).apply {
+                                    isVerticalScrollBarEnabled = true
                                     isFillViewport = true
-                                    val scroll = android.widget.ScrollView(ctx).apply {
-                                        isVerticalScrollBarEnabled = true
-                                    }
                                     val textView = android.widget.TextView(ctx).apply {
                                         tag = "terminal_copy_text"
                                         typeface = android.graphics.Typeface.MONOSPACE
-                                        textSize = 12f
+                                        textSize = 11f
+                                        setLineSpacing(0f, 1.05f)
                                         setTextColor(textColor)
                                         setBackgroundColor(backgroundColor)
-                                        setPadding(16, 16, 16, 16)
+                                        setPadding(20, 16, 20, 16)
                                         setTextIsSelectable(true)
                                         isFocusable = true
                                         isFocusableInTouchMode = true
-                                        setHorizontallyScrolling(true)
+                                        setHorizontallyScrolling(false) // wrap long lines
                                     }
-                                    scroll.addView(
+                                    addView(
                                         textView,
                                         android.view.ViewGroup.LayoutParams(
-                                            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-                                            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-                                        ),
-                                    )
-                                    addView(
-                                        scroll,
-                                        android.view.ViewGroup.LayoutParams(
-                                            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
                                             android.view.ViewGroup.LayoutParams.MATCH_PARENT,
+                                            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
                                         ),
                                     )
                                 }
                             },
-                            update = { hsv ->
-                                val scroll = hsv.getChildAt(0) as android.widget.ScrollView
+                            update = { scroll ->
                                 val tv = scroll.getChildAt(0) as android.widget.TextView
                                 tv.setTextColor(textColor)
                                 tv.setBackgroundColor(backgroundColor)
                                 val nextText = copyDialogText.ifBlank { "No terminal text in this range." }
                                 if (tv.text.toString() != nextText) tv.text = nextText
                             },
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f)
+                                .clip(RoundedCornerShape(8.dp)),
                         )
+                        Spacer(Modifier.height(10.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(onClick = { dismiss() }, modifier = Modifier.weight(1f)) {
+                                Text("Close")
+                            }
+                            Button(
+                                onClick = {
+                                    val cm = context.getSystemService(android.content.ClipboardManager::class.java)
+                                    cm?.setPrimaryClip(
+                                        android.content.ClipData.newPlainText("Terminal", copyDialogText)
+                                    )
+                                    // Android 13+ shows its own copy confirmation; toast covers older.
+                                    android.widget.Toast.makeText(context, "Copied to clipboard", android.widget.Toast.LENGTH_SHORT).show()
+                                    dismiss()
+                                },
+                                enabled = copyDialogText.isNotBlank(),
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("Copy all")
+                            }
+                        }
                     }
                 }
             }
