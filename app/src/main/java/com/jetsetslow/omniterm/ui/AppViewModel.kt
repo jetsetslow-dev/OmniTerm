@@ -659,6 +659,39 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var isPortScannerScanning by mutableStateOf(false)
     val portScannerResults = mutableStateListOf<Pair<Int, String>>()
 
+    // Single session-cached LAN sweep, shared by EVERYTHING that scans the local network: the Host
+    // Scan tab and every host picker (Ping / Traceroute / Port Scan / Wake-on-LAN). scanHosts() is
+    // the parent (rich ScannedHost); pickers derive their lighter ScannedWolDevice view from it via
+    // lanScanResults. Whichever screen scans first fills the cache for all the others, so we never run
+    // the same /24 sweep twice. In-memory only (per app session); an explicit rescan refreshes it.
+    var hostScanResults by mutableStateOf<List<ScannedHost>>(emptyList())
+        private set
+    var isLanScanInProgress by mutableStateOf(false)
+        private set
+
+    /** Picker-friendly view of the shared [hostScanResults] cache. */
+    val lanScanResults: List<ScannedWolDevice>
+        get() = hostScanResults.map {
+            ScannedWolDevice(name = it.hostname.ifBlank { "LAN Device" }, mac = it.mac, ip = it.ip, isOnline = it.isOnline)
+        }
+
+    /**
+     * Run the shared LAN sweep and cache it for every screen, unless a usable cached sweep already
+     * exists and [force] is false — in which case the cache is reused without re-scanning. Pass
+     * [force] = true when the user explicitly taps Scan/Rescan. A scan already in flight is a no-op,
+     * so concurrent callers from different tabs coalesce onto the one sweep.
+     */
+    suspend fun refreshLanScan(force: Boolean = false) {
+        if (isLanScanInProgress) return
+        if (!force && hostScanResults.isNotEmpty()) return
+        isLanScanInProgress = true
+        try {
+            hostScanResults = scanHosts()
+        } finally {
+            isLanScanInProgress = false
+        }
+    }
+
     // TERMINAL EMULATOR SHELL STATE (interactive PTY shell)
     private val sshTransport: SshTransport = JschSshTransport()
     private var termCols = 80
@@ -2195,7 +2228,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      * blocks `ip neigh` / `/proc/net/arp` reads in many cases, so MAC may be blank; the active probe
      * still surfaces live hosts regardless.
      */
-    suspend fun scanHosts(): List<ScannedHost> = withContext(Dispatchers.IO) {
+    // Private so all callers go through refreshLanScan()'s shared cache — there's no second path that
+    // could kick off a duplicate /24 sweep.
+    private suspend fun scanHosts(): List<ScannedHost> = withContext(Dispatchers.IO) {
         val online = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
         val macs = java.util.concurrent.ConcurrentHashMap<String, String>()
         try {
@@ -2267,18 +2302,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         } catch (_: Exception) {}
         emptyList()
     }
-
-    /**
-     * Thin adapter over [scanHosts] preserving the WoL/port-scanner call sites that just need an
-     * IP + MAC + online flag. The name reflects the hostname where one was resolved.
-     */
-    suspend fun scanLanDevices(): List<ScannedWolDevice> =
-        scanHosts().map {
-            ScannedWolDevice(
-                name = it.hostname.ifBlank { "LAN Device" },
-                mac = it.mac, ip = it.ip, isOnline = it.isOnline,
-            )
-        }
 
     fun triggerWol(target: WolTargetEntity) {
         viewModelScope.launch {

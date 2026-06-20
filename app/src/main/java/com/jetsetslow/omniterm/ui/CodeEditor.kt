@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -448,6 +449,7 @@ private fun EditorBody(
     val highlight = remember(language, palette, limit) { CodeHighlightTransformation(language, palette, limit) }
     val verticalScroll = rememberScrollState()
     val horizontalScroll = rememberScrollState()
+    val density = androidx.compose.ui.platform.LocalDensity.current
     val lineCount = remember(field.text) { field.text.count { it == '\n' } + 1 }
     var textLayoutResult by remember { mutableStateOf<androidx.compose.ui.text.TextLayoutResult?>(null) }
 
@@ -467,25 +469,41 @@ private fun EditorBody(
 
     Row(modifier = modifier.fillMaxSize().verticalScroll(verticalScroll)) {
         // Line-number gutter, scrolling in lockstep with the text (shared verticalScroll on the Row).
-        // Hidden while wrapping: the gutter emits one row per LOGICAL line, but soft-wrap adds extra
-        // VISUAL lines, so the numbers would drift out of alignment with the text. Keeping it simple
-        // (and correct) by dropping the gutter in wrap mode; Go-to-line still works.
-        if (!wrap) {
-            Column(
-                modifier = Modifier
-                    .background(MaterialTheme.colorScheme.surfaceContainer)
-                    .padding(horizontal = 6.dp, vertical = 12.dp),
-                horizontalAlignment = Alignment.End,
-            ) {
-                for (n in 1..lineCount) {
-                    Text(
-                        n.toString(),
-                        fontFamily = OmniFonts.mono,
-                        fontSize = fontSize,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                        textAlign = TextAlign.End,
-                    )
-                }
+        // When NOT wrapping, every logical line is exactly one visual line, so a plain stacked Column
+        // of numbers lines up with the text. When wrapping, a logical line can span several visual
+        // lines, so we measure each logical line's height from the text layout and stretch its number
+        // row to match — keeping the gutter aligned (and visible) instead of dropping it.
+        Column(
+            modifier = Modifier
+                .background(MaterialTheme.colorScheme.surfaceContainer)
+                .padding(horizontal = 6.dp, vertical = 12.dp),
+            horizontalAlignment = Alignment.End,
+        ) {
+            // Offset of the first char of each logical line, so we can find its starting VISUAL line
+            // in the wrapped layout and size each number to match that logical line's total height.
+            val lineStartOffsets = remember(field.text) { logicalLineStartOffsets(field.text) }
+            val layout = textLayoutResult
+            for (n in 1..lineCount) {
+                // Height this logical line occupies on screen. When wrapping, that's the sum of all
+                // its visual (wrapped) rows; otherwise it's a single row. Once measured, we lock each
+                // number's row to that height so it stays aligned with the text it labels.
+                val rowHeight = if (wrap && layout != null) {
+                    val startOffset = lineStartOffsets.getOrElse(n - 1) { 0 }
+                    val endOffset = lineStartOffsets.getOrNull(n)?.minus(1) ?: field.text.length
+                    val firstVisual = layout.getLineForOffset(startOffset)
+                    val lastVisual = layout.getLineForOffset(endOffset.coerceAtLeast(startOffset))
+                    with(density) {
+                        (layout.getLineBottom(lastVisual) - layout.getLineTop(firstVisual)).toDp()
+                    }
+                } else null
+                Text(
+                    n.toString(),
+                    fontFamily = OmniFonts.mono,
+                    fontSize = fontSize,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                    textAlign = TextAlign.End,
+                    modifier = if (rowHeight != null) Modifier.height(rowHeight) else Modifier,
+                )
             }
         }
         BasicTextField(
@@ -503,6 +521,20 @@ private fun EditorBody(
                 .then(if (wrap) Modifier else Modifier.horizontalScroll(horizontalScroll))
                 .padding(start = 8.dp, top = 12.dp, end = 12.dp, bottom = 12.dp),
         )
+    }
+}
+
+/**
+ * Character offset of the first char of each logical (newline-delimited) line in [text]. The gutter
+ * uses these to map a line number onto its starting position in the wrapped text layout. Pure for
+ * unit-testing. Always returns at least one entry (offset 0) so an empty buffer still has line 1.
+ */
+internal fun logicalLineStartOffsets(text: String): List<Int> = buildList {
+    add(0)
+    var i = text.indexOf('\n')
+    while (i >= 0) {
+        add(i + 1)
+        i = text.indexOf('\n', i + 1)
     }
 }
 

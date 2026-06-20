@@ -829,8 +829,10 @@ fun NetworkToolView(viewModel: AppViewModel) {
 // ── Host Scan: rich subnet sweep (rDNS hostname, MAC + vendor, open common ports) ──
 @Composable
 private fun HostScanTab(viewModel: AppViewModel, onUseHost: (String) -> Unit) {
-    var scanning by remember { mutableStateOf(false) }
-    var hosts by remember { mutableStateOf<List<AppViewModel.ScannedHost>>(emptyList()) }
+    // Reads the shared session cache: a sweep run from any picker shows up here, and the button
+    // force-refreshes it for everyone. Parent of the pickers — same underlying scanHosts() sweep.
+    val hosts = viewModel.hostScanResults
+    val scanning = viewModel.isLanScanInProgress
     val scope = rememberCoroutineScope()
 
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -839,12 +841,7 @@ private fun HostScanTab(viewModel: AppViewModel, onUseHost: (String) -> Unit) {
             fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Button(
-            onClick = {
-                scope.launch {
-                    try { scanning = true; hosts = emptyList(); hosts = viewModel.scanHosts() }
-                    finally { scanning = false }
-                }
-            },
+            onClick = { scope.launch { viewModel.refreshLanScan(force = true) } },
             modifier = Modifier.fillMaxWidth(),
             enabled = !scanning,
         ) {
@@ -855,7 +852,7 @@ private fun HostScanTab(viewModel: AppViewModel, onUseHost: (String) -> Unit) {
             } else {
                 Icon(Icons.Filled.Lan, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Scan network")
+                Text(if (hosts.isEmpty()) "Scan network" else "Rescan network")
             }
         }
         if (!scanning && hosts.isEmpty()) {
@@ -904,8 +901,10 @@ private fun HostScanTab(viewModel: AppViewModel, onUseHost: (String) -> Unit) {
 // which all three tabs read as their target field.
 @Composable
 private fun LanHostPicker(viewModel: AppViewModel) {
-    var isScanning by remember { mutableStateOf(false) }
-    var scannedDevices by remember { mutableStateOf<List<AppViewModel.ScannedWolDevice>>(emptyList()) }
+    // Results come from the session-shared cache on the VM, so a scan done in any tab is reused here
+    // without re-scanning. The button forces a fresh scan when the user wants to refresh.
+    val scannedDevices = viewModel.lanScanResults
+    val isScanning = viewModel.isLanScanInProgress
     val coroutineScope = rememberCoroutineScope()
 
     Row(
@@ -918,23 +917,13 @@ private fun LanHostPicker(viewModel: AppViewModel) {
             Text("Discover local hosts and tap one to set it as the target.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         Button(
-            onClick = {
-                coroutineScope.launch {
-                    try {
-                        isScanning = true
-                        scannedDevices = emptyList()
-                        scannedDevices = viewModel.scanLanDevices()
-                    } finally {
-                        isScanning = false
-                    }
-                }
-            },
+            onClick = { coroutineScope.launch { viewModel.refreshLanScan(force = true) } },
             enabled = !isScanning,
         ) {
             if (isScanning) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
             } else {
-                Text("Scan LAN", fontSize = 11.sp)
+                Text(if (scannedDevices.isEmpty()) "Scan LAN" else "Rescan LAN", fontSize = 11.sp)
             }
         }
     }
@@ -1153,23 +1142,35 @@ private fun PortScanTab(viewModel: AppViewModel) {
     }
 }
 
-// ── Wake-on-LAN: saved targets + add/edit dialog (with shared LAN scanner) ──
+// ── Wake-on-LAN: inline LAN scanner (like the other tabs) + saved targets + add/edit dialog ──
+//
+// The LAN scanner lives in the tab body, mirroring the Ping/Traceroute/Port Scan LanHostPicker, so
+// all five tabs discover hosts the same way. Tapping a scanned host opens the Add dialog pre-filled
+// with that host's name, MAC, and broadcast segment. The Add dialog itself is now scan-free.
 @Composable
 private fun WolTab(viewModel: AppViewModel) {
     val targetComputers by viewModel.wolTargets.collectAsState()
     var showAddWol by remember { mutableStateOf(false) }
     var editingTarget by remember { mutableStateOf<WolTargetEntity?>(null) }
+    // When a scanned host is tapped, prefill the Add dialog from it.
+    var prefill by remember { mutableStateOf<AppViewModel.ScannedWolDevice?>(null) }
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
 
     Column(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            WolLanScanner(
+                viewModel = viewModel,
+                onPick = { device -> prefill = device; showAddWol = true },
+            )
+        }
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text("Saved targets", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Button(onClick = { showAddWol = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), modifier = Modifier.height(36.dp)) {
+            Button(onClick = { prefill = null; showAddWol = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), modifier = Modifier.height(36.dp)) {
                 Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
                 Text("Add target", fontSize = 12.sp)
@@ -1221,17 +1222,20 @@ private fun WolTab(viewModel: AppViewModel) {
 
     if (showAddWol || editingTarget != null) {
         val target = editingTarget
-        var name by remember(target) { mutableStateOf(target?.name ?: "") }
-        var mac by remember(target) { mutableStateOf(target?.macAddress ?: "") }
-        var broadcastIp by remember(target) { mutableStateOf(target?.broadcastIp ?: "192.168.1.255") }
-        var port by remember(target) { mutableStateOf((target?.port ?: 9).toString()) }
-        var notes by remember(target) { mutableStateOf(target?.notes ?: "") }
-        var isScanning by remember { mutableStateOf(false) }
-        var scannedDevices by remember { mutableStateOf<List<AppViewModel.ScannedWolDevice>>(emptyList()) }
-        val coroutineScope = rememberCoroutineScope()
+        // For an edit, seed from the saved target. For an add, seed from the tapped scanned host (if
+        // any), otherwise blank. The remember key includes both so re-opening with a different source
+        // re-initializes the fields.
+        var name by remember(target, prefill) { mutableStateOf(target?.name ?: prefill?.name ?: "") }
+        var mac by remember(target, prefill) { mutableStateOf(target?.macAddress ?: prefill?.mac ?: "") }
+        var broadcastIp by remember(target, prefill) {
+            mutableStateOf(target?.broadcastIp ?: prefill?.ip?.substringBeforeLast('.')?.plus(".255") ?: "192.168.1.255")
+        }
+        var port by remember(target, prefill) { mutableStateOf((target?.port ?: 9).toString()) }
+        var notes by remember(target, prefill) { mutableStateOf(target?.notes ?: "") }
         fun dismissEditor() {
             showAddWol = false
             editingTarget = null
+            prefill = null
         }
 
         AlertDialog(
@@ -1239,52 +1243,6 @@ private fun WolTab(viewModel: AppViewModel) {
             title = { Text(if (target == null) "Configure WOL Pointer" else "Edit WOL Pointer") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text("Target specific host:", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                        Button(
-                            onClick = { 
-                                coroutineScope.launch {
-                                    try {
-                                        isScanning = true
-                                        scannedDevices = emptyList()
-                                        scannedDevices = viewModel.scanLanDevices()
-                                    } finally {
-                                        isScanning = false
-                                    }
-                                }
-                            },
-                            enabled = !isScanning
-                        ) {
-                            if (isScanning) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
-                            } else {
-                                Text("Scan LAN", fontSize = 11.sp)
-                            }
-                        }
-                    }
-                    if (scannedDevices.isNotEmpty()) {
-                        LazyColumn(modifier = Modifier.height(140.dp).fillMaxWidth()) {
-                            items(scannedDevices) { device ->
-                                Row(
-                                    modifier = Modifier.fillMaxWidth().clickable {
-                                        name = device.name
-                                        mac = device.mac
-                                        broadcastIp = device.ip.substringBeforeLast('.') + ".255"
-                                    }.padding(8.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(if (device.isOnline) Color(0xFF10B981) else Color.Red))
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Icon(Icons.Filled.Dns, contentDescription = null, modifier = Modifier.size(20.dp), tint = Color.Gray)
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Column {
-                                        Text(device.name, fontSize = 14.sp, fontWeight = FontWeight.Medium)
-                                        Text("${device.ip} · ${device.mac}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                }
-                            }
-                        }
-                    }
                     OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Machine Name") }, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = mac, onValueChange = { mac = it }, label = { Text("MAC Address target") }, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = broadcastIp, onValueChange = { broadcastIp = it }, label = { Text("Broadcast IP network segment") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
@@ -1311,6 +1269,67 @@ private fun WolTab(viewModel: AppViewModel) {
                 TextButton(onClick = { dismissEditor() }) { Text("Cancel") }
             }
         )
+    }
+}
+
+// ── Inline LAN scanner for the Wake-on-LAN tab. Mirrors LanHostPicker (used by Ping/Traceroute/Port
+// Scan) but, instead of setting a shared target, hands the tapped host to [onPick] so the caller can
+// open the Add-target dialog pre-filled from it.
+@Composable
+private fun WolLanScanner(viewModel: AppViewModel, onPick: (AppViewModel.ScannedWolDevice) -> Unit) {
+    // Shares the same session-cached scan as the other tabs' pickers (see refreshLanScan).
+    val scannedDevices = viewModel.lanScanResults
+    val isScanning = viewModel.isLanScanInProgress
+    val coroutineScope = rememberCoroutineScope()
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text("LAN host picker", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+            Text("Discover local hosts and tap one to add it as a target.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Button(
+            onClick = { coroutineScope.launch { viewModel.refreshLanScan(force = true) } },
+            enabled = !isScanning,
+        ) {
+            if (isScanning) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+            } else {
+                Text(if (scannedDevices.isEmpty()) "Scan LAN" else "Rescan LAN", fontSize = 11.sp)
+            }
+        }
+    }
+
+    if (scannedDevices.isNotEmpty()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            items(scannedDevices) { device ->
+                OmniCard(
+                    modifier = Modifier.fillMaxWidth().clickable { onPick(device) },
+                    leftAccent = OmniColors.green,
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(if (device.isOnline) Color(0xFF10B981) else Color.Red))
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Icon(Icons.Filled.Dns, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(device.name.ifBlank { device.ip }, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                            Text("${device.ip} · ${device.mac.ifBlank { "MAC unavailable" }}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        Icon(Icons.Filled.Add, contentDescription = "Add as target", tint = OmniColors.cyan, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
+        }
     }
 }
 
