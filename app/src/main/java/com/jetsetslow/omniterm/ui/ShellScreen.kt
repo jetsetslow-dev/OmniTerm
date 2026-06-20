@@ -45,6 +45,10 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.DisposableEffect
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.key.Key
@@ -502,6 +506,30 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
     LaunchedEffect(sessionId) {
         focusRequester.requestFocus()
         keyboard?.show()
+    }
+
+    // Release the hidden input's focus when the app is backgrounded (e.g. tapping a notification),
+    // and re-acquire it on return. Backgrounding tears down the IME text-input session; if the
+    // field is still focused when the app resumes and re-positions, Compose's legacy cursor-anchor
+    // path (LegacyCursorAnchorInfoController via onGloballyPositioned) dereferences the now-null
+    // session and crashes at draw time. Dropping focus on STOP removes that stale session.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, sessionId) {
+        val observer = LifecycleEventObserver { _, event ->
+            when (event) {
+                Lifecycle.Event.ON_STOP -> {
+                    runCatching { focusRequester.freeFocus() }
+                    keyboard?.hide()
+                }
+                Lifecycle.Event.ON_RESUME -> {
+                    runCatching { focusRequester.requestFocus() }
+                    keyboard?.show()
+                }
+                else -> {}
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     // Font size is user-adjustable (UI buttons + volume keys); re-measure when it changes.

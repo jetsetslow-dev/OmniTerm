@@ -92,6 +92,18 @@ class MainActivity : AppCompatActivity() {
   override fun onStop() {
     super.onStop()
     appViewModel?.noteAppBackgrounded()
+    // Clear focus from whatever text field is active before the activity stops. Backgrounding (e.g.
+    // tapping a notification) tears down the IME text-input session; if a Compose text field is still
+    // focused on resume it re-reports its position through the legacy cursor-anchor path against the
+    // now-null session and crashes at draw time (LegacyCursorAnchorInfoController NPE). Dropping focus
+    // app-wide here removes that stale session for ALL fields — terminal, editors, dialogs — at once.
+    runCatching {
+      currentFocus?.let { focused ->
+        val imm = getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+        imm?.hideSoftInputFromWindow(focused.windowToken, 0)
+        focused.clearFocus()
+      }
+    }
   }
 
   private var pendingSessionId: String? = null
