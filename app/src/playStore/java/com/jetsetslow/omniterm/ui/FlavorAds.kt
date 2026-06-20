@@ -4,6 +4,7 @@ import android.app.Activity
 import android.util.DisplayMetrics
 import android.util.Log
 import android.widget.FrameLayout
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -12,6 +13,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.google.android.gms.ads.AdListener
 import com.google.android.gms.ads.AdRequest
@@ -92,9 +94,13 @@ fun FlavorAdBanner(modifier: Modifier = Modifier) {
         val widthDp = (widthPx / metrics.density).toInt().coerceAtLeast(320)
         AdSize.getCurrentOrientationAnchoredAdaptiveBannerAdSize(activity, widthDp)
     }
+    // Reserve the banner's height up front. AndroidView starts at height 0 and the AdView only sizes
+    // itself once the ad loads asynchronously; without a reserved height the bottom bar under-measures
+    // and screen content can briefly render under the banner. heightIn(min=) fixes the slot height.
+    val adHeightDp = remember(adSize) { adSize.height.coerceAtLeast(50).dp }
 
     AndroidView(
-        modifier = modifier,
+        modifier = modifier.heightIn(min = adHeightDp),
         factory = { ctx ->
             // Wrap in a FrameLayout so Compose has a stable host even before the ad loads.
             FrameLayout(ctx).apply {

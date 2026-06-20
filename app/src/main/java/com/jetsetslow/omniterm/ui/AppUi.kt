@@ -654,7 +654,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
         bottomBar = {
             Column {
                 if (showMonetizationUi && !licenseState.adsRemoved) {
-                    AdBanner(licenseState, licenseController)
+                    AdBanner()
                 }
                 OmniBottomNav(
                     items = navItems,
@@ -930,17 +930,26 @@ private fun FreePlanBanner(state: LicenseState, controller: LicenseController) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Icon(Icons.Filled.WorkspacePremium, contentDescription = null, tint = OmniColors.cyan, modifier = Modifier.size(18.dp))
                 Text(
-                    "Free Play Store build: 1 host & 1 credential",
+                    // Reflect what the free build actually is: ad-supported and limited to 1 host until
+                    // ads are removed; once ads are gone it's just the host/credential limit.
+                    if (state.adsRemoved) {
+                        "Free Play Store build: 1 host & 1 credential"
+                    } else {
+                        "Free, ad-supported build: 1 host & 1 credential"
+                    },
                     fontWeight = FontWeight.Bold,
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurface,
                     modifier = Modifier.weight(1f),
                 )
             }
-            Row(
+            // FlowRow so the three upsell buttons (Restore / Remove ads / Unlock unlimited) wrap to a
+            // second line on narrow screens instead of clipping when prices make them too wide.
+            @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+            androidx.compose.foundation.layout.FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                verticalAlignment = Alignment.CenterVertically,
+                verticalArrangement = Arrangement.Center,
             ) {
             // Re-queries owned purchases from Play — the "Restore purchase" path for reinstalls
             // and new devices.
@@ -950,6 +959,26 @@ private fun FreePlanBanner(state: LicenseState, controller: LicenseController) {
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
             ) {
                 Text("Restore", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            // Cheaper ads-only removal. Its only entry point in the app — shown next to the full
+            // Unlock here (not as a separate bottom strip) so the ad area stays just ad + nav. Hidden
+            // once ads are already removed (or the user fully unlocked).
+            if (!state.adsRemoved) {
+                TextButton(
+                    onClick = { context.getActivity()?.let(controller::launchAdRemovalPurchase) },
+                    enabled = !state.loading,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                ) {
+                    Text(
+                        when {
+                            state.loading -> "Checking…"
+                            state.adRemovalPrice != null -> "Remove ads ${state.adRemovalPrice}"
+                            else -> "Remove ads"
+                        },
+                        fontSize = 11.sp,
+                        color = OmniColors.green,
+                    )
+                }
             }
             TextButton(
                 onClick = { context.getActivity()?.let(controller::launchPurchase) },
@@ -981,36 +1010,12 @@ private fun FreePlanBanner(state: LicenseState, controller: LicenseController) {
 }
 
 @Composable
-private fun AdBanner(state: LicenseState, controller: LicenseController) {
-    val context = LocalContext.current
+private fun AdBanner() {
     Column(modifier = Modifier.fillMaxWidth().background(OmniColors.bg1)) {
-        // The real (flavor-provided) ad: a single anchored adaptive banner in the Play Store build,
-        // nothing in the open-source build.
+        // Just the ad — a single anchored adaptive banner (Play Store build only; nothing in the
+        // open-source build). The "Remove ads" purchase lives in the top FreePlanBanner alongside
+        // "Unlock unlimited", so the bottom is only the ad + nav with no empty upsell strip.
         FlavorAdBanner(modifier = Modifier.fillMaxWidth())
-        // A slim, dismissible upsell row so the user always has a one-tap path to remove ads.
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 14.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.End,
-        ) {
-            TextButton(
-                onClick = { context.getActivity()?.let(controller::launchAdRemovalPurchase) },
-                enabled = !state.loading,
-                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-            ) {
-                Text(
-                    when {
-                        state.loading -> "Checking..."
-                        state.adRemovalPrice != null -> "Remove ads ${state.adRemovalPrice}"
-                        else -> "Remove ads"
-                    },
-                    fontSize = 11.sp,
-                    color = OmniColors.green,
-                )
-            }
-        }
     }
 }
 
