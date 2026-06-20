@@ -2556,37 +2556,41 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 pendingSnapshotJob?.cancel()
                 TerminalSessionManager.publishTerminalSnapshot(shellSession)
-                cleanExit = isCleanShellExit(session.exitStatus.value)
+                // remoteExited is the authoritative "the user ended the shell/tmux" signal (genuine
+                // remote channel-EOF). It's only ever true for a deliberate exit, never a socket drop.
+                cleanExit = session.remoteExited.value || isCleanShellExit(session.exitStatus.value)
                 android.util.Log.i(
                     "OmniTermSession",
-                    "output flow completed normally: exitStatus=${session.exitStatus.value} " +
-                        "cleanExit=$cleanExit persistent=${shellSession.persistent} userClosed=${shellSession.userClosed}"
+                    "output flow completed normally: remoteExited=${session.remoteExited.value} " +
+                        "exitStatus=${session.exitStatus.value} cleanExit=$cleanExit " +
+                        "persistent=${shellSession.persistent} userClosed=${shellSession.userClosed}"
                 )
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 // Non-cancellation: connection lost unexpectedly → fall through to reconnect.
+                cleanExit = session.remoteExited.value
                 android.util.Log.i(
                     "OmniTermSession",
                     "output flow ended with exception: ${e.javaClass.simpleName}: ${e.message} " +
+                        "remoteExited=${runCatching { session.remoteExited.value }.getOrNull()} " +
                         "exitStatus=${runCatching { session.exitStatus.value }.getOrNull()}"
                 )
             }
 
-            // Teardown vs. reconnect decision:
+            // Teardown vs. reconnect decision, driven by cleanExit (= remoteExited: a genuine remote
+            // channel-EOF). remoteExited is true ONLY for a deliberate exit and NEVER for a socket
+            // death, so it cleanly separates the two cases:
             //
-            // PERSISTENT (tmux) sessions: the whole point is to survive drops, and a connection-end
-            // is almost never a deliberate close — typing `exit` inside tmux only exits the inner
-            // shell while the `exec tmux attach` and the tmux server keep running. So unless the USER
-            // explicitly disconnected, we ALWAYS reconnect (and re-attach the same tmux). This is also
-            // robust against any exit-status ambiguity on a network drop: a false "clean exit" can no
-            // longer silently kill a tmux session. If the user really exited tmux, the reconnect just
-            // re-attaches harmlessly (or shows a fresh tmux), which is far better than losing the work.
-            //
-            // NON-persistent sessions: a clean shell `exit` tears down; an unexpected drop reconnects.
+            //   • cleanExit (remote `exit`): tear the session down. For a persistent session this
+            //     means the user fully exited tmux (inner shell → `exec tmux attach` → login shell all
+            //     ended), so the tmux server is gone — do NOT reconnect, or it loops into a fresh
+            //     session.
+            //   • not cleanExit + creds + not user-closed (a drop): auto-reconnect (re-attaching tmux
+            //     for a persistent session).
+            //   • user-initiated close: tear down.
             val isUserClose = shellSession.userClosed
             val hasCreds = shellSession.creds != null
-            val shouldReconnect = !isUserClose && hasCreds &&
-                (shellSession.persistent || !cleanExit)
+            val shouldReconnect = !isUserClose && hasCreds && !cleanExit
             val shouldTearDown = !shouldReconnect && (cleanExit || isUserClose)
             android.util.Log.i(
                 "OmniTermSession",

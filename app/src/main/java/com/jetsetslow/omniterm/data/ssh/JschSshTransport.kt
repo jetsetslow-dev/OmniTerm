@@ -366,10 +366,12 @@ private class JschTerminalSession(
     private val outChannel = Channel<ByteArray>(OUTPUT_BUFFER_CHUNKS)
     private val _closed = MutableStateFlow(false)
     private val _exitStatus = MutableStateFlow<Int?>(null)
+    private val _remoteExited = MutableStateFlow(false)
 
     override val output: Flow<ByteArray> = outChannel.receiveAsFlow()
     override val closed: StateFlow<Boolean> = _closed.asStateFlow()
     override val exitStatus: StateFlow<Int?> = _exitStatus.asStateFlow()
+    override val remoteExited: StateFlow<Boolean> = _remoteExited.asStateFlow()
 
     // True when the reader loop ended because the remote closed the stream gracefully (EOF), as
     // opposed to us closing the channel from this side or the connection dropping mid-read. A
@@ -449,6 +451,10 @@ private class JschTerminalSession(
                 val genuineEof = runCatching { channel.isEOF }.getOrDefault(false)
                 if (genuineEof && (status == null || status == -1)) status = 0
             }
+            // The remote deliberately ended the channel ONLY if JSch saw a real channel-EOF. A socket
+            // death (WiFi off) never sets this, so it cleanly separates "user exited the shell/tmux"
+            // (tear down) from "connection dropped" (reconnect) regardless of the exit-status number.
+            _remoteExited.value = runCatching { channel.isEOF }.getOrDefault(false)
             _exitStatus.value = status
             try { channel.disconnect() } catch (_: Throwable) {}
             // For a jumped session, tear down target + jump together; otherwise just this session.

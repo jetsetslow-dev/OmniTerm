@@ -64,6 +64,15 @@ interface TerminalSession {
      */
     val exitStatus: StateFlow<Int?>
 
+    /**
+     * `true` only when the remote deliberately ended the channel — i.e. the remote shell ran to
+     * completion (`exit`) and the server sent a genuine SSH channel-EOF. A network/transport drop
+     * (socket death, WiFi off) NEVER sets this: the remote never gets to send EOF. This is the
+     * unambiguous "the shell really exited" signal callers use to decide tear-down vs. reconnect,
+     * independent of the exit-status number (which can lag or be missing on a clean exit).
+     */
+    val remoteExited: StateFlow<Boolean>
+
     /** Send raw bytes (keystrokes / escape sequences) to the remote PTY. */
     suspend fun write(bytes: ByteArray)
 
