@@ -264,13 +264,25 @@ fun ShellScreen(viewModel: AppViewModel) {
                     modifier = Modifier.align(Alignment.TopCenter).zIndex(1f).background(OmniColors.bg3),
                     trailingContent = {
                         val connected = currentSession?.isConnected == true
+                        val reconnecting = currentSession?.reconnecting == true
                         TerminalHeaderAction("NEW", OmniColors.green, enabled = !viewModel.isTerminalConnecting) {
                             viewModel.connectTerminal()
                         }
                         TerminalHeaderAction("BG", OmniColors.cyan, enabled = connected) {
                             viewModel.sendToBackground()
                         }
-                        TerminalHeaderAction("DISC", OmniColors.red, OmniColors.redDim, enabled = connected) {
+                        // A dropped session that isn't already retrying gets a manual reconnect here,
+                        // so a stuck/exhausted auto-reconnect can be re-kicked without leaving the
+                        // terminal view (previously only the session-list picker offered this).
+                        if (currentSession != null && !connected && !reconnecting) {
+                            TerminalHeaderAction("RECON", OmniColors.cyan) {
+                                currentSession.let { viewModel.retrySession(it.id) }
+                            }
+                        }
+                        // DISC is ALWAYS available whenever a session exists — including mid-reconnect.
+                        // A user disconnect cancels any in-flight reconnect and tears the session down,
+                        // which is the escape hatch out of a "stuck reconnecting" limbo state.
+                        TerminalHeaderAction("DISC", OmniColors.red, OmniColors.redDim, enabled = currentSession != null) {
                             currentSession?.let { viewModel.requestDisconnectSession(it.id) }
                         }
                     }

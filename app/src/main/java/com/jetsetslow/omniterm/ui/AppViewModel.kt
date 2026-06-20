@@ -2886,7 +2886,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 restorablePersistentSessions = restorablePersistentSessions.filter { it.tmuxName != s.tmuxName }
             }
         }
-        s.session.close()
+        // cleanupSession closes the socket off the main thread (JSch disconnect can block on network
+        // I/O — on a dead/changed network a synchronous close would freeze the UI, which is exactly
+        // the "can't disconnect" limbo this avoids) and removes the session from the active list.
         cleanupSession(s)
     }
 
@@ -2902,11 +2904,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         s.userClosed = true
         s.reconnectJob?.cancel()
-        s.session.close()
         if (restorablePersistentSessions.none { it.tmuxName == s.tmuxName }) {
             restorablePersistentSessions = restorablePersistentSessions +
                 PersistentSessionEntity(s.tmuxName, s.serverId, s.serverName)
         }
+        // cleanupSession closes the socket off the main thread (see disconnectSession).
         cleanupSession(s)
         if (currentSessionId == sessionId) currentSessionId = null
     }

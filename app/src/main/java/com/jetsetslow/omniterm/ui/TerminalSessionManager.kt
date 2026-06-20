@@ -63,8 +63,11 @@ object TerminalSessionManager {
         s.userClosed = true
         s.reconnectJob?.cancel()
         // close() is idempotent; doing it here guarantees the transport reader thread and the
-        // SSH connection die with the session even if a caller forgot to close first.
-        try { s.session.close() } catch (_: Exception) {}
+        // SSH connection die with the session even if a caller forgot to close first. Run it off any
+        // caller thread (this is often invoked from Main): JSch's disconnect can block on network I/O,
+        // which on a dead/changed network would freeze the UI and trap the user in a stuck session.
+        val closing = s.session
+        scope.launch(Dispatchers.IO) { try { closing.close() } catch (_: Exception) {} }
         s.terminalOutputJob?.cancel()
         s.terminalInputJob?.cancel()
         s.terminalInputChannel?.close()
@@ -118,7 +121,10 @@ object TerminalSessionManager {
         activeSessions.forEach {
             it.userClosed = true
             it.reconnectJob?.cancel()
-            try { it.session.close() } catch (_: Exception) {}
+            // Close off-thread: a synchronous JSch disconnect can block on network I/O and freeze
+            // whatever thread (often Main) called clearAll().
+            val closing = it.session
+            scope.launch(Dispatchers.IO) { try { closing.close() } catch (_: Exception) {} }
             it.isConnected = false
             it.terminalOutputJob?.cancel()
             it.terminalInputJob?.cancel()
