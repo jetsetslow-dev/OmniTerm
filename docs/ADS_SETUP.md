@@ -200,6 +200,33 @@ Must resolve at the **root** of the domain in your Play listing's Website field:
 via GitHub Pages — needs Pages enabled once (Settings → Pages → Source = GitHub
 Actions). Without it, fill is throttled even after approval.
 
+### CI: test devices via GitHub Environments (no prod footgun)
+
+`ADMOB_TEST_DEVICE_IDS` is NOT sensitive (it's a hash of a device ad-id that only
+makes Google serve *test* ads), so it doesn't need to be a secret for security.
+The real concern is that test devices must NEVER ship to production. The release
+workflow handles this with **GitHub Environments**:
+
+- The `release` job picks `environment: production` for a production release
+  (manual `release_channel=production`, or a clean SemVer tag like `v1.0.0`) and
+  `testing` otherwise (prerelease/internal, or a `v1.0.0-Alpha`-style tag).
+- Scope the test-device value per environment: set `ADMOB_TEST_DEVICE_IDS` in the
+  **`testing`** environment only; leave it **unset** in **`production`**. A
+  production build then sees no value → empty → real ads for everyone. Nothing to
+  remember to clear.
+
+**One-time GitHub setup** (Settings → Environments):
+1. Create environments **`testing`** and **`production`**.
+2. In **`testing`** → add secret/variable `ADMOB_TEST_DEVICE_IDS` = your release
+   build's hashed device ID(s), comma-separated.
+3. In **`production`** → do NOT add it. (Optionally add a required-reviewer
+   protection rule so production releases need approval.)
+4. `ADMOB_APP_ID` / `ADMOB_BANNER_UNIT_ID` can stay as repo-level secrets (same
+   for both), or be moved into each environment if they ever differ.
+
+For your own LOCAL test builds, skip CI entirely:
+`./gradlew assemblePlayStoreDebug -PADMOB_TEST_DEVICE_IDS=<id>`.
+
 ### Order of operations to get real ads working
 1. Add the release device ID to `ADMOB_TEST_DEVICE_IDS` → test ads in the Play
    build now.

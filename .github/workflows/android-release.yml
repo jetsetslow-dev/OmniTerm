@@ -62,6 +62,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
+    # Pick the GitHub Environment by whether this is a PRODUCTION release. This is what scopes
+    # AdMob test-device IDs: define ADMOB_TEST_DEVICE_IDS only in the `testing` environment, leave
+    # it UNSET in `production`. A production build then sees no test-device secret → empty →
+    # real ads for everyone, with no "remember to clear it" footgun.
+    #   • Manual dispatch: release_channel == 'production'.
+    #   • Tag push: a SemVer pre-release suffix (v1.0.0-Alpha, has a '-') means prerelease/testing;
+    #     a clean tag (v1.0.0) means production.
+    environment: ${{ ((github.event_name == 'workflow_dispatch' && inputs.release_channel == 'production') || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref, '-'))) && 'production' || 'testing' }}
+
     env:
       VERSION_CODE_FLOOR: "140"
       KEYSTORE_PATH: ${{ github.workspace }}/omniterm-upload-key.jks
@@ -72,9 +81,9 @@ jobs:
       # playStoreRelease task runs with Google's sample IDs (see app/build.gradle.kts).
       ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
       ADMOB_BANNER_UNIT_ID: ${{ secrets.ADMOB_BANNER_UNIT_ID }}
-      # Optional: comma-separated AdMob test-device IDs so the internal-test track can serve test
-      # ads (a new real unit returns "no fill" for unregistered devices). Empty when the secret is
-      # unset — production then serves real ads to everyone.
+      # Comma-separated AdMob test-device IDs so a test build can serve test ads (a new real unit
+      # returns "no fill" for unregistered devices). Resolved from the selected ENVIRONMENT above:
+      # set in `testing`, unset in `production`. Empty here → real ads served to everyone.
       ADMOB_TEST_DEVICE_IDS: ${{ secrets.ADMOB_TEST_DEVICE_IDS }}
 
     steps:
