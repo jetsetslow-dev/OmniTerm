@@ -1350,6 +1350,11 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
     var showAuthOption by remember { mutableStateOf(false) }
     var generatedKeyResult by remember { mutableStateOf<Triple<String, String, String>?>(null) } // alias, priv, pub
 
+    // Refresh trusted host keys once when the screen opens. Kept at the composable's top level (not
+    // inside the LazyColumn item that renders them) so it fires once, instead of re-firing every time
+    // that row scrolls back into composition.
+    LaunchedEffect(Unit) { viewModel.refreshKnownHosts() }
+
     // Play Store free tier allows a single saved credential (profiles + keys combined).
     val credentialLimitReached = viewModel.hasCredentialProfileLimit &&
         (profilesList.size + keysList.size) >= viewModel.credentialProfileLimit
@@ -1442,7 +1447,6 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
 
                 item {
                     val hosts = viewModel.knownHosts
-                    LaunchedEffect(Unit) { viewModel.refreshKnownHosts() }
                     Column {
                         SectionHeader("Trusted Host Keys", modifier = Modifier.padding(top = 16.dp, bottom = 4.dp))
                         if (hosts.isEmpty()) {
