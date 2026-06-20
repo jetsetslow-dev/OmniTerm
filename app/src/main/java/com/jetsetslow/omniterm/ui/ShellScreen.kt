@@ -638,9 +638,12 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
             cursorBrush = SolidColor(Color.Transparent),
             textStyle = TerminalTextStyle.copy(color = Color.Transparent),
             keyboardOptions = KeyboardOptions(
-                autoCorrectEnabled = true,
-                capitalization = KeyboardCapitalization.Sentences,
-                keyboardType = KeyboardType.Text,
+                // A terminal needs literal keystrokes: no autocorrect, no auto-capitalization.
+                // Sentence-casing would uppercase the first letter of every command (and after each
+                // period), which is wrong for shell input.
+                autoCorrectEnabled = false,
+                capitalization = KeyboardCapitalization.None,
+                keyboardType = KeyboardType.Ascii,
                 imeAction = ImeAction.None,
             ),
             modifier = Modifier

@@ -62,6 +62,20 @@ private const val RECONNECT_BASE_DELAY_MS = 1_000L
 private const val RECONNECT_MAX_DELAY_MS = 30_000L
 private const val RECONNECT_MAX_ATTEMPTS = 6
 
+/**
+ * Decide whether a closed shell session was a CLEAN exit (the remote shell ran `exit`, so the
+ * session should be torn down) versus an unexpected transport loss (network change/drop, so the
+ * session should auto-reconnect instead).
+ *
+ * Any real, non-negative exit status counts as clean: the remote shell exited deliberately, whether
+ * with `0` (`exit`) or non-zero (`exit 1`, a failed last command, etc.). A network drop leaves the
+ * status as `-1` or `null` (the transport died before any `exit-status` message arrived), and must
+ * NOT be mistaken for a clean exit — otherwise a momentary network change would silently kill the
+ * terminal (and its tmux session) instead of reconnecting. Pulled out as a pure function so this
+ * exact rule is unit-tested and can't regress.
+ */
+internal fun isCleanShellExit(exitStatus: Int?): Boolean = exitStatus != null && exitStatus >= 0
+
 enum class Screen {
     Servers,
     Fleet,
@@ -2542,7 +2556,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 pendingSnapshotJob?.cancel()
                 TerminalSessionManager.publishTerminalSnapshot(shellSession)
-                cleanExit = session.exitStatus.value == 0
+                cleanExit = isCleanShellExit(session.exitStatus.value)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 // Non-cancellation: connection lost unexpectedly → fall through to reconnect.

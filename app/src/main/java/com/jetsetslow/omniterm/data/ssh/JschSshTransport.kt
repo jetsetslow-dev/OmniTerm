@@ -422,21 +422,32 @@ private class JschTerminalSession(
 
     override fun close() {
         if (_closed.compareAndSet(expect = false, update = true)) {
-            // JSch delivers the remote `exit-status` in a separate channel message that frequently
-            // arrives a few ms AFTER the data-stream EOF. Read immediately and it's often still -1,
-            // which a caller would misread as "not a clean exit" and auto-reconnect. So give it a
-            // brief window to settle when the remote closed gracefully.
+            // Decide whether this is a CLEAN remote exit (shell `exit` → tear down) or a transport
+            // loss (network change/drop → caller should auto-reconnect). These look similar at the
+            // stream level — both end the reader loop — so we lean on JSch's channel state:
+            //
+            //   • Clean `exit`: the remote sends an SSH EOF + an `exit-status` message. JSch marks the
+            //     channel isEOF()=true and exitStatus() becomes a real code (≥ 0). That status message
+            //     can arrive a few ms AFTER the data EOF, so we briefly poll for it.
+            //   • Network loss: the socket dies. exitStatus() stays -1 forever and the channel is NOT
+            //     cleanly EOF'd. We must NOT normalise this to 0, or a drop gets mistaken for `exit`
+            //     and the session is killed instead of reconnected.
             var status = runCatching { channel.exitStatus }.getOrNull()
             if (remoteEof) {
                 var waited = 0
-                while (status == -1 && waited < EXIT_STATUS_SETTLE_MS) {
+                while (status == -1 && runCatching { channel.isEOF }.getOrDefault(false) &&
+                    waited < EXIT_STATUS_SETTLE_MS
+                ) {
                     try { Thread.sleep(EXIT_STATUS_POLL_MS.toLong()) } catch (_: InterruptedException) { break }
                     waited += EXIT_STATUS_POLL_MS
                     status = runCatching { channel.exitStatus }.getOrNull()
                 }
-                // A graceful remote EOF IS a clean exit. If JSch never surfaced a real code (still
-                // -1, or null), normalise to 0 so the session tears down instead of reconnecting.
-                if (status == null || status == -1) status = 0
+                // Only a genuine remote EOF with no in-flight status (the shell closed its stream but
+                // the server didn't send an explicit exit-status — rare but valid for a clean `exit`)
+                // is normalised to 0. A still-connected channel that never EOF'd is a transport drop,
+                // so we leave the status as -1/null and let the caller reconnect.
+                val genuineEof = runCatching { channel.isEOF }.getOrDefault(false)
+                if (genuineEof && (status == null || status == -1)) status = 0
             }
             _exitStatus.value = status
             try { channel.disconnect() } catch (_: Throwable) {}
