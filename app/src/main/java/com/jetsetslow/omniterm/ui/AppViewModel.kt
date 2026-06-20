@@ -2557,18 +2557,49 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 pendingSnapshotJob?.cancel()
                 TerminalSessionManager.publishTerminalSnapshot(shellSession)
                 cleanExit = isCleanShellExit(session.exitStatus.value)
+                android.util.Log.i(
+                    "OmniTermSession",
+                    "output flow completed normally: exitStatus=${session.exitStatus.value} " +
+                        "cleanExit=$cleanExit persistent=${shellSession.persistent} userClosed=${shellSession.userClosed}"
+                )
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 // Non-cancellation: connection lost unexpectedly → fall through to reconnect.
+                android.util.Log.i(
+                    "OmniTermSession",
+                    "output flow ended with exception: ${e.javaClass.simpleName}: ${e.message} " +
+                        "exitStatus=${runCatching { session.exitStatus.value }.getOrNull()}"
+                )
             }
 
-            // A clean exit (shell `exit`) or a user-initiated disconnect tears the session down.
-            // An unexpected drop with credentials available triggers auto-reconnect instead.
-            val shouldReconnect = !cleanExit && !shellSession.userClosed && shellSession.creds != null
+            // Teardown vs. reconnect decision:
+            //
+            // PERSISTENT (tmux) sessions: the whole point is to survive drops, and a connection-end
+            // is almost never a deliberate close — typing `exit` inside tmux only exits the inner
+            // shell while the `exec tmux attach` and the tmux server keep running. So unless the USER
+            // explicitly disconnected, we ALWAYS reconnect (and re-attach the same tmux). This is also
+            // robust against any exit-status ambiguity on a network drop: a false "clean exit" can no
+            // longer silently kill a tmux session. If the user really exited tmux, the reconnect just
+            // re-attaches harmlessly (or shows a fresh tmux), which is far better than losing the work.
+            //
+            // NON-persistent sessions: a clean shell `exit` tears down; an unexpected drop reconnects.
+            val isUserClose = shellSession.userClosed
+            val hasCreds = shellSession.creds != null
+            val shouldReconnect = !isUserClose && hasCreds &&
+                (shellSession.persistent || !cleanExit)
+            val shouldTearDown = !shouldReconnect && (cleanExit || isUserClose)
+            android.util.Log.i(
+                "OmniTermSession",
+                "teardown decision: cleanExit=$cleanExit shouldReconnect=$shouldReconnect " +
+                    "shouldTearDown=$shouldTearDown creds=$hasCreds persistent=${shellSession.persistent} " +
+                    "userClosed=$isUserClose"
+            )
             withContext(Dispatchers.Main) {
                 shellSession.isConnected = false
                 TerminalSessionManager.updateKeepaliveCount()
-                if (cleanExit) {
+                if (shouldReconnect) {
+                    reconnectSession(shellSession)
+                } else if (shouldTearDown) {
                     if (shellSession.persistent) {
                         viewModelScope.launch {
                             repository.deletePersistentSession(shellSession.tmuxName)
@@ -2578,8 +2609,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                     TerminalSessionManager.cleanupSession(shellSession)
-                } else if (shouldReconnect) {
-                    reconnectSession(shellSession)
                 } else {
                     shellSession.disconnectError = "Connection lost."
                     TerminalSessionManager.startKeepAliveService()

@@ -82,7 +82,11 @@ internal fun buildJschSession(creds: SshCredentials): Session {
             },
         )
     })
-    session.serverAliveInterval = 30000 // 30 seconds
+    // Heartbeat so a dead link (e.g. WiFi turned off mid-session) is detected and the session
+    // disconnects — which unblocks the shell reader so the app can auto-reconnect. On mobile,
+    // networks drop often, so probe fairly aggressively: ~10s × 3 ≈ 30s to notice a dead link
+    // rather than the previous ~90s.
+    session.serverAliveInterval = 10000 // 10 seconds
     session.serverAliveCountMax = 3
     session.setConfig("TCPKeepAlive", "yes")
     return session
