@@ -7,9 +7,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.BasicTextField
@@ -20,6 +24,8 @@ import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.FindReplace
+import androidx.compose.material.icons.automirrored.filled.WrapText
+import androidx.compose.material.icons.filled.Save
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -73,6 +79,7 @@ fun CodeEditor(
     }
 
     var showFind by remember { mutableStateOf(false) }
+    var wrap by remember { mutableStateOf(false) }
     var query by remember { mutableStateOf("") }
     var replacement by remember { mutableStateOf("") }
     var caseSensitive by remember { mutableStateOf(false) }
@@ -125,7 +132,9 @@ fun CodeEditor(
         EditorToolbar(
             showFind = showFind,
             onToggleFind = { showFind = !showFind },
-            onGoToLine = { line -> 
+            wrap = wrap,
+            onToggleWrap = { wrap = !wrap },
+            onGoToLine = { line ->
                 field = goToLine(field, value, line)
                 scrollToCursorTrigger++
             },
@@ -156,7 +165,144 @@ fun CodeEditor(
             fontSize = fontSize,
             language = language,
             highlightMaxChars = highlightMaxChars,
+            wrap = wrap,
         )
+    }
+}
+
+/**
+ * Full-screen editor chrome around [CodeEditor]: a top bar (close + title/subtitle + dirty dot +
+ * optional trailing action), an optional error strip, and a Discard / Save bottom bar — pinned above
+ * the IME via the Scaffold's safeDrawing insets. Shared by the SFTP remote-file editor and the
+ * Compose Builder Raw YAML editor so both have an identical look, feel, and operations.
+ *
+ * Rendered as a full-screen [Surface] overlay (NOT a Compose Dialog, whose IME insets are unreliable
+ * across OEMs). The host must place this above any inset-consuming app Scaffold.
+ *
+ * The buffer is owned by the caller via [value]/[onValueChange] so the host controls dirty-tracking
+ * and what "save" means. [onClose] should itself prompt-on-dirty if desired; both the close button
+ * and hardware back invoke it.
+ */
+@Composable
+fun FullScreenCodeEditor(
+    title: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    onClose: () -> Unit,
+    onSave: () -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    subtitleColor: androidx.compose.ui.graphics.Color? = null,
+    dirty: Boolean = false,
+    saving: Boolean = false,
+    canSave: Boolean = dirty,
+    error: String? = null,
+    saveLabel: String = "Save",
+    fontSize: androidx.compose.ui.unit.TextUnit = 14.sp,
+    language: CodeLanguage = CodeLanguage.NONE,
+    highlightMaxChars: Int = HIGHLIGHT_MAX_CHARS_DEFAULT,
+    topBarAction: @Composable (() -> Unit)? = null,
+) {
+    androidx.activity.compose.BackHandler(enabled = true) { onClose() }
+
+    androidx.compose.material3.Surface(
+        modifier = modifier.fillMaxSize(),
+        color = MaterialTheme.colorScheme.surface,
+    ) {
+        androidx.compose.material3.Scaffold(
+            topBar = {
+                Column {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .statusBarsPadding()
+                            .background(MaterialTheme.colorScheme.surfaceContainer)
+                            .padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        IconButton(onClick = onClose) {
+                            Icon(Icons.Filled.Close, contentDescription = "Close editor")
+                        }
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                title + if (dirty) " •" else "",
+                                fontFamily = OmniFonts.mono,
+                                fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                            )
+                            if (subtitle != null) {
+                                Text(
+                                    subtitle,
+                                    fontSize = 10.sp,
+                                    color = subtitleColor ?: MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        topBarAction?.invoke()
+                    }
+                    androidx.compose.material3.HorizontalDivider()
+                }
+            },
+            bottomBar = {
+                Column {
+                    androidx.compose.material3.HorizontalDivider()
+                    if (error != null && !saving) {
+                        Text(
+                            error,
+                            color = OmniColors.red,
+                            fontSize = 11.sp,
+                            fontFamily = OmniFonts.mono,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .background(MaterialTheme.colorScheme.surfaceContainer)
+                                .padding(horizontal = 12.dp, vertical = 6.dp),
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .background(MaterialTheme.colorScheme.surfaceContainer)
+                            // The Scaffold consumes safeDrawing insets for the bottomBar, so no manual
+                            // nav/ime padding here — that would double-pad and push buttons off-screen.
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        horizontalArrangement = Arrangement.End,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        TextButton(onClick = onClose, enabled = !saving) { Text("Discard") }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        androidx.compose.material3.Button(onClick = onSave, enabled = !saving && canSave) {
+                            if (saving) {
+                                androidx.compose.material3.CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    strokeWidth = 2.dp,
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Saving…")
+                            } else {
+                                Icon(Icons.Filled.Save, null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(saveLabel)
+                            }
+                        }
+                    }
+                }
+            },
+            contentWindowInsets = androidx.compose.foundation.layout.WindowInsets.safeDrawing,
+        ) { innerPadding ->
+            CodeEditor(
+                value = value,
+                onValueChange = onValueChange,
+                enabled = !saving,
+                fontSize = fontSize,
+                language = language,
+                highlightMaxChars = highlightMaxChars,
+                modifier = Modifier.fillMaxSize().padding(innerPadding),
+            )
+        }
     }
 }
 
@@ -164,6 +310,8 @@ fun CodeEditor(
 private fun EditorToolbar(
     showFind: Boolean,
     onToggleFind: () -> Unit,
+    wrap: Boolean,
+    onToggleWrap: () -> Unit,
     onGoToLine: (Int) -> Unit,
     enabled: Boolean,
 ) {
@@ -180,6 +328,13 @@ private fun EditorToolbar(
                 if (showFind) Icons.Filled.Close else Icons.Filled.Search,
                 contentDescription = if (showFind) "Hide find" else "Find / replace",
                 tint = if (showFind) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        IconButton(onClick = onToggleWrap, enabled = enabled) {
+            Icon(
+                Icons.AutoMirrored.Filled.WrapText,
+                contentDescription = if (wrap) "Word wrap: on" else "Word wrap: off",
+                tint = if (wrap) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
         Spacer(Modifier.width(4.dp))
@@ -286,6 +441,7 @@ private fun EditorBody(
     fontSize: androidx.compose.ui.unit.TextUnit,
     language: CodeLanguage,
     highlightMaxChars: Int,
+    wrap: Boolean,
 ) {
     val palette = rememberHighlightPalette()
     val limit = remember(highlightMaxChars) { clampHighlightLimit(highlightMaxChars) }
@@ -303,27 +459,33 @@ private fun EditorBody(
                 val y = minOf(startRect.top, endRect.top).toInt()
                 val x = minOf(startRect.left, endRect.left).toInt()
                 verticalScroll.animateScrollTo((y - 200).coerceAtLeast(0))
-                horizontalScroll.animateScrollTo((x - 120).coerceAtLeast(0))
+                // No horizontal scroll state is in use when wrapping, so only move it otherwise.
+                if (!wrap) horizontalScroll.animateScrollTo((x - 120).coerceAtLeast(0))
             }
         }
     }
 
     Row(modifier = modifier.fillMaxSize().verticalScroll(verticalScroll)) {
         // Line-number gutter, scrolling in lockstep with the text (shared verticalScroll on the Row).
-        Column(
-            modifier = Modifier
-                .background(MaterialTheme.colorScheme.surfaceContainer)
-                .padding(horizontal = 6.dp, vertical = 12.dp),
-            horizontalAlignment = Alignment.End,
-        ) {
-            for (n in 1..lineCount) {
-                Text(
-                    n.toString(),
-                    fontFamily = OmniFonts.mono,
-                    fontSize = fontSize,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                    textAlign = TextAlign.End,
-                )
+        // Hidden while wrapping: the gutter emits one row per LOGICAL line, but soft-wrap adds extra
+        // VISUAL lines, so the numbers would drift out of alignment with the text. Keeping it simple
+        // (and correct) by dropping the gutter in wrap mode; Go-to-line still works.
+        if (!wrap) {
+            Column(
+                modifier = Modifier
+                    .background(MaterialTheme.colorScheme.surfaceContainer)
+                    .padding(horizontal = 6.dp, vertical = 12.dp),
+                horizontalAlignment = Alignment.End,
+            ) {
+                for (n in 1..lineCount) {
+                    Text(
+                        n.toString(),
+                        fontFamily = OmniFonts.mono,
+                        fontSize = fontSize,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        textAlign = TextAlign.End,
+                    )
+                }
             }
         }
         BasicTextField(
@@ -336,7 +498,9 @@ private fun EditorBody(
             cursorBrush = SolidColor(OmniColors.amber),
             modifier = Modifier
                 .fillMaxSize()
-                .horizontalScroll(horizontalScroll)
+                // Wrap mode: soft-wrap and no horizontal scroll. Otherwise: scroll horizontally so
+                // long lines extend off-screen instead of wrapping.
+                .then(if (wrap) Modifier else Modifier.horizontalScroll(horizontalScroll))
                 .padding(start = 8.dp, top = 12.dp, end = 12.dp, bottom = 12.dp),
         )
     }

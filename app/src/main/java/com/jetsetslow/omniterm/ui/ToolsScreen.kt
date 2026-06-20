@@ -24,6 +24,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -52,9 +53,7 @@ fun ToolsScreen(viewModel: AppViewModel) {
     val toolsItems = listOf(
         Triple(Screen.Alerts, "Alerts & Rules", Icons.Filled.Notifications),
         Triple(Screen.QuickScripts, "Scripts", Icons.Filled.Code),
-        Triple(Screen.PortScanner, "Port Scanner", Icons.Filled.NetworkCheck),
-        Triple(Screen.Ping, "Ping", Icons.Filled.NetworkPing),
-        Triple(Screen.WoL, "Wake on LAN", Icons.Filled.Power),
+        Triple(Screen.Network, "Network Tools", Icons.Filled.Lan),
         Triple(Screen.AuthKeys, "Auth & Keys", Icons.Filled.Key),
         Triple(Screen.Backup, "App Backup", Icons.Filled.Backup),
         Triple(Screen.HealthScoring, "Health Scoring", Icons.Filled.MonitorHeart),
@@ -796,70 +795,100 @@ private fun QuickScriptEditorDialog(
     )
 }
 
-// 7.2b DEVICE-SIDE PING PANEL
+// 7.2 UNIFIED NETWORK TOOLS (Host Scan · Ping · Traceroute · Port Scan · Wake-on-LAN)
+//
+// One tabbed screen for all device-side network utilities. The target host is shared across the
+// Ping / Traceroute / Port Scan tabs via viewModel.portScannerTarget (a VM-level field that already
+// persists across recomposition and tab switches), so a host discovered in Host Scan or typed in one
+// tab carries into the others. WoL keeps its own saved-target model.
 @Composable
-fun PingToolView(viewModel: AppViewModel) {
-    var pingTarget by remember { mutableStateOf("") }
-    var pingTries by remember { mutableStateOf("4") }
+fun NetworkToolView(viewModel: AppViewModel) {
+    var tab by rememberSaveable { mutableStateOf(0) }
+    val tabs = listOf("Host Scan", "Ping", "Traceroute", "Port Scan", "Wake-on-LAN")
 
-    ToolScaffold(viewModel, "Ping") {
-        Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedTextField(
-                value = pingTarget,
-                onValueChange = { pingTarget = it },
-                label = { Text("Hostname or IP address") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-            )
-            OutlinedTextField(
-                value = pingTries,
-                onValueChange = { pingTries = it.filter { c -> c.isDigit() }.take(4) },
-                label = { Text("Tries (0 = keep pinging until stopped)") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-            )
-            Button(
-                onClick = {
-                    if (viewModel.pingRunning) viewModel.stopPing()
-                    else viewModel.startPing(pingTarget, pingTries.toIntOrNull() ?: 4)
-                },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = viewModel.pingRunning || pingTarget.isNotBlank(),
-            ) {
-                if (viewModel.pingRunning) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Stop")
-                } else {
-                    Text("Start Ping")
+    ToolScaffold(viewModel, "Network Tools") {
+        Column(modifier = Modifier.fillMaxSize()) {
+            ScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp, containerColor = Color.Transparent) {
+                tabs.forEachIndexed { i, label ->
+                    Tab(selected = tab == i, onClick = { tab = i }, text = { Text(label, fontSize = 12.sp) })
                 }
             }
-            Text(
-                "Pings are sent from this device, so they tell you whether the HOST is reachable on your current network — independent of SSH.",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (viewModel.pingLines.isNotEmpty()) {
-                OmniCard(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                    val pingListState = rememberLazyListState()
-                    // Follow the tail as new replies stream in.
-                    LaunchedEffect(viewModel.pingLines.size) {
-                        if (viewModel.pingLines.isNotEmpty()) pingListState.animateScrollToItem(viewModel.pingLines.size - 1)
-                    }
-                    LazyColumn(
-                        state = pingListState,
-                        modifier = Modifier.fillMaxSize().padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        items(viewModel.pingLines) { line ->
+            Box(modifier = Modifier.fillMaxSize()) {
+                when (tab) {
+                    0 -> HostScanTab(viewModel, onUseHost = { viewModel.portScannerTarget = it; tab = 3 })
+                    1 -> PingTab(viewModel)
+                    2 -> TracerouteTab(viewModel)
+                    3 -> PortScanTab(viewModel)
+                    else -> WolTab(viewModel)
+                }
+            }
+        }
+    }
+}
+
+// ── Host Scan: rich subnet sweep (rDNS hostname, MAC + vendor, open common ports) ──
+@Composable
+private fun HostScanTab(viewModel: AppViewModel, onUseHost: (String) -> Unit) {
+    var scanning by remember { mutableStateOf(false) }
+    var hosts by remember { mutableStateOf<List<AppViewModel.ScannedHost>>(emptyList()) }
+    val scope = rememberCoroutineScope()
+
+    Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text(
+            "Sweep your local network and gather as much detail as possible per host: hostname, MAC + vendor, and which common ports answer. Tap a host to scan its ports.",
+            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Button(
+            onClick = {
+                scope.launch {
+                    try { scanning = true; hosts = emptyList(); hosts = viewModel.scanHosts() }
+                    finally { scanning = false }
+                }
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = !scanning,
+        ) {
+            if (scanning) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Scanning network…")
+            } else {
+                Icon(Icons.Filled.Lan, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Scan network")
+            }
+        }
+        if (!scanning && hosts.isEmpty()) {
+            Text("No hosts yet — run a scan.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
+            items(hosts) { host ->
+                OmniCard(
+                    modifier = Modifier.fillMaxWidth().clickable { onUseHost(host.ip) },
+                    leftAccent = if (host.isOnline) OmniColors.green else MaterialTheme.colorScheme.onSurfaceVariant,
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(if (host.isOnline) Color(0xFF10B981) else Color.Red))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(host.ip, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, modifier = Modifier.weight(1f))
+                            Icon(Icons.Filled.NetworkCheck, contentDescription = "Use as port-scan target", tint = OmniColors.cyan, modifier = Modifier.size(18.dp))
+                        }
+                        if (host.hostname.isNotBlank()) {
+                            Text(host.hostname, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        Text(
+                            buildString {
+                                append(host.mac.ifBlank { "MAC unavailable" })
+                                if (host.vendor.isNotBlank()) append(" · ${host.vendor}")
+                            },
+                            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                        if (host.openPorts.isNotEmpty()) {
                             Text(
-                                line,
-                                fontSize = 11.sp,
-                                fontFamily = OmniFonts.mono,
-                                color = if (line.contains("failed", true) || line.contains("unreachable", true) || line.contains("100% packet loss"))
-                                    OmniColors.red else MaterialTheme.colorScheme.onSurface,
+                                "Open ports: ${host.openPorts.joinToString(", ")}",
+                                fontSize = 11.sp, fontFamily = OmniFonts.mono, color = OmniColors.green,
                             )
                         }
                     }
@@ -869,117 +898,68 @@ fun PingToolView(viewModel: AppViewModel) {
     }
 }
 
-// 7.3 PORT RANGE SCANNER PANEL
+// ── Ping (device-side ICMP) ──
 @Composable
-fun PortScannerToolView(viewModel: AppViewModel) {
-    var isLanScanning by remember { mutableStateOf(false) }
-    var scannedDevices by remember { mutableStateOf<List<AppViewModel.ScannedWolDevice>>(emptyList()) }
-    val coroutineScope = rememberCoroutineScope()
+private fun PingTab(viewModel: AppViewModel) {
+    var pingTries by remember { mutableStateOf("4") }
 
-    ToolScaffold(viewModel, "Jump host port scanner") {
-        Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            OutlinedTextField(
-                value = viewModel.portScannerTarget, 
-                onValueChange = { viewModel.portScannerTarget = it }, 
-                label = { Text("Target Host IP (Scan pointer)") }, 
-                modifier = Modifier.fillMaxWidth(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text("LAN host picker", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                    Text("Discover local hosts and tap one to scan its ports.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Button(
-                    onClick = {
-                        coroutineScope.launch {
-                            try {
-                                isLanScanning = true
-                                scannedDevices = emptyList()
-                                scannedDevices = viewModel.scanLanDevices()
-                            } finally {
-                                isLanScanning = false
-                            }
-                        }
-                    },
-                    enabled = !isLanScanning && !viewModel.isPortScannerScanning,
-                ) {
-                    if (isLanScanning) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
-                    } else {
-                        Text("Scan LAN", fontSize = 11.sp)
-                    }
-                }
+    Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        OutlinedTextField(
+            value = viewModel.portScannerTarget,
+            onValueChange = { viewModel.portScannerTarget = it },
+            label = { Text("Hostname or IP address") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+        )
+        OutlinedTextField(
+            value = pingTries,
+            onValueChange = { pingTries = it.filter { c -> c.isDigit() }.take(4) },
+            label = { Text("Tries (0 = keep pinging until stopped)") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+        )
+        Button(
+            onClick = {
+                if (viewModel.pingRunning) viewModel.stopPing()
+                else viewModel.startPing(viewModel.portScannerTarget, pingTries.toIntOrNull() ?: 4)
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = viewModel.pingRunning || viewModel.portScannerTarget.isNotBlank(),
+        ) {
+            if (viewModel.pingRunning) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Stop")
+            } else {
+                Text("Start Ping")
             }
-
-            if (scannedDevices.isNotEmpty()) {
+        }
+        Text(
+            "Pings are sent from this device, so they tell you whether the HOST is reachable on your current network — independent of SSH.",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (viewModel.pingLines.isNotEmpty()) {
+            OmniCard(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                val pingListState = rememberLazyListState()
+                LaunchedEffect(viewModel.pingLines.size) {
+                    if (viewModel.pingLines.isNotEmpty()) pingListState.animateScrollToItem(viewModel.pingLines.size - 1)
+                }
                 LazyColumn(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
-                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                    state = pingListState,
+                    modifier = Modifier.fillMaxSize().padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
                 ) {
-                    items(scannedDevices) { device ->
-                        OmniCard(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable { viewModel.portScannerTarget = device.ip },
-                            leftAccent = if (viewModel.portScannerTarget == device.ip) OmniColors.cyan else OmniColors.green,
-                        ) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(10.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(if (device.isOnline) Color(0xFF10B981) else Color.Red))
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Icon(Icons.Filled.Dns, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(device.ip, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
-                                    Text(device.mac.ifBlank { "MAC unavailable" }, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                }
-                                if (viewModel.portScannerTarget == device.ip) {
-                                    Text("Target", color = OmniColors.cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            OutlinedTextField(
-                value = viewModel.portScannerRange, 
-                onValueChange = { viewModel.portScannerRange = it }, 
-                label = { Text("Ports list range (comma-split)") }, 
-                modifier = Modifier.fillMaxWidth(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
-            )
-
-            Button(
-                onClick = { viewModel.runPortScanner() },
-                modifier = Modifier.fillMaxWidth(),
-                enabled = viewModel.portScannerTarget.isNotBlank() && !viewModel.isPortScannerScanning
-            ) {
-                if (viewModel.isPortScannerScanning) {
-                    CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                } else {
-                    Text("Initiate Range Scan")
-                }
-            }
-
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
-                items(viewModel.portScannerResults) { (port, status) ->
-                    OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = if (status.contains("Open")) OmniColors.green else MaterialTheme.colorScheme.onSurfaceVariant) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                            Text("Port $port", fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
-                            Text(status, color = if (status.contains("Open")) Color(0xFF10B981) else Color.Gray, fontWeight = FontWeight.Bold)
-                        }
+                    items(viewModel.pingLines) { line ->
+                        Text(
+                            line,
+                            fontSize = 11.sp,
+                            fontFamily = OmniFonts.mono,
+                            color = if (line.contains("failed", true) || line.contains("unreachable", true) || line.contains("100% packet loss"))
+                                OmniColors.red else MaterialTheme.colorScheme.onSurface,
+                        )
                     }
                 }
             }
@@ -987,58 +967,239 @@ fun PortScannerToolView(viewModel: AppViewModel) {
     }
 }
 
-// 7.4 WAKE ON LAN TRANSFERENCE PANEL
+// ── Traceroute (device-side) ──
 @Composable
-fun WolToolView(viewModel: AppViewModel) {
+private fun TracerouteTab(viewModel: AppViewModel) {
+    Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        OutlinedTextField(
+            value = viewModel.portScannerTarget,
+            onValueChange = { viewModel.portScannerTarget = it },
+            label = { Text("Hostname or IP address") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+        )
+        Button(
+            onClick = {
+                if (viewModel.tracerouteRunning) viewModel.stopTraceroute()
+                else viewModel.startTraceroute(viewModel.portScannerTarget)
+            },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = viewModel.tracerouteRunning || viewModel.portScannerTarget.isNotBlank(),
+        ) {
+            if (viewModel.tracerouteRunning) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Stop")
+            } else {
+                Text("Start Traceroute")
+            }
+        }
+        Text(
+            "Traces each network hop from this device to the host. Uses the platform traceroute; if it isn't available, a clear message is shown.",
+            fontSize = 11.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        if (viewModel.tracerouteLines.isNotEmpty()) {
+            OmniCard(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                val listState = rememberLazyListState()
+                LaunchedEffect(viewModel.tracerouteLines.size) {
+                    if (viewModel.tracerouteLines.isNotEmpty()) listState.animateScrollToItem(viewModel.tracerouteLines.size - 1)
+                }
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.fillMaxSize().padding(10.dp),
+                    verticalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    items(viewModel.tracerouteLines) { line ->
+                        Text(
+                            line,
+                            fontSize = 11.sp,
+                            fontFamily = OmniFonts.mono,
+                            color = if (line.contains("not available", true) || line.contains("failed", true))
+                                OmniColors.red else MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Port Scan (uses the shared target host) ──
+@Composable
+private fun PortScanTab(viewModel: AppViewModel) {
+    var isLanScanning by remember { mutableStateOf(false) }
+    var scannedDevices by remember { mutableStateOf<List<AppViewModel.ScannedWolDevice>>(emptyList()) }
+    val coroutineScope = rememberCoroutineScope()
+
+    Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        OutlinedTextField(
+            value = viewModel.portScannerTarget,
+            onValueChange = { viewModel.portScannerTarget = it },
+            label = { Text("Target Host IP (Scan pointer)") },
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
+        )
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("LAN host picker", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Text("Discover local hosts and tap one to scan its ports.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Button(
+                onClick = {
+                    coroutineScope.launch {
+                        try {
+                            isLanScanning = true
+                            scannedDevices = emptyList()
+                            scannedDevices = viewModel.scanLanDevices()
+                        } finally {
+                            isLanScanning = false
+                        }
+                    }
+                },
+                enabled = !isLanScanning && !viewModel.isPortScannerScanning,
+            ) {
+                if (isLanScanning) {
+                    CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                } else {
+                    Text("Scan LAN", fontSize = 11.sp)
+                }
+            }
+        }
+
+        if (scannedDevices.isNotEmpty()) {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(scannedDevices) { device ->
+                    OmniCard(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { viewModel.portScannerTarget = device.ip },
+                        leftAccent = if (viewModel.portScannerTarget == device.ip) OmniColors.cyan else OmniColors.green,
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(if (device.isOnline) Color(0xFF10B981) else Color.Red))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Icon(Icons.Filled.Dns, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(device.ip, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
+                                Text(device.mac.ifBlank { "MAC unavailable" }, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            }
+                            if (viewModel.portScannerTarget == device.ip) {
+                                Text("Target", color = OmniColors.cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        OutlinedTextField(
+            value = viewModel.portScannerRange,
+            onValueChange = { viewModel.portScannerRange = it },
+            label = { Text("Ports list range (comma-split)") },
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
+        )
+
+        Button(
+            onClick = { viewModel.runPortScanner() },
+            modifier = Modifier.fillMaxWidth(),
+            enabled = viewModel.portScannerTarget.isNotBlank() && !viewModel.isPortScannerScanning
+        ) {
+            if (viewModel.isPortScannerScanning) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+            } else {
+                Text("Initiate Range Scan")
+            }
+        }
+
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
+            items(viewModel.portScannerResults) { (port, status) ->
+                OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = if (status.contains("Open")) OmniColors.green else MaterialTheme.colorScheme.onSurfaceVariant) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(12.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("Port $port", fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
+                        Text(status, color = if (status.contains("Open")) Color(0xFF10B981) else Color.Gray, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ── Wake-on-LAN: saved targets + add/edit dialog (with shared LAN scanner) ──
+@Composable
+private fun WolTab(viewModel: AppViewModel) {
     val targetComputers by viewModel.wolTargets.collectAsState()
     var showAddWol by remember { mutableStateOf(false) }
     var editingTarget by remember { mutableStateOf<WolTargetEntity?>(null) }
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
 
-    ToolScaffold(
-        viewModel = viewModel, 
-        title = "Wake-on-LAN",
-        onAdd = { showAddWol = true }
-    ) {
-        Box(modifier = Modifier.fillMaxSize()) {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize().padding(12.dp)) {
-                items(targetComputers) { target ->
-                    OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.green) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth().padding(16.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(target.name, fontWeight = FontWeight.Bold)
-                                Text("MAC: ${target.macAddress} · Port ${target.port}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Saved targets", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = { showAddWol = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), modifier = Modifier.height(36.dp)) {
+                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Add target", fontSize = 12.sp)
+            }
+        }
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp).padding(bottom = 12.dp)) {
+            items(targetComputers) { target ->
+                OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.green) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(target.name, fontWeight = FontWeight.Bold)
+                            Text("MAC: ${target.macAddress} · Port ${target.port}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Button(
+                                onClick = { viewModel.triggerWol(target) },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
+                                modifier = Modifier.height(36.dp),
+                            ) {
+                                Icon(Icons.Filled.Power, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Wake", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                             }
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                IconButton(onClick = { editingTarget = target }) {
-                                    Icon(Icons.Filled.Edit, contentDescription = "Edit WOL target", tint = OmniColors.cyan)
+                            IconButton(onClick = { editingTarget = target }) {
+                                Icon(Icons.Filled.Edit, contentDescription = "Edit WOL target", tint = OmniColors.cyan)
+                            }
+                            IconButton(
+                                onClick = {
+                                    confirm.ask(
+                                        "Delete WOL target?",
+                                        "Delete \"${target.name}\" from Wake-on-LAN targets?",
+                                        confirmLabel = "Delete",
+                                    ) { viewModel.deleteWolTarget(target) }
                                 }
-                                IconButton(
-                                    onClick = {
-                                        confirm.ask(
-                                            "Delete WOL target?",
-                                            "Delete \"${target.name}\" from Wake-on-LAN targets?",
-                                            confirmLabel = "Delete",
-                                        ) { viewModel.deleteWolTarget(target) }
-                                    }
-                                ) {
-                                    Icon(Icons.Filled.Delete, contentDescription = "Delete WOL target", tint = Color.Red)
-                                }
-                                Button(
-                                    onClick = { viewModel.triggerWol(target) },
-                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
-                                    contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
-                                    modifier = Modifier.height(36.dp),
-                                ) {
-                                    Icon(Icons.Filled.Power, contentDescription = null, modifier = Modifier.size(15.dp))
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("Wake", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
-                                }
+                            ) {
+                                Icon(Icons.Filled.Delete, contentDescription = "Delete WOL target", tint = Color.Red)
                             }
                         }
                     }

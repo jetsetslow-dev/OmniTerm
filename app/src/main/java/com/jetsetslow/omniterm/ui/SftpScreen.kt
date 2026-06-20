@@ -378,6 +378,22 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         horizontalArrangement = Arrangement.spacedBy(2.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
                     ) {
+                        // Toolbar grouped left→right: navigate · view · create/transfer · modes.
+
+                        // ── Navigate ──
+                        IconButton(onClick = { viewModel.sftpHome() }) {
+                            Icon(Icons.Filled.Home, contentDescription = "Go to home folder")
+                        }
+                        if (viewModel.sftpPath.isNotEmpty() && viewModel.sftpPath != "/") {
+                            IconButton(onClick = { viewModel.sftpUp() }) {
+                                Icon(Icons.Filled.ArrowUpward, contentDescription = "Go up")
+                            }
+                        }
+                        IconButton(onClick = { viewModel.loadSftp(viewModel.sftpPath.ifBlank { null }) }) {
+                            Icon(Icons.Filled.Refresh, contentDescription = "Reload")
+                        }
+
+                        // ── View ──
                         IconToggleButton(checked = viewModel.sftpSearchActive, onCheckedChange = {
                             if (viewModel.sftpSearchActive) viewModel.sftpSearchClear()
                             else viewModel.sftpSearchActive = true
@@ -386,13 +402,6 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                 Icons.Filled.Search,
                                 contentDescription = if (viewModel.sftpSearchActive) "Close search" else "Search this directory",
                                 tint = if (viewModel.sftpSearchActive) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        IconToggleButton(checked = viewModel.showSftpFolderSizes, onCheckedChange = { viewModel.toggleSftpFolderSizes() }) {
-                            Icon(
-                                Icons.Filled.Straighten,
-                                contentDescription = if (viewModel.showSftpFolderSizes) "Hide folder sizes" else "Show folder sizes",
-                                tint = if (viewModel.showSftpFolderSizes) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         Box {
@@ -423,6 +432,29 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                 }
                             }
                         }
+                        IconToggleButton(checked = viewModel.showSftpFolderSizes, onCheckedChange = { viewModel.toggleSftpFolderSizes() }) {
+                            Icon(
+                                Icons.Filled.Straighten,
+                                contentDescription = if (viewModel.showSftpFolderSizes) "Hide folder sizes" else "Show folder sizes",
+                                tint = if (viewModel.showSftpFolderSizes) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+
+                        // ── Create / transfer ──
+                        IconButton(onClick = { showCreateFolderDialog = true }) {
+                            Icon(Icons.Filled.CreateNewFolder, contentDescription = "Create folder")
+                        }
+                        IconButton(onClick = { uploadLauncher.launch(arrayOf("*/*")) }) {
+                            Icon(Icons.Filled.Upload, contentDescription = "Upload files")
+                        }
+                        IconButton(
+                            enabled = viewModel.sftpEntries.isNotEmpty(),
+                            onClick = { viewModel.sftpSelectAll() },
+                        ) {
+                            Icon(Icons.Filled.SelectAll, contentDescription = "Select all")
+                        }
+
+                        // ── Modes ──
                         IconToggleButton(checked = viewModel.sftpSudo, onCheckedChange = {
                             when {
                                 // Turning sudo OFF needs no auth.
@@ -458,29 +490,6 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                     tint = if (bookmarked) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                        }
-                        IconButton(onClick = { viewModel.loadSftp(viewModel.sftpPath.ifBlank { null }) }) {
-                            Icon(Icons.Filled.Refresh, contentDescription = "Reload")
-                        }
-                        IconButton(onClick = { viewModel.sftpHome() }) {
-                            Icon(Icons.Filled.Home, contentDescription = "Go to home folder")
-                        }
-                        if (viewModel.sftpPath.isNotEmpty() && viewModel.sftpPath != "/") {
-                            IconButton(onClick = { viewModel.sftpUp() }) {
-                                Icon(Icons.Filled.ArrowUpward, contentDescription = "Go up")
-                            }
-                        }
-                        IconButton(
-                            enabled = viewModel.sftpEntries.isNotEmpty(),
-                            onClick = { viewModel.sftpSelectAll() },
-                        ) {
-                            Icon(Icons.Filled.SelectAll, contentDescription = "Select all")
-                        }
-                        IconButton(onClick = { showCreateFolderDialog = true }) {
-                            Icon(Icons.Filled.CreateNewFolder, contentDescription = "Create folder")
-                        }
-                        IconButton(onClick = { uploadLauncher.launch(arrayOf("*/*")) }) {
-                            Icon(Icons.Filled.Upload, contentDescription = "Upload files")
                         }
                     }
                   }
@@ -1266,121 +1275,31 @@ fun SftpFileEditor(
         } else onDismiss()
     }
 
-    // Hardware/gesture back closes the editor (with a discard prompt if dirty) rather than
-    // falling through to app navigation.
-    BackHandler(enabled = true) { attemptDismiss() }
-
-    // Rendered as a full-screen overlay inside the Activity's own window (NOT a Dialog).
-    // A Compose Dialog is a separate window whose IME insets are unreliable across OEMs/API
-    // levels, which is what kept pushing the action bar off-screen. The host (MainAppScreen)
-    // places this above the inset-consuming app Scaffold, so WindowInsets.ime here is real and
-    // the Scaffold's safeDrawing insets keep the Save/Discard bar pinned above the keyboard.
-    Surface(
-        modifier = Modifier.fillMaxSize(),
-        color = MaterialTheme.colorScheme.surface,
-    ) {
-            Scaffold(
-                topBar = {
-                    Column {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .statusBarsPadding()
-                                .background(MaterialTheme.colorScheme.surfaceContainer)
-                                .padding(horizontal = 8.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            IconButton(onClick = { attemptDismiss() }) {
-                                Icon(Icons.Filled.Close, contentDescription = "Close editor")
-                            }
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text(
-                                    file.name + if (dirty) " •" else "",
-                                    fontFamily = OmniFonts.mono,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                Text(
-                                    "$lineCount lines · ${buffer.length} chars" + if (sudo) " · sudo" else "",
-                                    fontSize = 10.sp,
-                                    color = if (sudo) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            IconToggleButton(checked = sudo, onCheckedChange = { onToggleSudo() }) {
-                                Icon(
-                                    Icons.Filled.AdminPanelSettings,
-                                    contentDescription = if (sudo) "Save as root: on" else "Save as root: off",
-                                    tint = if (sudo) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        }
-                        HorizontalDivider()
-                    }
-                },
-                bottomBar = {
-                    Column {
-                        HorizontalDivider()
-                        if (error != null && !saving) {
-                            Text(
-                                error,
-                                color = Color.Red,
-                                fontSize = 11.sp,
-                                fontFamily = OmniFonts.mono,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(MaterialTheme.colorScheme.surfaceContainer)
-                                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                            )
-                        }
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(MaterialTheme.colorScheme.surfaceContainer)
-                                // The Scaffold consumes safeDrawing insets (nav bar + IME) for the
-                                // bottomBar, so no manual nav/ime padding here — that would double-pad
-                                // and push the buttons off-screen. Just inner content padding.
-                                .horizontalScroll(rememberScrollState())
-                                .padding(horizontal = 12.dp, vertical = 8.dp),
-                            horizontalArrangement = Arrangement.End,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            TextButton(onClick = { attemptDismiss() }, enabled = !saving) { Text("Discard") }
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Button(onClick = { onSave(buffer) }, enabled = !saving && dirty) {
-                                if (saving) {
-                                    CircularProgressIndicator(
-                                        modifier = Modifier.size(16.dp),
-                                        strokeWidth = 2.dp,
-                                        color = MaterialTheme.colorScheme.onPrimary,
-                                    )
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Saving…")
-                                } else {
-                                    Icon(Icons.Filled.Save, null)
-                                    Spacer(modifier = Modifier.width(8.dp))
-                                    Text(if (sudo) "Save as root" else "Save & verify")
-                                }
-                            }
-                        }
-                    }
-                },
-                contentWindowInsets = WindowInsets.safeDrawing,
-            ) { innerPadding ->
-                CodeEditor(
-                    value = buffer,
-                    onValueChange = { buffer = it },
-                    enabled = !saving,
-                    fontSize = 14.sp,
-                    language = remember(file.name) { languageForFileName(file.name) },
-                    highlightMaxChars = highlightLimit,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding),
+    FullScreenCodeEditor(
+        title = file.name,
+        value = buffer,
+        onValueChange = { buffer = it },
+        onClose = { attemptDismiss() },
+        onSave = { onSave(buffer) },
+        subtitle = "$lineCount lines · ${buffer.length} chars" + if (sudo) " · sudo" else "",
+        subtitleColor = if (sudo) OmniColors.red else null,
+        dirty = dirty,
+        saving = saving,
+        canSave = dirty,
+        error = error,
+        saveLabel = if (sudo) "Save as root" else "Save & verify",
+        language = remember(file.name) { languageForFileName(file.name) },
+        highlightMaxChars = highlightLimit,
+        topBarAction = {
+            IconToggleButton(checked = sudo, onCheckedChange = { onToggleSudo() }) {
+                Icon(
+                    Icons.Filled.AdminPanelSettings,
+                    contentDescription = if (sudo) "Save as root: on" else "Save as root: off",
+                    tint = if (sudo) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-    }
+        },
+    )
 }
 
 @Composable

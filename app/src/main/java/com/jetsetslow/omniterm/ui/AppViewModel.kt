@@ -86,9 +86,7 @@ enum class Screen {
     Tools,
     Alerts,
     QuickScripts,
-    PortScanner,
-    Ping,
-    WoL,
+    Network,
     AuthKeys,
     Backup,
     HealthScoring,
@@ -855,6 +853,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     override fun onCleared() {
         super.onCleared()
         stopPing()
+        stopTraceroute()
         // Release pooled SSH sessions held by the transport when the ViewModel goes away.
         sshTransport.shutdown()
         // Release the warm SFTP sessions too (separate pool from the exec/stream transport).
@@ -2152,14 +2151,53 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     data class ScannedWolDevice(val name: String, val mac: String, val ip: String, val isOnline: Boolean)
 
     /**
-     * Active subnet sweep: ping every host on the local /24 concurrently, then best-effort
-     * enrich each reachable IP with a MAC from the kernel ARP table. The old implementation
-     * relied solely on `ip neigh` / `/proc/net/arp`, both of which are blocked/empty on modern
-     * Android, so the scan always returned nothing. We now actively probe so live hosts show up;
-     * MACs are populated where the OS still exposes the ARP cache (needed to actually send WoL).
+     * A discovered host with as much best-effort detail as the OS exposes: reverse-DNS hostname,
+     * MAC (from the kernel ARP cache) + a guessed vendor from the OUI prefix, and which of a short
+     * list of common TCP ports answered. Everything beyond [ip]/[isOnline] may be blank/empty.
      */
-    suspend fun scanLanDevices(): List<ScannedWolDevice> = withContext(Dispatchers.IO) {
-        val results = java.util.concurrent.ConcurrentHashMap<String, ScannedWolDevice>()
+    data class ScannedHost(
+        val ip: String,
+        val isOnline: Boolean,
+        val hostname: String = "",
+        val mac: String = "",
+        val vendor: String = "",
+        val openPorts: List<Int> = emptyList(),
+    )
+
+    /** Common ports probed during a host scan (kept short so a full /24 sweep stays fast). */
+    private val hostScanPorts = listOf(22, 80, 443, 445, 3389, 5900, 8080)
+
+    /**
+     * Best-effort OUI (MAC prefix) → vendor map for the most common devices on a home/office LAN.
+     * Not exhaustive — this is a hint, not authoritative. Keys are the first 3 MAC octets, uppercase.
+     */
+    private val ouiVendors: Map<String, String> = mapOf(
+        "B8:27:EB" to "Raspberry Pi", "DC:A6:32" to "Raspberry Pi", "E4:5F:01" to "Raspberry Pi",
+        "28:CD:C1" to "Raspberry Pi",
+        "00:1A:11" to "Google", "F4:F5:E8" to "Google", "DA:A1:19" to "Google",
+        "EC:FA:BC" to "Espressif", "24:0A:C4" to "Espressif", "A0:20:A6" to "Espressif",
+        "FC:FB:FB" to "Apple", "AC:DE:48" to "Apple", "F0:18:98" to "Apple", "A4:83:E7" to "Apple",
+        "00:1B:63" to "Apple", "3C:15:C2" to "Apple",
+        "44:D9:E7" to "Ubiquiti", "FC:EC:DA" to "Ubiquiti", "78:8A:20" to "Ubiquiti",
+        "00:50:56" to "VMware", "08:00:27" to "VirtualBox", "52:54:00" to "QEMU/KVM",
+        "00:15:5D" to "Microsoft Hyper-V",
+    )
+
+    private fun vendorForMac(mac: String): String {
+        if (mac.length < 8) return ""
+        return ouiVendors[mac.substring(0, 8).uppercase(Locale.ROOT)] ?: ""
+    }
+
+    /**
+     * Active subnet sweep returning richly-detailed [ScannedHost]s: ping every host on the local /24
+     * concurrently, then best-effort enrich each reachable IP with a reverse-DNS hostname, a MAC from
+     * the kernel ARP table (+ guessed vendor), and a quick probe of [hostScanPorts]. Modern Android
+     * blocks `ip neigh` / `/proc/net/arp` reads in many cases, so MAC may be blank; the active probe
+     * still surfaces live hosts regardless.
+     */
+    suspend fun scanHosts(): List<ScannedHost> = withContext(Dispatchers.IO) {
+        val online = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+        val macs = java.util.concurrent.ConcurrentHashMap<String, String>()
         try {
             // Find this device's IPv4 + prefix to derive the /24 base (e.g. 192.168.11.x).
             val local = java.net.NetworkInterface.getNetworkInterfaces().toList()
@@ -2177,9 +2215,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     limiter.withPermit {
                         val target = "$base.$i"
                         try {
-                            if (java.net.InetAddress.getByName(target).isReachable(400)) {
-                                results[target] = ScannedWolDevice("LAN Device", "", target, true)
-                            }
+                            if (java.net.InetAddress.getByName(target).isReachable(400)) online.add(target)
                         } catch (_: Exception) {}
                     }
                 }
@@ -2193,16 +2229,56 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         if (parts.size >= 4) {
                             val pIp = parts[0]; val mac = parts[3]
                             if (mac.length == 17 && mac != "00:00:00:00:00:00") {
-                                val name = results[pIp]?.name ?: "LAN Device"
-                                results[pIp] = ScannedWolDevice(name, mac, pIp, true)
+                                macs[pIp] = mac
+                                online.add(pIp) // in the ARP cache ⇒ reachable, even if ping was filtered
                             }
                         }
                     }
                 }
             } catch (_: Exception) {}
+
+            // Enrich each live host with rDNS hostname + open common ports (bounded concurrency).
+            online.map { host ->
+                async {
+                    limiter.withPermit {
+                        val hostname = try {
+                            java.net.InetAddress.getByName(host).canonicalHostName.takeIf { it != host } ?: ""
+                        } catch (_: Exception) { "" }
+                        val open = hostScanPorts.filter { port ->
+                            try {
+                                java.net.Socket().use { s ->
+                                    s.connect(java.net.InetSocketAddress(host, port), 250); true
+                                }
+                            } catch (_: Exception) { false }
+                        }
+                        host to (hostname to open)
+                    }
+                }
+            }.awaitAll().associate { it }.let { enriched ->
+                return@withContext online.map { host ->
+                    val (hostname, open) = enriched[host] ?: ("" to emptyList())
+                    val mac = macs[host] ?: ""
+                    ScannedHost(
+                        ip = host, isOnline = true, hostname = hostname,
+                        mac = mac, vendor = vendorForMac(mac), openPorts = open,
+                    )
+                }.sortedBy { it.ip.substringAfterLast('.').toIntOrNull() ?: 0 }
+            }
         } catch (_: Exception) {}
-        results.values.sortedBy { it.ip.substringAfterLast('.').toIntOrNull() ?: 0 }
+        emptyList()
     }
+
+    /**
+     * Thin adapter over [scanHosts] preserving the WoL/port-scanner call sites that just need an
+     * IP + MAC + online flag. The name reflects the hostname where one was resolved.
+     */
+    suspend fun scanLanDevices(): List<ScannedWolDevice> =
+        scanHosts().map {
+            ScannedWolDevice(
+                name = it.hostname.ifBlank { "LAN Device" },
+                mac = it.mac, ip = it.ip, isOnline = it.isOnline,
+            )
+        }
 
     fun triggerWol(target: WolTargetEntity) {
         viewModelScope.launch {
@@ -3406,6 +3482,65 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         // cancelled coroutine actually finish.
         pingProcess?.destroy()
         pingJob?.cancel()
+    }
+
+    // ── Traceroute (modeled on ping above) ──
+    var tracerouteRunning by mutableStateOf(false); private set
+    var tracerouteLines by mutableStateOf<List<String>>(emptyList()); private set
+    private var tracerouteJob: Job? = null
+    private var tracerouteProcess: Process? = null
+
+    /**
+     * Trace the route to [host] from the phone, streaming each hop. Runs the platform `traceroute`
+     * binary if present; many Android builds ship it (toybox), but not all. If it can't be launched
+     * we surface a clear message rather than failing silently. Same process/cancel handling as
+     * [startPing] — the handle lets [stopTraceroute] interrupt a blocked readLine().
+     */
+    fun startTraceroute(host: String) {
+        if (tracerouteRunning) return
+        val target = host.trim()
+        if (target.isEmpty() || !target.all { it.isLetterOrDigit() || it in ".-:%_[]" }) {
+            tracerouteLines = listOf("Enter a valid hostname or IP address.")
+            return
+        }
+        tracerouteRunning = true
+        tracerouteLines = emptyList()
+        tracerouteJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // Prefer numeric, capped hops; fall back to a bare invocation if flags aren't supported.
+                val process = try {
+                    ProcessBuilder(listOf("traceroute", "-n", "-m", "30", target)).redirectErrorStream(true).start()
+                } catch (_: java.io.IOException) {
+                    ProcessBuilder(listOf("traceroute", target)).redirectErrorStream(true).start()
+                }
+                tracerouteProcess = process
+                val reader = process.inputStream.bufferedReader()
+                while (isActive) {
+                    val line = reader.readLine() ?: break
+                    if (line.isBlank()) continue
+                    withContext(Dispatchers.Main) { tracerouteLines = (tracerouteLines + line).takeLast(200) }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: java.io.IOException) {
+                withContext(NonCancellable + Dispatchers.Main) {
+                    tracerouteLines = tracerouteLines + "traceroute is not available on this device."
+                }
+            } catch (e: Throwable) {
+                withContext(NonCancellable + Dispatchers.Main) {
+                    tracerouteLines = tracerouteLines + "traceroute failed: ${e.message}"
+                }
+            } finally {
+                tracerouteProcess?.destroy()
+                tracerouteProcess = null
+                withContext(NonCancellable + Dispatchers.Main) { tracerouteRunning = false }
+            }
+        }
+    }
+
+    fun stopTraceroute() {
+        tracerouteProcess?.destroy()
+        tracerouteJob?.cancel()
     }
 
     // ── SFTP (real ChannelSftp) ──

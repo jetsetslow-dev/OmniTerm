@@ -686,9 +686,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                 Screen.Tools -> ToolsScreen(viewModel)
                 Screen.Alerts -> AlertsToolView(viewModel)
                 Screen.QuickScripts -> QuickScriptsToolView(viewModel)
-                Screen.PortScanner -> PortScannerToolView(viewModel)
-                Screen.Ping -> PingToolView(viewModel)
-                Screen.WoL -> WolToolView(viewModel)
+                Screen.Network -> NetworkToolView(viewModel)
                 Screen.AuthKeys -> AuthKeysToolView(viewModel)
                 Screen.Backup -> BackupToolView(viewModel)
                 Screen.HealthScoring -> HealthScoringToolView(viewModel)
@@ -1084,8 +1082,8 @@ fun FirstRunDialog(viewModel: AppViewModel) {
 
 fun isToolSubScreen(screen: Screen): Boolean {
     return screen in listOf(
-        Screen.Tools, Screen.Alerts, Screen.QuickScripts, Screen.PortScanner, Screen.Ping,
-        Screen.WoL, Screen.AuthKeys, Screen.Backup, Screen.HealthScoring, Screen.Settings, Screen.About
+        Screen.Tools, Screen.Alerts, Screen.QuickScripts, Screen.Network,
+        Screen.AuthKeys, Screen.Backup, Screen.HealthScoring, Screen.Settings, Screen.About
     )
 }
 

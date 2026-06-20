@@ -16,6 +16,7 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material3.*
 import androidx.activity.compose.BackHandler
 import androidx.compose.runtime.*
@@ -830,6 +831,9 @@ fun ComposeBuilder(viewModel: AppViewModel) {
 
     var rawMode by remember(seedKey) { mutableStateOf(false) }
     var rawText by remember(seedKey) { mutableStateOf(draft.originalText ?: generateDockerComposeYaml(draft)) }
+    // When true, the Raw YAML editor opens as a full-screen overlay matching the SFTP file editor's
+    // look/feel (same chrome, find/replace, go-to-line, word-wrap). Edits write straight to rawText.
+    var rawFullScreen by remember(seedKey) { mutableStateOf(false) }
 
     var deploying by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
@@ -869,6 +873,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
         if (rawMode) emptyList() else validateComposeDraft(draft)
     }
 
+    Box(modifier = Modifier.fillMaxSize()) {
     Column(modifier = Modifier.fillMaxSize()) {
         // ── outcome banner ──
         result?.let { (ok, msg) ->
@@ -969,11 +974,19 @@ fun ComposeBuilder(viewModel: AppViewModel) {
             }
 
             if (rawMode) {
-                if (isExisting) {
-                    Text(
-                        "Editing the file directly. Nothing is changed until you deploy, and the file is validated first.",
-                        fontSize = 11.sp, color = OmniColors.textMuted,
-                    )
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    if (isExisting) {
+                        Text(
+                            "Editing the file directly. Nothing is changed until you deploy, and the file is validated first.",
+                            fontSize = 11.sp, color = OmniColors.textMuted,
+                            modifier = Modifier.weight(1f),
+                        )
+                    } else {
+                        Spacer(Modifier.weight(1f))
+                    }
+                    IconButton(onClick = { rawFullScreen = true }) {
+                        Icon(Icons.Filled.Fullscreen, contentDescription = "Edit full screen", tint = OmniColors.cyan)
+                    }
                 }
                 CodeEditor(
                     value = rawText,
@@ -1093,6 +1106,25 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                 },
             )
             Spacer(Modifier.height(32.dp))
+        }
+    }
+
+        // Full-screen Raw YAML editor overlay — same chrome/operations as the SFTP file editor.
+        if (rawFullScreen && rawMode) {
+            FullScreenCodeEditor(
+                title = draft.fileName.ifBlank { "docker-compose.yml" },
+                value = rawText,
+                onValueChange = { rawText = it },
+                onClose = { rawFullScreen = false },
+                onSave = { rawFullScreen = false },
+                subtitle = "${rawText.count { it == '\n' } + 1} lines · ${rawText.length} chars",
+                dirty = false,
+                canSave = true,
+                saveLabel = "Done",
+                fontSize = 12.sp,
+                language = CodeLanguage.YAML,
+                highlightMaxChars = viewModel.editorHighlightLimit,
+            )
         }
     }
 }
