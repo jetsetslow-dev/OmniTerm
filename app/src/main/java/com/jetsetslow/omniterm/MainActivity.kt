@@ -330,6 +330,8 @@ class MainActivity : AppCompatActivity() {
       setOnClickListener {
         val clipboard = getSystemService(android.content.ClipboardManager::class.java)
         clipboard.setPrimaryClip(android.content.ClipData.newPlainText("OmniTerm crash report", report))
+        // Android 13+ shows its own copy confirmation; on older versions this is the only feedback.
+        android.widget.Toast.makeText(this@MainActivity, "Crash report copied to clipboard.", android.widget.Toast.LENGTH_SHORT).show()
       }
     })
     content.addView(buttonRow)
