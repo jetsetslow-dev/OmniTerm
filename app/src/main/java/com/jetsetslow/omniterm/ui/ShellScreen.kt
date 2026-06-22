@@ -682,7 +682,16 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                     if (committed.length > 100) {
                         pendingLargePaste = committed
                     } else if (committed.length > 1) {
-                        viewModel.pasteText(committed)
+                        // A multi-character commit is either a swipe-typed word or a short paste.
+                        // Gesture keyboards commit a whole word with no trailing space and rely on the
+                        // field's surrounding text to add the inter-word space — but we keep the field
+                        // empty (so autocorrect can't replace against stale text), so that space never
+                        // arrives and words run together. Detect a lone gesture word (letters/digits
+                        // only, no whitespace of its own) and append the space ourselves. Anything
+                        // containing whitespace, newlines, or punctuation is treated as a real paste
+                        // and sent verbatim.
+                        val isGestureWord = committed.all { it.isLetterOrDigit() }
+                        viewModel.pasteText(if (isGestureWord) "$committed " else committed)
                     } else {
                         val ch = committed.first()
                         if (ch == '\n' || ch == '\r') viewModel.sendKey(TermKey.ENTER)
