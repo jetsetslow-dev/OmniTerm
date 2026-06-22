@@ -2336,7 +2336,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
     var draftAccessibility by remember { mutableStateOf(viewModel.isAccessibilityEnabled) }
     var draftTextScale by remember { mutableStateOf(viewModel.textScale) }
     var draftIntervalSec by remember { mutableStateOf((viewModel.telemetryIntervalMs / 1000).toInt()) }
-    var draftKeepOn by remember { mutableStateOf(viewModel.isKeepScreenOnEnabled) }
+    var draftKeepOn by remember { mutableStateOf(viewModel.defaultKeepScreenOn) }
     var draftBgKeepAlive by remember { mutableStateOf(viewModel.isBackgroundKeepAlive) }
     var draftRetention by remember { mutableStateOf(viewModel.metricsRetentionDays) }
     var draftAlertHistoryLimit by remember { mutableStateOf(viewModel.alertHistoryLimit) }
@@ -2358,7 +2358,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
         draftAccessibility != viewModel.isAccessibilityEnabled ||
         draftTextScale != viewModel.textScale ||
         draftIntervalSec != (viewModel.telemetryIntervalMs / 1000).toInt() ||
-        draftKeepOn != viewModel.isKeepScreenOnEnabled ||
+        draftKeepOn != viewModel.defaultKeepScreenOn ||
         draftBgKeepAlive != viewModel.isBackgroundKeepAlive ||
         draftRetention != viewModel.metricsRetentionDays ||
         draftAlertHistoryLimit != viewModel.alertHistoryLimit ||
@@ -2384,7 +2384,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
         draftAccessibility = viewModel.isAccessibilityEnabled
         draftTextScale = viewModel.textScale
         draftIntervalSec = (viewModel.telemetryIntervalMs / 1000).toInt()
-        draftKeepOn = viewModel.isKeepScreenOnEnabled
+        draftKeepOn = viewModel.defaultKeepScreenOn
         draftBgKeepAlive = viewModel.isBackgroundKeepAlive
         draftRetention = viewModel.metricsRetentionDays
         draftAlertHistoryLimit = viewModel.alertHistoryLimit
@@ -2405,7 +2405,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
         if (draftAccessibility != viewModel.isAccessibilityEnabled) viewModel.saveAccessibilityToggle(draftAccessibility)
         if (draftTextScale != viewModel.textScale) viewModel.saveTextScale(draftTextScale)
         if (draftIntervalSec != (viewModel.telemetryIntervalMs / 1000).toInt()) viewModel.saveTelemetryInterval(draftIntervalSec)
-        if (draftKeepOn != viewModel.isKeepScreenOnEnabled) viewModel.saveKeepScreenOnToggle(draftKeepOn)
+        if (draftKeepOn != viewModel.defaultKeepScreenOn) viewModel.saveKeepScreenOnToggle(draftKeepOn)
         if (draftBgKeepAlive != viewModel.isBackgroundKeepAlive) viewModel.saveBackgroundKeepAliveToggle(draftBgKeepAlive)
         if (draftRetention != viewModel.metricsRetentionDays) viewModel.saveRetentionSetting(draftRetention)
         if (draftAlertHistoryLimit != viewModel.alertHistoryLimit) viewModel.saveAlertHistoryLimit(draftAlertHistoryLimit)

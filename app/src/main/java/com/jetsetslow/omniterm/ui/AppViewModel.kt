@@ -326,6 +326,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    var defaultKeepScreenOn by mutableStateOf(false)
+    private var initialKeepScreenOnLoaded = false
     var isKeepScreenOnEnabled by mutableStateOf(false)
     var isBackgroundKeepAlive by mutableStateOf(false)
     var isDarkModeEnabled by mutableStateOf<Boolean?>(null)
@@ -956,7 +958,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 isFlagSecureEnabled = list.find { it.key == "flag_secure" }?.value
                     ?.toBooleanStrictOrNull() ?: hasPinLock
                 metricsRetentionDays = retentionVal
-                isKeepScreenOnEnabled = keepScreenOn
+                if (!initialKeepScreenOnLoaded || defaultKeepScreenOn != keepScreenOn) {
+                    defaultKeepScreenOn = keepScreenOn
+                    isKeepScreenOnEnabled = keepScreenOn
+                    initialKeepScreenOnLoaded = true
+                }
                 isBackgroundKeepAlive = backgroundKeepAlive
                 TerminalSessionManager.isBackgroundKeepAlive = backgroundKeepAlive
                 isDarkModeEnabled = darkModePref?.toBooleanStrictOrNull()
@@ -4600,6 +4606,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun saveKeepScreenOnToggle(enabled: Boolean) {
         viewModelScope.launch {
             repository.insertSetting("keep_screen_on", enabled.toString())
+            defaultKeepScreenOn = enabled
             isKeepScreenOnEnabled = enabled
         }
     }
@@ -4946,7 +4953,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         put("health_scoring", healthConfig.encode())
         put("telemetry_interval", (telemetryIntervalMs / 1000L).coerceIn(5L, 300L).toString())
         put("metrics_retention", metricsRetentionDays.toString())
-        put("keep_screen_on", isKeepScreenOnEnabled.toString())
+        put("keep_screen_on", defaultKeepScreenOn.toString())
         put("dark_mode", isDarkModeEnabled?.toString() ?: "")
         put("background_keep_alive", isBackgroundKeepAlive.toString())
         put("sftp_large_batch_file_threshold", sftpLargeBatchFileThreshold.toString())
