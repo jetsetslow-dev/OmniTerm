@@ -402,11 +402,12 @@ fun SftpFilesTab(viewModel: AppViewModel) {
 
                     // Action buttons wrap only when the viewport is narrow, so the toolbar is not
                     // unnecessarily scrollable on normal widths.
-                    if (!editingPath) FlowRow(
+                    if (!editingPath) Row(
                         modifier = Modifier
-                            .fillMaxWidth(),
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(2.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
                         // Toolbar grouped left→right: navigate · view · create/transfer · modes.
 

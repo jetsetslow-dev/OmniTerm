@@ -4606,7 +4606,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun requestKeepScreenOnToggle() {
         if (isKeepScreenOnEnabled) {
-            saveKeepScreenOnToggle(false)
+            isKeepScreenOnEnabled = false
         } else {
             showKeepScreenOnBatteryWarning = true
         }

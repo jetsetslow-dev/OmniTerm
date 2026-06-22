@@ -717,7 +717,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                     confirmButton = {
                         TextButton(
                             onClick = {
-                                viewModel.saveKeepScreenOnToggle(true)
+                                viewModel.isKeepScreenOnEnabled = true
                                 viewModel.showKeepScreenOnBatteryWarning = false
                             }
                         ) {
