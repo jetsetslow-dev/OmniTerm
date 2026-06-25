@@ -811,22 +811,13 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                 }
                 .onPreviewKeyEvent { e ->
                     if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    // A live swipe preview is held locally and not yet on the remote. Backspace must
-                    // edit that local preview (not send a backspace the remote can't apply to it);
-                    // every other special key abandons normal typing, so flush the preview to the
-                    // remote first, then let the key act.
+                    // A live swipe preview is held locally and not yet on the remote. Any special key
+                    // (Backspace, Tab, Enter, arrows, …) is a signal that the user wants to act on the
+                    // real shell line, so commit the held word to the remote first (no trailing space)
+                    // and then let the key act on it. This makes shell-side backspace and Tab-completion
+                    // work on the word you just swiped, at the cost of that word no longer being
+                    // keyboard-self-correctable once you reach for a special key.
                     if (smartSwipe && swipeBuffer.pendingWord.isNotEmpty()) {
-                        if (e.key == Key.Backspace) {
-                            val shortened = swipeBuffer.pendingWord.dropLast(1)
-                            swipeBuffer.reset()
-                            val result = swipeBuffer.onValue(shortened) // re-hold the trimmed word
-                            swipePreview = result.fieldText
-                            inputField = TextFieldValue(
-                                text = result.fieldText,
-                                selection = androidx.compose.ui.text.TextRange(result.fieldText.length),
-                            )
-                            return@onPreviewKeyEvent true
-                        }
                         val flush = swipeBuffer.flushBare()
                         if (flush.isNotEmpty()) viewModel.pasteText(flush)
                         swipePreview = ""
