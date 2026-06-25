@@ -2732,7 +2732,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
                                 Text("Smart swipe input")
                                 Text(
                                     "Lets gesture keyboards correct each swiped word before it's sent. " +
-                                        "Turn off for strict, literal keystrokes (no autocorrect).",
+                                        "Turn off to disable swipe-typing and accept strict, literal " +
+                                        "keystrokes like a password field (no autocorrect or suggestions).",
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )

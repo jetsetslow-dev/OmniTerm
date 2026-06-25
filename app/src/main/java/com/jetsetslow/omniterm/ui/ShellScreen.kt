@@ -786,7 +786,11 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                 // period), which is wrong for shell input.
                 autoCorrectEnabled = false,
                 capitalization = KeyboardCapitalization.None,
-                keyboardType = KeyboardType.Ascii,
+                // Smart swipe on: Ascii keyboard so gesture keyboards still offer swipe-typing and
+                // can self-correct the held word. Smart swipe off: Password type, which makes IMEs
+                // disable swipe-typing, suggestions, and autocorrect entirely — each key arrives
+                // verbatim, exactly like a password field.
+                keyboardType = if (smartSwipe) KeyboardType.Ascii else KeyboardType.Password,
                 imeAction = ImeAction.None,
             ),
             modifier = Modifier
