@@ -506,6 +506,11 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
     var copyDialogTitle by remember { mutableStateOf<String?>(null) }
     var copyDialogText by remember { mutableStateOf("") }
     var pendingLargePaste by remember { mutableStateOf<String?>(null) }
+    // Smart-swipe "live preview": the still-uncommitted trailing word currently held in the IME
+    // field. It is NOT yet sent to the remote — it is drawn locally just after the terminal cursor
+    // so the word appears as you type/swipe and updates in place when the keyboard autocorrects it.
+    // Set to "" on every flush (the real bytes go to the remote at that point).
+    var swipePreview by remember(sessionId) { mutableStateOf("") }
     var followTail by remember(sessionId) { mutableStateOf(true) }
     var firstVisibleRow by remember(sessionId) { mutableStateOf(0) }
     var visibleRowCount by remember(sessionId) { mutableStateOf(1) }
@@ -618,6 +623,7 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                 cellWidthPx = cellWidth,
                 cellHeightPx = cellHeight,
                 fontSizePx = fontSizePx,
+                pendingPreview = swipePreview,
                 modifier = Modifier
                     .fillMaxSize()
                     .scrollable(scrollableState, orientation = Orientation.Vertical)
@@ -707,6 +713,7 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                 if (flush.isNotEmpty()) viewModel.pasteText(flush)
                 inputField = TextFieldValue("")
             }
+            swipePreview = ""
         }
         BasicTextField(
             value = inputField,
@@ -731,9 +738,11 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                 }
 
                 // ── Smart-swipe path: let the field hold the trailing word so the keyboard can
-                // self-correct it; flush completed words on a separator. ──
+                // self-correct it; flush completed words on a separator. The held word is mirrored
+                // into swipePreview and drawn live at the cursor (not sent to the remote yet). ──
                 if (committed.isEmpty()) {
                     swipeBuffer.reset()
+                    swipePreview = ""
                     inputField = TextFieldValue("")
                     return@BasicTextField
                 }
@@ -742,6 +751,7 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                     // dialog. The held word never combines with the paste.
                     val flush = swipeBuffer.flushBare()
                     if (flush.isNotEmpty()) viewModel.pasteText(flush)
+                    swipePreview = ""
                     pendingLargePaste = committed
                     inputField = TextFieldValue("")
                     return@BasicTextField
@@ -753,6 +763,7 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                     val result = swipeBuffer.onValue(before)
                     val emit = result.emit + result.fieldText // field text is finished by the newline
                     swipeBuffer.reset()
+                    swipePreview = ""
                     if (emit.isNotEmpty()) viewModel.pasteText(emit)
                     viewModel.sendKey(TermKey.ENTER)
                     inputField = TextFieldValue("")
@@ -760,6 +771,8 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                 }
                 val result = swipeBuffer.onValue(committed)
                 if (result.emit.isNotEmpty()) viewModel.pasteText(result.emit)
+                // The trailing run is the still-uncommitted word: show it live at the cursor.
+                swipePreview = result.fieldText
                 inputField = TextFieldValue(
                     text = result.fieldText,
                     selection = androidx.compose.ui.text.TextRange(result.fieldText.length),
@@ -788,11 +801,33 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                     if (smartSwipe && !focus.isFocused && swipeBuffer.pendingWord.isNotEmpty()) {
                         val flush = swipeBuffer.flushBare()
                         if (flush.isNotEmpty()) viewModel.pasteText(flush)
+                        swipePreview = ""
                         inputField = TextFieldValue("")
                     }
                 }
                 .onPreviewKeyEvent { e ->
                     if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                    // A live swipe preview is held locally and not yet on the remote. Backspace must
+                    // edit that local preview (not send a backspace the remote can't apply to it);
+                    // every other special key abandons normal typing, so flush the preview to the
+                    // remote first, then let the key act.
+                    if (smartSwipe && swipeBuffer.pendingWord.isNotEmpty()) {
+                        if (e.key == Key.Backspace) {
+                            val shortened = swipeBuffer.pendingWord.dropLast(1)
+                            swipeBuffer.reset()
+                            val result = swipeBuffer.onValue(shortened) // re-hold the trimmed word
+                            swipePreview = result.fieldText
+                            inputField = TextFieldValue(
+                                text = result.fieldText,
+                                selection = androidx.compose.ui.text.TextRange(result.fieldText.length),
+                            )
+                            return@onPreviewKeyEvent true
+                        }
+                        val flush = swipeBuffer.flushBare()
+                        if (flush.isNotEmpty()) viewModel.pasteText(flush)
+                        swipePreview = ""
+                        inputField = TextFieldValue("")
+                    }
                     when (e.key) {
                         Key.Backspace -> { viewModel.sendKey(TermKey.BACKSPACE); true }
                         Key.Enter, Key.NumPadEnter -> { viewModel.sendKey(TermKey.ENTER); true }
@@ -818,6 +853,7 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                     if (swipeBuffer.pendingWord.isNotEmpty()) {
                         val flush = swipeBuffer.flushBare()
                         if (flush.isNotEmpty()) viewModel.pasteText(flush)
+                        swipePreview = ""
                         inputField = TextFieldValue("")
                     }
                 }
@@ -1018,6 +1054,7 @@ private fun TerminalCanvas(
     cellWidthPx: Float,
     cellHeightPx: Float,
     fontSizePx: Float,
+    pendingPreview: String = "",
     modifier: Modifier = Modifier,
 ) {
     val backgroundArgb = palette.background.toArgb()
@@ -1087,7 +1124,28 @@ private fun TerminalCanvas(
                     }
                     col += span.text.length
                 }
-                if (cursorOn && snapshot.cursorVisible && absoluteRow == snapshot.cursorRow) {
+                if (absoluteRow == snapshot.cursorRow && pendingPreview.isNotEmpty()) {
+                    // Smart-swipe live preview: the still-uncommitted word, drawn in the cursor
+                    // accent colour with an underline so it reads as "pending, not yet sent". It is
+                    // laid out from the cursor column onward over its own (repainted) cells; the real
+                    // bytes only reach the remote when the word flushes, at which point this clears.
+                    regularPaint.textSkewX = 0f
+                    regularPaint.isUnderlineText = true
+                    regularPaint.alpha = 255
+                    regularPaint.color = cursorArgb
+                    val baselineY = yTop + baselineOffset
+                    for (i in pendingPreview.indices) {
+                        val previewCol = snapshot.cursorCol + i
+                        val cellX = previewCol * cellWidthPx
+                        bgPaint.color = backgroundArgb
+                        native.drawRect(cellX, yTop, cellX + cellWidthPx, yTop + cellHeightPx, bgPaint)
+                        native.drawText(
+                            pendingPreview, i, i + 1,
+                            cellX + cellWidthPx / 2f, baselineY, regularPaint,
+                        )
+                    }
+                    regularPaint.isUnderlineText = false
+                } else if (cursorOn && snapshot.cursorVisible && absoluteRow == snapshot.cursorRow) {
                     val cursorX = snapshot.cursorCol * cellWidthPx
                     native.drawRect(cursorX, yTop, cursorX + cellWidthPx, yTop + cellHeightPx, cursorPaint)
                     val ch = rowCharAt(row, snapshot.cursorCol)
