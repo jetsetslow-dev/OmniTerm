@@ -37,6 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Paint as ComposePaint
@@ -578,14 +579,34 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
             val rows = (constraints.maxHeight / cellHeight).toInt().coerceIn(1, 300)
             LaunchedEffect(cols, rows) { viewModel.resizeTerminal(cols, rows) }
             LaunchedEffect(rows) { visibleRowCount = rows.coerceAtLeast(1) }
+            // The scroll closure outlives any single recomposition, so reading snapshot.totalRows
+            // captured at creation time would clamp against a stale row count while output streams in
+            // (the screen shifts under the user). rememberUpdatedState keeps these pointing at the
+            // latest values without re-creating the scrollable state.
+            val latestTotalRows by rememberUpdatedState(snapshot.totalRows)
+            val latestVisibleRows by rememberUpdatedState(visibleRowCount)
+            // tmux sessions own their scrollback inside copy-mode; forward the gesture as mouse-wheel
+            // events so tmux scrolls its full history. Normal shells scroll the local viewport over
+            // our own emulator scrollback.
+            val forwardScrollToRemote = viewModel.terminalScrollForwardsToRemote()
             val scrollableState = rememberScrollableState { delta ->
-                val maxFirst = (snapshot.totalRows - visibleRowCount).coerceAtLeast(0)
-                val rawRows = (scrollRemainderPx - delta) / cellHeight
-                val rowDelta = rawRows.toInt()
-                scrollRemainderPx = (rawRows - rowDelta) * cellHeight
-                if (rowDelta != 0) {
-                    firstVisibleRow = (firstVisibleRow + rowDelta).coerceIn(0, maxFirst)
-                    followTail = firstVisibleRow >= maxFirst - 2
+                if (forwardScrollToRemote) {
+                    val rawRows = (scrollRemainderPx - delta) / cellHeight
+                    val rowDelta = rawRows.toInt()
+                    scrollRemainderPx = (rawRows - rowDelta) * cellHeight
+                    if (rowDelta != 0) {
+                        // delta<0 is a downward drag (content moves down) → wheel-up into history.
+                        viewModel.terminalMouseWheel(wheelUp = rowDelta < 0, ticks = kotlin.math.abs(rowDelta))
+                    }
+                } else {
+                    val maxFirst = (latestTotalRows - latestVisibleRows).coerceAtLeast(0)
+                    val rawRows = (scrollRemainderPx - delta) / cellHeight
+                    val rowDelta = rawRows.toInt()
+                    scrollRemainderPx = (rawRows - rowDelta) * cellHeight
+                    if (rowDelta != 0) {
+                        firstVisibleRow = (firstVisibleRow + rowDelta).coerceIn(0, maxFirst)
+                        followTail = firstVisibleRow >= maxFirst - 2
+                    }
                 }
                 delta
             }
@@ -674,34 +695,75 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
 
         // Invisible input sink: captures soft-keyboard text + hardware special keys.
         var inputField by remember(sessionId) { mutableStateOf(TextFieldValue("")) }
+        // Smart-swipe word buffer (per session). Only consulted when smartSwipeInput is enabled; the
+        // strict path below force-empties the field exactly as before.
+        val swipeBuffer = remember(sessionId) { SwipeInputBuffer() }
+        val smartSwipe = viewModel.smartSwipeInput
+        // A control modifier turns the next keystroke into a control byte, so a half-held swipe word
+        // must not get prepended to it. Drop it whenever a modifier is armed.
+        if (smartSwipe && (viewModel.isCtrlPressed || viewModel.isAltPressed)) {
+            if (swipeBuffer.pendingWord.isNotEmpty()) {
+                val flush = swipeBuffer.flushBare()
+                if (flush.isNotEmpty()) viewModel.pasteText(flush)
+                inputField = TextFieldValue("")
+            }
+        }
         BasicTextField(
             value = inputField,
             onValueChange = { tfv ->
                 val committed = tfv.text
-                if (committed.isNotEmpty()) {
-                    if (committed.length > 100) {
-                        pendingLargePaste = committed
-                    } else if (committed.length > 1) {
-                        // A multi-character commit is either a swipe-typed word or a short paste.
-                        // Gesture keyboards commit a whole word with no trailing space and rely on the
-                        // field's surrounding text to add the inter-word space — but we keep the field
-                        // empty (so autocorrect can't replace against stale text), so that space never
-                        // arrives and words run together. Detect a lone gesture word (letters/digits
-                        // only, no whitespace of its own) and append the space ourselves. Anything
-                        // containing whitespace, newlines, or punctuation is treated as a real paste
-                        // and sent verbatim.
-                        val isGestureWord = committed.all { it.isLetterOrDigit() }
-                        viewModel.pasteText(if (isGestureWord) "$committed " else committed)
-                    } else {
-                        val ch = committed.first()
-                        if (ch == '\n' || ch == '\r') viewModel.sendKey(TermKey.ENTER)
-                        else viewModel.typeText(ch.toString())
+                if (!smartSwipe) {
+                    // ── Strict path: empty buffer, send each commit verbatim (max fidelity) ──
+                    if (committed.isNotEmpty()) {
+                        if (committed.length > 100) {
+                            pendingLargePaste = committed
+                        } else if (committed.length > 1) {
+                            val isGestureWord = committed.all { it.isLetterOrDigit() }
+                            viewModel.pasteText(if (isGestureWord) "$committed " else committed)
+                        } else {
+                            val ch = committed.first()
+                            if (ch == '\n' || ch == '\r') viewModel.sendKey(TermKey.ENTER)
+                            else viewModel.typeText(ch.toString())
+                        }
                     }
+                    inputField = TextFieldValue("")
+                    return@BasicTextField
                 }
-                // Keep the IME buffer empty. Retaining prior text lets keyboards apply composing
-                // replacements/autocorrect against command history, which can emit characters the
-                // user never intended to send to the terminal.
-                inputField = TextFieldValue("")
+
+                // ── Smart-swipe path: let the field hold the trailing word so the keyboard can
+                // self-correct it; flush completed words on a separator. ──
+                if (committed.isEmpty()) {
+                    swipeBuffer.reset()
+                    inputField = TextFieldValue("")
+                    return@BasicTextField
+                }
+                if (committed.length > 100) {
+                    // Large paste: flush any held word first (ordering), then defer to the paste
+                    // dialog. The held word never combines with the paste.
+                    val flush = swipeBuffer.flushBare()
+                    if (flush.isNotEmpty()) viewModel.pasteText(flush)
+                    pendingLargePaste = committed
+                    inputField = TextFieldValue("")
+                    return@BasicTextField
+                }
+                val newline = committed.indexOfFirst { it == '\n' || it == '\r' }
+                if (newline >= 0) {
+                    // Emit everything up to the newline (held word + any inline text), then send ENTER.
+                    val before = committed.substring(0, newline)
+                    val result = swipeBuffer.onValue(before)
+                    val emit = result.emit + result.fieldText // field text is finished by the newline
+                    swipeBuffer.reset()
+                    if (emit.isNotEmpty()) viewModel.pasteText(emit)
+                    viewModel.sendKey(TermKey.ENTER)
+                    inputField = TextFieldValue("")
+                    return@BasicTextField
+                }
+                val result = swipeBuffer.onValue(committed)
+                if (result.emit.isNotEmpty()) viewModel.pasteText(result.emit)
+                inputField = TextFieldValue(
+                    text = result.fieldText,
+                    selection = androidx.compose.ui.text.TextRange(result.fieldText.length),
+                )
             },
             cursorBrush = SolidColor(Color.Transparent),
             textStyle = TerminalTextStyle.copy(color = Color.Transparent),
@@ -719,6 +781,16 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                 .size(2.dp)
                 .alpha(0.01f)
                 .focusRequester(focusRequester)
+                .onFocusChanged { focus ->
+                    // Losing focus (tap away, backgrounding, dialog) ends the current word. Flush it
+                    // so a half-corrected swipe word never lingers in the buffer and then prepends
+                    // itself to whatever the user does next.
+                    if (smartSwipe && !focus.isFocused && swipeBuffer.pendingWord.isNotEmpty()) {
+                        val flush = swipeBuffer.flushBare()
+                        if (flush.isNotEmpty()) viewModel.pasteText(flush)
+                        inputField = TextFieldValue("")
+                    }
+                }
                 .onPreviewKeyEvent { e ->
                     if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                     when (e.key) {
@@ -734,6 +806,23 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                     }
                 },
         )
+
+        // Idle-flush fallback: in the smart path the held word lives in the field. If the user pauses
+        // mid-word (no IME edits) for 20s, flush it so a half-typed word can never get stuck in the
+        // buffer and prepend itself to whatever they type much later. Re-keys on every edit, so it
+        // only ever fires after a genuine 20s lull — normal word-by-word typing flushes far sooner.
+        if (smartSwipe) {
+            LaunchedEffect(inputField.text, sessionId) {
+                if (inputField.text.isNotEmpty()) {
+                    delay(20_000)
+                    if (swipeBuffer.pendingWord.isNotEmpty()) {
+                        val flush = swipeBuffer.flushBare()
+                        if (flush.isNotEmpty()) viewModel.pasteText(flush)
+                        inputField = TextFieldValue("")
+                    }
+                }
+            }
+        }
 
         if (showCopyOptions) {
             fun openSelectableText(title: String, text: String) {

@@ -2244,16 +2244,26 @@ private fun BackupSelectionList(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(title, fontWeight = FontWeight.Bold, fontSize = 12.sp)
-        BackupSelectionRow("Servers", contents?.servers, selection.servers, { onChange(selection.copy(servers = it)) }, contents == null || contents.servers > 0)
-        BackupSelectionRow("SSH keys", contents?.sshKeys, selection.sshKeys, { onChange(selection.copy(sshKeys = it)) }, contents == null || contents.sshKeys > 0)
-        BackupSelectionRow("Credential profiles", contents?.credentialProfiles, selection.credentialProfiles, { onChange(selection.copy(credentialProfiles = it)) }, contents == null || contents.credentialProfiles > 0)
-        BackupSelectionRow("Scripts", contents?.scripts, selection.scripts, { onChange(selection.copy(scripts = it)) }, contents == null || contents.scripts > 0)
-        BackupSelectionRow("Alert rules", contents?.alertRules, selection.alertRules, { onChange(selection.copy(alertRules = it)) }, contents == null || contents.alertRules > 0)
+        // A trailing "*" marks a section as sensitive: selecting it forces the backup to be encrypted
+        // (see hasSensitiveData). Every section except Active alerts can carry secrets — hostnames,
+        // keys, credentials, paths, command fragments — so they're all starred. The legend below
+        // explains the marker once instead of repeating "(sensitive)" on every row.
+        BackupSelectionRow("Servers *", contents?.servers, selection.servers, { onChange(selection.copy(servers = it)) }, contents == null || contents.servers > 0)
+        BackupSelectionRow("SSH keys *", contents?.sshKeys, selection.sshKeys, { onChange(selection.copy(sshKeys = it)) }, contents == null || contents.sshKeys > 0)
+        BackupSelectionRow("Credential profiles *", contents?.credentialProfiles, selection.credentialProfiles, { onChange(selection.copy(credentialProfiles = it)) }, contents == null || contents.credentialProfiles > 0)
+        BackupSelectionRow("Scripts *", contents?.scripts, selection.scripts, { onChange(selection.copy(scripts = it)) }, contents == null || contents.scripts > 0)
+        BackupSelectionRow("Alert rules *", contents?.alertRules, selection.alertRules, { onChange(selection.copy(alertRules = it)) }, contents == null || contents.alertRules > 0)
         BackupSelectionRow("Active alerts", contents?.activeAlerts, selection.activeAlerts, { onChange(selection.copy(activeAlerts = it)) }, contents == null || contents.activeAlerts > 0)
-        BackupSelectionRow("Alert history", contents?.alertHistory, selection.alertHistory, { onChange(selection.copy(alertHistory = it)) }, contents == null || contents.alertHistory > 0)
-        BackupSelectionRow("Wake on LAN", contents?.wolTargets, selection.wolTargets, { onChange(selection.copy(wolTargets = it)) }, contents == null || contents.wolTargets > 0)
-        BackupSelectionRow("Settings & customizations", contents?.settings, selection.settings, { onChange(selection.copy(settings = it)) }, contents == null || contents.settings > 0)
-        BackupSelectionRow("Crash logs (sensitive)", contents?.crashLogs, selection.crashLogs, { onChange(selection.copy(crashLogs = it)) }, contents == null || contents.crashLogs > 0)
+        BackupSelectionRow("Alert history *", contents?.alertHistory, selection.alertHistory, { onChange(selection.copy(alertHistory = it)) }, contents == null || contents.alertHistory > 0)
+        BackupSelectionRow("Wake on LAN *", contents?.wolTargets, selection.wolTargets, { onChange(selection.copy(wolTargets = it)) }, contents == null || contents.wolTargets > 0)
+        BackupSelectionRow("Settings & customizations *", contents?.settings, selection.settings, { onChange(selection.copy(settings = it)) }, contents == null || contents.settings > 0)
+        BackupSelectionRow("Crash logs *", contents?.crashLogs, selection.crashLogs, { onChange(selection.copy(crashLogs = it)) }, contents == null || contents.crashLogs > 0)
+        Text(
+            "* Sensitive — selecting forces an encrypted backup.",
+            fontSize = 10.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = 4.dp),
+        )
     }
 }
 
@@ -2343,6 +2353,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
     var draftTerminalFontSize by remember { mutableStateOf(viewModel.terminalFontSize) }
     var draftTerminalTheme by remember { mutableStateOf(viewModel.terminalTheme) }
     var draftTerminalScrollbackLimit by remember { mutableStateOf(viewModel.terminalScrollbackLimit) }
+    var draftSmartSwipe by remember { mutableStateOf(viewModel.smartSwipeInput) }
     var draftAppLock by remember { mutableStateOf(viewModel.isAppLockEnabled) }
     var draftBiometrics by remember { mutableStateOf(viewModel.useBiometrics) }
     var draftBlockScreenshots by remember { mutableStateOf(viewModel.isFlagSecureEnabled) }
@@ -2365,6 +2376,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
         draftTerminalFontSize != viewModel.terminalFontSize ||
         draftTerminalTheme != viewModel.terminalTheme ||
         draftTerminalScrollbackLimit != viewModel.terminalScrollbackLimit ||
+        draftSmartSwipe != viewModel.smartSwipeInput ||
         draftAppLock != viewModel.isAppLockEnabled ||
         draftBiometrics != viewModel.useBiometrics ||
         draftBlockScreenshots != viewModel.isFlagSecureEnabled ||
@@ -2391,6 +2403,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
         draftTerminalFontSize = viewModel.terminalFontSize
         draftTerminalTheme = viewModel.terminalTheme
         draftTerminalScrollbackLimit = viewModel.terminalScrollbackLimit
+        draftSmartSwipe = viewModel.smartSwipeInput
         draftAppLock = viewModel.isAppLockEnabled
         draftBiometrics = viewModel.useBiometrics
         draftBlockScreenshots = viewModel.isFlagSecureEnabled
@@ -2412,6 +2425,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
         if (draftTerminalFontSize != viewModel.terminalFontSize) viewModel.saveTerminalFontSize(draftTerminalFontSize)
         if (draftTerminalTheme != viewModel.terminalTheme) viewModel.saveTerminalTheme(draftTerminalTheme)
         if (draftTerminalScrollbackLimit != viewModel.terminalScrollbackLimit) viewModel.saveTerminalScrollbackLimit(draftTerminalScrollbackLimit)
+        if (draftSmartSwipe != viewModel.smartSwipeInput) viewModel.saveSmartSwipeInput(draftSmartSwipe)
         val nextSftpWarnCount = draftSftpWarnFileCountValue ?: viewModel.sftpLargeBatchFileThreshold
         val nextSftpWarnBytes = (draftSftpWarnGbValue ?: currentSftpWarnGb) * 1_000_000_000L
         if (nextSftpWarnCount != viewModel.sftpLargeBatchFileThreshold || nextSftpWarnBytes != viewModel.sftpLargeBatchBytesThreshold) {
@@ -2708,6 +2722,23 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             fontSize = 10.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        Spacer(Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                                Text("Smart swipe input")
+                                Text(
+                                    "Lets gesture keyboards correct each swiped word before it's sent. " +
+                                        "Turn off for strict, literal keystrokes (no autocorrect).",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(checked = draftSmartSwipe, onCheckedChange = { draftSmartSwipe = it })
+                        }
                     }
                 }
 

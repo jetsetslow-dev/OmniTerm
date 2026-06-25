@@ -88,6 +88,11 @@ object RemoteCommands {
         return "command -v tmux >/dev/null 2>&1 && " +
             "(tmux has-session -t $safe 2>/dev/null || tmux new-session -d -s $safe) && " +
             "(tmux set-option -t $safe history-limit $limit >/dev/null 2>&1 || true) && " +
+            // Mouse on lets a swipe/drag enter tmux's own copy-mode and scroll its full internal
+            // scrollback — the history our local emulator can't see (tmux repaints via cursor
+            // addressing rather than scrolling lines through our scroll region). The app forwards
+            // scroll gestures as SGR mouse-wheel events so this history becomes reachable.
+            "(tmux set-option -t $safe mouse on >/dev/null 2>&1 || true) && " +
             "exec tmux attach-session -t $safe\n"
     }
 

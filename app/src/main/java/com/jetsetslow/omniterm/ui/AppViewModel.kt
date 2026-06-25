@@ -757,6 +757,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var alertHistoryLimit by mutableStateOf(100)
         private set
+    // Smart-swipe input: keep the current swiped word in the IME's buffer so gesture keyboards can
+    // self-correct it, flushing to the terminal on space/enter/punctuation. Off ⇒ the strict
+    // empty-buffer path that sends each commit verbatim (max terminal fidelity, no autocorrect).
+    var smartSwipeInput by mutableStateOf(true)
+        private set
+
+    fun saveSmartSwipeInput(enabled: Boolean) {
+        smartSwipeInput = enabled
+        viewModelScope.launch { repository.insertSetting("terminal_smart_swipe", enabled.toString()) }
+    }
 
     fun adjustTerminalFontSize(deltaSp: Int) {
         val next = (terminalFontSize + deltaSp).coerceIn(8, 28)
@@ -925,6 +935,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     ?: "omni_dark"
                 list.find { it.key == "terminal_scrollback_limit" }?.value?.toIntOrNull()?.let {
                     terminalScrollbackLimit = it.coerceIn(1_000, 50_000)
+                }
+                list.find { it.key == "terminal_smart_swipe" }?.value?.let {
+                    smartSwipeInput = it != "false"
                 }
                 alertHistoryLimit = list.find { it.key == "alert_history_limit" }?.value
                     ?.toIntOrNull()?.coerceIn(10, 1000) ?: 100
@@ -3050,6 +3063,33 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun escO(c: Char) = byteArrayOf(0x1B, 'O'.code.toByte(), c.code.toByte())
     private fun escTilde(code: String) = (byteArrayOf(0x1B, '['.code.toByte()) + code.toByteArray() + byteArrayOf('~'.code.toByte()))
 
+    /**
+     * True when a scroll gesture should be forwarded to the remote as mouse-wheel events rather than
+     * scrolling the local viewport. Persistent sessions run inside tmux with `mouse on`, so wheel
+     * events drive tmux's own copy-mode and expose its full server-side scrollback — the history the
+     * local emulator can't reconstruct (tmux repaints by cursor addressing, not by scrolling lines
+     * through our scroll region). Normal shells keep local viewport scroll over our own scrollback.
+     */
+    fun terminalScrollForwardsToRemote(): Boolean = currentSession?.persistent == true
+
+    /**
+     * Forward a vertical scroll gesture to the remote as SGR (1006) mouse-wheel events. [wheelUp]
+     * picks wheel-up (button 64, scroll back into history) vs wheel-down (button 65). [ticks] is how
+     * many discrete wheel notches the gesture covered. Coordinates are 1-based; we report the gesture
+     * at the top-left cell, which is sufficient for tmux copy-mode scrolling (it scrolls the pane the
+     * pointer is over, and a single pane fills the view). No-ops for a non-tmux/disconnected session.
+     */
+    fun terminalMouseWheel(wheelUp: Boolean, ticks: Int = 1) {
+        val session = currentSession ?: return
+        if (!session.isConnected || !session.persistent) return
+        val button = if (wheelUp) 64 else 65
+        val out = ArrayList<Byte>(ticks.coerceIn(1, 10) * 8)
+        // SGR mouse: ESC [ < button ; col ; row M   (M = press; wheel has no release).
+        val seq = "[<$button;1;1M".toByteArray()
+        repeat(ticks.coerceIn(1, 10)) { seq.forEach { out.add(it) } }
+        sendBytes(out.toByteArray())
+    }
+
     fun disconnectTerminal() {
         val s = currentSession ?: return
         disconnectSession(s.id)
@@ -4945,6 +4985,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         put("terminal_font_size", terminalFontSize.toString())
         put("terminal_theme", terminalTheme)
         put("terminal_scrollback_limit", terminalScrollbackLimit.toString())
+        put("terminal_smart_swipe", smartSwipeInput.toString())
         put("text_scale", textScale)
         put("accessibility", isAccessibilityEnabled.toString())
         put("amoled", isAmoledEnabled.toString())

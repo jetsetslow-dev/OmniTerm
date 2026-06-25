@@ -188,4 +188,48 @@ class RemoteParsersTest {
         assertEquals("running", svcs[0].status)
         assertEquals("active", svcs[0].subState)
     }
+
+    @Test
+    fun tmuxAttachCommandEnablesMouseAndHistory() {
+        val cmd = com.jetsetslow.omniterm.data.RemoteCommands.tmuxAttachCommand("omniterm-test-name", 12_000)
+        // Mouse mode lets a swipe reach tmux copy-mode (its real scrollback); history-limit caps it.
+        assertTrue("expected mouse on", cmd.contains("set-option -t omniterm-test-name mouse on"))
+        assertTrue("expected history-limit", cmd.contains("history-limit 12000"))
+        assertTrue("expected exec attach", cmd.contains("exec tmux attach-session -t omniterm-test-name"))
+    }
+
+    @Test
+    fun tmuxAttachCommandSanitisesSessionName() {
+        // Only [a-z0-9-] survives into the shell command; anything else is stripped (injection guard).
+        val cmd = com.jetsetslow.omniterm.data.RemoteCommands.tmuxAttachCommand("bad; rm -rf /", 5_000)
+        assertTrue(cmd.contains("badrm-rf"))
+        assertTrue("no raw semicolon from the name", !cmd.contains("bad; rm"))
+    }
+
+    @Test
+    fun tmuxAttachCommandClampsHistoryLimit() {
+        val low = com.jetsetslow.omniterm.data.RemoteCommands.tmuxAttachCommand("x", 10)
+        val high = com.jetsetslow.omniterm.data.RemoteCommands.tmuxAttachCommand("x", 999_999)
+        assertTrue(low.contains("history-limit 1000"))   // floor
+        assertTrue(high.contains("history-limit 50000"))  // ceiling
+    }
+
+    @Test
+    fun shellQuoteNeutralisesSpecialCharacters() {
+        val q = com.jetsetslow.omniterm.data.RemoteCommands::shellQuote
+        // Plain text is wrapped in single quotes.
+        assertEquals("'file.txt'", q.invoke("file.txt"))
+        // Spaces survive intact inside the quotes (one argument, not split).
+        assertEquals("'my file'", q.invoke("my file"))
+        // A single quote is closed, escaped, and reopened: ' -> '\'' .
+        assertEquals("'it'\\''s'", q.invoke("it's"))
+        // Shell metacharacters are inert inside single quotes — no expansion, no command execution.
+        assertEquals("'\$(rm -rf /)'", q.invoke("\$(rm -rf /)"))
+        assertEquals("'`whoami`'", q.invoke("`whoami`"))
+        assertEquals("'a;b|c&d'", q.invoke("a;b|c&d"))
+        // Newlines stay literal (a path with a newline is still a single argument).
+        assertEquals("'line1\nline2'", q.invoke("line1\nline2"))
+        // Unicode passes through untouched.
+        assertEquals("'café_日本'", q.invoke("café_日本"))
+    }
 }
