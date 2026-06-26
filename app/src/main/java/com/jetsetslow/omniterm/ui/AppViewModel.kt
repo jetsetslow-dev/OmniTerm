@@ -2167,13 +2167,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun addWolTarget(name: String, mac: String, broadcast: String, port: Int, notes: String) {
+    fun addWolTarget(name: String, mac: String, broadcast: String, ip: String, port: Int, notes: String) {
         viewModelScope.launch {
             if (name.isBlank() || !isValidMac(mac) || broadcast.isBlank() || port !in 1..65535) return@launch
             val tar = WolTargetEntity(
                 name = name.trim(),
                 macAddress = mac.trim(),
                 broadcastIp = broadcast,
+                ipAddress = ip.trim(),
                 port = port,
                 notes = notes
             )
@@ -2181,7 +2182,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun updateWolTarget(target: WolTargetEntity, name: String, mac: String, broadcast: String, port: Int, notes: String) {
+    fun updateWolTarget(target: WolTargetEntity, name: String, mac: String, broadcast: String, ip: String, port: Int, notes: String) {
         viewModelScope.launch {
             if (name.isBlank() || !isValidMac(mac) || broadcast.isBlank() || port !in 1..65535) return@launch
             repository.insertWolTarget(
@@ -2189,10 +2190,38 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     name = name.trim(),
                     macAddress = mac.trim(),
                     broadcastIp = broadcast.trim(),
+                    ipAddress = ip.trim(),
                     port = port,
                     notes = notes,
                 )
             )
+        }
+    }
+
+    /**
+     * Best-effort liveness probe for a WoL target's host IP, mirroring the LAN scanner: try ICMP
+     * reachability first, and if that's filtered (common on Android/Wi-Fi), fall back to the kernel
+     * ARP cache (an entry there means the host answered an ARP and is up). Returns false for a blank
+     * IP or any error. Runs on IO; safe to call from a polling loop.
+     */
+    suspend fun pingWolHost(ip: String): Boolean = withContext(Dispatchers.IO) {
+        val target = ip.trim()
+        if (target.isBlank()) return@withContext false
+        try {
+            if (java.net.InetAddress.getByName(target).isReachable(800)) return@withContext true
+        } catch (_: Exception) {
+            // fall through to ARP-cache check
+        }
+        try {
+            java.io.File("/proc/net/arp").useLines { lines ->
+                lines.drop(1).any { line ->
+                    val cols = line.trim().split(Regex("\\s+"))
+                    cols.isNotEmpty() && cols[0] == target &&
+                        cols.size >= 4 && cols[3] != "00:00:00:00:00:00"
+                }
+            }
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -4913,6 +4942,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         for (w in if (selection.wolTargets) wolTargets else emptyList()) {
             wolArr.put(org.json.JSONObject().apply {
                 put("name", w.name); put("macAddress", w.macAddress); put("broadcastIp", w.broadcastIp)
+                put("ipAddress", w.ipAddress)
                 put("port", w.port); put("notes", w.notes)
                 put("lastWokenTime", w.lastWokenTime)
             })
@@ -5482,6 +5512,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             WolTargetEntity(
                                 name = o.optString("name", "Target"), macAddress = mac,
                                 broadcastIp = o.optString("broadcastIp", "192.168.1.255"),
+                                ipAddress = o.optString("ipAddress", ""),
                                 port = o.optInt("port", 9), notes = o.optString("notes", ""),
                                 lastWokenTime = o.optLong("lastWokenTime", 0L),
                             )

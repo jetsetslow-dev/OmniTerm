@@ -804,7 +804,7 @@ private fun QuickScriptEditorDialog(
 @Composable
 fun NetworkToolView(viewModel: AppViewModel) {
     var tab by rememberSaveable { mutableStateOf(0) }
-    val tabs = listOf("Host Scan", "Ping", "Traceroute", "Port Scan", "Wake-on-LAN")
+    val tabs = listOf("Host Scan", "Wake-on-LAN", "Ping", "Traceroute", "Port Scan")
 
     ToolScaffold(viewModel, "Network Tools") {
         Column(modifier = Modifier.fillMaxSize()) {
@@ -815,11 +815,11 @@ fun NetworkToolView(viewModel: AppViewModel) {
             }
             Box(modifier = Modifier.fillMaxSize()) {
                 when (tab) {
-                    0 -> HostScanTab(viewModel, onUseHost = { viewModel.portScannerTarget = it; tab = 3 })
-                    1 -> PingTab(viewModel)
-                    2 -> TracerouteTab(viewModel)
-                    3 -> PortScanTab(viewModel)
-                    else -> WolTab(viewModel)
+                    0 -> HostScanTab(viewModel, onUseHost = { viewModel.portScannerTarget = it; tab = 4 })
+                    1 -> WolTab(viewModel)
+                    2 -> PingTab(viewModel)
+                    3 -> TracerouteTab(viewModel)
+                    else -> PortScanTab(viewModel)
                 }
             }
         }
@@ -1184,13 +1184,29 @@ private fun WolTab(viewModel: AppViewModel) {
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(target.name, fontWeight = FontWeight.Bold)
-                            Text("MAC: ${target.macAddress} · Port ${target.port}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(modifier = Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                            WolStatusDot(viewModel, target.ipAddress)
+                            Column {
+                                Text(target.name, fontWeight = FontWeight.Bold)
+                                Text(
+                                    buildString {
+                                        append("MAC: ${target.macAddress} · Port ${target.port}")
+                                        if (target.ipAddress.isNotBlank()) append(" · ${target.ipAddress}")
+                                    },
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Button(
-                                onClick = { viewModel.triggerWol(target) },
+                                onClick = {
+                                    confirm.ask(
+                                        "Send wake packet?",
+                                        "Send a Wake-on-LAN magic packet to \"${target.name}\" (${target.macAddress})?",
+                                        confirmLabel = "Wake",
+                                    ) { viewModel.triggerWol(target) }
+                                },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                                 modifier = Modifier.height(36.dp),
@@ -1230,6 +1246,7 @@ private fun WolTab(viewModel: AppViewModel) {
         var broadcastIp by remember(target, prefill) {
             mutableStateOf(target?.broadcastIp ?: prefill?.ip?.substringBeforeLast('.')?.plus(".255") ?: "192.168.1.255")
         }
+        var ipAddress by remember(target, prefill) { mutableStateOf(target?.ipAddress ?: prefill?.ip ?: "") }
         var port by remember(target, prefill) { mutableStateOf((target?.port ?: 9).toString()) }
         var notes by remember(target, prefill) { mutableStateOf(target?.notes ?: "") }
         fun dismissEditor() {
@@ -1246,6 +1263,7 @@ private fun WolTab(viewModel: AppViewModel) {
                     OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Machine Name") }, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = mac, onValueChange = { mac = it }, label = { Text("MAC Address target") }, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(value = broadcastIp, onValueChange = { broadcastIp = it }, label = { Text("Broadcast IP network segment") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
+                    OutlinedTextField(value = ipAddress, onValueChange = { ipAddress = it }, label = { Text("Host IP address (for online status)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), singleLine = true)
                     OutlinedTextField(value = port, onValueChange = { port = it.filter { c -> c.isDigit() } }, label = { Text("UDP port") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
                     OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Notes") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
                 }
@@ -1254,9 +1272,9 @@ private fun WolTab(viewModel: AppViewModel) {
                 Button(
                     onClick = {
                         if (target == null) {
-                            viewModel.addWolTarget(name, mac, broadcastIp, port.toIntOrNull() ?: 9, notes)
+                            viewModel.addWolTarget(name, mac, broadcastIp, ipAddress, port.toIntOrNull() ?: 9, notes)
                         } else {
-                            viewModel.updateWolTarget(target, name, mac, broadcastIp, port.toIntOrNull() ?: 9, notes)
+                            viewModel.updateWolTarget(target, name, mac, broadcastIp, ipAddress, port.toIntOrNull() ?: 9, notes)
                         }
                         dismissEditor()
                     },
@@ -1270,6 +1288,27 @@ private fun WolTab(viewModel: AppViewModel) {
             }
         )
     }
+}
+
+// ── Live online-status dot for a saved WoL target. Polls the host IP (ICMP, ARP-cache fallback)
+// every 10s while visible. Grey = no IP configured / checking; green = up; red = no response. ──
+@Composable
+private fun WolStatusDot(viewModel: AppViewModel, ip: String) {
+    // null = unknown/checking, true = online, false = offline.
+    var online by remember(ip) { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(ip) {
+        if (ip.isBlank()) { online = null; return@LaunchedEffect }
+        while (true) {
+            online = viewModel.pingWolHost(ip)
+            delay(10_000)
+        }
+    }
+    val color = when (online) {
+        true -> Color(0xFF10B981)
+        false -> Color.Red
+        null -> Color.Gray
+    }
+    Box(modifier = Modifier.padding(end = 10.dp).size(10.dp).clip(CircleShape).background(color))
 }
 
 // ── Inline LAN scanner for the Wake-on-LAN tab. Mirrors LanHostPicker (used by Ping/Traceroute/Port

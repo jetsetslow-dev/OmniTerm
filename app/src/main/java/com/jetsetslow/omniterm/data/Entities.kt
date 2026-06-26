@@ -157,6 +157,9 @@ data class WolTargetEntity(
     val name: String,
     val macAddress: String,
     val broadcastIp: String = "192.168.1.255",
+    // The host's own IP, used to ping it for live online status on the WoL screen. Optional: empty
+    // means "no status check" (older targets created before this field existed).
+    val ipAddress: String = "",
     val port: Int = 9,
     val notes: String = "",
     val lastWokenTime: Long = 0L

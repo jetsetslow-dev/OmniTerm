@@ -26,7 +26,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     // against the exact prior shape. Versions ≤7 predate schema export (several v5 builds shipped
     // with differing schemas), so upgrades from those still fall back to a destructive wipe — but
     // from v8 on, a version bump without a Migration must fail loudly instead of deleting data.
-    version = 12,
+    version = 13,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -79,6 +79,13 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // WoL targets gain an optional host IP, used to ping for live online status.
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE wol_targets ADD COLUMN ipAddress TEXT NOT NULL DEFAULT ''")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -88,7 +95,7 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 // Destructive only for the un-exported legacy versions; never for v8+.
                 .fallbackToDestructiveMigrationFrom(dropAllTables = true, 1, 2, 3, 4, 5, 6, 7)
-                .addMigrations(MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+                .addMigrations(MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
                 .build()
                 INSTANCE = instance
                 instance
