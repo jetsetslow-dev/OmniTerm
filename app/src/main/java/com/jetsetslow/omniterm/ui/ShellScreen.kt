@@ -506,11 +506,6 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
     var copyDialogTitle by remember { mutableStateOf<String?>(null) }
     var copyDialogText by remember { mutableStateOf("") }
     var pendingLargePaste by remember { mutableStateOf<String?>(null) }
-    // Smart-swipe "live preview": the still-uncommitted trailing word currently held in the IME
-    // field. It is NOT yet sent to the remote — it is drawn locally just after the terminal cursor
-    // so the word appears as you type/swipe and updates in place when the keyboard autocorrects it.
-    // Set to "" on every flush (the real bytes go to the remote at that point).
-    var swipePreview by remember(sessionId) { mutableStateOf("") }
     var followTail by remember(sessionId) { mutableStateOf(true) }
     var firstVisibleRow by remember(sessionId) { mutableStateOf(0) }
     var visibleRowCount by remember(sessionId) { mutableStateOf(1) }
@@ -623,7 +618,6 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                 cellWidthPx = cellWidth,
                 cellHeightPx = cellHeight,
                 fontSizePx = fontSizePx,
-                pendingPreview = swipePreview,
                 modifier = Modifier
                     .fillMaxSize()
                     .scrollable(scrollableState, orientation = Orientation.Vertical)
@@ -701,82 +695,62 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
 
         // Invisible input sink: captures soft-keyboard text + hardware special keys.
         var inputField by remember(sessionId) { mutableStateOf(TextFieldValue("")) }
-        // Smart-swipe word buffer (per session). Only consulted when smartSwipeInput is enabled; the
-        // strict path below force-empties the field exactly as before.
-        val swipeBuffer = remember(sessionId) { SwipeInputBuffer() }
         val smartSwipe = viewModel.smartSwipeInput
-        // A control modifier turns the next keystroke into a control byte, so a half-held swipe word
-        // must not get prepended to it. Drop it whenever a modifier is armed.
-        if (smartSwipe && (viewModel.isCtrlPressed || viewModel.isAltPressed)) {
-            if (swipeBuffer.pendingWord.isNotEmpty()) {
-                val flush = swipeBuffer.flushBare()
-                if (flush.isNotEmpty()) viewModel.pasteText(flush)
-                inputField = TextFieldValue("")
-            }
-            swipePreview = ""
+
+        // Swipe-typing mode keeps the keyboard's text in the field and mirrors edits to the remote by
+        // diffing, exactly like a plain text editor: when the field changes we drop the part that no
+        // longer matches (remote BACKSPACEs) and type the new tail. Autocorrect and swipe-revision are
+        // just field edits, so they reach the shell correctly. Once a shell-owned key (Enter/Tab/arrows/
+        // Ctrl) acts on the line, the shell owns it and our local copy is stale, so we resync to empty.
+        val resyncSwipeField = { inputField = TextFieldValue("") }
+        DisposableEffect(sessionId, smartSwipe) {
+            viewModel.pendingSwipeFlush = if (smartSwipe) resyncSwipeField else null
+            onDispose { viewModel.pendingSwipeFlush = null }
         }
+
         BasicTextField(
             value = inputField,
             onValueChange = { tfv ->
-                val committed = tfv.text
-                if (!smartSwipe) {
-                    // ── Strict path: empty buffer, send each commit verbatim (max fidelity) ──
-                    if (committed.isNotEmpty()) {
-                        if (committed.length > 100) {
-                            pendingLargePaste = committed
-                        } else if (committed.length > 1) {
-                            val isGestureWord = committed.all { it.isLetterOrDigit() }
-                            viewModel.pasteText(if (isGestureWord) "$committed " else committed)
-                        } else {
-                            val ch = committed.first()
-                            if (ch == '\n' || ch == '\r') viewModel.sendKey(TermKey.ENTER)
-                            else viewModel.typeText(ch.toString())
-                        }
-                    }
+                val newText = tfv.text
+                if (newText.length > 100) {
+                    // Large paste: defer to the paste dialog and clear the field.
+                    pendingLargePaste = newText
                     inputField = TextFieldValue("")
                     return@BasicTextField
                 }
-
-                // ── Smart-swipe path: let the field hold the trailing word so the keyboard can
-                // self-correct it; flush completed words on a separator. The held word is mirrored
-                // into swipePreview and drawn live at the cursor (not sent to the remote yet). ──
-                if (committed.isEmpty()) {
-                    swipeBuffer.reset()
-                    swipePreview = ""
-                    inputField = TextFieldValue("")
-                    return@BasicTextField
-                }
-                if (committed.length > 100) {
-                    // Large paste: flush any held word first (ordering), then defer to the paste
-                    // dialog. The held word never combines with the paste.
-                    val flush = swipeBuffer.flushBare()
-                    if (flush.isNotEmpty()) viewModel.pasteText(flush)
-                    swipePreview = ""
-                    pendingLargePaste = committed
-                    inputField = TextFieldValue("")
-                    return@BasicTextField
-                }
-                val newline = committed.indexOfFirst { it == '\n' || it == '\r' }
+                // Enter committed as text (rare for soft keyboards): submit the line up to it.
+                val newline = newText.indexOfFirst { it == '\n' || it == '\r' }
                 if (newline >= 0) {
-                    // Emit everything up to the newline (held word + any inline text), then send ENTER.
-                    val before = committed.substring(0, newline)
-                    val result = swipeBuffer.onValue(before)
-                    val emit = result.emit + result.fieldText // field text is finished by the newline
-                    swipeBuffer.reset()
-                    swipePreview = ""
-                    if (emit.isNotEmpty()) viewModel.pasteText(emit)
+                    val before = newText.substring(0, newline)
+                    if (smartSwipe) {
+                        diffToRemote(inputField.text, before, viewModel)
+                    } else if (before.isNotEmpty()) {
+                        viewModel.pasteText(before)
+                    }
                     viewModel.sendKey(TermKey.ENTER)
                     inputField = TextFieldValue("")
                     return@BasicTextField
                 }
-                val result = swipeBuffer.onValue(committed)
-                if (result.emit.isNotEmpty()) viewModel.pasteText(result.emit)
-                // The trailing run is the still-uncommitted word: show it live at the cursor.
-                swipePreview = result.fieldText
-                inputField = TextFieldValue(
-                    text = result.fieldText,
-                    selection = androidx.compose.ui.text.TextRange(result.fieldText.length),
-                )
+
+                if (smartSwipe) {
+                    // Editor-style: send the delta between the old field and the new field.
+                    diffToRemote(inputField.text, newText, viewModel)
+                    inputField = TextFieldValue(
+                        text = newText,
+                        selection = androidx.compose.ui.text.TextRange(newText.length),
+                    )
+                } else {
+                    // Stream mode: field stays empty, each commit goes straight through (max fidelity).
+                    if (newText.isNotEmpty()) {
+                        if (newText.length > 1) {
+                            val isGestureWord = newText.all { it.isLetterOrDigit() }
+                            viewModel.pasteText(if (isGestureWord) "$newText " else newText)
+                        } else {
+                            viewModel.typeText(newText)
+                        }
+                    }
+                    inputField = TextFieldValue("")
+                }
             },
             cursorBrush = SolidColor(Color.Transparent),
             textStyle = TerminalTextStyle.copy(color = Color.Transparent),
@@ -786,10 +760,9 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                 // period), which is wrong for shell input.
                 autoCorrectEnabled = false,
                 capitalization = KeyboardCapitalization.None,
-                // Smart swipe on: Ascii keyboard so gesture keyboards still offer swipe-typing and
-                // can self-correct the held word. Smart swipe off: Password type, which makes IMEs
-                // disable swipe-typing, suggestions, and autocorrect entirely — each key arrives
-                // verbatim, exactly like a password field.
+                // Swipe mode: Ascii keyboard so gesture keyboards offer swipe-typing and suggestions.
+                // Stream mode: Password type, which makes IMEs disable swipe/suggestions/autocorrect so
+                // every key arrives verbatim (max terminal fidelity).
                 keyboardType = if (smartSwipe) KeyboardType.Ascii else KeyboardType.Password,
                 imeAction = ImeAction.None,
             ),
@@ -799,31 +772,15 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                 .alpha(0.01f)
                 .focusRequester(focusRequester)
                 .onFocusChanged { focus ->
-                    // Losing focus (tap away, backgrounding, dialog) ends the current word. Flush it
-                    // so a half-corrected swipe word never lingers in the buffer and then prepends
-                    // itself to whatever the user does next.
-                    if (smartSwipe && !focus.isFocused && swipeBuffer.pendingWord.isNotEmpty()) {
-                        val flush = swipeBuffer.flushBare()
-                        if (flush.isNotEmpty()) viewModel.pasteText(flush)
-                        swipePreview = ""
-                        inputField = TextFieldValue("")
-                    }
+                    // Tapping away / backgrounding ends the line; drop the local copy so a stale field
+                    // can't re-diff against whatever the user does next.
+                    if (smartSwipe && !focus.isFocused) inputField = TextFieldValue("")
                 }
                 .onPreviewKeyEvent { e ->
                     if (e.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                    // A live swipe preview is held locally and not yet on the remote. Any special key
-                    // (Backspace, Tab, Enter, arrows, …) is a signal that the user wants to act on the
-                    // real shell line, so commit the held word to the remote first (no trailing space)
-                    // and then let the key act on it. This makes shell-side backspace and Tab-completion
-                    // work on the word you just swiped, at the cost of that word no longer being
-                    // keyboard-self-correctable once you reach for a special key.
-                    if (smartSwipe && swipeBuffer.pendingWord.isNotEmpty()) {
-                        val flush = swipeBuffer.flushBare()
-                        if (flush.isNotEmpty()) viewModel.pasteText(flush)
-                        swipePreview = ""
-                        inputField = TextFieldValue("")
-                    }
-                    when (e.key) {
+                    // A special key acts on the real shell line. In swipe mode our field copy is now
+                    // stale (the shell will redraw the line), so resync it to empty after the key.
+                    val handled = when (e.key) {
                         Key.Backspace -> { viewModel.sendKey(TermKey.BACKSPACE); true }
                         Key.Enter, Key.NumPadEnter -> { viewModel.sendKey(TermKey.ENTER); true }
                         Key.Tab -> { viewModel.sendKey(TermKey.TAB); true }
@@ -834,26 +791,11 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                         Key.DirectionRight -> { viewModel.sendKey(TermKey.RIGHT); true }
                         else -> false
                     }
+                    // sendKey() already triggers pendingSwipeFlush (resync); this covers the few keys
+                    // above that we handle without going through sendKey — none today, but keep it safe.
+                    handled
                 },
         )
-
-        // Idle-flush fallback: in the smart path the held word lives in the field. If the user pauses
-        // mid-word (no IME edits) for 20s, flush it so a half-typed word can never get stuck in the
-        // buffer and prepend itself to whatever they type much later. Re-keys on every edit, so it
-        // only ever fires after a genuine 20s lull — normal word-by-word typing flushes far sooner.
-        if (smartSwipe) {
-            LaunchedEffect(inputField.text, sessionId) {
-                if (inputField.text.isNotEmpty()) {
-                    delay(20_000)
-                    if (swipeBuffer.pendingWord.isNotEmpty()) {
-                        val flush = swipeBuffer.flushBare()
-                        if (flush.isNotEmpty()) viewModel.pasteText(flush)
-                        swipePreview = ""
-                        inputField = TextFieldValue("")
-                    }
-                }
-            }
-        }
 
         if (showCopyOptions) {
             fun openSelectableText(title: String, text: String) {
@@ -876,6 +818,46 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
+                            // ── Session-scoped quick toggles (runtime only, not saved to settings) ──
+                            Text("This session", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Swipe-typing input", fontSize = 15.sp)
+                                    Text(
+                                        if (viewModel.smartSwipeInput) "On — gesture/autocorrect typing" else "Off — stream each keystroke",
+                                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Switch(
+                                    checked = viewModel.smartSwipeInput,
+                                    onCheckedChange = { viewModel.toggleSmartSwipeRuntime() },
+                                )
+                            }
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Keep screen on", fontSize = 15.sp)
+                                    Text(
+                                        if (viewModel.isKeepScreenOnEnabled) "On — display won't sleep" else "Off — uses system timeout",
+                                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                Switch(
+                                    checked = viewModel.isKeepScreenOnEnabled,
+                                    onCheckedChange = {
+                                        showCopyOptions = false
+                                        viewModel.requestKeepScreenOnToggle()
+                                    },
+                                )
+                            }
+                            HorizontalDivider()
                             Text("Copy terminal text", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                             Text("Choose the terminal text range to copy.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Button(
@@ -1049,7 +1031,6 @@ private fun TerminalCanvas(
     cellWidthPx: Float,
     cellHeightPx: Float,
     fontSizePx: Float,
-    pendingPreview: String = "",
     modifier: Modifier = Modifier,
 ) {
     val backgroundArgb = palette.background.toArgb()
@@ -1119,28 +1100,7 @@ private fun TerminalCanvas(
                     }
                     col += span.text.length
                 }
-                if (absoluteRow == snapshot.cursorRow && pendingPreview.isNotEmpty()) {
-                    // Smart-swipe live preview: the still-uncommitted word, drawn in the cursor
-                    // accent colour with an underline so it reads as "pending, not yet sent". It is
-                    // laid out from the cursor column onward over its own (repainted) cells; the real
-                    // bytes only reach the remote when the word flushes, at which point this clears.
-                    regularPaint.textSkewX = 0f
-                    regularPaint.isUnderlineText = true
-                    regularPaint.alpha = 255
-                    regularPaint.color = cursorArgb
-                    val baselineY = yTop + baselineOffset
-                    for (i in pendingPreview.indices) {
-                        val previewCol = snapshot.cursorCol + i
-                        val cellX = previewCol * cellWidthPx
-                        bgPaint.color = backgroundArgb
-                        native.drawRect(cellX, yTop, cellX + cellWidthPx, yTop + cellHeightPx, bgPaint)
-                        native.drawText(
-                            pendingPreview, i, i + 1,
-                            cellX + cellWidthPx / 2f, baselineY, regularPaint,
-                        )
-                    }
-                    regularPaint.isUnderlineText = false
-                } else if (cursorOn && snapshot.cursorVisible && absoluteRow == snapshot.cursorRow) {
+                if (cursorOn && snapshot.cursorVisible && absoluteRow == snapshot.cursorRow) {
                     val cursorX = snapshot.cursorCol * cellWidthPx
                     native.drawRect(cursorX, yTop, cursorX + cellWidthPx, yTop + cellHeightPx, cursorPaint)
                     val ch = rowCharAt(row, snapshot.cursorCol)
@@ -1156,6 +1116,20 @@ private fun TerminalCanvas(
             }
         }
     }
+}
+
+/**
+ * Mirror an editor-style field edit to the remote shell: keep the shared prefix, BACKSPACE away the
+ * rest of the old text, then type the new tail. This makes the hidden field behave like a normal text
+ * line — swipe revision, autocorrect, and in-field backspace all reduce to "old → new" and reach the
+ * shell as the right sequence of deletes + inserts.
+ */
+private fun diffToRemote(old: String, new: String, viewModel: AppViewModel) {
+    if (old == new) return
+    var prefix = 0
+    val max = minOf(old.length, new.length)
+    while (prefix < max && old[prefix] == new[prefix]) prefix++
+    viewModel.applyLineEdit(backspaces = old.length - prefix, insert = new.substring(prefix))
 }
 
 private fun rowCharAt(row: TermRow, targetCol: Int): Char? {

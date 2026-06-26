@@ -306,24 +306,63 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     // Re-lock after the app has been in background past the grace period. The grace keeps quick
     // app switches (copying a 2FA code, replying to a message) from demanding the PIN every time.
+    // User-configurable (Settings) so the lock prompt isn't forced on every switch: 0 = lock
+    // immediately, larger = longer tolerance before re-locking. Defaults to APP_RELOCK_GRACE_MS.
+    var appLockGraceMs by mutableStateOf(APP_RELOCK_GRACE_MS)
+        private set
     private var backgroundedAtMs = 0L
+
+    fun saveAppLockGrace(graceMs: Long) {
+        appLockGraceMs = graceMs.coerceAtLeast(0L)
+        viewModelScope.launch { repository.insertSetting("app_lock_grace_ms", appLockGraceMs.toString()) }
+    }
+
+    // The background timestamp is mirrored to SharedPreferences (committed synchronously in onStop)
+    // so the grace survives process death: if Android reclaims the app while it's backgrounded, the
+    // next launch is a cold start with no in-memory backgroundedAtMs, and we'd otherwise lock
+    // unconditionally even after a 2-second switch. Reading the persisted stamp lets the cold-start
+    // path honor the same grace.
+    private val lockPrefs by lazy {
+        getApplication<Application>().getSharedPreferences("app_lock_state", android.content.Context.MODE_PRIVATE)
+    }
+    private val KEY_BACKGROUNDED_AT = "backgrounded_at"
 
     /** Called from MainActivity.onStop — remember when the app left the foreground. */
     fun noteAppBackgrounded() {
-        backgroundedAtMs = System.currentTimeMillis()
+        val now = System.currentTimeMillis()
+        backgroundedAtMs = now
+        // commit() (not apply): onStop may be the last code to run before the process is killed.
+        lockPrefs.edit().putLong(KEY_BACKGROUNDED_AT, now).commit()
     }
 
-    /** Called from MainActivity.onStart — re-engage the lock if backgrounded long enough. */
+    /** Called from MainActivity.onStart — re-engage the lock if backgrounded longer than the grace. */
     fun relockIfNeeded() {
         val since = backgroundedAtMs
         backgroundedAtMs = 0L
+        // since == 0L means this onStart isn't paired with an in-process onStop (a cold start). Leave
+        // the persisted stamp untouched so the cold-start path (shouldLockOnColdStart) can consume it.
         if (since == 0L) return
+        lockPrefs.edit().remove(KEY_BACKGROUNDED_AT).apply()
         if (!isAppLockEnabled || savedPin.isNullOrBlank()) return
-        if (System.currentTimeMillis() - since >= APP_RELOCK_GRACE_MS) {
+        if (System.currentTimeMillis() - since >= appLockGraceMs) {
             currentPinInput = ""
             lockScreenError = null
             isAppLocked = true
         }
+    }
+
+    /**
+     * Cold-start lock decision, honoring the grace: lock only if the app wasn't recently foregrounded.
+     * Returns true if the app should start locked. Consumes the persisted background stamp.
+     */
+    private fun shouldLockOnColdStart(): Boolean {
+        if (savedPin.isNullOrBlank() || !isAppLockEnabled) return false
+        val backgroundedAt = lockPrefs.getLong(KEY_BACKGROUNDED_AT, 0L)
+        lockPrefs.edit().remove(KEY_BACKGROUNDED_AT).apply()
+        // No stamp = a genuine fresh launch (or first run) → lock. A stamp within the grace = the
+        // process was killed during a quick switch → don't prompt; honor the grace.
+        if (backgroundedAt == 0L) return true
+        return System.currentTimeMillis() - backgroundedAt >= appLockGraceMs
     }
 
     var defaultKeepScreenOn by mutableStateOf(false)
@@ -538,6 +577,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var dockerError by mutableStateOf<String?>(null); private set
     
     var activeInfraTab by mutableStateOf(0)
+    // Network Tools subtab (0: Host Scan, 1: Wake-on-LAN, 2: Ping, 3: Traceroute, 4: Port Scan). Held
+    // in the VM (not local screen state) so the global horizontal swipe gesture can page between them.
+    var activeNetworkTab by mutableStateOf(0)
+    // Bumped to force every WoL target's status dot to re-ping immediately (pull-to-refresh on the WoL
+    // tab), so the user can check whether a woken host has come back online without waiting for the dot's
+    // own 10s poll. The dots key their LaunchedEffect on this value.
+    var wolStatusRefreshTick by mutableStateOf(0)
+        private set
     var activeComposeDraft by mutableStateOf<com.jetsetslow.omniterm.ui.ComposeStackDraft?>(null)
 
     // ── Shared live-action output panel ──
@@ -758,15 +805,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var alertHistoryLimit by mutableStateOf(100)
         private set
     // Smart-swipe input: keep the current swiped word in the IME's buffer so gesture keyboards can
-    // self-correct it, flushing to the terminal on space/enter/punctuation. Off ⇒ the strict
-    // empty-buffer path that sends each commit verbatim (max terminal fidelity, no autocorrect).
-    var smartSwipeInput by mutableStateOf(true)
+    // self-correct it, flushing to the terminal on space/enter/punctuation. Off (default) ⇒ the strict
+    // empty-buffer path that streams every commit straight to the remote (max terminal fidelity, no
+    // autocorrect) — so Tab-completion and backspace act on the live shell line immediately. It's an
+    // opt-in feature for users who want gesture-keyboard self-correction at the cost of word buffering.
+    var smartSwipeInput by mutableStateOf(false)
         private set
 
     fun saveSmartSwipeInput(enabled: Boolean) {
         smartSwipeInput = enabled
         viewModelScope.launch { repository.insertSetting("terminal_smart_swipe", enabled.toString()) }
     }
+
+    /** Flip swipe/stream input for the current session only — runtime, NOT persisted to settings. */
+    fun toggleSmartSwipeRuntime() { smartSwipeInput = !smartSwipeInput }
+
+    // The active terminal holds the current swipe word locally in its IME field (smart-swipe mode); it
+    // hasn't reached the remote yet. Any out-of-band key — the on-screen key bar's TAB/arrows/ESC, a
+    // symbol cap, a Ctrl/Alt combo — must commit that held word to the remote *first*, otherwise the
+    // key acts on a shell line that's still missing the word (e.g. TAB completes nothing). The terminal
+    // composable registers a flush here; sendKey()/typeText() invoke it before emitting their bytes.
+    var pendingSwipeFlush: (() -> Unit)? = null
 
     fun adjustTerminalFontSize(deltaSp: Int) {
         val next = (terminalFontSize + deltaSp).coerceIn(8, 28)
@@ -937,7 +996,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     terminalScrollbackLimit = it.coerceIn(1_000, 50_000)
                 }
                 list.find { it.key == "terminal_smart_swipe" }?.value?.let {
-                    smartSwipeInput = it != "false"
+                    smartSwipeInput = it == "true"
                 }
                 alertHistoryLimit = list.find { it.key == "alert_history_limit" }?.value
                     ?.toIntOrNull()?.coerceIn(10, 1000) ?: 100
@@ -966,6 +1025,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val hasPinLock = !pinVal.isNullOrBlank() && lockEnabled
                 savedPin = pinVal
                 isAppLockEnabled = hasPinLock
+                appLockGraceMs = list.find { it.key == "app_lock_grace_ms" }?.value
+                    ?.toLongOrNull()?.coerceAtLeast(0L) ?: APP_RELOCK_GRACE_MS
                 useBiometrics = hasPinLock && bioEnabled
                 // Screenshot blocking defaults to following the app lock until explicitly set.
                 isFlagSecureEnabled = list.find { it.key == "flag_secure" }?.value
@@ -987,7 +1048,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 // later settings write.
                 if (!coldStartLockEvaluated && list.isNotEmpty()) {
                     coldStartLockEvaluated = true
-                    if (!pinVal.isNullOrBlank() && lockEnabled) {
+                    // Honor the auto-lock grace even across process death: if the app was only
+                    // briefly backgrounded before being killed, don't demand the PIN on relaunch.
+                    if (shouldLockOnColdStart()) {
                         isAppLocked = true
                     }
                 }
@@ -1411,6 +1474,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         Screen.Infra -> 5
         Screen.Fleet -> 3
         Screen.SFTP -> 3
+        Screen.Network -> 5
         else -> 0
     }
 
@@ -1419,6 +1483,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         Screen.Infra -> activeInfraTab
         Screen.Fleet -> fleetTabIndex
         Screen.SFTP -> activeSftpTab
+        Screen.Network -> activeNetworkTab
         else -> 0
     }
 
@@ -1429,6 +1494,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             // Fleet's tab index drives a side flag the Fleet screen reads; keep them in sync.
             Screen.Fleet -> { fleetTabIndex = index; isFleetBroadcastMode = index == 1 }
             Screen.SFTP -> activeSftpTab = index
+            Screen.Network -> activeNetworkTab = index
             else -> {}
         }
     }
@@ -1528,7 +1594,38 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             Screen.Infra -> loadDocker()
             Screen.SFTP -> { /* SFTP refresh is usually per-folder, but we can re-list current */ }
             Screen.QuickScripts -> { /* No-op, scripts are local */ }
+            // Pull-to-refresh is specific to the active Network subtab.
+            Screen.Network -> refreshNetworkSubtab()
             else -> {}
+        }
+    }
+
+    /**
+     * Pull-to-refresh inside Network Tools, scoped to the active subtab:
+     *  - Host Scan: re-sweep the LAN.
+     *  - Wake-on-LAN: re-ping every target's status dot so the user can see if a woken host is back up.
+     *  - Ping / Traceroute / Port Scan: re-run that action against the current target (no-op if it's
+     *    blank or already running), so the pull repeats exactly the work that subtab does.
+     */
+    private fun refreshNetworkSubtab() {
+        when (activeNetworkTab) {
+            0 -> viewModelScope.launch {
+                isRefreshing = true
+                try { refreshLanScan(force = true) } finally { isRefreshing = false }
+            }
+            1 -> {
+                // The dots do their own async ping; just nudge them and flash the spinner briefly so
+                // the gesture feels acknowledged.
+                wolStatusRefreshTick++
+                viewModelScope.launch {
+                    isRefreshing = true
+                    delay(600)
+                    isRefreshing = false
+                }
+            }
+            2 -> if (!pingRunning && portScannerTarget.isNotBlank()) startPing(portScannerTarget, 4)
+            3 -> if (!tracerouteRunning && portScannerTarget.isNotBlank()) startTraceroute(portScannerTarget)
+            4 -> if (!isPortScannerScanning && portScannerTarget.isNotBlank()) runPortScanner()
         }
     }
 
@@ -2353,10 +2450,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         emptyList()
     }
 
-    fun triggerWol(target: WolTargetEntity) {
+    // [onResult] is invoked on the main thread with whether the magic packet actually went out, so the
+    // caller can show honest user feedback (a Toast) — never claim "sent" when validation or the socket
+    // send failed.
+    fun triggerWol(target: WolTargetEntity, onResult: ((Boolean) -> Unit)? = null) {
         viewModelScope.launch {
-            if (!isValidMac(target.macAddress) || target.port !in 1..65535 || target.broadcastIp.isBlank()) return@launch
-            try {
+            if (!isValidMac(target.macAddress) || target.port !in 1..65535 || target.broadcastIp.isBlank()) {
+                onResult?.invoke(false)
+                return@launch
+            }
+            val ok = try {
                 kotlinx.coroutines.withContext(Dispatchers.IO) {
                     val macBytes = getMacBytes(target.macAddress)
                     val bytes = ByteArray(6 + 16 * macBytes.size)
@@ -2372,9 +2475,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     socket.close()
                 }
                 repository.updateLastWoken(target.id, System.currentTimeMillis())
+                true
             } catch (e: Exception) {
                 // Invalid network/broadcast state should not crash or fake a successful wake.
+                false
             }
+            onResult?.invoke(ok)
         }
     }
 
@@ -3014,6 +3120,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun typeText(text: String) {
         val session = currentSession ?: return
         if (text.isEmpty() || !session.isConnected) return
+        pendingSwipeFlush?.invoke()
         var t = text
         if (isShiftPressed && t.length == 1) {
             t = t.uppercase()
@@ -3052,9 +3159,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** Map a character to its Ctrl-modified control byte (Ctrl-C → 0x03, etc.). */
     private fun controlByte(c: Char): Byte = (c.uppercaseChar().code and 0x1F).toByte()
 
+    /**
+     * Apply an editor-style line edit from the swipe input field: [backspaces] DEL bytes (0x7F) to
+     * erase the changed tail, then the [insert] text. Sent as one ordered write and deliberately does
+     * NOT trigger pendingSwipeFlush — it IS the field mirroring its own edit, not a shell-owned key.
+     */
+    fun applyLineEdit(backspaces: Int, insert: String) {
+        val session = currentSession ?: return
+        if (!session.isConnected) return
+        if (backspaces <= 0 && insert.isEmpty()) return
+        val out = ArrayList<Byte>(backspaces + insert.length)
+        repeat(backspaces) { out.add(0x7F) }
+        out.addAll(insert.toByteArray().toList())
+        sendBytes(out.toByteArray())
+    }
+
     fun sendKey(key: TermKey) {
         val session = currentSession ?: return
         if (!session.isConnected) return
+        pendingSwipeFlush?.invoke()
         val app = synchronized(session.emulator) { session.emulator.applicationCursorKeys }
         val seq: ByteArray = when (key) {
             TermKey.ENTER -> byteArrayOf(0x0D)

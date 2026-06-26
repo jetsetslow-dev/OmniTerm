@@ -24,7 +24,6 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -803,19 +802,21 @@ private fun QuickScriptEditorDialog(
 // tab carries into the others. WoL keeps its own saved-target model.
 @Composable
 fun NetworkToolView(viewModel: AppViewModel) {
-    var tab by rememberSaveable { mutableStateOf(0) }
+    // Subtab index lives in the VM so the app's global horizontal-swipe gesture (swipeNavigate) can
+    // page between these tabs the same way it does Monitor/Infra/SFTP/Fleet.
+    val tab = viewModel.activeNetworkTab
     val tabs = listOf("Host Scan", "Wake-on-LAN", "Ping", "Traceroute", "Port Scan")
 
     ToolScaffold(viewModel, "Network Tools") {
         Column(modifier = Modifier.fillMaxSize()) {
             ScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp, containerColor = Color.Transparent) {
                 tabs.forEachIndexed { i, label ->
-                    Tab(selected = tab == i, onClick = { tab = i }, text = { Text(label, fontSize = 12.sp) })
+                    Tab(selected = tab == i, onClick = { viewModel.activeNetworkTab = i }, text = { Text(label, fontSize = 12.sp) })
                 }
             }
             Box(modifier = Modifier.fillMaxSize()) {
                 when (tab) {
-                    0 -> HostScanTab(viewModel, onUseHost = { viewModel.portScannerTarget = it; tab = 4 })
+                    0 -> HostScanTab(viewModel, onUseHost = { viewModel.portScannerTarget = it; viewModel.activeNetworkTab = 4 })
                     1 -> WolTab(viewModel)
                     2 -> PingTab(viewModel)
                     3 -> TracerouteTab(viewModel)
@@ -1156,6 +1157,7 @@ private fun WolTab(viewModel: AppViewModel) {
     var prefill by remember { mutableStateOf<AppViewModel.ScannedWolDevice?>(null) }
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
+    val context = LocalContext.current
 
     Column(modifier = Modifier.fillMaxSize()) {
         Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1205,7 +1207,16 @@ private fun WolTab(viewModel: AppViewModel) {
                                         "Send wake packet?",
                                         "Send a Wake-on-LAN magic packet to \"${target.name}\" (${target.macAddress})?",
                                         confirmLabel = "Wake",
-                                    ) { viewModel.triggerWol(target) }
+                                    ) {
+                                        viewModel.triggerWol(target) { sent ->
+                                            android.widget.Toast.makeText(
+                                                context,
+                                                if (sent) "Magic packet sent to ${target.name}"
+                                                else "Failed to send magic packet to ${target.name}",
+                                                android.widget.Toast.LENGTH_SHORT,
+                                            ).show()
+                                        }
+                                    }
                                 },
                                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
@@ -1296,7 +1307,9 @@ private fun WolTab(viewModel: AppViewModel) {
 private fun WolStatusDot(viewModel: AppViewModel, ip: String) {
     // null = unknown/checking, true = online, false = offline.
     var online by remember(ip) { mutableStateOf<Boolean?>(null) }
-    LaunchedEffect(ip) {
+    // Keying on wolStatusRefreshTick restarts this effect when the WoL tab is pulled to refresh, so the
+    // dot re-pings immediately instead of waiting out the rest of its 10s poll interval.
+    LaunchedEffect(ip, viewModel.wolStatusRefreshTick) {
         if (ip.isBlank()) { online = null; return@LaunchedEffect }
         while (true) {
             online = viewModel.pingWolHost(ip)
@@ -2394,6 +2407,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
     var draftTerminalScrollbackLimit by remember { mutableStateOf(viewModel.terminalScrollbackLimit) }
     var draftSmartSwipe by remember { mutableStateOf(viewModel.smartSwipeInput) }
     var draftAppLock by remember { mutableStateOf(viewModel.isAppLockEnabled) }
+    var draftAppLockGrace by remember { mutableStateOf(viewModel.appLockGraceMs) }
     var draftBiometrics by remember { mutableStateOf(viewModel.useBiometrics) }
     var draftBlockScreenshots by remember { mutableStateOf(viewModel.isFlagSecureEnabled) }
     var draftSftpWarnFileCount by remember { mutableStateOf(viewModel.sftpLargeBatchFileThreshold.toString()) }
@@ -2417,6 +2431,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
         draftTerminalScrollbackLimit != viewModel.terminalScrollbackLimit ||
         draftSmartSwipe != viewModel.smartSwipeInput ||
         draftAppLock != viewModel.isAppLockEnabled ||
+        draftAppLockGrace != viewModel.appLockGraceMs ||
         draftBiometrics != viewModel.useBiometrics ||
         draftBlockScreenshots != viewModel.isFlagSecureEnabled ||
         draftSftpWarnFileCountValue == null ||
@@ -2444,6 +2459,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
         draftTerminalScrollbackLimit = viewModel.terminalScrollbackLimit
         draftSmartSwipe = viewModel.smartSwipeInput
         draftAppLock = viewModel.isAppLockEnabled
+        draftAppLockGrace = viewModel.appLockGraceMs
         draftBiometrics = viewModel.useBiometrics
         draftBlockScreenshots = viewModel.isFlagSecureEnabled
         draftSftpWarnFileCount = viewModel.sftpLargeBatchFileThreshold.toString()
@@ -2478,6 +2494,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
             else viewModel.removeSecurityPin()
         }
         if (draftAppLock && draftBiometrics != viewModel.useBiometrics) viewModel.saveBiometricsToggle(draftBiometrics)
+        if (draftAppLockGrace != viewModel.appLockGraceMs) viewModel.saveAppLockGrace(draftAppLockGrace)
         if (draftBlockScreenshots != viewModel.isFlagSecureEnabled) viewModel.saveFlagSecureToggle(draftBlockScreenshots)
     }
 
@@ -2537,6 +2554,29 @@ fun SettingsToolView(viewModel: AppViewModel) {
                                 )
                             }
                             TextButton(onClick = { showPinDialog = true }) { Text("Change PIN") }
+
+                            Spacer(Modifier.height(8.dp))
+                            Text("Re-lock after leaving the app", fontSize = 13.sp)
+                            Text(
+                                "Quick app switches within this window won't ask for the PIN again.",
+                                fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.height(6.dp))
+                            val graceChoices = listOf(
+                                "Immediately" to 0L,
+                                "30s" to 30_000L,
+                                "1 min" to 60_000L,
+                                "5 min" to 300_000L,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                graceChoices.forEach { (label, ms) ->
+                                    FilterChip(
+                                        selected = draftAppLockGrace == ms,
+                                        onClick = { draftAppLockGrace = ms },
+                                        label = { Text(label, fontSize = 12.sp) },
+                                    )
+                                }
+                            }
                         }
 
                         Row(
