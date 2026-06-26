@@ -82,10 +82,30 @@ class ComposeCommandTest {
     }
 
     @Test
-    fun docker_ps_uses_portable_compose_label_placeholders() {
-        assertTrue(RemoteCommands.DOCKER_PS.contains("""{{.Label "com.docker.compose.project"}}"""))
-        assertTrue(!RemoteCommands.DOCKER_PS.contains("index .Labels"))
+    fun docker_ps_uses_runtime_correct_compose_label_placeholders() {
+        // Docker exposes labels via the `.Label "key"` method; Podman's psReporter has no such
+        // method and exposes `.Labels` as an indexable map. Each branch must use its own syntax,
+        // or `podman ps` fails with `can't evaluate field Label in type containers.psReporter`.
+        assertTrue(
+            "docker branch uses the .Label method",
+            RemoteCommands.DOCKER_PS.contains("""{{.Label "com.docker.compose.project"}}"""),
+        )
+        assertTrue(
+            "podman branch indexes the .Labels map",
+            RemoteCommands.DOCKER_PS.contains("""{{index .Labels "com.docker.compose.project"}}"""),
+        )
+        assertTrue("branches on the podman runtime", RemoteCommands.DOCKER_PS.contains("grep -qi podman"))
         assertValidShell(RemoteCommands.DOCKER_PS)
+    }
+
+    @Test
+    fun docker_restarts_uses_runtime_correct_id_placeholder() {
+        // Docker's inspect template field is `.Id`; Podman's is `.ID` (its `.Id` errors with
+        // `can't evaluate field Id`). Both expose `.RestartCount`.
+        assertTrue("docker branch uses .Id", RemoteCommands.DOCKER_RESTARTS.contains("{{.Id}}\\t{{.RestartCount}}"))
+        assertTrue("podman branch uses .ID", RemoteCommands.DOCKER_RESTARTS.contains("{{.ID}}\\t{{.RestartCount}}"))
+        assertTrue("branches on the podman runtime", RemoteCommands.DOCKER_RESTARTS.contains("grep -qi podman"))
+        assertValidShell(RemoteCommands.DOCKER_RESTARTS)
     }
 
     @Test

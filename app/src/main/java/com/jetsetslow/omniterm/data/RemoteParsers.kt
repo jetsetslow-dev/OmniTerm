@@ -22,16 +22,35 @@ object RemoteCommands {
         "elif command -v podman-compose >/dev/null 2>&1; then OT_COMPOSE=\"podman-compose\"; " +
         "else echo 'No docker/podman compose found on host' >&2; exit 1; fi"
 
-    // Tab-separated, no-trunc so parsing is unambiguous.
+    // Tab-separated, no-trunc so parsing is unambiguous. Docker and Podman expose compose labels
+    // through incompatible template syntaxes, so we branch on the runtime:
+    //   • Docker's psReporter has a `.Label "key"` METHOD; its `.Labels` is a comma-joined string,
+    //     so `index .Labels "key"` errors there ("cannot index slice/array with type string").
+    //   • Podman's containers.psReporter has NO `.Label` method (the user-reported error
+    //     `can't evaluate field Label in type containers.psReporter`); its `.Labels` IS a
+    //     map[string]string, reachable via `index .Labels "key"`.
+    private const val PS_FIELDS_DOCKER =
+        "{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}\\t{{.Label \"com.docker.compose.project\"}}\\t{{.Label \"com.docker.compose.service\"}}\\t{{.Label \"com.docker.compose.project.working_dir\"}}\\t{{.Label \"com.docker.compose.project.config_files\"}}\\t{{.CreatedAt}}"
+    private const val PS_FIELDS_PODMAN =
+        "{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}\\t{{index .Labels \"com.docker.compose.project\"}}\\t{{index .Labels \"com.docker.compose.service\"}}\\t{{index .Labels \"com.docker.compose.project.working_dir\"}}\\t{{index .Labels \"com.docker.compose.project.config_files\"}}\\t{{.CreatedAt}}"
     const val DOCKER_PS =
         "if $CR --version | grep -qi podman; then " +
-            "$CR ps -a --no-trunc --format '{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}\\t{{.Label \"com.docker.compose.project\"}}\\t{{.Label \"com.docker.compose.service\"}}\\t{{.Label \"com.docker.compose.project.working_dir\"}}\\t{{.Label \"com.docker.compose.project.config_files\"}}\\t{{.CreatedAt}}'; " +
+            "$CR ps -a --no-trunc --format '$PS_FIELDS_PODMAN'; " +
         "else " +
-            "$CR ps -a --no-trunc --format '{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}\\t{{.Label \"com.docker.compose.project\"}}\\t{{.Label \"com.docker.compose.service\"}}\\t{{.Label \"com.docker.compose.project.working_dir\"}}\\t{{.Label \"com.docker.compose.project.config_files\"}}\\t{{.CreatedAt}}'; " +
+            "$CR ps -a --no-trunc --format '$PS_FIELDS_DOCKER'; " +
         "fi"
 
+    // Per-container restart counts, keyed by container ID. Docker and Podman name the inspect ID
+    // placeholder differently: Docker's template field is `.Id`, Podman's is `.ID` (its inspect
+    // JSON prints "Id" but the Go-template struct field is `ID`, so `.Id` errors with
+    // `can't evaluate field Id`). `.RestartCount` is identical on both. Branch like DOCKER_PS.
     const val DOCKER_RESTARTS =
-        "ids=\$($CR ps -aq); [ -z \"\$ids\" ] && exit 0; $CR inspect --format '{{.Id}}\\t{{.RestartCount}}' \$ids 2>/dev/null || true"
+        "ids=\$($CR ps -aq); [ -z \"\$ids\" ] && exit 0; " +
+        "if $CR --version | grep -qi podman; then " +
+            "$CR inspect --format '{{.ID}}\\t{{.RestartCount}}' \$ids 2>/dev/null || true; " +
+        "else " +
+            "$CR inspect --format '{{.Id}}\\t{{.RestartCount}}' \$ids 2>/dev/null || true; " +
+        "fi"
 
     const val DOCKER_IMAGES =
         "$CR images --no-trunc --format '{{.ID}}\\t{{.Repository}}\\t{{.Tag}}\\t{{.Size}}\\t{{.CreatedSince}}'"
