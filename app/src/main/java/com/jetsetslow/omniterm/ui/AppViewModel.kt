@@ -54,9 +54,6 @@ private const val SFTP_TRANSFER_LOG_MAX = 50
 /** Cap on recursive SFTP search hits so a broad pattern can't flood the UI. */
 private const val SFTP_SEARCH_MAX_HITS = 200
 
-/** How long the app may sit in background before the app lock re-engages. */
-private const val APP_RELOCK_GRACE_MS = 30_000L
-
 // Auto-reconnect backoff for dropped interactive sessions: 1s, 2s, 4s… capped at 30s, up to N tries.
 // Slow Wi-Fi -> mobile handoffs can take well over a minute before the OS has a usable route again.
 private const val RECONNECT_BASE_DELAY_MS = 1_000L
@@ -304,66 +301,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var isFlagSecureEnabled by mutableStateOf(false)
         private set
 
-    // Re-lock after the app has been in background past the grace period. The grace keeps quick
-    // app switches (copying a 2FA code, replying to a message) from demanding the PIN every time.
-    // User-configurable (Settings) so the lock prompt isn't forced on every switch: 0 = lock
-    // immediately, larger = longer tolerance before re-locking. Defaults to APP_RELOCK_GRACE_MS.
-    var appLockGraceMs by mutableStateOf(APP_RELOCK_GRACE_MS)
-        private set
-    private var backgroundedAtMs = 0L
-
-    fun saveAppLockGrace(graceMs: Long) {
-        appLockGraceMs = graceMs.coerceAtLeast(0L)
-        viewModelScope.launch { repository.insertSetting("app_lock_grace_ms", appLockGraceMs.toString()) }
-    }
-
-    // The background timestamp is mirrored to SharedPreferences (committed synchronously in onStop)
-    // so the grace survives process death: if Android reclaims the app while it's backgrounded, the
-    // next launch is a cold start with no in-memory backgroundedAtMs, and we'd otherwise lock
-    // unconditionally even after a 2-second switch. Reading the persisted stamp lets the cold-start
-    // path honor the same grace.
-    private val lockPrefs by lazy {
-        getApplication<Application>().getSharedPreferences("app_lock_state", android.content.Context.MODE_PRIVATE)
-    }
-    private val KEY_BACKGROUNDED_AT = "backgrounded_at"
-
-    /** Called from MainActivity.onStop — remember when the app left the foreground. */
-    fun noteAppBackgrounded() {
-        val now = System.currentTimeMillis()
-        backgroundedAtMs = now
-        // commit() (not apply): onStop may be the last code to run before the process is killed.
-        lockPrefs.edit().putLong(KEY_BACKGROUNDED_AT, now).commit()
-    }
-
-    /** Called from MainActivity.onStart — re-engage the lock if backgrounded longer than the grace. */
-    fun relockIfNeeded() {
-        val since = backgroundedAtMs
-        backgroundedAtMs = 0L
-        // since == 0L means this onStart isn't paired with an in-process onStop (a cold start). Leave
-        // the persisted stamp untouched so the cold-start path (shouldLockOnColdStart) can consume it.
-        if (since == 0L) return
-        lockPrefs.edit().remove(KEY_BACKGROUNDED_AT).apply()
-        if (!isAppLockEnabled || savedPin.isNullOrBlank()) return
-        if (System.currentTimeMillis() - since >= appLockGraceMs) {
-            currentPinInput = ""
-            lockScreenError = null
-            isAppLocked = true
-        }
-    }
-
-    /**
-     * Cold-start lock decision, honoring the grace: lock only if the app wasn't recently foregrounded.
-     * Returns true if the app should start locked. Consumes the persisted background stamp.
-     */
-    private fun shouldLockOnColdStart(): Boolean {
-        if (savedPin.isNullOrBlank() || !isAppLockEnabled) return false
-        val backgroundedAt = lockPrefs.getLong(KEY_BACKGROUNDED_AT, 0L)
-        lockPrefs.edit().remove(KEY_BACKGROUNDED_AT).apply()
-        // No stamp = a genuine fresh launch (or first run) → lock. A stamp within the grace = the
-        // process was killed during a quick switch → don't prompt; honor the grace.
-        if (backgroundedAt == 0L) return true
-        return System.currentTimeMillis() - backgroundedAt >= appLockGraceMs
-    }
+    // App lock is engaged on cold start only: every process relaunch demands the PIN/biometric when
+    // lock is enabled. Warm reopens (process still in memory) are not re-locked — there is no
+    // background grace timer to reason about, which keeps the behavior simple and stable.
+    private fun shouldLockOnColdStart(): Boolean =
+        !savedPin.isNullOrBlank() && isAppLockEnabled
 
     var defaultKeepScreenOn by mutableStateOf(false)
     private var initialKeepScreenOnLoaded = false
@@ -1025,8 +967,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val hasPinLock = !pinVal.isNullOrBlank() && lockEnabled
                 savedPin = pinVal
                 isAppLockEnabled = hasPinLock
-                appLockGraceMs = list.find { it.key == "app_lock_grace_ms" }?.value
-                    ?.toLongOrNull()?.coerceAtLeast(0L) ?: APP_RELOCK_GRACE_MS
                 useBiometrics = hasPinLock && bioEnabled
                 // Screenshot blocking defaults to following the app lock until explicitly set.
                 isFlagSecureEnabled = list.find { it.key == "flag_secure" }?.value
@@ -1048,8 +988,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 // later settings write.
                 if (!coldStartLockEvaluated && list.isNotEmpty()) {
                     coldStartLockEvaluated = true
-                    // Honor the auto-lock grace even across process death: if the app was only
-                    // briefly backgrounded before being killed, don't demand the PIN on relaunch.
+                    // Cold start: if app lock is enabled, demand the PIN/biometric on this relaunch.
                     if (shouldLockOnColdStart()) {
                         isAppLocked = true
                     }

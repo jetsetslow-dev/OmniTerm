@@ -84,14 +84,8 @@ class MainActivity : AppCompatActivity() {
     handleIntent(intent)
   }
 
-  override fun onStart() {
-    super.onStart()
-    appViewModel?.relockIfNeeded()
-  }
-
   override fun onStop() {
     super.onStop()
-    appViewModel?.noteAppBackgrounded()
     // Clear focus from whatever text field is active before the activity stops. Backgrounding (e.g.
     // tapping a notification) tears down the IME text-input session; if a Compose text field is still
     // focused on resume it re-reports its position through the legacy cursor-anchor path against the

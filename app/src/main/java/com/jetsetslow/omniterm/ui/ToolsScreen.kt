@@ -2407,7 +2407,6 @@ fun SettingsToolView(viewModel: AppViewModel) {
     var draftTerminalScrollbackLimit by remember { mutableStateOf(viewModel.terminalScrollbackLimit) }
     var draftSmartSwipe by remember { mutableStateOf(viewModel.smartSwipeInput) }
     var draftAppLock by remember { mutableStateOf(viewModel.isAppLockEnabled) }
-    var draftAppLockGrace by remember { mutableStateOf(viewModel.appLockGraceMs) }
     var draftBiometrics by remember { mutableStateOf(viewModel.useBiometrics) }
     var draftBlockScreenshots by remember { mutableStateOf(viewModel.isFlagSecureEnabled) }
     var draftSftpWarnFileCount by remember { mutableStateOf(viewModel.sftpLargeBatchFileThreshold.toString()) }
@@ -2431,7 +2430,6 @@ fun SettingsToolView(viewModel: AppViewModel) {
         draftTerminalScrollbackLimit != viewModel.terminalScrollbackLimit ||
         draftSmartSwipe != viewModel.smartSwipeInput ||
         draftAppLock != viewModel.isAppLockEnabled ||
-        draftAppLockGrace != viewModel.appLockGraceMs ||
         draftBiometrics != viewModel.useBiometrics ||
         draftBlockScreenshots != viewModel.isFlagSecureEnabled ||
         draftSftpWarnFileCountValue == null ||
@@ -2459,7 +2457,6 @@ fun SettingsToolView(viewModel: AppViewModel) {
         draftTerminalScrollbackLimit = viewModel.terminalScrollbackLimit
         draftSmartSwipe = viewModel.smartSwipeInput
         draftAppLock = viewModel.isAppLockEnabled
-        draftAppLockGrace = viewModel.appLockGraceMs
         draftBiometrics = viewModel.useBiometrics
         draftBlockScreenshots = viewModel.isFlagSecureEnabled
         draftSftpWarnFileCount = viewModel.sftpLargeBatchFileThreshold.toString()
@@ -2494,7 +2491,6 @@ fun SettingsToolView(viewModel: AppViewModel) {
             else viewModel.removeSecurityPin()
         }
         if (draftAppLock && draftBiometrics != viewModel.useBiometrics) viewModel.saveBiometricsToggle(draftBiometrics)
-        if (draftAppLockGrace != viewModel.appLockGraceMs) viewModel.saveAppLockGrace(draftAppLockGrace)
         if (draftBlockScreenshots != viewModel.isFlagSecureEnabled) viewModel.saveFlagSecureToggle(draftBlockScreenshots)
     }
 
@@ -2556,27 +2552,10 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             TextButton(onClick = { showPinDialog = true }) { Text("Change PIN") }
 
                             Spacer(Modifier.height(8.dp))
-                            Text("Re-lock after leaving the app", fontSize = 13.sp)
                             Text(
-                                "Quick app switches within this window won't ask for the PIN again.",
+                                "The app re-locks each time it's reopened from a fresh launch.",
                                 fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            Spacer(Modifier.height(6.dp))
-                            val graceChoices = listOf(
-                                "Immediately" to 0L,
-                                "30s" to 30_000L,
-                                "1 min" to 60_000L,
-                                "5 min" to 300_000L,
-                            )
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                graceChoices.forEach { (label, ms) ->
-                                    FilterChip(
-                                        selected = draftAppLockGrace == ms,
-                                        onClick = { draftAppLockGrace = ms },
-                                        label = { Text(label, fontSize = 12.sp) },
-                                    )
-                                }
-                            }
                         }
 
                         Row(
