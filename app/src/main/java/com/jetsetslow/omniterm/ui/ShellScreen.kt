@@ -850,7 +850,10 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                             // and the label states both the current state and what the tap will do.
                             Text("This session", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                             OutlinedButton(
-                                onClick = { viewModel.toggleSmartSwipeRuntime() },
+                                // Selecting a toggle is a terminal action like the copy options below:
+                                // act, then close the popup so the user is back on the terminal rather
+                                // than left staring at a menu that didn't visibly respond.
+                                onClick = { viewModel.toggleSmartSwipeRuntime(); showCopyOptions = false },
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Text(
@@ -860,8 +863,9 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                             }
                             OutlinedButton(
                                 // Toggle directly here: the long-press menu is already an explicit
-                                // opt-in, so skip the battery-warning follow-up dialog.
-                                onClick = { viewModel.toggleKeepScreenOnDirect() },
+                                // opt-in, so skip the battery-warning follow-up dialog. Dismiss on tap
+                                // too, matching the swipe-typing toggle and the copy actions.
+                                onClick = { viewModel.toggleKeepScreenOnDirect(); showCopyOptions = false },
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Text(

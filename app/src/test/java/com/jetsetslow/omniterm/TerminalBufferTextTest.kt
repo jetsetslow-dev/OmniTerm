@@ -36,6 +36,16 @@ class TerminalBufferTextTest {
     }
 
     @Test
+    fun collapsesAcrossBlankPaddingGap() {
+        // tmux replays the pane (B,C) but leaves blank pane-padding before the live screen:
+        // scrollback = [A, B, C, "", ""], screen = [B, C, D]. The B,C duplicate must collapse and
+        // the blank gap must be preserved.
+        val lines = listOf("A", "B", "C", "", "", "B", "C", "D")
+        val result = dropBoundaryDuplication(lines, boundary = 5)
+        assertEquals(listOf("A", "", "", "B", "C", "D"), result)
+    }
+
+    @Test
     fun prefersLongestOverlap() {
         val lines = listOf("X", "B", "C", "B", "C")
         assertEquals(listOf("X", "B", "C"), dropBoundaryDuplication(lines, boundary = 3))

@@ -306,7 +306,20 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                 exposedPorts = portDetails.size,
                 portDetails = portDetails,
                 oldestCreatedAt = list.mapNotNull { it.createdAt.takeIf(String::isNotBlank) }.minOrNull().orEmpty(),
-                workingDir = list.firstOrNull { it.composeWorkingDir.isNotBlank() }?.composeWorkingDir.orEmpty(),
+                workingDir = run {
+                    val labelled = list.firstOrNull { it.composeWorkingDir.isNotBlank() }?.composeWorkingDir.orEmpty()
+                    // Podman/podman-compose frequently sets the config_files label but NOT
+                    // working_dir, leaving Docker-only logic to gate every compose action off. When
+                    // working_dir is absent, fall back to the parent directory of the (absolute)
+                    // first config file — that's the directory `compose` would `cd` into anyway.
+                    labelled.ifBlank {
+                        val firstConfig = list.firstOrNull { it.composeConfigFiles.isNotBlank() }
+                            ?.composeConfigFiles.orEmpty()
+                            .split(',').firstOrNull()?.trim().orEmpty()
+                        if (firstConfig.startsWith("/")) firstConfig.substringBeforeLast('/').ifEmpty { "/" }
+                        else ""
+                    }
+                },
                 configFiles = list.firstOrNull { it.composeConfigFiles.isNotBlank() }?.composeConfigFiles.orEmpty(),
                 services = list.groupBy { it.composeService.ifBlank { it.name.substringBefore('_') } }
                     .map { (service, serviceContainers) ->
@@ -420,6 +433,11 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                                 }
                             })
                         }
+                        // Compose lifecycle actions need a working dir + config files to run.
+                        // Only show them when the stack actually exposes that metadata, so a
+                        // standalone group (or a runtime that hides the labels) never presents
+                        // buttons that can only fail with a "no compose metadata" message.
+                        if (canCompose) {
                         StackActionRow(
                             stack = stack,
                             actions = listOf("ps" to "PS", "logs" to "Logs", "followLogs" to "FOLLOW", "config" to "CONFIG"),
@@ -455,6 +473,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                                 }
                             },
                         )
+                        }
                     }
                     StackHealthSummary(stack, onPortsClick = { portsTarget = stack })
                     if (stack.services.isNotEmpty()) {
