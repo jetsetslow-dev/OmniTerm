@@ -263,6 +263,9 @@ class TerminalEmulator(
 
     fun rowCount(): Int = scrollback.size + rows
 
+    /** Number of captured scrollback rows (the rows above the live screen in a full snapshot). */
+    fun scrollbackRowCount(): Int = scrollback.size
+
     fun setScrollbackLimit(limit: Int) {
         scrollbackLimit = limit.coerceAtLeast(0)
         trimScrollbackToLimit()

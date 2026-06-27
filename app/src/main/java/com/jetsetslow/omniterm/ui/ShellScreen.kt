@@ -7,6 +7,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.awaitEachGesture
@@ -712,7 +713,15 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
             value = inputField,
             onValueChange = { tfv ->
                 val newText = tfv.text
-                if (newText.length > 100) {
+                // Detect a genuine clipboard paste, not a long-but-incremental swipe line. A paste
+                // drops a big chunk in one change; fast swipe-typing instead grows the field a word
+                // (or a re-revised composing region) at a time. Gate on the size of the *inserted
+                // delta* over the previous field, not the field's absolute length — otherwise a long
+                // command typed by swipe (or a momentary multi-word composing region the IME hands us
+                // mid-gesture) was being misread as a paste and popped the confirm dialog.
+                val prevText = inputField.text
+                val insertedDelta = newText.length - longestCommonAffix(prevText, newText)
+                if (insertedDelta > 100) {
                     // Large paste: defer to the paste dialog and clear the field.
                     pendingLargePaste = newText
                     inputField = TextFieldValue("")
@@ -808,9 +817,27 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                 onDismissRequest = { showCopyOptions = false },
                 properties = DialogProperties(usePlatformDefaultWidth = false),
             ) {
-                Box(Modifier.fillMaxSize().padding(18.dp), contentAlignment = Alignment.Center) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        // The full-screen scrim Box was swallowing outside taps, so the dialog never
+                        // dismissed on click-outside. Make the scrim itself dismiss (no ripple), and
+                        // let the Surface below consume taps so taps on the card don't bubble up.
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null,
+                        ) { showCopyOptions = false }
+                        .padding(18.dp),
+                    contentAlignment = Alignment.Center,
+                ) {
                     Surface(
-                        modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 360.dp)
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null,
+                            ) { /* swallow taps on the card so the scrim doesn't dismiss it */ },
                         shape = RoundedCornerShape(8.dp),
                         tonalElevation = 6.dp,
                     ) {
@@ -819,42 +846,27 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             // ── Session-scoped quick toggles (runtime only, not saved to settings) ──
+                            // Rendered as direct labelled buttons rather than switches: one tap acts,
+                            // and the label states both the current state and what the tap will do.
                             Text("This session", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                            Row(
+                            OutlinedButton(
+                                onClick = { viewModel.toggleSmartSwipeRuntime() },
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Column(Modifier.weight(1f)) {
-                                    Text("Swipe-typing input", fontSize = 15.sp)
-                                    Text(
-                                        if (viewModel.smartSwipeInput) "On — gesture/autocorrect typing" else "Off — stream each keystroke",
-                                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                Switch(
-                                    checked = viewModel.smartSwipeInput,
-                                    onCheckedChange = { viewModel.toggleSmartSwipeRuntime() },
+                                Text(
+                                    if (viewModel.smartSwipeInput) "Swipe-typing: On — tap to stream each keystroke"
+                                    else "Swipe-typing: Off — tap for gesture/autocorrect",
                                 )
                             }
-                            Row(
+                            OutlinedButton(
+                                // Toggle directly here: the long-press menu is already an explicit
+                                // opt-in, so skip the battery-warning follow-up dialog.
+                                onClick = { viewModel.toggleKeepScreenOnDirect() },
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
                             ) {
-                                Column(Modifier.weight(1f)) {
-                                    Text("Keep screen on", fontSize = 15.sp)
-                                    Text(
-                                        if (viewModel.isKeepScreenOnEnabled) "On — display won't sleep" else "Off — uses system timeout",
-                                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                Switch(
-                                    checked = viewModel.isKeepScreenOnEnabled,
-                                    onCheckedChange = {
-                                        showCopyOptions = false
-                                        viewModel.requestKeepScreenOnToggle()
-                                    },
+                                Text(
+                                    if (viewModel.isKeepScreenOnEnabled) "Keep screen on: On — tap to allow sleep"
+                                    else "Keep screen on: Off — tap to keep awake",
                                 )
                             }
                             HorizontalDivider()
@@ -1130,6 +1142,21 @@ private fun diffToRemote(old: String, new: String, viewModel: AppViewModel) {
     val max = minOf(old.length, new.length)
     while (prefix < max && old[prefix] == new[prefix]) prefix++
     viewModel.applyLineEdit(backspaces = old.length - prefix, insert = new.substring(prefix))
+}
+
+/**
+ * Number of characters [new] shares with [old] at the start and end combined (clamped so the two
+ * matched regions never overlap). `new.length - this` is the size of the changed middle region, i.e.
+ * how many characters were actually inserted in a single edit — what tells a paste apart from an
+ * incremental swipe edit that merely revises a word inside a long line.
+ */
+private fun longestCommonAffix(old: String, new: String): Int {
+    val max = minOf(old.length, new.length)
+    var prefix = 0
+    while (prefix < max && old[prefix] == new[prefix]) prefix++
+    var suffix = 0
+    while (suffix < max - prefix && old[old.length - 1 - suffix] == new[new.length - 1 - suffix]) suffix++
+    return prefix + suffix
 }
 
 private fun rowCharAt(row: TermRow, targetCol: Int): Char? {

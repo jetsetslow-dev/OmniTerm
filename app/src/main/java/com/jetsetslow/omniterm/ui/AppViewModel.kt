@@ -3028,13 +3028,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun terminalBufferText(full: Boolean, firstRow: Int = 0, rowCount: Int = Int.MAX_VALUE): String {
         val s = currentSession ?: return ""
+        val scrollbackRows: Int
         val rows = synchronized(s.emulator) {
+            scrollbackRows = s.emulator.scrollbackRowCount()
             if (full) s.emulator.snapshot().rows
             else s.emulator.snapshotRange(firstRow, rowCount).rows
         }
-        return rows.joinToString("\n") { row ->
-            row.spans.joinToString("") { it.text }.trimEnd()
-        }.trimEnd()
+        var lines = rows.map { row -> row.spans.joinToString("") { it.text }.trimEnd() }
+        if (full) {
+            // tmux (and other full-screen apps we capture scrollback from) often replays the visible
+            // pane right after a scroll, so the tail of captured scrollback repeats the head of the
+            // live screen verbatim. That overlap is why "Full buffer" showed duplicated content. Drop
+            // the longest exact run where scrollback's tail equals the screen's head — a conservative
+            // collapse at just the scrollback↔screen boundary, so genuinely repeated output elsewhere
+            // in the buffer is left intact.
+            lines = dropBoundaryDuplication(lines, scrollbackRows)
+        }
+        return lines.joinToString("\n").trimEnd()
     }
 
     fun clearTerminalScrollback() {
@@ -4748,6 +4758,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         } else {
             showKeepScreenOnBatteryWarning = true
         }
+    }
+
+    /**
+     * Toggle keep-screen-on for this session without the battery-warning follow-up. Used by the
+     * terminal long-press popup, where the user has already chosen the option from an explicit menu
+     * and a second confirmation dialog is redundant friction.
+     */
+    fun toggleKeepScreenOnDirect() {
+        isKeepScreenOnEnabled = !isKeepScreenOnEnabled
     }
 
     fun saveDarkModeToggle(enabled: Boolean?) {
