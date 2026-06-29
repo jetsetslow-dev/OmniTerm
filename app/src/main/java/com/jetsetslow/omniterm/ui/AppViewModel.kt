@@ -1635,8 +1635,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // CRUDS FOR SERVERS
     fun addServer(name: String, host: String, port: Int, username: String, group: String?, authType: String, notes: String, keepAlive: Int, compression: Boolean, proxy: String, password: String? = null, keyAlias: String? = null, profileId: Int? = null, createProfile: Boolean = false, serverColor: String = "Default", sudoPassword: String = "", proxyType: String = "none", proxyHost: String = "", proxyPort: Int = 0, proxyUser: String = "", proxyPassword: String = "", proxyKeyAlias: String? = null, persistentSession: Boolean = false, onResult: (String?) -> Unit) {
         viewModelScope.launch {
-            if (name.isBlank() || host.isBlank() || username.isBlank()) {
+            // Username/password live on the credential profile when authType == "profile", so the
+            // form leaves the username field greyed out and empty; only require it for the other
+            // auth types where the user types credentials directly into this server.
+            if (name.isBlank() || host.isBlank() || (authType != "profile" && username.isBlank())) {
                 onResult("Please fill in all layout fields.")
+                return@launch
+            }
+            if (authType == "profile" && profileId == null) {
+                onResult("Select a credential profile.")
                 return@launch
             }
             if (repository.getAllServers().size >= hostLimit) {
