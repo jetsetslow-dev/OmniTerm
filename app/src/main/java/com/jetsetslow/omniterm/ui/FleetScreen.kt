@@ -49,15 +49,15 @@ fun FleetScreen(viewModel: AppViewModel) {
         TabRow(selectedTabIndex = viewModel.fleetTabIndex) {
             Tab(
                 selected = viewModel.fleetTabIndex == 0,
-                onClick = { viewModel.fleetTabIndex = 0; viewModel.isFleetBroadcastMode = false }
+                onClick = { viewModel.fleetTabIndex = 0 }
             ) { Text("Dashboard", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
             Tab(
                 selected = viewModel.fleetTabIndex == 1,
-                onClick = { viewModel.fleetTabIndex = 1; viewModel.isFleetBroadcastMode = true }
+                onClick = { viewModel.fleetTabIndex = 1 }
             ) { Text("Broadcast", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
             Tab(
                 selected = viewModel.fleetTabIndex == 2,
-                onClick = { viewModel.fleetTabIndex = 2; viewModel.isFleetBroadcastMode = false }
+                onClick = { viewModel.fleetTabIndex = 2 }
             ) { Text("Logs", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
         }
 
@@ -177,7 +177,6 @@ fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                                         viewModel.broadcastTargetServerIds.clear()
                                         viewModel.broadcastTargetServerIds.add(s.id)
                                         viewModel.broadcastCommandText = cmd
-                                        viewModel.isFleetBroadcastMode = true
                                         viewModel.runFleetBroadcast(cmd, resolvedIds = listOf(s.id))
                                     },
                                     color = accentColor,

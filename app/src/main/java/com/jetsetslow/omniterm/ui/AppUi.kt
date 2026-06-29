@@ -406,6 +406,10 @@ fun MainAppScreen(viewModel: AppViewModel) {
         // First-connect tmux install prompt for persistent-session hosts.
         TmuxInstallDialog(viewModel)
 
+        // Warn (but allow) when connecting to a host whose last probe found it offline. Hosted here
+        // so it overlays both the terminal screen and the server-list connect action.
+        OfflineConnectDialog(viewModel)
+
         // Full-screen SFTP text editor, hosted here at the top of the Activity window rather than
         // inside SftpScreen. SftpScreen lives under AppCoreScaffold's content Box, which calls
         // consumeWindowInsets() — so any editor placed there sees a zero IME inset and its bottom
@@ -494,6 +498,39 @@ fun TmuxInstallDialog(viewModel: AppViewModel) {
                 TextButton(onClick = { viewModel.dismissTmuxInstallPrompt() }, enabled = !installing) {
                     Text("Cancel")
                 }
+            }
+        },
+    )
+}
+
+@Composable
+fun OfflineConnectDialog(viewModel: AppViewModel) {
+    val srv = viewModel.offlineConnectPromptServer ?: return
+    AlertDialog(
+        onDismissRequest = { viewModel.dismissOfflineConnectPrompt() },
+        title = { Text("Host Appears Offline") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "${srv.name} (${srv.host}:${srv.port}) didn't answer on its SSH port at the last " +
+                        "check, so it looks offline.",
+                    fontSize = 13.sp,
+                )
+                Text(
+                    "The status may be out of date — connect anyway to try, or cancel and wait for it to come back online.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { viewModel.connectTerminalConfirmedOffline() }) {
+                Text("Connect anyway")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = { viewModel.dismissOfflineConnectPrompt() }) {
+                Text("Cancel")
             }
         },
     )

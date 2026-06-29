@@ -70,6 +70,7 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -462,8 +463,31 @@ private fun ConnectPrompt(srv: ServerEntity, viewModel: AppViewModel) {
                 modifier = Modifier.padding(vertical = 4.dp),
             )
             viewModel.terminalDisconnectError?.let {
-                Spacer(Modifier.height(8.dp))
-                Text(it, color = OmniColors.red, fontSize = 12.sp, fontFamily = OmniFonts.mono)
+                Spacer(Modifier.height(12.dp))
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier
+                        .background(OmniColors.red.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                        .border(1.dp, OmniColors.red.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                        .padding(horizontal = 14.dp, vertical = 10.dp),
+                ) {
+                    Text(
+                        "CONNECTION FAILED",
+                        color = OmniColors.red,
+                        fontSize = 11.sp,
+                        fontFamily = OmniFonts.mono,
+                        fontWeight = FontWeight.Bold,
+                        letterSpacing = 1.sp,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        it,
+                        color = OmniColors.textSecondary,
+                        fontSize = 12.sp,
+                        fontFamily = OmniFonts.mono,
+                        textAlign = TextAlign.Center,
+                    )
+                }
             }
             Spacer(Modifier.height(18.dp))
             Box(
@@ -720,6 +744,24 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                 // command typed by swipe (or a momentary multi-word composing region the IME hands us
                 // mid-gesture) was being misread as a paste and popped the confirm dialog.
                 val prevText = inputField.text
+                // A sticky Ctrl/Alt/Shift modifier (armed from the key bar) transforms the next
+                // typed character (control/meta byte, or uppercase). That can't be expressed as an
+                // editor-style line diff, so when one is armed we route the freshly-inserted text
+                // straight through typeText() — which applies and then clears the modifier — and
+                // keep the hidden field empty. This is the only path that honors CTRL/ALT/SHFT for
+                // soft-keyboard and swipe input; without it the modifier was silently dropped
+                // (issue: Ctrl/Shift had no effect in the mini keyboard).
+                if (viewModel.isCtrlPressed || viewModel.isAltPressed || viewModel.isShiftPressed) {
+                    if (newText.length > prevText.length) {
+                        var p = 0
+                        val cap = minOf(prevText.length, newText.length)
+                        while (p < cap && prevText[p] == newText[p]) p++
+                        val inserted = newText.substring(p, p + (newText.length - prevText.length))
+                        if (inserted.isNotEmpty()) viewModel.typeText(inserted)
+                    }
+                    inputField = TextFieldValue("")
+                    return@BasicTextField
+                }
                 val insertedDelta = newText.length - longestCommonAffix(prevText, newText)
                 if (insertedDelta > 100) {
                     // Large paste: defer to the paste dialog and clear the field.

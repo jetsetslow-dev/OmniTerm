@@ -459,7 +459,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     // FLEET SCREEN MODE
     var fleetTabIndex by mutableStateOf(0) // 0: Dashboard, 1: Broadcast, 2: Fleet Logs
-    var isFleetBroadcastMode by mutableStateOf(false) // false: Dashboard, true: Broadcast
     val broadcastTargetServerIds = mutableStateListOf<Int>()
     val broadcastTargetGroups = mutableStateListOf<String>()
     var broadcastTargetMode by mutableStateOf(FleetTargetMode.Servers)
@@ -703,12 +702,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var terminalConnectError by mutableStateOf<String?>(null)
     val terminalDisconnectError: String? get() = currentSession?.disconnectError ?: terminalConnectError
     var hostKeyChangedServer by mutableStateOf<com.jetsetslow.omniterm.data.ServerEntity?>(null)
+    // Set when the user asks to connect to a host whose last probe found the SSH port unreachable.
+    // The status can be stale, so we warn-and-confirm rather than hard-block; null = no prompt.
+    var offlineConnectPromptServer by mutableStateOf<com.jetsetslow.omniterm.data.ServerEntity?>(null)
     var pendingHostKeyApproval by mutableStateOf<com.jetsetslow.omniterm.data.ssh.HostKeyApprovalRequest?>(null)
     // Approvals beyond the one on screen wait here (first fleet probe can surface several at
     // once); approveHostKey() pops the next so every blocked JSch thread eventually gets an answer.
     private val hostKeyApprovalQueue = ArrayDeque<com.jetsetslow.omniterm.data.ssh.HostKeyApprovalRequest>()
     var terminalConnectionPhase by mutableStateOf("Connecting…")
     private var terminalConnectJob: kotlinx.coroutines.Job? = null
+    // True only between a user tapping cancel and the connect coroutine observing the cancellation,
+    // so the catch can tell a deliberate cancel (show nothing) from any other interruption (show why).
+    private var userCancelledConnect = false
 
     // In-app review nudge: set once when the user's 3rd SSH session connects, consumed by
     // MainActivity which hands it to the flavor-specific review flow (no-op on openSource).
@@ -1026,9 +1031,35 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Trim JSch/exec noise into a short, user-facing auth error. */
-    private fun cleanSshError(raw: String): String =
-        raw.removePrefix("SSH Error:").trim().ifBlank { "Authentication failed" }
-            .let { if (it.contains("Auth fail", true) || it.contains("auth cancel", true)) "Authentication failed (bad key or password)" else it }
+    /**
+     * Turn a raw SSH/socket exception message into something a user can act on. Low-level transport
+     * failures (a still-booting host, an unreachable network, a bad DNS name) otherwise surface as
+     * cryptic Java exception text — or, when the message is blank, as nothing at all — which reads as
+     * "it just failed silently." We classify the common cases explicitly and only fall back to the
+     * trimmed raw text for genuinely unrecognized failures.
+     */
+    private fun cleanSshError(raw: String): String {
+        val msg = raw.removePrefix("SSH Error:").trim()
+        fun has(vararg needles: String) = needles.any { msg.contains(it, ignoreCase = true) }
+        return when {
+            has("Auth fail", "auth cancel", "USERAUTH fail") ->
+                "Authentication failed (bad key or password)"
+            has("Connection refused") ->
+                "Connection refused — the server isn't accepting SSH yet (it may still be booting). Try again in a moment."
+            has("timed out", "timeout", "socket is not established", "connection timed") ->
+                "Connection timed out — the host didn't respond. Check it's powered on and reachable."
+            has("UnknownHost", "Name or service not known", "nodename nor servname", "No address associated") ->
+                "Host not found — check the hostname or IP address."
+            has("Network is unreachable", "No route to host") ->
+                "Network unreachable — the host can't be reached from this network."
+            has("Connection reset", "Broken pipe", "connection closed by") ->
+                "Connection dropped during handshake — the server may not be ready yet. Try again in a moment."
+            has("reject HostKey", "HostKey has been changed") ->
+                "Host key verification failed."
+            msg.isBlank() -> "Connection failed — the host didn't respond as expected."
+            else -> msg
+        }
+    }
 
     private fun healthFromMetrics(cpu: Float, ram: Float, disk: Float, rtt: Int): Int =
         healthConfig.score(cpu, ram, disk, rtt)
@@ -1430,8 +1461,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         when (screen) {
             Screen.Monitor -> activeMonitorTab = index
             Screen.Infra -> activeInfraTab = index
-            // Fleet's tab index drives a side flag the Fleet screen reads; keep them in sync.
-            Screen.Fleet -> { fleetTabIndex = index; isFleetBroadcastMode = index == 1 }
+            Screen.Fleet -> fleetTabIndex = index
             Screen.SFTP -> activeSftpTab = index
             Screen.Network -> activeNetworkTab = index
             else -> {}
@@ -2566,6 +2596,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun cancelConnect() {
+        userCancelledConnect = true
         terminalConnectJob?.cancel()
         terminalConnectJob = null
         isTerminalConnecting = false
@@ -2574,8 +2605,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun connectTerminal() {
         val srv = selectedServer ?: return
+        // Gate on the last reachability probe: if the SSH port was found unreachable, the host is
+        // (very likely) offline. The probe can be stale, so warn-and-confirm instead of hard-blocking
+        // — connectTerminalConfirmedOffline() re-enters with the gate bypassed. Only gate once the
+        // host has actually been probed this run; an un-probed host falls through and connects.
+        if (probedServerIds[srv.id] == true && srv.status == "offline" && !isTerminalConnecting) {
+            offlineConnectPromptServer = srv
+            return
+        }
         connectTerminal(srv, forceDisablePersistence = false)
     }
+
+    /** Proceed with a connect the user confirmed despite an offline status (dismisses the warning). */
+    fun connectTerminalConfirmedOffline() {
+        val srv = offlineConnectPromptServer ?: return
+        offlineConnectPromptServer = null
+        connectTerminal(srv, forceDisablePersistence = false)
+    }
+
+    fun dismissOfflineConnectPrompt() { offlineConnectPromptServer = null }
 
     private fun connectTerminal(srv: ServerEntity, forceDisablePersistence: Boolean) {
         if (isTerminalConnecting) return
@@ -2639,8 +2687,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 startKeepAliveService()
 
                 wireSessionIo(shellSession)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Only an explicit user cancel (cancelConnect) should leave the screen with no error.
+                // Any other cancellation means the attempt died without reaching the catch below, which
+                // previously looked like a silent bounce back to the prompt — surface a reason instead.
+                isTerminalConnecting = false
+                if (!userCancelledConnect) {
+                    terminalConnectError = "Connection attempt was interrupted before it completed."
+                }
+                userCancelledConnect = false
+                throw e
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
                 isTerminalConnecting = false
                 val msg = e.message ?: "Connection failed."
                 if (msg.contains("reject HostKey", ignoreCase = true) ||
@@ -3135,17 +3192,29 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (!session.isConnected) return
         pendingSwipeFlush?.invoke()
         val app = synchronized(session.emulator) { session.emulator.applicationCursorKeys }
-        val seq: ByteArray = when (key) {
+        // Shift+Tab is back-tab (CSI Z) — reverse tab-completion in many shells/TUIs. Without this,
+        // an armed SHFT modifier was silently dropped on Tab. Other Shift combos fall through.
+        val shiftTab = key == TermKey.TAB && isShiftPressed
+        // xterm modifier parameter: 1 + Shift(1) + Alt(2) + Ctrl(4). >1 means a modifier is armed,
+        // in which case cursor/Home/End use the CSI 1;<mod><letter> form (Ctrl+→ word-jump,
+        // Shift+→ select, etc.) instead of the plain sequence — otherwise the modifier was dropped.
+        val cursorMod = 1 + (if (isShiftPressed) 1 else 0) + (if (isAltPressed) 2 else 0) + (if (isCtrlPressed) 4 else 0)
+        fun modCursor(letter: Char): ByteArray =
+            if (cursorMod > 1) ("[1;$cursorMod$letter").toByteArray()
+            else if (app) escO(letter) else escBracket(letter)
+        val seq: ByteArray = when {
+            shiftTab -> byteArrayOf(0x1B, '['.code.toByte(), 'Z'.code.toByte())
+            else -> when (key) {
             TermKey.ENTER -> byteArrayOf(0x0D)
             TermKey.BACKSPACE -> byteArrayOf(0x7F)
             TermKey.TAB -> byteArrayOf(0x09)
             TermKey.ESC -> byteArrayOf(0x1B)
-            TermKey.UP -> if (app) escO('A') else escBracket('A')
-            TermKey.DOWN -> if (app) escO('B') else escBracket('B')
-            TermKey.RIGHT -> if (app) escO('C') else escBracket('C')
-            TermKey.LEFT -> if (app) escO('D') else escBracket('D')
-            TermKey.HOME -> escBracket('H')
-            TermKey.END -> escBracket('F')
+            TermKey.UP -> modCursor('A')
+            TermKey.DOWN -> modCursor('B')
+            TermKey.RIGHT -> modCursor('C')
+            TermKey.LEFT -> modCursor('D')
+            TermKey.HOME -> if (cursorMod > 1) "[1;${cursorMod}H".toByteArray() else escBracket('H')
+            TermKey.END -> if (cursorMod > 1) "[1;${cursorMod}F".toByteArray() else escBracket('F')
             TermKey.PAGE_UP -> byteArrayOf(0x1B, '['.code.toByte(), '5'.code.toByte(), '~'.code.toByte())
             TermKey.PAGE_DOWN -> byteArrayOf(0x1B, '['.code.toByte(), '6'.code.toByte(), '~'.code.toByte())
             TermKey.F1 -> escO('P')
@@ -3160,6 +3229,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             TermKey.F10 -> escTilde("21")
             TermKey.F11 -> escTilde("23")
             TermKey.F12 -> escTilde("24")
+            }
         }
         sendBytes(seq)
         isCtrlPressed = false
