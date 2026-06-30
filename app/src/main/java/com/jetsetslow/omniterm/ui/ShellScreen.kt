@@ -888,33 +888,26 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             // ── Session-scoped quick toggles (runtime only, not saved to settings) ──
-                            // Rendered as direct labelled buttons rather than switches: one tap acts,
-                            // and the label states both the current state and what the tap will do.
+                            // Rendered as Switch rows: the switch shows current state at a glance, and
+                            // flipping it acts immediately. Unlike the copy actions, these stay on the
+                            // menu after toggling so the user can adjust both without re-opening it.
                             Text("This session", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                            OutlinedButton(
-                                // Selecting a toggle is a terminal action like the copy options below:
-                                // act, then close the popup so the user is back on the terminal rather
-                                // than left staring at a menu that didn't visibly respond.
-                                onClick = { viewModel.toggleSmartSwipeRuntime(); showCopyOptions = false },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(
-                                    if (viewModel.smartSwipeInput) "Swipe-typing: On — tap to stream each keystroke"
-                                    else "Swipe-typing: Off — tap for gesture/autocorrect",
-                                )
-                            }
-                            OutlinedButton(
-                                // Toggle directly here: the long-press menu is already an explicit
-                                // opt-in, so skip the battery-warning follow-up dialog. Dismiss on tap
-                                // too, matching the swipe-typing toggle and the copy actions.
-                                onClick = { viewModel.toggleKeepScreenOnDirect(); showCopyOptions = false },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(
-                                    if (viewModel.isKeepScreenOnEnabled) "Keep screen on: On — tap to allow sleep"
-                                    else "Keep screen on: Off — tap to keep awake",
-                                )
-                            }
+                            TerminalToggleRow(
+                                title = "Swipe-typing",
+                                subtitle = if (viewModel.smartSwipeInput) "On — text streams as you swipe/autocorrect"
+                                    else "Off — each keystroke is sent immediately",
+                                checked = viewModel.smartSwipeInput,
+                                onCheckedChange = { viewModel.toggleSmartSwipeRuntime() },
+                            )
+                            TerminalToggleRow(
+                                title = "Keep screen on",
+                                subtitle = if (viewModel.isKeepScreenOnEnabled) "On — screen stays awake in this session"
+                                    else "Off — screen may sleep normally",
+                                checked = viewModel.isKeepScreenOnEnabled,
+                                // Toggle directly: the long-press menu is already an explicit opt-in, so
+                                // skip the battery-warning follow-up dialog.
+                                onCheckedChange = { viewModel.toggleKeepScreenOnDirect() },
+                            )
                             HorizontalDivider()
                             Text("Copy terminal text", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                             Text("Choose the terminal text range to copy.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -1078,6 +1071,30 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                 }
             }
         }
+    }
+}
+
+// A labelled Switch row for the terminal long-press menu's session toggles. The whole row is
+// clickable (not just the switch) so it's an easy touch target on the terminal.
+@Composable
+private fun TerminalToggleRow(
+    title: String,
+    subtitle: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, fontSize = 15.sp, fontWeight = FontWeight.Medium)
+            Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

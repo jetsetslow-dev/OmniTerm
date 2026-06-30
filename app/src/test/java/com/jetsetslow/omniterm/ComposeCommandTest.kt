@@ -69,11 +69,31 @@ class ComposeCommandTest {
 
     @Test
     fun stack_actions_are_podman_aware_and_valid() {
-        for (action in listOf("up", "down", "restart", "pull", "logs", "config", "ps", "update")) {
+        for (action in listOf("up", "down", "restart", "pull", "logs", "config", "ps", "update", "build")) {
             val cmd = RemoteCommands.dockerComposeAction("proj", "/srv/proj", "docker-compose.yml", action)
             assertTrue("$action resolves compose runtime", cmd.contains("docker ps") && cmd.contains("podman ps"))
             assertValidShell(cmd)
         }
+    }
+
+    @Test
+    fun update_builds_dockerfile_images_and_tolerates_pull_failures() {
+        val cmd = RemoteCommands.dockerComposeAction("proj", "/srv/proj", "docker-compose.yml", "update")
+        // Build step is present so Dockerfile-based (build:) services are (re)built rather than
+        // pulled from a registry, which is what caused the login error.
+        assertTrue("update builds images", cmd.contains("build --pull"))
+        // A pull failure (e.g. private-registry login) must not abort the build + recreate.
+        assertTrue("pull is non-fatal", cmd.contains("--ignore-buildable") || cmd.contains("|| true"))
+        assertTrue("update recreates containers", cmd.contains("up -d"))
+        assertValidShell(cmd)
+    }
+
+    @Test
+    fun build_action_only_builds_without_recreating() {
+        val cmd = RemoteCommands.dockerComposeAction("proj", "/srv/proj", "docker-compose.yml", "build")
+        assertTrue("build action builds with --pull", cmd.contains("build --pull"))
+        assertTrue("build action does not recreate", !cmd.contains("up -d"))
+        assertValidShell(cmd)
     }
 
     @Test

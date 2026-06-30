@@ -652,20 +652,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val portScannerResults = mutableStateListOf<Pair<Int, String>>()
 
     // Single session-cached LAN sweep, shared by EVERYTHING that scans the local network: the Host
-    // Scan tab and every host picker (Ping / Traceroute / Port Scan / Wake-on-LAN). scanHosts() is
-    // the parent (rich ScannedHost); pickers derive their lighter ScannedWolDevice view from it via
-    // lanScanResults. Whichever screen scans first fills the cache for all the others, so we never run
-    // the same /24 sweep twice. In-memory only (per app session); an explicit rescan refreshes it.
+    // Scan tab and every host picker (Ping / Traceroute / Port Scan / Wake-on-LAN). All surfaces read
+    // the rich ScannedHost directly. Whichever screen scans first fills the cache for all the others,
+    // so we never run the same /24 sweep twice. In-memory only (per app session); an explicit rescan
+    // or a stale cache refreshes it.
     var hostScanResults by mutableStateOf<List<ScannedHost>>(emptyList())
         private set
     var isLanScanInProgress by mutableStateOf(false)
         private set
 
-    /** Picker-friendly view of the shared [hostScanResults] cache. */
-    val lanScanResults: List<ScannedWolDevice>
-        get() = hostScanResults.map {
-            ScannedWolDevice(name = it.hostname.ifBlank { "LAN Device" }, mac = it.mac, ip = it.ip, isOnline = it.isOnline)
-        }
+    // When the shared cache was last filled. Pickers reuse cached results only while they're fresh;
+    // past this window a "Scan LAN" tap re-sweeps so a tool never acts on a stale view of the network.
+    var lastLanScanTime by mutableStateOf(0L)
+        private set
+    private val lanScanFreshnessMs = 5 * 60 * 1000L // 5 minutes
+
+    /** True when the shared LAN cache holds results recent enough to reuse without re-scanning. */
+    fun isLanScanFresh(): Boolean =
+        hostScanResults.isNotEmpty() && System.currentTimeMillis() - lastLanScanTime < lanScanFreshnessMs
 
     /**
      * Run the shared LAN sweep and cache it for every screen, unless a usable cached sweep already
@@ -675,10 +679,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      */
     suspend fun refreshLanScan(force: Boolean = false) {
         if (isLanScanInProgress) return
-        if (!force && hostScanResults.isNotEmpty()) return
+        // Reuse the cache only when it's still fresh. A non-forced call with stale results falls
+        // through and re-sweeps, so pickers that reuse the cache never present an outdated network.
+        if (!force && isLanScanFresh()) return
         isLanScanInProgress = true
         try {
             hostScanResults = scanHosts()
+            lastLanScanTime = System.currentTimeMillis()
         } finally {
             isLanScanInProgress = false
         }
@@ -2220,6 +2227,37 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         Triple("Disk Usage", 90f, "WARNING"),
         Triple("Latency", 250f, "WARNING"),
     )
+
+    // ── Backup default-filtering ──────────────────────────────────────────────────────────────────
+    // A backup should preserve what the user CREATED or CHANGED — not the app's own seeded presets,
+    // which are re-seeded automatically on a fresh install. We identify a preset by its name; if the
+    // stored row still matches the preset's original command/threshold it's pristine (skip it). If the
+    // command/threshold differs, the user edited it, so it's effectively custom and we keep it.
+
+    /** Original command for a built-in/homelab preset script keyed by name, or null if not a preset. */
+    private val presetScriptOriginalCommands: Map<String, String> by lazy {
+        (builtInFleetPresets + homelabPresetScripts)
+            .associate { it.name.lowercase(Locale.ROOT) to it.command.trim() }
+    }
+
+    /** True when [script] is an untouched copy of a seeded preset (same name + same command). */
+    private fun isPristineDefaultScript(script: QuickScriptEntity): Boolean =
+        presetScriptOriginalCommands[script.name.lowercase(Locale.ROOT)] == script.command.trim()
+
+    /** Keep only user-created or user-edited scripts; drop pristine seeded presets. */
+    private fun customScriptsOnly(scripts: List<QuickScriptEntity>): List<QuickScriptEntity> =
+        scripts.filterNot { isPristineDefaultScript(it) }
+
+    /** True when [rule] is an untouched fleet-wide (serverId=0) default alert preset. */
+    private fun isPristineDefaultRule(rule: AlertRuleEntity): Boolean =
+        rule.serverId == 0 && alertRulePresets.any { (metric, threshold, severity) ->
+            rule.metricName == metric && rule.thresholdValue == threshold &&
+                rule.severity == severity && rule.mountPoint == "/"
+        }
+
+    /** Keep only user-created or user-edited alert rules; drop pristine default presets. */
+    private fun customRulesOnly(rules: List<AlertRuleEntity>): List<AlertRuleEntity> =
+        rules.filterNot { isPristineDefaultRule(it) }
 
     /** Enable/disable the default alert rules across all current hosts. */
     fun toggleAlertPresets(enabled: Boolean) {
@@ -5049,19 +5087,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             })
         }
         val scriptArr = org.json.JSONArray()
-        val scriptsForBackup = if (!selection.scripts) {
-            emptyList()
-        } else if (settings.find { it.key == "fleet_presets" }?.value != "false") {
-            val existingFleetPresetKeys = scripts
-                .filter { it.category == "Fleet" }
-                .map { it.name.lowercase(Locale.ROOT) to it.command.trim() }
-                .toSet()
-            scripts + builtInFleetPresets.filter { preset ->
-                (preset.name.lowercase(Locale.ROOT) to preset.command.trim()) !in existingFleetPresetKeys
-            }
-        } else {
-            scripts
-        }
+        // Back up only user-created or user-edited scripts. Pristine seeded presets (built-in Fleet
+        // presets, homelab presets that still match their original command) are skipped — a fresh
+        // install re-seeds those on its own, so exporting them would just duplicate defaults on restore.
+        val scriptsForBackup = if (selection.scripts) customScriptsOnly(scripts) else emptyList()
         for (q in scriptsForBackup) {
             scriptArr.put(org.json.JSONObject().apply {
                 put("emoji", q.emoji); put("name", q.name); put("command", q.command)
@@ -5074,7 +5103,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             })
         }
         val ruleArr = org.json.JSONArray()
-        for (r in if (selection.alertRules) rules else emptyList()) {
+        // Skip the pristine fleet-wide default alert presets (CPU/Mem/Disk/Latency); keep custom and
+        // edited rules. Defaults are re-applied automatically, so they don't belong in a backup.
+        for (r in if (selection.alertRules) customRulesOnly(rules) else emptyList()) {
             ruleArr.put(org.json.JSONObject().apply {
                 put("id", r.id); put("serverId", r.serverId); put("metricName", r.metricName)
                 put("mountPoint", r.mountPoint); put("thresholdValue", r.thresholdValue.toDouble())
@@ -5321,17 +5352,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val wolTargets = repository.getAllWolTargets()
             val activeAlerts = repository.getActiveAlerts()
             val settings = backupSettingsSnapshot(repository.getAllSettings())
-            val scriptsForCount = if (settings.find { it.key == "fleet_presets" }?.value != "false") {
-                val existingFleetPresetKeys = scripts
-                    .filter { it.category == "Fleet" }
-                    .map { it.name.lowercase(Locale.ROOT) to it.command.trim() }
-                    .toSet()
-                scripts + builtInFleetPresets.filter { preset ->
-                    (preset.name.lowercase(Locale.ROOT) to preset.command.trim()) !in existingFleetPresetKeys
-                }
-            } else {
-                scripts
-            }
+            // Counts shown in the result toast must match what buildBackupJson actually writes:
+            // custom/edited scripts and rules only, with pristine defaults filtered out.
+            val scriptsForCount = customScriptsOnly(scripts)
+            val rulesForCount = customRulesOnly(rules)
             val encrypted = selection.hasSensitiveData()
             val ok = withContext(Dispatchers.IO) {
                 try {
@@ -5351,7 +5375,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 lastBackupExportTime = now
                 repository.insertSetting("backup_last_export_time", now.toString())
             }
-            onResult(ok, if (ok) "$mode backup written: ${if (selection.servers) srvs.size else 0} servers, ${if (selection.sshKeys) keys.size else 0} keys, ${if (selection.credentialProfiles) profiles.size else 0} profiles, ${if (selection.scripts) scriptsForCount.size else 0} scripts, ${if (selection.alertRules) rules.size else 0} rules, ${if (selection.alertHistory) alertHistories.size else 0} alert history, ${if (selection.wolTargets) wolTargets.size else 0} WoL, ${if (selection.settings) settings.size else 0} settings." else "Export failed.")
+            onResult(ok, if (ok) "$mode backup written: ${if (selection.servers) srvs.size else 0} servers, ${if (selection.sshKeys) keys.size else 0} keys, ${if (selection.credentialProfiles) profiles.size else 0} profiles, ${if (selection.scripts) scriptsForCount.size else 0} scripts, ${if (selection.alertRules) rulesForCount.size else 0} rules, ${if (selection.alertHistory) alertHistories.size else 0} alert history, ${if (selection.wolTargets) wolTargets.size else 0} WoL, ${if (selection.settings) settings.size else 0} settings." else "Export failed.")
         }
     }
 

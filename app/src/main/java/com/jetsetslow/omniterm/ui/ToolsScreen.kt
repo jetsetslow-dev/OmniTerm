@@ -861,106 +861,149 @@ private fun HostScanTab(viewModel: AppViewModel, onUseHost: (String) -> Unit) {
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
             items(hosts) { host ->
-                OmniCard(
-                    modifier = Modifier.fillMaxWidth().clickable { onUseHost(host.ip) },
-                    leftAccent = if (host.isOnline) OmniColors.green else MaterialTheme.colorScheme.onSurfaceVariant,
-                ) {
-                    Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(if (host.isOnline) Color(0xFF10B981) else Color.Red))
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(host.ip, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, modifier = Modifier.weight(1f))
-                            Icon(Icons.Filled.NetworkCheck, contentDescription = "Use as port-scan target", tint = OmniColors.cyan, modifier = Modifier.size(18.dp))
-                        }
-                        if (host.hostname.isNotBlank()) {
-                            Text(host.hostname, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        Text(
-                            buildString {
-                                append(host.mac.ifBlank { "MAC unavailable" })
-                                if (host.vendor.isNotBlank()) append(" · ${host.vendor}")
-                            },
-                            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1, overflow = TextOverflow.Ellipsis,
-                        )
-                        if (host.openPorts.isNotEmpty()) {
-                            Text(
-                                "Open ports: ${host.openPorts.joinToString(", ")}",
-                                fontSize = 11.sp, fontFamily = OmniFonts.mono, color = OmniColors.green,
-                            )
-                        }
-                    }
-                }
+                ScannedHostCard(
+                    host = host,
+                    accent = if (host.isOnline) OmniColors.green else MaterialTheme.colorScheme.onSurfaceVariant,
+                    trailingIcon = Icons.Filled.NetworkCheck,
+                    trailingDesc = "Use as port-scan target",
+                    onClick = { onUseHost(host.ip) },
+                )
             }
         }
     }
 }
 
-// ── Shared LAN host picker: "Scan LAN" button + tappable results that set the shared target host.
-// Used by Ping, Traceroute and Port Scan so the three tabs offer the same way to pick a local host
-// (mirrors the scanner in the Wake-on-LAN editor). Tapping a result writes to portScannerTarget,
-// which all three tabs read as their target field.
+// Rich per-host card shared by the Host Scan tab and the LAN host-picker popup, so both surfaces
+// show the same detail (status dot, IP, hostname, MAC + vendor, open ports) instead of the old
+// cramped IP+MAC row.
+@Composable
+private fun ScannedHostCard(
+    host: AppViewModel.ScannedHost,
+    accent: Color,
+    onClick: () -> Unit,
+    trailingIcon: androidx.compose.ui.graphics.vector.ImageVector? = null,
+    trailingDesc: String? = null,
+    trailingTint: Color = OmniColors.cyan,
+) {
+    OmniCard(
+        modifier = Modifier.fillMaxWidth().clickable { onClick() },
+        leftAccent = accent,
+    ) {
+        Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(if (host.isOnline) Color(0xFF10B981) else Color.Red))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(host.ip, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, modifier = Modifier.weight(1f))
+                if (trailingIcon != null) {
+                    Icon(trailingIcon, contentDescription = trailingDesc, tint = trailingTint, modifier = Modifier.size(18.dp))
+                }
+            }
+            if (host.hostname.isNotBlank()) {
+                Text(host.hostname, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Text(
+                buildString {
+                    append(host.mac.ifBlank { "MAC unavailable" })
+                    if (host.vendor.isNotBlank()) append(" · ${host.vendor}")
+                },
+                fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+            if (host.openPorts.isNotEmpty()) {
+                Text(
+                    "Open ports: ${host.openPorts.joinToString(", ")}",
+                    fontSize = 11.sp, fontFamily = OmniFonts.mono, color = OmniColors.green,
+                )
+            }
+        }
+    }
+}
+
+// ── Shared LAN host picker for Ping / Traceroute / Port Scan ──
+// Unlike the Host Scan tab, these tabs are about acting on a target the user already has in mind, so
+// the discovered-host list must NOT occupy the top of the view by default. Instead this is a single
+// button that opens a popup on demand. Opening the popup reuses the session-shared scan cache when
+// it's still fresh (no redundant sweep) and only re-scans when stale or forced. Picking a host sets
+// portScannerTarget — the field all three tabs read — and closes the popup.
 @Composable
 private fun LanHostPicker(viewModel: AppViewModel) {
-    // Results come from the session-shared cache on the VM, so a scan done in any tab is reused here
-    // without re-scanning. The button forces a fresh scan when the user wants to refresh.
-    val scannedDevices = viewModel.lanScanResults
+    val coroutineScope = rememberCoroutineScope()
+    var showPicker by remember { mutableStateOf(false) }
+
+    OutlinedButton(
+        onClick = {
+            showPicker = true
+            // Reuse a fresh cache; otherwise this kicks off a sweep the popup will show progress for.
+            coroutineScope.launch { viewModel.refreshLanScan(force = false) }
+        },
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Icon(Icons.Filled.Lan, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(modifier = Modifier.width(8.dp))
+        Text("Pick LAN host", fontSize = 12.sp)
+    }
+
+    if (showPicker) {
+        LanHostPickerDialog(
+            viewModel = viewModel,
+            onDismiss = { showPicker = false },
+            onPick = { ip ->
+                viewModel.portScannerTarget = ip
+                showPicker = false
+            },
+        )
+    }
+}
+
+@Composable
+private fun LanHostPickerDialog(
+    viewModel: AppViewModel,
+    onDismiss: () -> Unit,
+    onPick: (String) -> Unit,
+) {
+    val hosts = viewModel.hostScanResults
     val isScanning = viewModel.isLanScanInProgress
     val coroutineScope = rememberCoroutineScope()
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text("LAN host picker", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-            Text("Discover local hosts and tap one to set it as the target.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Button(
-            onClick = { coroutineScope.launch { viewModel.refreshLanScan(force = true) } },
-            enabled = !isScanning,
-        ) {
-            if (isScanning) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
-            } else {
-                Text(if (scannedDevices.isEmpty()) "Scan LAN" else "Rescan LAN", fontSize = 11.sp)
-            }
-        }
-    }
-
-    if (scannedDevices.isNotEmpty()) {
-        LazyColumn(
-            modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            items(scannedDevices) { device ->
-                OmniCard(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { viewModel.portScannerTarget = device.ip },
-                    leftAccent = if (viewModel.portScannerTarget == device.ip) OmniColors.cyan else OmniColors.green,
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Pick a LAN host") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = { coroutineScope.launch { viewModel.refreshLanScan(force = true) } },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !isScanning,
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(if (device.isOnline) Color(0xFF10B981) else Color.Red))
+                    if (isScanning) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Icon(Icons.Filled.Dns, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(device.ip, fontSize = 14.sp, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
-                            Text(device.mac.ifBlank { "MAC unavailable" }, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        if (viewModel.portScannerTarget == device.ip) {
-                            Text("Target", color = OmniColors.cyan, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                        }
+                        Text("Scanning network…")
+                    } else {
+                        Text(if (hosts.isEmpty()) "Scan LAN" else "Rescan LAN", fontSize = 12.sp)
+                    }
+                }
+                if (!isScanning && hosts.isEmpty()) {
+                    Text("No hosts yet — run a scan.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(hosts) { host ->
+                        ScannedHostCard(
+                            host = host,
+                            accent = if (viewModel.portScannerTarget == host.ip) OmniColors.cyan else if (host.isOnline) OmniColors.green else MaterialTheme.colorScheme.onSurfaceVariant,
+                            onClick = { onPick(host.ip) },
+                        )
                     }
                 }
             }
-        }
-    }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
 }
 
 // ── Ping (device-side ICMP) ──
@@ -1324,64 +1367,45 @@ private fun WolStatusDot(viewModel: AppViewModel, ip: String) {
     Box(modifier = Modifier.padding(end = 10.dp).size(10.dp).clip(CircleShape).background(color))
 }
 
-// ── Inline LAN scanner for the Wake-on-LAN tab. Mirrors LanHostPicker (used by Ping/Traceroute/Port
-// Scan) but, instead of setting a shared target, hands the tapped host to [onPick] so the caller can
-// open the Add-target dialog pre-filled from it.
+// ── LAN scanner for the Wake-on-LAN tab. Like LanHostPicker, the discovered-host list lives in a
+// popup (opened on demand) rather than inline, so it doesn't push the saved targets down the screen.
+// Instead of setting a shared target, it hands the tapped host to [onPick] so the caller can open the
+// Add-target dialog pre-filled from it.
 @Composable
 private fun WolLanScanner(viewModel: AppViewModel, onPick: (AppViewModel.ScannedWolDevice) -> Unit) {
-    // Shares the same session-cached scan as the other tabs' pickers (see refreshLanScan).
-    val scannedDevices = viewModel.lanScanResults
-    val isScanning = viewModel.isLanScanInProgress
     val coroutineScope = rememberCoroutineScope()
+    var showPicker by remember { mutableStateOf(false) }
 
-    Row(
+    OutlinedButton(
+        onClick = {
+            showPicker = true
+            // Reuse a fresh session-cached scan; only sweep when stale (see refreshLanScan).
+            coroutineScope.launch { viewModel.refreshLanScan(force = false) }
+        },
         modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text("LAN host picker", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-            Text("Discover local hosts and tap one to add it as a target.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Button(
-            onClick = { coroutineScope.launch { viewModel.refreshLanScan(force = true) } },
-            enabled = !isScanning,
-        ) {
-            if (isScanning) {
-                CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
-            } else {
-                Text(if (scannedDevices.isEmpty()) "Scan LAN" else "Rescan LAN", fontSize = 11.sp)
-            }
-        }
+        Icon(Icons.Filled.Lan, contentDescription = null, modifier = Modifier.size(18.dp))
+        Spacer(modifier = Modifier.width(8.dp))
+        Text("Scan LAN to add a target", fontSize = 12.sp)
     }
 
-    if (scannedDevices.isNotEmpty()) {
-        LazyColumn(
-            modifier = Modifier.fillMaxWidth().heightIn(max = 160.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            items(scannedDevices) { device ->
-                OmniCard(
-                    modifier = Modifier.fillMaxWidth().clickable { onPick(device) },
-                    leftAccent = OmniColors.green,
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(if (device.isOnline) Color(0xFF10B981) else Color.Red))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Icon(Icons.Filled.Dns, contentDescription = null, modifier = Modifier.size(20.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(device.name.ifBlank { device.ip }, fontSize = 14.sp, fontWeight = FontWeight.Bold)
-                            Text("${device.ip} · ${device.mac.ifBlank { "MAC unavailable" }}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                        Icon(Icons.Filled.Add, contentDescription = "Add as target", tint = OmniColors.cyan, modifier = Modifier.size(18.dp))
-                    }
-                }
-            }
-        }
+    if (showPicker) {
+        LanHostPickerDialog(
+            viewModel = viewModel,
+            onDismiss = { showPicker = false },
+            onPick = { ip ->
+                val host = viewModel.hostScanResults.firstOrNull { it.ip == ip }
+                onPick(
+                    AppViewModel.ScannedWolDevice(
+                        name = host?.hostname?.ifBlank { "LAN Device" } ?: "LAN Device",
+                        mac = host?.mac ?: "",
+                        ip = ip,
+                        isOnline = host?.isOnline ?: true,
+                    )
+                )
+                showPicker = false
+            },
+        )
     }
 }
 

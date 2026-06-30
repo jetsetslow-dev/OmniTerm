@@ -307,7 +307,19 @@ object RemoteCommands {
         val flags = composeFlags(project, configFiles)
         val orphansFlag = if (removeOrphans) " --remove-orphans" else ""
         val verb = when (action) {
-            "update" -> "pull && \$OT_COMPOSE $flags up -d$orphansFlag && \$OT_COMPOSE $flags ps"
+            // Update must handle BOTH registry images (image:) and Dockerfile-built images (build:).
+            // A plain `pull` fails on build-only services (no registry to pull from → login/auth
+            // error), which used to abort the whole update. So: pull registry images but skip
+            // buildable ones (`--ignore-buildable`, falling back to a best-effort `pull` on older
+            // compose that lacks the flag), then `build --pull` to (re)build Dockerfile services and
+            // refresh their base images, then `up -d` to recreate. Pull is non-fatal (|| true) so a
+            // private-registry/login hiccup never blocks the local build + recreate.
+            // NOTE: the verb is appended to a leading `$OT_COMPOSE $flags`, so it MUST begin with a
+            // compose subcommand. We start with `pull ...` (consumed by that prefix) and chain the
+            // rest explicitly.
+            "update" -> "pull --ignore-buildable 2>/dev/null || \$OT_COMPOSE $flags pull 2>/dev/null || true; \$OT_COMPOSE $flags build --pull && \$OT_COMPOSE $flags up -d$orphansFlag && \$OT_COMPOSE $flags ps"
+            // Build (and refresh base images) without pulling registry images or recreating.
+            "build" -> "build --pull"
             "pull" -> "pull"
             "down" -> "down$orphansFlag"
             "up" -> "up -d$orphansFlag"

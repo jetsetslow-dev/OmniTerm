@@ -445,10 +445,15 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                         )
                         StackActionRow(
                             stack = stack,
-                            actions = listOf("update" to "Update", "pull" to "Pull", "up" to "UP -D", "forceRecreate" to "Force Recreate", "restart" to "Restart", "down" to "DOWN", "removeOrphans" to "Remove Orphans"),
+                            actions = listOf("update" to "Update", "build" to "Build", "pull" to "Pull", "up" to "UP -D", "forceRecreate" to "Force Recreate", "restart" to "Restart", "down" to "DOWN", "removeOrphans" to "Remove Orphans"),
                             onAction = { action ->
                                 when (action) {
                                     "down" -> { pendingDownRemoveOrphans = false; pendingDown = stack }
+                                    "build" -> confirm.ask(
+                                        "Build ${stack.name}?",
+                                        "Build this stack's Dockerfile-based images (refreshing their base images). Containers are not recreated — run Update or UP -D afterwards to apply.",
+                                        confirmLabel = "Build",
+                                    ) { viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, "build") }
                                     "removeOrphans" -> confirm.ask(
                                         "Remove Orphans?",
                                         "Remove containers for services no longer defined in the compose file for ${stack.name}.",
@@ -456,7 +461,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                                     ) { viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, "removeOrphans") }
                                     "update" -> confirm.ask(
                                         "Update ${stack.name}?",
-                                        "Pull the latest images and recreate this stack's containers?",
+                                        "Pull updated registry images, (re)build any Dockerfile-based images, then recreate this stack's containers?",
                                         confirmLabel = "Update",
                                     ) { viewModel.dockerStackUpdate(stack.name, stack.workingDir, stack.configFiles) }
                                     "forceRecreate" -> confirm.ask(
