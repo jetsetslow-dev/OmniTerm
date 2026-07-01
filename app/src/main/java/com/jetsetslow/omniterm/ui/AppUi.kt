@@ -1164,6 +1164,8 @@ fun ServersMainView(viewModel: AppViewModel) {
     val srvList by viewModel.servers.collectAsState()
     var showAddSheet by remember { mutableStateOf(false) }
     var editingServer by remember { mutableStateOf<ServerEntity?>(null) }
+    // Source host for a "Duplicate": opens the add-sheet pre-filled from it (see AddServerSheet).
+    var duplicatingFrom by remember { mutableStateOf<ServerEntity?>(null) }
     var selectedForActionSheet by remember { mutableStateOf<ServerEntity?>(null) }
     var showBulkGroupDialog by remember { mutableStateOf(false) }
     var bulkGroupName by remember { mutableStateOf("") }
@@ -1473,6 +1475,19 @@ fun ServersMainView(viewModel: AppViewModel) {
                                         }
                                     }
 
+                                    // Host notes (if documented) — shown below the connection line.
+                                    if (server.notes.isNotBlank()) {
+                                        Text(
+                                            text = server.notes,
+                                            fontSize = 12.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                            maxLines = 3,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                                        )
+                                    }
+
                                     // Online + auth OK → show real gauges (hardcoded values removed).
                                     // Online + auth FAILED → show the actual error, no fake metrics.
                                     if (server.status == "online" && server.authStatus == "failed") {
@@ -1605,6 +1620,10 @@ fun ServersMainView(viewModel: AppViewModel) {
             AddServerSheet(viewModel = viewModel, serverToEdit = s) { editingServer = null }
         }
 
+        duplicatingFrom?.let { s ->
+            AddServerSheet(viewModel = viewModel, serverToEdit = null, prefillFrom = s) { duplicatingFrom = null }
+        }
+
         // Host ellipsis parameters selector actions drawer drawer
         selectedForActionSheet?.let { srv ->
             AlertDialog(
@@ -1621,6 +1640,19 @@ fun ServersMainView(viewModel: AppViewModel) {
                             Icon(Icons.Filled.Edit, null)
                             Spacer(modifier = Modifier.width(8.dp))
                             Text("Edit Server Configuration")
+                        }
+                        TextButton(
+                            onClick = {
+                                selectedForActionSheet = null
+                                // Open a NEW-host draft pre-filled (incl. credentials) from this host.
+                                // Nothing is saved until the user confirms, so the copy is fully
+                                // independent and still passes the first-connect host-key trust gate.
+                                duplicatingFrom = srv
+                            }
+                        ) {
+                            Icon(Icons.Filled.ContentCopy, null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Duplicate Host (reuse credentials)")
                         }
                         TextButton(
                             onClick = {
@@ -1784,16 +1816,30 @@ private fun StoredSecretField(
 // Bottom sheet simulation layout component that allows connection/credential wizard splits
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AddServerSheet(viewModel: AppViewModel, serverToEdit: ServerEntity?, onDismiss: () -> Unit) {
+fun AddServerSheet(
+    viewModel: AppViewModel,
+    serverToEdit: ServerEntity?,
+    // When set (and serverToEdit is null), this is a DUPLICATE: the form pre-fills from [prefillFrom]
+    // — including credentials — but the sheet stays in add-mode. Nothing is written until the user
+    // saves, the save goes through addServer() as a brand-new independent host, and the first-connect
+    // host-key trust gate is enforced (testedOkSignature starts null) exactly like any new host. This
+    // guarantees the copy shares no live state with its source.
+    prefillFrom: ServerEntity? = null,
+    onDismiss: () -> Unit,
+) {
     var activeTab by remember { mutableStateOf(0) } // 0: Connect, 1: Auth, 2: Adv
 
+    // Source for pre-filling non-secret fields: the edited host, else a duplicate's source, else none.
+    val src = serverToEdit ?: prefillFrom
+    val isDuplicate = serverToEdit == null && prefillFrom != null
+
     // Form parameter captures
-    var name by remember { mutableStateOf(serverToEdit?.name ?: "") }
-    var host by remember { mutableStateOf(serverToEdit?.host ?: "") }
-    var port by remember { mutableStateOf(serverToEdit?.port?.toString() ?: "22") }
-    var user by remember { mutableStateOf(serverToEdit?.username ?: "") }
-    var group by remember { mutableStateOf(serverToEdit?.groupName ?: "Default") }
-    var serverColor by remember { mutableStateOf(serverToEdit?.serverColor ?: "Default") }
+    var name by remember { mutableStateOf(if (isDuplicate) "${src?.name} copy" else (src?.name ?: "")) }
+    var host by remember { mutableStateOf(src?.host ?: "") }
+    var port by remember { mutableStateOf(src?.port?.toString() ?: "22") }
+    var user by remember { mutableStateOf(src?.username ?: "") }
+    var group by remember { mutableStateOf(src?.groupName ?: "Default") }
+    var serverColor by remember { mutableStateOf(src?.serverColor ?: "Default") }
 
     // Existing group labels (so a typo can't silently fork a new label).
     val allServers by viewModel.servers.collectAsState()
@@ -1802,33 +1848,34 @@ fun AddServerSheet(viewModel: AppViewModel, serverToEdit: ServerEntity?, onDismi
     }
 
     // Auth vars
-    var authType by remember { mutableStateOf(serverToEdit?.authType ?: "password") } // password, key, profile
-    // Stored secrets are never loaded back into the form: an empty field means "keep the saved
-    // value" (or "remove it" when the matching forget* flag is set). This keeps saved passwords
-    // out of the UI entirely — the reveal toggle can only ever show what was typed this session.
-    var password by remember { mutableStateOf("") }
+    var authType by remember { mutableStateOf(src?.authType ?: "password") } // password, key, profile
+    // Stored secrets are never loaded back into the form for an EDIT: an empty field means "keep the
+    // saved value" (or "remove it" when the matching forget* flag is set), keeping saved passwords out
+    // of the UI. For a DUPLICATE there is no saved row to fall back to, so the source's secrets ARE
+    // seeded here — that's the whole point of "reuse credentials" — and travel through addServer().
+    var password by remember { mutableStateOf(if (isDuplicate) prefillFrom?.authPassword ?: "" else "") }
     var forgetPassword by remember { mutableStateOf(false) }
-    var selectedKey by remember { mutableStateOf(serverToEdit?.authKeyAlias ?: "") }
-    var selectedProfileId by remember { mutableStateOf<Int?>(serverToEdit?.authProfileId) }
+    var selectedKey by remember { mutableStateOf(src?.authKeyAlias ?: "") }
+    var selectedProfileId by remember { mutableStateOf<Int?>(src?.authProfileId) }
     var saveProfile by remember { mutableStateOf(false) }
     val hasStoredPassword = !serverToEdit?.authPassword.isNullOrEmpty()
 
     // Advanced vars
-    var notes by remember { mutableStateOf(serverToEdit?.notes ?: "") }
-    var keepAlive by remember { mutableStateOf(serverToEdit?.keepAlive?.toString() ?: "30") }
-    var compression by remember { mutableStateOf(serverToEdit?.sshCompression ?: false) }
-    var persistentSession by remember { mutableStateOf(serverToEdit?.persistentSession ?: false) }
-    var sudoPassword by remember { mutableStateOf("") }
+    var notes by remember { mutableStateOf(src?.notes ?: "") }
+    var keepAlive by remember { mutableStateOf(src?.keepAlive?.toString() ?: "30") }
+    var compression by remember { mutableStateOf(src?.sshCompression ?: false) }
+    var persistentSession by remember { mutableStateOf(src?.persistentSession ?: false) }
+    var sudoPassword by remember { mutableStateOf(if (isDuplicate) prefillFrom?.sudoPassword ?: "" else "") }
     var forgetSudoPassword by remember { mutableStateOf(false) }
     val hasStoredSudoPassword = !serverToEdit?.sudoPassword.isNullOrEmpty()
-    var proxyType by remember { mutableStateOf(serverToEdit?.proxyType ?: "none") }
-    var proxyHost by remember { mutableStateOf(serverToEdit?.proxyHost ?: "") }
-    var proxyPort by remember { mutableStateOf(serverToEdit?.proxyPort?.takeIf { it > 0 }?.toString() ?: "") }
-    var proxyUser by remember { mutableStateOf(serverToEdit?.proxyUser ?: "") }
-    var proxyPassword by remember { mutableStateOf("") }
+    var proxyType by remember { mutableStateOf(src?.proxyType ?: "none") }
+    var proxyHost by remember { mutableStateOf(src?.proxyHost ?: "") }
+    var proxyPort by remember { mutableStateOf(src?.proxyPort?.takeIf { it > 0 }?.toString() ?: "") }
+    var proxyUser by remember { mutableStateOf(src?.proxyUser ?: "") }
+    var proxyPassword by remember { mutableStateOf(if (isDuplicate) prefillFrom?.proxyPassword ?: "" else "") }
     var forgetProxyPassword by remember { mutableStateOf(false) }
     val hasStoredProxyPassword = !serverToEdit?.proxyPassword.isNullOrEmpty()
-    var proxyKeyAlias by remember { mutableStateOf(serverToEdit?.proxyKeyAlias ?: "") }
+    var proxyKeyAlias by remember { mutableStateOf(src?.proxyKeyAlias ?: "") }
 
     var errorText by remember { mutableStateOf<String?>(null) }
     var testingConnection by remember { mutableStateOf(false) }
@@ -1949,7 +1996,7 @@ fun AddServerSheet(viewModel: AppViewModel, serverToEdit: ServerEntity?, onDismi
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Add Linux Remote Host") },
+        title = { Text(if (isDuplicate) "Duplicate Host" else if (serverToEdit == null) "Add Linux Remote Host" else "Edit Linux Remote Host") },
         text = {
             Column(
                 modifier = Modifier

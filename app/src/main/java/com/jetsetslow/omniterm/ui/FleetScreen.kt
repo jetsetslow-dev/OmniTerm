@@ -554,6 +554,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                     availableForFleet = draft.availableForFleet,
                     targetOs = draft.targetOs,
                     targetSystem = draft.targetSystem,
+                    notes = draft.notes,
                 )
                 showPresetEditor = false
             },

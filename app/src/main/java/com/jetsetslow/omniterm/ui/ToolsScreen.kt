@@ -292,10 +292,13 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Column {
+                                Column(modifier = Modifier.weight(1f)) {
                                     Text(r.metricName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                     val targetName = if (r.serverId == 0) "All Hosts" else srv?.name ?: "host"
                                     Text("$targetName · Threshold > ${r.thresholdValue}% for ${r.triggerWindow}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    if (r.notes.isNotBlank()) {
+                                        Text(r.notes, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
+                                    }
                                 }
                                 Row {
                                     IconButton(onClick = { editRule = r }) {
@@ -370,6 +373,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
         var metricSelect by remember(existing) { mutableStateOf(existing?.metricName ?: "CPU Usage") }
         var threshInput by remember(existing) { mutableStateOf(existing?.thresholdValue?.toString() ?: "80") }
         var severitySelect by remember(existing) { mutableStateOf(existing?.severity ?: "CRITICAL") }
+        var notesInput by remember(existing) { mutableStateOf(existing?.notes ?: "") }
 
         AlertDialog(
             onDismissRequest = { showCreateRuleDialog = false; editRule = null },
@@ -393,6 +397,14 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         }
                     }
                     OutlinedTextField(value = threshInput, onValueChange = { threshInput = it }, label = { Text("Threshold value (%)") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(
+                        value = notesInput,
+                        onValueChange = { notesInput = it },
+                        label = { Text("Notes (optional)") },
+                        placeholder = { Text("Why this rule exists / what it watches for") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 2,
+                    )
                 }
             },
             confirmButton = {
@@ -400,9 +412,9 @@ fun AlertsToolView(viewModel: AppViewModel) {
                     onClick = {
                         val thresh = threshInput.toFloatOrNull() ?: 80f
                         if (existing == null) {
-                            viewModel.addAlertRule(selectedSrvId, metricSelect, "/", thresh, severitySelect, "5m")
+                            viewModel.addAlertRule(selectedSrvId, metricSelect, "/", thresh, severitySelect, "5m", notesInput.trim())
                         } else {
-                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvId, metricName = metricSelect, thresholdValue = thresh, severity = severitySelect))
+                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvId, metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, notes = notesInput.trim()))
                         }
                         showCreateRuleDialog = false
                         editRule = null
@@ -625,6 +637,16 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
                                         maxLines = 2,
                                         overflow = TextOverflow.Ellipsis,
                                     )
+                                    if (s.notes.isNotBlank()) {
+                                        Text(
+                                            text = s.notes,
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -658,6 +680,7 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
                             availableForFleet = draft.availableForFleet,
                             targetOs = draft.targetOs,
                             targetSystem = draft.targetSystem,
+                            notes = draft.notes,
                         )
                     )
                 } else {
@@ -672,6 +695,7 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
                         availableForFleet = draft.availableForFleet,
                         targetOs = draft.targetOs,
                         targetSystem = draft.targetSystem,
+                        notes = draft.notes,
                     )
                 }
                 showCreateScriptSheet = false
@@ -1241,6 +1265,16 @@ private fun WolTab(viewModel: AppViewModel) {
                                     fontSize = 12.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                                if (target.notes.isNotBlank()) {
+                                    Text(
+                                        target.notes,
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
                             }
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {

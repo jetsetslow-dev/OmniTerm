@@ -306,18 +306,21 @@ object RemoteCommands {
     fun dockerComposeAction(project: String, workingDir: String, configFiles: String, action: String, service: String? = null, replicas: Int? = null, removeOrphans: Boolean = false): String {
         val flags = composeFlags(project, configFiles)
         val orphansFlag = if (removeOrphans) " --remove-orphans" else ""
+
+        // "update" is multi-step and must stay guarded by the `cd`, so it builds its own tail rather
+        // than plugging a single verb into the shared `$OT_COMPOSE $flags <verb>` template below.
+        // Steps: pull registry images (skipping buildable services; non-fatal so a login hiccup can't
+        // block the build), then `build --pull` to (re)build Dockerfile images + refresh their bases,
+        // then `up -d` to recreate, then `ps`. build/up/ps are `&&`-chained so a real failure exits
+        // non-zero; the whole tail runs only after `cd` succeeds.
+        if (action == "update") {
+            val c = "\$OT_COMPOSE $flags"
+            val tail = "{ $c pull --ignore-buildable 2>/dev/null || $c pull 2>/dev/null || true; } && " +
+                "$c build --pull && $c up -d$orphansFlag && $c ps"
+            return "$COMPOSE_RESOLVE && cd ${shellQuote(workingDir)} && $tail 2>&1"
+        }
+
         val verb = when (action) {
-            // Update must handle BOTH registry images (image:) and Dockerfile-built images (build:).
-            // A plain `pull` fails on build-only services (no registry to pull from → login/auth
-            // error), which used to abort the whole update. So: pull registry images but skip
-            // buildable ones (`--ignore-buildable`, falling back to a best-effort `pull` on older
-            // compose that lacks the flag), then `build --pull` to (re)build Dockerfile services and
-            // refresh their base images, then `up -d` to recreate. Pull is non-fatal (|| true) so a
-            // private-registry/login hiccup never blocks the local build + recreate.
-            // NOTE: the verb is appended to a leading `$OT_COMPOSE $flags`, so it MUST begin with a
-            // compose subcommand. We start with `pull ...` (consumed by that prefix) and chain the
-            // rest explicitly.
-            "update" -> "pull --ignore-buildable 2>/dev/null || \$OT_COMPOSE $flags pull 2>/dev/null || true; \$OT_COMPOSE $flags build --pull && \$OT_COMPOSE $flags up -d$orphansFlag && \$OT_COMPOSE $flags ps"
             // Build (and refresh base images) without pulling registry images or recreating.
             "build" -> "build --pull"
             "pull" -> "pull"

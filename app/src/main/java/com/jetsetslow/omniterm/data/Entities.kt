@@ -100,7 +100,9 @@ data class AlertRuleEntity(
     val thresholdValue: Float,
     val severity: String, // "WARNING", "CRITICAL"
     val triggerWindow: String = "5m", // "2m", "5m", "10m", "15m"
-    val enabled: Boolean = true
+    val enabled: Boolean = true,
+    // Free-text note documenting why this rule exists / what it watches for.
+    val notes: String = ""
 )
 
 @Entity(tableName = "active_alerts")
@@ -148,7 +150,9 @@ data class QuickScriptEntity(
     val availableForQuick: Boolean = true,
     val availableForFleet: Boolean = false,
     val targetOs: String = "Any",
-    val targetSystem: String = "Any"
+    val targetSystem: String = "Any",
+    // Free-text note documenting what this script does / caveats.
+    val notes: String = ""
 )
 
 @Entity(tableName = "wol_targets")

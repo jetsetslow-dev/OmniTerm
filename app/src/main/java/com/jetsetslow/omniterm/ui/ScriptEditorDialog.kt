@@ -37,6 +37,7 @@ data class ScriptEditorDraft(
     val availableForFleet: Boolean,
     val targetOs: String,
     val targetSystem: String,
+    val notes: String,
 )
 
 @Composable
@@ -62,11 +63,12 @@ fun SharedScriptEditorDialog(
     var availableForFleet by remember { mutableStateOf(existing?.availableForFleet ?: defaultAvailableForFleet) }
     var targetOs by remember { mutableStateOf(existing?.targetOs?.ifBlank { "Any" } ?: defaultTargetOs.ifBlank { "Any" }) }
     var targetSystem by remember { mutableStateOf(existing?.targetSystem?.ifBlank { "Any" } ?: "Any") }
+    var notesInput by remember { mutableStateOf(existing?.notes ?: "") }
     var categoryMenuExpanded by remember { mutableStateOf(false) }
     var osMenuExpanded by remember { mutableStateOf(false) }
     var systemMenuExpanded by remember { mutableStateOf(false) }
 
-    val isDirty = remember(nameInput, emojiInput, cmdInput, categoryInput, availableForQuick, availableForFleet, targetOs, targetSystem) {
+    val isDirty = remember(nameInput, emojiInput, cmdInput, categoryInput, availableForQuick, availableForFleet, targetOs, targetSystem, notesInput) {
         val ogName = existing?.name ?: ""
         val ogEmoji = existing?.emoji ?: "CMD"
         val ogCmd = existing?.command ?: initialCommand
@@ -75,9 +77,11 @@ fun SharedScriptEditorDialog(
         val ogFleet = existing?.availableForFleet ?: defaultAvailableForFleet
         val ogOs = existing?.targetOs?.ifBlank { "Any" } ?: defaultTargetOs.ifBlank { "Any" }
         val ogSys = existing?.targetSystem?.ifBlank { "Any" } ?: "Any"
+        val ogNotes = existing?.notes ?: ""
 
         nameInput != ogName || emojiInput != ogEmoji || cmdInput != ogCmd || categoryInput != ogCat ||
-        availableForQuick != ogQuick || availableForFleet != ogFleet || targetOs != ogOs || targetSystem != ogSys
+        availableForQuick != ogQuick || availableForFleet != ogFleet || targetOs != ogOs ||
+        targetSystem != ogSys || notesInput != ogNotes
     }
 
     val confirm = rememberConfirm()
@@ -185,6 +189,14 @@ fun SharedScriptEditorDialog(
                         }
                     }
                 }
+                OutlinedTextField(
+                    value = notesInput,
+                    onValueChange = { notesInput = it },
+                    label = { Text("Notes (optional)") },
+                    placeholder = { Text("What this script does, caveats, etc.") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 2,
+                )
             }
         },
         confirmButton = {
@@ -201,6 +213,7 @@ fun SharedScriptEditorDialog(
                             availableForFleet = availableForFleet,
                             targetOs = targetOs.ifBlank { "Any" },
                             targetSystem = targetSystem.ifBlank { "Any" },
+                            notes = notesInput.trim(),
                         )
                     )
                 },

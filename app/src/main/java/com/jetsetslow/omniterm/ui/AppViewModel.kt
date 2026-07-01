@@ -2067,7 +2067,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun addAlertRule(serverId: Int, metricName: String, mountPoint: String, threshold: Float, severity: String, triggerWindow: String) {
+    fun addAlertRule(serverId: Int, metricName: String, mountPoint: String, threshold: Float, severity: String, triggerWindow: String, notes: String = "") {
         viewModelScope.launch {
             val rule = AlertRuleEntity(
                 serverId = serverId,
@@ -2075,7 +2075,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 mountPoint = mountPoint,
                 thresholdValue = threshold,
                 severity = severity,
-                triggerWindow = triggerWindow
+                triggerWindow = triggerWindow,
+                notes = notes,
             )
             repository.insertRule(rule)
         }
@@ -2093,6 +2094,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         availableForFleet: Boolean = false,
         targetOs: String = "Any",
         targetSystem: String = "Any",
+        notes: String = "",
     ) {
         viewModelScope.launch {
             val script = QuickScriptEntity(
@@ -2107,6 +2109,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 availableForFleet = availableForFleet,
                 targetOs = targetOs,
                 targetSystem = targetSystem,
+                notes = notes,
             )
             repository.insertScript(script)
         }
@@ -2240,17 +2243,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             .associate { it.name.lowercase(Locale.ROOT) to it.command.trim() }
     }
 
-    /** True when [script] is an untouched copy of a seeded preset (same name + same command). */
+    /**
+     * True when [script] is an untouched copy of a seeded preset: same name + same command AND no
+     * user note. Adding a note counts as customizing it, so a noted preset is kept in the backup.
+     */
     private fun isPristineDefaultScript(script: QuickScriptEntity): Boolean =
-        presetScriptOriginalCommands[script.name.lowercase(Locale.ROOT)] == script.command.trim()
+        script.notes.isBlank() &&
+            presetScriptOriginalCommands[script.name.lowercase(Locale.ROOT)] == script.command.trim()
 
     /** Keep only user-created or user-edited scripts; drop pristine seeded presets. */
     private fun customScriptsOnly(scripts: List<QuickScriptEntity>): List<QuickScriptEntity> =
         scripts.filterNot { isPristineDefaultScript(it) }
 
-    /** True when [rule] is an untouched fleet-wide (serverId=0) default alert preset. */
+    /** True when [rule] is an untouched fleet-wide (serverId=0) default alert preset (no user note). */
     private fun isPristineDefaultRule(rule: AlertRuleEntity): Boolean =
-        rule.serverId == 0 && alertRulePresets.any { (metric, threshold, severity) ->
+        rule.serverId == 0 && rule.notes.isBlank() && alertRulePresets.any { (metric, threshold, severity) ->
             rule.metricName == metric && rule.thresholdValue == threshold &&
                 rule.severity == severity && rule.mountPoint == "/"
         }
@@ -5100,6 +5107,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 put("availableForFleet", q.availableForFleet)
                 put("targetOs", q.targetOs)
                 put("targetSystem", q.targetSystem)
+                put("notes", q.notes)
             })
         }
         val ruleArr = org.json.JSONArray()
@@ -5110,6 +5118,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 put("id", r.id); put("serverId", r.serverId); put("metricName", r.metricName)
                 put("mountPoint", r.mountPoint); put("thresholdValue", r.thresholdValue.toDouble())
                 put("severity", r.severity); put("triggerWindow", r.triggerWindow); put("enabled", r.enabled)
+                put("notes", r.notes)
             })
         }
         val historyArr = org.json.JSONArray()
@@ -5584,6 +5593,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                                 availableForFleet = o.optBoolean("availableForFleet", category == "Fleet"),
                                 targetOs = o.optString("targetOs", "Any").ifBlank { "Any" },
                                 targetSystem = o.optString("targetSystem", "Any").ifBlank { "Any" },
+                                notes = o.optString("notes", ""),
                             )
                         )
                         existingScripts.add(scriptKey)
@@ -5619,6 +5629,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                                 mountPoint = o.optString("mountPoint", "/"), thresholdValue = threshold,
                                 severity = o.optString("severity", "WARNING"), triggerWindow = window,
                                 enabled = o.optBoolean("enabled", true),
+                                notes = o.optString("notes", ""),
                             )
                         )
                         repository.getAllRules().find {
