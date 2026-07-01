@@ -9,7 +9,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.border
@@ -641,38 +640,32 @@ private fun BroadcastTargetPicker(viewModel: AppViewModel, srvList: List<ServerE
             )
         }
 
-        LazyRow(
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            if (viewModel.broadcastTargetMode == FleetTargetMode.Servers) {
-                items(srvList) { s ->
-                    val isChecked = viewModel.broadcastTargetServerIds.contains(s.id)
-                    val canSelect = s.status == "online"
-                    ElevatedFilterChip(
-                        selected = isChecked,
-                        onClick = {
-                            if (canSelect) {
-                                if (isChecked) viewModel.broadcastTargetServerIds.remove(s.id) else viewModel.broadcastTargetServerIds.add(s.id)
-                            }
-                        },
-                        label = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(6.dp)
-                                        .clip(CircleShape)
-                                        .background(if (s.status == "online") Color(0xFF10B981) else Color.Red)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text(s.name, fontFamily = OmniFonts.mono, fontSize = 11.sp)
-                            }
-                        },
-                        enabled = canSelect
-                    )
-                }
-            } else {
-                items(groups) { group ->
+        if (viewModel.broadcastTargetMode == FleetTargetMode.Servers) {
+            // A dialog picker instead of a horizontal chip strip: with more than a few hosts the
+            // strip hides most of the fleet offscreen, so selection state becomes invisible.
+            HostPickerField(
+                label = "Target hosts",
+                servers = srvList,
+                selectedIds = viewModel.broadcastTargetServerIds.toSet(),
+                onToggle = { id ->
+                    if (!viewModel.broadcastTargetServerIds.remove(id)) viewModel.broadcastTargetServerIds.add(id)
+                },
+                isSelectable = { it.status == "online" },
+                onSelectAll = {
+                    viewModel.broadcastTargetServerIds.clear()
+                    viewModel.broadcastTargetServerIds.addAll(srvList.filter { it.status == "online" }.map { it.id })
+                },
+                onClear = { viewModel.broadcastTargetServerIds.clear() },
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        } else {
+            // Groups stay as chips (there are few of them), but wrapped so all remain visible.
+            @OptIn(ExperimentalLayoutApi::class)
+            FlowRow(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                groups.forEach { group ->
                     val isChecked = viewModel.broadcastTargetGroups.contains(group)
                     ElevatedFilterChip(
                         selected = isChecked,
@@ -759,16 +752,17 @@ fun MetricLineChart(
 fun FleetLogsView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("Select hosts then tap Fetch Logs:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            items(srvList, key = { it.id }) { srv ->
-                val selected = srv.id in viewModel.fleetLogSelectedServerIds
-                FilterChip(
-                    selected = selected,
-                    onClick = { viewModel.toggleFleetLogServer(srv.id) },
-                    label = { Text(srv.name, fontSize = 12.sp) },
-                )
-            }
-        }
+        HostPickerField(
+            label = "Log hosts",
+            servers = srvList,
+            selectedIds = viewModel.fleetLogSelectedServerIds.toSet(),
+            onToggle = { viewModel.toggleFleetLogServer(it) },
+            onSelectAll = {
+                viewModel.fleetLogSelectedServerIds.clear()
+                viewModel.fleetLogSelectedServerIds.addAll(srvList.map { it.id })
+            },
+            onClear = { viewModel.fleetLogSelectedServerIds.clear() },
+        )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
             OmniButton(
                 label = if (viewModel.isFleetLogsLoading) "Loading…" else "Fetch Logs",

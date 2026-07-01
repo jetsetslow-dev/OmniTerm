@@ -2122,8 +2122,12 @@ fun AddServerSheet(
                                 Text("No SSH keys saved yet. Go to Tools → Keys to generate or import one.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                             } else {
                                 Text("Select Keypair Alias:")
-                                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    items(savedKeys) { key ->
+                                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                                androidx.compose.foundation.layout.FlowRow(
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                                ) {
+                                    savedKeys.forEach { key ->
                                         ElevatedFilterChip(
                                             selected = selectedKey == key.alias,
                                             onClick = { selectedKey = key.alias },
@@ -2195,8 +2199,12 @@ fun AddServerSheet(
                         OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Server Notes") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
                         Text("Keep alive interval:")
                         val intervals = listOf("10s", "20s", "30s", "60s", "120s")
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items(intervals) { item ->
+                        @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                        androidx.compose.foundation.layout.FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp),
+                        ) {
+                            intervals.forEach { item ->
                                 FilterChip(
                                     selected = keepAlive == item.replace("s", ""),
                                     onClick = { keepAlive = item.replace("s", "") },
@@ -2266,8 +2274,12 @@ fun AddServerSheet(
                                 if (savedKeys.isEmpty()) {
                                     Text("No SSH keys saved yet. Go to Tools → Keys to generate or import one.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                                 } else {
-                                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        items(savedKeys) { key ->
+                                    @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                                    androidx.compose.foundation.layout.FlowRow(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        savedKeys.forEach { key ->
                                             ElevatedFilterChip(
                                                 selected = proxyKeyAlias == key.alias,
                                                 // Tap again to deselect — key auth on the jump host is optional.

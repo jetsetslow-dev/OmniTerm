@@ -54,6 +54,9 @@ private const val SFTP_TRANSFER_LOG_MAX = 50
 /** Cap on recursive SFTP search hits so a broad pattern can't flood the UI. */
 private const val SFTP_SEARCH_MAX_HITS = 200
 
+/** Default background time before the app lock re-engages on a warm reopen (user-configurable). */
+private const val APP_RELOCK_GRACE_MS = 30_000L
+
 // Auto-reconnect backoff for dropped interactive sessions: 1s, 2s, 4s… capped at 30s, up to N tries.
 // Slow Wi-Fi -> mobile handoffs can take well over a minute before the OS has a usable route again.
 private const val RECONNECT_BASE_DELAY_MS = 1_000L
@@ -301,9 +304,40 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var isFlagSecureEnabled by mutableStateOf(false)
         private set
 
-    // App lock is engaged on cold start only: every process relaunch demands the PIN/biometric when
-    // lock is enabled. Warm reopens (process still in memory) are not re-locked — there is no
-    // background grace timer to reason about, which keeps the behavior simple and stable.
+    // App lock always engages on cold start: every process relaunch demands the PIN/biometric when
+    // lock is enabled (shouldLockOnColdStart below). On top of that, warm reopens re-lock once the
+    // app has sat in background past the user's grace window. The timer is in-memory only — unlike
+    // the pre-64cf6ff SharedPreferences mirror, process death can never carry a stale "recently
+    // backgrounded" stamp into a fresh launch and bypass the lock.
+    var appLockGraceMs by mutableStateOf(APP_RELOCK_GRACE_MS)
+        private set
+    private var backgroundedAtMs = 0L
+
+    fun saveAppLockGrace(graceMs: Long) {
+        appLockGraceMs = graceMs.coerceAtLeast(0L)
+        viewModelScope.launch { repository.insertSetting("app_lock_grace_ms", appLockGraceMs.toString()) }
+    }
+
+    /** Called from MainActivity.onStop — remember when the app left the foreground. */
+    fun noteAppBackgrounded() {
+        backgroundedAtMs = System.currentTimeMillis()
+    }
+
+    /** Called from MainActivity.onStart — re-engage the lock if backgrounded past the grace. */
+    fun relockIfNeeded() {
+        val since = backgroundedAtMs
+        backgroundedAtMs = 0L
+        // since == 0L means this onStart isn't paired with an in-process onStop: either the very
+        // first launch (the cold-start path already decided the lock) or a config change. No-op.
+        if (since == 0L) return
+        if (!isAppLockEnabled || savedPin.isNullOrBlank()) return
+        if (System.currentTimeMillis() - since >= appLockGraceMs) {
+            currentPinInput = ""
+            lockScreenError = null
+            isAppLocked = true
+        }
+    }
+
     private fun shouldLockOnColdStart(): Boolean =
         !savedPin.isNullOrBlank() && isAppLockEnabled
 
@@ -979,6 +1013,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val hasPinLock = !pinVal.isNullOrBlank() && lockEnabled
                 savedPin = pinVal
                 isAppLockEnabled = hasPinLock
+                appLockGraceMs = list.find { it.key == "app_lock_grace_ms" }?.value
+                    ?.toLongOrNull()?.coerceAtLeast(0L) ?: APP_RELOCK_GRACE_MS
                 useBiometrics = hasPinLock && bioEnabled
                 // Screenshot blocking defaults to following the app lock until explicitly set.
                 isFlagSecureEnabled = list.find { it.key == "flag_secure" }?.value
@@ -1149,6 +1185,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun probeServer(srv: ServerEntity) {
         try {
+            // Make the periodic retry visible: an offline host shows "connecting" while its probe
+            // runs (TCP reachability first — up to 4s — then SSH only if the port answered), instead
+            // of silently sitting at Offline through the whole attempt.
+            if (srv.status == "offline") {
+                repository.updateConnectionState(srv.id, "connecting", 0, 0)
+            }
             val rtt = tcpReachable(srv.host, srv.port)
             if (rtt < 0) {
                 repository.updateConnectionState(srv.id, "offline", 0, 0)
@@ -1566,13 +1608,42 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshCurrentScreen() {
         when (currentScreen) {
             Screen.Servers, Screen.Fleet -> refreshAllServers()
-            Screen.Monitor -> selectedServer?.let { refreshServer(it.id) }
-            Screen.Infra -> loadDocker()
-            Screen.SFTP -> { /* SFTP refresh is usually per-folder, but we can re-list current */ }
-            Screen.QuickScripts -> { /* No-op, scripts are local */ }
+            // Monitor refreshes what the active subtab is actually showing, not just host metrics.
+            Screen.Monitor -> pullSpin {
+                when (activeMonitorTab) {
+                    1 -> loadProcesses()
+                    2 -> loadServices()
+                    3 -> loadLogs(logFilterType)
+                    5 -> loadCron()
+                    else -> selectedServer?.let { refreshServer(it.id) } // Overview / Scripts
+                }
+            }
+            Screen.Infra -> pullSpin { loadDocker() }
+            Screen.SFTP -> pullSpin { loadSftp(clearError = true) } // re-list the current folder
+            // Alerts are evaluated on each metrics pass, so refreshing metrics refreshes alerts.
+            Screen.Alerts -> refreshAllServers()
             // Pull-to-refresh is specific to the active Network subtab.
             Screen.Network -> refreshNetworkSubtab()
+            // Remaining screens (Shell, Tools, Scripts, Keys, Backup, Settings…) show local/reactive
+            // data with nothing remote to fetch; a spinner there would be theater.
             else -> {}
+        }
+    }
+
+    /**
+     * Wrap a fire-and-forget loader in the shared pull-to-refresh spinner. The loaders keep their
+     * own fine-grained loading flags; this just acknowledges the pull gesture visibly (same
+     * fixed-lag approach as refreshAllServers) so every tab responds consistently.
+     */
+    private fun pullSpin(work: () -> Unit) {
+        viewModelScope.launch {
+            isRefreshing = true
+            try {
+                work()
+                delay(1200)
+            } finally {
+                isRefreshing = false
+            }
         }
     }
 

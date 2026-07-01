@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -463,6 +464,226 @@ fun formatDateTime(timeMs: Long): String =
 
 fun formatShortDateTime(timeMs: Long): String =
     java.text.SimpleDateFormat("MMM d, HH:mm", java.util.Locale.getDefault()).format(java.util.Date(timeMs))
+
+// ─── Host picker (scales past a handful of hosts) ────────────────────────────
+
+/**
+ * Host selector for anywhere the host count can grow beyond a few: a compact field showing the
+ * current selection that opens a searchable vertical list in a dialog. Replaces horizontal chip
+ * strips, which hide most hosts offscreen once a fleet gets large.
+ *
+ * Selection semantics are owned by the caller through [selectedIds]/[onToggle]. When
+ * [allHostsOption] is true a pseudo-entry with id 0 ("All hosts") is offered at the top of the
+ * list — callers decide how picking it interacts with concrete ids. In [singleSelect] mode the
+ * dialog closes as soon as a row is picked.
+ */
+@Composable
+fun HostPickerField(
+    label: String,
+    servers: List<com.jetsetslow.omniterm.data.ServerEntity>,
+    selectedIds: Set<Int>,
+    onToggle: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+    singleSelect: Boolean = false,
+    allHostsOption: Boolean = false,
+    isSelectable: (com.jetsetslow.omniterm.data.ServerEntity) -> Boolean = { true },
+    onSelectAll: (() -> Unit)? = null,
+    onClear: (() -> Unit)? = null,
+) {
+    var showDialog by remember { mutableStateOf(false) }
+
+    val summary = when {
+        allHostsOption && 0 in selectedIds -> "All hosts"
+        selectedIds.isEmpty() -> "Choose hosts…"
+        else -> {
+            val names = servers.filter { it.id in selectedIds }.map { it.name }
+            if (singleSelect) names.firstOrNull() ?: "Choose host…"
+            else "${names.size} selected: ${names.joinToString(", ")}"
+        }
+    }
+
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
+            .clickable { showDialog = true }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(label, fontSize = 10.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant, letterSpacing = 1.sp)
+            Text(
+                summary,
+                fontSize = 13.sp,
+                fontFamily = OmniFonts.mono,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+        }
+        Icon(
+            Icons.Filled.ArrowDropDown,
+            contentDescription = "Choose hosts",
+            tint = OmniColors.cyan,
+        )
+    }
+
+    if (showDialog) {
+        HostPickerDialog(
+            title = label,
+            servers = servers,
+            selectedIds = selectedIds,
+            onToggle = { id ->
+                onToggle(id)
+                if (singleSelect) showDialog = false
+            },
+            singleSelect = singleSelect,
+            allHostsOption = allHostsOption,
+            isSelectable = isSelectable,
+            onSelectAll = onSelectAll,
+            onClear = onClear,
+            onDismiss = { showDialog = false },
+        )
+    }
+}
+
+@Composable
+fun HostPickerDialog(
+    title: String,
+    servers: List<com.jetsetslow.omniterm.data.ServerEntity>,
+    selectedIds: Set<Int>,
+    onToggle: (Int) -> Unit,
+    singleSelect: Boolean,
+    allHostsOption: Boolean,
+    isSelectable: (com.jetsetslow.omniterm.data.ServerEntity) -> Boolean,
+    onSelectAll: (() -> Unit)?,
+    onClear: (() -> Unit)?,
+    onDismiss: () -> Unit,
+) {
+    var query by remember { mutableStateOf("") }
+    val filtered = if (query.isBlank()) servers else servers.filter {
+        it.name.contains(query, ignoreCase = true) || it.host.contains(query, ignoreCase = true) ||
+            (it.groupName ?: "").contains(query, ignoreCase = true)
+    }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Search only earns its space once the list is long enough to need it.
+                if (servers.size > 6) {
+                    androidx.compose.material3.OutlinedTextField(
+                        value = query,
+                        onValueChange = { query = it },
+                        label = { Text("Search hosts") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+                if (!singleSelect && (onSelectAll != null || onClear != null)) {
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                        if (onSelectAll != null) {
+                            Text(
+                                "Select all",
+                                fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.clickable { onSelectAll() }.padding(4.dp),
+                            )
+                        }
+                        if (onClear != null) {
+                            Spacer(Modifier.width(12.dp))
+                            Text(
+                                "Clear",
+                                fontSize = 12.sp, fontWeight = FontWeight.Bold,
+                                color = OmniColors.red,
+                                modifier = Modifier.clickable { onClear() }.padding(4.dp),
+                            )
+                        }
+                    }
+                }
+                androidx.compose.foundation.lazy.LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
+                ) {
+                    if (allHostsOption && query.isBlank()) {
+                        item(key = 0) {
+                            HostPickerRow(
+                                name = "All hosts",
+                                detail = "Applies to every saved host",
+                                online = true,
+                                dotColor = OmniColors.cyan,
+                                checked = 0 in selectedIds,
+                                enabled = true,
+                                singleSelect = singleSelect,
+                                onClick = { onToggle(0) },
+                            )
+                        }
+                    }
+                    items(filtered.size, key = { filtered[it].id }) { idx ->
+                        val s = filtered[idx]
+                        val enabled = isSelectable(s)
+                        HostPickerRow(
+                            name = s.name,
+                            detail = "${s.username}@${s.host}" + if (enabled) "" else " · offline",
+                            online = s.status == "online",
+                            dotColor = OmniColors.serverAccent(s.serverColor, s.name),
+                            checked = s.id in selectedIds,
+                            enabled = enabled,
+                            singleSelect = singleSelect,
+                            onClick = { onToggle(s.id) },
+                        )
+                    }
+                }
+                if (filtered.isEmpty()) {
+                    Text("No hosts match “$query”.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        },
+        confirmButton = {
+            androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Done") }
+        },
+    )
+}
+
+@Composable
+private fun HostPickerRow(
+    name: String,
+    detail: String,
+    online: Boolean,
+    dotColor: Color,
+    checked: Boolean,
+    enabled: Boolean,
+    singleSelect: Boolean,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .clickable(enabled = enabled) { onClick() }
+            .padding(horizontal = 4.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        StatusDot(online = online, color = dotColor, size = 8.dp)
+        Column(Modifier.weight(1f)) {
+            Text(
+                name,
+                fontFamily = OmniFonts.mono,
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Bold,
+                color = if (enabled) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(detail, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+        }
+        if (singleSelect) {
+            androidx.compose.material3.RadioButton(selected = checked, onClick = null, enabled = enabled)
+        } else {
+            androidx.compose.material3.Checkbox(checked = checked, onCheckedChange = null, enabled = enabled)
+        }
+    }
+}
 
 /**
  * Outlined password field with a show/hide eye toggle. Use for real passwords/passphrases;

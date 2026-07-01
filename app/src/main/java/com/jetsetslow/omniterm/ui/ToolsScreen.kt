@@ -369,7 +369,9 @@ fun AlertsToolView(viewModel: AppViewModel) {
 
     if (showCreateRuleDialog || editRule != null) {
         val existing = editRule
-        var selectedSrvId by remember(existing) { mutableStateOf(existing?.serverId ?: 0) }
+        // Creating supports multiple hosts (one rule per host, or id 0 = "All hosts"); editing an
+        // existing rule keeps its single-host identity, so the picker becomes single-select.
+        val selectedSrvIds = remember(existing) { mutableStateListOf(existing?.serverId ?: 0) }
         var metricSelect by remember(existing) { mutableStateOf(existing?.metricName ?: "CPU Usage") }
         var threshInput by remember(existing) { mutableStateOf(existing?.thresholdValue?.toString() ?: "80") }
         var severitySelect by remember(existing) { mutableStateOf(existing?.severity ?: "CRITICAL") }
@@ -380,19 +382,29 @@ fun AlertsToolView(viewModel: AppViewModel) {
             title = { Text(if (existing == null) "Add Alert Rule Trigger" else "Edit Alert Rule") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Select Host Server:")
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        item {
-                            FilterChip(selected = selectedSrvId == 0, onClick = { selectedSrvId = 0 }, label = { Text("All Hosts") })
-                        }
-                        items(serversList) { s ->
-                            FilterChip(selected = selectedSrvId == s.id, onClick = { selectedSrvId = s.id }, label = { Text(s.name) })
-                        }
-                    }
+                    HostPickerField(
+                        label = if (existing == null) "Hosts" else "Host",
+                        servers = serversList,
+                        selectedIds = selectedSrvIds.toSet(),
+                        singleSelect = existing != null,
+                        allHostsOption = true,
+                        onToggle = { id ->
+                            if (existing != null) {
+                                selectedSrvIds.clear(); selectedSrvIds.add(id)
+                            } else if (id == 0) {
+                                // "All hosts" is exclusive of concrete picks.
+                                selectedSrvIds.clear(); selectedSrvIds.add(0)
+                            } else {
+                                selectedSrvIds.remove(0)
+                                if (!selectedSrvIds.remove(id)) selectedSrvIds.add(id)
+                            }
+                        },
+                    )
                     Text("Select Metric Key:")
                     val metricsOptions = listOf("CPU Usage", "Memory Usage", "Disk Usage", "Latency")
-                    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                        items(metricsOptions) { opt ->
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        metricsOptions.forEach { opt ->
                             FilterChip(selected = metricSelect == opt, onClick = { metricSelect = opt }, label = { Text(opt) })
                         }
                     }
@@ -409,12 +421,17 @@ fun AlertsToolView(viewModel: AppViewModel) {
             },
             confirmButton = {
                 Button(
+                    enabled = selectedSrvIds.isNotEmpty(),
                     onClick = {
                         val thresh = threshInput.toFloatOrNull() ?: 80f
                         if (existing == null) {
-                            viewModel.addAlertRule(selectedSrvId, metricSelect, "/", thresh, severitySelect, "5m", notesInput.trim())
+                            // One rule per picked host ("All hosts" collapses to a single id-0 rule).
+                            val targets = if (0 in selectedSrvIds) listOf(0) else selectedSrvIds.toList()
+                            targets.forEach { srvId ->
+                                viewModel.addAlertRule(srvId, metricSelect, "/", thresh, severitySelect, "5m", notesInput.trim())
+                            }
                         } else {
-                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvId, metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, notes = notesInput.trim()))
+                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvIds.first(), metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, notes = notesInput.trim()))
                         }
                         showCreateRuleDialog = false
                         editRule = null
@@ -2465,6 +2482,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
     var draftTerminalScrollbackLimit by remember { mutableStateOf(viewModel.terminalScrollbackLimit) }
     var draftSmartSwipe by remember { mutableStateOf(viewModel.smartSwipeInput) }
     var draftAppLock by remember { mutableStateOf(viewModel.isAppLockEnabled) }
+    var draftAppLockGrace by remember { mutableStateOf(viewModel.appLockGraceMs) }
     var draftBiometrics by remember { mutableStateOf(viewModel.useBiometrics) }
     var draftBlockScreenshots by remember { mutableStateOf(viewModel.isFlagSecureEnabled) }
     var draftSftpWarnFileCount by remember { mutableStateOf(viewModel.sftpLargeBatchFileThreshold.toString()) }
@@ -2488,6 +2506,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
         draftTerminalScrollbackLimit != viewModel.terminalScrollbackLimit ||
         draftSmartSwipe != viewModel.smartSwipeInput ||
         draftAppLock != viewModel.isAppLockEnabled ||
+        draftAppLockGrace != viewModel.appLockGraceMs ||
         draftBiometrics != viewModel.useBiometrics ||
         draftBlockScreenshots != viewModel.isFlagSecureEnabled ||
         draftSftpWarnFileCountValue == null ||
@@ -2515,6 +2534,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
         draftTerminalScrollbackLimit = viewModel.terminalScrollbackLimit
         draftSmartSwipe = viewModel.smartSwipeInput
         draftAppLock = viewModel.isAppLockEnabled
+        draftAppLockGrace = viewModel.appLockGraceMs
         draftBiometrics = viewModel.useBiometrics
         draftBlockScreenshots = viewModel.isFlagSecureEnabled
         draftSftpWarnFileCount = viewModel.sftpLargeBatchFileThreshold.toString()
@@ -2549,6 +2569,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
             else viewModel.removeSecurityPin()
         }
         if (draftAppLock && draftBiometrics != viewModel.useBiometrics) viewModel.saveBiometricsToggle(draftBiometrics)
+        if (draftAppLockGrace != viewModel.appLockGraceMs) viewModel.saveAppLockGrace(draftAppLockGrace)
         if (draftBlockScreenshots != viewModel.isFlagSecureEnabled) viewModel.saveFlagSecureToggle(draftBlockScreenshots)
     }
 
@@ -2610,10 +2631,29 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             TextButton(onClick = { showPinDialog = true }) { Text("Change PIN") }
 
                             Spacer(Modifier.height(8.dp))
+                            Text("Re-lock after leaving the app", fontSize = 13.sp)
                             Text(
-                                "The app re-locks each time it's reopened from a fresh launch.",
+                                "Quick app switches within this window won't ask for the PIN again. " +
+                                    "A full restart of the app always locks.",
                                 fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
+                            Spacer(Modifier.height(6.dp))
+                            val graceChoices = listOf(
+                                "Immediately" to 0L,
+                                "30s" to 30_000L,
+                                "1 min" to 60_000L,
+                                "5 min" to 300_000L,
+                            )
+                            @OptIn(ExperimentalLayoutApi::class)
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                graceChoices.forEach { (label, ms) ->
+                                    FilterChip(
+                                        selected = draftAppLockGrace == ms,
+                                        onClick = { draftAppLockGrace = ms },
+                                        label = { Text(label, fontSize = 12.sp) },
+                                    )
+                                }
+                            }
                         }
 
                         Row(
@@ -2810,15 +2850,14 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             steps = 19,
                         )
                         Text("Theme", fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                            items(
-                                listOf(
-                                    "omni_dark" to "Omni Dark",
-                                    "solarized_dark" to "Solarized",
-                                    "matrix" to "Matrix",
-                                    "light" to "Light",
-                                )
-                            ) { (key, label) ->
+                        @OptIn(ExperimentalLayoutApi::class)
+                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            listOf(
+                                "omni_dark" to "Omni Dark",
+                                "solarized_dark" to "Solarized",
+                                "matrix" to "Matrix",
+                                "light" to "Light",
+                            ).forEach { (key, label) ->
                                 FilterChip(
                                     selected = draftTerminalTheme == key,
                                     onClick = { draftTerminalTheme = key },
