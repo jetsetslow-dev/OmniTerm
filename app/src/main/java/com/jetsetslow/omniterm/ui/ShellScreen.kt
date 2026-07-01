@@ -614,7 +614,11 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
             // events so tmux scrolls its full history. Normal shells scroll the local viewport over
             // our own emulator scrollback.
             val forwardScrollToRemote = viewModel.terminalScrollForwardsToRemote()
-            val scrollableState = rememberScrollableState { delta ->
+            val scrollableState = rememberScrollableState { rawDelta ->
+                // Dampen finger→row travel: 1:1 pixel tracking feels twitchy on a row-quantized
+                // terminal (a small flick jumps many rows, and fling momentum feeds through this
+                // same path, amplifying it). 0.6 keeps direction and inertia but ~40% less travel.
+                val delta = rawDelta * 0.6f
                 if (forwardScrollToRemote) {
                     val rawRows = (scrollRemainderPx - delta) / cellHeight
                     val rowDelta = rawRows.toInt()
@@ -633,7 +637,9 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                         followTail = firstVisibleRow >= maxFirst - 2
                     }
                 }
-                delta
+                // Consume the full raw delta so the gesture never leaks to the scaffold's
+                // pull-to-refresh / nested scroll above the terminal.
+                rawDelta
             }
 
             TerminalCanvas(

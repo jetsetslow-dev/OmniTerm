@@ -45,6 +45,9 @@ import java.util.UUID
 /** Notification channel for fired monitoring alerts (distinct from the session-service channel). */
 private const val ALERT_CHANNEL_ID = "monitoring_alerts"
 
+/** Notification channel for the low-battery saver engaging. */
+private const val BATTERY_SAVER_CHANNEL_ID = "battery_saver"
+
 /** Cap on the live action panel text: long-running streams keep only the most recent output. */
 private const val ACTION_STREAM_MAX_CHARS = 200_000
 
@@ -946,6 +949,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         super.onCleared()
+        runCatching { getApplication<Application>().unregisterReceiver(batteryReceiver) }
         stopPing()
         stopTraceroute()
         // Release pooled SSH sessions held by the transport when the ViewModel goes away.
@@ -988,6 +992,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 alertHistoryLimit = list.find { it.key == "alert_history_limit" }?.value
                     ?.toIntOrNull()?.coerceIn(10, 1000) ?: 100
+                batterySaverEnabled = list.find { it.key == "battery_saver_enabled" }?.value == "true"
+                batterySaverThresholdPct = list.find { it.key == "battery_saver_threshold" }?.value
+                    ?.toIntOrNull()?.coerceIn(5, 50) ?: 20
                 list.find { it.key == "text_scale" }?.value?.let { textScale = it }
                 list.find { it.key == "accessibility" }?.value?.let { isAccessibilityEnabled = it == "true" }
                 list.find { it.key == "amoled" }?.value?.let { isAmoledEnabled = it == "true" }
@@ -1590,6 +1597,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     // PULL TO REFRESH INITIATION
     fun refreshAllServers() {
+        // An explicit refresh while battery saver has polling paused is the user overriding the
+        // saver — resume it fully rather than restarting polling behind the saver's back.
+        if (batterySaverActive) resumeFromBatterySaver()
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) { isRefreshing = true }
             try {
@@ -4945,6 +4955,109 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ── Battery saver ─────────────────────────────────────────────────────────
+    // When enabled and the battery drains to the threshold while unplugged, shed the app's main
+    // battery costs without any new permissions: keep-screen-on released, telemetry polling paused,
+    // persistent (tmux) terminals parked in their resumable state. Battery level comes from the
+    // sticky ACTION_BATTERY_CHANGED broadcast, which needs no permission.
+    var batterySaverEnabled by mutableStateOf(false); private set
+    var batterySaverThresholdPct by mutableStateOf(20); private set
+    var batterySaverActive by mutableStateOf(false); private set
+    var showBatterySaverDialog by mutableStateOf(false)
+    var batterySaverEngagedAtPct by mutableStateOf(0); private set
+
+    fun saveBatterySaverEnabled(on: Boolean) {
+        batterySaverEnabled = on
+        if (!on && batterySaverActive) resumeFromBatterySaver()
+        viewModelScope.launch { repository.insertSetting("battery_saver_enabled", on.toString()) }
+    }
+
+    fun saveBatterySaverThreshold(pct: Int) {
+        batterySaverThresholdPct = pct.coerceIn(5, 50)
+        viewModelScope.launch { repository.insertSetting("battery_saver_threshold", batterySaverThresholdPct.toString()) }
+    }
+
+    private val batteryReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: Intent?) {
+            val level = intent?.getIntExtra(android.os.BatteryManager.EXTRA_LEVEL, -1) ?: return
+            if (level < 0) return
+            val scale = intent.getIntExtra(android.os.BatteryManager.EXTRA_SCALE, 100).coerceAtLeast(1)
+            val status = intent.getIntExtra(android.os.BatteryManager.EXTRA_STATUS, -1)
+            val charging = status == android.os.BatteryManager.BATTERY_STATUS_CHARGING ||
+                status == android.os.BatteryManager.BATTERY_STATUS_FULL
+            onBatterySample(level * 100 / scale, charging)
+        }
+    }
+
+    // Registered in a late init block (below the property) so the receiver exists by then;
+    // unregistered in onCleared. ACTION_BATTERY_CHANGED is a protected system broadcast, so a
+    // NOT_EXPORTED context receiver still gets it.
+    init {
+        ContextCompat.registerReceiver(
+            getApplication<Application>(),
+            batteryReceiver,
+            android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+    }
+
+    private fun onBatterySample(pct: Int, charging: Boolean) {
+        if (!batterySaverEnabled) return
+        if (batterySaverActive) {
+            // Recover automatically once plugged in or comfortably above the threshold (+5 of
+            // hysteresis so the boundary doesn't flap the saver on/off).
+            if (charging || pct >= batterySaverThresholdPct + 5) resumeFromBatterySaver()
+        } else if (!charging && pct <= batterySaverThresholdPct) {
+            activateBatterySaver(pct)
+        }
+    }
+
+    private fun activateBatterySaver(pct: Int) {
+        batterySaverActive = true
+        batterySaverEngagedAtPct = pct
+        isKeepScreenOnEnabled = false
+        // Pause the auto-refresh loop and any probes in flight.
+        pollingJob?.cancel()
+        activeProbes.values.forEach { it.cancel() }
+        activeProbes.clear()
+        // Park persistent (tmux) terminals in their resumable state — the remote session keeps
+        // running and reattaches on the next connect. Non-persistent shells are left alone:
+        // closing them would kill the remote shell, which is the opposite of resumable.
+        activeSessions.filter { it.persistent }.map { it.id }.forEach { leaveSessionResumable(it) }
+        showBatterySaverDialog = true
+        postBatterySaverNotification(pct)
+    }
+
+    /** Manual or automatic exit from battery saver: restart the paused auto-refresh loop. */
+    fun resumeFromBatterySaver() {
+        batterySaverActive = false
+        showBatterySaverDialog = false
+        startTelemetryPolling()
+    }
+
+    /** Surfaces the saver engaging as a system notification, mirroring postAlertNotification. */
+    private fun postBatterySaverNotification(pct: Int) {
+        val app = getApplication<Application>()
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(app, android.Manifest.permission.POST_NOTIFICATIONS) !=
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) return
+        val nm = app.getSystemService(NotificationManager::class.java) ?: return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            nm.createNotificationChannel(
+                NotificationChannel(BATTERY_SAVER_CHANNEL_ID, "Battery saver", NotificationManager.IMPORTANCE_DEFAULT)
+            )
+        }
+        val n = NotificationCompat.Builder(app, BATTERY_SAVER_CHANNEL_ID)
+            .setContentTitle("OmniTerm battery saver on")
+            .setContentText("Battery at $pct% — keep-screen-on released, auto-refresh paused, tmux terminals parked.")
+            .setSmallIcon(R.drawable.ic_stat_omniterm)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setAutoCancel(true)
+            .build()
+        nm.notify(BATTERY_SAVER_CHANNEL_ID.hashCode(), n)
+    }
+
     fun requestKeepScreenOnToggle() {
         if (isKeepScreenOnEnabled) {
             isKeepScreenOnEnabled = false
@@ -5296,6 +5409,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         put("keep_screen_on", defaultKeepScreenOn.toString())
         put("dark_mode", isDarkModeEnabled?.toString() ?: "")
         put("background_keep_alive", isBackgroundKeepAlive.toString())
+        put("battery_saver_enabled", batterySaverEnabled.toString())
+        put("battery_saver_threshold", batterySaverThresholdPct.toString())
+        // The lock grace is a preference, not a secret: it travels, but the PIN/lock/biometric
+        // keys stay device-local, so a restored grace sits unread until a lock is set up here.
+        put("app_lock_grace_ms", appLockGraceMs.toString())
         put("sftp_large_batch_file_threshold", sftpLargeBatchFileThreshold.toString())
         put("sftp_large_batch_bytes_threshold", sftpLargeBatchBytesThreshold.toString())
         put("backup_last_export_time", lastBackupExportTime.toString())

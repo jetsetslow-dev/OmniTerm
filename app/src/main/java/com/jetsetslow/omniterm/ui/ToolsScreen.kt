@@ -2475,6 +2475,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
     var draftIntervalSec by remember { mutableStateOf((viewModel.telemetryIntervalMs / 1000).toInt()) }
     var draftKeepOn by remember { mutableStateOf(viewModel.defaultKeepScreenOn) }
     var draftBgKeepAlive by remember { mutableStateOf(viewModel.isBackgroundKeepAlive) }
+    var draftBatterySaver by remember { mutableStateOf(viewModel.batterySaverEnabled) }
+    var draftBatterySaverPct by remember { mutableStateOf(viewModel.batterySaverThresholdPct) }
     var draftRetention by remember { mutableStateOf(viewModel.metricsRetentionDays) }
     var draftAlertHistoryLimit by remember { mutableStateOf(viewModel.alertHistoryLimit) }
     var draftTerminalFontSize by remember { mutableStateOf(viewModel.terminalFontSize) }
@@ -2499,6 +2501,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
         draftIntervalSec != (viewModel.telemetryIntervalMs / 1000).toInt() ||
         draftKeepOn != viewModel.defaultKeepScreenOn ||
         draftBgKeepAlive != viewModel.isBackgroundKeepAlive ||
+        draftBatterySaver != viewModel.batterySaverEnabled ||
+        draftBatterySaverPct != viewModel.batterySaverThresholdPct ||
         draftRetention != viewModel.metricsRetentionDays ||
         draftAlertHistoryLimit != viewModel.alertHistoryLimit ||
         draftTerminalFontSize != viewModel.terminalFontSize ||
@@ -2527,6 +2531,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
         draftIntervalSec = (viewModel.telemetryIntervalMs / 1000).toInt()
         draftKeepOn = viewModel.defaultKeepScreenOn
         draftBgKeepAlive = viewModel.isBackgroundKeepAlive
+        draftBatterySaver = viewModel.batterySaverEnabled
+        draftBatterySaverPct = viewModel.batterySaverThresholdPct
         draftRetention = viewModel.metricsRetentionDays
         draftAlertHistoryLimit = viewModel.alertHistoryLimit
         draftTerminalFontSize = viewModel.terminalFontSize
@@ -2550,6 +2556,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
         if (draftIntervalSec != (viewModel.telemetryIntervalMs / 1000).toInt()) viewModel.saveTelemetryInterval(draftIntervalSec)
         if (draftKeepOn != viewModel.defaultKeepScreenOn) viewModel.saveKeepScreenOnToggle(draftKeepOn)
         if (draftBgKeepAlive != viewModel.isBackgroundKeepAlive) viewModel.saveBackgroundKeepAliveToggle(draftBgKeepAlive)
+        if (draftBatterySaver != viewModel.batterySaverEnabled) viewModel.saveBatterySaverEnabled(draftBatterySaver)
+        if (draftBatterySaverPct != viewModel.batterySaverThresholdPct) viewModel.saveBatterySaverThreshold(draftBatterySaverPct)
         if (draftRetention != viewModel.metricsRetentionDays) viewModel.saveRetentionSetting(draftRetention)
         if (draftAlertHistoryLimit != viewModel.alertHistoryLimit) viewModel.saveAlertHistoryLimit(draftAlertHistoryLimit)
         if (draftTerminalFontSize != viewModel.terminalFontSize) viewModel.saveTerminalFontSize(draftTerminalFontSize)
@@ -2688,6 +2696,38 @@ fun SettingsToolView(viewModel: AppViewModel) {
                         ) {
                             Text("Keep device screen always on")
                             Switch(checked = draftKeepOn, onCheckedChange = { draftKeepOn = it })
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Low-battery saver")
+                                Text(
+                                    "Below the threshold (unplugged): turn off keep-screen-on, pause " +
+                                        "auto-refresh, and park tmux terminals resumably. Resumes on " +
+                                        "charge, recovery, or pull-to-refresh.",
+                                    fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(checked = draftBatterySaver, onCheckedChange = { draftBatterySaver = it })
+                        }
+                        if (draftBatterySaver) {
+                            Spacer(modifier = Modifier.height(6.dp))
+                            Text("Engage below: $draftBatterySaverPct%", fontSize = 12.sp)
+                            @OptIn(ExperimentalLayoutApi::class)
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                listOf(10, 15, 20, 30).forEach { pct ->
+                                    FilterChip(
+                                        selected = draftBatterySaverPct == pct,
+                                        onClick = { draftBatterySaverPct = pct },
+                                        label = { Text("$pct%", fontSize = 12.sp) },
+                                    )
+                                }
+                            }
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))

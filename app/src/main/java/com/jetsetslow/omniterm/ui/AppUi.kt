@@ -745,6 +745,30 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
             // Biometric/PIN gate for privileged (sudo) actions, shown when one is staged.
             SudoAuthDialog(viewModel)
 
+            // Low-battery saver engaged: tell the user what was shed and offer an instant resume.
+            if (viewModel.showBatterySaverDialog) {
+                AlertDialog(
+                    onDismissRequest = { viewModel.showBatterySaverDialog = false },
+                    title = { Text("Battery saver engaged") },
+                    text = {
+                        Text(
+                            "Battery reached ${viewModel.batterySaverEngagedAtPct}% (threshold " +
+                                "${viewModel.batterySaverThresholdPct}%). To conserve power, keep-screen-on was " +
+                                "turned off, auto-refresh is paused, and persistent (tmux) terminals were parked — " +
+                                "they keep running on the host and reattach on your next connect. Non-persistent " +
+                                "shells were left connected.\n\nEverything resumes when you charge, when the " +
+                                "battery recovers, or when you pull to refresh."
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { viewModel.showBatterySaverDialog = false }) { Text("Keep saving") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { viewModel.resumeFromBatterySaver() }) { Text("Resume now") }
+                    },
+                )
+            }
+
             // Disconnect dialog safety check
             if (viewModel.showKeepScreenOnBatteryWarning) {
                 AlertDialog(
