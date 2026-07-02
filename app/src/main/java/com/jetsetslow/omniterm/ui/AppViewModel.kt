@@ -19,6 +19,8 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.jetsetslow.omniterm.data.*
+import com.jetsetslow.omniterm.data.shares.RemoteFsClient
+import com.jetsetslow.omniterm.data.shares.ShareClients
 import com.jetsetslow.omniterm.data.ssh.JschSftp
 import com.jetsetslow.omniterm.data.ssh.JschSshTransport
 import com.jetsetslow.omniterm.data.ssh.SshCredentials
@@ -33,6 +35,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import java.io.ByteArrayOutputStream
 import java.security.MessageDigest
 import java.net.InetSocketAddress
+import java.net.NetworkInterface
 import java.net.Socket
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
@@ -137,6 +140,28 @@ data class SftpTransferItem(
     val sourceUri: String? = null,
 )
 
+data class NetworkShareScanHit(
+    val address: String,
+    val protocol: String,
+    val port: Int,
+    val label: String = "$protocol on $address:$port",
+)
+
+/**
+ * One file staged on the cross-endpoint clipboard. Exactly one of [serverId] (an SSH host from
+ * the SFTP tab) or [shareId] (a saved network share) identifies where the file lives, so a paste
+ * can re-open the right connection even after the user navigates elsewhere.
+ */
+data class RemoteFileRef(
+    val serverId: Int? = null,
+    val shareId: Int? = null,
+    val sourceLabel: String,
+    val dir: String,
+    val name: String,
+    val isDirectory: Boolean,
+    val size: Long = 0L,
+)
+
 enum class BroadcastStatus { Running, Success, Failure }
 
 enum class FleetTargetMode { Servers, Groups }
@@ -157,6 +182,7 @@ data class BackupSelection(
     val activeAlerts: Boolean = true,
     val alertHistory: Boolean = true,
     val wolTargets: Boolean = true,
+    val networkShares: Boolean = true,
     val settings: Boolean = true,
     // Opt-in (off by default): crash logs are device/build-specific diagnostics that can contain
     // sensitive details (hostnames, paths, command fragments), so they're never included unless the
@@ -173,6 +199,7 @@ data class BackupContents(
     val activeAlerts: Int = 0,
     val alertHistory: Int = 0,
     val wolTargets: Int = 0,
+    val networkShares: Int = 0,
     val settings: Int = 0,
     val crashLogs: Int = 0,
 )
@@ -188,7 +215,7 @@ fun BackupSelection.hasSensitiveData(): Boolean =
     servers || sshKeys || credentialProfiles || scripts || alertRules || activeAlerts ||
         // Crash traces can carry hostnames, file paths, and command fragments — treat as sensitive
         // so a backup containing them is gated behind passphrase encryption like any other secret.
-        alertHistory || wolTargets || settings || crashLogs
+        alertHistory || wolTargets || networkShares || settings || crashLogs
 
 fun BackupSelection.encode(): String = listOf(
     "servers" to servers,
@@ -199,6 +226,7 @@ fun BackupSelection.encode(): String = listOf(
     "activeAlerts" to activeAlerts,
     "alertHistory" to alertHistory,
     "wolTargets" to wolTargets,
+    "networkShares" to networkShares,
     "settings" to settings,
     "crashLogs" to crashLogs,
 ).filter { it.second }.joinToString(",") { it.first }
@@ -215,6 +243,7 @@ fun decodeBackupSelection(value: String?): BackupSelection {
         activeAlerts = "activeAlerts" in keys,
         alertHistory = "alertHistory" in keys,
         wolTargets = "wolTargets" in keys,
+        networkShares = "networkShares" in keys,
         settings = "settings" in keys,
         crashLogs = "crashLogs" in keys,
     )
@@ -373,6 +402,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val alertHistory = repository.alertHistoryFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val quickScripts = repository.scriptsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val wolTargets = repository.wolTargetsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+    val networkShares = repository.networkSharesFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     val allSettings = repository.settingsFlow.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
     private var playStoreLicenseEnabled by mutableStateOf(false)
     private var playStoreUnlocked by mutableStateOf(true)
@@ -555,6 +585,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val sftpTransfers = mutableStateListOf<SftpTransferItem>()
     var edittingSftpFile by mutableStateOf<SftpFile?>(null)
     var edittingSftpFilePath by mutableStateOf("")
+    var networkShareScanRunning by mutableStateOf(false); private set
+    var networkShareScanStatus by mutableStateOf<String?>(null); private set
+    var networkShareScanCidr by mutableStateOf("")
+    val networkShareScanHits = mutableStateListOf<NetworkShareScanHit>()
+
+    // ── Network share browsing (file browser over SMB/FTP/SFTP/WebDAV) ──
+    var browsingShare by mutableStateOf<NetworkShareEntity?>(null); private set
+    var sharePath by mutableStateOf(""); private set
+    var shareEntries by mutableStateOf<List<SftpFile>>(emptyList()); private set
+    var shareLoading by mutableStateOf(false); private set
+    var shareError by mutableStateOf<String?>(null); private set
+    /** Transient success/info banner for share browser actions. */
+    var shareStatus by mutableStateOf<String?>(null)
+    /** True while a share mutation (mkdir/rename/delete) runs, to gate those buttons. */
+    var shareOpRunning by mutableStateOf(false); private set
+    /** True while share SAF uploads/downloads run, so the browser can show an inline indicator. */
+    var shareTransferRunning by mutableStateOf(false); private set
+    /** Connection for the active browsing session; owned here, closed on exit/switch/clear. */
+    private var shareClient: RemoteFsClient? = null
+    private var shareJob: Job? = null
+
+    // ── Cross-endpoint clipboard: copy/paste between shares and SFTP hosts, both directions ──
+    var crossClipboard by mutableStateOf<List<RemoteFileRef>>(emptyList()); private set
+    var crossClipboardIsMove by mutableStateOf(false); private set
+    var crossPasteRunning by mutableStateOf(false); private set
 
     // ── LIVE REMOTE DATA (real SSH; replaces the old in-memory simulator) ──
     var dockerContainers by mutableStateOf<List<SimContainer>>(emptyList()); private set
@@ -668,6 +723,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** Absolute source paths staged for paste, with a flag for whether they're a move (cut) or copy. */
     var sftpClipboard by mutableStateOf<List<String>>(emptyList()); private set
     var sftpClipboardIsMove by mutableStateOf(false); private set
+    /** Host the [sftpClipboard] paths live on — a paste on any other host must stream, not `cp`. */
+    private var sftpClipboardServerId: Int? = null
     /** True while a paste (server-side cp/mv) is running, to gate the paste button. */
     var sftpPasteRunning by mutableStateOf(false); private set
 
@@ -969,6 +1026,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         sshTransport.shutdown()
         // Release the warm SFTP sessions too (separate pool from the exec/stream transport).
         JschSftp.shutdownPool()
+        // And the network-share browsing connection, if a browser was open.
+        closeShareBrowserClient()
     }
 
     // Ensures the cold-start lock is evaluated once, not on every settings write.
@@ -4033,6 +4092,644 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         tracerouteJob?.cancel()
     }
 
+    // ── Network shares (SMB/FTP/SFTP/NFS/WebDAV profiles + LAN discovery) ──
+    fun defaultNetworkSharePort(protocol: String): Int = when (protocol.uppercase(Locale.ROOT)) {
+        "SMB" -> 445
+        "FTP" -> 21
+        "SFTP" -> 22
+        "NFS" -> 2049
+        "WEBDAV" -> 80
+        else -> 0
+    }
+
+    fun saveNetworkShare(share: NetworkShareEntity) {
+        val normalizedProtocol = share.protocol.uppercase(Locale.ROOT).ifBlank { "SMB" }
+        var normalized = share.copy(
+            name = share.name.trim().ifBlank { "${normalizedProtocol.lowercase(Locale.ROOT)}://${share.address.trim()}" },
+            protocol = normalizedProtocol,
+            address = share.address.trim(),
+            port = share.port.takeIf { it > 0 } ?: defaultNetworkSharePort(normalizedProtocol),
+            sharePath = share.sharePath.trim().trimStart('/'),
+            workgroup = share.workgroup.trim(),
+            username = if (share.anonymous || share.authProfileId != null) "" else share.username.trim(),
+            password = if (share.anonymous || share.authProfileId != null) "" else share.password,
+            authProfileId = if (share.anonymous) null else share.authProfileId,
+            notes = share.notes.trim(),
+        )
+        if (normalized.address.isBlank()) {
+            networkShareScanStatus = "Address is required."
+            return
+        }
+        viewModelScope.launch {
+            if (!normalized.anonymous && normalized.authProfileId == null && normalized.username.isNotBlank()) {
+                val profileName = normalized.name.ifBlank { "${normalized.protocol} ${normalized.address}" }
+                val profileId = repository.insertProfile(
+                    CredentialProfileEntity(
+                        profileName = "Network Share - $profileName",
+                        username = normalized.username,
+                        authType = "password",
+                        password = normalized.password,
+                        groupName = "Network Shares",
+                    )
+                ).toInt()
+                normalized = normalized.copy(authProfileId = profileId, username = "", password = "")
+            }
+            repository.insertNetworkShare(normalized)
+            networkShareScanStatus = "Saved ${normalized.name}."
+        }
+    }
+
+    fun deleteNetworkShare(share: NetworkShareEntity) {
+        viewModelScope.launch {
+            repository.deleteNetworkShare(share)
+            networkShareScanStatus = "Deleted ${share.name}."
+        }
+    }
+
+    fun testNetworkShare(share: NetworkShareEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val ok = canConnect(share.address, share.port, timeoutMs = 1200)
+            val now = System.currentTimeMillis()
+            val status = if (ok) "online" else "unreachable"
+            // Re-read before writing: the user may have edited (or deleted) this share while the
+            // probe was in flight, and a blind copy(share) would resurrect the stale row's fields.
+            val current = repository.getAllNetworkShares().firstOrNull { it.id == share.id }
+            if (current != null) {
+                repository.updateNetworkShare(current.copy(lastChecked = now, lastStatus = status))
+            }
+            withContext(Dispatchers.Main) {
+                networkShareScanStatus = "${share.name}: $status on ${share.address}:${share.port}."
+            }
+        }
+    }
+
+    fun addNetworkShareFromScan(hit: NetworkShareScanHit) {
+        saveNetworkShare(
+            NetworkShareEntity(
+                name = hit.label,
+                protocol = hit.protocol,
+                address = hit.address,
+                port = hit.port,
+                anonymous = hit.protocol != "SFTP",
+                lastChecked = System.currentTimeMillis(),
+                lastStatus = "online",
+            )
+        )
+    }
+
+    fun scanNetworkShares(cidrInput: String = networkShareScanCidr) {
+        if (networkShareScanRunning) return
+        val targets = expandScanTargets(cidrInput.ifBlank { networkShareScanCidr })
+        if (targets.isEmpty()) {
+            networkShareScanStatus = "Enter a /24 subnet like 192.168.1.0/24, or leave it blank on Wi-Fi/LAN."
+            return
+        }
+        networkShareScanRunning = true
+        networkShareScanHits.clear()
+        networkShareScanStatus = "Scanning ${targets.size} host(s) for SMB, FTP, SFTP, NFS, and WebDAV."
+        viewModelScope.launch(Dispatchers.IO) {
+            val ports = listOf("SMB" to 445, "FTP" to 21, "SFTP" to 22, "NFS" to 2049, "WEBDAV" to 80, "WEBDAV" to 443)
+            val semaphore = Semaphore(64)
+            val found = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+            try {
+                coroutineScope {
+                    targets.forEach { host ->
+                        ports.forEach { (protocol, port) ->
+                            launch {
+                                semaphore.withPermit {
+                                    if (canConnect(host, port, timeoutMs = 700)) {
+                                        val key = "$host:$port"
+                                        if (found.add(key)) {
+                                            withContext(Dispatchers.Main) {
+                                                networkShareScanHits.add(NetworkShareScanHit(host, protocol, port))
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                withContext(Dispatchers.Main) {
+                    networkShareScanStatus = "Scan complete: ${networkShareScanHits.size} candidate share service(s)."
+                }
+            } finally {
+                withContext(NonCancellable + Dispatchers.Main) { networkShareScanRunning = false }
+            }
+        }
+    }
+
+    private fun canConnect(host: String, port: Int, timeoutMs: Int): Boolean =
+        runCatching {
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress(host, port), timeoutMs)
+                true
+            }
+        }.getOrDefault(false)
+
+    private fun expandScanTargets(input: String): List<String> {
+        val trimmed = input.trim()
+        if (trimmed.isBlank()) return localIpv4Prefixes().firstOrNull()?.let { prefix ->
+            (1..254).map { "$prefix.$it" }
+        } ?: emptyList()
+        if (!trimmed.contains("/")) return listOf(trimmed)
+        val base = trimmed.substringBefore("/")
+        val cidr = trimmed.substringAfter("/").toIntOrNull() ?: return emptyList()
+        val octets = base.split(".").mapNotNull { it.toIntOrNull()?.takeIf { n -> n in 0..255 } }
+        if (octets.size != 4 || cidr != 24) return emptyList()
+        val prefix = octets.take(3).joinToString(".")
+        return (1..254).map { "$prefix.$it" }
+    }
+
+    private fun localIpv4Prefixes(): List<String> =
+        runCatching {
+            NetworkInterface.getNetworkInterfaces().toList()
+                .filter { it.isUp && !it.isLoopback }
+                .flatMap { it.inetAddresses.toList() }
+                .mapNotNull { addr ->
+                    val host = addr.hostAddress ?: return@mapNotNull null
+                    val parts = host.split(".")
+                    if (parts.size == 4 && parts.none { it.isBlank() } && !host.startsWith("127.")) {
+                        parts.take(3).joinToString(".")
+                    } else null
+                }
+                .distinct()
+        }.getOrDefault(emptyList())
+
+    // ── Network share browser (real SMB/FTP/SFTP/WebDAV file operations) ──
+
+    /** Resolve the share's login: linked credential profile first, then inline creds. */
+    private suspend fun shareCredentials(share: NetworkShareEntity): Pair<String, String> {
+        if (share.anonymous) return "" to ""
+        share.authProfileId?.let { id ->
+            repository.getAllProfiles().firstOrNull { it.id == id }?.let { p ->
+                return p.username to (p.password ?: "")
+            }
+        }
+        return share.username to share.password
+    }
+
+    /** Build a protocol client for [share]. SFTP shares honor key-based credential profiles. */
+    private suspend fun shareFsClient(share: NetworkShareEntity): RemoteFsClient {
+        if (share.protocol.uppercase(Locale.ROOT) == "SFTP" && !share.anonymous && share.authProfileId != null) {
+            val profile = repository.getAllProfiles().firstOrNull { it.id == share.authProfileId }
+            if (profile != null && profile.authType == "key") {
+                val pem = repository.getAllKeys().find { it.alias == profile.keyAlias }?.privateKey
+                    ?: throw java.io.IOException("Key \"${profile.keyAlias}\" for profile \"${profile.profileName}\" no longer exists.")
+                return JschSftp(SshCredentials(share.address, share.port, profile.username, privateKeyPem = pem))
+            }
+        }
+        val (user, pass) = shareCredentials(share)
+        return ShareClients.forShare(share, user, pass)
+    }
+
+    /** The cached browsing connection, dialing it on first use. */
+    private suspend fun browserClient(share: NetworkShareEntity): RemoteFsClient =
+        shareClient ?: shareFsClient(share).also { shareClient = it }
+
+    private fun closeShareBrowserClient() {
+        val client = shareClient ?: return
+        shareClient = null
+        // Teardown can block on socket close, so it must leave the main thread — and it can't use
+        // viewModelScope because that is already cancelled when onCleared calls this.
+        @OptIn(DelicateCoroutinesApi::class)
+        GlobalScope.launch(Dispatchers.IO) { runCatching { client.close() } }
+    }
+
+    fun openShareBrowser(share: NetworkShareEntity) {
+        if (browsingShare?.id == share.id) return
+        shareJob?.cancel()
+        closeShareBrowserClient()
+        browsingShare = share
+        sharePath = ""
+        shareEntries = emptyList()
+        shareError = null
+        shareStatus = null
+        loadShareDir()
+    }
+
+    fun closeShareBrowser() {
+        shareJob?.cancel()
+        closeShareBrowserClient()
+        browsingShare = null
+        sharePath = ""
+        shareEntries = emptyList()
+        shareError = null
+        shareStatus = null
+    }
+
+    fun loadShareDir(path: String? = null, clearError: Boolean = true) {
+        val share = browsingShare ?: return
+        shareJob?.cancel()
+        shareJob = viewModelScope.launch {
+            shareLoading = true
+            if (clearError) shareError = null
+            try {
+                val client = browserClient(share)
+                val target = (path ?: sharePath.ifBlank { ShareClients.startPath(share, client) }).ifBlank { "/" }
+                val listing = client.list(target)
+                if (browsingShare?.id != share.id) return@launch  // browser switched; discard.
+                shareEntries = listing.sortedWith(
+                    compareByDescending<SftpFile> { it.isDirectory }
+                        .thenBy { it.name.lowercase(Locale.ROOT) }
+                        .thenBy { it.name }
+                )
+                sharePath = target
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (browsingShare?.id == share.id) shareError = e.message ?: "Share error"
+            } finally {
+                if (shareJob == coroutineContext[Job]) shareLoading = false
+            }
+        }
+    }
+
+    fun shareNavigateInto(name: String) = loadShareDir(joinPath(sharePath, name))
+
+    fun shareNavigateUp() {
+        val parent = sharePath.trimEnd('/').substringBeforeLast('/', "")
+        loadShareDir(parent.ifBlank { "/" })
+    }
+
+    /** Run one mutation on the browsed share, then refresh without clobbering the banner. */
+    private fun shareMutate(successStatus: String, op: suspend (RemoteFsClient) -> Unit) {
+        val share = browsingShare ?: return
+        if (shareOpRunning) return
+        viewModelScope.launch {
+            shareOpRunning = true
+            try {
+                op(browserClient(share))
+                shareError = null
+                shareStatus = successStatus
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                shareError = e.message ?: "Share operation failed"
+            } finally {
+                shareOpRunning = false
+            }
+            loadShareDir(sharePath, clearError = false)
+        }
+    }
+
+    /** True for protocols the in-app browser can actually open (NFS/CUSTOM are save-only). */
+    fun isShareBrowsable(share: NetworkShareEntity): Boolean =
+        share.protocol.uppercase(Locale.ROOT) in setOf("SMB", "FTP", "SFTP", "WEBDAV")
+
+    fun shareMkdir(name: String) {
+        val trimmed = name.trim()
+        if (trimmed.isBlank()) return
+        shareMutate("Created folder \"$trimmed\"") { it.mkdir(joinPath(sharePath, trimmed)) }
+    }
+
+    fun shareRename(file: SftpFile, newName: String) {
+        val trimmed = newName.trim()
+        if (trimmed.isBlank() || trimmed == file.name) return
+        shareMutate("Renamed to \"$trimmed\"") {
+            it.rename(joinPath(sharePath, file.name), joinPath(sharePath, trimmed))
+        }
+    }
+
+    fun shareDelete(file: SftpFile) {
+        shareMutate("Deleted \"${file.name}\"") { it.delete(joinPath(sharePath, file.name), file.isDirectory) }
+    }
+
+    /** Download a file from the browsed share into a SAF-picked destination. */
+    fun shareDownload(remoteName: String, uri: android.net.Uri, context: android.content.Context) {
+        val share = browsingShare ?: return
+        val remotePath = joinPath(sharePath, remoteName)
+        viewModelScope.launch {
+            shareTransferRunning = true
+            try {
+                shareDownloadInner(share, remoteName, remotePath, uri, context)
+            } finally {
+                shareTransferRunning = false
+            }
+        }
+    }
+
+    private suspend fun shareDownloadInner(
+        share: NetworkShareEntity,
+        remoteName: String,
+        remotePath: String,
+        uri: android.net.Uri,
+        context: android.content.Context,
+    ) {
+        val transferId = addTransfer(-share.id, shareEndpointLabel(share), "Download", remoteName, remotePath)
+        try {
+            val client = browserClient(share)
+            val output = withContext(Dispatchers.IO) {
+                context.contentResolver.openOutputStream(uri)
+                    ?: throw java.io.IOException("Could not open destination.")
+            }
+            val bytes = try {
+                client.downloadTo(remotePath, output) { done, total ->
+                    updateSftpTransferProgress(transferId, done, total)
+                }
+            } finally {
+                withContext(Dispatchers.IO) { output.close() }
+            }
+            finishSftpTransfer(transferId, SftpTransferStatus.Success, bytes, bytes, "Downloaded $bytes bytes")
+            shareStatus = "Downloaded \"$remoteName\""
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            shareError = e.message ?: "Download failed"
+            finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = e.message ?: "Download failed")
+        }
+    }
+
+    /** Upload device files (SAF picker) into the browsed share's current directory. */
+    fun shareUploadMany(uris: List<android.net.Uri>, context: android.content.Context) {
+        val share = browsingShare ?: return
+        val picked = uris.distinct()
+        if (picked.isEmpty()) return
+        val destDir = sharePath.ifBlank { "/" }
+        viewModelScope.launch {
+            shareTransferRunning = true
+            var ok = 0
+            var firstErr: String? = null
+            try {
+                for ((index, uri) in picked.withIndex()) {
+                    val name = queryDisplayName(context, uri)?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
+                        ?: "upload_${System.currentTimeMillis()}_${index + 1}"
+                    val remotePath = joinPath(destDir, name)
+                    val transferId = addTransfer(-share.id, shareEndpointLabel(share), "Upload", name, remotePath, sourceUri = uri.toString())
+                    try {
+                        val client = browserClient(share)
+                        val totalBytes = queryOpenableSize(context, uri)
+                        val input = withContext(Dispatchers.IO) {
+                            context.contentResolver.openInputStream(uri)
+                                ?: throw java.io.IOException("Could not read the selected file from this device.")
+                        }
+                        try {
+                            client.uploadStream(remotePath, input, totalBytes) { done, total ->
+                                updateSftpTransferProgress(transferId, done, total)
+                            }
+                        } finally {
+                            withContext(Dispatchers.IO) { input.close() }
+                        }
+                        ok++
+                        finishSftpTransfer(transferId, SftpTransferStatus.Success, totalBytes, totalBytes, "Uploaded")
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        val msg = e.message ?: "upload failed"
+                        if (firstErr == null) firstErr = "$name: $msg"
+                        finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = msg)
+                    }
+                }
+            } finally {
+                shareTransferRunning = false
+            }
+            shareError = firstErr?.let { "Upload failed: $it" }
+            shareStatus = if (firstErr == null) "Uploaded $ok file(s)" else "Uploaded $ok of ${picked.size} file(s) — see error"
+            if (browsingShare?.id == share.id) loadShareDir(destDir, clearError = false)
+        }
+    }
+
+    private fun shareEndpointLabel(share: NetworkShareEntity): String = "${share.name} (${share.protocol})"
+
+    // ── Cross-endpoint copy/paste ──
+
+    /** Stage one browsed-share entry on the cross-endpoint clipboard (appends while staging). */
+    fun shareClipFile(file: SftpFile, move: Boolean) {
+        val share = browsingShare ?: return
+        val ref = RemoteFileRef(
+            shareId = share.id,
+            sourceLabel = shareEndpointLabel(share),
+            dir = sharePath.ifBlank { "/" },
+            name = file.name,
+            isDirectory = file.isDirectory,
+            size = file.size,
+        )
+        stageCrossRefs(listOf(ref), move)
+        // A share staging replaces any same-server SFTP staging (the two would be ambiguous).
+        sftpClipboard = emptyList()
+        sftpClipboardIsMove = false
+        shareStatus = "${if (move) "Cut" else "Copied"} \"${file.name}\" — paste in a folder here, another share, or the SFTP tab"
+    }
+
+    private fun stageCrossRefs(refs: List<RemoteFileRef>, move: Boolean) {
+        crossClipboard = if (crossClipboardIsMove != move) refs else {
+            (crossClipboard + refs).distinctBy { "${it.serverId}|${it.shareId}|${it.dir}|${it.name}" }
+        }
+        crossClipboardIsMove = move
+    }
+
+    fun clearCrossClipboard() {
+        crossClipboard = emptyList()
+        crossClipboardIsMove = false
+    }
+
+    /** True when the staged SFTP clipboard can be pasted server-side on the selected host. */
+    val sftpClipboardIsLocal: Boolean
+        get() = sftpClipboard.isNotEmpty() && sftpClipboardServerId == selectedServerId
+
+    /** Paste bar entry point for the SFTP Files tab: server-side when local, streamed otherwise. */
+    fun pasteIntoSftp() {
+        val srv = selectedServer ?: return
+        if (sftpClipboardIsLocal) {
+            sftpPaste()
+            return
+        }
+        pasteCrossTo(destServer = srv, destShare = null, destDir = sftpPath.ifBlank { "/" })
+    }
+
+    /** Paste bar entry point for the share browser. */
+    fun pasteIntoShare() {
+        val share = browsingShare ?: return
+        pasteCrossTo(destServer = null, destShare = share, destDir = sharePath.ifBlank { "/" })
+    }
+
+    /**
+     * Copy (or move) every staged clipboard file into [destDir] on the destination endpoint,
+     * streaming each file through the device. Folders are skipped — cross-endpoint recursion
+     * isn't supported yet — and a move within the same share collapses to a rename.
+     */
+    private fun pasteCrossTo(destServer: ServerEntity?, destShare: NetworkShareEntity?, destDir: String) {
+        if (crossPasteRunning) return
+        val refs = crossClipboard
+        if (refs.isEmpty()) return
+        val isMove = crossClipboardIsMove
+        val destLabel = destServer?.name ?: destShare?.let(::shareEndpointLabel).orEmpty()
+        viewModelScope.launch {
+            crossPasteRunning = true
+            val sourceClients = mutableMapOf<String, RemoteFsClient>()
+            var destClient: RemoteFsClient? = null
+            // Reuse (and don't close) the live browsing connection when pasting into the share
+            // the user is looking at; every other client here is owned by this paste.
+            var ownsDestClient = true
+            var ok = 0
+            var skippedDirs = 0
+            var firstErr: String? = null
+            try {
+                destClient = when {
+                    destServer != null -> sftpClientFor(destServer)
+                    destShare != null && browsingShare?.id == destShare.id -> {
+                        ownsDestClient = false
+                        browserClient(destShare)
+                    }
+                    destShare != null -> shareFsClient(destShare)
+                    else -> return@launch
+                }
+                for (ref in refs) {
+                    if (ref.isDirectory) {
+                        skippedDirs++
+                        continue
+                    }
+                    val srcPath = joinPath(ref.dir, ref.name)
+                    val destPath = joinPath(destDir, ref.name)
+                    if (srcPath == destPath && ((destShare != null && ref.shareId == destShare.id) || (destServer != null && ref.serverId == destServer.id))) {
+                        continue  // pasted onto itself; nothing to do.
+                    }
+                    // A move within the same share is just a rename — no data travels.
+                    if (isMove && destShare != null && ref.shareId == destShare.id) {
+                        try {
+                            destClient.rename(srcPath, destPath)
+                            ok++
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            if (firstErr == null) firstErr = "${ref.name}: ${e.message ?: "move failed"}"
+                        }
+                        continue
+                    }
+                    val sourceKey = "${ref.serverId}|${ref.shareId}"
+                    val transferId = addTransfer(
+                        endpointId = ref.shareId?.let { -it } ?: ref.serverId ?: 0,
+                        endpointName = ref.sourceLabel,
+                        direction = if (isMove) "Move" else "Copy",
+                        name = ref.name,
+                        remotePath = "$destLabel:$destPath",
+                    )
+                    try {
+                        val src = sourceClients.getOrPut(sourceKey) { clientForRef(ref) }
+                        val copied = streamCopyBetween(src, srcPath, destClient, destPath, ref.size, transferId)
+                        if (isMove) src.delete(srcPath, false)
+                        ok++
+                        finishSftpTransfer(transferId, SftpTransferStatus.Success, copied, copied, "${if (isMove) "Moved" else "Copied"} $copied bytes to $destLabel")
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        val msg = e.message ?: "copy failed"
+                        if (firstErr == null) firstErr = "${ref.name}: $msg"
+                        finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = msg)
+                    }
+                }
+                val summary = buildString {
+                    append(if (isMove) "Moved" else "Copied")
+                    append(" $ok of ${refs.size} item(s) to $destLabel")
+                    if (skippedDirs > 0) append(" — $skippedDirs folder(s) skipped (folders can't be copied across endpoints yet)")
+                }
+                if (destShare != null) {
+                    shareError = firstErr
+                    shareStatus = summary
+                } else {
+                    sftpError = firstErr
+                    sftpStatus = summary
+                }
+                if (isMove && firstErr == null) {
+                    clearCrossClipboard()
+                    sftpClearClipboard()
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val msg = "Paste failed: ${e.message}"
+                if (destShare != null) shareError = msg else sftpError = msg
+            } finally {
+                crossPasteRunning = false
+                withContext(NonCancellable + Dispatchers.IO) {
+                    sourceClients.values.forEach { runCatching { it.close() } }
+                    if (ownsDestClient) runCatching { destClient?.close() }
+                }
+            }
+            // Refresh whichever destination view the user is (still) looking at.
+            if (destShare != null && browsingShare?.id == destShare.id) loadShareDir(destDir, clearError = false)
+            if (destServer != null) refreshSftpIfStillViewing(destServer.id, destDir)
+            // After a move, the source listing changed too — refresh it if it's on screen.
+            if (isMove) {
+                val srcShareId = refs.firstNotNullOfOrNull { it.shareId }
+                if (srcShareId != null && srcShareId != destShare?.id && browsingShare?.id == srcShareId) {
+                    loadShareDir(sharePath, clearError = false)
+                }
+                val srcServerId = refs.firstNotNullOfOrNull { it.serverId }
+                if (srcServerId != null && srcServerId != destServer?.id) {
+                    refreshSftpIfStillViewing(srcServerId, refs.first { it.serverId == srcServerId }.dir)
+                }
+            }
+        }
+    }
+
+    /** Open a one-off client for the clipboard entry's source endpoint. */
+    private suspend fun clientForRef(ref: RemoteFileRef): RemoteFsClient = when {
+        ref.serverId != null -> {
+            val srv = repository.getAllServers().firstOrNull { it.id == ref.serverId }
+                ?: throw java.io.IOException("The source server no longer exists.")
+            sftpClientFor(srv)
+        }
+        ref.shareId != null -> {
+            val share = repository.getAllNetworkShares().firstOrNull { it.id == ref.shareId }
+                ?: throw java.io.IOException("The source share no longer exists.")
+            shareFsClient(share)
+        }
+        else -> throw java.io.IOException("Invalid clipboard entry.")
+    }
+
+    /**
+     * Copy one file between two endpoints by piping the download straight into the upload — no
+     * temp file, no full-file buffering — so a copy is bounded only by bandwidth, never by device
+     * storage or memory (multi-GB files work). The two legs run as concurrent coroutines joined by
+     * a 1 MiB pipe; [expectedSize] (from the source listing) sizes the progress bar and, for
+     * protocols that want a Content-Length, the upload.
+     *
+     * A mid-stream source failure closes the pipe, which the uploader sees as EOF — so the byte
+     * count is verified afterwards and a short copy fails loudly instead of leaving a silently
+     * truncated file at the destination marked as success.
+     */
+    private suspend fun streamCopyBetween(
+        src: RemoteFsClient,
+        srcPath: String,
+        dest: RemoteFsClient,
+        destPath: String,
+        expectedSize: Long,
+        transferId: String,
+    ): Long = withContext(Dispatchers.IO) {
+        val pipeIn = java.io.PipedInputStream(1 shl 20)
+        val pipeOut = java.io.PipedOutputStream(pipeIn)
+        var downloaded = 0L
+        try {
+            coroutineScope {
+                val downloader = launch {
+                    try {
+                        downloaded = src.downloadTo(srcPath, pipeOut) { done, total ->
+                            updateSftpTransferProgress(transferId, done, if (total > 0) total else expectedSize)
+                        }
+                    } finally {
+                        // Unblocks the uploader's read; on failure it sees EOF and the size check
+                        // below turns that into an error.
+                        runCatching { pipeOut.close() }
+                    }
+                }
+                try {
+                    dest.uploadStream(destPath, pipeIn, expectedSize)
+                } finally {
+                    // If the upload died first, unblock a writer stuck on a full pipe.
+                    runCatching { pipeIn.close() }
+                }
+                downloader.join()
+            }
+        } finally {
+            runCatching { pipeIn.close() }
+        }
+        if (expectedSize > 0 && downloaded != expectedSize) {
+            throw java.io.IOException("Source stream ended early: got $downloaded of $expectedSize bytes.")
+        }
+        downloaded
+    }
+
     // ── SFTP (real ChannelSftp) ──
     private suspend fun sftpClientOrNull(): JschSftp? =
         selectedServer?.let { JschSftp(buildCredentials(it)) }
@@ -4393,14 +5090,39 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** Stage the current selection on the clipboard. [move] = cut (the originals are removed on paste). */
     fun sftpClipSelection(move: Boolean) {
         if (sftpSelected.isEmpty()) return
+        val srv = selectedServer
         sftpClipboard = sftpSelected.map { joinPath(sftpPath, it) }
         sftpClipboardIsMove = move
+        sftpClipboardServerId = srv?.id
+        // Mirror the staging onto the cross-endpoint clipboard so the same copy/cut can be pasted
+        // into a network share's browser or onto a different host, not just back on this server.
+        if (srv != null) {
+            val byName = sftpEntries.associateBy { it.name }
+            crossClipboard = sftpSelected.mapNotNull { name ->
+                byName[name]?.let { f ->
+                    RemoteFileRef(
+                        serverId = srv.id,
+                        sourceLabel = srv.name,
+                        dir = sftpPath.ifBlank { "/" },
+                        name = f.name,
+                        isDirectory = f.isDirectory,
+                        size = f.size,
+                    )
+                }
+            }
+            crossClipboardIsMove = move
+        }
         val verb = if (move) "Cut" else "Copied"
-        sftpStatus = "$verb ${sftpClipboard.size} item(s) — open a folder and Paste"
+        sftpStatus = "$verb ${sftpClipboard.size} item(s) — paste in a folder here, on another host, or in a share"
         sftpSelected.clear()
     }
 
-    fun sftpClearClipboard() { sftpClipboard = emptyList(); sftpClipboardIsMove = false }
+    fun sftpClearClipboard() {
+        sftpClipboard = emptyList()
+        sftpClipboardIsMove = false
+        sftpClipboardServerId = null
+        clearCrossClipboard()
+    }
 
     /**
      * Paste the clipboard into the current directory. Done server-side via `cp -a` / `mv` over an
@@ -4666,8 +5388,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         ) ?: throw java.io.IOException("Could not create destination file.")
     }
 
-    private fun addSftpTransfer(server: ServerEntity, direction: String, name: String, remotePath: String, sourceUri: String? = null): String {
-        val item = SftpTransferItem(serverId = server.id, serverName = server.name, direction = direction, name = name, remotePath = remotePath, sourceUri = sourceUri)
+    private fun addSftpTransfer(server: ServerEntity, direction: String, name: String, remotePath: String, sourceUri: String? = null): String =
+        addTransfer(server.id, server.name, direction, name, remotePath, sourceUri)
+
+    /**
+     * Add a row to the shared transfer log. [endpointId] is a server id for SFTP transfers or the
+     * negated share id for network-share transfers (the two id spaces never collide that way).
+     */
+    private fun addTransfer(endpointId: Int, endpointName: String, direction: String, name: String, remotePath: String, sourceUri: String? = null): String {
+        val item = SftpTransferItem(serverId = endpointId, serverName = endpointName, direction = direction, name = name, remotePath = remotePath, sourceUri = sourceUri)
         sftpTransfers.add(0, item)
         // Trim the oldest finished entries so the log can't grow without bound across a session.
         for (i in sftpTransfers.indices.reversed()) {
@@ -4723,7 +5452,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun retrySftpTransfer(item: SftpTransferItem) {
-        if (!item.retryable || item.sourceUri == null) return
+        // Negative ids are network-share transfers; retry would re-upload to the selected SSH
+        // host instead of the share, so those rows are never marked retryable (see below).
+        if (!item.retryable || item.sourceUri == null || item.serverId < 0) return
         val uri = runCatching { android.net.Uri.parse(item.sourceUri) }.getOrNull() ?: return
         val context = getApplication<android.app.Application>()
         sftpUploadMany(listOf(uri), context)
@@ -5269,6 +6000,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         rules: List<AlertRuleEntity>,
         alertHistories: List<AlertHistoryEntity>,
         wolTargets: List<WolTargetEntity>,
+        networkShares: List<NetworkShareEntity>,
         activeAlerts: List<ActiveAlertEntity>,
         settings: List<AppSettingEntity>,
         selection: BackupSelection = BackupSelection(),
@@ -5316,6 +6048,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 put("authType", p.authType)
                 put("password", p.password)
                 put("keyAlias", p.keyAlias)
+                put("groupName", p.groupName)
             })
         }
         val scriptArr = org.json.JSONArray()
@@ -5370,6 +6103,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 put("lastWokenTime", w.lastWokenTime)
             })
         }
+        val networkShareArr = org.json.JSONArray()
+        for (share in if (selection.networkShares) networkShares else emptyList()) {
+            networkShareArr.put(org.json.JSONObject().apply {
+                put("name", share.name)
+                put("protocol", share.protocol)
+                put("address", share.address)
+                put("port", share.port)
+                put("sharePath", share.sharePath)
+                put("workgroup", share.workgroup)
+                put("username", share.username)
+                put("password", share.password)
+                put("authProfileId", share.authProfileId)
+                put("anonymous", share.anonymous)
+                put("notes", share.notes)
+                put("lastChecked", share.lastChecked)
+                put("lastStatus", share.lastStatus)
+            })
+        }
         val activeAlertArr = org.json.JSONArray()
         for (a in if (selection.activeAlerts) activeAlerts else emptyList()) {
             activeAlertArr.put(org.json.JSONObject().apply {
@@ -5418,6 +6169,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             .put("activeAlerts", activeAlertArr)
             .put("alertHistory", historyArr)
             .put("wolTargets", wolArr)
+            .put("networkShares", networkShareArr)
             .put("settings", settingsObj)
             .put("crashLogs", crashArr)
             .toString()
@@ -5522,6 +6274,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             activeAlerts = root.optJSONArray("activeAlerts")?.length() ?: 0,
             alertHistory = root.optJSONArray("alertHistory")?.length() ?: 0,
             wolTargets = root.optJSONArray("wolTargets")?.length() ?: 0,
+            networkShares = root.optJSONArray("networkShares")?.length() ?: 0,
             settings = settingsObj?.length() ?: 0,
             crashLogs = root.optJSONArray("crashLogs")?.length() ?: 0,
         )
@@ -5589,6 +6342,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val rules = repository.getAllRules()
             val alertHistories = repository.getAlertHistory()
             val wolTargets = repository.getAllWolTargets()
+            val networkShares = repository.getAllNetworkShares()
             val activeAlerts = repository.getActiveAlerts()
             val settings = backupSettingsSnapshot(repository.getAllSettings())
             // Counts shown in the result toast must match what buildBackupJson actually writes:
@@ -5600,7 +6354,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 try {
                     val json = buildBackupJson(
                         srvs, keys, profiles, scripts, rules, alertHistories, wolTargets,
-                        activeAlerts, settings, selection
+                        networkShares, activeAlerts, settings, selection
                     )
                     val payload = if (encrypted) encryptBackupJson(json, passphrase) else json
                     context.contentResolver.openOutputStream(uri)?.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
@@ -5614,7 +6368,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 lastBackupExportTime = now
                 repository.insertSetting("backup_last_export_time", now.toString())
             }
-            onResult(ok, if (ok) "$mode backup written: ${if (selection.servers) srvs.size else 0} servers, ${if (selection.sshKeys) keys.size else 0} keys, ${if (selection.credentialProfiles) profiles.size else 0} profiles, ${if (selection.scripts) scriptsForCount.size else 0} scripts, ${if (selection.alertRules) rulesForCount.size else 0} rules, ${if (selection.alertHistory) alertHistories.size else 0} alert history, ${if (selection.wolTargets) wolTargets.size else 0} WoL, ${if (selection.settings) settings.size else 0} settings." else "Export failed.")
+            onResult(ok, if (ok) "$mode backup written: ${if (selection.servers) srvs.size else 0} servers, ${if (selection.sshKeys) keys.size else 0} keys, ${if (selection.credentialProfiles) profiles.size else 0} profiles, ${if (selection.scripts) scriptsForCount.size else 0} scripts, ${if (selection.alertRules) rulesForCount.size else 0} rules, ${if (selection.alertHistory) alertHistories.size else 0} alert history, ${if (selection.wolTargets) wolTargets.size else 0} WoL, ${if (selection.networkShares) networkShares.size else 0} shares, ${if (selection.settings) settings.size else 0} settings." else "Export failed.")
         }
     }
 
@@ -5663,6 +6417,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                     }
+                    if (selection.networkShares) {
+                        val shareArr = root.optJSONArray("networkShares") ?: org.json.JSONArray()
+                        for (i in 0 until shareArr.length()) {
+                            val profileId = shareArr.getJSONObject(i).optInt("authProfileId", 0)
+                            if (profileId != 0) allowedProfileOldIds.add(profileId)
+                        }
+                    }
 
                     val existingKeys = repository.getAllKeys().map { it.alias }.toMutableSet()
                     val existingProfiles = repository.getAllProfiles().associateBy { it.profileName }.toMutableMap()
@@ -5705,7 +6466,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         val o = profileArr.getJSONObject(i)
                         val name = o.getString("profileName")
                         val oldId = o.optInt("id", 0)
-                        if (selection.servers && oldId != 0 && !allowedProfileOldIds.contains(oldId)) continue
+                        if ((selection.servers || selection.networkShares) && oldId != 0 && !allowedProfileOldIds.contains(oldId)) continue
                         val existing = existingProfiles[name]
                         if (existing != null) {
                             if (oldId != 0) profileIdMap[oldId] = existing.id
@@ -5721,6 +6482,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             authType = o.optString("authType", "password"),
                             password = jsonNullableString(o, "password"),
                             keyAlias = jsonNullableString(o, "keyAlias"),
+                            groupName = o.optString("groupName", "General").ifBlank { "General" },
                         )
                         val newId = repository.insertProfile(
                             profile
@@ -5944,6 +6706,43 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         importedWol++
                     }
 
+                    // Network shares (dedup by endpoint + path; auth profile ids are re-pointed).
+                    val existingShareKeys = repository.getAllNetworkShares()
+                        .map { "${it.protocol.uppercase(Locale.ROOT)}|${it.address.lowercase(Locale.ROOT)}|${it.port}|${it.sharePath.trim('/')}" }
+                        .toMutableSet()
+                    val shareArr = root.optJSONArray("networkShares") ?: org.json.JSONArray()
+                    var importedNetworkShares = 0
+                    for (i in 0 until if (selection.networkShares) shareArr.length() else 0) {
+                        val o = shareArr.getJSONObject(i)
+                        val protocol = o.optString("protocol", "SMB").uppercase(Locale.ROOT)
+                        val address = o.optString("address")
+                        val port = o.optInt("port", defaultNetworkSharePort(protocol))
+                        val sharePath = o.optString("sharePath", "").trim('/')
+                        if (address.isBlank()) continue
+                        val key = "$protocol|${address.lowercase(Locale.ROOT)}|$port|$sharePath"
+                        if (key in existingShareKeys) continue
+                        val oldProfileId = o.optInt("authProfileId", 0)
+                        repository.insertNetworkShare(
+                            NetworkShareEntity(
+                                name = o.optString("name", "$protocol $address"),
+                                protocol = protocol,
+                                address = address,
+                                port = port,
+                                sharePath = sharePath,
+                                workgroup = o.optString("workgroup", ""),
+                                username = o.optString("username", ""),
+                                password = o.optString("password", ""),
+                                authProfileId = profileIdMap[oldProfileId],
+                                anonymous = o.optBoolean("anonymous", true),
+                                notes = o.optString("notes", ""),
+                                lastChecked = o.optLong("lastChecked", 0L),
+                                lastStatus = o.optString("lastStatus", "unknown"),
+                            )
+                        )
+                        existingShareKeys.add(key)
+                        importedNetworkShares++
+                    }
+
                     // App settings / config (overwrite by key — full restore of preferences).
                     val settingsObj = root.optJSONObject("settings")
                     var importedSettings = 0
@@ -6002,7 +6801,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         true,
                         "Restored $imported server(s), $importedKeys key(s), $importedProfiles profile(s), " +
                             "$importedScripts script(s), $importedRules rule(s), $importedActiveAlerts active alert(s), $importedHistory alert history, $importedWol WoL, " +
-                            "$importedSettings setting(s), $importedCrashLogs crash log(s)." + skippedSuffix,
+                            "$importedNetworkShares share(s), $importedSettings setting(s), $importedCrashLogs crash log(s)." + skippedSuffix,
                     )
                 } catch (e: javax.crypto.AEADBadTagException) {
                     Pair(false, "Wrong passphrase or corrupted backup.")

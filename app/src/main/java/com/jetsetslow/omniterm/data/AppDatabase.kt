@@ -18,6 +18,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AlertHistoryEntity::class,
         QuickScriptEntity::class,
         WolTargetEntity::class,
+        NetworkShareEntity::class,
         AppSettingEntity::class,
         PersistentSessionEntity::class
     ],
@@ -26,7 +27,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     // against the exact prior shape. Versions ≤7 predate schema export (several v5 builds shipped
     // with differing schemas), so upgrades from those still fall back to a destructive wipe — but
     // from v8 on, a version bump without a Migration must fail loudly instead of deleting data.
-    version = 14,
+    version = 15,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -39,6 +40,7 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun alertHistoryDao(): AlertHistoryDao
     abstract fun quickScriptDao(): QuickScriptDao
     abstract fun wolTargetDao(): WolTargetDao
+    abstract fun networkShareDao(): NetworkShareDao
     abstract fun appSettingDao(): AppSettingDao
     abstract fun persistentSessionDao(): PersistentSessionDao
 
@@ -94,6 +96,30 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // Saved LAN/network share profiles for SMB/FTP/SFTP/NFS/WebDAV discovery and access metadata.
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE credential_profiles ADD COLUMN groupName TEXT NOT NULL DEFAULT 'General'")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS network_shares (" +
+                        "id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "name TEXT NOT NULL, " +
+                        "protocol TEXT NOT NULL, " +
+                        "address TEXT NOT NULL, " +
+                        "port INTEGER NOT NULL, " +
+                        "sharePath TEXT NOT NULL, " +
+                        "workgroup TEXT NOT NULL, " +
+                        "username TEXT NOT NULL, " +
+                        "password TEXT NOT NULL, " +
+                        "authProfileId INTEGER, " +
+                        "anonymous INTEGER NOT NULL, " +
+                        "notes TEXT NOT NULL, " +
+                        "lastChecked INTEGER NOT NULL, " +
+                        "lastStatus TEXT NOT NULL)"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -103,7 +129,7 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 // Destructive only for the un-exported legacy versions; never for v8+.
                 .fallbackToDestructiveMigrationFrom(dropAllTables = true, 1, 2, 3, 4, 5, 6, 7)
-                .addMigrations(MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+                .addMigrations(MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
                 .build()
                 INSTANCE = instance
                 instance

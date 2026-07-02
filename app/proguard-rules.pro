@@ -15,3 +15,11 @@
 # Shrinking it silently breaks ed25519 public-key auth (the modern ssh-keygen default).
 -keep class org.bouncycastle.** { *; }
 -dontwarn org.bouncycastle.**
+
+# smbj resolves SMB message/cipher factories and its mbassador event-bus handlers reflectively,
+# and logs through slf4j (no binding at runtime is fine, but R8 must not warn the build red).
+-keep class com.hierynomus.** { *; }
+-dontwarn com.hierynomus.**
+-keep class net.engio.mbassy.** { *; }
+-dontwarn net.engio.mbassy.**
+-dontwarn org.slf4j.**

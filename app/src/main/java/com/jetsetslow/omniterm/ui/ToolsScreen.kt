@@ -2359,6 +2359,7 @@ private fun backupSelectionFromContents(contents: BackupContents): BackupSelecti
         activeAlerts = contents.activeAlerts > 0,
         alertHistory = contents.alertHistory > 0,
         wolTargets = contents.wolTargets > 0,
+        networkShares = contents.networkShares > 0,
         settings = contents.settings > 0,
     )
 
@@ -2383,6 +2384,7 @@ private fun BackupSelectionList(
         BackupSelectionRow("Active alerts", contents?.activeAlerts, selection.activeAlerts, { onChange(selection.copy(activeAlerts = it)) }, contents == null || contents.activeAlerts > 0)
         BackupSelectionRow("Alert history *", contents?.alertHistory, selection.alertHistory, { onChange(selection.copy(alertHistory = it)) }, contents == null || contents.alertHistory > 0)
         BackupSelectionRow("Wake on LAN *", contents?.wolTargets, selection.wolTargets, { onChange(selection.copy(wolTargets = it)) }, contents == null || contents.wolTargets > 0)
+        BackupSelectionRow("Network shares *", contents?.networkShares, selection.networkShares, { onChange(selection.copy(networkShares = it)) }, contents == null || contents.networkShares > 0)
         BackupSelectionRow("Settings & customizations *", contents?.settings, selection.settings, { onChange(selection.copy(settings = it)) }, contents == null || contents.settings > 0)
         BackupSelectionRow("Crash logs *", contents?.crashLogs, selection.crashLogs, { onChange(selection.copy(crashLogs = it)) }, contents == null || contents.crashLogs > 0)
         Text(

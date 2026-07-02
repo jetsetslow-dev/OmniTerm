@@ -68,7 +68,7 @@ class SecuritySafeguardsTest {
     private val emptySelection = BackupSelection(
         servers = false, sshKeys = false, credentialProfiles = false, scripts = false,
         alertRules = false, activeAlerts = false, alertHistory = false, wolTargets = false,
-        settings = false,
+        networkShares = false, settings = false,
     )
 
     @Test
@@ -94,6 +94,7 @@ class SecuritySafeguardsTest {
             "activeAlerts" to emptySelection.copy(activeAlerts = true),
             "alertHistory" to emptySelection.copy(alertHistory = true),
             "wolTargets" to emptySelection.copy(wolTargets = true),
+            "networkShares" to emptySelection.copy(networkShares = true),
             "settings" to emptySelection.copy(settings = true),
         )
         for ((name, selection) in variants) {

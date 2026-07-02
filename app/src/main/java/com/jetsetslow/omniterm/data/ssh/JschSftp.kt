@@ -1,6 +1,7 @@
 package com.jetsetslow.omniterm.data.ssh
 
 import com.jetsetslow.omniterm.data.SftpFile
+import com.jetsetslow.omniterm.data.shares.RemoteFsClient
 import com.jcraft.jsch.ChannelSftp
 import com.jcraft.jsch.SftpProgressMonitor
 import kotlinx.coroutines.CancellationException
@@ -23,7 +24,7 @@ import java.io.OutputStream
  * Each operation gets its own short-lived channel so a long transfer never blocks a folder listing
  * on the same connection. Jump-host sessions are not pooled (see [buildJumpedJschSession]).
  */
-class JschSftp(private val creds: SshCredentials) {
+class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
 
     private val isJump: Boolean =
         creds.proxyType == "ssh" && creds.proxyHost.isNotBlank() && creds.proxyPort > 0
@@ -79,7 +80,7 @@ class JschSftp(private val creds: SshCredentials) {
         }
     }
 
-    suspend fun list(path: String): List<SftpFile> = withChannel { ch ->
+    override suspend fun list(path: String): List<SftpFile> = withChannel { ch ->
         val target = path.ifBlank { ch.pwd() ?: "/" }
         @Suppress("UNCHECKED_CAST")
         val entries = ch.ls(target) as java.util.Vector<ChannelSftp.LsEntry>
@@ -98,21 +99,28 @@ class JschSftp(private val creds: SshCredentials) {
     }
 
     /** Resolve the absolute home/working directory to start the browser at. */
-    suspend fun home(): String = withChannel { ch -> ch.pwd() ?: "/" }
+    override suspend fun home(): String = withChannel { ch -> ch.pwd() ?: "/" }
 
-    suspend fun mkdir(path: String) = withChannel { ch -> ch.mkdir(path) }
+    override suspend fun mkdir(path: String) { withChannel { ch -> ch.mkdir(path) } }
 
-    suspend fun rename(oldPath: String, newPath: String) = withChannel { ch -> ch.rename(oldPath, newPath) }
+    override suspend fun rename(oldPath: String, newPath: String) { withChannel { ch -> ch.rename(oldPath, newPath) } }
 
-    suspend fun delete(path: String, isDirectory: Boolean) = withChannel { ch ->
+    override suspend fun delete(path: String, isDirectory: Boolean): Unit = withChannel { ch ->
         if (isDirectory) ch.rmdir(path) else ch.rm(path)
     }
 
     suspend fun readText(path: String, maxBytes: Int = 512 * 1024): String = withChannel { ch ->
         ch.get(path).use { input ->
-            val bytes = input.readBytes()
-            val slice = if (bytes.size > maxBytes) bytes.copyOf(maxBytes) else bytes
-            String(slice, Charsets.UTF_8)
+            // Stop reading at the cap instead of buffering the whole file first — opening a
+            // multi-GB file for editing must cost at most maxBytes of memory, not the file size.
+            val out = java.io.ByteArrayOutputStream(minOf(maxBytes, 64 * 1024))
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (out.size() < maxBytes) {
+                val read = input.read(buffer, 0, minOf(buffer.size, maxBytes - out.size()))
+                if (read < 0) break
+                out.write(buffer, 0, read)
+            }
+            String(out.toByteArray(), Charsets.UTF_8)
         }
     }
 
@@ -129,31 +137,23 @@ class JschSftp(private val creds: SshCredentials) {
         runCatching { ch.lstat(path).size }.getOrDefault(-1L)
     }
 
-    /** Upload raw bytes (e.g. a local file picked via SAF) to [path] on the remote. */
-    suspend fun upload(path: String, bytes: ByteArray, onProgress: ((Long, Long) -> Unit)? = null) = withChannel { ch ->
-        ByteArrayInputStream(bytes).use { input ->
-            ch.put(input, path, progressMonitor(bytes.size.toLong(), onProgress), ChannelSftp.OVERWRITE)
-        }
-    }
-
     /** Upload a stream without buffering the whole local file in memory. */
-    suspend fun uploadStream(
+    override suspend fun uploadStream(
         path: String,
         input: InputStream,
         totalBytes: Long,
-        onProgress: ((Long, Long) -> Unit)? = null,
-    ) = withChannel { ch ->
-        ch.put(input, path, progressMonitor(totalBytes, onProgress), ChannelSftp.OVERWRITE)
+        onProgress: ((Long, Long) -> Unit)?,
+    ) {
+        withChannel { ch ->
+            ch.put(input, path, progressMonitor(totalBytes, onProgress), ChannelSftp.OVERWRITE)
+        }
     }
 
-    /** Download the full remote file at [path] as raw bytes. */
-    suspend fun download(path: String, onProgress: ((Long, Long) -> Unit)? = null): ByteArray = withChannel { ch ->
-        val total = runCatching { ch.lstat(path).size }.getOrDefault(0L)
-        ch.get(path, progressMonitor(total, onProgress)).use { it.readBytes() }
-    }
+    // Deliberately no whole-file ByteArray download/upload helpers: every transfer path must
+    // stream, so a multi-GB file can never be pulled into the heap by accident.
 
     /** Stream a remote file into [output] without closing the caller-owned output stream. */
-    suspend fun downloadTo(path: String, output: OutputStream, onProgress: ((Long, Long) -> Unit)? = null): Long = withChannel { ch ->
+    override suspend fun downloadTo(path: String, output: OutputStream, onProgress: ((Long, Long) -> Unit)?): Long = withChannel { ch ->
         val total = runCatching { ch.lstat(path).size }.getOrDefault(0L)
         var copied = 0L
         ch.get(path, progressMonitor(total, onProgress)).use { input ->

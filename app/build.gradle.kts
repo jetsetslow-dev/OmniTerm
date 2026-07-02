@@ -175,6 +175,15 @@ dependencies {
   // crypto API on the classpath. Without this, RSA/ECDSA keys authenticate but every modern
   // OpenSSH ed25519 key (the ssh-keygen default) silently fails public-key auth.
   implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
+  // SMB2/3 client for the Shares browser (network_shares). Pure-JVM, Android-safe; its bcprov
+  // needs are satisfied by the pinned bcprov-jdk18on above.
+  implementation(libs.smbj) {
+    // smbj declares its own Bouncy Castle artifact; the same packages already ship via the pinned
+    // bcprov-jdk18on above, and two BC jars on the classpath fail the build with duplicate classes.
+    exclude(group = "org.bouncycastle")
+  }
+  // FTP client for the Shares browser. WebDAV rides on the existing OkHttp dependency.
+  implementation(libs.commons.net)
   implementation(libs.androidx.compose.material3)
   implementation("androidx.compose.material:material")
   implementation(libs.androidx.compose.ui)

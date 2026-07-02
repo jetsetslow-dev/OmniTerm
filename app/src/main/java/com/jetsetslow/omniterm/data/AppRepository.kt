@@ -87,6 +87,17 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun updateLastWoken(id: Int, time: Long) = db.wolTargetDao().updateLastWoken(id, time)
     suspend fun deleteWolTarget(target: WolTargetEntity) = db.wolTargetDao().deleteWolTarget(target)
 
+    // Network share functions
+    val networkSharesFlow: Flow<List<NetworkShareEntity>> =
+        db.networkShareDao().getAllNetworkSharesFlow().map { list -> list.map(::decryptNetworkShare) }
+    suspend fun getAllNetworkShares(): List<NetworkShareEntity> =
+        db.networkShareDao().getAllNetworkShares().map(::decryptNetworkShare)
+    suspend fun insertNetworkShare(share: NetworkShareEntity): Long =
+        db.networkShareDao().insertNetworkShare(encryptNetworkShare(share))
+    suspend fun updateNetworkShare(share: NetworkShareEntity) =
+        db.networkShareDao().updateNetworkShare(encryptNetworkShare(share))
+    suspend fun deleteNetworkShare(share: NetworkShareEntity) = db.networkShareDao().deleteNetworkShare(share)
+
     // App Settings functions
     val settingsFlow: Flow<List<AppSettingEntity>> =
         db.appSettingDao().getAllSettingsFlow().map { list -> list.map(::decryptSetting) }
@@ -125,6 +136,12 @@ class AppRepository(private val db: AppDatabase) {
 
     private fun encryptProfile(profile: CredentialProfileEntity): CredentialProfileEntity =
         profile.copy(password = SecretStore.encrypt(profile.password))
+
+    private fun decryptNetworkShare(share: NetworkShareEntity): NetworkShareEntity =
+        share.copy(password = SecretStore.decrypt(share.password) ?: "")
+
+    private fun encryptNetworkShare(share: NetworkShareEntity): NetworkShareEntity =
+        share.copy(password = SecretStore.encrypt(share.password) ?: "")
 
     private fun decryptSetting(setting: AppSettingEntity): AppSettingEntity =
         if (setting.key in secureSettingKeys) setting.copy(value = SecretStore.decrypt(setting.value) ?: "") else setting

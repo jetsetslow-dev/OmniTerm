@@ -20,6 +20,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.automirrored.filled.*
@@ -74,24 +75,23 @@ private fun CompactSftpIconToggleButton(
 @Composable
 fun SftpScreen(viewModel: AppViewModel) {
     val srv = viewModel.selectedServer
-    if (srv == null) {
-        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("Please add a server first.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        return
+    LaunchedEffect(srv?.id) {
+        if (srv != null) viewModel.ensureSftpLoadedForSelectedServer()
+        else viewModel.activeSftpTab = 3
     }
-    LaunchedEffect(srv.id) { viewModel.ensureSftpLoadedForSelectedServer() }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // Let the user switch hosts from SFTP itself (mirrors the other tabs).
-        // The reset itself is driven by SftpFilesTab's LaunchedEffect on the selected host,
-        // so here we only jump back to the FILES tab (avoids opening two SFTP sessions).
-        ServerSelectorBar(viewModel, onServerChange = {
-            viewModel.activeSftpTab = 0
-        })
+        if (srv != null) {
+            // Let the user switch hosts from SFTP itself (mirrors the other tabs).
+            // The reset itself is driven by SftpFilesTab's LaunchedEffect on the selected host,
+            // so here we only jump back to the FILES tab (avoids opening two SFTP sessions).
+            ServerSelectorBar(viewModel, onServerChange = {
+                viewModel.activeSftpTab = 0
+            })
+        }
         TabRow(selectedTabIndex = viewModel.activeSftpTab) {
-            Tab(selected = viewModel.activeSftpTab == 0, onClick = { viewModel.activeSftpTab = 0 }) { Text("Files", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
-            Tab(selected = viewModel.activeSftpTab == 1, onClick = { viewModel.activeSftpTab = 1 }) {
+            Tab(selected = viewModel.activeSftpTab == 0, enabled = srv != null, onClick = { viewModel.activeSftpTab = 0 }) { Text("Files", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+            Tab(selected = viewModel.activeSftpTab == 1, enabled = srv != null, onClick = { viewModel.activeSftpTab = 1 }) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Transfers", fontSize = OmniTextSize.Dense)
                     if (viewModel.sftpTransfers.isNotEmpty()) {
@@ -102,7 +102,8 @@ fun SftpScreen(viewModel: AppViewModel) {
                     }
                 }
             }
-            Tab(selected = viewModel.activeSftpTab == 2, onClick = { viewModel.activeSftpTab = 2 }) { Text("Bookmarks", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+            Tab(selected = viewModel.activeSftpTab == 2, enabled = srv != null, onClick = { viewModel.activeSftpTab = 2 }) { Text("Bookmarks", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+            Tab(selected = viewModel.activeSftpTab == 3, onClick = { viewModel.activeSftpTab = 3 }) { Text("Shares", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
         }
 
         Box(
@@ -115,9 +116,767 @@ fun SftpScreen(viewModel: AppViewModel) {
                 0 -> SftpFilesTab(viewModel)
                 1 -> SftpTransfersTab(viewModel)
                 2 -> SftpBookmarksTab(viewModel)
+                3 -> NetworkSharesTab(viewModel)
             }
         }
     }
+}
+
+@Composable
+private fun NetworkSharesTab(viewModel: AppViewModel) {
+    // A share is open in the file browser — the browser owns the tab until Back closes it.
+    viewModel.browsingShare?.let { share ->
+        ShareBrowserView(viewModel, share)
+        return
+    }
+    val shares = viewModel.networkShares.value
+    val credentialProfiles = viewModel.profiles.value
+    val credentialProfilesById = credentialProfiles.associateBy { it.id }
+    var showDialog by remember { mutableStateOf(false) }
+    var editingShare by remember { mutableStateOf<NetworkShareEntity?>(null) }
+    val protocols = listOf("SMB", "FTP", "SFTP", "NFS", "WEBDAV", "CUSTOM")
+    val confirm = rememberConfirm()
+    ConfirmHost(confirm)
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Network Shares", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                Text(
+                    "Saved SMB/FTP/SFTP/NFS/WebDAV profiles are separate from SSH hosts.",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Button(onClick = {
+                editingShare = null
+                showDialog = true
+            }) {
+                Icon(Icons.Filled.Add, null)
+                Spacer(Modifier.width(6.dp))
+                Text("Add")
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.cyan) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Radar, null, tint = OmniColors.cyan)
+                    Spacer(Modifier.width(8.dp))
+                    Text("LAN share scan", fontWeight = FontWeight.Bold)
+                }
+                OutlinedTextField(
+                    value = viewModel.networkShareScanCidr,
+                    onValueChange = { viewModel.networkShareScanCidr = it },
+                    label = { Text("Subnet or host") },
+                    placeholder = { Text("192.168.1.0/24 or nas.local") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    colors = omniTextFieldColors(),
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Button(
+                        onClick = { viewModel.scanNetworkShares() },
+                        enabled = !viewModel.networkShareScanRunning,
+                    ) {
+                        if (viewModel.networkShareScanRunning) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Filled.Search, null)
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (viewModel.networkShareScanRunning) "Scanning" else "Scan")
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text(
+                        "Probes SMB 445, FTP 21, SFTP 22, NFS 2049, WebDAV 80/443.",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                viewModel.networkShareScanStatus?.let {
+                    Text(it, fontSize = 12.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (viewModel.networkShareScanHits.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        viewModel.networkShareScanHits.forEach { hit ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                            ) {
+                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                                    Icon(Icons.Filled.Lan, null, tint = OmniColors.green)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(hit.label, fontFamily = OmniFonts.mono, fontSize = 12.sp)
+                                }
+                                TextButton(onClick = { viewModel.addNetworkShareFromScan(hit) }) {
+                                    Text("Save")
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+
+        if (shares.isEmpty()) {
+            Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                Text("No network shares saved yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        } else {
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().weight(1f),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(shares, key = { it.id }) { share ->
+                    OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = shareProtocolColor(share.protocol)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Filled.FolderShared, null, tint = shareProtocolColor(share.protocol))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(share.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                }
+                                Text(
+                                    shareUri(share),
+                                    fontFamily = OmniFonts.mono,
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                val authProfile = share.authProfileId?.let { credentialProfilesById[it] }
+                                val auth = when {
+                                    share.anonymous -> "anonymous"
+                                    authProfile != null -> "profile: ${authProfile.profileName}"
+                                    else -> listOf(share.workgroup, share.username).filter { it.isNotBlank() }.joinToString("\\").ifBlank { "credentials" }
+                                }
+                                Text(
+                                    "${share.protocol} · $auth · ${share.lastStatus}",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Row {
+                                val browsable = viewModel.isShareBrowsable(share)
+                                IconButton(onClick = { viewModel.openShareBrowser(share) }, enabled = browsable) {
+                                    Icon(
+                                        Icons.Filled.FolderOpen,
+                                        contentDescription = if (browsable) "Browse files" else "Browsing not supported for ${share.protocol}",
+                                        tint = if (browsable) shareProtocolColor(share.protocol)
+                                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                                    )
+                                }
+                                IconButton(onClick = { viewModel.testNetworkShare(share) }) {
+                                    Icon(Icons.Filled.NetworkPing, contentDescription = "Test share")
+                                }
+                                IconButton(onClick = {
+                                    editingShare = share
+                                    showDialog = true
+                                }) {
+                                    Icon(Icons.Filled.Edit, contentDescription = "Edit share")
+                                }
+                                IconButton(onClick = {
+                                    confirm.ask(
+                                        "Delete \"${share.name}\"?",
+                                        "Removes this saved share profile. Files on the share are not touched.",
+                                        confirmLabel = "Delete",
+                                    ) { viewModel.deleteNetworkShare(share) }
+                                }) {
+                                    Icon(Icons.Filled.Delete, contentDescription = "Delete share", tint = Color.Red)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showDialog) {
+        NetworkShareDialog(
+            initial = editingShare,
+            protocols = protocols,
+            credentialProfiles = credentialProfiles,
+            defaultPort = { viewModel.defaultNetworkSharePort(it) },
+            onDismiss = { showDialog = false },
+            onSave = {
+                viewModel.saveNetworkShare(it)
+                showDialog = false
+            },
+        )
+    }
+}
+
+/**
+ * Full file browser for one saved network share (SMB/FTP/SFTP/WebDAV): navigation, mkdir, rename,
+ * delete, device download/upload, and the cross-endpoint copy/paste clipboard shared with the
+ * SFTP Files tab. Every mutating action is gated while it runs and confirms before overwriting
+ * or deleting; transfers report live progress both inline and on the Transfers tab.
+ */
+@Composable
+private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val confirm = rememberConfirm()
+    ConfirmHost(confirm)
+
+    var pendingDownloadName by remember { mutableStateOf<String?>(null) }
+    val downloadLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("*/*")
+    ) { uri ->
+        val name = pendingDownloadName
+        if (uri != null && name != null) viewModel.shareDownload(name, uri, context)
+        pendingDownloadName = null
+    }
+    val uploadLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+        // Uploads silently replace same-named files on the share, so warn about collisions first.
+        val existing = viewModel.shareEntries.mapTo(mutableSetOf()) { it.name }
+        val conflicts = uris
+            .mapNotNull { contentDisplayName(context, it)?.substringAfterLast('/') }
+            .filter { it in existing }
+            .distinct()
+        if (conflicts.isEmpty()) viewModel.shareUploadMany(uris, context)
+        else confirm.ask(
+            "Overwrite existing file(s)?",
+            "Already in this folder and will be replaced: " +
+                conflicts.take(5).joinToString(", ") +
+                (if (conflicts.size > 5) " and ${conflicts.size - 5} more" else "") +
+                ". This cannot be undone.",
+            confirmLabel = "Overwrite",
+        ) { viewModel.shareUploadMany(uris, context) }
+    }
+
+    var showCreateFolderDialog by remember { mutableStateOf(false) }
+    var folderNameInput by remember { mutableStateOf("") }
+    var renameTarget by remember { mutableStateOf<SftpFile?>(null) }
+    var renameInput by remember { mutableStateOf("") }
+    var menuForName by remember { mutableStateOf<String?>(null) }
+
+    // Auto-clear the transient success banner, mirroring the SFTP Files tab.
+    viewModel.shareStatus?.let { msg ->
+        LaunchedEffect(msg) {
+            delay(4000)
+            if (viewModel.shareStatus == msg) viewModel.shareStatus = null
+        }
+    }
+
+    val atRoot = viewModel.sharePath.trim('/').isEmpty()
+    BackHandler {
+        if (!atRoot) viewModel.shareNavigateUp() else viewModel.closeShareBrowser()
+    }
+
+    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    LaunchedEffect(viewModel.sharePath) { listState.scrollToItem(0) }
+
+    Column(modifier = Modifier.fillMaxSize()) {
+        // Header: back to the share list, identity, refresh, mkdir, upload.
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { viewModel.closeShareBrowser() }) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back to share list")
+            }
+            Column(modifier = Modifier.weight(1f)) {
+                Text(share.name, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    shareUri(share),
+                    fontFamily = OmniFonts.mono,
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            IconButton(
+                onClick = { viewModel.loadShareDir(viewModel.sharePath.ifBlank { null }) },
+                enabled = !viewModel.shareLoading,
+            ) { Icon(Icons.Filled.Refresh, contentDescription = "Refresh") }
+            IconButton(
+                onClick = { folderNameInput = ""; showCreateFolderDialog = true },
+                enabled = !viewModel.shareOpRunning && !viewModel.shareLoading,
+            ) { Icon(Icons.Filled.CreateNewFolder, contentDescription = "New folder") }
+            IconButton(
+                onClick = { uploadLauncher.launch(arrayOf("*/*")) },
+                enabled = !viewModel.shareTransferRunning,
+            ) { Icon(Icons.Filled.UploadFile, contentDescription = "Upload files from device") }
+        }
+
+        // Path bar with Up navigation and the listing spinner.
+        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = { viewModel.shareNavigateUp() }, enabled = !atRoot && !viewModel.shareLoading) {
+                Icon(Icons.Filled.ArrowUpward, contentDescription = "Up one folder")
+            }
+            Text(
+                viewModel.sharePath.ifBlank { "/" },
+                fontFamily = OmniFonts.mono,
+                fontSize = 12.sp,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (viewModel.shareLoading || viewModel.shareOpRunning) {
+                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+            }
+        }
+
+        // Error banner with retry — connection/auth problems must be visible and recoverable.
+        viewModel.shareError?.let { err ->
+            OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.red) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.ErrorOutline, null, tint = OmniColors.red)
+                    Spacer(Modifier.width(8.dp))
+                    Text(err, fontSize = 12.sp, fontFamily = OmniFonts.mono, modifier = Modifier.weight(1f))
+                    TextButton(onClick = { viewModel.loadShareDir(viewModel.sharePath.ifBlank { null }) }) { Text("Retry") }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+
+        // Transient success banner.
+        viewModel.shareStatus?.let {
+            OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.green) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.CheckCircle, null, tint = OmniColors.green)
+                    Spacer(Modifier.width(8.dp))
+                    Text(it, fontSize = 12.sp, fontFamily = OmniFonts.mono)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+
+        // Cross-endpoint clipboard bar — paste files copied here, in another share, or in SFTP.
+        if (viewModel.crossClipboard.isNotEmpty()) {
+            CrossClipboardBar(
+                viewModel = viewModel,
+                existingNames = viewModel.shareEntries.map { it.name },
+                confirm = confirm,
+                onPaste = { viewModel.pasteIntoShare() },
+            )
+            Spacer(Modifier.height(8.dp))
+        }
+
+        // Live progress for this share's in-flight transfers (full history is on Transfers).
+        val activeTransfers = viewModel.sftpTransfers.filter {
+            it.serverId == -share.id && it.status == SftpTransferStatus.InProgress
+        }
+        activeTransfers.forEach { t ->
+            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        "${t.direction}: ${t.name}",
+                        fontSize = 11.sp,
+                        fontFamily = OmniFonts.mono,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        if (t.totalBytes > 0) "${formatBytes(t.bytesTransferred)} / ${formatBytes(t.totalBytes)}"
+                        else formatBytes(t.bytesTransferred),
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (t.totalBytes > 0) {
+                    LinearProgressIndicator(
+                        progress = { (t.bytesTransferred.toFloat() / t.totalBytes).coerceIn(0f, 1f) },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                } else {
+                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                }
+            }
+        }
+        if (activeTransfers.isNotEmpty()) Spacer(Modifier.height(8.dp))
+
+        // The listing itself.
+        when {
+            viewModel.shareLoading && viewModel.shareEntries.isEmpty() -> {
+                Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator()
+                }
+            }
+            viewModel.shareEntries.isEmpty() -> {
+                Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                    Text(
+                        if (viewModel.shareError != null) "Could not open this folder." else "Empty folder.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            else -> {
+                LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), state = listState) {
+                    items(viewModel.shareEntries, key = { it.name }) { file ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = file.isDirectory && !viewModel.shareLoading) {
+                                    viewModel.shareNavigateInto(file.name)
+                                }
+                                .padding(vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Icon(
+                                if (file.isDirectory) Icons.Filled.Folder else Icons.AutoMirrored.Filled.InsertDriveFile,
+                                null,
+                                tint = if (file.isDirectory) shareProtocolColor(share.protocol) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(file.name, fontSize = 13.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                Text(
+                                    listOfNotNull(
+                                        if (file.isDirectory) null else formatBytes(file.size),
+                                        file.modDate.takeIf { it.isNotBlank() },
+                                    ).joinToString(" · ").ifBlank { "folder" },
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Box {
+                                IconButton(onClick = { menuForName = file.name }) {
+                                    Icon(Icons.Filled.MoreVert, contentDescription = "Actions for ${file.name}")
+                                }
+                                DropdownMenu(
+                                    expanded = menuForName == file.name,
+                                    onDismissRequest = { menuForName = null },
+                                ) {
+                                    DropdownMenuItem(
+                                        text = { Text("Copy") },
+                                        leadingIcon = { Icon(Icons.Filled.ContentCopy, null) },
+                                        onClick = { menuForName = null; viewModel.shareClipFile(file, move = false) },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Cut") },
+                                        leadingIcon = { Icon(Icons.Filled.ContentCut, null) },
+                                        onClick = { menuForName = null; viewModel.shareClipFile(file, move = true) },
+                                    )
+                                    if (!file.isDirectory) {
+                                        DropdownMenuItem(
+                                            text = { Text("Download to device") },
+                                            leadingIcon = { Icon(Icons.Filled.Download, null) },
+                                            enabled = !viewModel.shareTransferRunning,
+                                            onClick = {
+                                                menuForName = null
+                                                pendingDownloadName = file.name
+                                                downloadLauncher.launch(file.name)
+                                            },
+                                        )
+                                    }
+                                    DropdownMenuItem(
+                                        text = { Text("Rename") },
+                                        leadingIcon = { Icon(Icons.Filled.DriveFileRenameOutline, null) },
+                                        enabled = !viewModel.shareOpRunning,
+                                        onClick = {
+                                            menuForName = null
+                                            renameInput = file.name
+                                            renameTarget = file
+                                        },
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text("Delete", color = Color.Red) },
+                                        leadingIcon = { Icon(Icons.Filled.Delete, null, tint = Color.Red) },
+                                        enabled = !viewModel.shareOpRunning,
+                                        onClick = {
+                                            menuForName = null
+                                            confirm.ask(
+                                                "Delete \"${file.name}\"?",
+                                                if (file.isDirectory) "Deletes this folder on the share (must be empty on most servers). This cannot be undone."
+                                                else "Deletes this file on the share. This cannot be undone.",
+                                                confirmLabel = "Delete",
+                                            ) { viewModel.shareDelete(file) }
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showCreateFolderDialog) {
+        AlertDialog(
+            onDismissRequest = { showCreateFolderDialog = false },
+            title = { Text("New folder") },
+            text = {
+                OutlinedTextField(
+                    value = folderNameInput,
+                    onValueChange = { folderNameInput = it },
+                    label = { Text("Folder name") },
+                    singleLine = true,
+                    colors = omniTextFieldColors(),
+                )
+            },
+            confirmButton = {
+                Button(
+                    enabled = folderNameInput.isNotBlank() && !folderNameInput.contains('/'),
+                    onClick = {
+                        viewModel.shareMkdir(folderNameInput)
+                        showCreateFolderDialog = false
+                    },
+                ) { Text("Create") }
+            },
+            dismissButton = { TextButton(onClick = { showCreateFolderDialog = false }) { Text("Cancel") } },
+        )
+    }
+
+    renameTarget?.let { target ->
+        AlertDialog(
+            onDismissRequest = { renameTarget = null },
+            title = { Text("Rename \"${target.name}\"") },
+            text = {
+                OutlinedTextField(
+                    value = renameInput,
+                    onValueChange = { renameInput = it },
+                    label = { Text("New name") },
+                    singleLine = true,
+                    colors = omniTextFieldColors(),
+                )
+            },
+            confirmButton = {
+                Button(
+                    enabled = renameInput.isNotBlank() && !renameInput.contains('/') && renameInput != target.name,
+                    onClick = {
+                        viewModel.shareRename(target, renameInput)
+                        renameTarget = null
+                    },
+                ) { Text("Rename") }
+            },
+            dismissButton = { TextButton(onClick = { renameTarget = null }) { Text("Cancel") } },
+        )
+    }
+}
+
+/**
+ * The shared paste bar for the cross-endpoint clipboard. Shows what's staged and from where,
+ * warns about same-named entries at the destination, and gates itself while a paste runs.
+ */
+@Composable
+private fun CrossClipboardBar(
+    viewModel: AppViewModel,
+    existingNames: List<String>,
+    confirm: ConfirmController,
+    onPaste: () -> Unit,
+) {
+    OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.green) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                Icon(
+                    if (viewModel.crossClipboardIsMove) Icons.Filled.ContentCut else Icons.Filled.ContentCopy,
+                    contentDescription = null,
+                    tint = OmniColors.green,
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Column {
+                    Text(
+                        "${viewModel.crossClipboard.size} item(s) ready to ${if (viewModel.crossClipboardIsMove) "move" else "copy"}",
+                        fontSize = 12.sp,
+                        fontFamily = OmniFonts.mono,
+                    )
+                    Text(
+                        "from ${viewModel.crossClipboard.map { it.sourceLabel }.distinct().joinToString(", ")}",
+                        fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (viewModel.crossPasteRunning) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+            } else {
+                Row {
+                    TextButton(onClick = { viewModel.sftpClearClipboard() }) { Text("Clear") }
+                    Button(onClick = {
+                        val conflicts = viewModel.crossClipboard
+                            .map { it.name }
+                            .filter { it in existingNames }
+                            .distinct()
+                        if (conflicts.isEmpty()) onPaste()
+                        else confirm.ask(
+                            "Overwrite existing item(s)?",
+                            "Already in this folder and will be replaced: " +
+                                conflicts.take(5).joinToString(", ") +
+                                (if (conflicts.size > 5) " and ${conflicts.size - 5} more" else "") +
+                                ". This cannot be undone.",
+                            confirmLabel = "Overwrite",
+                        ) { onPaste() }
+                    }) {
+                        Icon(Icons.Filled.ContentPaste, null)
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("Paste here")
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NetworkShareDialog(
+    initial: NetworkShareEntity?,
+    protocols: List<String>,
+    credentialProfiles: List<CredentialProfileEntity>,
+    defaultPort: (String) -> Int,
+    onDismiss: () -> Unit,
+    onSave: (NetworkShareEntity) -> Unit,
+) {
+    var name by remember(initial) { mutableStateOf(initial?.name.orEmpty()) }
+    var protocol by remember(initial) { mutableStateOf(initial?.protocol ?: "SMB") }
+    var address by remember(initial) { mutableStateOf(initial?.address.orEmpty()) }
+    var portText by remember(initial) { mutableStateOf((initial?.port ?: defaultPort(protocol)).toString()) }
+    var sharePath by remember(initial) { mutableStateOf(initial?.sharePath.orEmpty()) }
+    var workgroup by remember(initial) { mutableStateOf(initial?.workgroup.orEmpty()) }
+    var username by remember(initial) { mutableStateOf(initial?.username.orEmpty()) }
+    var password by remember(initial) { mutableStateOf(initial?.password.orEmpty()) }
+    var authProfileId by remember(initial) { mutableStateOf(initial?.authProfileId) }
+    var anonymous by remember(initial) { mutableStateOf(initial?.anonymous ?: true) }
+    var notes by remember(initial) { mutableStateOf(initial?.notes.orEmpty()) }
+    var menuExpanded by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (initial == null) "Add network share" else "Edit network share") },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Custom name") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
+                Box {
+                    OutlinedTextField(
+                        value = protocol,
+                        onValueChange = {},
+                        label = { Text("Protocol") },
+                        modifier = Modifier.fillMaxWidth().clickable { menuExpanded = true },
+                        readOnly = true,
+                        trailingIcon = { Icon(Icons.Filled.ArrowDropDown, null) },
+                        colors = omniTextFieldColors(),
+                    )
+                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                        protocols.forEach { option ->
+                            DropdownMenuItem(
+                                text = { Text(option) },
+                                onClick = {
+                                    protocol = option
+                                    portText = defaultPort(option).takeIf { it > 0 }?.toString().orEmpty()
+                                    menuExpanded = false
+                                },
+                            )
+                        }
+                    }
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(value = address, onValueChange = { address = it }, label = { Text("Address") }, modifier = Modifier.weight(1f), singleLine = true, colors = omniTextFieldColors())
+                    OutlinedTextField(
+                        value = portText,
+                        onValueChange = { portText = it.filter(Char::isDigit).take(5) },
+                        label = { Text("Port") },
+                        modifier = Modifier.width(96.dp),
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        colors = omniTextFieldColors(),
+                    )
+                }
+                OutlinedTextField(value = sharePath, onValueChange = { sharePath = it }, label = { Text("Share/path") }, placeholder = { Text("SharedFolder or exports/media") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = anonymous, onCheckedChange = { anonymous = it })
+                    Spacer(Modifier.width(6.dp))
+                    Text("Anonymous / guest login")
+                }
+                if (!anonymous) {
+                    Text("Credential profile", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        item {
+                            FilterChip(
+                                selected = authProfileId == null,
+                                onClick = { authProfileId = null },
+                                label = { Text("New profile") },
+                            )
+                        }
+                        items(credentialProfiles, key = { it.id }) { profile ->
+                            FilterChip(
+                                selected = authProfileId == profile.id,
+                                onClick = { authProfileId = profile.id },
+                                label = { Text(profile.profileName, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            )
+                        }
+                    }
+                    if (authProfileId == null) {
+                        Text("Saving will create a reusable credential profile in the Network Shares group.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        OutlinedTextField(value = workgroup, onValueChange = { workgroup = it }, label = { Text("Workgroup / domain") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
+                        OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
+                        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
+                    }
+                }
+                OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Notes") }, modifier = Modifier.fillMaxWidth(), minLines = 2, colors = omniTextFieldColors())
+            }
+        },
+        confirmButton = {
+            Button(onClick = {
+                onSave(
+                    NetworkShareEntity(
+                        id = initial?.id ?: 0,
+                        name = name,
+                        protocol = protocol,
+                        address = address,
+                        port = portText.toIntOrNull() ?: defaultPort(protocol),
+                        sharePath = sharePath,
+                        workgroup = workgroup,
+                        username = username,
+                        password = password,
+                        authProfileId = authProfileId,
+                        anonymous = anonymous,
+                        notes = notes,
+                        lastChecked = initial?.lastChecked ?: 0L,
+                        lastStatus = initial?.lastStatus ?: "unknown",
+                    )
+                )
+            }) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+private fun shareUri(share: NetworkShareEntity): String {
+    val scheme = when (share.protocol.uppercase(Locale.ROOT)) {
+        "SMB" -> "smb"
+        "WEBDAV" -> if (share.port == 443) "https" else "http"
+        else -> share.protocol.lowercase(Locale.ROOT)
+    }
+    val port = if (share.port > 0) ":${share.port}" else ""
+    val path = share.sharePath.trim('/').takeIf { it.isNotBlank() }?.let { "/$it" }.orEmpty()
+    return "$scheme://${share.address}$port$path"
+}
+
+private fun shareProtocolColor(protocol: String): Color = when (protocol.uppercase(Locale.ROOT)) {
+    "SMB" -> OmniColors.cyan
+    "FTP" -> OmniColors.green
+    "SFTP" -> OmniColors.amber
+    "NFS" -> OmniColors.purple
+    "WEBDAV" -> OmniColors.orange
+    else -> OmniColors.cyan
 }
 
 @OptIn(
@@ -662,8 +1421,9 @@ fun SftpFilesTab(viewModel: AppViewModel) {
             }
         }
 
-        // Clipboard / paste bar — shown whenever something is staged to copy or move.
-        if (viewModel.sftpClipboard.isNotEmpty()) {
+        // Clipboard / paste bar — server-side cp/mv, so only when the staged files live on THIS
+        // host. After switching hosts the cross-endpoint bar below takes over (streamed paste).
+        if (viewModel.sftpClipboardIsLocal) {
             Spacer(modifier = Modifier.height(8.dp))
             OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.green) {
                 Row(
@@ -715,6 +1475,19 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                     }
                 }
             }
+        }
+
+        // Cross-endpoint paste bar — appears when files copied from a network share or a *different*
+        // SSH host are staged. Pasting here streams them onto the current host (the same-host case
+        // above already handles server-side cp/mv, so this bar hides when the clipboard is local).
+        if (viewModel.crossClipboard.isNotEmpty() && !viewModel.sftpClipboardIsLocal) {
+            Spacer(modifier = Modifier.height(8.dp))
+            CrossClipboardBar(
+                viewModel = viewModel,
+                existingNames = viewModel.sftpEntries.map { it.name },
+                confirm = confirm,
+                onPaste = { viewModel.pasteIntoSftp() },
+            )
         }
 
         // Transient success/info banner (save confirmed, copied, moved, deleted…).

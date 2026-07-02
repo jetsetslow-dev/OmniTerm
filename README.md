@@ -6,6 +6,7 @@ OmniTerm is a native Android app for managing SSH hosts, homelab servers, Docker
 
 - **SSH terminal** with multiple background-capable sessions, session switching, a special-key bar, themes, and copy tools.
 - **SFTP file manager** with an in-app text editor, an editable path bar, copy-path and quick-bookmark actions, authenticated sudo writes, per-host bookmarks, and large-transfer warnings.
+- **Network shares**: browse, transfer, and manage files on **SMB, FTP, SFTP, and WebDAV** shares, with LAN discovery, saved profiles, and credential reuse — plus **cross-protocol copy/paste** to move files between shares, or between a share and an SSH host, in either direction. Transfers stream directly and handle multi-GB files.
 - **Live monitoring**: CPU, memory, disk, load, uptime, temperature, per-core usage, network/disk I/O rates, SMART health, and process/service/log views.
 - **Docker & Podman**: containers, stacks, images, and volumes, plus a visual **Compose Builder** with safe validate-before-deploy.
 - **Fleet Broadcast**: run a command across many hosts or groups at once with live per-host output.
@@ -45,7 +46,7 @@ Install from Google Play when available. Free with a 1-host limit and a single b
 ## Architecture
 
 OmniTerm is built natively for Android using Kotlin and Jetpack Compose.
-- **Connection Layer:** SSH and SFTP connections are managed using JSch (Java Secure Channel) directly from the device.
+- **Connection Layer:** SSH and SFTP connections are managed using JSch (Java Secure Channel) directly from the device. Network shares use a common `RemoteFsClient` abstraction over smbj (SMB2/3), Apache Commons Net (FTP), OkHttp (WebDAV), and JSch (SFTP), so the file browser and cross-protocol transfer engine behave identically across protocols.
 - **Data Storage:** SQLite (via Room) is used for storing hosts, snippets, rules, and telemetry locally.
 - **Security:** Android Keystore provides hardware-backed AES-256-GCM encryption for credentials, private keys, and passwords.
 - **Execution Model:** Background services and WakeLocks allow resilient, persistent SSH terminal sessions (`tmux`-backed when available) to survive network drops and app backgrounding. Monitoring tasks are executed dynamically by parsing standard Linux `/proc` and utility outputs, requiring zero agents to be installed on remote servers.
@@ -74,6 +75,12 @@ Open **SFTP** to browse files on the selected host. You can upload, download, re
 - The path bar is **editable** — tap it to type a destination and jump straight there.
 - **Sudo mode** is authenticated via device biometrics/PIN before enabling.
 - **Bookmarks** let you jump to frequently used directories (e.g., `/etc`, `/var/log`). Each host keeps its own bookmark list.
+
+### Network Shares
+Open the **Shares** tab (in the SFTP screen) to work with network file shares that are separate from your SSH hosts.
+- **Discovery & saved profiles:** Scan a subnet (e.g. `192.168.1.0/24`, or leave it blank on Wi-Fi/LAN) to find SMB, FTP, SFTP, NFS, and WebDAV services, then save them as reusable profiles. Credentials can be entered inline or linked to a shared credential profile.
+- **File browsing:** Tap **Browse** on a SMB, FTP, SFTP, or WebDAV share to navigate folders, create/rename/delete, and upload or download files to your device. (NFS and custom profiles are save-only for now.)
+- **Cross-protocol copy/paste:** Copy or cut files in a share and paste them into another folder, another share, or the SFTP host — and vice versa, in either direction. Same-host SFTP pastes run server-side (`cp`/`mv`); everything else streams through the device without buffering the whole file, so multi-GB transfers work. Each transfer shows live progress and lands in the **Transfers** tab.
 
 ### Monitoring
 Open **Monitor** for live host metrics (CPU, memory, disk, load, uptime, process count, temperature).
@@ -110,7 +117,7 @@ Open **Tools > Settings** to configure the app to your liking:
 **About > Device & diagnostics** shows your app version, build, device info, and an on-device crash history viewer to help you report issues.
 
 ## Backup & Restore
-Open **Tools > Backups Hub** to export or restore a selective backup of OmniTerm's app data (hosts, SSH keys, scripts, alert data, settings).
+Open **Tools > Backups Hub** to export or restore a selective backup of OmniTerm's app data (hosts, SSH keys, scripts, alert data, saved network shares, settings).
 - Backups including sensitive sections are compressed and encrypted with AES-256-GCM using a passphrase-derived key.
 - OmniTerm app backups do not copy files from your remote hosts.
 - OmniTerm does not store the backup passphrase. Keep it safe.

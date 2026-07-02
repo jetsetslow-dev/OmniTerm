@@ -88,7 +88,8 @@ data class CredentialProfileEntity(
     val username: String,
     val authType: String, // "password", "key"
     val password: String? = null,
-    val keyAlias: String? = null
+    val keyAlias: String? = null,
+    val groupName: String = "General"
 )
 
 @Entity(tableName = "alert_rules")
@@ -167,6 +168,25 @@ data class WolTargetEntity(
     val port: Int = 9,
     val notes: String = "",
     val lastWokenTime: Long = 0L
+)
+
+@Entity(tableName = "network_shares")
+data class NetworkShareEntity(
+    @PrimaryKey(autoGenerate = true) val id: Int = 0,
+    val name: String,
+    // "SMB", "FTP", "SFTP", "NFS", "WEBDAV", "CUSTOM"
+    val protocol: String = "SMB",
+    val address: String,
+    val port: Int = 445,
+    val sharePath: String = "",
+    val workgroup: String = "",
+    val username: String = "",
+    val password: String = "",
+    val authProfileId: Int? = null,
+    val anonymous: Boolean = true,
+    val notes: String = "",
+    val lastChecked: Long = 0L,
+    val lastStatus: String = "unknown"
 )
 
 @Entity(tableName = "app_settings")

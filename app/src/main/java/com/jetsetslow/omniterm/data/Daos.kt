@@ -196,6 +196,24 @@ interface WolTargetDao {
 }
 
 @Dao
+interface NetworkShareDao {
+    @Query("SELECT * FROM network_shares ORDER BY name ASC")
+    fun getAllNetworkSharesFlow(): Flow<List<NetworkShareEntity>>
+
+    @Query("SELECT * FROM network_shares ORDER BY name ASC")
+    suspend fun getAllNetworkShares(): List<NetworkShareEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertNetworkShare(share: NetworkShareEntity): Long
+
+    @Update
+    suspend fun updateNetworkShare(share: NetworkShareEntity)
+
+    @Delete
+    suspend fun deleteNetworkShare(share: NetworkShareEntity)
+}
+
+@Dao
 interface AppSettingDao {
     @Query("SELECT * FROM app_settings WHERE `key` = :key LIMIT 1")
     suspend fun getSetting(key: String): AppSettingEntity?
