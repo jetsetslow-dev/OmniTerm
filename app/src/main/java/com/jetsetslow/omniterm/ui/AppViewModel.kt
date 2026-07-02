@@ -60,6 +60,9 @@ private const val SFTP_TRANSFER_LOG_MAX = 50
 /** Cap on recursive SFTP search hits so a broad pattern can't flood the UI. */
 private const val SFTP_SEARCH_MAX_HITS = 200
 
+/** How often saved network-share availability is refreshed while the app is alive. */
+private const val NETWORK_SHARE_PROBE_INTERVAL_MS = 60_000L
+
 /** Default background time before the app lock re-engages on a warm reopen (user-configurable). */
 private const val APP_RELOCK_GRACE_MS = 30_000L
 
@@ -602,7 +605,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // SFTP SCREEN FILE BROWSER
-    var activeSftpTab by mutableStateOf(0) // 0: Files, 1: Transfers, 2: Bookmarks
+    var activeSftpTab by mutableStateOf(0) // 0: Files, 1: Transfers, 2: Bookmarks, 3: Shares
     val sftpTransfers = mutableStateListOf<SftpTransferItem>()
     var edittingSftpFile by mutableStateOf<SftpFile?>(null)
     var edittingSftpFilePath by mutableStateOf("")
@@ -627,6 +630,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private var shareClient: RemoteFsClient? = null
     private var shareClientShareId: Int? = null
     private var shareJob: Job? = null
+    private var networkShareAvailabilityJob: Job? = null
+    private var networkShareAvailabilityRunning = false
 
     // ── Cross-endpoint clipboard: copy/paste between shares and SFTP hosts, both directions ──
     var crossClipboard by mutableStateOf<List<RemoteFileRef>>(emptyList()); private set
@@ -1032,6 +1037,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         // Load settings, security configs, generate examples
         loadSecuritySettings()
         startTelemetryPolling()
+        startNetworkShareAvailabilityProbe()
 
         viewModelScope.launch {
             restorablePersistentSessions = withContext(Dispatchers.IO) {
@@ -1741,7 +1747,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             Screen.Infra -> pullSpin { loadDocker() }
-            Screen.SFTP -> pullSpin { loadSftp(clearError = true) } // re-list the current folder
+            Screen.SFTP -> refreshSftpSubtab()
             // Alerts are evaluated on each metrics pass, so refreshing metrics refreshes alerts.
             Screen.Alerts -> refreshAllServers()
             // Pull-to-refresh is specific to the active Network subtab.
@@ -1766,6 +1772,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             } finally {
                 isRefreshing = false
             }
+        }
+    }
+
+    /**
+     * Pull-to-refresh inside SFTP is scoped to the active subtab. The Shares tab either reloads the
+     * open share folder or refreshes saved-share availability from the shares list.
+     */
+    private fun refreshSftpSubtab() {
+        when (activeSftpTab) {
+            0 -> pullSpin { loadSftp(clearError = true) }
+            3 -> pullSpin {
+                if (browsingShare != null) loadShareDir(sharePath, clearError = true)
+                else refreshNetworkSharesAvailability()
+            }
+            else -> {}
         }
     }
 
@@ -4235,19 +4256,82 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun testNetworkShare(share: NetworkShareEntity) {
         viewModelScope.launch(Dispatchers.IO) {
-            val ok = canConnect(share.address, share.port, timeoutMs = 1200)
-            val now = System.currentTimeMillis()
-            val status = if (ok) "online" else "unreachable"
-            // Re-read before writing: the user may have edited (or deleted) this share while the
-            // probe was in flight, and a blind copy(share) would resurrect the stale row's fields.
-            val current = repository.getAllNetworkShares().firstOrNull { it.id == share.id }
-            if (current != null) {
-                repository.updateNetworkShare(current.copy(lastChecked = now, lastStatus = status))
+            repository.getAllNetworkShares().firstOrNull { it.id == share.id }?.let {
+                repository.updateNetworkShare(it.copy(lastStatus = "checking"))
             }
+            val status = updateNetworkShareAvailability(share)
             withContext(Dispatchers.Main) {
                 networkShareScanStatus = "${share.name}: $status on ${share.address}:${share.port}."
             }
         }
+    }
+
+    fun refreshNetworkSharesAvailability() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val shares = repository.getAllNetworkShares()
+            if (shares.isEmpty()) {
+                withContext(Dispatchers.Main) { scanNetworkShares() }
+                return@launch
+            }
+            shares.forEach { share ->
+                launch {
+                    repository.getAllNetworkShares().firstOrNull { it.id == share.id }?.let {
+                        repository.updateNetworkShare(it.copy(lastStatus = "checking"))
+                    }
+                    updateNetworkShareAvailability(share)
+                }
+            }
+        }
+    }
+
+    private fun startNetworkShareAvailabilityProbe() {
+        if (networkShareAvailabilityJob != null) return
+        networkShareAvailabilityJob = viewModelScope.launch(Dispatchers.IO) {
+            delay(3_000)
+            while (isActive) {
+                probeSavedNetworkShares(markChecking = false)
+                delay(NETWORK_SHARE_PROBE_INTERVAL_MS)
+            }
+        }
+    }
+
+    private suspend fun probeSavedNetworkShares(markChecking: Boolean) {
+        if (networkShareAvailabilityRunning || batterySaverActive) return
+        networkShareAvailabilityRunning = true
+        try {
+            val shares = repository.getAllNetworkShares()
+            if (shares.isEmpty()) return
+            val semaphore = Semaphore(8)
+            coroutineScope {
+                shares.forEach { share ->
+                    launch {
+                        semaphore.withPermit {
+                            if (markChecking) {
+                                repository.getAllNetworkShares().firstOrNull { it.id == share.id }?.let {
+                                    repository.updateNetworkShare(it.copy(lastStatus = "checking"))
+                                }
+                            }
+                            updateNetworkShareAvailability(share)
+                        }
+                    }
+                }
+            }
+        } finally {
+            networkShareAvailabilityRunning = false
+        }
+    }
+
+    private suspend fun updateNetworkShareAvailability(share: NetworkShareEntity): String {
+        val ok = canConnect(share.address, share.port, timeoutMs = 1200)
+        val now = System.currentTimeMillis()
+        val status = if (ok) "online" else "unreachable"
+        // Re-read before writing: the user may have edited (or deleted) this share while the probe
+        // was in flight, and a blind copy(share) would resurrect stale row fields.
+        val current = repository.getAllNetworkShares().firstOrNull { it.id == share.id }
+        if (current != null) {
+            repository.updateNetworkShare(current.copy(lastChecked = now, lastStatus = status))
+        }
+        return status
     }
 
     fun addNetworkShareFromScan(hit: NetworkShareScanHit) {

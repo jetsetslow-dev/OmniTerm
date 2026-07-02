@@ -146,6 +146,7 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
     val credentialProfiles = viewModel.profiles.value
     val credentialProfilesById = credentialProfiles.associateBy { it.id }
     var showDialog by remember { mutableStateOf(false) }
+    var showScanDialog by remember { mutableStateOf(false) }
     var editingShare by remember { mutableStateOf<NetworkShareEntity?>(null) }
     val protocols = listOf("SMB", "FTP", "SFTP", "NFS", "WEBDAV", "CUSTOM")
     val confirm = rememberConfirm()
@@ -177,78 +178,13 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
 
         Spacer(Modifier.height(12.dp))
 
-        OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.cyan) {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Radar, null, tint = OmniColors.cyan)
-                    Spacer(Modifier.width(8.dp))
-                    Text("LAN share scan", fontWeight = FontWeight.Bold)
-                }
-                OutlinedTextField(
-                    value = viewModel.networkShareScanCidr,
-                    onValueChange = { viewModel.networkShareScanCidr = it },
-                    label = { Text("Subnet or host") },
-                    placeholder = { Text("192.168.1.0/24 or nas.local") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    colors = omniTextFieldColors(),
-                )
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Button(
-                        onClick = { viewModel.scanNetworkShares() },
-                        enabled = !viewModel.networkShareScanRunning,
-                    ) {
-                        if (viewModel.networkShareScanRunning) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        } else {
-                            Icon(Icons.Filled.Search, null)
-                        }
-                        Spacer(Modifier.width(6.dp))
-                        Text(if (viewModel.networkShareScanRunning) "Scanning" else "Scan")
-                    }
-                    Spacer(Modifier.width(10.dp))
-                    Text(
-                        "Probes SMB 445, FTP 21, SFTP 22, NFS 2049, WebDAV 80/443.",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                viewModel.networkShareScanStatus?.let {
-                    Text(it, fontSize = 12.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                if (viewModel.networkShareScanHits.isNotEmpty()) {
-                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        viewModel.networkShareScanHits.forEach { hit ->
-                            val scannedHost = scannedHostsByIp[hit.address]
-                            val hostLabel = scannedHost?.hostname?.takeIf { it.isNotBlank() } ?: hit.address
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                            ) {
-                                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                                    Icon(Icons.Filled.Lan, null, tint = OmniColors.green)
-                                    Spacer(Modifier.width(8.dp))
-                                    Column {
-                                        Text("$hostLabel · ${hit.protocol}", fontFamily = OmniFonts.mono, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                                        Text("${hit.address}:${hit.port}", fontFamily = OmniFonts.mono, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                                    }
-                                }
-                                TextButton(onClick = {
-                                    if (hit.protocol in setOf("SMB", "SFTP")) {
-                                        editingShare = shareDraftFromScan(hit, anonymous = hit.protocol != "SFTP")
-                                        showDialog = true
-                                    } else {
-                                        viewModel.addNetworkShareFromScan(hit)
-                                    }
-                                }) {
-                                    Text(if (hit.protocol in setOf("SMB", "SFTP")) "Configure" else "Save")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        OutlinedButton(
+            onClick = { showScanDialog = true },
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Icon(Icons.Filled.Radar, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text("Scan LAN for shares", fontSize = 12.sp)
         }
 
         Spacer(Modifier.height(12.dp))
@@ -305,6 +241,119 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
             },
         )
     }
+
+    if (showScanDialog) {
+        NetworkShareScanDialog(
+            viewModel = viewModel,
+            scannedHostsByIp = scannedHostsByIp,
+            onDismiss = { showScanDialog = false },
+            onConfigure = { hit ->
+                editingShare = shareDraftFromScan(hit, anonymous = hit.protocol != "SFTP")
+                showScanDialog = false
+                showDialog = true
+            },
+            onSave = { hit -> viewModel.addNetworkShareFromScan(hit) },
+        )
+    }
+}
+
+@Composable
+private fun NetworkShareScanDialog(
+    viewModel: AppViewModel,
+    scannedHostsByIp: Map<String, AppViewModel.ScannedHost>,
+    onDismiss: () -> Unit,
+    onConfigure: (NetworkShareScanHit) -> Unit,
+    onSave: (NetworkShareScanHit) -> Unit,
+) {
+    val hits = viewModel.networkShareScanHits
+    val scanning = viewModel.networkShareScanRunning
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("LAN share scan") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = viewModel.networkShareScanCidr,
+                    onValueChange = { viewModel.networkShareScanCidr = it },
+                    label = { Text("Subnet or host") },
+                    placeholder = { Text("192.168.1.0/24 or nas.local") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    colors = omniTextFieldColors(),
+                )
+                Button(
+                    onClick = { viewModel.scanNetworkShares() },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !scanning,
+                ) {
+                    if (scanning) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Scanning shares")
+                    } else {
+                        Icon(Icons.Filled.Search, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (hits.isEmpty()) "Scan LAN shares" else "Rescan LAN shares", fontSize = 12.sp)
+                    }
+                }
+                Text(
+                    "Probes SMB 445, FTP 21, SFTP 22, NFS 2049, WebDAV 80/443.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                viewModel.networkShareScanStatus?.let {
+                    Text(it, fontSize = 12.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (!scanning && hits.isEmpty()) {
+                    Text("No shares yet - run a scan.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                LazyColumn(
+                    modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    items(hits) { hit ->
+                        NetworkShareScanHitRow(
+                            hit = hit,
+                            scannedHost = scannedHostsByIp[hit.address],
+                            onClick = {
+                                if (hit.protocol in setOf("SMB", "SFTP")) onConfigure(hit) else onSave(hit)
+                            },
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("Close") }
+        },
+    )
+}
+
+@Composable
+private fun NetworkShareScanHitRow(
+    hit: NetworkShareScanHit,
+    scannedHost: AppViewModel.ScannedHost?,
+    onClick: () -> Unit,
+) {
+    val hostLabel = scannedHost?.hostname?.takeIf { it.isNotBlank() } ?: hit.address
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+            Icon(Icons.Filled.Lan, null, tint = OmniColors.green)
+            Spacer(Modifier.width(8.dp))
+            Column {
+                Text("$hostLabel · ${hit.protocol}", fontFamily = OmniFonts.mono, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text("${hit.address}:${hit.port}", fontFamily = OmniFonts.mono, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        TextButton(onClick = onClick) {
+            Text(if (hit.protocol in setOf("SMB", "SFTP")) "Configure" else "Save")
+        }
+    }
 }
 
 private fun shareDraftFromScan(hit: NetworkShareScanHit, anonymous: Boolean): NetworkShareEntity =
@@ -332,13 +381,38 @@ private fun NetworkShareCard(
     val accent = shareProtocolColor(share.protocol)
     val hostLabel = scannedHost?.hostname?.takeIf { it.isNotBlank() } ?: share.address
     val shareName = share.sharePath.ifBlank { share.name }
+    val availability = shareAvailabilityUi(share.lastStatus)
     OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = accent) {
         Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Filled.FolderShared, null, tint = accent)
                 Spacer(Modifier.width(8.dp))
                 Column(Modifier.weight(1f)) {
-                    Text(share.name, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            share.name,
+                            modifier = Modifier.weight(1f, fill = false),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 14.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(9.dp)
+                                .clip(RoundedCornerShape(50))
+                                .background(availability.color),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            availability.label,
+                            fontSize = 11.sp,
+                            color = availability.color,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     Text(hostLabel, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Row {
@@ -361,7 +435,7 @@ private fun NetworkShareCard(
                 }
             }
             Text(
-                "$shareName · ${share.protocol} · $authLabel · ${share.lastStatus}",
+                "$shareName · ${share.protocol} · $authLabel",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -386,6 +460,16 @@ private fun NetworkShareCard(
         }
     }
 }
+
+private data class ShareAvailabilityUi(val label: String, val color: Color)
+
+private fun shareAvailabilityUi(status: String): ShareAvailabilityUi =
+    when (status.lowercase(Locale.ROOT)) {
+        "online", "available", "ok" -> ShareAvailabilityUi("Available", OmniColors.green)
+        "checking", "testing" -> ShareAvailabilityUi("Checking", OmniColors.amber)
+        "unreachable", "offline", "failed", "error" -> ShareAvailabilityUi("Unavailable", Color.Red)
+        else -> ShareAvailabilityUi("Unknown", Color.Gray)
+    }
 
 /**
  * Full file browser for one saved network share (SMB/FTP/SFTP/WebDAV): navigation, mkdir, rename,
