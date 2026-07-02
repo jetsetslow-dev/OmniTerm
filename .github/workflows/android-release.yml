@@ -34,6 +34,11 @@ on:
         required: true
         type: boolean
         default: true
+      publish_artifacts:
+        description: "Publish GitHub Release assets and upload the AAB to Google Play"
+        required: true
+        type: boolean
+        default: true
       version_code:
         description: "Override versionCode (default: 140 + git commit count; needed when Play already has that code)"
         required: false
@@ -69,18 +74,19 @@ jobs:
     #   • Manual dispatch: release_channel == 'production'.
     #   • Tag push: a SemVer pre-release suffix (v1.0.0-Alpha, has a '-') means prerelease/testing;
     #     a clean tag (v1.0.0) means production.
-    environment: ${{ ((github.event_name == 'workflow_dispatch' && inputs.release_channel == 'production') || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref, '-'))) && 'production' || 'testing' }}
+    environment: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish_artifacts) && 'dry-run' || (((github.event_name == 'workflow_dispatch' && inputs.release_channel == 'production') || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref, '-'))) && 'production' || 'testing') }}
 
     env:
+      PUBLISH_EXTERNAL: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_artifacts }}
       VERSION_CODE_FLOOR: "140"
       KEYSTORE_PATH: ${{ github.workspace }}/omniterm-upload-key.jks
-      STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-      KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-      KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      STORE_PASSWORD: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish_artifacts) && 'android' || secrets.ANDROID_KEYSTORE_PASSWORD }}
+      KEY_ALIAS: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish_artifacts) && 'androidreleasekey' || secrets.ANDROID_KEY_ALIAS }}
+      KEY_PASSWORD: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish_artifacts) && 'android' || secrets.ANDROID_KEY_PASSWORD }}
       # Real AdMob IDs for the playStore flavor. The build fails at configuration if a
       # playStoreRelease task runs with Google's sample IDs (see app/build.gradle.kts).
-      ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
-      ADMOB_BANNER_UNIT_ID: ${{ secrets.ADMOB_BANNER_UNIT_ID }}
+      ADMOB_APP_ID: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish_artifacts) && 'ca-app-pub-0000000000000000~0000000000' || secrets.ADMOB_APP_ID }}
+      ADMOB_BANNER_UNIT_ID: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish_artifacts) && 'ca-app-pub-0000000000000000/0000000000' || secrets.ADMOB_BANNER_UNIT_ID }}
       # Comma-separated AdMob test-device IDs so a test build can serve test ads (a new real unit
       # returns "no fill" for unregistered devices). An environment VARIABLE (not a secret — the ID
       # isn't sensitive): set in the `testing` environment, unset in `production`. Resolved from the
@@ -93,14 +99,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up JDK
-        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+      - name: Set up Android Gradle
+        uses: ./.github/actions/setup-android-gradle
         with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+          install-sdk-packages: "true"
 
       - name: Resolve release label
         env:
@@ -129,11 +131,6 @@ jobs:
             echo "RELEASE_LABEL=${GITHUB_REF_NAME}" >> "$GITHUB_ENV"
           fi
 
-      - name: Install Android SDK packages
-        run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
-
       # Gate the release on the full unit-test suite — including the Robolectric cold-start smoke
       # test (ColdStartRobolectricTest), so a build that crashes on open can never be signed and
       # published. Deliberately runs before any secret is decoded.
@@ -144,13 +141,18 @@ jobs:
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
-          test -n "$ANDROID_KEYSTORE_BASE64" || { echo "Missing ANDROID_KEYSTORE_BASE64 secret"; exit 1; }
           test -n "$STORE_PASSWORD" || { echo "Missing ANDROID_KEYSTORE_PASSWORD secret"; exit 1; }
           test -n "$KEY_ALIAS" || { echo "Missing ANDROID_KEY_ALIAS secret"; exit 1; }
           test -n "$KEY_PASSWORD" || { echo "Missing ANDROID_KEY_PASSWORD secret"; exit 1; }
           test -n "$ADMOB_APP_ID" || { echo "Missing ADMOB_APP_ID secret (real AdMob app ID for the Play Store build)"; exit 1; }
           test -n "$ADMOB_BANNER_UNIT_ID" || { echo "Missing ADMOB_BANNER_UNIT_ID secret (real AdMob banner unit ID)"; exit 1; }
-          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          if [ "$PUBLISH_EXTERNAL" = "true" ]; then
+            test -n "$ANDROID_KEYSTORE_BASE64" || { echo "Missing ANDROID_KEYSTORE_BASE64 secret"; exit 1; }
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          else
+            keytool -genkeypair -keystore "$KEYSTORE_PATH" -storepass "$STORE_PASSWORD" -keypass "$KEY_PASSWORD" \
+              -alias "$KEY_ALIAS" -dname CN=OmniTerm-Dry-Run -keyalg RSA -keysize 2048 -validity 1
+          fi
 
       - name: Build signed release artifacts
         env:
@@ -221,7 +223,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish GitHub Release assets
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish_artifacts)
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_CHANNEL: ${{ inputs.release_channel }}
@@ -247,7 +249,7 @@ jobs:
           fi
 
       - name: Prune old GitHub Releases
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish_artifacts)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -260,7 +262,7 @@ jobs:
           done
 
       - name: Upload to Google Play
-        if: startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+        if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.publish_artifacts)
         uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1
         with:
           serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
@@ -282,14 +284,10 @@ jobs:
           # and a shallow clone would undercount after the repository move.
           fetch-depth: 0
 
-      - name: Set up JDK
-        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
+      - name: Set up Android Gradle
+        uses: ./.github/actions/setup-android-gradle
         with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+          install-sdk-packages: "true"
 
       - name: Resolve release tag
         env:
@@ -299,19 +297,20 @@ jobs:
           # When no tag is given, a rolling "debug-latest" prerelease is created/updated.
           echo "RELEASE_TAG=${INPUT_RELEASE_TAG:-debug-latest}" >> "$GITHUB_ENV"
 
-      - name: Install Android SDK packages
-        run: |
-          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null || true
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
-
       # Sideloaded debug APKs must keep the same signature across releases so they update in
       # place, so the real debug keystore comes from a secret (it was never committed).
       - name: Decode debug keystore
         env:
+          PUBLISH_EXTERNAL: ${{ inputs.publish_artifacts }}
           ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
         run: |
-          test -n "$ANDROID_DEBUG_KEYSTORE_BASE64" || { echo "Missing ANDROID_DEBUG_KEYSTORE_BASE64 secret"; exit 1; }
-          printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > debug.keystore
+          if [ "$PUBLISH_EXTERNAL" = "true" ]; then
+            test -n "$ANDROID_DEBUG_KEYSTORE_BASE64" || { echo "Missing ANDROID_DEBUG_KEYSTORE_BASE64 secret"; exit 1; }
+            printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > debug.keystore
+          else
+            keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
+              -alias androiddebugkey -dname CN=Android-Debug -keyalg RSA -keysize 2048 -validity 1
+          fi
 
       # Same cold-start gate as the release job: sideloaded debug builds must open too.
       - name: Run unit tests
@@ -331,6 +330,7 @@ jobs:
           ls -la release-artifacts
 
       - name: Create or update release with debug assets
+        if: inputs.publish_artifacts
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

@@ -28,14 +28,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Set up JDK
-        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4
-        with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      - name: Set up Android Gradle
+        uses: ./.github/actions/setup-android-gradle
 
       # assembleDebug needs a keystore to package. Use the real debug keystore from the repo
       # secret when available; fall back to a throwaway one with the same alias/passwords for

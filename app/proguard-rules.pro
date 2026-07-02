@@ -23,3 +23,7 @@
 -keep class net.engio.mbassy.** { *; }
 -dontwarn net.engio.mbassy.**
 -dontwarn org.slf4j.**
+
+# OkHttp probes optional desktop/JVM TLS providers that are not shipped on Android.
+-dontwarn org.conscrypt.**
+-dontwarn org.openjsse.**
