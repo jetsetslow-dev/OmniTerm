@@ -1,6 +1,11 @@
 name: PR Check
 
+# Commits often land on main directly (not via PR), so run the same build + unit-test suite on
+# every push to main too — otherwise the Robolectric cold-start gate only fires at release time.
 on:
+  push:
+    branches:
+      - main
   pull_request:
     branches:
       - main
