@@ -59,7 +59,7 @@ object ShareClients {
             "WEBDAV" -> WebDavFsClient(
                 host = share.address,
                 port = share.port,
-                https = share.port == 443 || share.port == 8443,
+                https = share.useHttps,
                 username = username,
                 password = password,
                 anonymous = share.anonymous,

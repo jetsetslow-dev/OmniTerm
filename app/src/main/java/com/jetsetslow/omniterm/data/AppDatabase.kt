@@ -27,7 +27,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     // against the exact prior shape. Versions ≤7 predate schema export (several v5 builds shipped
     // with differing schemas), so upgrades from those still fall back to a destructive wipe — but
     // from v8 on, a version bump without a Migration must fail loudly instead of deleting data.
-    version = 15,
+    version = 16,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -120,6 +120,15 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // WebDAV shares gain an explicit TLS flag; backfill from the old port heuristic (443/8443
+        // were treated as https) so existing shares keep connecting exactly as before.
+        private val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE network_shares ADD COLUMN useHttps INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE network_shares SET useHttps = 1 WHERE UPPER(protocol) = 'WEBDAV' AND port IN (443, 8443)")
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -129,7 +138,7 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 // Destructive only for the un-exported legacy versions; never for v8+.
                 .fallbackToDestructiveMigrationFrom(dropAllTables = true, 1, 2, 3, 4, 5, 6, 7)
-                .addMigrations(MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
+                .addMigrations(MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
                 .build()
                 INSTANCE = instance
                 instance

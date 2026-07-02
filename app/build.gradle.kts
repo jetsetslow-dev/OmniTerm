@@ -177,7 +177,17 @@ dependencies {
   implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
   // SMB2/3 client for the Shares browser (network_shares). Pure-JVM, Android-safe; its bcprov
   // needs are satisfied by the pinned bcprov-jdk18on above.
-  implementation(libs.smbjrpc)
+  implementation(libs.smbjrpc) {
+    // smbj-rpc's 2018-era POM declares four runtime deps its bytecode never references (verified:
+    // zero class-file refs to guava/commons-io/commons-lang3 packages). Left in, bcprov-jdk15on
+    // duplicate-classes against the pinned bcprov-jdk18on and guava's ListenableFuture collides
+    // with androidx's listenablefuture — both fail checkReleaseDuplicateClasses. It really only
+    // needs smbj (above) and slf4j-api, both already on the classpath.
+    exclude(group = "org.bouncycastle")
+    exclude(group = "com.google.guava")
+    exclude(group = "commons-io")
+    exclude(group = "org.apache.commons", module = "commons-lang3")
+  }
   implementation(libs.smbj) {
     // smbj declares its own Bouncy Castle artifact; the same packages already ship via the pinned
     // bcprov-jdk18on above, and two BC jars on the classpath fail the build with duplicate classes.

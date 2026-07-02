@@ -35,26 +35,32 @@ class FtpFsClient(
             if (existing.isConnected && runCatching { existing.sendNoOp() }.getOrDefault(false)) return existing
         }
         teardownLocked()
+        return dial().also { ftp = it }
+    }
+
+    /** Fresh logged-in binary/passive connection; the socket never outlives a failed setup step. */
+    private fun dial(): FTPClient {
         val client = FTPClient()
         client.controlEncoding = "UTF-8"
         client.connectTimeout = 10_000
         client.defaultTimeout = 15_000
         client.connect(host, if (port > 0) port else 21)
-        client.soTimeout = 30_000
-        if (!FTPReply.isPositiveCompletion(client.replyCode)) {
+        try {
+            client.soTimeout = 30_000
+            if (!FTPReply.isPositiveCompletion(client.replyCode)) {
+                throw IOException("FTP server refused connection: ${client.replyString?.trim()}")
+            }
+            val user = if (anonymous || username.isBlank()) "anonymous" else username
+            val pass = if (anonymous || username.isBlank()) "guest@omniterm.app" else password
+            if (!client.login(user, pass)) {
+                throw IOException("FTP login failed: ${client.replyString?.trim()}")
+            }
+            client.enterLocalPassiveMode()
+            if (!client.setFileType(FTP.BINARY_FILE_TYPE)) throw IOException("FTP server rejected binary mode.")
+        } catch (e: Exception) {
             runCatching { client.disconnect() }
-            throw IOException("FTP server refused connection: ${client.replyString?.trim()}")
+            throw e
         }
-        val user = if (anonymous || username.isBlank()) "anonymous" else username
-        val pass = if (anonymous || username.isBlank()) "guest@omniterm.app" else password
-        if (!client.login(user, pass)) {
-            val reply = client.replyString?.trim()
-            runCatching { client.disconnect() }
-            throw IOException("FTP login failed: $reply")
-        }
-        client.enterLocalPassiveMode()
-        if (!client.setFileType(FTP.BINARY_FILE_TYPE)) throw IOException("FTP server rejected binary mode.")
-        ftp = client
         return client
     }
 
@@ -66,14 +72,7 @@ class FtpFsClient(
         ftp = null
     }
 
-    /**
-     * [retryOnDeadTransport] must be false for streaming transfers: their caller-owned streams are
-     * already partially written/consumed when the transport dies, so re-running [block] would
-     * silently duplicate downloaded bytes or upload only the leftover tail. Listings and metadata
-     * ops are side-effect-free and safe to re-run. (connectLocked's NoOp preflight still gives
-     * every call, retryable or not, a live control connection to start from.)
-     */
-    private suspend fun <T> withFtp(retryOnDeadTransport: Boolean = true, block: (FTPClient) -> T): T = withContext(Dispatchers.IO) {
+    private suspend fun <T> withFtp(block: (FTPClient) -> T): T = withContext(Dispatchers.IO) {
         lock.withLock {
             var attempt = 0
             while (true) {
@@ -87,12 +86,29 @@ class FtpFsClient(
                     // always rebuild; retry only when the transport itself died mid-command.
                     val transportDead = !client.isConnected
                     teardownLocked()
-                    if (retryOnDeadTransport && transportDead && attempt++ < 1) continue
+                    if (transportDead && attempt++ < 1) continue
                     throw e
                 }
             }
             @Suppress("UNREACHABLE_CODE")
             throw IllegalStateException("unreachable")
+        }
+    }
+
+    /**
+     * Transfers run on their own dedicated connection: FTP can't multiplex one control channel,
+     * so going through [withFtp]'s lock would park every directory listing behind a long
+     * download/upload. No retry either — the caller-owned streams are already partially
+     * written/consumed when a transfer dies, and re-running [block] would silently duplicate
+     * downloaded bytes or upload only the leftover tail.
+     */
+    private suspend fun <T> withTransferFtp(block: (FTPClient) -> T): T = withContext(Dispatchers.IO) {
+        val client = dial()
+        try {
+            block(client)
+        } finally {
+            runCatching { if (client.isConnected) client.logout() }
+            runCatching { if (client.isConnected) client.disconnect() }
         }
     }
 
@@ -136,7 +152,7 @@ class FtpFsClient(
     }
 
     override suspend fun downloadTo(path: String, output: OutputStream, onProgress: ((Long, Long) -> Unit)?): Long =
-        withFtp(retryOnDeadTransport = false) { client ->
+        withTransferFtp { client ->
             val total = runCatching { client.mlistFile(path)?.size ?: 0L }.getOrDefault(0L)
             val input = client.retrieveFileStream(path)
                 ?: throw IOException("FTP download failed: ${client.replyString?.trim()}")
@@ -146,7 +162,7 @@ class FtpFsClient(
         }
 
     override suspend fun uploadStream(path: String, input: InputStream, totalBytes: Long, onProgress: ((Long, Long) -> Unit)?) {
-        withFtp(retryOnDeadTransport = false) { client ->
+        withTransferFtp { client ->
             val out = client.storeFileStream(path)
                 ?: throw IOException("FTP upload failed: ${client.replyString?.trim()}")
             out.use { copyWithProgress(input, it, totalBytes, onProgress) }

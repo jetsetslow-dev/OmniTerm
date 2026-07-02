@@ -40,7 +40,9 @@ import java.net.Socket
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import java.util.Locale
 import java.util.UUID
@@ -630,6 +632,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** Connection for the active browsing session; owned here, closed on exit/switch/clear. */
     private var shareClient: RemoteFsClient? = null
     private var shareClientShareId: Int? = null
+    private val shareClientDialLock = Mutex()
     private var shareJob: Job? = null
     private var networkShareAvailabilityJob: Job? = null
     private var networkShareAvailabilityRunning = false
@@ -4349,6 +4352,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         address = hit.address,
                         port = hit.port,
                         anonymous = true,
+                        useHttps = hit.protocol == "WEBDAV" && (hit.port == 443 || hit.port == 8443),
                         lastChecked = System.currentTimeMillis(),
                         lastStatus = "online",
                     )
@@ -4551,9 +4555,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         return ShareClients.forShare(share, user, pass)
     }
 
-    /** The cached browsing connection, dialing it on first use. */
-    private suspend fun browserClient(share: NetworkShareEntity): RemoteFsClient {
-        shareClient?.takeIf { shareClientShareId == share.id }?.let { return it }
+    /**
+     * The cached browsing connection, dialing it on first use. [shareClientDialLock] serializes
+     * the check-evict-dial-cache sequence: two cold callers (e.g. a directory load racing an
+     * upload right after the browser opens) would otherwise both miss the cache, both dial, and
+     * the loser's connection would be overwritten into a leak.
+     */
+    private suspend fun browserClient(share: NetworkShareEntity): RemoteFsClient = shareClientDialLock.withLock {
+        shareClient?.takeIf { shareClientShareId == share.id }?.let { return@withLock it }
 
         val stale = shareClient
         shareClient = null
@@ -4570,7 +4579,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         shareClient = client
         shareClientShareId = share.id
-        return client
+        client
     }
 
     private fun closeShareBrowserClient() {
@@ -6501,6 +6510,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 put("password", share.password)
                 put("authProfileId", share.authProfileId)
                 put("anonymous", share.anonymous)
+                put("useHttps", share.useHttps)
                 put("notes", share.notes)
                 put("lastChecked", share.lastChecked)
                 put("lastStatus", share.lastStatus)
@@ -7119,6 +7129,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                                 password = o.optString("password", ""),
                                 authProfileId = profileIdMap[oldProfileId],
                                 anonymous = o.optBoolean("anonymous", true),
+                                // Old backups predate the flag; default from the same port
+                                // heuristic the DB migration uses so behavior doesn't change.
+                                useHttps = o.optBoolean("useHttps", protocol == "WEBDAV" && (port == 443 || port == 8443)),
                                 notes = o.optString("notes", ""),
                                 lastChecked = o.optLong("lastChecked", 0L),
                                 lastStatus = o.optString("lastStatus", "unknown"),

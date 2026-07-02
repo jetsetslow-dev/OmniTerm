@@ -372,6 +372,7 @@ private fun shareDraftFromScan(hit: NetworkShareScanHit, anonymous: Boolean): Ne
         port = hit.port,
         sharePath = hit.sharePath,
         anonymous = anonymous,
+        useHttps = hit.protocol == "WEBDAV" && (hit.port == 443 || hit.port == 8443),
         lastChecked = System.currentTimeMillis(),
         lastStatus = "online",
     )
@@ -919,6 +920,7 @@ private fun NetworkShareDialog(
     var password by remember(initial) { mutableStateOf(initial?.password.orEmpty()) }
     var authProfileId by remember(initial) { mutableStateOf(initial?.authProfileId) }
     var anonymous by remember(initial) { mutableStateOf(initial?.anonymous ?: true) }
+    var useHttps by remember(initial) { mutableStateOf(initial?.useHttps ?: false) }
     var notes by remember(initial) { mutableStateOf(initial?.notes.orEmpty()) }
     var menuExpanded by remember { mutableStateOf(false) }
     var errorText by remember(initial) { mutableStateOf<String?>(null) }
@@ -969,6 +971,8 @@ private fun NetworkShareDialog(
                                     protocol = option
                                     portText = defaultPort(option).takeIf { it > 0 }?.toString().orEmpty()
                                     if (option == "SFTP") anonymous = false
+                                    // Sensible TLS default when switching to WebDAV; still user-editable.
+                                    if (option == "WEBDAV") useHttps = portText == "443" || portText == "8443"
                                     menuExpanded = false
                                     errorText = null
                                 },
@@ -989,6 +993,27 @@ private fun NetworkShareDialog(
                     )
                 }
                 OutlinedTextField(value = sharePath, onValueChange = { sharePath = it }, label = { Text("Share/path") }, placeholder = { Text("SharedFolder or exports/media") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
+                if (protocol == "WEBDAV") {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable { useHttps = !useHttps }
+                            .padding(vertical = 4.dp)
+                    ) {
+                        Checkbox(checked = useHttps, onCheckedChange = null)
+                        Spacer(Modifier.width(6.dp))
+                        Column {
+                            Text("Use HTTPS (TLS)")
+                            Text(
+                                "Off sends WebDAV logins in cleartext — only for trusted LANs.",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
@@ -1062,6 +1087,7 @@ private fun NetworkShareDialog(
                         password = password,
                         authProfileId = authProfileId,
                         anonymous = anonymous,
+                        useHttps = useHttps,
                         notes = notes,
                         lastChecked = initial?.lastChecked ?: 0L,
                         lastStatus = initial?.lastStatus ?: "unknown",
@@ -1076,7 +1102,7 @@ private fun NetworkShareDialog(
 private fun shareUri(share: NetworkShareEntity): String {
     val scheme = when (share.protocol.uppercase(Locale.ROOT)) {
         "SMB" -> "smb"
-        "WEBDAV" -> if (share.port == 443) "https" else "http"
+        "WEBDAV" -> if (share.useHttps) "https" else "http"
         else -> share.protocol.lowercase(Locale.ROOT)
     }
     val port = if (share.port > 0) ":${share.port}" else ""

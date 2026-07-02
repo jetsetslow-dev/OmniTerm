@@ -184,6 +184,9 @@ data class NetworkShareEntity(
     val password: String = "",
     val authProfileId: Int? = null,
     val anonymous: Boolean = true,
+    // WebDAV only: send requests over TLS. Explicit, not inferred from the port — Basic auth over
+    // plain http on a nonstandard TLS port (e.g. Synology 5006) would leak credentials.
+    val useHttps: Boolean = false,
     val notes: String = "",
     val lastChecked: Long = 0L,
     val lastStatus: String = "unknown"
