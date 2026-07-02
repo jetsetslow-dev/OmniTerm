@@ -134,6 +134,12 @@ jobs:
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null || true
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
+      # Gate the release on the full unit-test suite — including the Robolectric cold-start smoke
+      # test (ColdStartRobolectricTest), so a build that crashes on open can never be signed and
+      # published. Deliberately runs before any secret is decoded.
+      - name: Run unit tests
+        run: ./gradlew testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest --no-daemon -Dorg.gradle.jvmargs=-Xmx2g
+
       - name: Decode release keystore
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -300,6 +306,10 @@ jobs:
 
       - name: Decode debug keystore
         run: base64 --decode debug.keystore.base64 > debug.keystore
+
+      # Same cold-start gate as the release job: sideloaded debug builds must open too.
+      - name: Run unit tests
+        run: ./gradlew testOpenSourceDebugUnitTest --no-daemon -Dorg.gradle.jvmargs=-Xmx2g
 
       # Sideloaders get the openSource flavor (no ad SDK / Play Services dependency).
       - name: Build debug APK

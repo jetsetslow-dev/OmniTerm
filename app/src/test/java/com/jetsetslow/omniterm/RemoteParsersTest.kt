@@ -57,6 +57,15 @@ class RemoteParsersTest {
     }
 
     @Test
+    fun parsesRuntimeList() {
+        assertEquals(setOf("docker", "podman"), RemoteParsers.parseRuntimeList("docker\npodman\n"))
+        assertEquals(setOf("podman"), RemoteParsers.parseRuntimeList("  podman  \n"))
+        assertEquals(emptySet<String>(), RemoteParsers.parseRuntimeList(""))
+        // Noise (motd banners, errors) must not register as a runtime.
+        assertEquals(setOf("docker"), RemoteParsers.parseRuntimeList("Welcome to host\ndocker\nbash: podman: command not found"))
+    }
+
+    @Test
     fun parsesDockerPs() {
         val out =
             "podman\tabc123\tweb\tnginx:1.25\tUp 3 hours (healthy)\t80/tcp\tmyproj\tweb\t/opt/app\tcompose.yml\t2026-05-01 00:00:00 +0000 UTC\n" +

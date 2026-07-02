@@ -61,6 +61,14 @@ object RemoteCommands {
         "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; podman ps -a --no-trunc --format 'podman\\t$PS_FIELDS_PODMAN'; fi; " +
         "if [ \"\$found\" = 0 ]; then if $CR --version | grep -qi podman; then $CR ps -a --no-trunc --format 'podman\\t$PS_FIELDS_PODMAN'; else $CR ps -a --no-trunc --format 'docker\\t$PS_FIELDS_DOCKER'; fi; fi"
 
+    // One line per usable container runtime on the host ("docker" / "podman"). Gated on `ps`
+    // actually answering — a binary whose daemon/socket the user can't reach doesn't count —
+    // matching how DOCKER_PS decides which runtimes to query. Drives the compose-builder runtime
+    // picker when a host has both.
+    const val DOCKER_RUNTIMES =
+        "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then echo docker; fi; " +
+        "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then echo podman; fi"
+
     // Per-container restart counts, keyed by container ID. Docker and Podman name the inspect ID
     // placeholder differently: Docker's template field is `.Id`, Podman's is `.ID` (its inspect
     // JSON prints "Id" but the Go-template struct field is `ID`, so `.Id` errors with
@@ -590,6 +598,10 @@ object RemoteCommands {
 
 /** Pure parsers — deterministic, no I/O — so they can be unit-tested with captured output. */
 object RemoteParsers {
+
+    /** Output of [RemoteCommands.DOCKER_RUNTIMES]: one runtime name per line, anything else ignored. */
+    fun parseRuntimeList(output: String): Set<String> =
+        output.lineSequence().map { it.trim() }.filter { it == "docker" || it == "podman" }.toSet()
 
     // Columns: pid user %cpu %mem vsz etime stat comm (Linux/BSD/macOS and the Windows emulation),
     // or BusyBox's plain `ps w` 4-column form (PID USER TIME COMMAND) from the fallback path.

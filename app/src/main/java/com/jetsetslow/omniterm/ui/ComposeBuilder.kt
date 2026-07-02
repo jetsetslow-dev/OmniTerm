@@ -1103,6 +1103,38 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                 )
             }
 
+            // ── container runtime ──
+            // Only offered when the host has BOTH usable runtimes; with a single runtime the
+            // on-host resolver already picks it. Existing stacks stay on the runtime that owns
+            // them — deploying to the other one wouldn't update the running stack, it would start
+            // a duplicate beside it — so the runtime is shown but not editable.
+            val bothRuntimes = viewModel.availableContainerRuntimes.containsAll(setOf("docker", "podman"))
+            if (!isExisting && bothRuntimes) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text("Runtime", fontSize = 12.sp, color = OmniColors.textMuted)
+                    // Blank runtime deploys via the auto-resolver, which prefers Docker — so
+                    // Docker renders as the default selection until the user picks explicitly.
+                    FilterChip(
+                        selected = draft.runtime != "podman",
+                        onClick = { draft = draft.copy(runtime = "docker") },
+                        label = { Text("Docker") },
+                    )
+                    FilterChip(
+                        selected = draft.runtime == "podman",
+                        onClick = { draft = draft.copy(runtime = "podman") },
+                        label = { Text("Podman") },
+                    )
+                }
+            } else if (isExisting && bothRuntimes && draft.runtime.isNotBlank()) {
+                Text(
+                    "Runtime: ${draft.runtime} (owned by this runtime; redeploys stay on it)",
+                    fontSize = 11.sp, color = OmniColors.textMuted,
+                )
+            }
+
             OmniButton(
                 label = if (deploying) "Deploying…" else if (isExisting) "Validate & Deploy" else "Deploy Stack",
                 color = OmniColors.amber,

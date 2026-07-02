@@ -139,7 +139,7 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
   val isLinuxArm64 = System.getProperty("os.name").equals("Linux", ignoreCase = true) &&
       System.getProperty("os.arch").equals("aarch64", ignoreCase = true)
   if (isLinuxArm64) {
-    exclude("**/ExampleRobolectricTest.class", "**/GreetingScreenshotTest.class", "**/PinHashRobolectricTest.class")
+    exclude("**/ExampleRobolectricTest.class", "**/GreetingScreenshotTest.class", "**/PinHashRobolectricTest.class", "**/ColdStartRobolectricTest.class")
   }
 }
 

@@ -480,6 +480,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var isLanScanning by mutableStateOf(false)
     var sftpLargeBatchFileThreshold by mutableStateOf(50); private set
     var sftpLargeBatchBytesThreshold by mutableStateOf(1_000_000_000L); private set
+    // Battery saver state (feature logic lives in the "Battery saver" section further down).
+    // These MUST be declared above the init block: loadSecuritySettings() collects the allSettings
+    // StateFlow, whose first (initial-value) emission runs synchronously inside the constructor on
+    // Main.immediate — writing a mutableStateOf property declared below init NPEs on the null
+    // delegate and crashes the app at startup.
+    var batterySaverEnabled by mutableStateOf(false); private set
+    var batterySaverThresholdPct by mutableStateOf(20); private set
+    var batterySaverActive by mutableStateOf(false); private set
+    var showBatterySaverDialog by mutableStateOf(false)
+    var batterySaverEngagedAtPct by mutableStateOf(0); private set
 
     // MULTI-SELECT SERVER MODE
     var isMultiSelectMode by mutableStateOf(false)
@@ -553,6 +563,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var dockerNetworks by mutableStateOf<List<SimDockerNetwork>>(emptyList()); private set
     var dockerLoading by mutableStateOf(false); private set
     var dockerError by mutableStateOf<String?>(null); private set
+    // Usable container runtimes on the selected host ("docker"/"podman"); refreshed by loadDocker.
+    // When both are present the compose builder offers a runtime picker for new stacks.
+    var availableContainerRuntimes by mutableStateOf<Set<String>>(emptySet()); private set
     
     var activeInfraTab by mutableStateOf(0)
     // Network Tools subtab (0: Host Scan, 1: Wake-on-LAN, 2: Ping, 3: Traceroute, 4: Port Scan). Held
@@ -965,6 +978,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             isFirstRun = repository.getSetting("first_run_complete") != "true"
         }
         viewModelScope.launch {
+            // NOTE: allSettings is a StateFlow, so this collect body runs its first iteration
+            // synchronously inside the ViewModel constructor (Main.immediate launches undispatched).
+            // Every property assigned in here must be declared ABOVE the init block, or its
+            // mutableStateOf delegate is still null and the app crashes on startup.
             allSettings.collect { list ->
                 val pinVal = list.find { it.key == "app_pin" }?.value
                 val lockEnabled = list.find { it.key == "app_lock_enabled" }?.value == "true"
@@ -3539,6 +3556,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     val imagesAsync = async { executeSshCommand(srv, RemoteCommands.DOCKER_IMAGES) }
                     val volumesAsync = async { executeSshCommand(srv, RemoteCommands.DOCKER_VOLUMES) }
                     val networksAsync = async { executeSshCommand(srv, RemoteCommands.DOCKER_NETWORKS) }
+                    val runtimesAsync = async { executeSshCommand(srv, RemoteCommands.DOCKER_RUNTIMES) }
 
                     val out = outAsync.await()
                     if (srv.id != selectedServerId) return@coroutineScope
@@ -3548,6 +3566,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         dockerImages = emptyList()
                         dockerVolumes = emptyList()
                         dockerNetworks = emptyList()
+                        availableContainerRuntimes = emptySet()
                     } else {
                         val restarts = runCatching { RemoteParsers.parseDockerRestartCounts(restartsAsync.await()) }.getOrDefault(emptyMap())
                         if (srv.id != selectedServerId) return@coroutineScope
@@ -3571,6 +3590,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
                         val netOut = networksAsync.await()
                         dockerNetworks = RemoteParsers.parseDockerNetworks(netOut)
+
+                        availableContainerRuntimes = RemoteParsers.parseRuntimeList(runtimesAsync.await())
                     }
                 }
             } catch (e: CancellationException) {
@@ -3582,6 +3603,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     dockerImages = emptyList()
                     dockerVolumes = emptyList()
                     dockerNetworks = emptyList()
+                    availableContainerRuntimes = emptySet()
                 }
             } finally {
                 if (srv.id == selectedServerId) dockerLoading = false
@@ -4982,11 +5004,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // battery costs without any new permissions: keep-screen-on released, telemetry polling paused,
     // persistent (tmux) terminals parked in their resumable state. Battery level comes from the
     // sticky ACTION_BATTERY_CHANGED broadcast, which needs no permission.
-    var batterySaverEnabled by mutableStateOf(false); private set
-    var batterySaverThresholdPct by mutableStateOf(20); private set
-    var batterySaverActive by mutableStateOf(false); private set
-    var showBatterySaverDialog by mutableStateOf(false)
-    var batterySaverEngagedAtPct by mutableStateOf(0); private set
+    // (State vars live above the main init block with the other settings-backed properties —
+    // loadSecuritySettings() writes them synchronously during construction.)
 
     fun saveBatterySaverEnabled(on: Boolean) {
         batterySaverEnabled = on
