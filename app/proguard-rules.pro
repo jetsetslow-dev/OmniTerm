@@ -24,6 +24,11 @@
 -dontwarn net.engio.mbassy.**
 -dontwarn org.slf4j.**
 
+# smbj-rpc (SRVSVC share enumeration for the LAN scanner) marshals DCE-RPC stubs; keep it whole
+# like its smbj host library so R8 can't strip request/response classes reached via generics.
+-keep class com.rapid7.client.dcerpc.** { *; }
+-dontwarn com.rapid7.client.dcerpc.**
+
 # OkHttp probes optional desktop/JVM TLS providers that are not shipped on Android.
 -dontwarn org.conscrypt.**
 -dontwarn org.openjsse.**

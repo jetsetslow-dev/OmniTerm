@@ -76,7 +76,12 @@ class SmbFsClient(
         share = null; session = null; connection = null; client = null
     }
 
-    private suspend fun <T> withShare(block: (DiskShare) -> T): T = withContext(Dispatchers.IO) {
+    /**
+     * [retryOnDeadTransport] must be false for streaming transfers: their caller-owned streams are
+     * already partially written/consumed when the transport dies, so re-running [block] would
+     * silently duplicate downloaded bytes or upload only the leftover tail.
+     */
+    private suspend fun <T> withShare(retryOnDeadTransport: Boolean = true, block: (DiskShare) -> T): T = withContext(Dispatchers.IO) {
         lock.withLock {
             var attempt = 0
             while (true) {
@@ -90,7 +95,7 @@ class SmbFsClient(
                     // denied, not found) must surface as-is without burning the warm session.
                     val transportDead = !s.isConnected || e is IOException
                     teardownLocked()
-                    if (transportDead && attempt++ < 1) continue
+                    if (retryOnDeadTransport && transportDead && attempt++ < 1) continue
                     throw e
                 }
             }
@@ -140,7 +145,7 @@ class SmbFsClient(
     }
 
     override suspend fun downloadTo(path: String, output: OutputStream, onProgress: ((Long, Long) -> Unit)?): Long =
-        withShare { s ->
+        withShare(retryOnDeadTransport = false) { s ->
             val p = smbPath(path)
             val total = runCatching { s.getFileInformation(p).standardInformation.endOfFile }.getOrDefault(0L)
             s.openFile(
@@ -152,7 +157,7 @@ class SmbFsClient(
         }
 
     override suspend fun uploadStream(path: String, input: InputStream, totalBytes: Long, onProgress: ((Long, Long) -> Unit)?) {
-        withShare { s ->
+        withShare(retryOnDeadTransport = false) { s ->
             s.openFile(
                 smbPath(path), EnumSet.of(AccessMask.GENERIC_WRITE), null,
                 SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_OVERWRITE_IF, null,

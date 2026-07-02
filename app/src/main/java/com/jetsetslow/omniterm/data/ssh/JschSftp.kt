@@ -29,37 +29,51 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
     private val isJump: Boolean =
         creds.proxyType == "ssh" && creds.proxyHost.isNotBlank() && creds.proxyPort > 0
 
-    private suspend fun <T> withChannel(block: (ChannelSftp) -> T): T =
-        if (isJump) withContext(Dispatchers.IO) { withJumpedChannel(block) } else withPooledChannel(block)
+    private suspend fun <T> withChannel(retryBlockOnStaleSession: Boolean = true, block: (ChannelSftp) -> T): T =
+        if (isJump) withContext(Dispatchers.IO) { withJumpedChannel(block) }
+        else withPooledChannel(retryBlockOnStaleSession, block)
 
     /**
      * Reuse a warm authenticated session from the pool; open a fresh channel per call. Both the
      * (potential) session handshake and the channel work run on [Dispatchers.IO] — never the caller's
      * (UI) thread — since [SshSessionPool.acquire] may dial+authenticate a brand-new connection.
+     *
+     * A stale pooled session usually fails at channel open — before [block] has done anything —
+     * and that phase is always evict-and-retried once. Failures *inside* [block] retry only when
+     * [retryBlockOnStaleSession] allows it: streaming transfers must pass false, because their
+     * caller-owned streams are already partially written/consumed, and re-running the block would
+     * silently duplicate downloaded bytes or upload only the leftover tail.
      */
-    private suspend fun <T> withPooledChannel(block: (ChannelSftp) -> T): T = withContext(Dispatchers.IO) {
+    private suspend fun <T> withPooledChannel(retryBlockOnStaleSession: Boolean, block: (ChannelSftp) -> T): T = withContext(Dispatchers.IO) {
         var attempt = 0
         while (true) {
             val session = pool.acquire(creds)
-            var channel: ChannelSftp? = null
+            val channel: ChannelSftp = try {
+                (session.openChannel("sftp") as ChannelSftp).also { it.connect(CONNECT_TIMEOUT_MS) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (!session.isConnected) {
+                    pool.evict(creds)
+                    if (attempt++ < 1) continue
+                }
+                throw e
+            }
             try {
-                channel = (session.openChannel("sftp") as ChannelSftp).also { it.connect(CONNECT_TIMEOUT_MS) }
                 return@withContext block(channel)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 // Only a dropped/stale session warrants eviction + one reconnect; a logical error
                 // (e.g. "No such file") must NOT throw away the warm session — rethrow it as-is.
-                if (!session.isConnected && attempt++ < 1) {
+                if (!session.isConnected) {
                     pool.evict(creds)
-                } else {
-                    if (!session.isConnected) pool.evict(creds)
-                    throw e
+                    if (retryBlockOnStaleSession && attempt++ < 1) continue
                 }
+                throw e
             } finally {
-                channel?.disconnect()
+                channel.disconnect()
             }
-            // Reached only after a stale-session eviction above: loop to rebuild + retry once.
         }
         @Suppress("UNREACHABLE_CODE")
         throw IllegalStateException("withPooledChannel loop exited unexpectedly")
@@ -144,7 +158,7 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
         totalBytes: Long,
         onProgress: ((Long, Long) -> Unit)?,
     ) {
-        withChannel { ch ->
+        withChannel(retryBlockOnStaleSession = false) { ch ->
             ch.put(input, path, progressMonitor(totalBytes, onProgress), ChannelSftp.OVERWRITE)
         }
     }
@@ -153,7 +167,7 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
     // stream, so a multi-GB file can never be pulled into the heap by accident.
 
     /** Stream a remote file into [output] without closing the caller-owned output stream. */
-    override suspend fun downloadTo(path: String, output: OutputStream, onProgress: ((Long, Long) -> Unit)?): Long = withChannel { ch ->
+    override suspend fun downloadTo(path: String, output: OutputStream, onProgress: ((Long, Long) -> Unit)?): Long = withChannel(retryBlockOnStaleSession = false) { ch ->
         val total = runCatching { ch.lstat(path).size }.getOrDefault(0L)
         var copied = 0L
         ch.get(path, progressMonitor(total, onProgress)).use { input ->

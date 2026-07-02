@@ -177,6 +177,7 @@ dependencies {
   implementation("org.bouncycastle:bcprov-jdk18on:1.78.1")
   // SMB2/3 client for the Shares browser (network_shares). Pure-JVM, Android-safe; its bcprov
   // needs are satisfied by the pinned bcprov-jdk18on above.
+  implementation(libs.smbjrpc)
   implementation(libs.smbj) {
     // smbj declares its own Bouncy Castle artifact; the same packages already ship via the pinned
     // bcprov-jdk18on above, and two BC jars on the classpath fail the build with duplicate classes.

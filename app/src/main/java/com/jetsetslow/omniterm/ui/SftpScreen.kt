@@ -141,9 +141,9 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
         ShareBrowserView(viewModel, share)
         return
     }
-    val shares = viewModel.networkShares.value
+    val shares by viewModel.networkShares.collectAsState()
     val scannedHostsByIp = viewModel.hostScanResults.associateBy { it.ip }
-    val credentialProfiles = viewModel.profiles.value
+    val credentialProfiles by viewModel.profiles.collectAsState()
     val credentialProfilesById = credentialProfiles.associateBy { it.id }
     var showDialog by remember { mutableStateOf(false) }
     var showScanDialog by remember { mutableStateOf(false) }
@@ -252,7 +252,12 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
                 showScanDialog = false
                 showDialog = true
             },
-            onSave = { hit -> viewModel.addNetworkShareFromScan(hit) },
+            onSave = { hit -> 
+                viewModel.addNetworkShareFromScan(hit)
+                if (hit.protocol !in setOf("SMB", "SFTP")) {
+                    showScanDialog = false
+                }
+            },
         )
     }
 }
@@ -337,6 +342,9 @@ private fun NetworkShareScanHitRow(
     onClick: () -> Unit,
 ) {
     val hostLabel = scannedHost?.hostname?.takeIf { it.isNotBlank() } ?: hit.address
+    // Enumerated SMB shares produce one hit per share on the same host:port — without the share
+    // name the rows would be indistinguishable.
+    val title = if (hit.sharePath.isNotBlank()) "$hostLabel · ${hit.protocol} · ${hit.sharePath}" else "$hostLabel · ${hit.protocol}"
     Row(
         modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -346,7 +354,7 @@ private fun NetworkShareScanHitRow(
             Icon(Icons.Filled.Lan, null, tint = OmniColors.green)
             Spacer(Modifier.width(8.dp))
             Column {
-                Text("$hostLabel · ${hit.protocol}", fontFamily = OmniFonts.mono, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text(title, fontFamily = OmniFonts.mono, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Text("${hit.address}:${hit.port}", fontFamily = OmniFonts.mono, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -362,6 +370,7 @@ private fun shareDraftFromScan(hit: NetworkShareScanHit, anonymous: Boolean): Ne
         protocol = hit.protocol,
         address = hit.address,
         port = hit.port,
+        sharePath = hit.sharePath,
         anonymous = anonymous,
         lastChecked = System.currentTimeMillis(),
         lastStatus = "online",
@@ -938,9 +947,6 @@ private fun NetworkShareDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                errorText?.let {
-                    Text(it, color = OmniColors.red, fontSize = 12.sp, modifier = Modifier.fillMaxWidth())
-                }
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Custom name") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
                 ExposedDropdownMenuBox(
                     expanded = menuExpanded,
@@ -983,18 +989,25 @@ private fun NetworkShareDialog(
                     )
                 }
                 OutlinedTextField(value = sharePath, onValueChange = { sharePath = it }, label = { Text("Share/path") }, placeholder = { Text("SharedFolder or exports/media") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(
-                        checked = anonymous,
-                        enabled = protocol != "SFTP",
-                        onCheckedChange = {
-                            anonymous = it
-                            if (it) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable(enabled = protocol != "SFTP") {
+                            anonymous = !anonymous
+                            if (anonymous) {
                                 authProfileId = null
                                 username = ""
                                 password = ""
                             }
-                        },
+                        }
+                        .padding(vertical = 4.dp)
+                ) {
+                    Checkbox(
+                        checked = anonymous,
+                        onCheckedChange = null,
+                        enabled = protocol != "SFTP",
                     )
                     Spacer(Modifier.width(6.dp))
                     Text("Anonymous / guest login")
@@ -1025,6 +1038,9 @@ private fun NetworkShareDialog(
                     }
                 }
                 OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Notes") }, modifier = Modifier.fillMaxWidth(), minLines = 2, colors = omniTextFieldColors())
+                errorText?.let {
+                    Text(it, color = OmniColors.red, fontSize = 12.sp, modifier = Modifier.fillMaxWidth())
+                }
             }
         },
         confirmButton = {

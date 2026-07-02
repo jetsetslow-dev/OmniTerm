@@ -66,7 +66,14 @@ class FtpFsClient(
         ftp = null
     }
 
-    private suspend fun <T> withFtp(block: (FTPClient) -> T): T = withContext(Dispatchers.IO) {
+    /**
+     * [retryOnDeadTransport] must be false for streaming transfers: their caller-owned streams are
+     * already partially written/consumed when the transport dies, so re-running [block] would
+     * silently duplicate downloaded bytes or upload only the leftover tail. Listings and metadata
+     * ops are side-effect-free and safe to re-run. (connectLocked's NoOp preflight still gives
+     * every call, retryable or not, a live control connection to start from.)
+     */
+    private suspend fun <T> withFtp(retryOnDeadTransport: Boolean = true, block: (FTPClient) -> T): T = withContext(Dispatchers.IO) {
         lock.withLock {
             var attempt = 0
             while (true) {
@@ -80,7 +87,7 @@ class FtpFsClient(
                     // always rebuild; retry only when the transport itself died mid-command.
                     val transportDead = !client.isConnected
                     teardownLocked()
-                    if (transportDead && attempt++ < 1) continue
+                    if (retryOnDeadTransport && transportDead && attempt++ < 1) continue
                     throw e
                 }
             }
@@ -129,7 +136,7 @@ class FtpFsClient(
     }
 
     override suspend fun downloadTo(path: String, output: OutputStream, onProgress: ((Long, Long) -> Unit)?): Long =
-        withFtp { client ->
+        withFtp(retryOnDeadTransport = false) { client ->
             val total = runCatching { client.mlistFile(path)?.size ?: 0L }.getOrDefault(0L)
             val input = client.retrieveFileStream(path)
                 ?: throw IOException("FTP download failed: ${client.replyString?.trim()}")
@@ -139,7 +146,7 @@ class FtpFsClient(
         }
 
     override suspend fun uploadStream(path: String, input: InputStream, totalBytes: Long, onProgress: ((Long, Long) -> Unit)?) {
-        withFtp { client ->
+        withFtp(retryOnDeadTransport = false) { client ->
             val out = client.storeFileStream(path)
                 ?: throw IOException("FTP upload failed: ${client.replyString?.trim()}")
             out.use { copyWithProgress(input, it, totalBytes, onProgress) }

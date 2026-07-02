@@ -148,6 +148,7 @@ data class NetworkShareScanHit(
     val protocol: String,
     val port: Int,
     val label: String = "$protocol on $address:$port",
+    val sharePath: String = "",
 )
 
 /**
@@ -4400,8 +4401,37 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                                     if (canConnect(host, port, timeoutMs = 700)) {
                                         val key = "$host:$port"
                                         if (found.add(key)) {
-                                            withContext(Dispatchers.Main) {
-                                                networkShareScanHits.add(NetworkShareScanHit(host, protocol, port))
+                                            if (protocol == "SMB") {
+                                                try {
+                                                    val shares = enumerateSmbShares(host, port)
+                                                    if (shares.isNotEmpty()) {
+                                                        shares.forEach { shareName ->
+                                                            withContext(Dispatchers.Main) {
+                                                                networkShareScanHits.add(
+                                                                    NetworkShareScanHit(
+                                                                        address = host,
+                                                                        protocol = protocol,
+                                                                        port = port,
+                                                                        label = "SMB Share: $shareName on $host",
+                                                                        sharePath = shareName
+                                                                    )
+                                                                )
+                                                            }
+                                                        }
+                                                    } else {
+                                                        withContext(Dispatchers.Main) {
+                                                            networkShareScanHits.add(NetworkShareScanHit(host, protocol, port))
+                                                        }
+                                                    }
+                                                } catch(e: Exception) {
+                                                    withContext(Dispatchers.Main) {
+                                                        networkShareScanHits.add(NetworkShareScanHit(host, protocol, port))
+                                                    }
+                                                }
+                                            } else {
+                                                withContext(Dispatchers.Main) {
+                                                    networkShareScanHits.add(NetworkShareScanHit(host, protocol, port))
+                                                }
                                             }
                                         }
                                     }
@@ -4417,6 +4447,44 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(NonCancellable + Dispatchers.Main) { networkShareScanRunning = false }
             }
         }
+    }
+
+    /**
+     * Best-effort anonymous SRVSVC share enumeration for scan hits. Short timeouts (smbj's
+     * defaults include an infinite socket read) so one stalled host can't wedge a scan worker;
+     * any failure — guest login disabled, RPC blocked — just means the caller falls back to a
+     * plain host hit. Hidden/admin shares (trailing "$") are skipped.
+     */
+    private suspend fun enumerateSmbShares(host: String, port: Int): List<String> = withContext(Dispatchers.IO) {
+        val shares = mutableListOf<String>()
+        try {
+            val config = com.hierynomus.smbj.SmbConfig.builder()
+                .withTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                .withSoTimeout(5, java.util.concurrent.TimeUnit.SECONDS)
+                .build()
+            val client = com.hierynomus.smbj.SMBClient(config)
+            client.connect(host, port.takeIf { it > 0 } ?: 445).use { connection ->
+                connection.authenticate(com.hierynomus.smbj.auth.AuthenticationContext.anonymous()).use { session ->
+                    val transport = com.rapid7.client.dcerpc.transport.SMBTransportFactories.SRVSVC.getTransport(session, config)
+                    val srvsvc = com.rapid7.client.dcerpc.mssrvs.ServerService(transport)
+                    val shareInfos = srvsvc.shares0
+                    for (info in shareInfos) {
+                        val shareName = info.netName
+                        if (shareName != null && !shareName.endsWith("$")) {
+                            shares.add(shareName)
+                        }
+                    }
+                }
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // Ignore error
+        } catch (e: LinkageError) {
+            // smbj-rpc is built against smbj 0.11.x while the app ships 0.13.x; if the ABI ever
+            // drifts this surfaces as NoSuchMethodError — degrade to a plain host hit, not a crash.
+        }
+        shares
     }
 
     private fun canConnect(host: String, port: Int, timeoutMs: Int): Boolean =
@@ -4490,11 +4558,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val stale = shareClient
         shareClient = null
         shareClientShareId = null
-        withContext(Dispatchers.IO) { runCatching { stale?.close() } }
+        // NonCancellable: these run when the browser was switched or the job is being torn down —
+        // exactly when the calling job may already be cancelled, and a cancelled withContext would
+        // skip the close and leak the connection.
+        withContext(NonCancellable + Dispatchers.IO) { runCatching { stale?.close() } }
 
         val client = shareFsClient(share)
         if (browsingShare?.id != share.id) {
-            withContext(Dispatchers.IO) { runCatching { client.close() } }
+            withContext(NonCancellable + Dispatchers.IO) { runCatching { client.close() } }
             throw CancellationException("Share browser switched")
         }
         shareClient = client
@@ -4648,11 +4719,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 withContext(Dispatchers.IO) { output.close() }
             }
             finishSftpTransfer(transferId, SftpTransferStatus.Success, bytes, bytes, "Downloaded $bytes bytes")
-            shareStatus = "Downloaded \"$remoteName\""
+            if (browsingShare?.id == share.id) shareStatus = "Downloaded \"$remoteName\""
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            shareError = e.message ?: "Download failed"
+            if (browsingShare?.id == share.id) shareError = e.message ?: "Download failed"
             finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = e.message ?: "Download failed")
         }
     }
@@ -4700,9 +4771,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             } finally {
                 shareTransferRunning = false
             }
-            shareError = firstErr?.let { "Upload failed: $it" }
-            shareStatus = if (firstErr == null) "Uploaded $ok file(s)" else "Uploaded $ok of ${picked.size} file(s) — see error"
-            if (browsingShare?.id == share.id) loadShareDir(destDir, clearError = false)
+            if (browsingShare?.id == share.id) {
+                shareError = firstErr?.let { "Upload failed: $it" }
+                shareStatus = if (firstErr == null) "Uploaded $ok file(s)" else "Uploaded $ok of ${picked.size} file(s) — see error"
+                loadShareDir(destDir, clearError = false)
+            }
         }
     }
 
