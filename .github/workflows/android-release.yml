@@ -304,8 +304,14 @@ jobs:
           yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses >/dev/null || true
           $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platform-tools" "platforms;android-36" "build-tools;36.0.0"
 
+      # Sideloaded debug APKs must keep the same signature across releases so they update in
+      # place, so the real debug keystore comes from a secret (it was never committed).
       - name: Decode debug keystore
-        run: base64 --decode debug.keystore.base64 > debug.keystore
+        env:
+          ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$ANDROID_DEBUG_KEYSTORE_BASE64" || { echo "Missing ANDROID_DEBUG_KEYSTORE_BASE64 secret"; exit 1; }
+          printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > debug.keystore
 
       # Same cold-start gate as the release job: sideloaded debug builds must open too.
       - name: Run unit tests
