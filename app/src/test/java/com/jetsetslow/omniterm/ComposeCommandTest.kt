@@ -35,6 +35,7 @@ class ComposeCommandTest {
         val cmd = RemoteCommands.composeDeploy(path, "core_utilities", "eA==")
         assertTrue("resolves usable docker|podman", cmd.contains("docker ps") && cmd.contains("podman ps"))
         assertTrue("falls back to standalone compose", cmd.contains("docker-compose") && cmd.contains("podman-compose"))
+        assertTrue("prefers podman-compose when Podman is the usable runtime", cmd.indexOf("grep -qi podman") < cmd.indexOf("docker-compose"))
         assertTrue("validates with config before swapping", cmd.contains("config > /dev/null"))
         assertTrue("backs up the live file", cmd.contains(".omniterm.bak"))
         assertTrue("restores on failure", cmd.contains("restoring previous compose file"))
@@ -122,10 +123,29 @@ class ComposeCommandTest {
     fun docker_restarts_uses_runtime_correct_id_placeholder() {
         // Docker's inspect template field is `.Id`; Podman's is `.ID` (its `.Id` errors with
         // `can't evaluate field Id`). Both expose `.RestartCount`.
-        assertTrue("docker branch uses .Id", RemoteCommands.DOCKER_RESTARTS.contains("{{.Id}}\\t{{.RestartCount}}"))
-        assertTrue("podman branch uses .ID", RemoteCommands.DOCKER_RESTARTS.contains("{{.ID}}\\t{{.RestartCount}}"))
-        assertTrue("branches on the podman runtime", RemoteCommands.DOCKER_RESTARTS.contains("grep -qi podman"))
+        assertTrue("docker branch uses .Id", RemoteCommands.DOCKER_RESTARTS.contains("docker\\t{{.Id}}\\t{{.RestartCount}}"))
+        assertTrue("podman branch uses .ID", RemoteCommands.DOCKER_RESTARTS.contains("podman\\t{{.ID}}\\t{{.RestartCount}}"))
         assertValidShell(RemoteCommands.DOCKER_RESTARTS)
+    }
+
+    @Test
+    fun compose_actions_can_pin_docker_or_podman_runtime() {
+        val docker = RemoteCommands.dockerComposeAction("proj", "/srv/proj", "compose.yml", "ps", runtime = "docker")
+        val podman = RemoteCommands.dockerComposeAction("proj", "/srv/proj", "compose.yml", "ps", runtime = "podman")
+        assertTrue(docker.contains("OT_CR=docker"))
+        assertTrue(docker.contains("docker compose"))
+        assertTrue(podman.contains("OT_CR=podman"))
+        assertTrue(podman.contains("podman-compose"))
+        assertValidShell(docker)
+        assertValidShell(podman)
+    }
+
+    @Test
+    fun container_resource_actions_can_pin_runtime() {
+        assertTrue(RemoteCommands.dockerAction("abc", "stop", runtime = "podman").startsWith("podman stop"))
+        assertTrue(RemoteCommands.dockerImageAction("abc", "remove", runtime = "podman").startsWith("podman rmi -f"))
+        assertTrue(RemoteCommands.dockerVolumeAction("data", "remove", runtime = "podman").startsWith("podman volume rm -f"))
+        assertTrue(RemoteCommands.dockerNetworkAction("net", "remove", runtime = "podman").startsWith("podman network rm"))
     }
 
     @Test

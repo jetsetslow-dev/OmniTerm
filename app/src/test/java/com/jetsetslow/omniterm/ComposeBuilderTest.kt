@@ -304,6 +304,46 @@ class ComposeBuilderTest {
     }
 
     @Test
+    fun generated_yaml_quotes_values_that_would_be_comments_or_mappings() {
+        val d = ComposeStackDraft(
+            stackName = "stack",
+            services = mutableListOf(
+                ComposeServiceDraft(
+                    serviceName = "app",
+                    image = "busybox",
+                    command = "sh -c: echo hi # keep",
+                    environment = mutableListOf("TOKEN=abc # not a yaml comment"),
+                    ports = mutableListOf("127.0.0.1:8080:80/tcp"),
+                ),
+            ),
+        )
+        val out = generateDockerComposeYaml(d)
+        assertTrue(out.contains("command: 'sh -c: echo hi # keep'"))
+        assertTrue(out.contains("- 'TOKEN=abc # not a yaml comment'"))
+        assertTrue(out.contains("- \"127.0.0.1:8080:80/tcp\""))
+    }
+
+    @Test
+    fun validation_blocks_bad_top_level_volume_and_network_names() {
+        val d = ComposeStackDraft(
+            services = mutableListOf(ComposeServiceDraft(serviceName = "app", image = "busybox")),
+            topVolumes = mutableListOf(
+                com.jetsetslow.omniterm.ui.TopLevelVolumeDraft(name = ""),
+                com.jetsetslow.omniterm.ui.TopLevelVolumeDraft(name = "bad name"),
+            ),
+            topNetworks = mutableListOf(
+                TopLevelNetworkDraft(name = "front", driver = "bridge", external = true),
+                TopLevelNetworkDraft(name = "front"),
+            ),
+        )
+        val issues = validateComposeDraft(d).joinToString("\n")
+        assertTrue(issues.contains("Top-level volumes cannot have blank names."))
+        assertTrue(issues.contains("Top-level volume has an invalid name: bad name"))
+        assertTrue(issues.contains("Duplicate top-level network name: front"))
+        assertTrue(issues.contains("front cannot set both external: true and driver."))
+    }
+
+    @Test
     fun commented_out_services_do_not_block_visual_validation() {
         val yaml = """
             services:

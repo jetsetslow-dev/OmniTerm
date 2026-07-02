@@ -3117,7 +3117,8 @@ private fun SettingsSaveAuthDialog(
         },
         confirmButton = {
             TextButton(onClick = {
-                if (viewModel.verifyPin(pin)) onAuthenticated() else error = "Incorrect PIN"
+                val err = viewModel.verifyPinForSensitiveAction(pin)
+                if (err == null) onAuthenticated() else error = err
             }) { Text("Confirm") }
         },
         dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },

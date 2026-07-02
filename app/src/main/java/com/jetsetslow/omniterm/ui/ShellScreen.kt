@@ -1266,7 +1266,7 @@ private fun TerminalKeyBar(viewModel: AppViewModel) {
             }
         } else if (!viewModel.isFunctionSetVisible) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-                KeyCap("TAB", Modifier.weight(1f)) { viewModel.sendKey(TermKey.TAB) }
+                KeyCap("TAB", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.TAB) }
                 KeyCap("ESC", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ESC) }
                 KeyCap("CTRL", Modifier.weight(1f), active = viewModel.isCtrlPressed) { viewModel.isCtrlPressed = !viewModel.isCtrlPressed }
                 KeyCap("↑", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.UP) }
@@ -1278,11 +1278,11 @@ private fun TerminalKeyBar(viewModel: AppViewModel) {
             Spacer(Modifier.height(4.dp))
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
                 KeyCap("SHFT", Modifier.weight(1f), active = viewModel.isShiftPressed) { viewModel.isShiftPressed = !viewModel.isShiftPressed }
-                KeyCap("HOME", Modifier.weight(1f)) { viewModel.sendKey(TermKey.HOME) }
+                KeyCap("HOME", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.HOME) }
                 KeyCap("←", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.LEFT) }
                 KeyCap("↓", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DOWN) }
                 KeyCap("→", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.RIGHT) }
-                KeyCap("END", Modifier.weight(1f)) { viewModel.sendKey(TermKey.END) }
+                KeyCap("END", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.END) }
                 KeyCap("-", Modifier.weight(1f)) { viewModel.typeText("-") }
                 KeyCap("↵", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ENTER) }
             }
@@ -1305,8 +1305,8 @@ private fun TerminalKeyBar(viewModel: AppViewModel) {
                 KeyCap("F10", Modifier.weight(1f)) { viewModel.sendKey(TermKey.F10) }
                 KeyCap("F11", Modifier.weight(1f)) { viewModel.sendKey(TermKey.F11) }
                 KeyCap("F12", Modifier.weight(1f)) { viewModel.sendKey(TermKey.F12) }
-                KeyCap("PGUP", Modifier.weight(1f)) { viewModel.sendKey(TermKey.PAGE_UP) }
-                KeyCap("PGDN", Modifier.weight(1f)) { viewModel.sendKey(TermKey.PAGE_DOWN) }
+                KeyCap("PGUP", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_UP) }
+                KeyCap("PGDN", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_DOWN) }
             }
         }
     }

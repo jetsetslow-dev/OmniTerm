@@ -18,9 +18,31 @@ object RemoteCommands {
     private const val COMPOSE_RESOLVE =
         "OT_CR=$CR; " +
         "if [ -n \"\$OT_CR\" ] && \"\$OT_CR\" compose version >/dev/null 2>&1; then OT_COMPOSE=\"\$OT_CR compose\"; " +
+        "elif [ -n \"\$OT_CR\" ] && \"\$OT_CR\" --version 2>/dev/null | grep -qi podman && command -v podman-compose >/dev/null 2>&1; then OT_COMPOSE=\"podman-compose\"; " +
         "elif command -v docker-compose >/dev/null 2>&1; then OT_COMPOSE=\"docker-compose\"; " +
         "elif command -v podman-compose >/dev/null 2>&1; then OT_COMPOSE=\"podman-compose\"; " +
         "else echo 'No docker/podman compose found on host' >&2; exit 1; fi"
+
+    private fun runtimeCommand(runtime: String): String = when (runtime.lowercase()) {
+        "docker" -> "docker"
+        "podman" -> "podman"
+        else -> CR
+    }
+
+    private fun composeResolve(runtime: String): String = when (runtime.lowercase()) {
+        "docker" ->
+            "OT_CR=docker; " +
+                "if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then OT_COMPOSE=\"docker compose\"; " +
+                "elif command -v docker-compose >/dev/null 2>&1; then OT_COMPOSE=\"docker-compose\"; " +
+                "else echo 'No Docker Compose found on host' >&2; exit 1; fi"
+        "podman" ->
+            "OT_CR=podman; " +
+                "if command -v podman >/dev/null 2>&1 && podman compose version >/dev/null 2>&1; then OT_COMPOSE=\"podman compose\"; " +
+                "elif command -v podman-compose >/dev/null 2>&1; then OT_COMPOSE=\"podman-compose\"; " +
+                "elif command -v docker-compose >/dev/null 2>&1; then OT_COMPOSE=\"docker-compose\"; " +
+                "else echo 'No Podman Compose provider found on host' >&2; exit 1; fi"
+        else -> COMPOSE_RESOLVE
+    }
 
     // Tab-separated, no-trunc so parsing is unambiguous. Docker and Podman expose compose labels
     // through incompatible template syntaxes, so we branch on the runtime:
@@ -34,26 +56,24 @@ object RemoteCommands {
     private const val PS_FIELDS_PODMAN =
         "{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}\\t{{index .Labels \"com.docker.compose.project\"}}\\t{{index .Labels \"com.docker.compose.service\"}}\\t{{index .Labels \"com.docker.compose.project.working_dir\"}}\\t{{index .Labels \"com.docker.compose.project.config_files\"}}\\t{{.CreatedAt}}"
     const val DOCKER_PS =
-        "if $CR --version | grep -qi podman; then " +
-            "$CR ps -a --no-trunc --format '$PS_FIELDS_PODMAN'; " +
-        "else " +
-            "$CR ps -a --no-trunc --format '$PS_FIELDS_DOCKER'; " +
-        "fi"
+        "found=0; " +
+        "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; docker ps -a --no-trunc --format 'docker\\t$PS_FIELDS_DOCKER'; fi; " +
+        "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; podman ps -a --no-trunc --format 'podman\\t$PS_FIELDS_PODMAN'; fi; " +
+        "if [ \"\$found\" = 0 ]; then if $CR --version | grep -qi podman; then $CR ps -a --no-trunc --format 'podman\\t$PS_FIELDS_PODMAN'; else $CR ps -a --no-trunc --format 'docker\\t$PS_FIELDS_DOCKER'; fi; fi"
 
     // Per-container restart counts, keyed by container ID. Docker and Podman name the inspect ID
     // placeholder differently: Docker's template field is `.Id`, Podman's is `.ID` (its inspect
     // JSON prints "Id" but the Go-template struct field is `ID`, so `.Id` errors with
     // `can't evaluate field Id`). `.RestartCount` is identical on both. Branch like DOCKER_PS.
     const val DOCKER_RESTARTS =
-        "ids=\$($CR ps -aq); [ -z \"\$ids\" ] && exit 0; " +
-        "if $CR --version | grep -qi podman; then " +
-            "$CR inspect --format '{{.ID}}\\t{{.RestartCount}}' \$ids 2>/dev/null || true; " +
-        "else " +
-            "$CR inspect --format '{{.Id}}\\t{{.RestartCount}}' \$ids 2>/dev/null || true; " +
-        "fi"
+        "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then ids=\$(docker ps -aq); [ -n \"\$ids\" ] && docker inspect --format 'docker\\t{{.Id}}\\t{{.RestartCount}}' \$ids 2>/dev/null || true; fi; " +
+        "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then ids=\$(podman ps -aq); [ -n \"\$ids\" ] && podman inspect --format 'podman\\t{{.ID}}\\t{{.RestartCount}}' \$ids 2>/dev/null || true; fi"
 
     const val DOCKER_IMAGES =
-        "$CR images --no-trunc --format '{{.ID}}\\t{{.Repository}}\\t{{.Tag}}\\t{{.Size}}\\t{{.CreatedSince}}'"
+        "found=0; " +
+        "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; docker images --no-trunc --format 'docker\\t{{.ID}}\\t{{.Repository}}\\t{{.Tag}}\\t{{.Size}}\\t{{.CreatedSince}}'; fi; " +
+        "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; podman images --no-trunc --format 'podman\\t{{.ID}}\\t{{.Repository}}\\t{{.Tag}}\\t{{.Size}}\\t{{.CreatedSince}}'; fi; " +
+        "if [ \"\$found\" = 0 ]; then if $CR --version | grep -qi podman; then $CR images --no-trunc --format 'podman\\t{{.ID}}\\t{{.Repository}}\\t{{.Tag}}\\t{{.Size}}\\t{{.CreatedSince}}'; else $CR images --no-trunc --format 'docker\\t{{.ID}}\\t{{.Repository}}\\t{{.Tag}}\\t{{.Size}}\\t{{.CreatedSince}}'; fi; fi"
 
     // Tab-separated: name \t driver \t mountpoint \t size \t links. Three layered fallbacks so we
     // get sizes where the runtime supports them and still list volumes where it doesn't:
@@ -67,17 +87,23 @@ object RemoteCommands {
     //      $3=size maps cleanly. Volume names with spaces are out of scope (extremely rare).
     //   3. `volume ls` template — always available; no size/links, but the list is still correct.
     const val DOCKER_VOLUMES =
-        "$CR system df -v --format '{{range .Volumes}}{{.Name}}\\t{{.Driver}}\\t{{.Mountpoint}}\\t{{.Size}}\\t{{.Links}}\\n{{end}}' 2>/dev/null " +
-        "|| $CR system df -v 2>/dev/null | awk '" +
+        "ot_vols() { rt=\"\$1\"; \"\$rt\" system df -v --format '{{range .Volumes}}{{.Name}}\\t{{.Driver}}\\t{{.Mountpoint}}\\t{{.Size}}\\t{{.Links}}\\n{{end}}' 2>/dev/null " +
+        "|| \"\$rt\" system df -v 2>/dev/null | awk '" +
             "/^Local Volumes/ { f=1; seen=0; next } " +                       // enter the section
             "f && \\$1==\"VOLUME\" && \\$2==\"NAME\" { seen=1; next } " +      // arm on column header
             "f && seen && /^[[:space:]]*$/ { f=0; next } " +                  // blank line ends it
             "f && seen && /^[A-Za-z].*:/ { f=0 } " +                          // next \"Header:\" ends it
             "f && seen && NF>=3 { print \\$1 \"\\tlocal\\t\\t\" \\$3 \"\\t\" \\$2 }' " +
-        "|| $CR volume ls --format '{{.Name}}\\t{{.Driver}}\\t{{.Mountpoint}}\\t\\t'"
+        "|| \"\$rt\" volume ls --format '{{.Name}}\\t{{.Driver}}\\t{{.Mountpoint}}\\t\\t'; }; " +
+        "found=0; if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; ot_vols docker | sed 's/^/docker\\t/'; fi; " +
+        "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; ot_vols podman | sed 's/^/podman\\t/'; fi; " +
+        "if [ \"\$found\" = 0 ]; then if $CR --version | grep -qi podman; then ot_vols $CR | sed 's/^/podman\\t/'; else ot_vols $CR | sed 's/^/docker\\t/'; fi; fi"
 
     const val DOCKER_NETWORKS =
-        "$CR network ls --format '{{.ID}}\\t{{.Name}}\\t{{.Driver}}' 2>/dev/null"
+        "found=0; " +
+        "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; docker network ls --format 'docker\\t{{.ID}}\\t{{.Name}}\\t{{.Driver}}' 2>/dev/null; fi; " +
+        "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; podman network ls --format 'podman\\t{{.ID}}\\t{{.Name}}\\t{{.Driver}}' 2>/dev/null; fi; " +
+        "if [ \"\$found\" = 0 ]; then if $CR --version | grep -qi podman; then $CR network ls --format 'podman\\t{{.ID}}\\t{{.Name}}\\t{{.Driver}}'; else $CR network ls --format 'docker\\t{{.ID}}\\t{{.Name}}\\t{{.Driver}}'; fi; fi"
 
     // ── Remote OS detection ──
     // Cheap one-shot probe run once per host (result cached in AppViewModel). POSIX hosts answer
@@ -261,51 +287,56 @@ object RemoteCommands {
     fun reboot(sudoPassword: String = "") =
         "${sudoWrap("reboot", sudoPassword)} || reboot 2>&1"
 
-    fun dockerAction(id: String, action: String): String {
+    fun dockerAction(id: String, action: String, runtime: String = ""): String {
+        val cr = runtimeCommand(runtime)
         val verb = when (action) {
             "remove" -> "rm -f"
             else -> action // start | stop | restart | pause | unpause
         }
-        return "$CR $verb ${shellQuote(id)} 2>&1"
+        return "$cr $verb ${shellQuote(id)} 2>&1"
     }
 
-    fun dockerImageAction(id: String, action: String): String {
+    fun dockerImageAction(id: String, action: String, runtime: String = ""): String {
+        val cr = runtimeCommand(runtime)
         val verb = when (action) {
             "remove" -> "rmi -f"
             else -> action
         }
-        return "$CR $verb ${shellQuote(id)} 2>&1"
+        return "$cr $verb ${shellQuote(id)} 2>&1"
     }
 
-    fun dockerVolumeAction(name: String, action: String): String {
+    fun dockerVolumeAction(name: String, action: String, runtime: String = ""): String {
+        val cr = runtimeCommand(runtime)
         val verb = when (action) {
             "remove" -> "volume rm -f"
             else -> action
         }
-        return "$CR $verb ${shellQuote(name)} 2>&1"
+        return "$cr $verb ${shellQuote(name)} 2>&1"
     }
 
-    fun dockerNetworkAction(id: String, action: String): String {
+    fun dockerNetworkAction(id: String, action: String, runtime: String = ""): String {
+        val cr = runtimeCommand(runtime)
         val verb = when (action) {
             "remove" -> "network rm"
             else -> action
         }
-        return "$CR $verb ${shellQuote(id)} 2>&1"
+        return "$cr $verb ${shellQuote(id)} 2>&1"
     }
 
-    fun dockerPruneImages() = "$CR image prune -a -f 2>&1"
+    fun dockerPruneImages() = "{ command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1 && docker image prune -a -f; true; } 2>&1; { command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1 && podman image prune -a -f; true; } 2>&1"
 
     // `volume prune -f` removes only anonymous unused volumes on current Docker and Podman.
     // `-a/--all` prunes unused named volumes too, matching the UI's "unused volumes" wording.
-    fun dockerPruneVolumes() = "$CR volume prune -a -f 2>&1"
+    fun dockerPruneVolumes() = "{ command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1 && docker volume prune -a -f; true; } 2>&1; { command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1 && podman volume prune -a -f; true; } 2>&1"
 
-    fun dockerPruneNetworks() = "$CR network prune -f 2>&1"
+    fun dockerPruneNetworks() = "{ command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1 && docker network prune -f; true; } 2>&1; { command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1 && podman network prune -f; true; } 2>&1"
 
-    fun dockerLogs(id: String) = "$CR logs --tail 200 ${shellQuote(id)} 2>&1"
+    fun dockerLogs(id: String, runtime: String = "") = "${runtimeCommand(runtime)} logs --tail 200 ${shellQuote(id)} 2>&1"
 
-    fun dockerComposeAction(project: String, workingDir: String, configFiles: String, action: String, service: String? = null, replicas: Int? = null, removeOrphans: Boolean = false): String {
+    fun dockerComposeAction(project: String, workingDir: String, configFiles: String, action: String, service: String? = null, replicas: Int? = null, removeOrphans: Boolean = false, runtime: String = ""): String {
         val flags = composeFlags(project, configFiles)
         val orphansFlag = if (removeOrphans) " --remove-orphans" else ""
+        val resolver = composeResolve(runtime)
 
         // "update" is multi-step and must stay guarded by the `cd`, so it builds its own tail rather
         // than plugging a single verb into the shared `$OT_COMPOSE $flags <verb>` template below.
@@ -317,7 +348,7 @@ object RemoteCommands {
             val c = "\$OT_COMPOSE $flags"
             val tail = "{ $c pull --ignore-buildable 2>/dev/null || $c pull 2>/dev/null || true; } && " +
                 "$c build --pull && $c up -d$orphansFlag && $c ps"
-            return "$COMPOSE_RESOLVE && cd ${shellQuote(workingDir)} && $tail 2>&1"
+            return "$resolver && cd ${shellQuote(workingDir)} && $tail 2>&1"
         }
 
         val verb = when (action) {
@@ -341,7 +372,7 @@ object RemoteCommands {
             else -> "ps"
         }
         // Resolve the compose entrypoint (docker/podman, builtin or standalone) before running.
-        return "$COMPOSE_RESOLVE && cd ${shellQuote(workingDir)} && \$OT_COMPOSE $flags $verb 2>&1"
+        return "$resolver && cd ${shellQuote(workingDir)} && \$OT_COMPOSE $flags $verb 2>&1"
     }
 
     /**
@@ -372,6 +403,7 @@ object RemoteCommands {
         yamlBase64: String,
         workingDir: String = "",
         configFiles: String = "",
+        runtime: String = "",
     ): String {
         // Expand a leading ~ at runtime on the remote host; shell won't expand it inside single quotes.
         fun expandPath(p: String) = if (p.startsWith("~/")) "\$HOME/${shellQuote(p.removePrefix("~/"))}" else shellQuote(p)
@@ -409,8 +441,9 @@ object RemoteCommands {
         val dir = if (rawDir.startsWith("~/")) "\$HOME/${shellQuote(rawDir.removePrefix("~/"))}" else shellQuote(rawDir)
         val stagedFlags = flagsWithReplacement("\"\$tmp\"")
         val liveFlags = flagsWithReplacement(file)
+        val resolver = composeResolve(runtime)
         return buildString {
-            append(COMPOSE_RESOLVE)
+            append(resolver)
             append(" && umask 077")
             append(" && mkdir -p $dir")
             append(" && tmp=\$(mktemp ${dir}/.omniterm-compose.XXXXXX)")
@@ -445,7 +478,7 @@ object RemoteCommands {
         return "cat $path 2>/dev/null || echo OMNITERM_NO_FILE"
     }
 
-    fun dockerComposeExecShellCommand(containerId: String) = "$CR exec -it ${shellQuote(containerId)} sh"
+    fun dockerComposeExecShellCommand(containerId: String, runtime: String = "") = "${runtimeCommand(runtime)} exec -it ${shellQuote(containerId)} sh"
 
     private fun composeFlags(project: String, configFiles: String): String {
         val configFlags = configFiles
@@ -706,8 +739,11 @@ object RemoteParsers {
             .map { it.trimEnd() }
             .filter { it.isNotBlank() && !it.startsWith("SSH Error") }
             .mapNotNull { line ->
-                val t = line.split('\t')
-                if (t.size < 4) return@mapNotNull null
+                val raw = line.split('\t')
+                if (raw.size < 4) return@mapNotNull null
+                val hasRuntimePrefix = raw.first() == "docker" || raw.first() == "podman"
+                val runtime = if (hasRuntimePrefix) raw.first() else "docker"
+                val t = if (hasRuntimePrefix) raw.drop(1) else raw
                 val statusRaw = t[3].trim()
                 val healthRaw = Regex("""\((healthy|unhealthy|starting)\)""", RegexOption.IGNORE_CASE)
                     .find(statusRaw)
@@ -736,6 +772,7 @@ object RemoteParsers {
                     composeConfigFiles = t.getOrElse(8) { "" }.trim().takeUnless { it == "<no value>" }.orEmpty(),
                     restartCount = 0,
                     createdAt = t.getOrElse(9) { "" }.trim(),
+                    runtime = runtime,
                 )
             }
             .toList()
@@ -746,9 +783,13 @@ object RemoteParsers {
             .filter { it.isNotEmpty() && it.contains('\t') }
             .mapNotNull { line ->
                 val t = line.split('\t')
-                val id = t.getOrNull(0)?.take(12) ?: return@mapNotNull null
-                val count = t.getOrNull(1)?.toIntOrNull() ?: 0
-                id to count
+                if (t.size >= 3 && (t[0] == "docker" || t[0] == "podman")) {
+                    val id = t[1].take(12)
+                    "${t[0]}:$id" to (t[2].toIntOrNull() ?: 0)
+                } else {
+                    val id = t.getOrNull(0)?.take(12) ?: return@mapNotNull null
+                    id to (t.getOrNull(1)?.toIntOrNull() ?: 0)
+                }
             }
             .toMap()
 
@@ -757,14 +798,18 @@ object RemoteParsers {
             .map { it.trimEnd() }
             .filter { it.isNotBlank() && !it.startsWith("SSH Error") }
             .mapNotNull { line ->
-                val t = line.split('\t')
-                if (t.size < 5) return@mapNotNull null
+                val raw = line.split('\t')
+                if (raw.size < 5) return@mapNotNull null
+                val hasRuntimePrefix = raw.first() == "docker" || raw.first() == "podman"
+                val runtime = if (hasRuntimePrefix) raw.first() else "docker"
+                val t = if (hasRuntimePrefix) raw.drop(1) else raw
                 SimDockerImage(
                     id = t[0].removePrefix("sha256:").take(12),
                     repository = t[1],
                     tag = t[2],
                     size = t[3],
-                    created = t[4]
+                    created = t[4],
+                    runtime = runtime,
                 )
             }
             .toList()
@@ -774,8 +819,11 @@ object RemoteParsers {
             .map { it.trimEnd() }
             .filter { it.isNotBlank() && !it.startsWith("SSH Error") }
             .mapNotNull { line ->
-                val t = line.split('\t')
-                if (t.size < 2) return@mapNotNull null
+                val raw = line.split('\t')
+                if (raw.size < 2) return@mapNotNull null
+                val hasRuntimePrefix = raw.first() == "docker" || raw.first() == "podman"
+                val runtime = if (hasRuntimePrefix) raw.first() else "docker"
+                val t = if (hasRuntimePrefix) raw.drop(1) else raw
                 val linksStr = t.getOrElse(4) { "0" }
                 val links = linksStr.toIntOrNull() ?: 0
 
@@ -784,7 +832,8 @@ object RemoteParsers {
                     driver = t[1],
                     mountpoint = t.getOrElse(2) { "" },
                     size = t.getOrElse(3) { "" },
-                    inUse = links > 0
+                    inUse = links > 0,
+                    runtime = runtime,
                 )
             }
             .toList()
@@ -794,9 +843,12 @@ object RemoteParsers {
             .map { it.trim() }
             .filter { it.isNotEmpty() && !it.startsWith("NETWORK") }
             .mapNotNull { line ->
-                val t = line.split('\t')
-                if (t.size < 3) return@mapNotNull null
-                SimDockerNetwork(id = t[0].take(12), name = t[1], driver = t[2])
+                val raw = line.split('\t')
+                if (raw.size < 3) return@mapNotNull null
+                val hasRuntimePrefix = raw.first() == "docker" || raw.first() == "podman"
+                val runtime = if (hasRuntimePrefix) raw.first() else "docker"
+                val t = if (hasRuntimePrefix) raw.drop(1) else raw
+                SimDockerNetwork(id = t[0].take(12), name = t[1], driver = t[2], runtime = runtime)
             }
             .toList()
 

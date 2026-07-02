@@ -121,6 +121,8 @@ data class ComposeStackDraft(
     // from multiple -f files; deploy must validate/up with the same chain while replacing only the
     // file being edited.
     var composeConfigFiles: String = "",
+    // Container runtime that owns this stack: "docker", "podman", or blank for auto/new drafts.
+    var runtime: String = "",
 )
 
 private fun String.unquoteYaml(): String =
@@ -139,6 +141,23 @@ private fun String.stripYamlInlineComment(): String {
 
 private fun isValidComposeName(value: String): Boolean =
     value.matches(Regex("""[A-Za-z0-9][A-Za-z0-9_.-]*"""))
+
+private fun yamlPlainOrSingleQuoted(value: String): String {
+    val trimmed = value.trim()
+    if (trimmed.isEmpty()) return "''"
+    val risky = trimmed.any { it == '\n' || it == '\r' || it == '\t' } ||
+        trimmed.startsWith("#") || trimmed.startsWith("- ") || trimmed.startsWith("? ") ||
+        trimmed.startsWith(": ") || trimmed.startsWith("{") || trimmed.startsWith("[") ||
+        trimmed.startsWith("&") || trimmed.startsWith("*") || trimmed.startsWith("!") ||
+        trimmed.startsWith("|") || trimmed.startsWith(">") || trimmed.startsWith("@") ||
+        trimmed.startsWith("`") || trimmed.equals("null", ignoreCase = true) ||
+        trimmed.equals("true", ignoreCase = true) || trimmed.equals("false", ignoreCase = true) ||
+        trimmed.contains(" #") || trimmed.contains(": ") || trimmed.endsWith(":")
+    return if (risky) "'${trimmed.replace("'", "''")}'" else trimmed
+}
+
+private fun yamlDoubleQuoted(value: String): String =
+    "\"" + value.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
 
 // Keys that can appear directly under a service definition (Compose spec). Used to tell a
 // commented-out service HEADER apart from a commented-out config block at a similar effective
@@ -207,6 +226,23 @@ fun validateComposeDraft(draft: ComposeStackDraft): List<String> {
         }
     }
     duplicates.forEach { issues += "Duplicate active service name: $it" }
+    val topVolumeNames = draft.topVolumes.filterNot { it.isCommentedOut }.map { it.name.trim() }
+    val topNetworkNames = draft.topNetworks.filterNot { it.isCommentedOut }.map { it.name.trim() }
+    topVolumeNames.filter { it.isBlank() }.forEach { _ -> issues += "Top-level volumes cannot have blank names." }
+    topNetworkNames.filter { it.isBlank() }.forEach { _ -> issues += "Top-level networks cannot have blank names." }
+    topVolumeNames.filter { it.isNotBlank() && !isValidComposeName(it) }.forEach {
+        issues += "Top-level volume has an invalid name: $it"
+    }
+    topNetworkNames.filter { it.isNotBlank() && !isValidComposeName(it) }.forEach {
+        issues += "Top-level network has an invalid name: $it"
+    }
+    topNetworkNames.filter { it.isNotBlank() }.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+        .forEach { issues += "Duplicate top-level network name: $it" }
+    topVolumeNames.filter { it.isNotBlank() }.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
+        .forEach { issues += "Duplicate top-level volume name: $it" }
+    draft.topNetworks.filter { !it.isCommentedOut && it.external && it.driver.isNotBlank() }.forEach {
+        issues += "${it.name.ifBlank { "Network" }} cannot set both external: true and driver."
+    }
     return issues.distinct()
 }
 
@@ -223,6 +259,7 @@ fun parseDockerComposeYaml(
     fileName: String = "docker-compose.yml",
     composeFilePath: String = "",
     composeConfigFiles: String = "",
+    runtime: String = "",
 ): ComposeStackDraft {
     val lines = yaml.split("\n")
     val draft = ComposeStackDraft(
@@ -233,6 +270,7 @@ fun parseDockerComposeYaml(
         workingDir = workingDir,
         fileName = fileName,
         composeConfigFiles = composeConfigFiles,
+        runtime = runtime,
     )
 
     var inServices = false
@@ -491,7 +529,7 @@ private fun generateServiceBlock(svc: ComposeServiceDraft): String {
     val name = svc.serviceName.ifBlank { "service" }
     val c = if (svc.isCommentedOut) "# " else ""
     sb.append("$c  $name:\n")
-    fun scalar(k: String, v: String) { if (v.isNotBlank()) sb.append("$c    $k: $v\n") }
+    fun scalar(k: String, v: String) { if (v.isNotBlank()) sb.append("$c    $k: ${yamlPlainOrSingleQuoted(v)}\n") }
     scalar("image", svc.image)
     scalar("container_name", svc.containerName)
     scalar("restart", svc.restart)
@@ -500,7 +538,7 @@ private fun generateServiceBlock(svc: ComposeServiceDraft): String {
         val v = items.filter { it.isNotBlank() }
         if (v.isEmpty()) return
         sb.append("$c    $k:\n")
-        for (it in v) sb.append(if (quote) "$c      - \"$it\"\n" else "$c      - $it\n")
+        for (it in v) sb.append(if (quote) "$c      - ${yamlDoubleQuoted(it)}\n" else "$c      - ${yamlPlainOrSingleQuoted(it)}\n")
     }
     list("ports", svc.ports, quote = true)
     list("environment", svc.environment, quote = false)
@@ -515,7 +553,7 @@ fun generateDockerComposeYaml(draft: ComposeStackDraft): String {
     val sb = StringBuilder()
     // No top-level `version:` — it's obsolete in the Compose Spec and recent Docker/Podman Compose
     // print a deprecation warning for it. Omitting it keeps deploy output clean.
-    if (draft.stackName.isNotBlank()) sb.append("name: ${draft.stackName}\n")
+    if (draft.stackName.isNotBlank()) sb.append("name: ${yamlPlainOrSingleQuoted(draft.stackName)}\n")
     sb.append("services:\n")
     for (svc in draft.services) {
         sb.append(generateServiceBlock(svc))
@@ -536,7 +574,7 @@ fun generateDockerComposeYaml(draft: ComposeStackDraft): String {
         for (n in nets) {
             val c = if (n.isCommentedOut) "# " else ""
             sb.append("${c}  ${n.name}:\n")
-            if (n.driver.isNotBlank()) sb.append("${c}    driver: ${n.driver}\n")
+            if (n.driver.isNotBlank()) sb.append("${c}    driver: ${yamlPlainOrSingleQuoted(n.driver)}\n")
             if (n.external) sb.append("${c}    external: true\n")
         }
     }
@@ -1099,6 +1137,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
 	                            yaml = yaml,
 	                            workingDir = draft.workingDir,
 	                            configFiles = draft.composeConfigFiles,
+                                runtime = draft.runtime,
 	                        ) { ok, out ->
                             deploying = false
                             result = ok to out

@@ -1731,6 +1731,25 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun verifyPin(pin: String): Boolean = verifyStoredPin(savedPin, pin)
 
+    /**
+     * PIN check for privileged in-app gates outside the lock screen (sudo mode, protected settings).
+     * Shares the same throttling counter as app unlock so alternate PIN prompts cannot be brute-forced
+     * independently.
+     */
+    fun verifyPinForSensitiveAction(pin: String): String? {
+        val now = System.currentTimeMillis()
+        if (isPinThrottled(pinLockedUntilMs, now)) return "Too many attempts — wait a moment"
+        return if (verifyStoredPin(savedPin, pin)) {
+            failedPinAttempts = 0
+            pinLockedUntilMs = 0L
+            null
+        } else {
+            failedPinAttempts += 1
+            pinLockoutAfterFailure(failedPinAttempts, now).takeIf { it > 0L }?.let { pinLockedUntilMs = it }
+            if (failedPinAttempts >= PIN_MAX_ATTEMPTS) "Too many attempts — wait 30 seconds" else "Incorrect PIN"
+        }
+    }
+
     fun completeFirstRun() {
         isFirstRun = false
         viewModelScope.launch {
@@ -3534,14 +3553,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         if (srv.id != selectedServerId) return@coroutineScope
 
                         val parsedContainers = RemoteParsers.parseDockerPs(out).map {
-                            it.copy(host = srv.name, restartCount = restarts[it.id] ?: it.restartCount)
+                            it.copy(host = srv.name, restartCount = restarts["${it.runtime}:${it.id}"] ?: restarts[it.id] ?: it.restartCount)
                         }
                         dockerContainers = parsedContainers
 
                         val imgOut = imagesAsync.await()
                         dockerImages = RemoteParsers.parseDockerImages(imgOut).map { img ->
                             val inUse = parsedContainers.any { c ->
-                                c.image == img.repository || c.image == "${img.repository}:${img.tag}" || c.image.contains(img.id.take(12))
+                                c.runtime == img.runtime &&
+                                    (c.image == img.repository || c.image == "${img.repository}:${img.tag}" || c.image.contains(img.id.take(12)))
                             }
                             img.copy(inUse = inUse)
                         }
@@ -3569,20 +3589,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun dockerAction(containerId: String, action: String) {
-        runStreamingAction("container $action", RemoteCommands.dockerAction(containerId, action)) { loadDocker() }
+    fun dockerAction(containerId: String, action: String, runtime: String = "") {
+        runStreamingAction("container $action", RemoteCommands.dockerAction(containerId, action, runtime)) { loadDocker() }
     }
 
-    fun dockerImageAction(imageId: String, action: String) {
-        runStreamingAction("image $action", RemoteCommands.dockerImageAction(imageId, action)) { loadDocker() }
+    fun dockerImageAction(imageId: String, action: String, runtime: String = "") {
+        runStreamingAction("image $action", RemoteCommands.dockerImageAction(imageId, action, runtime)) { loadDocker() }
     }
 
-    fun dockerVolumeAction(volumeName: String, action: String) {
-        runStreamingAction("volume $action", RemoteCommands.dockerVolumeAction(volumeName, action)) { loadDocker() }
+    fun dockerVolumeAction(volumeName: String, action: String, runtime: String = "") {
+        runStreamingAction("volume $action", RemoteCommands.dockerVolumeAction(volumeName, action, runtime)) { loadDocker() }
     }
 
-    fun dockerNetworkAction(networkId: String, action: String) {
-        runStreamingAction("network $action", RemoteCommands.dockerNetworkAction(networkId, action)) { loadDocker() }
+    fun dockerNetworkAction(networkId: String, action: String, runtime: String = "") {
+        runStreamingAction("network $action", RemoteCommands.dockerNetworkAction(networkId, action, runtime)) { loadDocker() }
     }
 
     fun dockerPruneImages() {
@@ -3598,8 +3618,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** Stream a container's recent logs into the shared action panel. */
-    fun dockerContainerLogs(containerId: String, name: String) {
-        runStreamingAction("logs · $name", RemoteCommands.dockerLogs(containerId))
+    fun dockerContainerLogs(containerId: String, name: String, runtime: String = "") {
+        runStreamingAction("logs · $name", RemoteCommands.dockerLogs(containerId, runtime))
     }
 
     // ── Shared streaming-action panel ──
@@ -3660,16 +3680,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         actionStreamRunning = false
     }
 
-    fun dockerStackAction(project: String, workingDir: String, configFiles: String, action: String, removeOrphans: Boolean = false) {
+    fun dockerStackAction(project: String, workingDir: String, configFiles: String, action: String, removeOrphans: Boolean = false, runtime: String = "") {
         if (project == "standalone" || workingDir.isBlank()) {
             showActionMessage(project, "This stack does not expose compose working directory labels, so OmniTerm cannot run compose actions for it.")
             return
         }
-        runStreamingAction("$project · $action", RemoteCommands.dockerComposeAction(project, workingDir, configFiles, action, removeOrphans = removeOrphans)) { loadDocker() }
+        runStreamingAction("$project · $action", RemoteCommands.dockerComposeAction(project, workingDir, configFiles, action, removeOrphans = removeOrphans, runtime = runtime)) { loadDocker() }
     }
 
-    fun dockerStackUpdate(project: String, workingDir: String, configFiles: String) {
-        dockerStackAction(project, workingDir, configFiles, "update")
+    fun dockerStackUpdate(project: String, workingDir: String, configFiles: String, runtime: String = "") {
+        dockerStackAction(project, workingDir, configFiles, "update", runtime = runtime)
     }
 
     /**
@@ -3694,12 +3714,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         yaml: String,
         workingDir: String = "",
         configFiles: String = "",
+        runtime: String = "",
         onResult: (Boolean, String) -> Unit,
     ) {
         val srv = selectedServer ?: return onResult(false, "No host selected.")
         viewModelScope.launch {
             val b64 = android.util.Base64.encodeToString(yaml.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
-            val cmd = RemoteCommands.composeDeploy(composeFilePath, project, b64, workingDir, configFiles)
+            val cmd = RemoteCommands.composeDeploy(composeFilePath, project, b64, workingDir, configFiles, runtime)
             val out = executeSshCommand(srv, cmd)
             // Success only when the runtime printed our end-of-pipeline sentinel AND the transport
             // didn't report an SSH/command failure. Any compose validation or `up` error trips this.
@@ -3725,14 +3746,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun dockerStackServiceAction(project: String, workingDir: String, configFiles: String, service: String, action: String, replicas: Int? = null) {
+    fun dockerStackServiceAction(project: String, workingDir: String, configFiles: String, service: String, action: String, replicas: Int? = null, runtime: String = "") {
         if (project == "standalone" || workingDir.isBlank() || service.isBlank()) {
             showActionMessage("$project · $service", "This service does not expose enough compose metadata for service-level actions.")
             return
         }
         runStreamingAction(
             "$project/$service · $action",
-            RemoteCommands.dockerComposeAction(project, workingDir, configFiles, action, service, replicas),
+            RemoteCommands.dockerComposeAction(project, workingDir, configFiles, action, service, replicas, runtime = runtime),
         ) { loadDocker() }
     }
 
@@ -3745,7 +3766,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             // it's ready. `return@repeat` only ends one iteration, so exit via return@launch.
             repeat(30) {
                 if (isTerminalConnected) {
-                    typeText(RemoteCommands.dockerComposeExecShellCommand(containerId) + "\r")
+                    val runtime = dockerContainers.firstOrNull { it.id == containerId }?.runtime.orEmpty()
+                    typeText(RemoteCommands.dockerComposeExecShellCommand(containerId, runtime) + "\r")
                     return@launch
                 }
                 delay(200)

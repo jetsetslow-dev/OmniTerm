@@ -1073,10 +1073,11 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                 },
                 confirmButton = {
                     TextButton(onClick = {
-                        if (viewModel.verifyPin(sudoPin)) {
+                        val err = viewModel.verifyPinForSensitiveAction(sudoPin)
+                        if (err == null) {
                             showSudoPinDialog = false
                             viewModel.toggleSftpSudo()
-                        } else sudoPinError = "Incorrect PIN"
+                        } else sudoPinError = err
                     }) { Text("Confirm") }
                 },
                 dismissButton = {

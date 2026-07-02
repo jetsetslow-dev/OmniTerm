@@ -150,7 +150,10 @@ private fun ContainerList(viewModel: AppViewModel, containers: List<SimContainer
                     Button(
                         onClick = {
                             confirm.ask("Remove Containers?", "Permanently remove ${selectedIds.size} containers?", confirmLabel = "Remove") {
-                                selectedIds.forEach { viewModel.dockerAction(it, "remove") }
+                                selectedIds.forEach { id ->
+                                    val runtime = containers.firstOrNull { it.id == id }?.runtime.orEmpty()
+                                    viewModel.dockerAction(id, "remove", runtime)
+                                }
                                 selectedIds = setOf()
                                 isSelectionMode = false
                             }
@@ -191,14 +194,14 @@ private fun ContainerList(viewModel: AppViewModel, containers: List<SimContainer
                         Spacer(Modifier.height(10.dp))
                         Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
                             OmniButton(label = "Logs", onClick = {
-                                viewModel.dockerContainerLogs(c.id, c.name)
+                                viewModel.dockerContainerLogs(c.id, c.name, c.runtime)
                             }, color = OmniColors.cyan, small = true)
 
                             when (c.status) {
                                 "paused" -> {
                                     OmniButton(
                                         label = "Unpause",
-                                        onClick = { viewModel.dockerAction(c.id, "unpause") },
+                                        onClick = { viewModel.dockerAction(c.id, "unpause", c.runtime) },
                                         color = OmniColors.green,
                                         small = true,
                                     )
@@ -206,7 +209,7 @@ private fun ContainerList(viewModel: AppViewModel, containers: List<SimContainer
                                         label = "Stop",
                                         onClick = {
                                             confirm.ask("Stop ${c.name}?", "Stop this container? It will remain stopped until started again.", confirmLabel = "Stop") {
-                                                viewModel.dockerAction(c.id, "stop")
+                                                viewModel.dockerAction(c.id, "stop", c.runtime)
                                             }
                                         },
                                         color = OmniColors.red,
@@ -216,7 +219,7 @@ private fun ContainerList(viewModel: AppViewModel, containers: List<SimContainer
                                 "running", "restarting" -> {
                                     OmniButton(
                                         label = "Pause",
-                                        onClick = { viewModel.dockerAction(c.id, "pause") },
+                                        onClick = { viewModel.dockerAction(c.id, "pause", c.runtime) },
                                         color = OmniColors.amber,
                                         small = true,
                                     )
@@ -224,7 +227,7 @@ private fun ContainerList(viewModel: AppViewModel, containers: List<SimContainer
                                         label = "Restart",
                                         onClick = {
                                             confirm.ask("Restart ${c.name}?", "Restart this container? It will briefly go down.", confirmLabel = "Restart") {
-                                                viewModel.dockerAction(c.id, "restart")
+                                                viewModel.dockerAction(c.id, "restart", c.runtime)
                                             }
                                         },
                                         color = OmniColors.cyan,
@@ -234,7 +237,7 @@ private fun ContainerList(viewModel: AppViewModel, containers: List<SimContainer
                                         label = "Stop",
                                         onClick = {
                                             confirm.ask("Stop ${c.name}?", "Stop this container? It will remain stopped until started again.", confirmLabel = "Stop") {
-                                                viewModel.dockerAction(c.id, "stop")
+                                                viewModel.dockerAction(c.id, "stop", c.runtime)
                                             }
                                         },
                                         color = OmniColors.red,
@@ -244,7 +247,7 @@ private fun ContainerList(viewModel: AppViewModel, containers: List<SimContainer
                                         label = "Delete",
                                         onClick = {
                                             confirm.ask("Delete ${c.name}?", "Force-remove this running container? This cannot be undone.", confirmLabel = "Delete") {
-                                                viewModel.dockerAction(c.id, "remove")
+                                                viewModel.dockerAction(c.id, "remove", c.runtime)
                                             }
                                         },
                                         color = OmniColors.red,
@@ -254,7 +257,7 @@ private fun ContainerList(viewModel: AppViewModel, containers: List<SimContainer
                                 else -> {
                                     OmniButton(
                                         label = "Start",
-                                        onClick = { viewModel.dockerAction(c.id, "start") },
+                                        onClick = { viewModel.dockerAction(c.id, "start", c.runtime) },
                                         color = OmniColors.green,
                                         small = true,
                                     )
@@ -262,7 +265,7 @@ private fun ContainerList(viewModel: AppViewModel, containers: List<SimContainer
                                         label = "Remove",
                                         onClick = {
                                             confirm.ask("Remove ${c.name}?", "Permanently remove this container? This cannot be undone.", confirmLabel = "Remove") {
-                                                viewModel.dockerAction(c.id, "remove")
+                                                viewModel.dockerAction(c.id, "remove", c.runtime)
                                             }
                                         },
                                         color = OmniColors.red,
@@ -292,12 +295,14 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
     val stacks = remember(containers) {
-        containers.groupBy { it.group }.map { (name, list) ->
+        containers.groupBy { it.runtime to it.group }.map { (key, list) ->
+            val (runtime, name) = key
             val portDetails = list
                 .filter { it.ports != "—" }
                 .map { ContainerPortDetail(it.name, it.composeService.ifBlank { it.name.substringBefore('_') }, it.ports) }
             StackSummary(
                 name = name,
+                runtime = runtime,
                 total = list.size,
                 running = list.count { it.status == "running" },
                 unhealthy = list.count { it.health == "unhealthy" },
@@ -383,7 +388,11 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                             Icon(Icons.Filled.Layers, contentDescription = null, tint = OmniColors.cyan)
                             Spacer(Modifier.width(12.dp))
                             Column {
-                                Text(stack.name, fontWeight = FontWeight.Bold, fontSize = 16.sp, fontFamily = OmniFonts.mono)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(stack.name, fontWeight = FontWeight.Bold, fontSize = 16.sp, fontFamily = OmniFonts.mono)
+                    Spacer(Modifier.width(6.dp))
+                    OmniTag(stack.runtime.uppercase(), color = if (stack.runtime == "podman") OmniColors.purple else OmniColors.cyan)
+                }
                                 Text(
                                     if (canCompose) stack.workingDir else "No compose metadata for stack actions",
                                     fontSize = 11.sp,
@@ -425,6 +434,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                                             fileName = fileName,
                                             composeFilePath = composePath,
                                             composeConfigFiles = stack.configFiles,
+                                            runtime = stack.runtime,
                                         )
                                         viewModel.activeInfraTab = 1
                                     } else {
@@ -441,7 +451,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                         StackActionRow(
                             stack = stack,
                             actions = listOf("ps" to "PS", "logs" to "Logs", "followLogs" to "FOLLOW", "config" to "CONFIG"),
-                            onAction = { action -> viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, action) },
+                            onAction = { action -> viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, action, runtime = stack.runtime) },
                         )
                         StackActionRow(
                             stack = stack,
@@ -453,28 +463,28 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                                         "Build ${stack.name}?",
                                         "Build this stack's Dockerfile-based images (refreshing their base images). Containers are not recreated — run Update or UP -D afterwards to apply.",
                                         confirmLabel = "Build",
-                                    ) { viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, "build") }
+                                    ) { viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, "build", runtime = stack.runtime) }
                                     "removeOrphans" -> confirm.ask(
                                         "Remove Orphans?",
                                         "Remove containers for services no longer defined in the compose file for ${stack.name}.",
                                         confirmLabel = "Remove Orphans",
-                                    ) { viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, "removeOrphans") }
+                                    ) { viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, "removeOrphans", runtime = stack.runtime) }
                                     "update" -> confirm.ask(
                                         "Update ${stack.name}?",
                                         "Pull updated registry images, (re)build any Dockerfile-based images, then recreate this stack's containers?",
                                         confirmLabel = "Update",
-                                    ) { viewModel.dockerStackUpdate(stack.name, stack.workingDir, stack.configFiles) }
+                                    ) { viewModel.dockerStackUpdate(stack.name, stack.workingDir, stack.configFiles, stack.runtime) }
                                     "forceRecreate" -> confirm.ask(
                                         "Force Recreate ${stack.name}?",
                                         "Recreate all containers even if nothing changed? Running containers will briefly restart.",
                                         confirmLabel = "Recreate",
-                                    ) { viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, "forceRecreate") }
+                                    ) { viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, "forceRecreate", runtime = stack.runtime) }
                                     "restart" -> confirm.ask(
                                         "Restart ${stack.name}?",
                                         "Restart all services in this stack? They will briefly go down.",
                                         confirmLabel = "Restart",
-                                    ) { viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, action) }
-                                    else -> viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, action)
+                                    ) { viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, action, runtime = stack.runtime) }
+                                    else -> viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, action, runtime = stack.runtime)
                                 }
                             },
                         )
@@ -529,6 +539,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                                             stack.configFiles,
                                             service.name,
                                             if (follow) "followLogs" else "serviceLogs",
+                                            runtime = stack.runtime,
                                         )
                                     },
                                     onRestart = {
@@ -536,14 +547,14 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                                             "Restart ${service.name}?",
                                             "Restart this service in ${stack.name}? It will briefly go down.",
                                             confirmLabel = "Restart",
-                                        ) { viewModel.dockerStackServiceAction(stack.name, stack.workingDir, stack.configFiles, service.name, "serviceRestart") }
+                                        ) { viewModel.dockerStackServiceAction(stack.name, stack.workingDir, stack.configFiles, service.name, "serviceRestart", runtime = stack.runtime) }
                                     },
                                     onStop = {
                                         confirm.ask(
                                             "Stop ${service.name}?",
                                             "Stop this service in ${stack.name}? It will remain stopped until started again.",
                                             confirmLabel = "Stop",
-                                        ) { viewModel.dockerStackServiceAction(stack.name, stack.workingDir, stack.configFiles, service.name, "serviceStop") }
+                                        ) { viewModel.dockerStackServiceAction(stack.name, stack.workingDir, stack.configFiles, service.name, "serviceStop", runtime = stack.runtime) }
                                     },
                                     onShell = { viewModel.openDockerExecShell(service.containerId) },
                                     onScale = { scaleTarget = ScaleTarget(stack, service) },
@@ -552,7 +563,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                                             "Remove ${service.name}?",
                                             "Stop and remove the container(s) for this service in ${stack.name}. The service definition in the compose file is not deleted.",
                                             confirmLabel = "Remove",
-                                        ) { viewModel.dockerStackServiceAction(stack.name, stack.workingDir, stack.configFiles, service.name, "serviceRemove") }
+                                        ) { viewModel.dockerStackServiceAction(stack.name, stack.workingDir, stack.configFiles, service.name, "serviceRemove", runtime = stack.runtime) }
                                     },
                                   )
                                 }
@@ -596,7 +607,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
             confirmButton = {
                 TextButton(
                     onClick = {
-                        viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, "down", removeOrphans = pendingDownRemoveOrphans)
+                        viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, "down", removeOrphans = pendingDownRemoveOrphans, runtime = stack.runtime)
                         pendingDown = null
                     }
                 ) { Text("DOWN", color = OmniColors.red) }
@@ -629,6 +640,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                             target.service.name,
                             "scale",
                             replicas.toIntOrNull() ?: target.service.running.coerceAtLeast(1),
+                            runtime = target.stack.runtime,
                         )
                         scaleTarget = null
                     }
@@ -749,6 +761,7 @@ private fun StackServiceRow(
 
 private data class StackSummary(
     val name: String,
+    val runtime: String,
     val total: Int,
     val running: Int,
     val unhealthy: Int,
@@ -782,6 +795,7 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
 
     var isSelectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    fun imageKey(img: SimDockerImage) = "${img.runtime}:${img.id}"
 
     LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
@@ -794,7 +808,11 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
                         Button(
                             onClick = {
                                 confirm.ask("Remove Images?", "Permanently remove ${selectedIds.size} images?", confirmLabel = "Remove") {
-                                    selectedIds.forEach { viewModel.dockerImageAction(it, "remove") }
+                                    selectedIds.forEach { key ->
+                                        images.firstOrNull { imageKey(it) == key }?.let {
+                                            viewModel.dockerImageAction(it.id, "remove", it.runtime)
+                                        }
+                                    }
                                     selectedIds = setOf()
                                     isSelectionMode = false
                                 }
@@ -822,11 +840,11 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
                 }
             }
         }
-        items(images, key = { it.id }) { img ->
+        items(images, key = { imageKey(it) }) { img ->
             OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = if (img.inUse) OmniColors.green else MaterialTheme.colorScheme.outlineVariant) {
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     if (isSelectionMode) {
-                        Checkbox(checked = img.id in selectedIds, onCheckedChange = { if (it) selectedIds += img.id else selectedIds -= img.id })
+                        Checkbox(checked = imageKey(img) in selectedIds, onCheckedChange = { if (it) selectedIds += imageKey(img) else selectedIds -= imageKey(img) })
                     }
                     Column(modifier = Modifier.weight(1f).padding(12.dp)) {
                     Row(
@@ -854,7 +872,7 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
                             label = "Remove",
                             onClick = {
                                 confirm.ask("Remove Image?", "Permanently remove image ${img.repository}:${img.tag}?", confirmLabel = "Remove") {
-                                    viewModel.dockerImageAction(img.id, "remove")
+                                    viewModel.dockerImageAction(img.id, "remove", img.runtime)
                                 }
                             },
                             color = OmniColors.red,
@@ -875,6 +893,7 @@ private fun VolumeList(viewModel: AppViewModel, volumes: List<SimDockerVolume>) 
 
     var isSelectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    fun volumeKey(vol: SimDockerVolume) = "${vol.runtime}:${vol.name}"
 
     LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
@@ -887,7 +906,11 @@ private fun VolumeList(viewModel: AppViewModel, volumes: List<SimDockerVolume>) 
                         Button(
                             onClick = {
                                 confirm.ask("Remove Volumes?", "Permanently remove ${selectedIds.size} volumes?", confirmLabel = "Remove") {
-                                    selectedIds.forEach { viewModel.dockerVolumeAction(it, "remove") }
+                                    selectedIds.forEach { key ->
+                                        volumes.firstOrNull { volumeKey(it) == key }?.let {
+                                            viewModel.dockerVolumeAction(it.name, "remove", it.runtime)
+                                        }
+                                    }
                                     selectedIds = setOf()
                                     isSelectionMode = false
                                 }
@@ -915,11 +938,11 @@ private fun VolumeList(viewModel: AppViewModel, volumes: List<SimDockerVolume>) 
                 }
             }
         }
-        items(volumes, key = { it.name }) { vol ->
+        items(volumes, key = { volumeKey(it) }) { vol ->
             OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.purple) {
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     if (isSelectionMode) {
-                        Checkbox(checked = vol.name in selectedIds, onCheckedChange = { if (it) selectedIds += vol.name else selectedIds -= vol.name })
+                        Checkbox(checked = volumeKey(vol) in selectedIds, onCheckedChange = { if (it) selectedIds += volumeKey(vol) else selectedIds -= volumeKey(vol) })
                     }
                     Column(modifier = Modifier.weight(1f).padding(12.dp)) {
                     Row(
@@ -951,7 +974,7 @@ private fun VolumeList(viewModel: AppViewModel, volumes: List<SimDockerVolume>) 
                             label = "Remove",
                             onClick = {
                                 confirm.ask("Remove Volume?", "Permanently remove volume ${vol.name}?", confirmLabel = "Remove") {
-                                    viewModel.dockerVolumeAction(vol.name, "remove")
+                                    viewModel.dockerVolumeAction(vol.name, "remove", vol.runtime)
                                 }
                             },
                             color = OmniColors.red,
@@ -992,7 +1015,7 @@ private fun NetworkList(viewModel: AppViewModel, networks: List<SimDockerNetwork
                 }
             }
         }
-        items(networks, key = { it.id }) { net ->
+        items(networks, key = { "${it.runtime}:${it.id}" }) { net ->
             val isBuiltin = net.name in setOf("bridge", "host", "none")
             OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.cyan) {
                 Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
@@ -1032,7 +1055,7 @@ private fun NetworkList(viewModel: AppViewModel, networks: List<SimDockerNetwork
                                 label = "Remove",
                                 onClick = {
                                     confirm.ask("Remove Network?", "Permanently remove network ${net.name}?", confirmLabel = "Remove") {
-                                        viewModel.dockerNetworkAction(net.id, "remove")
+                                        viewModel.dockerNetworkAction(net.id, "remove", net.runtime)
                                     }
                                 },
                                 color = OmniColors.red,

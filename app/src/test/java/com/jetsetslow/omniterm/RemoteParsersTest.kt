@@ -59,16 +59,18 @@ class RemoteParsersTest {
     @Test
     fun parsesDockerPs() {
         val out =
-            "abc123\tweb\tnginx:1.25\tUp 3 hours (healthy)\t80/tcp\tmyproj\tweb\t/opt/app\tcompose.yml\t2026-05-01 00:00:00 +0000 UTC\n" +
-            "def456\tdb\tpostgres:16\tExited (0) 2 hours ago\t\t\t\t\t\t2026-05-02 00:00:00 +0000 UTC"
+            "podman\tabc123\tweb\tnginx:1.25\tUp 3 hours (healthy)\t80/tcp\tmyproj\tweb\t/opt/app\tcompose.yml\t2026-05-01 00:00:00 +0000 UTC\n" +
+            "docker\tdef456\tdb\tpostgres:16\tExited (0) 2 hours ago\t\t\t\t\t\t2026-05-02 00:00:00 +0000 UTC"
         val containers = RemoteParsers.parseDockerPs(out)
         assertEquals(2, containers.size)
         assertEquals("web", containers[0].name)
+        assertEquals("podman", containers[0].runtime)
         assertEquals("running", containers[0].status)
         assertEquals("myproj", containers[0].group)
         assertEquals("web", containers[0].composeService)
         assertEquals("healthy", containers[0].health)
         assertEquals("exited", containers[1].status)
+        assertEquals("docker", containers[1].runtime)
         assertEquals("standalone", containers[1].group)
     }
 
@@ -84,9 +86,21 @@ class RemoteParsersTest {
 
     @Test
     fun parsesDockerRestartCounts() {
-        val counts = RemoteParsers.parseDockerRestartCounts("abc1234567890\t2\ndef4567890000\t0")
+        val counts = RemoteParsers.parseDockerRestartCounts("podman\tabc1234567890\t2\nabc1234567890\t2\ndef4567890000\t0")
+        assertEquals(2, counts["podman:abc123456789"])
         assertEquals(2, counts["abc123456789"])
         assertEquals(0, counts["def456789000"])
+    }
+
+    @Test
+    fun parsesContainerResourcesWithRuntimePrefixes() {
+        val images = RemoteParsers.parseDockerImages("podman\tsha256:abc1234567890\tnginx\tlatest\t187MB\t2 days ago")
+        assertEquals("podman", images.single().runtime)
+        val volumes = RemoteParsers.parseDockerVolumes("podman\tpgdata\tlocal\t/var/lib/containers/storage/volumes/pgdata\t1GB\t1")
+        assertEquals("podman", volumes.single().runtime)
+        assertTrue(volumes.single().inUse)
+        val networks = RemoteParsers.parseDockerNetworks("podman\tnet1234567890\tpodman\tbridge")
+        assertEquals("podman", networks.single().runtime)
     }
 
     @Test

@@ -340,7 +340,8 @@ fun SudoAuthDialog(viewModel: AppViewModel) {
         confirmButton = {
             if (viewModel.savedPin != null) {
                 TextButton(onClick = {
-                    if (viewModel.verifyPin(pin)) viewModel.confirmPendingSudoAction() else error = "Incorrect PIN"
+                    val err = viewModel.verifyPinForSensitiveAction(pin)
+                    if (err == null) viewModel.confirmPendingSudoAction() else error = err
                 }) { Text("Confirm") }
             }
         },

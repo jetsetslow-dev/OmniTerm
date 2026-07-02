@@ -20,6 +20,7 @@ data class SimContainer(
     val health: String = "none",
     val restartCount: Int = 0,
     val createdAt: String = "",
+    val runtime: String = "docker",
 )
 
 data class SimDockerImage(
@@ -28,7 +29,8 @@ data class SimDockerImage(
     val tag: String,
     val size: String,
     val created: String,
-    var inUse: Boolean = false
+    var inUse: Boolean = false,
+    val runtime: String = "docker",
 )
 
 data class SimDockerVolume(
@@ -36,7 +38,8 @@ data class SimDockerVolume(
     val driver: String,
     val mountpoint: String,
     var inUse: Boolean = false,
-    val size: String = ""
+    val size: String = "",
+    val runtime: String = "docker",
 )
 
 data class SimDockerNetwork(
@@ -46,6 +49,7 @@ data class SimDockerNetwork(
     val subnet: String = "",
     val gateway: String = "",
     val containerCount: Int = 0,
+    val runtime: String = "docker",
 )
 
 data class KnownHost(val host: String, val keyType: String, val fingerprint: String)
