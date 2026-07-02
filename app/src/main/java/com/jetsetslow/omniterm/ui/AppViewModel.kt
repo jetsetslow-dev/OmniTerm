@@ -624,6 +624,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var shareTransferRunning by mutableStateOf(false); private set
     /** Connection for the active browsing session; owned here, closed on exit/switch/clear. */
     private var shareClient: RemoteFsClient? = null
+    private var shareClientShareId: Int? = null
     private var shareJob: Job? = null
 
     // ── Cross-endpoint clipboard: copy/paste between shares and SFTP hosts, both directions ──
@@ -4343,12 +4344,28 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /** The cached browsing connection, dialing it on first use. */
-    private suspend fun browserClient(share: NetworkShareEntity): RemoteFsClient =
-        shareClient ?: shareFsClient(share).also { shareClient = it }
+    private suspend fun browserClient(share: NetworkShareEntity): RemoteFsClient {
+        shareClient?.takeIf { shareClientShareId == share.id }?.let { return it }
+
+        val stale = shareClient
+        shareClient = null
+        shareClientShareId = null
+        withContext(Dispatchers.IO) { runCatching { stale?.close() } }
+
+        val client = shareFsClient(share)
+        if (browsingShare?.id != share.id) {
+            withContext(Dispatchers.IO) { runCatching { client.close() } }
+            throw CancellationException("Share browser switched")
+        }
+        shareClient = client
+        shareClientShareId = share.id
+        return client
+    }
 
     private fun closeShareBrowserClient() {
         val client = shareClient ?: return
         shareClient = null
+        shareClientShareId = null
         // Teardown can block on socket close, so it must leave the main thread — and it can't use
         // viewModelScope because that is already cancelled when onCleared calls this.
         @OptIn(DelicateCoroutinesApi::class)
@@ -4419,16 +4436,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             shareOpRunning = true
             try {
                 op(browserClient(share))
+                if (browsingShare?.id != share.id) return@launch
                 shareError = null
                 shareStatus = successStatus
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                shareError = e.message ?: "Share operation failed"
+                if (browsingShare?.id == share.id) shareError = e.message ?: "Share operation failed"
             } finally {
                 shareOpRunning = false
             }
-            loadShareDir(sharePath, clearError = false)
+            if (browsingShare?.id == share.id) loadShareDir(sharePath, clearError = false)
         }
     }
 

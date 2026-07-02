@@ -68,7 +68,7 @@ Open **Term** to start an interactive SSH shell on the selected host. OmniTerm s
 - Theme presets: Omni Dark, Solarized Dark, Matrix, and Light.
 - Hardware keyboard and soft keyboard input, plus a compact special-key bar.
 - Long-press copy tools for visible screen or full scrollback text.
-- Scroll up to review history; a **Bottom** button jumps back to the live tail (and exits tmux copy-mode on persistent sessions).
+- Smooth row-snapped scrolling for local terminal history; a **Bottom** button jumps back to the live tail (and exits tmux copy-mode on persistent sessions).
 
 ### SFTP File Manager
 Open **SFTP** to browse files on the selected host. You can upload, download, rename, delete, create folders, sort file lists, and edit text files. 
@@ -119,7 +119,7 @@ Open **Tools > Settings** to configure the app to your liking:
 **About > Device & diagnostics** shows your app version, build, device info, and an on-device crash history viewer to help you report issues.
 
 ## Backup & Restore
-Open **Tools > Backups Hub** to export or restore a selective backup of OmniTerm's app data (hosts, SSH keys, scripts, alert data, saved network shares, settings).
+Open **Tools > Backups Hub** to export or restore a selective backup of OmniTerm's app data (hosts, SSH keys, reusable credential profiles, scripts, alert data, saved network shares, and settings).
 - Backups including sensitive sections are compressed and encrypted with AES-256-GCM using a passphrase-derived key.
 - OmniTerm app backups do not copy files from your remote hosts.
 - OmniTerm does not store the backup passphrase. Keep it safe.
