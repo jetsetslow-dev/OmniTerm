@@ -68,6 +68,7 @@ Open **Term** to start an interactive SSH shell on the selected host. OmniTerm s
 - Theme presets: Omni Dark, Solarized Dark, Matrix, and Light.
 - Hardware keyboard and soft keyboard input, plus a compact special-key bar.
 - Long-press copy tools for visible screen or full scrollback text.
+- Scroll up to review history; a **Bottom** button jumps back to the live tail (and exits tmux copy-mode on persistent sessions).
 
 ### SFTP File Manager
 Open **SFTP** to browse files on the selected host. You can upload, download, rename, delete, create folders, sort file lists, and edit text files. 
@@ -80,7 +81,8 @@ Open **SFTP** to browse files on the selected host. You can upload, download, re
 Open the **Shares** tab (in the SFTP screen) to work with network file shares that are separate from your SSH hosts.
 - **Discovery & saved profiles:** Scan a subnet (e.g. `192.168.1.0/24`, or leave it blank on Wi-Fi/LAN) to find SMB, FTP, SFTP, NFS, and WebDAV services, then save them as reusable profiles. Credentials can be entered inline or linked to a shared credential profile.
 - **File browsing:** Tap **Browse** on a SMB, FTP, SFTP, or WebDAV share to navigate folders, create/rename/delete, and upload or download files to your device. (NFS and custom profiles are save-only for now.)
-- **Cross-protocol copy/paste:** Copy or cut files in a share and paste them into another folder, another share, or the SFTP host — and vice versa, in either direction. Same-host SFTP pastes run server-side (`cp`/`mv`); everything else streams through the device without buffering the whole file, so multi-GB transfers work. Each transfer shows live progress and lands in the **Transfers** tab.
+- **Cross-protocol copy/paste:** Copy or cut files in a share and paste them into another folder, another share, or the SFTP host — and vice versa, in either direction. Same-host SFTP pastes run server-side (`cp`/`mv`); everything else streams through the device without buffering the whole file, so multi-GB transfers work. Whole **folders** copy recursively when you tick **Include folders** in the paste bar (off by default, since a deep tree can move a lot of data).
+- **Progress:** Every transfer surface shows a Windows-style rollup — number of files, bytes done of the total, combined speed, and ETA — plus per-file rows in the **Transfers** tab.
 
 ### Monitoring
 Open **Monitor** for live host metrics (CPU, memory, disk, load, uptime, process count, temperature).

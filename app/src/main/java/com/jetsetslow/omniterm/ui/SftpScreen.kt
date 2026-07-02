@@ -470,39 +470,28 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
             Spacer(Modifier.height(8.dp))
         }
 
-        // Live progress for this share's in-flight transfers (full history is on Transfers).
-        val activeTransfers = viewModel.sftpTransfers.filter {
+        // Live aggregate progress for this share's in-flight transfers (files + total size,
+        // Windows-style). A recursive folder paste also shows the file currently being copied.
+        val hasActive = viewModel.sftpTransfers.any {
             it.serverId == -share.id && it.status == SftpTransferStatus.InProgress
         }
-        activeTransfers.forEach { t ->
-            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "${t.direction}: ${t.name}",
-                        fontSize = 11.sp,
-                        fontFamily = OmniFonts.mono,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        if (t.totalBytes > 0) "${formatBytes(t.bytesTransferred)} / ${formatBytes(t.totalBytes)}"
-                        else formatBytes(t.bytesTransferred),
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (t.totalBytes > 0) {
-                    LinearProgressIndicator(
-                        progress = { (t.bytesTransferred.toFloat() / t.totalBytes).coerceIn(0f, 1f) },
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                } else {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                }
+        // Cross-endpoint pastes into this share are logged under endpointId 0 (mixed source),
+        // so surface those too whenever a cross paste is running while this browser is open.
+        if (hasActive || viewModel.crossPasteRunning) {
+            TransferAggregateBar(viewModel, endpointId = if (viewModel.crossPasteRunning) null else -share.id)
+            viewModel.crossPasteProgress?.let { current ->
+                Text(
+                    "Copying: $current",
+                    fontSize = 10.sp,
+                    fontFamily = OmniFonts.mono,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(top = 2.dp),
+                )
             }
+            Spacer(Modifier.height(8.dp))
         }
-        if (activeTransfers.isNotEmpty()) Spacer(Modifier.height(8.dp))
 
         // The listing itself.
         when {
@@ -675,58 +664,76 @@ private fun CrossClipboardBar(
     confirm: ConfirmController,
     onPaste: () -> Unit,
 ) {
+    val hasFolders = viewModel.crossClipboard.any { it.isDirectory }
     OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.green) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                Icon(
-                    if (viewModel.crossClipboardIsMove) Icons.Filled.ContentCut else Icons.Filled.ContentCopy,
-                    contentDescription = null,
-                    tint = OmniColors.green,
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Column {
-                    Text(
-                        "${viewModel.crossClipboard.size} item(s) ready to ${if (viewModel.crossClipboardIsMove) "move" else "copy"}",
-                        fontSize = 12.sp,
-                        fontFamily = OmniFonts.mono,
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
+                    Icon(
+                        if (viewModel.crossClipboardIsMove) Icons.Filled.ContentCut else Icons.Filled.ContentCopy,
+                        contentDescription = null,
+                        tint = OmniColors.green,
                     )
-                    Text(
-                        "from ${viewModel.crossClipboard.map { it.sourceLabel }.distinct().joinToString(", ")}",
-                        fontSize = 10.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            "${viewModel.crossClipboard.size} item(s) ready to ${if (viewModel.crossClipboardIsMove) "move" else "copy"}",
+                            fontSize = 12.sp,
+                            fontFamily = OmniFonts.mono,
+                        )
+                        Text(
+                            "from ${viewModel.crossClipboard.map { it.sourceLabel }.distinct().joinToString(", ")}",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                if (viewModel.crossPasteRunning) {
+                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                } else {
+                    Row {
+                        TextButton(onClick = { viewModel.sftpClearClipboard() }) { Text("Clear") }
+                        Button(onClick = {
+                            val conflicts = viewModel.crossClipboard
+                                .map { it.name }
+                                .filter { it in existingNames }
+                                .distinct()
+                            if (conflicts.isEmpty()) onPaste()
+                            else confirm.ask(
+                                "Overwrite existing item(s)?",
+                                "Already in this folder and will be replaced: " +
+                                    conflicts.take(5).joinToString(", ") +
+                                    (if (conflicts.size > 5) " and ${conflicts.size - 5} more" else "") +
+                                    ". This cannot be undone.",
+                                confirmLabel = "Overwrite",
+                            ) { onPaste() }
+                        }) {
+                            Icon(Icons.Filled.ContentPaste, null)
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text("Paste here")
+                        }
+                    }
                 }
             }
-            if (viewModel.crossPasteRunning) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-            } else {
-                Row {
-                    TextButton(onClick = { viewModel.sftpClearClipboard() }) { Text("Clear") }
-                    Button(onClick = {
-                        val conflicts = viewModel.crossClipboard
-                            .map { it.name }
-                            .filter { it in existingNames }
-                            .distinct()
-                        if (conflicts.isEmpty()) onPaste()
-                        else confirm.ask(
-                            "Overwrite existing item(s)?",
-                            "Already in this folder and will be replaced: " +
-                                conflicts.take(5).joinToString(", ") +
-                                (if (conflicts.size > 5) " and ${conflicts.size - 5} more" else "") +
-                                ". This cannot be undone.",
-                            confirmLabel = "Overwrite",
-                        ) { onPaste() }
-                    }) {
-                        Icon(Icons.Filled.ContentPaste, null)
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("Paste here")
-                    }
+            // Folders in a cross-endpoint paste are copied file-by-file, which is slower and moves
+            // more data — off by default, opt in here. Only shown when the clipboard has folders.
+            if (hasFolders && !viewModel.crossPasteRunning) {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
+                    Checkbox(
+                        checked = viewModel.crossPasteRecurseFolders,
+                        onCheckedChange = { viewModel.toggleCrossPasteRecurseFolders(it) },
+                    )
+                    Text(
+                        "Include folders (copy their contents recursively)",
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
@@ -1477,6 +1484,27 @@ fun SftpFilesTab(viewModel: AppViewModel) {
             }
         }
 
+        // Windows-style aggregate progress for transfers on this host (uploads/downloads) and any
+        // running cross-endpoint paste. Full per-file history stays on the Transfers tab.
+        val srvId = viewModel.selectedServerId
+        val hasHostTransfers = srvId != null && viewModel.sftpTransfers.any {
+            it.serverId == srvId && it.status == SftpTransferStatus.InProgress
+        }
+        if (hasHostTransfers || viewModel.crossPasteRunning) {
+            Spacer(modifier = Modifier.height(8.dp))
+            TransferAggregateBar(viewModel, endpointId = if (viewModel.crossPasteRunning) null else srvId)
+            viewModel.crossPasteProgress?.let { current ->
+                Text(
+                    "Copying: $current",
+                    fontSize = 10.sp,
+                    fontFamily = OmniFonts.mono,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+
         // Cross-endpoint paste bar — appears when files copied from a network share or a *different*
         // SSH host are staged. Pasting here streams them onto the current host (the same-host case
         // above already handles server-side cp/mv, so this bar hides when the clipboard is local).
@@ -1934,6 +1962,59 @@ fun SftpFilesTab(viewModel: AppViewModel) {
     }
 }
 
+/**
+ * Windows-style aggregate transfer banner: "Copying 3 files · 1.2 GB of 4.7 GB · 18.4 MB/s · ETA 2m".
+ * Shows a combined progress bar over every in-flight transfer for the given [endpointId] (null =
+ * all endpoints). Renders nothing when idle. Reused by the Transfers tab, the share browser, and
+ * the SFTP Files tab so every transfer surface reports files + total size consistently.
+ */
+@Composable
+fun TransferAggregateBar(viewModel: AppViewModel, endpointId: Int? = null, modifier: Modifier = Modifier) {
+    val agg = viewModel.transferAggregate(endpointId) ?: return
+    val verb = "Transferring"
+    val etaStr = if (agg.etaSeconds > 0) " · ETA ${formatEta(agg.etaSeconds)}" else ""
+    val speedStr = if (agg.speedKbps >= 1024f) "%.1f MB/s".format(agg.speedKbps / 1024f)
+        else if (agg.speedKbps > 0f) "%.0f KB/s".format(agg.speedKbps) else ""
+    OmniCard(modifier = modifier.fillMaxWidth(), leftAccent = OmniColors.cyan) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.SyncAlt, null, tint = OmniColors.cyan)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "$verb ${agg.activeFiles} file${if (agg.activeFiles == 1) "" else "s"}",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+            if (agg.hasKnownTotal) {
+                LinearProgressIndicator(progress = { agg.fraction }, modifier = Modifier.fillMaxWidth(), color = OmniColors.cyan)
+            } else {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth(), color = OmniColors.cyan)
+            }
+            Spacer(Modifier.height(4.dp))
+            Text(
+                buildString {
+                    if (agg.hasKnownTotal) append("${formatBytes(agg.bytesTransferred)} of ${formatBytes(agg.totalBytes)}")
+                    else append(formatBytes(agg.bytesTransferred))
+                    if (speedStr.isNotBlank()) append(" · $speedStr")
+                    append(etaStr)
+                },
+                fontSize = 11.sp,
+                fontFamily = OmniFonts.mono,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+private fun formatEta(seconds: Int): String = when {
+    seconds >= 3600 -> "${seconds / 3600}h ${(seconds % 3600) / 60}m"
+    seconds >= 60 -> "${seconds / 60}m ${seconds % 60}s"
+    else -> "${seconds}s"
+}
+
 @Composable
 fun SftpTransfersTab(viewModel: AppViewModel) {
     var confirmClearTransfers by remember { mutableStateOf(false) }
@@ -1951,6 +2032,11 @@ fun SftpTransfersTab(viewModel: AppViewModel) {
                 }
             }
             Spacer(modifier = Modifier.height(12.dp))
+            // Windows-style rollup across every in-flight transfer, above the per-file rows.
+            if (hasRunningTransfers) {
+                TransferAggregateBar(viewModel)
+                Spacer(modifier = Modifier.height(12.dp))
+            }
             LazyColumn(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 verticalArrangement = Arrangement.spacedBy(8.dp)

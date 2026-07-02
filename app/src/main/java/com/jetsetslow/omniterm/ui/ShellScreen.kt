@@ -27,6 +27,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.KeyboardDoubleArrowDown
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -558,6 +559,8 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
     LaunchedEffect(sessionId) {
         focusRequester.requestFocus()
         keyboard?.show()
+        // A fresh session starts at its live tail; clear any stale tmux copy-mode scroll flag.
+        viewModel.clearTerminalTmuxScrolledBack()
     }
 
     // Release the hidden input's focus when the app is backgrounded (e.g. tapping a notification),
@@ -665,18 +668,30 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
                     },
             )
 
-            if (!followTail) {
-                TextButton(
+            // Jump-to-bottom control. For local-scroll shells it shows once the user scrolls up off
+            // the tail; for tmux (persistent) sessions the scroll drives copy-mode instead of the
+            // local viewport, so we track that separately and exit copy-mode with `q` on tap.
+            val scrolledUp = if (forwardScrollToRemote) viewModel.terminalTmuxScrolledBack else !followTail
+            if (scrolledUp) {
+                FilledTonalButton(
                     onClick = {
-                        followTail = true
-                        val bottom = (snapshot.totalRows - visibleRowCount).coerceAtLeast(0)
-                        firstVisibleRow = bottom
-                        viewModel.updateTerminalViewport(bottom, visibleRowCount, followTail = true)
+                        if (forwardScrollToRemote) {
+                            viewModel.terminalJumpToLiveTail()
+                        } else {
+                            followTail = true
+                            val bottom = (snapshot.totalRows - visibleRowCount).coerceAtLeast(0)
+                            firstVisibleRow = bottom
+                            viewModel.updateTerminalViewport(bottom, visibleRowCount, followTail = true)
+                        }
                     },
-                    modifier = Modifier.align(Alignment.BottomEnd),
-                    colors = ButtonDefaults.textButtonColors(contentColor = palette.cursor),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(12.dp),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp),
                 ) {
-                    Text("BOTTOM", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    Icon(Icons.Filled.KeyboardDoubleArrowDown, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("Bottom", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
 

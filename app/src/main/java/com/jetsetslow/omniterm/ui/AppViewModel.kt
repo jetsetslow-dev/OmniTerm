@@ -148,6 +148,26 @@ data class NetworkShareScanHit(
 )
 
 /**
+ * Windows-style rollup of the transfers currently in flight: how many files, how many bytes done
+ * of the known total, and the combined throughput. [totalBytes] counts only rows whose size is
+ * known, so a WebDAV upload with no Content-Length doesn't zero out the aggregate bar.
+ */
+data class TransferAggregate(
+    val activeFiles: Int,
+    val bytesTransferred: Long,
+    val totalBytes: Long,
+    val speedKbps: Float,
+) {
+    val hasKnownTotal: Boolean get() = totalBytes > 0
+    val fraction: Float get() = if (totalBytes > 0) (bytesTransferred.toFloat() / totalBytes).coerceIn(0f, 1f) else 0f
+    val etaSeconds: Int
+        get() {
+            val remaining = totalBytes - bytesTransferred
+            return if (speedKbps > 0f && remaining > 0) (remaining / (speedKbps * 1024f)).toInt() else -1
+        }
+}
+
+/**
  * One file staged on the cross-endpoint clipboard. Exactly one of [serverId] (an SSH host from
  * the SFTP tab) or [shareId] (a saved network share) identifies where the file lives, so a paste
  * can re-open the right connection even after the user navigates elsewhere.
@@ -610,6 +630,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var crossClipboard by mutableStateOf<List<RemoteFileRef>>(emptyList()); private set
     var crossClipboardIsMove by mutableStateOf(false); private set
     var crossPasteRunning by mutableStateOf(false); private set
+    /**
+     * Opt-in: recurse into folders when pasting across endpoints. Off by default because a deep tree
+     * is many round-trips over two connections and can move a lot of data; the user turns it on per
+     * paste from the clipboard bar. Persisted so the choice sticks across sessions.
+     */
+    var crossPasteRecurseFolders by mutableStateOf(false)
+        private set
+    fun toggleCrossPasteRecurseFolders(enabled: Boolean) {
+        crossPasteRecurseFolders = enabled
+        viewModelScope.launch { repository.insertSetting("cross_paste_recurse", enabled.toString()) }
+    }
+    /** Live progress for a running recursive paste: files done + current path (null when idle). */
+    var crossPasteProgress by mutableStateOf<String?>(null); private set
 
     // ── LIVE REMOTE DATA (real SSH; replaces the old in-memory simulator) ──
     var dockerContainers by mutableStateOf<List<SimContainer>>(emptyList()); private set
@@ -1077,6 +1110,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 list.find { it.key == "sftp_sort" }?.value?.let { v ->
                     SftpSortOption.entries.firstOrNull { it.name == v }?.let { sftpSortOption = it }
                 }
+                list.find { it.key == "cross_paste_recurse" }?.value?.let { crossPasteRecurseFolders = it == "true" }
                 list.find { it.key == "editor_highlight_limit" }?.value?.toIntOrNull()
                     ?.let { editorHighlightLimit = clampHighlightLimit(it) }
                 healthConfig = HealthScoringConfig.decode(list.find { it.key == "health_scoring" }?.value)
@@ -3354,6 +3388,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun typeText(text: String) {
         val session = currentSession ?: return
         if (text.isEmpty() || !session.isConnected) return
+        // Printable input exits tmux copy-mode, so the pane is back at the live tail — drop the
+        // jump-to-bottom flag to match. (Wheel scrolling re-arms it in terminalMouseWheel.)
+        if (terminalTmuxScrolledBack) terminalTmuxScrolledBack = false
         pendingSwipeFlush?.invoke()
         var t = text
         if (isShiftPressed && t.length == 1) {
@@ -3481,12 +3518,34 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun terminalMouseWheel(wheelUp: Boolean, ticks: Int = 1) {
         val session = currentSession ?: return
         if (!session.isConnected || !session.persistent) return
+        // A wheel-up scroll puts tmux into copy-mode; remember it so the terminal can show the
+        // jump-to-bottom control and exit copy-mode cleanly when the user taps it.
+        if (wheelUp) terminalTmuxScrolledBack = true
         val button = if (wheelUp) 64 else 65
         val out = ArrayList<Byte>(ticks.coerceIn(1, 10) * 8)
         // SGR mouse: ESC [ < button ; col ; row M   (M = press; wheel has no release).
         val seq = "[<$button;1;1M".toByteArray()
         repeat(ticks.coerceIn(1, 10)) { seq.forEach { out.add(it) } }
         sendBytes(out.toByteArray())
+    }
+
+    /**
+     * True when a tmux (persistent) session has been scrolled up into copy-mode, so the terminal
+     * should offer a jump-to-bottom control. Reset on jump-to-bottom or session switch.
+     */
+    var terminalTmuxScrolledBack by mutableStateOf(false); private set
+
+    fun clearTerminalTmuxScrolledBack() { terminalTmuxScrolledBack = false }
+
+    /**
+     * Return a scrolled-up tmux pane to the live tail by leaving copy-mode: sends `q` (the default
+     * copy-mode cancel binding), which snaps the pane back to the bottom. No-op for non-tmux.
+     */
+    fun terminalJumpToLiveTail() {
+        val session = currentSession ?: return
+        if (!session.isConnected || !session.persistent) return
+        sendBytes("q".toByteArray())
+        terminalTmuxScrolledBack = false
     }
 
     fun disconnectTerminal() {
@@ -4545,8 +4604,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Copy (or move) every staged clipboard file into [destDir] on the destination endpoint,
-     * streaming each file through the device. Folders are skipped — cross-endpoint recursion
-     * isn't supported yet — and a move within the same share collapses to a rename.
+     * streaming each file through the device. Folders are copied recursively only when the user
+     * has opted in ([crossPasteRecurseFolders]); otherwise they're skipped and reported. A move
+     * within the same share collapses to a rename (files and folders alike).
      */
     private fun pasteCrossTo(destServer: ServerEntity?, destShare: NetworkShareEntity?, destDir: String) {
         if (crossPasteRunning) return
@@ -4556,6 +4616,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val destLabel = destServer?.name ?: destShare?.let(::shareEndpointLabel).orEmpty()
         viewModelScope.launch {
             crossPasteRunning = true
+            crossPasteProgress = null
+            var copiedFiles = 0
             val sourceClients = mutableMapOf<String, RemoteFsClient>()
             var destClient: RemoteFsClient? = null
             // Reuse (and don't close) the live browsing connection when pasting into the share
@@ -4574,17 +4636,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     destShare != null -> shareFsClient(destShare)
                     else -> return@launch
                 }
+                val recurse = crossPasteRecurseFolders
                 for (ref in refs) {
-                    if (ref.isDirectory) {
-                        skippedDirs++
-                        continue
-                    }
                     val srcPath = joinPath(ref.dir, ref.name)
                     val destPath = joinPath(destDir, ref.name)
                     if (srcPath == destPath && ((destShare != null && ref.shareId == destShare.id) || (destServer != null && ref.serverId == destServer.id))) {
                         continue  // pasted onto itself; nothing to do.
                     }
-                    // A move within the same share is just a rename — no data travels.
+                    // A move within the same share (file or folder) is just a rename — no data travels.
                     if (isMove && destShare != null && ref.shareId == destShare.id) {
                         try {
                             destClient.rename(srcPath, destPath)
@@ -4597,6 +4656,23 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         continue
                     }
                     val sourceKey = "${ref.serverId}|${ref.shareId}"
+                    val src = sourceClients.getOrPut(sourceKey) { clientForRef(ref) }
+
+                    if (ref.isDirectory) {
+                        if (!recurse) { skippedDirs++; continue }
+                        try {
+                            val filesCopied = copyTreeBetween(src, srcPath, destClient, destPath, ref.name, destLabel, isMove)
+                            if (isMove) deleteTree(src, srcPath)
+                            ok++
+                            copiedFiles += filesCopied
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            if (firstErr == null) firstErr = "${ref.name}: ${e.message ?: "folder copy failed"}"
+                        }
+                        continue
+                    }
+
                     val transferId = addTransfer(
                         endpointId = ref.shareId?.let { -it } ?: ref.serverId ?: 0,
                         endpointName = ref.sourceLabel,
@@ -4605,10 +4681,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         remotePath = "$destLabel:$destPath",
                     )
                     try {
-                        val src = sourceClients.getOrPut(sourceKey) { clientForRef(ref) }
                         val copied = streamCopyBetween(src, srcPath, destClient, destPath, ref.size, transferId)
                         if (isMove) src.delete(srcPath, false)
                         ok++
+                        copiedFiles++
                         finishSftpTransfer(transferId, SftpTransferStatus.Success, copied, copied, "${if (isMove) "Moved" else "Copied"} $copied bytes to $destLabel")
                     } catch (e: CancellationException) {
                         throw e
@@ -4621,7 +4697,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val summary = buildString {
                     append(if (isMove) "Moved" else "Copied")
                     append(" $ok of ${refs.size} item(s) to $destLabel")
-                    if (skippedDirs > 0) append(" — $skippedDirs folder(s) skipped (folders can't be copied across endpoints yet)")
+                    if (recurse && copiedFiles > 0) append(" ($copiedFiles file(s) total)")
+                    if (skippedDirs > 0) append(" — $skippedDirs folder(s) skipped (enable \"Include folders\" to copy them)")
                 }
                 if (destShare != null) {
                     shareError = firstErr
@@ -4641,6 +4718,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 if (destShare != null) shareError = msg else sftpError = msg
             } finally {
                 crossPasteRunning = false
+                crossPasteProgress = null
                 withContext(NonCancellable + Dispatchers.IO) {
                     sourceClients.values.forEach { runCatching { it.close() } }
                     if (ownsDestClient) runCatching { destClient?.close() }
@@ -4728,6 +4806,64 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             throw java.io.IOException("Source stream ended early: got $downloaded of $expectedSize bytes.")
         }
         downloaded
+    }
+
+    /**
+     * Recursively copy a directory tree between two endpoints. Creates [destPath], then walks
+     * [srcPath] breadth-first, streaming each file with [streamCopyBetween] and recursing into
+     * subfolders. Each file is one row in the transfer log; [crossPasteProgress] shows the
+     * running per-folder position. Returns the number of files copied. A symlink loop is bounded
+     * by [maxDepth] rather than followed forever.
+     */
+    private suspend fun copyTreeBetween(
+        src: RemoteFsClient,
+        srcPath: String,
+        dest: RemoteFsClient,
+        destPath: String,
+        rootName: String,
+        destLabel: String,
+        isMove: Boolean,
+        depth: Int = 0,
+        maxDepth: Int = 40,
+    ): Int {
+        if (depth > maxDepth) throw java.io.IOException("Folder nesting too deep (>$maxDepth) — aborting to avoid a symlink loop.")
+        // mkdir is idempotent enough here: a pre-existing dir on the destination is fine (merge).
+        runCatching { dest.mkdir(destPath) }
+        var files = 0
+        val entries = src.list(srcPath)
+        for (entry in entries) {
+            val childSrc = joinPath(srcPath, entry.name)
+            val childDest = joinPath(destPath, entry.name)
+            if (entry.isDirectory) {
+                files += copyTreeBetween(src, childSrc, dest, childDest, "$rootName/${entry.name}", destLabel, isMove, depth + 1, maxDepth)
+            } else {
+                crossPasteProgress = "$rootName/${entry.name}"
+                val transferId = addTransfer(0, destLabel, if (isMove) "Move" else "Copy", "$rootName/${entry.name}", "$destLabel:$childDest")
+                try {
+                    val copied = streamCopyBetween(src, childSrc, dest, childDest, entry.size, transferId)
+                    finishSftpTransfer(transferId, SftpTransferStatus.Success, copied, copied, "Copied $copied bytes")
+                    files++
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = e.message ?: "copy failed")
+                    throw e  // fail the whole folder so a move never deletes a partially-copied tree.
+                }
+            }
+        }
+        return files
+    }
+
+    /** Depth-first delete of a tree (used to finish a folder move). Files first, then the dirs. */
+    private suspend fun deleteTree(client: RemoteFsClient, path: String, depth: Int = 0, maxDepth: Int = 40) {
+        if (depth > maxDepth) return
+        val entries = runCatching { client.list(path) }.getOrDefault(emptyList())
+        for (entry in entries) {
+            val child = joinPath(path, entry.name)
+            if (entry.isDirectory) deleteTree(client, child, depth + 1, maxDepth)
+            else runCatching { client.delete(child, false) }
+        }
+        runCatching { client.delete(path, true) }
     }
 
     // ── SFTP (real ChannelSftp) ──
@@ -5404,6 +5540,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (sftpTransfers[i].status != SftpTransferStatus.InProgress) sftpTransfers.removeAt(i)
         }
         return item.id
+    }
+
+    /**
+     * Roll up the in-flight transfers into a single files-and-bytes summary. [endpointId] filters
+     * to one endpoint (a server id, or the negated share id) for an inline browser banner; null
+     * aggregates every running transfer for the Transfers tab. Returns null when nothing is running.
+     */
+    fun transferAggregate(endpointId: Int? = null): TransferAggregate? {
+        val running = sftpTransfers.filter {
+            it.status == SftpTransferStatus.InProgress && (endpointId == null || it.serverId == endpointId)
+        }
+        if (running.isEmpty()) return null
+        val done = running.sumOf { it.bytesTransferred.coerceAtLeast(0L) }
+        // Only rows with a known size contribute to the total, so an unknown-size row doesn't
+        // drag the aggregate bar to 0%.
+        val total = running.filter { it.totalBytes > 0 }.sumOf { it.totalBytes }
+        val speed = running.sumOf { it.speedKbps.toDouble() }.toFloat()
+        return TransferAggregate(running.size, done, total, speed)
     }
 
     private fun refreshSftpIfStillViewing(serverId: Int, remoteDir: String) {
