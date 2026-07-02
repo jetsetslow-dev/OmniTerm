@@ -18,6 +18,10 @@ runs:
 
     - name: Set up Gradle
       uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+      with:
+        build-scan-publish: true
+        build-scan-terms-of-use-url: https://gradle.com/terms-of-service
+        build-scan-terms-of-use-agree: "yes"
 
     - name: Install Android SDK packages
       if: inputs.install-sdk-packages == 'true'
