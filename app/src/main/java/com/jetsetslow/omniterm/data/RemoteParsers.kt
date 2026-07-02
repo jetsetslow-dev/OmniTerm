@@ -10,15 +10,23 @@ object RemoteCommands {
         "elif command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then command -v podman; " +
         "elif command -v docker >/dev/null 2>&1; then command -v docker; else command -v podman; fi)\""
 
-    // Compose entrypoint resolved at run time. Tries, in order: the runtime's built-in `compose`
-    // subcommand (`docker compose` / `podman compose`), then the standalone binaries
-    // (`docker-compose`, `podman-compose`). The chosen invocation is exported as $OT_COMPOSE so a
-    // single resolution is reused across a chained command. Emits an error to stderr and exits 1 if
-    // no compose tooling is present, instead of failing later with a confusing message.
+    // Compose entrypoint resolved at run time. Tries the selected runtime's built-in `compose`
+    // subcommand (`docker compose` / `podman compose`), then the matching standalone provider.
+    // Direct `docker-compose` is intentionally never used for a pinned Podman action: on hosts with
+    // both engines it can talk to Docker's socket and deploy the stack into the wrong runtime.
+    // The chosen invocation is exported as $OT_COMPOSE so a single resolution is reused across a
+    // chained command. Emits an error to stderr and exits 1 if no compose tooling is present,
+    // instead of failing later with a confusing message.
     private const val COMPOSE_RESOLVE =
         "OT_CR=$CR; " +
-        "if [ -n \"\$OT_CR\" ] && \"\$OT_CR\" compose version >/dev/null 2>&1; then OT_COMPOSE=\"\$OT_CR compose\"; " +
-        "elif [ -n \"\$OT_CR\" ] && \"\$OT_CR\" --version 2>/dev/null | grep -qi podman && command -v podman-compose >/dev/null 2>&1; then OT_COMPOSE=\"podman-compose\"; " +
+        "if [ -n \"\$OT_CR\" ] && \"\$OT_CR\" --version 2>/dev/null | grep -qi podman; then " +
+            "if \"\$OT_CR\" compose version >/dev/null 2>&1; then OT_COMPOSE=\"\$OT_CR compose\"; " +
+            "elif command -v podman-compose >/dev/null 2>&1; then OT_COMPOSE=\"podman-compose\"; " +
+            "else echo 'No Podman Compose provider found on host' >&2; exit 1; fi; " +
+        "elif [ -n \"\$OT_CR\" ]; then " +
+            "if \"\$OT_CR\" compose version >/dev/null 2>&1; then OT_COMPOSE=\"\$OT_CR compose\"; " +
+            "elif command -v docker-compose >/dev/null 2>&1; then OT_COMPOSE=\"docker-compose\"; " +
+            "else echo 'No Docker Compose found on host' >&2; exit 1; fi; " +
         "elif command -v docker-compose >/dev/null 2>&1; then OT_COMPOSE=\"docker-compose\"; " +
         "elif command -v podman-compose >/dev/null 2>&1; then OT_COMPOSE=\"podman-compose\"; " +
         "else echo 'No docker/podman compose found on host' >&2; exit 1; fi"
@@ -39,7 +47,6 @@ object RemoteCommands {
             "OT_CR=podman; " +
                 "if command -v podman >/dev/null 2>&1 && podman compose version >/dev/null 2>&1; then OT_COMPOSE=\"podman compose\"; " +
                 "elif command -v podman-compose >/dev/null 2>&1; then OT_COMPOSE=\"podman-compose\"; " +
-                "elif command -v docker-compose >/dev/null 2>&1; then OT_COMPOSE=\"docker-compose\"; " +
                 "else echo 'No Podman Compose provider found on host' >&2; exit 1; fi"
         else -> COMPOSE_RESOLVE
     }

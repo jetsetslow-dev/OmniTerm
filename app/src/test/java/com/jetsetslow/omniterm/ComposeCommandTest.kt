@@ -141,6 +141,15 @@ class ComposeCommandTest {
     }
 
     @Test
+    fun pinned_podman_compose_never_falls_back_to_docker_compose() {
+        val cmd = RemoteCommands.dockerComposeAction("proj", "/srv/proj", "compose.yml", "up", runtime = "podman")
+        assertTrue("pinned Podman uses Podman's compose wrapper when available", cmd.contains("podman compose"))
+        assertTrue("pinned Podman may use the Podman provider", cmd.contains("podman-compose"))
+        assertTrue("pinned Podman must not silently deploy with Docker Compose", !cmd.contains("docker-compose"))
+        assertValidShell(cmd)
+    }
+
+    @Test
     fun container_resource_actions_can_pin_runtime() {
         assertTrue(RemoteCommands.dockerAction("abc", "stop", runtime = "podman").startsWith("podman stop"))
         assertTrue(RemoteCommands.dockerImageAction("abc", "remove", runtime = "podman").startsWith("podman rmi -f"))
