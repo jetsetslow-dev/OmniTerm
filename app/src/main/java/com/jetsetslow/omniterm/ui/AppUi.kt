@@ -73,16 +73,20 @@ fun getServerColor(server: ServerEntity): Color =
 fun ServerSelectorBar(
     viewModel: AppViewModel,
     overrideServer: ServerEntity? = null,
+    onlineOnly: Boolean = false,
     onServerChange: () -> Unit = {},
     leadingContent: (@Composable RowScope.() -> Unit)? = null,
     trailingContent: (@Composable RowScope.() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val servers by viewModel.servers.collectAsState()
-    val srv = overrideServer ?: viewModel.selectedServer
+    val selectableServers = if (onlineOnly) servers.filter { it.status == "online" } else servers
+    val srv = overrideServer
+        ?: selectableServers.find { it.id == viewModel.selectedServerId }
+        ?: selectableServers.firstOrNull()
     if (srv == null) {
         Text(
-            "No server selected — add or pick one on the Hosts tab.",
+            if (onlineOnly) "No online hosts available right now." else "No server selected — add or pick one on the Hosts tab.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(16.dp),
         )
@@ -124,7 +128,7 @@ fun ServerSelectorBar(
             }
         }
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-            servers.forEach { s ->
+            selectableServers.forEach { s ->
                 DropdownMenuItem(
                     text = { Text("${s.name} — ${s.username}@${s.host}", fontFamily = OmniFonts.mono) },
                     leadingIcon = { StatusDot(online = s.status == "online", color = getServerColor(s), size = 8.dp) },

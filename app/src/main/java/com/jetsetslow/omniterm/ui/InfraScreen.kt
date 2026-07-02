@@ -30,14 +30,26 @@ import kotlinx.coroutines.launch
 
 @Composable
 fun InfraScreen(viewModel: AppViewModel) {
+    val servers by viewModel.servers.collectAsState()
+    val onlineServers = servers.filter { it.status == "online" }
+    val srv = onlineServers.find { it.id == viewModel.selectedServerId } ?: onlineServers.firstOrNull()
     // Load real container runtime state whenever the selected host changes.
-    LaunchedEffect(viewModel.selectedServerId) { viewModel.loadDocker() }
+    LaunchedEffect(srv?.id) {
+        if (srv != null) {
+            if (viewModel.selectedServerId != srv.id) viewModel.selectedServerId = srv.id
+            viewModel.loadDocker()
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         // Host picker (mirrors SFTP/Cron) so the user can switch which host's containers they inspect.
-        ServerSelectorBar(viewModel, onServerChange = { viewModel.loadDocker() })
-
-        val srv = viewModel.selectedServer ?: return@Column
+        ServerSelectorBar(viewModel, onlineOnly = true, onServerChange = { viewModel.loadDocker() })
+        if (srv == null) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text("No online hosts available. Container data appears when a host comes back online.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            return@Column
+        }
 
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),

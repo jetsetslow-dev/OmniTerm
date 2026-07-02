@@ -34,21 +34,26 @@ import kotlinx.coroutines.delay
 
 @Composable
 fun MonitorScreen(viewModel: AppViewModel) {
-    val srv = viewModel.selectedServer
+    val serversList by viewModel.servers.collectAsState()
+    val onlineServers = serversList.filter { it.status == "online" }
+    val srv = onlineServers.find { it.id == viewModel.selectedServerId } ?: onlineServers.firstOrNull()
+    LaunchedEffect(srv?.id) {
+        if (srv != null && viewModel.selectedServerId != srv.id) viewModel.selectedServerId = srv.id
+    }
     if (srv == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("Please add and select a server to monitor.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("No online hosts available to monitor. Offline hosts reappear after the next successful probe.", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         return
     }
 
     var showScoreDialog by remember { mutableStateOf(false) }
     var showRebootDialog by remember { mutableStateOf(false) }
-    val serversList by viewModel.servers.collectAsState()
 
     Column(modifier = Modifier.fillMaxSize()) {
         ServerSelectorBar(
             viewModel = viewModel,
+            onlineOnly = true,
             leadingContent = {
                 Box(
                     modifier = Modifier.clickable { showScoreDialog = true }.padding(end = 4.dp),

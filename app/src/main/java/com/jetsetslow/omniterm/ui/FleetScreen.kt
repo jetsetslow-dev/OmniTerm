@@ -42,6 +42,15 @@ import com.jetsetslow.omniterm.data.*
 @Composable
 fun FleetScreen(viewModel: AppViewModel) {
     val srvList by viewModel.servers.collectAsState()
+    val onlineSrvList = srvList.filter { it.status == "online" }
+    LaunchedEffect(onlineSrvList.map { it.id }) {
+        val onlineIds = onlineSrvList.mapTo(HashSet()) { it.id }
+        viewModel.broadcastTargetServerIds.removeAll { it !in onlineIds }
+        viewModel.fleetLogSelectedServerIds.removeAll { it !in onlineIds }
+        viewModel.broadcastTargetGroups.removeAll { group ->
+            onlineSrvList.none { it.groupName.orEmpty() == group }
+        }
+    }
 
     Column(modifier = Modifier.fillMaxSize()) {
         FleetSummaryBar(viewModel, srvList)
@@ -67,9 +76,9 @@ fun FleetScreen(viewModel: AppViewModel) {
                 .padding(12.dp)
         ) {
             when (viewModel.fleetTabIndex) {
-                1 -> FleetBroadcastView(viewModel, srvList)
-                2 -> FleetLogsView(viewModel, srvList)
-                else -> FleetDashboardView(viewModel, srvList)
+                1 -> FleetBroadcastView(viewModel, onlineSrvList)
+                2 -> FleetLogsView(viewModel, onlineSrvList)
+                else -> FleetDashboardView(viewModel, onlineSrvList)
             }
         }
     }
@@ -124,6 +133,14 @@ fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                 OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$online", label = "Online", color = OmniColors.green) }
                 OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$critical", label = "Critical", color = if (critical > 0) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant) }
                 OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$avgScore", label = "Avg Score", color = OmniColors.cyan) }
+            }
+        }
+
+        if (srvList.isEmpty()) {
+            item {
+                Box(Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("No online hosts available. Fleet details appear when hosts come back online.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
 

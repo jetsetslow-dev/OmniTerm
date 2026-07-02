@@ -585,6 +585,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 launch {
                     fleetLogSemaphore.withPermit {
                         val srv = repository.getServerById(srvId) ?: return@launch
+                        if (srv.status != "online") return@launch
                         val out = executeSshCommand(srv, RemoteCommands.journal(200))
                         val entries = RemoteParsers.parseFleetJournal(out, srv.name, srv.id)
                         allEntries.addAll(entries)
@@ -4162,7 +4163,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         else -> 0
     }
 
-    fun saveNetworkShare(share: NetworkShareEntity) {
+    private suspend fun persistNetworkShare(share: NetworkShareEntity): NetworkShareEntity? {
         val normalizedProtocol = share.protocol.uppercase(Locale.ROOT).ifBlank { "SMB" }
         var normalized = share.copy(
             name = share.name.trim().ifBlank { "${normalizedProtocol.lowercase(Locale.ROOT)}://${share.address.trim()}" },
@@ -4178,24 +4179,50 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         )
         if (normalized.address.isBlank()) {
             networkShareScanStatus = "Address is required."
-            return
+            return null
         }
+        if (normalized.protocol != "CUSTOM" && normalized.port !in 1..65535) {
+            networkShareScanStatus = "Port must be between 1 and 65535."
+            return null
+        }
+        if (normalized.protocol == "SFTP" && normalized.anonymous) {
+            networkShareScanStatus = "SFTP shares need a username or credential profile."
+            return null
+        }
+        if (normalized.protocol == "SMB" && normalized.sharePath.isBlank()) {
+            networkShareScanStatus = "SMB shares need a Share/path value such as Public or Media."
+            return null
+        }
+        if (!normalized.anonymous && normalized.authProfileId == null && normalized.username.isBlank()) {
+            networkShareScanStatus = "Username is required for ${normalized.protocol} shares that are not anonymous."
+            return null
+        }
+        if (!normalized.anonymous && normalized.authProfileId == null && normalized.username.isNotBlank()) {
+            val profileName = normalized.name.ifBlank { "${normalized.protocol} ${normalized.address}" }
+            val profileId = repository.insertProfile(
+                CredentialProfileEntity(
+                    profileName = "Network Share - $profileName",
+                    username = normalized.username,
+                    authType = "password",
+                    password = normalized.password,
+                    groupName = "Network Shares",
+                )
+            ).toInt()
+            normalized = normalized.copy(authProfileId = profileId, username = "", password = "")
+        }
+        repository.insertNetworkShare(normalized)
+        networkShareScanStatus = "Saved ${normalized.name}."
+        return normalized
+    }
+
+    fun saveNetworkShare(share: NetworkShareEntity) {
         viewModelScope.launch {
-            if (!normalized.anonymous && normalized.authProfileId == null && normalized.username.isNotBlank()) {
-                val profileName = normalized.name.ifBlank { "${normalized.protocol} ${normalized.address}" }
-                val profileId = repository.insertProfile(
-                    CredentialProfileEntity(
-                        profileName = "Network Share - $profileName",
-                        username = normalized.username,
-                        authType = "password",
-                        password = normalized.password,
-                        groupName = "Network Shares",
-                    )
-                ).toInt()
-                normalized = normalized.copy(authProfileId = profileId, username = "", password = "")
+            try {
+                persistNetworkShare(share)
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                networkShareScanStatus = "Save failed: ${e.message ?: "unknown error"}"
             }
-            repository.insertNetworkShare(normalized)
-            networkShareScanStatus = "Saved ${normalized.name}."
         }
     }
 
@@ -4224,34 +4251,63 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun addNetworkShareFromScan(hit: NetworkShareScanHit) {
-        saveNetworkShare(
-            NetworkShareEntity(
-                name = hit.label,
-                protocol = hit.protocol,
-                address = hit.address,
-                port = hit.port,
-                anonymous = hit.protocol != "SFTP",
-                lastChecked = System.currentTimeMillis(),
-                lastStatus = "online",
-            )
-        )
+        viewModelScope.launch {
+            if (hit.protocol in setOf("SMB", "SFTP")) {
+                networkShareScanStatus = "${hit.protocol} needs configuration before saving."
+                return@launch
+            }
+            try {
+                val saved = persistNetworkShare(
+                    NetworkShareEntity(
+                        name = hit.label,
+                        protocol = hit.protocol,
+                        address = hit.address,
+                        port = hit.port,
+                        anonymous = true,
+                        lastChecked = System.currentTimeMillis(),
+                        lastStatus = "online",
+                    )
+                )
+                if (saved != null) {
+                    networkShareScanHits.remove(hit)
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                networkShareScanStatus = "Save failed: ${e.message ?: "unknown error"}"
+            }
+        }
     }
 
     fun scanNetworkShares(cidrInput: String = networkShareScanCidr) {
         if (networkShareScanRunning) return
-        val targets = expandScanTargets(cidrInput.ifBlank { networkShareScanCidr })
-        if (targets.isEmpty()) {
-            networkShareScanStatus = "Enter a /24 subnet like 192.168.1.0/24, or leave it blank on Wi-Fi/LAN."
-            return
-        }
+        val input = cidrInput.ifBlank { networkShareScanCidr }.trim()
         networkShareScanRunning = true
         networkShareScanHits.clear()
-        networkShareScanStatus = "Scanning ${targets.size} host(s) for SMB, FTP, SFTP, NFS, and WebDAV."
+        networkShareScanStatus = if (input.isBlank()) {
+            "Scanning LAN hosts, then probing SMB, FTP, SFTP, NFS, and WebDAV."
+        } else {
+            "Scanning share services for SMB, FTP, SFTP, NFS, and WebDAV."
+        }
         viewModelScope.launch(Dispatchers.IO) {
             val ports = listOf("SMB" to 445, "FTP" to 21, "SFTP" to 22, "NFS" to 2049, "WEBDAV" to 80, "WEBDAV" to 443)
             val semaphore = Semaphore(64)
             val found = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
             try {
+                if (input.isBlank()) withContext(Dispatchers.Main) { refreshLanScan(force = false) }
+                val targets = if (input.isBlank() && hostScanResults.isNotEmpty()) {
+                    withContext(Dispatchers.Main) { hostScanResults.filter { it.isOnline }.map { it.ip } }
+                } else {
+                    expandScanTargets(input)
+                }
+                if (targets.isEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        networkShareScanStatus = "Enter a /24 subnet like 192.168.1.0/24, or leave it blank on Wi-Fi/LAN."
+                    }
+                    return@launch
+                }
+                withContext(Dispatchers.Main) {
+                    networkShareScanStatus = "Scanning ${targets.size} host(s) for SMB, FTP, SFTP, NFS, and WebDAV."
+                }
                 coroutineScope {
                     targets.forEach { host ->
                         ports.forEach { (protocol, port) ->
@@ -5715,8 +5771,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val allServers = repository.getAllServers()
             val selected = when {
-                resolvedIds != null -> allServers.filter { it.id in resolvedIds }
-                broadcastTargetMode == FleetTargetMode.Servers -> allServers.filter { it.id in targetIds }
+                resolvedIds != null -> allServers.filter { it.status == "online" && it.id in resolvedIds }
+                broadcastTargetMode == FleetTargetMode.Servers -> allServers.filter { it.status == "online" && it.id in targetIds }
                 else -> allServers.filter { it.status == "online" && it.groupName.orEmpty() in targetGroups }
             }
             if (selected.isEmpty()) {

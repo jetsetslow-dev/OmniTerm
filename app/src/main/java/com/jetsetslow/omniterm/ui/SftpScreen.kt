@@ -74,9 +74,14 @@ private fun CompactSftpIconToggleButton(
 
 @Composable
 fun SftpScreen(viewModel: AppViewModel) {
-    val srv = viewModel.selectedServer
+    val servers by viewModel.servers.collectAsState()
+    val onlineServers = servers.filter { it.status == "online" }
+    val srv = onlineServers.find { it.id == viewModel.selectedServerId } ?: onlineServers.firstOrNull()
     LaunchedEffect(srv?.id) {
-        if (srv != null) viewModel.ensureSftpLoadedForSelectedServer()
+        if (srv != null) {
+            if (viewModel.selectedServerId != srv.id) viewModel.selectedServerId = srv.id
+            viewModel.ensureSftpLoadedForSelectedServer()
+        }
         else viewModel.activeSftpTab = 3
     }
 
@@ -85,7 +90,7 @@ fun SftpScreen(viewModel: AppViewModel) {
             // Let the user switch hosts from SFTP itself (mirrors the other tabs).
             // The reset itself is driven by SftpFilesTab's LaunchedEffect on the selected host,
             // so here we only jump back to the FILES tab (avoids opening two SFTP sessions).
-            ServerSelectorBar(viewModel, onServerChange = {
+            ServerSelectorBar(viewModel, onlineOnly = true, onServerChange = {
                 viewModel.activeSftpTab = 0
             })
         }
@@ -113,12 +118,19 @@ fun SftpScreen(viewModel: AppViewModel) {
                 .padding(12.dp)
         ) {
             when (viewModel.activeSftpTab) {
-                0 -> SftpFilesTab(viewModel)
-                1 -> SftpTransfersTab(viewModel)
-                2 -> SftpBookmarksTab(viewModel)
+                0 -> if (srv != null) SftpFilesTab(viewModel) else NoOnlineSshHostMessage()
+                1 -> if (srv != null) SftpTransfersTab(viewModel) else NoOnlineSshHostMessage()
+                2 -> if (srv != null) SftpBookmarksTab(viewModel) else NoOnlineSshHostMessage()
                 3 -> NetworkSharesTab(viewModel)
             }
         }
+    }
+}
+
+@Composable
+private fun NoOnlineSshHostMessage() {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text("No online SSH hosts available. Offline hosts reappear here after the next successful probe.", color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -130,6 +142,7 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
         return
     }
     val shares = viewModel.networkShares.value
+    val scannedHostsByIp = viewModel.hostScanResults.associateBy { it.ip }
     val credentialProfiles = viewModel.profiles.value
     val credentialProfilesById = credentialProfiles.associateBy { it.id }
     var showDialog by remember { mutableStateOf(false) }
@@ -206,6 +219,8 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
                 if (viewModel.networkShareScanHits.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         viewModel.networkShareScanHits.forEach { hit ->
+                            val scannedHost = scannedHostsByIp[hit.address]
+                            val hostLabel = scannedHost?.hostname?.takeIf { it.isNotBlank() } ?: hit.address
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 verticalAlignment = Alignment.CenterVertically,
@@ -214,10 +229,20 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
                                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                                     Icon(Icons.Filled.Lan, null, tint = OmniColors.green)
                                     Spacer(Modifier.width(8.dp))
-                                    Text(hit.label, fontFamily = OmniFonts.mono, fontSize = 12.sp)
+                                    Column {
+                                        Text("$hostLabel · ${hit.protocol}", fontFamily = OmniFonts.mono, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                                        Text("${hit.address}:${hit.port}", fontFamily = OmniFonts.mono, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
                                 }
-                                TextButton(onClick = { viewModel.addNetworkShareFromScan(hit) }) {
-                                    Text("Save")
+                                TextButton(onClick = {
+                                    if (hit.protocol in setOf("SMB", "SFTP")) {
+                                        editingShare = shareDraftFromScan(hit, anonymous = hit.protocol != "SFTP")
+                                        showDialog = true
+                                    } else {
+                                        viewModel.addNetworkShareFromScan(hit)
+                                    }
+                                }) {
+                                    Text(if (hit.protocol in setOf("SMB", "SFTP")) "Configure" else "Save")
                                 }
                             }
                         }
@@ -238,69 +263,30 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 items(shares, key = { it.id }) { share ->
-                    OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = shareProtocolColor(share.protocol)) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Icon(Icons.Filled.FolderShared, null, tint = shareProtocolColor(share.protocol))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text(share.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                }
-                                Text(
-                                    shareUri(share),
-                                    fontFamily = OmniFonts.mono,
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                                val authProfile = share.authProfileId?.let { credentialProfilesById[it] }
-                                val auth = when {
-                                    share.anonymous -> "anonymous"
-                                    authProfile != null -> "profile: ${authProfile.profileName}"
-                                    else -> listOf(share.workgroup, share.username).filter { it.isNotBlank() }.joinToString("\\").ifBlank { "credentials" }
-                                }
-                                Text(
-                                    "${share.protocol} · $auth · ${share.lastStatus}",
-                                    fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Row {
-                                val browsable = viewModel.isShareBrowsable(share)
-                                IconButton(onClick = { viewModel.openShareBrowser(share) }, enabled = browsable) {
-                                    Icon(
-                                        Icons.Filled.FolderOpen,
-                                        contentDescription = if (browsable) "Browse files" else "Browsing not supported for ${share.protocol}",
-                                        tint = if (browsable) shareProtocolColor(share.protocol)
-                                        else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
-                                    )
-                                }
-                                IconButton(onClick = { viewModel.testNetworkShare(share) }) {
-                                    Icon(Icons.Filled.NetworkPing, contentDescription = "Test share")
-                                }
-                                IconButton(onClick = {
-                                    editingShare = share
-                                    showDialog = true
-                                }) {
-                                    Icon(Icons.Filled.Edit, contentDescription = "Edit share")
-                                }
-                                IconButton(onClick = {
-                                    confirm.ask(
-                                        "Delete \"${share.name}\"?",
-                                        "Removes this saved share profile. Files on the share are not touched.",
-                                        confirmLabel = "Delete",
-                                    ) { viewModel.deleteNetworkShare(share) }
-                                }) {
-                                    Icon(Icons.Filled.Delete, contentDescription = "Delete share", tint = Color.Red)
-                                }
-                            }
-                        }
-                    }
+                    val authProfile = share.authProfileId?.let { credentialProfilesById[it] }
+                    NetworkShareCard(
+                        share = share,
+                        scannedHost = scannedHostsByIp[share.address],
+                        authLabel = when {
+                            share.anonymous -> "anonymous"
+                            authProfile != null -> "profile: ${authProfile.profileName}"
+                            else -> listOf(share.workgroup, share.username).filter { it.isNotBlank() }.joinToString("\\").ifBlank { "credentials" }
+                        },
+                        browsable = viewModel.isShareBrowsable(share),
+                        onBrowse = { viewModel.openShareBrowser(share) },
+                        onTest = { viewModel.testNetworkShare(share) },
+                        onEdit = {
+                            editingShare = share
+                            showDialog = true
+                        },
+                        onDelete = {
+                            confirm.ask(
+                                "Delete \"${share.name}\"?",
+                                "Removes this saved share profile. Files on the share are not touched.",
+                                confirmLabel = "Delete",
+                            ) { viewModel.deleteNetworkShare(share) }
+                        },
+                    )
                 }
             }
         }
@@ -318,6 +304,86 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
                 showDialog = false
             },
         )
+    }
+}
+
+private fun shareDraftFromScan(hit: NetworkShareScanHit, anonymous: Boolean): NetworkShareEntity =
+    NetworkShareEntity(
+        name = hit.label,
+        protocol = hit.protocol,
+        address = hit.address,
+        port = hit.port,
+        anonymous = anonymous,
+        lastChecked = System.currentTimeMillis(),
+        lastStatus = "online",
+    )
+
+@Composable
+private fun NetworkShareCard(
+    share: NetworkShareEntity,
+    scannedHost: AppViewModel.ScannedHost?,
+    authLabel: String,
+    browsable: Boolean,
+    onBrowse: () -> Unit,
+    onTest: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+) {
+    val accent = shareProtocolColor(share.protocol)
+    val hostLabel = scannedHost?.hostname?.takeIf { it.isNotBlank() } ?: share.address
+    val shareName = share.sharePath.ifBlank { share.name }
+    OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = accent) {
+        Column(modifier = Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.FolderShared, null, tint = accent)
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(share.name, fontWeight = FontWeight.Bold, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(hostLabel, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Row {
+                    IconButton(onClick = onBrowse, enabled = browsable) {
+                        Icon(
+                            Icons.Filled.FolderOpen,
+                            contentDescription = if (browsable) "Browse files" else "Browsing not supported for ${share.protocol}",
+                            tint = if (browsable) accent else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                        )
+                    }
+                    IconButton(onClick = onTest) {
+                        Icon(Icons.Filled.NetworkPing, contentDescription = "Test share")
+                    }
+                    IconButton(onClick = onEdit) {
+                        Icon(Icons.Filled.Edit, contentDescription = "Edit share")
+                    }
+                    IconButton(onClick = onDelete) {
+                        Icon(Icons.Filled.Delete, contentDescription = "Delete share", tint = Color.Red)
+                    }
+                }
+            }
+            Text(
+                "$shareName · ${share.protocol} · $authLabel · ${share.lastStatus}",
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                shareUri(share),
+                fontFamily = OmniFonts.mono,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (scannedHost != null) {
+                val details = buildString {
+                    append(scannedHost.mac.ifBlank { "MAC unavailable" })
+                    if (scannedHost.vendor.isNotBlank()) append(" · ${scannedHost.vendor}")
+                    if (scannedHost.openPorts.isNotEmpty()) append(" · ports ${scannedHost.openPorts.joinToString(", ")}")
+                }
+                Text(details, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
     }
 }
 
@@ -740,6 +806,7 @@ private fun CrossClipboardBar(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun NetworkShareDialog(
     initial: NetworkShareEntity?,
@@ -761,6 +828,23 @@ private fun NetworkShareDialog(
     var anonymous by remember(initial) { mutableStateOf(initial?.anonymous ?: true) }
     var notes by remember(initial) { mutableStateOf(initial?.notes.orEmpty()) }
     var menuExpanded by remember { mutableStateOf(false) }
+    var errorText by remember(initial) { mutableStateOf<String?>(null) }
+
+    fun validateDraft(): String? {
+        val normalizedProtocol = protocol.uppercase(Locale.ROOT)
+        val port = portText.toIntOrNull()
+        return when {
+            address.isBlank() -> "Address is required."
+            normalizedProtocol != "CUSTOM" && (port == null || port !in 1..65535) -> "Port must be between 1 and 65535."
+            normalizedProtocol == "SMB" && sharePath.trim().trim('/').isBlank() ->
+                "SMB needs a Share/path value such as Public or Media."
+            normalizedProtocol == "SFTP" && anonymous ->
+                "SFTP needs a username or credential profile."
+            !anonymous && authProfileId == null && username.isBlank() ->
+                "Username is required when anonymous login is off and no profile is selected."
+            else -> null
+        }
+    }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -770,25 +854,33 @@ private fun NetworkShareDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
+                errorText?.let {
+                    Text(it, color = OmniColors.red, fontSize = 12.sp, modifier = Modifier.fillMaxWidth())
+                }
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Custom name") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
-                Box {
+                ExposedDropdownMenuBox(
+                    expanded = menuExpanded,
+                    onExpandedChange = { menuExpanded = !menuExpanded },
+                ) {
                     OutlinedTextField(
                         value = protocol,
                         onValueChange = {},
                         label = { Text("Protocol") },
-                        modifier = Modifier.fillMaxWidth().clickable { menuExpanded = true },
+                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
                         readOnly = true,
-                        trailingIcon = { Icon(Icons.Filled.ArrowDropDown, null) },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = menuExpanded) },
                         colors = omniTextFieldColors(),
                     )
-                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    ExposedDropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                         protocols.forEach { option ->
                             DropdownMenuItem(
                                 text = { Text(option) },
                                 onClick = {
                                     protocol = option
                                     portText = defaultPort(option).takeIf { it > 0 }?.toString().orEmpty()
+                                    if (option == "SFTP") anonymous = false
                                     menuExpanded = false
+                                    errorText = null
                                 },
                             )
                         }
@@ -808,7 +900,18 @@ private fun NetworkShareDialog(
                 }
                 OutlinedTextField(value = sharePath, onValueChange = { sharePath = it }, label = { Text("Share/path") }, placeholder = { Text("SharedFolder or exports/media") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Checkbox(checked = anonymous, onCheckedChange = { anonymous = it })
+                    Checkbox(
+                        checked = anonymous,
+                        enabled = protocol != "SFTP",
+                        onCheckedChange = {
+                            anonymous = it
+                            if (it) {
+                                authProfileId = null
+                                username = ""
+                                password = ""
+                            }
+                        },
+                    )
                     Spacer(Modifier.width(6.dp))
                     Text("Anonymous / guest login")
                 }
@@ -834,7 +937,7 @@ private fun NetworkShareDialog(
                         Text("Saving will create a reusable credential profile in the Network Shares group.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         OutlinedTextField(value = workgroup, onValueChange = { workgroup = it }, label = { Text("Workgroup / domain") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
                         OutlinedTextField(value = username, onValueChange = { username = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
-                        OutlinedTextField(value = password, onValueChange = { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
+                        OmniPasswordField(value = password, onValueChange = { password = it }, label = "Password", modifier = Modifier.fillMaxWidth())
                     }
                 }
                 OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Notes") }, modifier = Modifier.fillMaxWidth(), minLines = 2, colors = omniTextFieldColors())
@@ -842,6 +945,10 @@ private fun NetworkShareDialog(
         },
         confirmButton = {
             Button(onClick = {
+                validateDraft()?.let {
+                    errorText = it
+                    return@Button
+                }
                 onSave(
                     NetworkShareEntity(
                         id = initial?.id ?: 0,
