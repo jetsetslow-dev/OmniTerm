@@ -37,10 +37,19 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
 
-      # Debug builds are signed with the repo debug keystore (committed as base64) — without
-      # this, assembleDebug fails at packaging with a missing keystore file.
-      - name: Decode debug keystore
-        run: base64 --decode debug.keystore.base64 > debug.keystore
+      # Debug builds are signed with the repo debug keystore (debug.keystore.base64) — without
+      # a keystore, assembleDebug fails at packaging. The base64 file was never actually
+      # committed (lost in the history reset), so fall back to generating a throwaway keystore
+      # with the same alias/passwords the build expects: check APKs are build-verification
+      # artifacts, never published, so signature continuity doesn't matter here.
+      - name: Provide debug keystore
+        run: |
+          if [ -f debug.keystore.base64 ]; then
+            base64 --decode debug.keystore.base64 > debug.keystore
+          else
+            keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
+              -alias androiddebugkey -dname CN=Android-Debug -keyalg RSA -keysize 2048 -validity 10000
+          fi
 
       - name: Build Debug APK
         run: ./gradlew assembleDebug --no-daemon
