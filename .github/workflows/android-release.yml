@@ -242,10 +242,24 @@ jobs:
             # an invisible draft forever (this is exactly what happened to v1.0.0-Alpha).
             gh release edit "$RELEASE_LABEL" --draft=false --prerelease=$PRERELEASE
           else
+            # Release notes: every commit subject since the previous v* release. Commits land on
+            # main directly (no PRs), so GitHub's --generate-notes would come up empty here.
+            PREV_TAG=$(gh release list --limit 50 --json tagName \
+              --jq '[.[] | select(.tagName | test("^v[0-9]"))][0].tagName' 2>/dev/null || true)
+            {
+              echo "Signed Android release build. Download the .apk to install the Open Source version."
+              echo
+              echo "## Changes${PREV_TAG:+ since $PREV_TAG}"
+              if [ -n "$PREV_TAG" ] && git rev-parse "$PREV_TAG" >/dev/null 2>&1; then
+                git log --no-merges --pretty='- %s' "$PREV_TAG"..HEAD
+              else
+                git log --no-merges --pretty='- %s' -15
+              fi
+            } > release-notes.md
             gh release create "$RELEASE_LABEL" github-artifacts/* \
               --prerelease=$PRERELEASE \
               --title "OmniTerm $RELEASE_LABEL" \
-              --notes "Signed Android release build. Download the .apk to install the Open Source version."
+              --notes-file release-notes.md
           fi
 
       - name: Prune old GitHub Releases
