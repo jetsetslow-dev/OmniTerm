@@ -5,7 +5,7 @@ OmniTerm is a native Android app for managing SSH hosts, homelab servers, Docker
 ## Features At A Glance
 
 - **SSH terminal** with multiple background-capable sessions, session switching, a special-key bar, themes, and copy tools.
-- **SFTP file manager** with an in-app text editor, an editable path bar, copy-path and quick-bookmark actions, authenticated sudo writes, per-host bookmarks, and large-transfer warnings.
+- **SFTP file manager** with an in-app text editor, an editable path bar, copy-path and quick-bookmark actions, authenticated sudo writes, cross-endpoint bookmarks (hosts and shares), cancellable transfers, and large-transfer warnings.
 - **Network shares**: browse, transfer, and manage files on **SMB, FTP, SFTP, and WebDAV** shares, with LAN discovery, saved profiles, and credential reuse — plus **cross-protocol copy/paste** to move files between shares, or between a share and an SSH host, in either direction. Transfers stream directly and handle multi-GB files.
 - **Live monitoring**: CPU, memory, disk, load, uptime, temperature, per-core usage, network/disk I/O rates, SMART health, and process/service/log views.
 - **Docker & Podman**: containers, stacks, images, and volumes, plus a visual **Compose Builder** with safe validate-before-deploy.
@@ -70,19 +70,20 @@ Open **Term** to start an interactive SSH shell on the selected host. OmniTerm s
 - Long-press copy tools for visible screen or full scrollback text.
 - Smooth row-snapped scrolling for local terminal history; a **Bottom** button jumps back to the live tail (and exits tmux copy-mode on persistent sessions).
 
-### SFTP File Manager
-Open **SFTP** to browse files on the selected host. You can upload, download, rename, delete, create folders, sort file lists, and edit text files. 
+### Files (SFTP, Transfers, Bookmarks, Shares)
+Open **Files** to work with remote filesystems. The **SFTP** subtab browses files on the selected SSH host (the host picker lives on this subtab): upload, download, rename, delete, create folders, sort file lists, and edit text files.
 - **CodeEditor:** The built-in text editor features line numbers, syntax highlighting, and find/replace, and supports sudo-assisted writes when configured for the host.
 - The path bar is **editable** — tap it to type a destination and jump straight there.
 - **Sudo mode** is authenticated via device biometrics/PIN before enabling.
-- **Bookmarks** let you jump to frequently used directories (e.g., `/etc`, `/var/log`). Each host keeps its own bookmark list.
+- **Bookmarks** span every SSH host and network share: star a folder in the SFTP or Shares browser and it appears in the Bookmarks subtab labelled with its endpoint. Offline endpoints are greyed out until they come back.
+- **Transfers** shows per-file rows for every transfer with a running rollup; individual transfers (or all of them) can be **cancelled** mid-flight, and transfers keep running if you navigate elsewhere in the app.
 
 ### Network Shares
-Open the **Shares** tab (in the SFTP screen) to work with network file shares that are separate from your SSH hosts.
-- **Discovery & saved profiles:** Scan a subnet (e.g. `192.168.1.0/24`, or leave it blank on Wi-Fi/LAN) to find SMB, FTP, SFTP, NFS, and WebDAV services, then save them as reusable profiles. Credentials can be entered inline or linked to a shared credential profile.
-- **File browsing:** Tap **Browse** on a SMB, FTP, SFTP, or WebDAV share to navigate folders, create/rename/delete, and upload or download files to your device. (NFS and custom profiles are save-only for now.)
-- **Cross-protocol copy/paste:** Copy or cut files in a share and paste them into another folder, another share, or the SFTP host — and vice versa, in either direction. Same-host SFTP pastes run server-side (`cp`/`mv`); everything else streams through the device without buffering the whole file, so multi-GB transfers work. Whole **folders** copy recursively when you tick **Include folders** in the paste bar (off by default, since a deep tree can move a lot of data).
-- **Progress:** Every transfer surface shows a Windows-style rollup — number of files, bytes done of the total, combined speed, and ETA — plus per-file rows in the **Transfers** tab.
+Open the **Shares** subtab to work with network file shares that are separate from your SSH hosts.
+- **Discovery & saved profiles:** Scan a subnet (e.g. `192.168.1.0/24`, or leave it blank on Wi-Fi/LAN) to find SMB, FTP, SFTP, NFS, and WebDAV services, then save them as reusable profiles. Protocol filter chips cut scan noise (e.g. untick WebDAV on printer-heavy networks); SMB hosts are expanded into their actual share names when the server allows anonymous enumeration. Credentials can be entered inline or linked to a shared credential profile.
+- **File browsing:** Tap **Browse** on a SMB, FTP, SFTP, or WebDAV share to navigate folders, create/rename/delete, and upload or download files to your device. (NFS and custom profiles are save-only for now.) WebDAV shares carry an explicit **Use HTTPS** toggle.
+- **Cross-protocol copy/paste:** Copy or cut files in a share and paste them into another folder, another share, or the SFTP host — and vice versa, in either direction. Same-host SFTP pastes run server-side (`cp`/`mv`); everything else streams through the device without buffering the whole file, so multi-GB transfers work. Whole **folders** copy recursively when you tick **Include folders** in the paste bar (off by default, since a deep tree can move a lot of data). A fully successful paste clears the clipboard.
+- **Progress:** Every transfer surface shows a Windows-style rollup — number of files, bytes done of the total, combined speed, and ETA — plus per-file rows in the **Transfers** tab with per-row cancel.
 
 ### Monitoring
 Open **Monitor** for live host metrics (CPU, memory, disk, load, uptime, process count, temperature).

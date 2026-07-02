@@ -59,6 +59,9 @@ private const val ACTION_STREAM_MAX_CHARS = 200_000
 /** Cap on the SFTP transfer log; finished entries beyond this are dropped, in-flight ones never. */
 private const val SFTP_TRANSFER_LOG_MAX = 50
 
+/** Sentinel message for user-cancelled transfers; the Transfers tab renders it as its own state. */
+const val TRANSFER_CANCELLED_MESSAGE = "Cancelled"
+
 /** Cap on recursive SFTP search hits so a broad pattern can't flood the UI. */
 private const val SFTP_SEARCH_MAX_HITS = 200
 
@@ -608,14 +611,60 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // SFTP SCREEN FILE BROWSER
-    var activeSftpTab by mutableStateOf(0) // 0: Files, 1: Transfers, 2: Bookmarks, 3: Shares
+    var activeSftpTab by mutableStateOf(0) // 0: SFTP files, 1: Shares, 2: Bookmarks, 3: Transfers
     val sftpTransfers = mutableStateListOf<SftpTransferItem>()
+
+    // ── Transfer cancellation ──
+    // Cancel requests are flag-based, checked from inside every transfer's progress callback (the
+    // callbacks run on the transfer's own IO thread at least every 64 KiB / 150 ms). That gives
+    // per-file semantics — cancelling one row of a batch upload lets the remaining files continue —
+    // and works identically across SFTP/SMB/FTP/WebDAV without needing to interrupt blocking IO.
+    private val cancelledTransferIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    /** Thrown from a progress callback to abort the surrounding stream copy. */
+    private class TransferCancelledException : RuntimeException("Transfer cancelled")
+
+    fun cancelSftpTransfer(id: String) {
+        if (sftpTransfers.any { it.id == id && it.status == SftpTransferStatus.InProgress }) {
+            cancelledTransferIds.add(id)
+        }
+    }
+
+    fun cancelAllRunningTransfers() {
+        sftpTransfers.filter { it.status == SftpTransferStatus.InProgress }
+            .forEach { cancelledTransferIds.add(it.id) }
+    }
+
+    /** Progress callback for [transferId] that also aborts the copy once a cancel is requested. */
+    private fun transferProgress(transferId: String): (Long, Long) -> Unit = { done, total ->
+        if (transferId in cancelledTransferIds) throw TransferCancelledException()
+        updateSftpTransferProgress(transferId, done, total)
+    }
     var edittingSftpFile by mutableStateOf<SftpFile?>(null)
     var edittingSftpFilePath by mutableStateOf("")
     var networkShareScanRunning by mutableStateOf(false); private set
     var networkShareScanStatus by mutableStateOf<String?>(null); private set
     var networkShareScanCidr by mutableStateOf("")
     val networkShareScanHits = mutableStateListOf<NetworkShareScanHit>()
+
+    /**
+     * Protocols the LAN share scanner probes — a noise filter for networks where, say, every
+     * printer answers on 80/443 as "WebDAV". Persisted; defaults to everything. At least one
+     * protocol always stays enabled (a scan for nothing is a no-op that just looks broken).
+     */
+    val networkShareScanProtocols = mutableStateListOf("SMB", "FTP", "SFTP", "NFS", "WEBDAV")
+
+    fun toggleShareScanProtocol(protocol: String) {
+        if (protocol in networkShareScanProtocols) {
+            if (networkShareScanProtocols.size <= 1) return
+            networkShareScanProtocols.remove(protocol)
+        } else {
+            networkShareScanProtocols.add(protocol)
+        }
+        viewModelScope.launch {
+            repository.insertSetting("share_scan_protocols", networkShareScanProtocols.joinToString(","))
+        }
+    }
 
     // ── Network share browsing (file browser over SMB/FTP/SFTP/WebDAV) ──
     var browsingShare by mutableStateOf<NetworkShareEntity?>(null); private set
@@ -1123,6 +1172,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     SftpSortOption.entries.firstOrNull { it.name == v }?.let { sftpSortOption = it }
                 }
                 list.find { it.key == "cross_paste_recurse" }?.value?.let { crossPasteRecurseFolders = it == "true" }
+                list.find { it.key == "share_scan_protocols" }?.value?.let { v ->
+                    val chosen = v.split(',').filter { it.isNotBlank() }
+                    if (chosen.isNotEmpty()) {
+                        networkShareScanProtocols.clear()
+                        networkShareScanProtocols.addAll(chosen)
+                    }
+                }
                 list.find { it.key == "editor_highlight_limit" }?.value?.toIntOrNull()
                     ?.let { editorHighlightLimit = clampHighlightLimit(it) }
                 healthConfig = HealthScoringConfig.decode(list.find { it.key == "health_scoring" }?.value)
@@ -1786,7 +1842,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun refreshSftpSubtab() {
         when (activeSftpTab) {
             0 -> pullSpin { loadSftp(clearError = true) }
-            3 -> pullSpin {
+            1 -> pullSpin {
                 if (browsingShare != null) loadShareDir(sharePath, clearError = true)
                 else refreshNetworkSharesAvailability()
             }
@@ -4254,6 +4310,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteNetworkShare(share: NetworkShareEntity) {
         viewModelScope.launch {
             repository.deleteNetworkShare(share)
+            repository.deleteSetting("share_bookmarks_${share.id}")
+            allBookmarks.removeAll { it.shareId == share.id }
+            if (browsingShare?.id == share.id) closeShareBrowser()
             networkShareScanStatus = "Deleted ${share.name}."
         }
     }
@@ -4370,15 +4429,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun scanNetworkShares(cidrInput: String = networkShareScanCidr) {
         if (networkShareScanRunning) return
         val input = cidrInput.ifBlank { networkShareScanCidr }.trim()
+        val enabledProtocols = networkShareScanProtocols.toSet()
+        val protocolLabel = enabledProtocols.joinToString(", ")
         networkShareScanRunning = true
         networkShareScanHits.clear()
         networkShareScanStatus = if (input.isBlank()) {
-            "Scanning LAN hosts, then probing SMB, FTP, SFTP, NFS, and WebDAV."
+            "Scanning LAN hosts, then probing $protocolLabel."
         } else {
-            "Scanning share services for SMB, FTP, SFTP, NFS, and WebDAV."
+            "Scanning share services for $protocolLabel."
         }
         viewModelScope.launch(Dispatchers.IO) {
             val ports = listOf("SMB" to 445, "FTP" to 21, "SFTP" to 22, "NFS" to 2049, "WEBDAV" to 80, "WEBDAV" to 443)
+                .filter { it.first in enabledProtocols }
             val semaphore = Semaphore(64)
             val found = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
             try {
@@ -4395,7 +4457,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     return@launch
                 }
                 withContext(Dispatchers.Main) {
-                    networkShareScanStatus = "Scanning ${targets.size} host(s) for SMB, FTP, SFTP, NFS, and WebDAV."
+                    networkShareScanStatus = "Scanning ${targets.size} host(s) for $protocolLabel."
                 }
                 coroutineScope {
                     targets.forEach { host ->
@@ -4592,8 +4654,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         GlobalScope.launch(Dispatchers.IO) { runCatching { client.close() } }
     }
 
-    fun openShareBrowser(share: NetworkShareEntity) {
-        if (browsingShare?.id == share.id) return
+    fun openShareBrowser(share: NetworkShareEntity, startPath: String? = null) {
+        if (browsingShare?.id == share.id) {
+            if (startPath != null) loadShareDir(startPath)
+            return
+        }
         shareJob?.cancel()
         closeShareBrowserClient()
         browsingShare = share
@@ -4601,7 +4666,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         shareEntries = emptyList()
         shareError = null
         shareStatus = null
-        loadShareDir()
+        loadShareBookmarks(share.id)
+        loadShareDir(startPath)
     }
 
     fun closeShareBrowser() {
@@ -4612,6 +4678,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         shareEntries = emptyList()
         shareError = null
         shareStatus = null
+        shareBookmarks.clear()
     }
 
     fun loadShareDir(path: String? = null, clearError: Boolean = true) {
@@ -4714,16 +4781,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         context: android.content.Context,
     ) {
         val transferId = addTransfer(-share.id, shareEndpointLabel(share), "Download", remoteName, remotePath)
+        // A dedicated connection, not the shared browsing one: the download must keep running
+        // (and the browser must stay responsive) when the user navigates to another share or
+        // closes the browser mid-transfer — closing the browsing client used to kill it.
+        var client: RemoteFsClient? = null
         try {
-            val client = browserClient(share)
+            client = shareFsClient(share)
             val output = withContext(Dispatchers.IO) {
                 context.contentResolver.openOutputStream(uri)
                     ?: throw java.io.IOException("Could not open destination.")
             }
             val bytes = try {
-                client.downloadTo(remotePath, output) { done, total ->
-                    updateSftpTransferProgress(transferId, done, total)
-                }
+                client.downloadTo(remotePath, output, transferProgress(transferId))
             } finally {
                 withContext(Dispatchers.IO) { output.close() }
             }
@@ -4734,6 +4803,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: Exception) {
             if (browsingShare?.id == share.id) shareError = e.message ?: "Download failed"
             finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = e.message ?: "Download failed")
+        } finally {
+            withContext(NonCancellable + Dispatchers.IO) { runCatching { client?.close() } }
         }
     }
 
@@ -4747,23 +4818,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             shareTransferRunning = true
             var ok = 0
             var firstErr: String? = null
+            // One dedicated connection for the whole batch (not the shared browsing client), so
+            // uploads keep running when the user browses elsewhere or closes the share browser.
+            var client: RemoteFsClient? = null
             try {
+                client = shareFsClient(share)
                 for ((index, uri) in picked.withIndex()) {
                     val name = queryDisplayName(context, uri)?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
                         ?: "upload_${System.currentTimeMillis()}_${index + 1}"
                     val remotePath = joinPath(destDir, name)
                     val transferId = addTransfer(-share.id, shareEndpointLabel(share), "Upload", name, remotePath, sourceUri = uri.toString())
                     try {
-                        val client = browserClient(share)
                         val totalBytes = queryOpenableSize(context, uri)
                         val input = withContext(Dispatchers.IO) {
                             context.contentResolver.openInputStream(uri)
                                 ?: throw java.io.IOException("Could not read the selected file from this device.")
                         }
                         try {
-                            client.uploadStream(remotePath, input, totalBytes) { done, total ->
-                                updateSftpTransferProgress(transferId, done, total)
-                            }
+                            client.uploadStream(remotePath, input, totalBytes, transferProgress(transferId))
                         } finally {
                             withContext(Dispatchers.IO) { input.close() }
                         }
@@ -4777,8 +4849,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = msg)
                     }
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Reached only when the share connection itself couldn't be built.
+                if (firstErr == null) firstErr = e.message ?: "share connection failed"
             } finally {
                 shareTransferRunning = false
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { client?.close() } }
             }
             if (browsingShare?.id == share.id) {
                 shareError = firstErr?.let { "Upload failed: $it" }
@@ -4860,19 +4938,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             var copiedFiles = 0
             val sourceClients = mutableMapOf<String, RemoteFsClient>()
             var destClient: RemoteFsClient? = null
-            // Reuse (and don't close) the live browsing connection when pasting into the share
-            // the user is looking at; every other client here is owned by this paste.
-            var ownsDestClient = true
             var ok = 0
             var skippedDirs = 0
             var firstErr: String? = null
             try {
+                // Every client here is owned by this paste — deliberately NOT the shared browsing
+                // connection, so the transfer survives the user switching shares or closing the
+                // browser mid-paste (closing the browsing client used to abort it).
                 destClient = when {
                     destServer != null -> sftpClientFor(destServer)
-                    destShare != null && browsingShare?.id == destShare.id -> {
-                        ownsDestClient = false
-                        browserClient(destShare)
-                    }
                     destShare != null -> shareFsClient(destShare)
                     else -> return@launch
                 }
@@ -4947,7 +5021,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     sftpError = firstErr
                     sftpStatus = summary
                 }
-                if (isMove && firstErr == null) {
+                // A fully successful paste consumes the clipboard — for moves (the sources are
+                // gone) and for copies (pasting the same thing twice is almost never intended;
+                // re-copying is one tap). Partial failures keep it staged for a retry.
+                if (firstErr == null) {
                     clearCrossClipboard()
                     sftpClearClipboard()
                 }
@@ -4961,7 +5038,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 crossPasteProgress = null
                 withContext(NonCancellable + Dispatchers.IO) {
                     sourceClients.values.forEach { runCatching { it.close() } }
-                    if (ownsDestClient) runCatching { destClient?.close() }
+                    runCatching { destClient?.close() }
                 }
             }
             // Refresh whichever destination view the user is (still) looking at.
@@ -5023,6 +5100,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val downloader = launch {
                     try {
                         downloaded = src.downloadTo(srcPath, pipeOut) { done, total ->
+                            if (transferId in cancelledTransferIds) throw TransferCancelledException()
                             updateSftpTransferProgress(transferId, done, if (total > 0) total else expectedSize)
                         }
                     } finally {
@@ -5369,6 +5447,110 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ── Endpoint-scoped bookmarks (Bookmarks tab) ──
+    // Bookmarks belong to a specific SSH host or network share, stored per endpoint:
+    // "sftp_bookmarks_{serverId}" (the historical format) and "share_bookmarks_{shareId}".
+    // The Bookmarks tab shows them all; unavailable endpoints render greyed and unclickable.
+
+    data class EndpointBookmark(
+        val serverId: Int?,
+        val shareId: Int?,
+        val endpointName: String,
+        val path: String,
+    )
+
+    val allBookmarks = mutableStateListOf<EndpointBookmark>()
+
+    /** Bookmarked paths for the share being browsed (drives the star in the share browser). */
+    val shareBookmarks = mutableStateListOf<String>()
+
+    fun loadAllBookmarks() {
+        viewModelScope.launch {
+            val result = mutableListOf<EndpointBookmark>()
+            for (srv in repository.getAllServers()) {
+                val raw = repository.getSetting("sftp_bookmarks_${srv.id}") ?: continue
+                raw.split("|||").filter { it.isNotBlank() }
+                    .forEach { result.add(EndpointBookmark(srv.id, null, srv.name, it)) }
+            }
+            for (share in repository.getAllNetworkShares()) {
+                val raw = repository.getSetting("share_bookmarks_${share.id}") ?: continue
+                raw.split("|||").filter { it.isNotBlank() }
+                    .forEach { result.add(EndpointBookmark(null, share.id, shareEndpointLabel(share), it)) }
+            }
+            allBookmarks.clear()
+            allBookmarks.addAll(result)
+        }
+    }
+
+    private fun loadShareBookmarks(shareId: Int) {
+        viewModelScope.launch {
+            val raw = repository.getSetting("share_bookmarks_$shareId")
+            shareBookmarks.clear()
+            shareBookmarks.addAll(raw.orEmpty().split("|||").filter { it.isNotBlank() })
+        }
+    }
+
+    fun addShareBookmark(path: String) {
+        val share = browsingShare ?: return
+        val normalized = path.ifBlank { "/" }
+        if (normalized in shareBookmarks) return
+        shareBookmarks.add(normalized)
+        viewModelScope.launch {
+            repository.insertSetting("share_bookmarks_${share.id}", shareBookmarks.joinToString("|||"))
+        }
+        shareStatus = "Bookmarked $normalized"
+    }
+
+    fun removeShareBookmark(path: String) {
+        val share = browsingShare ?: return
+        if (!shareBookmarks.remove(path)) return
+        viewModelScope.launch {
+            repository.insertSetting("share_bookmarks_${share.id}", shareBookmarks.joinToString("|||"))
+        }
+    }
+
+    /** Remove a bookmark from whichever endpoint owns it, then refresh the unified list. */
+    fun removeEndpointBookmark(bookmark: EndpointBookmark) {
+        viewModelScope.launch {
+            val key = when {
+                bookmark.serverId != null -> "sftp_bookmarks_${bookmark.serverId}"
+                bookmark.shareId != null -> "share_bookmarks_${bookmark.shareId}"
+                else -> return@launch
+            }
+            val remaining = repository.getSetting(key).orEmpty()
+                .split("|||").filter { it.isNotBlank() && it != bookmark.path }
+            repository.insertSetting(key, remaining.joinToString("|||"))
+            allBookmarks.remove(bookmark)
+            // Keep the per-endpoint lists that drive the star toggles in sync.
+            if (bookmark.serverId == selectedServerId) sftpBookmarks.remove(bookmark.path)
+            if (bookmark.shareId == browsingShare?.id) shareBookmarks.remove(bookmark.path)
+        }
+    }
+
+    /**
+     * Follow a bookmark to its endpoint. Availability is enforced by the UI (greyed rows), but
+     * re-checked here so a stale tap can't dial an offline endpoint.
+     */
+    fun openEndpointBookmark(bookmark: EndpointBookmark) {
+        viewModelScope.launch {
+            when {
+                bookmark.serverId != null -> {
+                    val online = servers.value.any { it.id == bookmark.serverId && it.status == "online" }
+                    if (!online) return@launch
+                    selectedServerId = bookmark.serverId
+                    activeSftpTab = 0
+                    loadSftp(bookmark.path)
+                }
+                bookmark.shareId != null -> {
+                    val share = repository.getAllNetworkShares().firstOrNull { it.id == bookmark.shareId } ?: return@launch
+                    if (share.lastStatus == "offline") return@launch
+                    activeSftpTab = 1
+                    openShareBrowser(share, startPath = bookmark.path)
+                }
+            }
+        }
+    }
+
     fun sftpCd(name: String) = loadSftp(joinPath(sftpPath, name))
 
     fun sftpHome() {
@@ -5534,7 +5716,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     sftpError = err
                 } else {
                     sftpStatus = "${if (isMove) "Moved" else "Copied"} ${sources.size} item(s) here${sudoTag()}"
-                    if (isMove) sftpClearClipboard()
+                    // A successful paste consumes the clipboard (copy included — re-copying is one tap).
+                    sftpClearClipboard()
                 }
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { sftpError = "Paste failed: ${e.message}" }
@@ -5630,9 +5813,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         ?: throw java.io.IOException("Could not open destination.")
                 }
                 val bytes = try {
-                    client.downloadTo(remotePath, output) { done, total ->
-                        updateSftpTransferProgress(transferId, done, total)
-                    }
+                    client.downloadTo(remotePath, output, transferProgress(transferId))
                 } finally {
                     withContext(Dispatchers.IO) { output.close() }
                 }
@@ -5671,9 +5852,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             ?: throw java.io.IOException("Could not open destination for $name.")
                     }
                     val copied = try {
-                        client.downloadTo(remotePath, output) { done, total ->
-                            updateSftpTransferProgress(transferId, done, total)
-                        }
+                        client.downloadTo(remotePath, output, transferProgress(transferId))
                     } finally {
                         withContext(Dispatchers.IO) { output.close() }
                     }
@@ -5724,9 +5903,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                             ?: throw java.io.IOException("Could not read the selected file from this device.")
                     }
                     val uploaded = try {
-                        client.uploadStream(remotePath, input, totalBytes) { done, total ->
-                            updateSftpTransferProgress(transferId, done, total)
-                        }
+                        client.uploadStream(remotePath, input, totalBytes, transferProgress(transferId))
                         totalBytes.coerceAtLeast(0L)
                     } finally {
                         withContext(Dispatchers.IO) { input.close() }
@@ -5832,6 +6009,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         totalBytes: Long? = null,
         message: String = "",
     ) {
+        // A cancelled row reports as Failure with a fixed message the UI renders as "Cancelled";
+        // it is never retryable (the user just asked for it to stop).
+        val wasCancelled = cancelledTransferIds.remove(id)
         val index = sftpTransfers.indexOfFirst { it.id == id }
         if (index >= 0) {
             val current = sftpTransfers[index]
@@ -5839,8 +6019,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 status = status,
                 bytesTransferred = bytesTransferred ?: current.bytesTransferred,
                 totalBytes = totalBytes ?: current.totalBytes,
-                message = message,
-                retryable = status == SftpTransferStatus.Failure && current.direction == "Upload" && current.sourceUri != null,
+                message = if (wasCancelled && status == SftpTransferStatus.Failure) TRANSFER_CANCELLED_MESSAGE else message,
+                retryable = !wasCancelled && status == SftpTransferStatus.Failure && current.direction == "Upload" && current.sourceUri != null,
             )
         }
     }
@@ -6500,6 +6680,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val networkShareArr = org.json.JSONArray()
         for (share in if (selection.networkShares) networkShares else emptyList()) {
             networkShareArr.put(org.json.JSONObject().apply {
+                // The id is only used at restore time to re-point per-share settings
+                // (share_bookmarks_{id}) at the newly inserted row.
+                put("id", share.id)
                 put("name", share.name)
                 put("protocol", share.protocol)
                 put("address", share.address)
@@ -7102,9 +7285,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     // Network shares (dedup by endpoint + path; auth profile ids are re-pointed).
-                    val existingShareKeys = repository.getAllNetworkShares()
-                        .map { "${it.protocol.uppercase(Locale.ROOT)}|${it.address.lowercase(Locale.ROOT)}|${it.port}|${it.sharePath.trim('/')}" }
-                        .toMutableSet()
+                    // shareIdMap tracks old id → restored/existing id so per-share settings
+                    // (share_bookmarks_{id}) can follow their share, mirroring serverIdMap.
+                    val existingSharesByKey = repository.getAllNetworkShares()
+                        .associateBy { "${it.protocol.uppercase(Locale.ROOT)}|${it.address.lowercase(Locale.ROOT)}|${it.port}|${it.sharePath.trim('/')}" }
+                        .toMutableMap()
+                    val existingShareKeys = existingSharesByKey.keys.toMutableSet()
+                    val shareIdMap = mutableMapOf<Int, Int>()
                     val shareArr = root.optJSONArray("networkShares") ?: org.json.JSONArray()
                     var importedNetworkShares = 0
                     for (i in 0 until if (selection.networkShares) shareArr.length() else 0) {
@@ -7114,10 +7301,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         val port = o.optInt("port", defaultNetworkSharePort(protocol))
                         val sharePath = o.optString("sharePath", "").trim('/')
                         if (address.isBlank()) continue
+                        val oldShareId = o.optInt("id", 0)
                         val key = "$protocol|${address.lowercase(Locale.ROOT)}|$port|$sharePath"
-                        if (key in existingShareKeys) continue
+                        if (key in existingShareKeys) {
+                            // Duplicate of a share we already have — its bookmarks re-point there.
+                            existingSharesByKey[key]?.let { if (oldShareId != 0) shareIdMap[oldShareId] = it.id }
+                            continue
+                        }
                         val oldProfileId = o.optInt("authProfileId", 0)
-                        repository.insertNetworkShare(
+                        val newShareId = repository.insertNetworkShare(
                             NetworkShareEntity(
                                 name = o.optString("name", "$protocol $address"),
                                 protocol = protocol,
@@ -7137,6 +7329,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                                 lastStatus = o.optString("lastStatus", "unknown"),
                             )
                         )
+                        if (oldShareId != 0) shareIdMap[oldShareId] = newShareId.toInt()
                         existingShareKeys.add(key)
                         importedNetworkShares++
                     }
@@ -7148,10 +7341,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         // Defensive: never restore device-local security keys even if an old backup carried them.
                         val securityKeys = setOf("app_pin", "app_lock_enabled", "biometrics_enabled")
                         val it = settingsObj.keys()
-                        // Per-server settings are keyed by the OLD server id; re-point them to the
-                        // restored id. If the owning server wasn't restored, skip the setting entirely
-                        // so we don't leave orphaned per-server rows pointing at a nonexistent server.
+                        // Per-endpoint settings are keyed by the OLD server/share id; re-point them
+                        // to the restored id. If the owning endpoint wasn't restored, skip the
+                        // setting entirely so we don't leave orphaned rows pointing at nothing.
                         val perServerPrefixes = listOf("sftp_bookmarks_")
+                        val perSharePrefixes = listOf("share_bookmarks_")
                         while (it.hasNext()) {
                             val originalKey = it.next()
                             if (originalKey in securityKeys) continue
@@ -7162,6 +7356,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                                 val mapped = serverIdMap[oldSrvId]
                                 if (oldSrvId != 0 && mapped == null) continue // owning server not restored
                                 if (mapped != null) newKey = "$prefix$mapped"
+                            }
+                            val sharePrefix = perSharePrefixes.firstOrNull { p -> originalKey.startsWith(p) }
+                            if (sharePrefix != null) {
+                                val oldShareId = originalKey.removePrefix(sharePrefix).toIntOrNull() ?: 0
+                                val mapped = shareIdMap[oldShareId]
+                                if (mapped == null) continue // owning share not restored (or pre-id backup)
+                                newKey = "$sharePrefix$mapped"
                             }
                             repository.insertSetting(newKey, settingsObj.getString(originalKey))
                             importedSettings++

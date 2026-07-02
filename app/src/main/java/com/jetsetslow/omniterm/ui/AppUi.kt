@@ -658,7 +658,9 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
             OmniNavItem(Screen.Fleet, "Fleet", Icons.Filled.Hub, OmniColors.green),
             OmniNavItem(Screen.Monitor, "Monitor", Icons.Filled.Speed, OmniColors.amber),
             OmniNavItem(Screen.Shell, "Term", Icons.Filled.Terminal, OmniColors.cyan),
-            OmniNavItem(Screen.SFTP, "SFTP", Icons.Filled.FolderZip, OmniColors.orange),
+            // The screen is more than SFTP now (transfers, cross-endpoint bookmarks, SMB/FTP/
+            // WebDAV shares) — "Files" names what it does; SFTP is its first subtab.
+            OmniNavItem(Screen.SFTP, "Files", Icons.Filled.FolderZip, OmniColors.orange),
             OmniNavItem(Screen.Infra, "Containers", Icons.Filled.Layers, OmniColors.purple),
             OmniNavItem(Screen.Tools, "Tools", Icons.Filled.Build, OmniColors.red),
         )

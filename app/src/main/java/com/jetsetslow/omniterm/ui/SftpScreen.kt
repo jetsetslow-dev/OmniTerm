@@ -28,6 +28,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontFamily
@@ -82,21 +83,26 @@ fun SftpScreen(viewModel: AppViewModel) {
             if (viewModel.selectedServerId != srv.id) viewModel.selectedServerId = srv.id
             viewModel.ensureSftpLoadedForSelectedServer()
         }
-        else viewModel.activeSftpTab = 3
+        // Only the SFTP subtab needs an online SSH host; Shares/Bookmarks/Transfers work without.
+        else if (viewModel.activeSftpTab == 0) viewModel.activeSftpTab = 1
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        if (srv != null) {
-            // Let the user switch hosts from SFTP itself (mirrors the other tabs).
-            // The reset itself is driven by SftpFilesTab's LaunchedEffect on the selected host,
-            // so here we only jump back to the FILES tab (avoids opening two SFTP sessions).
+        if (srv != null && viewModel.activeSftpTab == 0) {
+            // The host picker belongs to the SFTP subtab only — Transfers and Bookmarks span every
+            // endpoint and Shares has its own list, so a host bar there is misleading clutter.
+            // The reset itself is driven by SftpFilesTab's LaunchedEffect on the selected host.
             ServerSelectorBar(viewModel, onlineOnly = true, onServerChange = {
                 viewModel.activeSftpTab = 0
             })
         }
+        // Subtab order groups the two browsing surfaces first (SFTP host, then network Shares),
+        // Bookmarks as the jump list between them, and the Transfers activity log last.
         TabRow(selectedTabIndex = viewModel.activeSftpTab) {
-            Tab(selected = viewModel.activeSftpTab == 0, enabled = srv != null, onClick = { viewModel.activeSftpTab = 0 }) { Text("Files", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
-            Tab(selected = viewModel.activeSftpTab == 1, enabled = srv != null, onClick = { viewModel.activeSftpTab = 1 }) {
+            Tab(selected = viewModel.activeSftpTab == 0, enabled = srv != null, onClick = { viewModel.activeSftpTab = 0 }) { Text("SFTP", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+            Tab(selected = viewModel.activeSftpTab == 1, onClick = { viewModel.activeSftpTab = 1 }) { Text("Shares", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+            Tab(selected = viewModel.activeSftpTab == 2, onClick = { viewModel.activeSftpTab = 2 }) { Text("Bookmarks", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+            Tab(selected = viewModel.activeSftpTab == 3, onClick = { viewModel.activeSftpTab = 3 }) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Transfers", fontSize = OmniTextSize.Dense)
                     if (viewModel.sftpTransfers.isNotEmpty()) {
@@ -107,8 +113,6 @@ fun SftpScreen(viewModel: AppViewModel) {
                     }
                 }
             }
-            Tab(selected = viewModel.activeSftpTab == 2, enabled = srv != null, onClick = { viewModel.activeSftpTab = 2 }) { Text("Bookmarks", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
-            Tab(selected = viewModel.activeSftpTab == 3, onClick = { viewModel.activeSftpTab = 3 }) { Text("Shares", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
         }
 
         Box(
@@ -119,9 +123,9 @@ fun SftpScreen(viewModel: AppViewModel) {
         ) {
             when (viewModel.activeSftpTab) {
                 0 -> if (srv != null) SftpFilesTab(viewModel) else NoOnlineSshHostMessage()
-                1 -> if (srv != null) SftpTransfersTab(viewModel) else NoOnlineSshHostMessage()
-                2 -> if (srv != null) SftpBookmarksTab(viewModel) else NoOnlineSshHostMessage()
-                3 -> NetworkSharesTab(viewModel)
+                1 -> NetworkSharesTab(viewModel)
+                2 -> SftpBookmarksTab(viewModel)
+                3 -> SftpTransfersTab(viewModel)
             }
         }
     }
@@ -302,8 +306,21 @@ private fun NetworkShareScanDialog(
                         Text(if (hits.isEmpty()) "Scan LAN shares" else "Rescan LAN shares", fontSize = 12.sp)
                     }
                 }
+                // Protocol noise filter: e.g. drop WebDAV on networks where every printer
+                // answers on 80/443. Persisted; at least one stays enabled.
+                @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+                androidx.compose.foundation.layout.FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("SMB", "FTP", "SFTP", "NFS", "WEBDAV").forEach { proto ->
+                        FilterChip(
+                            selected = proto in viewModel.networkShareScanProtocols,
+                            onClick = { viewModel.toggleShareScanProtocol(proto) },
+                            enabled = !scanning,
+                            label = { Text(proto, fontSize = 10.sp) },
+                        )
+                    }
+                }
                 Text(
-                    "Probes SMB 445, FTP 21, SFTP 22, NFS 2049, WebDAV 80/443.",
+                    "Probes SMB 445, FTP 21, SFTP 22, NFS 2049, WebDAV 80/443 — untick protocols to cut noise.",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -588,6 +605,23 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
+            // Star the current folder — mirrors the SFTP Files tab; lands in the Bookmarks tab.
+            val currentDir = viewModel.sharePath.ifBlank { "/" }
+            val bookmarked = currentDir in viewModel.shareBookmarks
+            IconButton(onClick = {
+                if (bookmarked) {
+                    viewModel.removeShareBookmark(currentDir)
+                    viewModel.shareStatus = "Bookmark removed"
+                } else {
+                    viewModel.addShareBookmark(currentDir)
+                }
+            }) {
+                Icon(
+                    if (bookmarked) Icons.Filled.Bookmark else Icons.Filled.BookmarkBorder,
+                    contentDescription = if (bookmarked) "Remove bookmark" else "Bookmark this folder",
+                    tint = if (bookmarked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             if (viewModel.shareLoading || viewModel.shareOpRunning) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                 Spacer(Modifier.width(8.dp))
@@ -2260,7 +2294,9 @@ fun SftpTransfersTab(viewModel: AppViewModel) {
         Column(modifier = Modifier.fillMaxSize()) {
             Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                 Text("Transfer Log Feed", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                if (!hasRunningTransfers) {
+                if (hasRunningTransfers) {
+                    Text("Cancel all", fontSize = 11.sp, color = OmniColors.amber, modifier = Modifier.clickable { viewModel.cancelAllRunningTransfers() })
+                } else {
                     Text("Clear logs", fontSize = 11.sp, color = Color.Red, modifier = Modifier.clickable { confirmClearTransfers = true })
                 }
             }
@@ -2275,10 +2311,12 @@ fun SftpTransfersTab(viewModel: AppViewModel) {
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 items(viewModel.sftpTransfers, key = { it.id }) { item ->
-                    val accent = when (item.status) {
-                        SftpTransferStatus.Success -> OmniColors.green
-                        SftpTransferStatus.Failure -> OmniColors.red
-                        SftpTransferStatus.InProgress -> OmniColors.cyan
+                    val cancelled = item.status == SftpTransferStatus.Failure && item.message == TRANSFER_CANCELLED_MESSAGE
+                    val accent = when {
+                        cancelled -> OmniColors.amber
+                        item.status == SftpTransferStatus.Success -> OmniColors.green
+                        item.status == SftpTransferStatus.Failure -> OmniColors.red
+                        else -> OmniColors.cyan
                     }
                     val progress = if (item.totalBytes > 0) {
                         (item.bytesTransferred.toFloat() / item.totalBytes.toFloat()).coerceIn(0f, 1f)
@@ -2312,15 +2350,21 @@ fun SftpTransfersTab(viewModel: AppViewModel) {
                                     )
                                 }
                                 Text(
-                                    when (item.status) {
-                                        SftpTransferStatus.InProgress -> "Running"
-                                        SftpTransferStatus.Success -> "Done"
-                                        SftpTransferStatus.Failure -> "Failed"
+                                    when {
+                                        cancelled -> "Cancelled"
+                                        item.status == SftpTransferStatus.InProgress -> "Running"
+                                        item.status == SftpTransferStatus.Success -> "Done"
+                                        else -> "Failed"
                                     },
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = accent,
                                 )
+                                if (item.status == SftpTransferStatus.InProgress) {
+                                    IconButton(onClick = { viewModel.cancelSftpTransfer(item.id) }, modifier = Modifier.size(28.dp)) {
+                                        Icon(Icons.Filled.Close, contentDescription = "Cancel transfer", tint = OmniColors.amber, modifier = Modifier.size(16.dp))
+                                    }
+                                }
                             }
                             if (item.status == SftpTransferStatus.InProgress) {
                                 Spacer(Modifier.height(8.dp))
@@ -2428,52 +2472,74 @@ fun SftpFileEditor(
 
 @Composable
 fun SftpBookmarksTab(viewModel: AppViewModel) {
-    val bookmarks = viewModel.sftpBookmarks
+    val servers by viewModel.servers.collectAsState()
+    val shares by viewModel.networkShares.collectAsState()
     var newBookmarkPath by remember { mutableStateOf("") }
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
+    // Bookmarks span every host and share; reload on entry so stars set elsewhere show up.
+    LaunchedEffect(Unit) { viewModel.loadAllBookmarks() }
+    val srv = viewModel.selectedServer
 
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            OutlinedTextField(
-                value = newBookmarkPath,
-                onValueChange = { newBookmarkPath = it },
-                label = { Text("Enter path to bookmark") },
-                modifier = Modifier.weight(1f)
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Button(
-                onClick = {
-                    if (newBookmarkPath.isNotBlank()) {
-                        viewModel.addSftpBookmark(newBookmarkPath.trim())
-                        newBookmarkPath = ""
-                    }
-                }
+        if (srv != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("Add")
+                OutlinedTextField(
+                    value = newBookmarkPath,
+                    onValueChange = { newBookmarkPath = it },
+                    label = { Text("Add path on ${srv.name}") },
+                    modifier = Modifier.weight(1f)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Button(
+                    onClick = {
+                        if (newBookmarkPath.isNotBlank()) {
+                            viewModel.addSftpBookmark(newBookmarkPath.trim())
+                            newBookmarkPath = ""
+                            viewModel.loadAllBookmarks()
+                        }
+                    }
+                ) {
+                    Text("Add")
+                }
             }
         }
 
         Spacer(modifier = Modifier.height(4.dp))
-        Text("Quick-access bookmarks", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(
+            "Quick-access bookmarks — every host and share. Offline endpoints are greyed out.",
+            fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
 
-        LazyColumn(
+        if (viewModel.allBookmarks.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                Text(
+                    "No bookmarks yet. Star a folder in the SFTP or Shares browser to pin it here.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        } else LazyColumn(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            items(bookmarks) { bmk ->
+            items(viewModel.allBookmarks, key = { "${it.serverId}|${it.shareId}|${it.path}" }) { bmk ->
+                val share = bmk.shareId?.let { id -> shares.firstOrNull { it.id == id } }
+                // A host must be probed online; a share is selectable unless its last test failed
+                // (an untested share is still worth attempting — browsing dials it anyway).
+                val available = when {
+                    bmk.serverId != null -> servers.any { it.id == bmk.serverId && it.status == "online" }
+                    share != null -> share.lastStatus != "offline"
+                    else -> false
+                }
+                val endpointColor = if (bmk.shareId != null) shareProtocolColor(share?.protocol ?: "") else OmniColors.cyan
                 OmniCard(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable {
-                            if (viewModel.selectedServer != null) {
-                                viewModel.activeSftpTab = 0
-                                viewModel.loadSftp(bmk)
-                            }
-                        }
+                        .alpha(if (available) 1f else 0.38f)
+                        .clickable(enabled = available) { viewModel.openEndpointBookmark(bmk) }
                 ) {
                     Row(
                         modifier = Modifier
@@ -2481,18 +2547,32 @@ fun SftpBookmarksTab(viewModel: AppViewModel) {
                             .padding(4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Filled.Bookmark, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            text = bmk,
-                            fontFamily = OmniFonts.mono,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 14.sp,
-                            modifier = Modifier.weight(1f)
+                        Icon(
+                            if (bmk.shareId != null) Icons.Filled.Lan else Icons.Filled.Bookmark,
+                            contentDescription = null,
+                            tint = if (available) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = bmk.path,
+                                fontFamily = OmniFonts.mono,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Text(
+                                text = bmk.endpointName + if (available) "" else " · offline",
+                                fontSize = 11.sp,
+                                color = endpointColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                         IconButton(onClick = {
-                            confirm.ask("Remove Bookmark?", "Remove bookmark $bmk?", confirmLabel = "Remove") {
-                                viewModel.removeSftpBookmark(bmk)
+                            confirm.ask("Remove Bookmark?", "Remove ${bmk.path} on ${bmk.endpointName}?", confirmLabel = "Remove") {
+                                viewModel.removeEndpointBookmark(bmk)
                             }
                         }) {
                             Icon(Icons.Filled.Delete, contentDescription = "Delete bookmark", tint = Color.Red)
