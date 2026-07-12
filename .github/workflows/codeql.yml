@@ -70,8 +70,11 @@ jobs:
           --no-daemon --no-build-cache --no-configuration-cache
 
       # Automatic prereleases are gated on this workflow, so migration validation belongs in the
-      # same aggregate result rather than a concurrent check that could fail after publication.
+      # same aggregate result on main rather than a concurrent check that could fail after
+      # publication. Pull requests already run the identical required emulator gate in PR Check;
+      # do not boot two software-emulated API-35 devices for the same unmerged commit.
       - name: Validate Room migration matrix
+        if: github.event_name != 'pull_request'
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
           api-level: 35
