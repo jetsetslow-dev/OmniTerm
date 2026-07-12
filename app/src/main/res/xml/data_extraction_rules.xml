@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+   OmniTerm stores SSH credentials, sudo passwords, proxy passwords, and private keys in its local
+   database. Android cloud backup/device-transfer extraction is disabled in the manifest; these
+   exclusions make the sensitive-data policy explicit if backup is ever re-enabled.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="file" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="file" path="." />
+    </device-transfer>
+</data-extraction-rules>

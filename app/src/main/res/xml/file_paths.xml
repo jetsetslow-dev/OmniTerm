@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  FileProvider paths for sharing the saved crash report. Only a dedicated subdirectory of the app's
+  internal cache (cacheDir/crash-reports) is exposed — no other app data is reachable through the
+  provider.
+-->
+<paths>
+    <cache-path
+        name="crash-reports"
+        path="crash-reports/" />
+</paths>

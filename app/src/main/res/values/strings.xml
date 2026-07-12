@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">OmniTerm</string>
+    <string name="crash_start_title">OmniTerm could not start</string>
+    <string name="crash_clear_retry">Clear and try again</string>
+    <string name="crash_report_github">Report on GitHub</string>
+    <string name="crash_share_full">Share full report</string>
+    <string name="crash_copy">Copy report</string>
+    <string name="ad_debug_load_failed">[ads: failed code=%1$d — %2$s]</string>
+</resources>

@@ -1,0 +1,191 @@
+package com.jetsetslow.omniterm.data
+
+import androidx.room.withTransaction
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.map
+
+class AppRepository(private val db: AppDatabase) {
+    suspend fun <T> inTransaction(block: suspend () -> T): T = db.withTransaction(block)
+
+    // Server functions
+    val serversFlow: Flow<List<ServerEntity>> =
+        db.serverDao().getAllServersFlow().map { list -> list.map(::decryptServer) }
+    suspend fun getAllServers(): List<ServerEntity> = db.serverDao().getAllServers().map(::decryptServer)
+    suspend fun getServerById(id: Int): ServerEntity? = db.serverDao().getServerById(id)?.let(::decryptServer)
+    suspend fun getServerByName(name: String): ServerEntity? = db.serverDao().getServerByName(name)?.let(::decryptServer)
+    suspend fun insertServer(server: ServerEntity): Long = db.serverDao().insertServer(encryptServer(server))
+    suspend fun updateServer(server: ServerEntity) = db.serverDao().updateServer(encryptServer(server))
+    suspend fun updateConnectionState(id: Int, status: String, health: Int, latency: Int) =
+        db.serverDao().updateConnectionState(id, status, health, latency)
+    suspend fun resetAllConnectionStates() = db.serverDao().resetAllConnectionStates()
+    suspend fun updateAuthState(id: Int, authStatus: String, authError: String?) =
+        db.serverDao().updateAuthState(id, authStatus, authError)
+    suspend fun deleteServer(server: ServerEntity) = db.serverDao().deleteServer(server)
+    suspend fun deleteServerAndDependents(serverId: Int) = db.withTransaction {
+        db.metricHistoryDao().deleteForServer(serverId)
+        db.alertRuleDao().deleteForServer(serverId)
+        db.activeAlertDao().deleteForServer(serverId)
+        db.alertHistoryDao().deleteForServer(serverId)
+        db.portForwardDao().deleteForServer(serverId)
+        db.stackRegistryDao().deleteForServer(serverId)
+        db.persistentSessionDao().deleteForServer(serverId)
+        db.appSettingDao().deleteSetting("sftp_bookmarks_$serverId")
+        db.serverDao().deleteById(serverId)
+    }
+    suspend fun keepOnlyServers(keepServerIds: Set<Int>) {
+        // Room expands an empty IN-list inconsistently across SQLite versions. A server ID is an
+        // auto-generated positive integer, so this impossible sentinel makes the "keep none" case
+        // explicit while still preserving fleet-wide rule/alert/history rows with serverId == 0.
+        val ids = keepServerIds.ifEmpty { setOf(Int.MIN_VALUE) }.toList()
+        db.withTransaction {
+            db.metricHistoryDao().deleteExceptServers(ids)
+            db.alertRuleDao().deleteExceptServers(ids)
+            db.activeAlertDao().deleteExceptServers(ids)
+            db.alertHistoryDao().deleteExceptServers(ids)
+            db.portForwardDao().deleteExceptServers(ids)
+            db.stackRegistryDao().deleteExceptServers(ids)
+            db.persistentSessionDao().deleteExceptServers(ids)
+            db.appSettingDao().deleteSftpBookmarksExcept(ids.map { "sftp_bookmarks_$it" })
+            db.serverDao().deleteServersExcept(ids)
+        }
+    }
+
+    // Metric functions
+    fun getMetricsForServerFlow(serverId: Int): Flow<List<MetricHistoryEntity>> = db.metricHistoryDao().getMetricsForServerFlow(serverId)
+    suspend fun getMetricsForServer(serverId: Int): List<MetricHistoryEntity> = db.metricHistoryDao().getMetricsForServer(serverId)
+    suspend fun getMetricsSince(serverId: Int, since: Long): List<MetricHistoryEntity> = db.metricHistoryDao().getMetricsSince(serverId, since)
+    suspend fun insertMetric(metric: MetricHistoryEntity) = db.metricHistoryDao().insertMetric(metric)
+    suspend fun pruneMetrics(cutoff: Long) = db.metricHistoryDao().pruneMetrics(cutoff)
+
+    // SSH Key functions
+    val keysFlow: Flow<List<SshKeyEntity>> =
+        db.sshKeyDao().getAllKeysFlow().map { list -> list.map(::decryptKey) }
+    suspend fun getAllKeys(): List<SshKeyEntity> = db.sshKeyDao().getAllKeys().map(::decryptKey)
+    suspend fun insertKey(key: SshKeyEntity) = db.sshKeyDao().insertKey(encryptKey(key))
+    suspend fun deleteKey(key: SshKeyEntity) = db.sshKeyDao().deleteKey(key)
+
+    // Credential Profile functions
+    val profilesFlow: Flow<List<CredentialProfileEntity>> =
+        db.credentialProfileDao().getAllProfilesFlow().map { list -> list.map(::decryptProfile) }
+    suspend fun getAllProfiles(): List<CredentialProfileEntity> = db.credentialProfileDao().getAllProfiles().map(::decryptProfile)
+    suspend fun insertProfile(profile: CredentialProfileEntity) = db.credentialProfileDao().insertProfile(encryptProfile(profile))
+    suspend fun deleteProfile(profile: CredentialProfileEntity) = db.credentialProfileDao().deleteProfile(profile)
+    suspend fun getCredentialProfileById(id: Int): CredentialProfileEntity? = db.credentialProfileDao().getProfileById(id)?.let(::decryptProfile)
+
+    // Alert Rule functions
+    val rulesFlow: Flow<List<AlertRuleEntity>> = db.alertRuleDao().getAllRulesFlow()
+    suspend fun getAllRules(): List<AlertRuleEntity> = db.alertRuleDao().getAllRules()
+    suspend fun getRulesForServer(serverId: Int): List<AlertRuleEntity> = db.alertRuleDao().getRulesForServer(serverId)
+    suspend fun insertRule(rule: AlertRuleEntity) = db.alertRuleDao().insertRule(rule)
+    suspend fun deleteRule(rule: AlertRuleEntity) = db.alertRuleDao().deleteRule(rule)
+
+    // Active Alert functions
+    val activeAlertsFlow: Flow<List<ActiveAlertEntity>> = db.activeAlertDao().getActiveAlertsFlow()
+    suspend fun getActiveAlerts(): List<ActiveAlertEntity> = db.activeAlertDao().getActiveAlerts()
+    suspend fun insertAlert(alert: ActiveAlertEntity) = db.activeAlertDao().insertAlert(alert)
+    suspend fun deleteAlert(id: Int) = db.activeAlertDao().deleteAlert(id)
+    suspend fun setAcknowledged(id: Int, ack: Boolean) = db.activeAlertDao().setAcknowledged(id, ack)
+    suspend fun acknowledgeAll() = db.activeAlertDao().acknowledgeAll()
+    suspend fun muteAlert(id: Int, mutedUntil: Long) = db.activeAlertDao().muteAlert(id, mutedUntil)
+
+    // Alert History functions
+    val alertHistoryFlow: Flow<List<AlertHistoryEntity>> = db.alertHistoryDao().getAlertHistoryFlow()
+    suspend fun getAlertHistory(): List<AlertHistoryEntity> = db.alertHistoryDao().getAlertHistory()
+    suspend fun insertAlertHistory(history: AlertHistoryEntity) = db.alertHistoryDao().insertHistory(history)
+    suspend fun pruneAlertHistoryForServer(serverId: Int, limit: Int) =
+        db.alertHistoryDao().pruneHistoryForServer(serverId, limit.coerceIn(10, 100))
+    suspend fun pruneAlertHistoryPerServer(limit: Int) =
+        db.alertHistoryDao().pruneHistoryPerServer(limit.coerceIn(10, 100))
+    suspend fun clearAlertHistory() = db.alertHistoryDao().clearHistory()
+
+    // Quick Script functions
+    val scriptsFlow: Flow<List<QuickScriptEntity>> = db.quickScriptDao().getAllScriptsFlow()
+    suspend fun getAllScripts(): List<QuickScriptEntity> = db.quickScriptDao().getAllScripts()
+    suspend fun insertScript(script: QuickScriptEntity) = db.quickScriptDao().insertScript(script)
+    suspend fun deleteScript(script: QuickScriptEntity) = db.quickScriptDao().deleteScript(script)
+
+    // WOL Target functions
+    val wolTargetsFlow: Flow<List<WolTargetEntity>> = db.wolTargetDao().getAllWolTargetsFlow()
+    suspend fun getAllWolTargets(): List<WolTargetEntity> = db.wolTargetDao().getAllWolTargets()
+    suspend fun insertWolTarget(target: WolTargetEntity) = db.wolTargetDao().insertWolTarget(target)
+    suspend fun updateLastWoken(id: Int, time: Long) = db.wolTargetDao().updateLastWoken(id, time)
+    suspend fun deleteWolTarget(target: WolTargetEntity) = db.wolTargetDao().deleteWolTarget(target)
+
+    // ── Port-forward tunnels ──
+    val portForwardsFlow: Flow<List<PortForwardEntity>> = db.portForwardDao().getAllPortForwardsFlow()
+    suspend fun getAllPortForwards(): List<PortForwardEntity> = db.portForwardDao().getAllPortForwards()
+    suspend fun insertPortForward(pf: PortForwardEntity): Long = db.portForwardDao().insertPortForward(pf)
+    suspend fun updatePortForward(pf: PortForwardEntity) = db.portForwardDao().updatePortForward(pf)
+    suspend fun deletePortForward(pf: PortForwardEntity) = db.portForwardDao().deletePortForward(pf)
+
+    // ── Compose stack registry (per-host record of stacks seen up, so downed stacks stay listed) ──
+    suspend fun getStacksForServer(serverId: Int): List<StackRegistryEntity> = db.stackRegistryDao().getForServer(serverId)
+    suspend fun upsertStacks(stacks: List<StackRegistryEntity>) = db.stackRegistryDao().upsertAll(stacks)
+    suspend fun deleteStack(serverId: Int, runtime: String, project: String) = db.stackRegistryDao().delete(serverId, runtime, project)
+
+    // Network share functions
+    val networkSharesFlow: Flow<List<NetworkShareEntity>> =
+        db.networkShareDao().getAllNetworkSharesFlow().map { list -> list.map(::decryptNetworkShare) }
+    suspend fun getAllNetworkShares(): List<NetworkShareEntity> =
+        db.networkShareDao().getAllNetworkShares().map(::decryptNetworkShare)
+    suspend fun insertNetworkShare(share: NetworkShareEntity): Long =
+        db.networkShareDao().insertNetworkShare(encryptNetworkShare(share))
+    suspend fun updateNetworkShare(share: NetworkShareEntity) =
+        db.networkShareDao().updateNetworkShare(encryptNetworkShare(share))
+    suspend fun deleteNetworkShare(share: NetworkShareEntity) = db.networkShareDao().deleteNetworkShare(share)
+
+    // App Settings functions
+    val settingsFlow: Flow<List<AppSettingEntity>> =
+        db.appSettingDao().getAllSettingsFlow().map { list -> list.map(::decryptSetting) }
+    suspend fun getAllSettings(): List<AppSettingEntity> = db.appSettingDao().getAllSettings().map(::decryptSetting)
+    suspend fun getSetting(key: String): String? = db.appSettingDao().getSetting(key)?.let(::decryptSetting)?.value
+    suspend fun insertSetting(key: String, value: String) =
+        db.appSettingDao().insertSetting(encryptSetting(AppSettingEntity(key, value)))
+    suspend fun deleteSetting(key: String) = db.appSettingDao().deleteSetting(key)
+
+    // Persistent (tmux) session tracking — runtime/device state, never backed up.
+    suspend fun getPersistentSessions(): List<PersistentSessionEntity> = db.persistentSessionDao().getAll()
+    suspend fun upsertPersistentSession(session: PersistentSessionEntity) = db.persistentSessionDao().upsert(session)
+    suspend fun deletePersistentSession(tmuxName: String) = db.persistentSessionDao().delete(tmuxName)
+    suspend fun deletePersistentSessionsForServer(serverId: Int) = db.persistentSessionDao().deleteForServer(serverId)
+
+    private fun decryptServer(server: ServerEntity): ServerEntity = server.copy(
+        authPassword = SecretStore.decrypt(server.authPassword),
+        sudoPassword = SecretStore.decrypt(server.sudoPassword) ?: "",
+        proxyPassword = SecretStore.decrypt(server.proxyPassword) ?: "",
+    )
+
+    private fun encryptServer(server: ServerEntity): ServerEntity = server.copy(
+        authPassword = SecretStore.encrypt(server.authPassword),
+        sudoPassword = SecretStore.encrypt(server.sudoPassword) ?: "",
+        proxyPassword = SecretStore.encrypt(server.proxyPassword) ?: "",
+    )
+
+    private fun decryptKey(key: SshKeyEntity): SshKeyEntity =
+        key.copy(privateKey = SecretStore.decrypt(key.privateKey) ?: "")
+
+    private fun encryptKey(key: SshKeyEntity): SshKeyEntity =
+        key.copy(privateKey = SecretStore.encrypt(key.privateKey) ?: "")
+
+    private fun decryptProfile(profile: CredentialProfileEntity): CredentialProfileEntity =
+        profile.copy(password = SecretStore.decrypt(profile.password))
+
+    private fun encryptProfile(profile: CredentialProfileEntity): CredentialProfileEntity =
+        profile.copy(password = SecretStore.encrypt(profile.password))
+
+    private fun decryptNetworkShare(share: NetworkShareEntity): NetworkShareEntity =
+        share.copy(password = SecretStore.decrypt(share.password) ?: "")
+
+    private fun encryptNetworkShare(share: NetworkShareEntity): NetworkShareEntity =
+        share.copy(password = SecretStore.encrypt(share.password) ?: "")
+
+    private fun decryptSetting(setting: AppSettingEntity): AppSettingEntity =
+        if (setting.key in secureSettingKeys) setting.copy(value = SecretStore.decrypt(setting.value) ?: "") else setting
+
+    private fun encryptSetting(setting: AppSettingEntity): AppSettingEntity =
+        if (setting.key in secureSettingKeys) setting.copy(value = SecretStore.encrypt(setting.value) ?: "") else setting
+
+    companion object {
+        private val secureSettingKeys = setOf("app_pin")
+    }
+}

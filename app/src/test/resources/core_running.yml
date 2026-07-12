@@ -1,0 +1,58 @@
+# Synthetic adversarial Compose fixture. Never copy a deployed stack into test resources.
+name: core_utilities
+
+x-common: &common
+  restart: unless-stopped
+  environment:
+    APP_TOKEN: ${SYNTHETIC_APP_TOKEN}
+
+networks:
+  app_net:
+    driver: bridge
+
+volumes:
+  model_data:
+  budget_data:
+
+services:
+  open-webui:
+    <<: *common
+    image: ghcr.io/example/open-webui:1.0
+    ports:
+      - "8080:8080"
+
+  hawser:
+    <<: *common
+    image: ghcr.io/example/hawser:1.0
+
+  parser-service:
+    <<: *common
+    build:
+      context: ./parser
+      dockerfile: Containerfile
+
+  actual-sync:
+    <<: *common
+    image: registry.example.invalid/actual-sync:1.0
+
+  ollama:
+    <<: *common
+    image: docker.io/example/ollama:1.0
+    volumes:
+      - model_data:/models
+
+  model-loader:
+    <<: *common
+    build: ./model-loader
+    depends_on:
+      - ollama
+
+  actual-budget:
+    <<: *common
+    image: registry.example.invalid/actual-budget:1.0
+    volumes:
+      - budget_data:/data
+
+  memos:
+    <<: *common
+    image: registry.example.invalid/memos:1.0
