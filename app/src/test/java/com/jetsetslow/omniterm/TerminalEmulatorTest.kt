@@ -463,4 +463,32 @@ class TerminalEmulatorTest {
         assertEquals("◌\u0301X", rowText(e, 0))
         assertEquals(2, e.snapshot().cursorCol)
     }
+
+    @Test
+    fun deterministicArbitraryByteAndResizeCorpusStaysBounded() {
+        val random = java.util.Random(0x4f4d4e49L)
+        val scrollbackLimit = 64
+        var columns = 80
+        var rows = 24
+        val e = TerminalEmulator(columns, rows, scrollbackLimit)
+
+        repeat(2_000) { iteration ->
+            val chunk = ByteArray(1 + random.nextInt(32))
+            random.nextBytes(chunk)
+            e.feed(chunk)
+            if (iteration % 25 == 0) {
+                columns = 1 + random.nextInt(100)
+                rows = 1 + random.nextInt(40)
+                e.resize(columns, rows)
+            }
+
+            if (iteration % 20 == 0) {
+                val snapshot = e.snapshot()
+                assertTrue(snapshot.cursorRow in 0 until snapshot.totalRows)
+                assertTrue(snapshot.cursorCol in 0 until columns)
+                assertTrue(snapshot.totalRows <= scrollbackLimit + rows)
+                assertEquals(columns, snapshot.cols)
+            }
+        }
+    }
 }
