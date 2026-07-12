@@ -78,6 +78,16 @@ jobs:
           keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
             -alias androiddebugkey -dname CN=Android-Debug -keyalg RSA -keysize 2048 -validity 1
 
+      # ReactiveCircus requires KVM permissions on Ubuntu. Without this, API 35 falls back to
+      # software emulation and can report boot complete before Android's input service is ready.
+      - name: Enable KVM acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          test -r /dev/kvm && test -w /dev/kvm
+
       - name: Run exported-schema migration matrix
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
