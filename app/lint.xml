@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Commons Net ships an optional TrustManagerUtils helper containing a trust-all class.
+         OmniTerm uses only plain FTPClient and never references that helper or FTPS. Keep the
+         security rule enabled for application code while excluding this unreachable jar class. -->
+    <issue id="TrustAllX509TrustManager">
+        <ignore regexp="commons-net-[0-9.]+\.jar" />
+    </issue>
+
+    <!-- License text is intentionally packaged to satisfy the fonts' OFL redistribution terms. -->
+    <issue id="UnusedResources">
+        <ignore path="src/main/res/raw/font_licenses.txt" />
+    </issue>
+</lint>

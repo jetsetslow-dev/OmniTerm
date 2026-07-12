@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+   OmniTerm stores SSH credentials, sudo passwords, proxy passwords, and private keys in its local
+   database. Android Auto Backup is disabled in the manifest; these explicit exclusions document
+   the policy and protect older backup readers if the manifest setting is changed accidentally.
+-->
+<full-backup-content>
+    <exclude domain="database" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="file" path="." />
+</full-backup-content>

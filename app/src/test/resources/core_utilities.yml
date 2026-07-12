@@ -1,0 +1,35 @@
+# Synthetic messy Compose fixture: no top-level name, comments between services, a
+# pre-commented service, an extension field, and an intentionally unknown field.
+x-defaults: &defaults
+  restart: unless-stopped
+
+services:
+  hawser:
+    <<: *defaults
+    image: registry.example.invalid/hawser:1.0
+
+#  archived-ui:
+#    image: registry.example.invalid/archived-ui:1.0
+
+  parser-service:
+    <<: *defaults
+    build:
+      context: ./parser
+    deliberately malformed fixture line
+    x-unknown-field: preserved
+
+  actual-sync:
+    <<: *defaults
+    image: registry.example.invalid/actual-sync:1.0
+
+  ollama:
+    <<: *defaults
+    image: registry.example.invalid/ollama:1.0
+
+  model-loader:
+    <<: *defaults
+    build: ./model-loader
+
+  actual-budget:
+    <<: *defaults
+    image: registry.example.invalid/actual-budget:1.0

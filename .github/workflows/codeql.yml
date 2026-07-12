@@ -1,0 +1,89 @@
+name: CodeQL
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: "24 3 * * 1"
+
+permissions:
+  actions: read
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze Java/Kotlin
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Android Gradle
+        uses: ./.github/actions/setup-android-gradle
+        with:
+          install-sdk-packages: "true"
+
+      - name: Provide debug keystore
+        run: |
+          umask 077
+          keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
+            -alias androiddebugkey -dname CN=Android-Debug -keyalg RSA -keysize 2048 -validity 1
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        with:
+          languages: java-kotlin
+          build-mode: manual
+          dependency-caching: true
+          queries: security-extended
+
+      - name: Validate release tooling
+        run: ./scripts/test-release-version.sh
+
+      # This workflow is the automatic prerelease gate, so secret-history validation must be part
+      # of this same aggregate result rather than a concurrent workflow that could fail later.
+      - name: Scan complete history for committed secrets
+        run: >-
+          docker run --rm
+          -v "$PWD:/repo" -w /repo
+          zricethezav/gitleaks@sha256:e1b35e12a8c6fa8901f060459cfb6b2fc4c484d3afbe3b029733a3bbfab07055
+          git --redact --no-banner --no-color /repo
+
+      - name: Build, test, and lint both variants
+        run: >-
+          ./gradlew clean
+          :app:assembleOpenSourceDebug :app:assemblePlayStoreDebug
+          :app:testOpenSourceDebugUnitTest :app:testPlayStoreDebugUnitTest
+          :app:lintOpenSourceDebug :app:lintPlayStoreDebug
+          --no-daemon --no-build-cache --no-configuration-cache
+
+      # Automatic prereleases are gated on this workflow, so migration validation belongs in the
+      # same aggregate result rather than a concurrent check that could fail after publication.
+      - name: Validate Room migration matrix
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 35
+          arch: x86_64
+          disable-animations: true
+          script: >-
+            ./gradlew connectedOpenSourceDebugAndroidTest --no-daemon
+            -Pandroid.testInstrumentationRunnerArguments.package=com.jetsetslow.omniterm.data
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
+        with:
+          category: "/language:java-kotlin"
+
+      - name: Delete debug keystore
+        if: always()
+        run: rm -f debug.keystore

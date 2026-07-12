@@ -1,0 +1,55 @@
+name: Bug report
+description: Report a reproducible OmniTerm defect (not a security vulnerability)
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: "Remove credentials, hostnames, IP addresses, terminal secrets, and private keys. Report security issues through the private advisory link instead."
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Include expected and actual behavior.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      placeholder: "1. Open…\n2. Connect…\n3. Rotate/background/resize…"
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: OmniTerm version and distribution
+      placeholder: "1.2.3-main.1, source-available or Play Store"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and Android version
+    validations:
+      required: true
+  - type: textarea
+    id: terminal
+    attributes:
+      label: Terminal / SSH context (if applicable)
+      description: Shell, remote OS, tmux version, control mode on/off, keyboard, orientation, split mode, and network transition. Do not include connection details.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Sanitized diagnostics
+      description: Paste the smallest relevant log or crash report after removing sensitive data.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Safety checks
+      options:
+        - label: I removed credentials, host details, keys, and sensitive terminal output.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

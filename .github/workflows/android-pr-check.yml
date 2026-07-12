@@ -1,0 +1,93 @@
+name: PR Check
+
+# Commits often land on main directly (not via PR), so run the same build + unit-test suite on
+# every push to main too — otherwise the Robolectric cold-start gate only fires at release time.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+# Cancel in-progress runs for the same PR to save GitHub Actions minutes
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Android Gradle
+        uses: ./.github/actions/setup-android-gradle
+
+      - name: Validate release tooling
+        run: ./scripts/test-release-version.sh
+
+      # Verification APKs never need signing continuity. Always use an ephemeral key so untrusted
+      # build/test code cannot access the stable sideload signing key.
+      - name: Provide debug keystore
+        run: |
+          umask 077
+          keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
+            -alias androiddebugkey -dname CN=Android-Debug -keyalg RSA -keysize 2048 -validity 1
+
+      - name: Build Debug APK
+        run: ./gradlew assembleDebug --no-daemon
+
+      # With product flavors there is no "testDebugUnitTest" umbrella task — the per-variant
+      # task names must be spelled out.
+      - name: Run Unit Tests
+        run: ./gradlew testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest --no-daemon
+
+      - name: Run Android lint
+        run: ./gradlew lintOpenSourceDebug lintPlayStoreDebug --no-daemon --no-configuration-cache
+
+      - name: Delete debug keystore
+        if: always()
+        run: rm -f debug.keystore
+
+  migration-test:
+    name: Validate Room migrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Android Gradle
+        uses: ./.github/actions/setup-android-gradle
+
+      - name: Provide ephemeral debug keystore
+        run: |
+          umask 077
+          keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
+            -alias androiddebugkey -dname CN=Android-Debug -keyalg RSA -keysize 2048 -validity 1
+
+      - name: Run exported-schema migration matrix
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
+        with:
+          api-level: 35
+          arch: x86_64
+          disable-animations: true
+          script: >-
+            ./gradlew connectedOpenSourceDebugAndroidTest --no-daemon
+            -Pandroid.testInstrumentationRunnerArguments.package=com.jetsetslow.omniterm.data
+
+      - name: Delete debug keystore
+        if: always()
+        run: rm -f debug.keystore

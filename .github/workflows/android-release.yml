@@ -1,0 +1,652 @@
+name: Android build & publish
+
+# One workflow for both build types:
+#   - Manual "Run workflow": pick build_type = release (default) or debug.
+#       release: signed AAB + source-available APK, optional GitHub Release + Play upload.
+#                release_channel picks whether the GitHub Release is a production release
+#                or a prerelease (tag pushes derive it from the tag name instead).
+#       debug:   source-available debug APK, creates a uniquely tagged PRERELEASE GitHub Release.
+#                Debug tags use a "debug-" prefix so they can never fire the automated
+#                release trigger below, and the release is always flagged prerelease so
+#                a debuggable, unminified APK can't be mistaken for a production build.
+#   - Pushing a tag "v*" (automation): always the full signed release path.
+#   - A successful CodeQL workflow for main (automation): full signed release on the PRERELEASE
+#       channel with a deterministic per-commit tag. Waiting for that aggregate workflow prevents
+#       publishing a commit whose build, tests, lint, release tooling, or CodeQL analysis failed.
+#       Production releases stay manual (dispatch with release_channel=production or
+#       a bare v* tag push). No paths filter: mixing paths-ignore with the tags trigger can
+#       suppress tag-triggered runs, and a doc-only prerelease is harmless.
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "What to build"
+        required: true
+        type: choice
+        options: [release, debug]
+        default: release
+      release_tag:
+        description: "Release tag vMAJOR.MINOR.PATCH[-SuffixN]. Debug tags must start debug-; empty debug tags are unique per run."
+        required: false
+        type: string
+      release_channel:
+        description: "GitHub Release type (tag pushes pick automatically: a SemVer pre-release suffix like v1.0.0-Alpha means prerelease)"
+        required: true
+        type: choice
+        options: [prerelease, production]
+        default: prerelease
+      build_apk:
+        description: "Release only: also build the OpenSource APK (takes longer)"
+        required: true
+        type: boolean
+        default: true
+      publish_artifacts:
+        description: "Publish GitHub Release assets and upload the AAB to Google Play"
+        required: true
+        type: boolean
+        default: true
+      version_code:
+        description: "Break-glass versionCode override (default: major*10000000 + minor*100000 + patch*100 + build). Also skips the monotonicity guard."
+        required: false
+        type: string
+  push:
+    tags:
+      - "v*"
+  workflow_run:
+    workflows: [CodeQL]
+    types: [completed]
+
+permissions:
+  contents: read
+
+# Serialize runs: two quick pushes to main would otherwise auto-bump from the same latest
+# release, race to create the same tag, and trip the Play monotonicity guard.
+concurrency:
+  group: android-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build signed AAB and APK
+    if: >-
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_repository.full_name == github.repository &&
+       github.event.workflow_run.head_branch == 'main') ||
+      github.event_name == 'push' ||
+      inputs.build_type == 'release'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    outputs:
+      release_label: ${{ steps.resolve.outputs.release_label }}
+      release_already_published: ${{ steps.resolve.outputs.release_already_published }}
+      release_prerelease: ${{ steps.resolve.outputs.release_prerelease }}
+      publish_external: ${{ steps.resolve.outputs.publish_external }}
+
+    # Pick the GitHub Environment by whether this is a PRODUCTION release. This is what scopes
+    # AdMob test-device IDs: define ADMOB_TEST_DEVICE_IDS only in the `testing` environment, leave
+    # it UNSET in `production`. A production build then sees no test-device secret → empty →
+    # real ads for everyone, with no "remember to clear it" footgun.
+    #   • Manual dispatch: release_channel == 'production'.
+    #   • Tag push: a SemVer pre-release suffix (v1.0.0-Alpha, has a '-') means prerelease/testing;
+    #     a clean tag (v1.0.0) means production.
+    environment: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish_artifacts) && 'dry-run' || (((github.event_name == 'workflow_dispatch' && inputs.release_channel == 'production') || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref, '-'))) && 'production' || 'testing') }}
+
+    env:
+      PUBLISH_EXTERNAL: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_artifacts }}
+      BUILD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      KEYSTORE_PATH: ${{ github.workspace }}/omniterm-upload-key.jks
+      # Comma-separated AdMob test-device IDs so a test build can serve test ads (a new real unit
+      # returns "no fill" for unregistered devices). An environment VARIABLE (not a secret — the ID
+      # isn't sensitive): set in the `testing` environment, unset in `production`. Resolved from the
+      # selected ENVIRONMENT above, so empty for production → real ads served to everyone.
+      ADMOB_TEST_DEVICE_IDS: ${{ vars.ADMOB_TEST_DEVICE_IDS }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ env.BUILD_SHA }}
+
+      - name: Verify trusted release source
+        if: env.PUBLISH_EXTERNAL == 'true'
+        run: |
+          test "$(git rev-parse HEAD)" = "$BUILD_SHA" || {
+            echo "Checked-out commit does not match BUILD_SHA" >&2
+            exit 1
+          }
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$BUILD_SHA" refs/remotes/origin/main || {
+            echo "Published builds must use a commit reachable from origin/main" >&2
+            exit 1
+          }
+
+      - name: Require exact-SHA aggregate security gate
+        if: env.PUBLISH_EXTERNAL == 'true' && github.event_name != 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Tag/manual entry points do not inherit workflow_run's success proof. Require the exact
+          # source commit to have completed the main push aggregate (build/test/lint/migrations,
+          # CodeQL and complete-history Gitleaks) before any secret is decoded or artifact published.
+          RUNS="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/codeql.yml/runs?head_sha=${BUILD_SHA}&per_page=100")"
+          jq -e --arg sha "$BUILD_SHA" '
+            any(.workflow_runs[];
+              .head_sha == $sha and .event == "push" and .head_branch == "main" and
+              .status == "completed" and .conclusion == "success")
+          ' <<<"$RUNS" >/dev/null || {
+            echo "No successful exact-SHA CodeQL aggregate push gate exists for $BUILD_SHA" >&2
+            exit 1
+          }
+
+      - name: Set up Android Gradle
+        uses: ./.github/actions/setup-android-gradle
+        with:
+          install-sdk-packages: "true"
+
+      # Version scheme: versionName is the tag without the leading "v"; versionCode packs it as
+      #   major*10_000_000 + minor*100_000 + patch*100 + build
+      # where a bare release owns build slot 99 and a -Suffix takes its trailing digits as the
+      # build (v1.0.0-Beta -> 1, v1.0.0-Beta2 -> 2, v1.0.0 -> 99). That makes the standard
+      # promotion flow work: Beta chains climb 1..98 and dropping the suffix is always a higher
+      # code. The source of truth is the highest immutable release tag, NOT git history
+      # (commit counts change under squash/rebase/repo moves, which is how the old
+      # "floor + commit count" scheme went wrong).
+      - name: Resolve version and prior publication state
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          INPUT_RELEASE_CHANNEL: ${{ inputs.release_channel }}
+          INPUT_VERSION_CODE: ${{ inputs.version_code }}
+        run: |
+          source scripts/release-version.sh
+          # The REST endpoint includes drafts. A failed run's draft must remain the high-water
+          # mark so a queued main push cannot allocate the same version while the retry is pending.
+          API_RELEASE_TAGS="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '.[].tag_name')"
+          RELEASE_TAGS="$({
+            git tag --list 'v*'
+            printf '%s\n' "$API_RELEASE_TAGS"
+          } | sort -u)"
+          LAST_TAG="$(printf '%s\n' "$RELEASE_TAGS" | version_highest)"
+          # The repository underwent an approved history reset after v0.9.239 to remove old
+          # credential-bearing fixture history. No legacy tag is retained, but Play versionCodes
+          # remain immutable, so a fresh repository must continue strictly after that baseline.
+          LAST_TAG="${LAST_TAG:-v0.9.239}"
+          if [ -n "$INPUT_RELEASE_TAG" ]; then
+            RELEASE_LABEL="$INPUT_RELEASE_TAG"
+          elif [ "${GITHUB_EVENT_NAME}" != "workflow_dispatch" ] && [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            RELEASE_LABEL="${GITHUB_REF_NAME}"
+          elif [ "${GITHUB_EVENT_NAME}" = "workflow_run" ]; then
+            # A branch rerun reuses the prerelease tag already pinned to this exact SHA. On the
+            # first run, allocate the next patch with a prerelease build slot. gh release create
+            # later pins that tag to BUILD_SHA, making retries deterministic even if main moves.
+            # Draft releases do not necessarily materialize their git tag until publication, so
+            # search both tags and draft/release targetCommitish values for this SHA.
+            SHA_RELEASE_TAGS="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq '.[] | select(.target_commitish == env.BUILD_SHA) | .tag_name')"
+            RELEASE_LABEL="$({
+              git tag --points-at "$BUILD_SHA"
+              printf '%s\n' "$SHA_RELEASE_TAGS"
+            } | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-' | version_highest || true)"
+            if [ -z "$RELEASE_LABEL" ]; then
+              RELEASE_LABEL="$(version_next_prerelease "$LAST_TAG" main.1)" || {
+                echo "Could not allocate a prerelease after $LAST_TAG"; exit 1;
+              }
+            fi
+          else
+            # A release-job manual dispatch without an explicit tag follows the requested channel.
+            # Production promotes the latest suffix to build 99; prerelease allocates a new patch.
+            if [ "$INPUT_RELEASE_CHANNEL" = "production" ]; then
+              RELEASE_LABEL="$(version_next_production "$LAST_TAG")" || {
+                echo "Could not allocate a production version after $LAST_TAG"; exit 1;
+              }
+            else
+              RELEASE_LABEL="$(version_next_prerelease "$LAST_TAG" manual.1)" || {
+                echo "Could not allocate a prerelease after $LAST_TAG"; exit 1;
+              }
+            fi
+          fi
+          VERSION_CODE_RESOLVED="$(version_pack "$RELEASE_LABEL")" || {
+            echo "Release tag '$RELEASE_LABEL' must be vMAJOR.MINOR.PATCH[-SuffixN]"
+            echo "(major<=200, minor<=99, patch<=999, suffix build number 1-98)."
+            exit 1
+          }
+          COLLISIONS="$(printf '%s\n' "$RELEASE_TAGS" | version_collisions "$RELEASE_LABEL")"
+          if [ -n "$COLLISIONS" ]; then
+            echo "Release tag $RELEASE_LABEL aliases an Android versionCode already owned by:" >&2
+            printf '%s\n' "$COLLISIONS" >&2
+            exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            if [ "$INPUT_RELEASE_CHANNEL" = "production" ] && [[ "$RELEASE_LABEL" == *-* ]]; then
+              echo "Production releases must use a suffix-free tag"; exit 1
+            fi
+            if [ "$INPUT_RELEASE_CHANNEL" = "prerelease" ] && [[ "$RELEASE_LABEL" != *-* ]]; then
+              echo "Prereleases must use a tag suffix so build slots 1-98 remain promotable"; exit 1
+            fi
+          fi
+
+          # Production is promotion of an already-tested prerelease for the exact source SHA,
+          # never an independent build path that can bypass the main-branch gate.
+          if [[ "$RELEASE_LABEL" != *-* && "$PUBLISH_EXTERNAL" = "true" ]]; then
+            MATCHING_PRERELEASE=""
+            while IFS= read -r prerelease_tag; do
+              [[ "$prerelease_tag" == "$RELEASE_LABEL"-* ]] || continue
+              prerelease_sha="$(git rev-list -n 1 "$prerelease_tag" 2>/dev/null || true)"
+              if [ "$prerelease_sha" = "$BUILD_SHA" ]; then
+                MATCHING_PRERELEASE="$prerelease_tag"
+                break
+              fi
+            done < <(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" \
+              --jq '.[] | select(.prerelease == true and .draft == false) | .tag_name')
+            test -n "$MATCHING_PRERELEASE" || {
+              echo "Production $RELEASE_LABEL requires a published ${RELEASE_LABEL}-* prerelease for $BUILD_SHA" >&2
+              exit 1
+            }
+          fi
+
+          # Never build one commit and publish it under an existing tag for another commit.
+          if git rev-parse -q --verify "refs/tags/$RELEASE_LABEL" >/dev/null; then
+            TAG_SHA="$(git rev-list -n 1 "$RELEASE_LABEL")"
+            test "$TAG_SHA" = "$BUILD_SHA" || {
+              echo "Tag $RELEASE_LABEL points to $TAG_SHA, not this build's $BUILD_SHA"; exit 1;
+            }
+          fi
+
+          RELEASE_ALREADY_PUBLISHED=false
+          RELEASE_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_LABEL}" 2>/dev/null || true)"
+          if [ -n "$RELEASE_JSON" ] && ! git rev-parse -q --verify "refs/tags/$RELEASE_LABEL" >/dev/null; then
+            RELEASE_TARGET="$(jq -r '.target_commitish' <<<"$RELEASE_JSON")"
+            test "$RELEASE_TARGET" = "$BUILD_SHA" || {
+              echo "Draft $RELEASE_LABEL targets $RELEASE_TARGET, not this build's $BUILD_SHA" >&2
+              exit 1
+            }
+          fi
+          if [ -n "$RELEASE_JSON" ] && [ "$(jq -r '.draft' <<<"$RELEASE_JSON")" = "false" ]; then
+            # Publication is the commit marker for the release transaction: the workflow only
+            # clears draft after Play accepts the AAB. A successful run can therefore be rerun
+            # without attempting to upload an already-used Play versionCode.
+            RELEASE_ALREADY_PUBLISHED=true
+          fi
+          if [ -n "$INPUT_VERSION_CODE" ]; then
+            # Break-glass: claim an explicit code (e.g. after a manual Console upload). Skips the
+            # guard below — the operator is asserting they know the Play high-water mark.
+            [[ "$INPUT_VERSION_CODE" =~ ^[1-9][0-9]*$ ]] && [ "$INPUT_VERSION_CODE" -le 2100000000 ] || {
+              echo "version_code must be an integer from 1 through 2100000000"; exit 1;
+            }
+            VERSION_CODE_RESOLVED="$INPUT_VERSION_CODE"
+          else
+            # Monotonicity guard: fail here, in CI, rather than let Play reject the upload.
+            # Exclude the candidate itself so a same-SHA draft retry remains valid, but compare it
+            # against every other immutable tag/release high-water mark.
+            PRIOR_TAG="$(printf '%s\n' "$RELEASE_TAGS" | grep -Fxv "$RELEASE_LABEL" | version_highest || true)"
+            PRIOR_CODE="$(version_pack "$PRIOR_TAG" 2>/dev/null || echo 0)"
+            if [ "$RELEASE_ALREADY_PUBLISHED" != "true" ] && [ "$VERSION_CODE_RESOLVED" -le "$PRIOR_CODE" ]; then
+              echo "versionCode $VERSION_CODE_RESOLVED ($RELEASE_LABEL) does not exceed the prior release $PRIOR_TAG (code $PRIOR_CODE)."
+              echo "Play requires strictly increasing codes; pick a higher version."
+              exit 1
+            fi
+          fi
+          echo "Resolved $RELEASE_LABEL -> versionName=${RELEASE_LABEL#v}, versionCode=$VERSION_CODE_RESOLVED (latest release: ${LAST_TAG:-none})"
+          {
+            echo "VERSION_CODE=$VERSION_CODE_RESOLVED"
+            echo "VERSION_NAME=${RELEASE_LABEL#v}"
+            echo "RELEASE_LABEL=$RELEASE_LABEL"
+            echo "RELEASE_ALREADY_PUBLISHED=$RELEASE_ALREADY_PUBLISHED"
+          } >> "$GITHUB_ENV"
+          case "${INPUT_RELEASE_CHANNEL:-auto}" in
+            production) RELEASE_PRERELEASE=false ;;
+            prerelease) RELEASE_PRERELEASE=true ;;
+            *)
+              if [ "$GITHUB_EVENT_NAME" = "workflow_run" ]; then
+                RELEASE_PRERELEASE=true
+              elif [[ "$RELEASE_LABEL" == *-* ]]; then
+                RELEASE_PRERELEASE=true
+              else
+                RELEASE_PRERELEASE=false
+              fi
+              ;;
+          esac
+          {
+            echo "release_label=$RELEASE_LABEL"
+            echo "release_already_published=$RELEASE_ALREADY_PUBLISHED"
+            echo "release_prerelease=$RELEASE_PRERELEASE"
+            echo "publish_external=$PUBLISH_EXTERNAL"
+          } >> "$GITHUB_OUTPUT"
+
+      # Gate the release on the full unit-test suite — including the Robolectric cold-start smoke
+      # test (ColdStartRobolectricTest), so a build that crashes on open can never be signed and
+      # published. Deliberately runs before any secret is decoded.
+      - name: Run unit tests
+        run: ./gradlew testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest --no-daemon -Dorg.gradle.jvmargs=-Xmx2g
+
+      - name: Validate release tooling
+        run: ./scripts/test-release-version.sh
+
+      - name: Run Android lint
+        run: ./gradlew lintOpenSourceDebug lintPlayStoreDebug --no-daemon --no-configuration-cache -Dorg.gradle.jvmargs=-Xmx2g
+
+      - name: Decode release keystore
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish_artifacts) && 'android' || secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish_artifacts) && 'androidreleasekey' || secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish_artifacts) && 'android' || secrets.ANDROID_KEY_PASSWORD }}
+          ADMOB_APP_ID: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish_artifacts) && 'ca-app-pub-0000000000000000~0000000000' || secrets.ADMOB_APP_ID }}
+          ADMOB_BANNER_UNIT_ID: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish_artifacts) && 'ca-app-pub-0000000000000000/0000000000' || secrets.ADMOB_BANNER_UNIT_ID }}
+        run: |
+          umask 077
+          test -n "$STORE_PASSWORD" || { echo "Missing ANDROID_KEYSTORE_PASSWORD secret"; exit 1; }
+          test -n "$KEY_ALIAS" || { echo "Missing ANDROID_KEY_ALIAS secret"; exit 1; }
+          test -n "$KEY_PASSWORD" || { echo "Missing ANDROID_KEY_PASSWORD secret"; exit 1; }
+          test -n "$ADMOB_APP_ID" || { echo "Missing ADMOB_APP_ID secret (real AdMob app ID for the Play Store build)"; exit 1; }
+          test -n "$ADMOB_BANNER_UNIT_ID" || { echo "Missing ADMOB_BANNER_UNIT_ID secret (real AdMob banner unit ID)"; exit 1; }
+          if [ "$PUBLISH_EXTERNAL" = "true" ]; then
+            test -n "$ANDROID_KEYSTORE_BASE64" || { echo "Missing ANDROID_KEYSTORE_BASE64 secret"; exit 1; }
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          else
+            keytool -genkeypair -keystore "$KEYSTORE_PATH" -storepass "$STORE_PASSWORD" -keypass "$KEY_PASSWORD" \
+              -alias "$KEY_ALIAS" -dname CN=OmniTerm-Dry-Run -keyalg RSA -keysize 2048 -validity 1
+          fi
+
+      - name: Build signed release artifacts
+        env:
+          BUILD_APK: ${{ inputs.build_apk }}
+          STORE_PASSWORD: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish_artifacts) && 'android' || secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish_artifacts) && 'androidreleasekey' || secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish_artifacts) && 'android' || secrets.ANDROID_KEY_PASSWORD }}
+          ADMOB_APP_ID: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish_artifacts) && 'ca-app-pub-0000000000000000~0000000000' || secrets.ADMOB_APP_ID }}
+          ADMOB_BANNER_UNIT_ID: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish_artifacts) && 'ca-app-pub-0000000000000000/0000000000' || secrets.ADMOB_BANNER_UNIT_ID }}
+        run: |
+          TASKS=(":app:bundlePlayStoreRelease")
+          if [ "$BUILD_APK" = "true" ] || [ -z "$BUILD_APK" ]; then
+            TASKS+=(":app:assembleOpenSourceRelease")
+          fi
+          ./gradlew "${TASKS[@]}" --no-daemon -Dorg.gradle.jvmargs=-Xmx2g
+
+      # Signing is done; remove the decoded keystore immediately so no later step (artifact
+      # upload, third-party actions) can ever see it, even though the runner is ephemeral.
+      - name: Delete decoded keystore
+        if: always()
+        run: rm -f "$KEYSTORE_PATH"
+
+      - name: Collect GitHub Release outputs (APK)
+        run: |
+          mkdir -p github-artifacts
+          if [ -d "app/build/outputs/apk" ]; then
+            find app/build/outputs/apk -name "*.apk" -exec cp {} "github-artifacts/OmniTerm-OpenSource-${RELEASE_LABEL}.apk" \;
+          fi
+
+      - name: Collect Play Store output (AAB)
+        run: |
+          mkdir -p playstore-artifacts
+          find app/build/outputs/bundle -name "*.aab" -exec cp {} "playstore-artifacts/OmniTerm-PlayStore-${RELEASE_LABEL}.aab" \;
+
+      # Upload the Play mapping directly to Play below. Ordinary Actions artifacts in a public
+      # repository are not private storage and must not be used to retain obfuscation mappings.
+      - name: Verify Play R8 mapping
+        run: |
+          test -s app/build/outputs/mapping/playStoreRelease/mapping.txt || {
+            echo "No Play Store R8 mapping.txt found — release builds must be minified" >&2
+            exit 1
+          }
+
+      - name: Generate and validate release SBOM
+        run: |
+          SBOM_CONFIGURATION=playStoreReleaseRuntimeClasspath \
+            SBOM_COMPONENT_NAME="OmniTerm Play Store" \
+            ./gradlew cyclonedxBom --init-script .github/cyclonedx.init.gradle.kts --no-daemon
+          PLAY_SBOM="github-artifacts/OmniTerm-PlayStore-${RELEASE_LABEL}.cdx.json"
+          cp build/reports/cyclonedx/bom.json "$PLAY_SBOM"
+          jq -e '
+            .bomFormat == "CycloneDX" and
+            (.metadata.component.name == "OmniTerm Play Store") and
+            ((.components // []) | length >= 20)
+          ' "$PLAY_SBOM" >/dev/null || {
+            echo "Play Store SBOM is missing expected resolved dependencies" >&2
+            exit 1
+          }
+          if [ -d app/build/outputs/apk/openSource/release ]; then
+            SBOM_CONFIGURATION=openSourceReleaseRuntimeClasspath \
+              SBOM_COMPONENT_NAME="OmniTerm Source Available" \
+              ./gradlew cyclonedxBom --init-script .github/cyclonedx.init.gradle.kts --no-daemon
+            OSS_SBOM="github-artifacts/OmniTerm-SourceAvailable-${RELEASE_LABEL}.cdx.json"
+            cp build/reports/cyclonedx/bom.json "$OSS_SBOM"
+            jq -e '
+              .bomFormat == "CycloneDX" and
+              (.metadata.component.name == "OmniTerm Source Available") and
+              ((.components // []) | length >= 15)
+            ' "$OSS_SBOM" >/dev/null || {
+              echo "Source-available APK SBOM is missing expected resolved dependencies" >&2
+              exit 1
+            }
+          fi
+
+      - name: Generate release checksums
+        run: (cd github-artifacts && sha256sum -- ./* > SHA256SUMS.txt)
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          # v4 artifacts are immutable within a workflow run. A failed external publication may
+          # require a full-job retry, so each attempt needs its own name instead of failing 409.
+          name: omniterm-android-release-attempt-${{ github.run_attempt }}
+          path: github-artifacts/*
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Attest release artifact provenance
+        if: env.PUBLISH_EXTERNAL == 'true' && env.RELEASE_ALREADY_PUBLISHED != 'true'
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        with:
+          subject-path: |
+            github-artifacts/*
+            playstore-artifacts/*
+
+      - name: Attest AAB dependency SBOM
+        if: env.PUBLISH_EXTERNAL == 'true' && env.RELEASE_ALREADY_PUBLISHED != 'true'
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4
+        with:
+          subject-path: playstore-artifacts/OmniTerm-PlayStore-${{ env.RELEASE_LABEL }}.aab
+          sbom-path: github-artifacts/OmniTerm-PlayStore-${{ env.RELEASE_LABEL }}.cdx.json
+
+      - name: Attest source-available APK dependency SBOM
+        if: env.PUBLISH_EXTERNAL == 'true' && env.RELEASE_ALREADY_PUBLISHED != 'true' && (github.event_name != 'workflow_dispatch' || inputs.build_apk)
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4
+        with:
+          subject-path: github-artifacts/OmniTerm-OpenSource-${{ env.RELEASE_LABEL }}.apk
+          sbom-path: github-artifacts/OmniTerm-SourceAvailable-${{ env.RELEASE_LABEL }}.cdx.json
+
+      - name: Stage GitHub Release as draft
+        if: (github.event_name == 'workflow_run' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_artifacts)) && env.RELEASE_ALREADY_PUBLISHED != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # An automated main build always publishes on the prerelease channel — its tag is
+          # bare (no suffix), so the tag-based fallback would wrongly call it production.
+          RELEASE_CHANNEL: ${{ github.event_name == 'workflow_run' && 'prerelease' || inputs.release_channel }}
+        run: |
+          # Manual runs say production/prerelease explicitly; tag pushes have no inputs, so a
+          # SemVer pre-release suffix (v1.0.0-Alpha, v2.0.0-rc1) marks the release prerelease.
+          case "${RELEASE_CHANNEL:-auto}" in
+            production) PRERELEASE=false ;;
+            prerelease) PRERELEASE=true ;;
+            *) case "$RELEASE_LABEL" in *-*) PRERELEASE=true ;; *) PRERELEASE=false ;; esac ;;
+          esac
+          assets=(github-artifacts/*)
+          [ -e "${assets[0]}" ] || assets=()
+          if gh release view "$RELEASE_LABEL" >/dev/null 2>&1; then
+            ((${#assets[@]} == 0)) || gh release upload "$RELEASE_LABEL" "${assets[@]}" --clobber
+            # Preserve draft state. It is the transaction boundary proving Play has not yet
+            # accepted this build; the finalize step is the only place allowed to publish it.
+            gh release edit "$RELEASE_LABEL" --draft=true --prerelease=$PRERELEASE
+          else
+            # Release notes: every commit subject since the previous v* release. Commits land on
+            # main directly (no PRs), so GitHub's --generate-notes would come up empty here.
+            PREV_TAG=$(gh release list --limit 50 --json tagName \
+              --jq '[.[] | select(.tagName | test("^v[0-9]"))][0].tagName' 2>/dev/null || true)
+            {
+            echo "Signed Android release build. Download the .apk to install the source-available version."
+              echo
+              echo "## Changes${PREV_TAG:+ since $PREV_TAG}"
+              if [ -n "$PREV_TAG" ] && git rev-parse "$PREV_TAG" >/dev/null 2>&1; then
+                git log --no-merges --pretty='- %s' "$PREV_TAG"..HEAD
+              else
+                git log --no-merges --pretty='- %s' -15
+              fi
+            } > release-notes.md
+            gh release create "$RELEASE_LABEL" "${assets[@]}" \
+              --draft \
+              --prerelease=$PRERELEASE \
+              --target "$BUILD_SHA" \
+              --title "OmniTerm $RELEASE_LABEL" \
+              --notes-file release-notes.md
+          fi
+
+      - name: Upload to Google Play
+        if: (github.event_name == 'workflow_run' || github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_artifacts)) && env.RELEASE_ALREADY_PUBLISHED != 'true'
+        uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.jetsetslow.omniterm.app
+          releaseFiles: playstore-artifacts/*.aab
+          mappingFile: app/build/outputs/mapping/playStoreRelease/mapping.txt
+          tracks: internal
+
+
+  # Keep finalization in a separate job. If GitHub publication fails after Play accepted the AAB,
+  # "rerun failed jobs" retries only this idempotent step and never reuses the Play versionCode.
+  finalize-release:
+    name: Finalize GitHub Release
+    needs: release
+    if: needs.release.outputs.publish_external == 'true' && needs.release.outputs.release_already_published != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Publish staged release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_LABEL: ${{ needs.release.outputs.release_label }}
+          RELEASE_PRERELEASE: ${{ needs.release.outputs.release_prerelease }}
+        run: gh release edit "$RELEASE_LABEL" --draft=false --prerelease="$RELEASE_PRERELEASE"
+
+  debug:
+    name: Build and publish debug APK
+    if: github.event_name == 'workflow_dispatch' && inputs.build_type == 'debug'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: debug
+    permissions:
+      contents: write
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          # The stable sideload-signing key belongs only to reviewed main-branch code. The live
+          # debug environment also enforces this branch policy; pinning checkout is a second layer.
+          ref: main
+
+      - name: Set up Android Gradle
+        uses: ./.github/actions/setup-android-gradle
+        with:
+          install-sdk-packages: "true"
+
+      - name: Resolve release tag and version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          source scripts/release-version.sh
+          BUILD_SHA="$(git rev-parse HEAD)"
+          # Keep debug artifacts in a namespace that can never squat or modify a production tag.
+          SHORT_SHA="${BUILD_SHA:0:12}"
+          RELEASE_TAG="${INPUT_RELEASE_TAG:-debug-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-${SHORT_SHA}}"
+          [[ "$RELEASE_TAG" =~ ^debug-[0-9A-Za-z._-]+$ ]] || {
+            echo "Debug release tags must start with 'debug-' and contain only safe tag characters." >&2
+            exit 1
+          }
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1 ||
+             gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Debug tag $RELEASE_TAG already exists; immutable releases are never modified." >&2
+            exit 1
+          fi
+          echo "BUILD_SHA=$BUILD_SHA" >> "$GITHUB_ENV"
+          echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
+          # Debug builds never reach Play, but sideloaded APKs update in place, so the code must
+          # never drop below earlier installs. Use the next patch of the highest released version,
+          # packed the same way as the release job; the run number in the name tells builds apart.
+          RELEASE_TAGS="$({
+            git tag --list 'v*'
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '.[].tag_name'
+          } | sort -u)"
+          LAST_TAG="$(printf '%s\n' "$RELEASE_TAGS" | version_highest)"
+          NEXT_TAG="$(version_next_prerelease "${LAST_TAG:-v0.9.239}" debug.1)" || {
+            echo "Could not allocate a bounded debug version after ${LAST_TAG:-v0.9.239}" >&2
+            exit 1
+          }
+          BASE="${NEXT_TAG#v}"; BASE="${BASE%%-*}"
+          # Build slot 1 (lowest): a debug build must never outrank a real release of its triple.
+          echo "VERSION_CODE=$(version_pack "$NEXT_TAG")" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=$BASE-debug.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
+
+      # Sideloaded debug APKs must keep the same signature across releases so they update in
+      # place, so the real debug keystore comes from a secret (it was never committed).
+      - name: Decode debug keystore
+        env:
+          PUBLISH_EXTERNAL: ${{ inputs.publish_artifacts }}
+          ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          umask 077
+          if [ "$PUBLISH_EXTERNAL" = "true" ]; then
+            test -n "$ANDROID_DEBUG_KEYSTORE_BASE64" || { echo "Missing ANDROID_DEBUG_KEYSTORE_BASE64 secret"; exit 1; }
+            printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > debug.keystore
+          else
+            keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
+              -alias androiddebugkey -dname CN=Android-Debug -keyalg RSA -keysize 2048 -validity 1
+          fi
+
+      # Same cold-start gate as the release job: sideloaded debug builds must open too.
+      - name: Run unit tests
+        run: ./gradlew testOpenSourceDebugUnitTest --no-daemon -Dorg.gradle.jvmargs=-Xmx2g
+
+      # Sideloaders get the openSource flavor (no ad SDK / Play Services dependency).
+      - name: Build debug APK
+        run: ./gradlew :app:assembleOpenSourceDebug --no-daemon -Dorg.gradle.jvmargs=-Xmx2g
+
+      - name: Stage release artifacts
+        run: |
+          mkdir -p release-artifacts
+          APK=app/build/outputs/apk/openSource/debug/app-openSource-debug.apk
+          cp "$APK" "release-artifacts/app-debug.apk"
+          cp "$APK" "release-artifacts/OmniTerm-${RELEASE_TAG}-debug.apk"
+          (cd release-artifacts && sha256sum -- ./* > SHA256SUMS.txt)
+          ls -la release-artifacts
+
+      - name: Create unique release with debug assets
+        if: inputs.publish_artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Debug releases are unique and immutable; never clobber an earlier artifact.
+          gh release create "$RELEASE_TAG" release-artifacts/* \
+            --prerelease \
+            --target "$BUILD_SHA" \
+            --title "OmniTerm $RELEASE_TAG (debug build)" \
+            --notes "Debug build for testing only — unminified and debuggable. Not a production release."
+
+      - name: Delete debug keystore
+        if: always()
+        run: rm -f debug.keystore
