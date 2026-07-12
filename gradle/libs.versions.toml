@@ -46,7 +46,8 @@ smbj = "0.13.0"
 smbjrpc = "0.11.1.1"
 commonsNet = "3.11.1"
 jsch = "0.2.18"
-bcprov = "1.78.1"
+bcprov = "1.84"
+guavaAndroid = "33.4.0-android"
 browser = "1.8.0"
 
 [libraries]
@@ -107,6 +108,7 @@ smbjrpc = { group = "io.github.daveboy", name = "smbj-rpc", version.ref = "smbjr
 commons-net = { group = "commons-net", name = "commons-net", version.ref = "commonsNet" }
 jsch = { group = "com.github.mwiede", name = "jsch", version.ref = "jsch" }
 bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "bcprov" }
+guava-android = { group = "com.google.guava", name = "guava", version.ref = "guavaAndroid" }
 androidx-compose-material = { group = "androidx.compose.material", name = "material" }
 androidx-browser = { group = "androidx.browser", name = "browser", version.ref = "browser" }
 

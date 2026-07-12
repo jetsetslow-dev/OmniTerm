@@ -165,6 +165,11 @@ tasks.register("rpiCheck") {
 }
 
 dependencies {
+  constraints {
+    implementation(libs.guava.android) {
+      because("Play Ads transitively requests a Guava release with published security advisories")
+    }
+  }
   implementation(platform(libs.androidx.compose.bom))
   implementation(libs.androidx.activity.compose)
   implementation(libs.androidx.compose.material.icons.core)

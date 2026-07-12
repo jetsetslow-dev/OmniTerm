@@ -1,2 +1,2 @@
-# Every change needs the maintainer's review (branch protection enforces code-owner review).
-* @jetsetslow-dev
+# Every change needs review from one of the two trusted maintainers.
+* @jetsetslow-dev @sbvino

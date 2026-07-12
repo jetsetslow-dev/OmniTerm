@@ -32,3 +32,11 @@ jobs:
 
       - name: Generate and submit dependency graph
         uses: gradle/actions/dependency-submission@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          # Report only the dependencies that can ship in a release APK. Resolving every Gradle
+          # configuration also publishes build-tool and test-runner internals as if they were app
+          # dependencies, producing unactionable alerts for code that is never packaged.
+          dependency-graph-include-projects: "^:app$"
+          dependency-graph-include-configurations: "^(openSource|playStore)ReleaseRuntimeClasspath$"
+          dependency-graph: generate-and-submit
+          validate-wrappers: true
