@@ -46,7 +46,7 @@ smbj = "0.13.0"
 smbjrpc = "0.11.1.1"
 commonsNet = "3.11.1"
 jsch = "0.2.18"
-bcprov = "1.84"
+bcprov = "1.85"
 guavaAndroid = "33.4.0-android"
 browser = "1.8.0"
 
