@@ -197,7 +197,7 @@ fun ServerSelectorBar(
                                         "P${splitSelection.indexOf(s.id) + 1}",
                                         fontSize = 10.sp,
                                         fontWeight = FontWeight.Bold,
-                                        color = MaterialTheme.colorScheme.primary,
+                                        color = MaterialTheme.colorScheme.onSurface,
                                     )
                                 }
                                 Checkbox(

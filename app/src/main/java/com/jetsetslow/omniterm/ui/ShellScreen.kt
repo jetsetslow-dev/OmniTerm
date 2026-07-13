@@ -255,7 +255,6 @@ private data class ShellChromePalette(
     val disabledText: Color,
     val border: Color,
     val actionBackground: Color,
-    val dangerBackground: Color,
 )
 
 @Composable
@@ -276,7 +275,6 @@ private fun shellChromePalette(): ShellChromePalette {
         disabledText = scheme.onSurfaceVariant.copy(alpha = 0.58f),
         border = scheme.outline,
         actionBackground = scheme.surfaceContainerHighest,
-        dangerBackground = scheme.errorContainer.copy(alpha = if (isLight) 0.75f else 0.35f),
     )
 }
 
@@ -333,6 +331,7 @@ fun ShellScreen(viewModel: AppViewModel) {
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
     val chrome = shellChromePalette()
+    val scheme = MaterialTheme.colorScheme
     val currentSession = viewModel.currentSession
     // The header identifies exactly the focused terminal. Do not fall back to the other split pane
     // when the focused pane is empty; that made the top host name actively misleading.
@@ -446,7 +445,7 @@ fun ShellScreen(viewModel: AppViewModel) {
                     leadingContent = {
                         Text(
                             if (viewModel.isMultiSsh) "P${viewModel.multiSshFocusedPane}" else "TERM",
-                            color = OmniColors.cyan,
+                            color = chrome.text,
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
                             fontFamily = OmniFonts.mono,
@@ -457,9 +456,9 @@ fun ShellScreen(viewModel: AppViewModel) {
                             if (viewModel.isMultiSsh) "FOCUSED" else "CURRENT",
                             fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
-                            color = OmniColors.cyan,
+                            color = chrome.text,
                         )
-                        Icon(Icons.Filled.ArrowDropDown, contentDescription = "Switch host", tint = OmniColors.cyan)
+                        Icon(Icons.Filled.ArrowDropDown, contentDescription = "Switch host", tint = chrome.mutedText)
                     },
                     modifier = Modifier
                         .align(Alignment.TopCenter)
@@ -480,19 +479,41 @@ fun ShellScreen(viewModel: AppViewModel) {
                         if (viewModel.isMultiSsh) {
                             // Flip side-by-side ↔ stacked, and a way back to single-session view.
                             val layoutLabel = if (viewModel.multiSshLayout == MultiSshLayout.SideBySide) "⬍ STACK" else "⬌ COLS"
-                            TerminalHeaderAction(layoutLabel, OmniColors.purple, modifier = Modifier.weight(1f)) {
+                            TerminalHeaderAction(
+                                layoutLabel,
+                                scheme.onSecondaryContainer,
+                                scheme.secondaryContainer,
+                                modifier = Modifier.weight(1f),
+                            ) {
                                 viewModel.multiSshLayout =
                                     if (viewModel.multiSshLayout == MultiSshLayout.SideBySide) MultiSshLayout.Stacked
                                     else MultiSshLayout.SideBySide
                             }
-                            TerminalHeaderAction("SINGLE", OmniColors.amber, modifier = Modifier.weight(1f)) { viewModel.exitMultiSsh() }
+                            TerminalHeaderAction(
+                                "SINGLE",
+                                scheme.onTertiaryContainer,
+                                scheme.tertiaryContainer,
+                                modifier = Modifier.weight(1f),
+                            ) { viewModel.exitMultiSsh() }
                         } else {
-                            TerminalHeaderAction("SPLIT", OmniColors.purple, enabled = !viewModel.isTerminalConnecting, modifier = Modifier.weight(1f)) {
+                            TerminalHeaderAction(
+                                "SPLIT",
+                                scheme.onSecondaryContainer,
+                                scheme.secondaryContainer,
+                                enabled = !viewModel.isTerminalConnecting,
+                                modifier = Modifier.weight(1f),
+                            ) {
                                 viewModel.enterMultiSsh()
                             }
                         }
                         TerminalOpenPicker(viewModel, actionSession, modifier = Modifier.weight(1f))
-                        TerminalHeaderAction("BG", OmniColors.cyan, enabled = connected, modifier = Modifier.weight(1f)) {
+                        TerminalHeaderAction(
+                            "BG",
+                            scheme.onPrimaryContainer,
+                            scheme.primaryContainer,
+                            enabled = connected,
+                            modifier = Modifier.weight(1f),
+                        ) {
                             confirm.ask(
                                 title = "Send Session to Background?",
                                 message = "OmniTerm will keep the SSH session active in the background. This may increase battery consumption.",
@@ -506,14 +527,25 @@ fun ShellScreen(viewModel: AppViewModel) {
                         // so a stuck/exhausted auto-reconnect can be re-kicked without leaving the
                         // terminal view (previously only the session-list picker offered this).
                         if (actionSession != null && !connected && !reconnecting) {
-                            TerminalHeaderAction("RECON", OmniColors.cyan, modifier = Modifier.weight(1f)) {
+                            TerminalHeaderAction(
+                                "RECON",
+                                scheme.onPrimaryContainer,
+                                scheme.primaryContainer,
+                                modifier = Modifier.weight(1f),
+                            ) {
                                 viewModel.retrySession(actionSession.id)
                             }
                         }
                         // DISC is ALWAYS available whenever a session exists — including mid-reconnect.
                         // A user disconnect cancels any in-flight reconnect and tears the session down,
                         // which is the escape hatch out of a "stuck reconnecting" limbo state.
-                        TerminalHeaderAction("DISC", OmniColors.red, chrome.dangerBackground, enabled = actionSession != null, modifier = Modifier.weight(1f)) {
+                        TerminalHeaderAction(
+                            "DISC",
+                            scheme.onErrorContainer,
+                            scheme.errorContainer,
+                            enabled = actionSession != null,
+                            modifier = Modifier.weight(1f),
+                        ) {
                             actionSession?.let { viewModel.requestDisconnectSession(it.id) }
                         }
                     }
@@ -668,6 +700,7 @@ private fun TerminalOpenPicker(
     modifier: Modifier = Modifier,
 ) {
     val chrome = shellChromePalette()
+    val scheme = MaterialTheme.colorScheme
     val focusedPane = viewModel.multiSshFocusedPane
     val otherPaneSessionId = if (!viewModel.isMultiSsh) null else {
         if (focusedPane == 1) viewModel.multiSshSessionId2 else viewModel.multiSshSessionId1
@@ -683,7 +716,7 @@ private fun TerminalOpenPicker(
     Box(modifier) {
         Text(
             "OPEN ▾",
-            color = if (viewModel.isTerminalConnecting) chrome.disabledText else OmniColors.green,
+            color = if (viewModel.isTerminalConnecting) chrome.disabledText else scheme.onPrimaryContainer,
             fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
             maxLines = 1,
@@ -692,7 +725,7 @@ private fun TerminalOpenPicker(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(6.dp))
                 .clickable(enabled = !viewModel.isTerminalConnecting) { expanded = true }
-                .background(chrome.actionBackground, RoundedCornerShape(6.dp))
+                .background(scheme.primaryContainer, RoundedCornerShape(6.dp))
                 .heightIn(min = 34.dp)
                 .wrapContentHeight(Alignment.CenterVertically)
                 .padding(horizontal = 7.dp, vertical = 6.dp)
@@ -714,7 +747,7 @@ private fun TerminalOpenPicker(
                                 fontWeight = FontWeight.Bold,
                             )
                             if (session.persistent) {
-                                Text(displayTmuxSessionName(session.tmuxName), fontSize = 10.sp, color = OmniColors.amber)
+                                Text(displayTmuxSessionName(session.tmuxName), fontSize = 10.sp, color = scheme.onSurfaceVariant)
                             }
                         }
                     },
@@ -738,7 +771,7 @@ private fun TerminalOpenPicker(
                                 Text(
                                     if (session.persistent) displayTmuxSessionName(session.tmuxName) else "Live SSH session",
                                     fontSize = 10.sp,
-                                    color = if (session.persistent) OmniColors.amber else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    color = scheme.onSurfaceVariant,
                                 )
                             }
                         },
@@ -762,7 +795,7 @@ private fun TerminalOpenPicker(
                         text = {
                             Column {
                                 Text(saved.serverName, fontFamily = OmniFonts.mono, fontSize = 12.sp)
-                                Text(displayTmuxSessionName(saved.tmuxName), fontSize = 10.sp, color = OmniColors.amber)
+                                Text(displayTmuxSessionName(saved.tmuxName), fontSize = 10.sp, color = scheme.onSurfaceVariant)
                             }
                         },
                         onClick = {
@@ -781,7 +814,7 @@ private fun TerminalOpenPicker(
                         fontFamily = OmniFonts.mono,
                     )
                 },
-                leadingIcon = { Text("+", fontSize = 20.sp, color = OmniColors.green) },
+                leadingIcon = { Text("+", fontSize = 20.sp, color = scheme.onSurface) },
                 enabled = !viewModel.isTerminalConnecting,
                 onClick = {
                     viewModel.connectTerminal()
@@ -1008,6 +1041,7 @@ private fun SplitHandle(stacked: Boolean, onReset: (() -> Unit)? = null, onDrag:
 @Composable
 private fun MultiSshPaneHeader(viewModel: AppViewModel, paneIndex: Int, session: ShellSession?, isFocused: Boolean) {
     val chrome = shellChromePalette()
+    val scheme = MaterialTheme.colorScheme
     val servers by viewModel.servers.collectAsStateWithLifecycle()
     val hostLabel = session?.let { s -> servers.find { it.id == s.serverId }?.name ?: s.serverName }
     val label = when {
@@ -1067,13 +1101,13 @@ private fun MultiSshPaneHeader(viewModel: AppViewModel, paneIndex: Int, session:
             // palette and stay a comfortable tap target.
             Text(
                 "✕",
-                color = OmniColors.red,
+                color = scheme.onErrorContainer,
                 fontSize = 13.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .clip(RoundedCornerShape(4.dp))
-                    .background(chrome.dangerBackground)
-                    .border(1.dp, OmniColors.red.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
+                    .background(scheme.errorContainer)
+                    .border(1.dp, scheme.error.copy(alpha = 0.7f), RoundedCornerShape(4.dp))
                     .clickable { viewModel.requestDisconnectSession(session.id) }
                     .heightIn(min = 28.dp)
                     .wrapContentHeight(Alignment.CenterVertically)
@@ -1093,6 +1127,7 @@ private fun MultiSshPanePicker(
     compact: Boolean,
 ) {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
+    val scheme = MaterialTheme.colorScheme
     val onlineServers = servers.filter { it.status == "online" }
     val otherSessionId = if (paneIndex == 1) viewModel.multiSshSessionId2 else viewModel.multiSshSessionId1
     val selectableSessions = viewModel.activeSessions.filter {
@@ -1107,12 +1142,13 @@ private fun MultiSshPanePicker(
         if (compact) {
             Text(
                 "PICK ▾",
-                color = OmniColors.cyan,
+                color = scheme.onPrimaryContainer,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .clip(RoundedCornerShape(4.dp))
                     .clickable { expanded = true }
+                    .background(scheme.primaryContainer, RoundedCornerShape(4.dp))
                     .heightIn(min = 28.dp)
                     .wrapContentHeight(Alignment.CenterVertically)
                     .padding(horizontal = 6.dp, vertical = 3.dp)
@@ -1169,7 +1205,7 @@ private fun MultiSshPanePicker(
                         text = {
                             Column {
                                 Text(saved.serverName, fontFamily = OmniFonts.mono, fontSize = 12.sp)
-                                Text(displayTmuxSessionName(saved.tmuxName), fontSize = 10.sp, color = OmniColors.amber)
+                                Text(displayTmuxSessionName(saved.tmuxName), fontSize = 10.sp, color = scheme.onSurfaceVariant)
                             }
                         },
                         enabled = !viewModel.isTerminalConnecting,
