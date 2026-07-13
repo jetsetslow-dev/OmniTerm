@@ -19,6 +19,19 @@ runs:
     - name: Set up Gradle
       uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
 
+    # TmuxControlIntegrationTest executes the generated wire commands against a real control
+    # client. Keep this dependency in the shared setup so PR, main, and release test suites all
+    # enforce the same protocol gate instead of trusting string-only fixtures.
+    - name: Provide tmux protocol-test runtime
+      shell: bash
+      run: |
+        if ! command -v tmux >/dev/null 2>&1; then
+          sudo apt-get update
+          sudo apt-get install -y tmux
+        fi
+        tmux -V
+        echo "OMNITERM_REQUIRE_TMUX_INTEGRATION=true" >> "$GITHUB_ENV"
+
     - name: Install Android SDK packages
       if: inputs.install-sdk-packages == 'true'
       shell: bash
