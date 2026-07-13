@@ -105,7 +105,7 @@ fun SftpScreen(viewModel: AppViewModel) {
         }
         // Subtab order groups the two browsing surfaces first (SFTP host, then network Shares),
         // Bookmarks as the jump list between them, and the Transfers activity log last.
-        TabRow(selectedTabIndex = viewModel.activeSftpTab) {
+        PrimaryTabRow(selectedTabIndex = viewModel.activeSftpTab) {
             Tab(selected = viewModel.activeSftpTab == 0, enabled = srv != null, onClick = { viewModel.activeSftpTab = 0 }) { Text("SFTP", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
             Tab(selected = viewModel.activeSftpTab == 1, onClick = { viewModel.activeSftpTab = 1 }) { Text("Shares", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
             Tab(selected = viewModel.activeSftpTab == 2, onClick = { viewModel.activeSftpTab = 2 }) { Text("Bookmarks", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
@@ -564,7 +564,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
     var renameInput by remember { mutableStateOf("") }
     var menuForName by remember { mutableStateOf<String?>(null) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
-    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val copyToClipboard = rememberClipboardCopy()
     val selectionMode = viewModel.shareSelectionMode
     val selectedShareFiles = viewModel.shareEntries.filter { it.name in viewModel.shareSelected && !it.isDirectory }
     val selectedShareFileNames = selectedShareFiles.map { it.name }
@@ -1085,7 +1085,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                                         onClick = {
                                             menuForName = null
                                             val full = (viewModel.sharePath.ifBlank { "" } + "/" + file.name).replace("//", "/")
-                                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(full))
+                                            copyToClipboard(full)
                                             viewModel.shareStatus = "Path copied: $full"
                                         },
                                     )
@@ -1349,7 +1349,7 @@ private fun NetworkShareDialog(
                         value = protocol,
                         onValueChange = {},
                         label = { Text("Protocol") },
-                        modifier = Modifier.fillMaxWidth().menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                        modifier = Modifier.fillMaxWidth().menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable),
                         readOnly = true,
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = menuExpanded) },
                         colors = omniTextFieldColors(),
@@ -1539,7 +1539,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
     var folderNameInput by remember { mutableStateOf("") }
     var showSudoConfirmDialog by remember { mutableStateOf(false) }
     var sortMenuExpanded by remember { mutableStateOf(false) }
-    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val copyToClipboard = rememberClipboardCopy()
 
     // Editable path bar: tap the path to type a destination and jump straight there.
     var editingPath by remember { mutableStateOf(false) }
@@ -2461,7 +2461,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                             onClick = {
                                 selectedFileForOption = null
                                 val fullPath = (viewModel.sftpPath.ifBlank { "" } + "/" + file.name).replace("//", "/")
-                                clipboard.setText(androidx.compose.ui.text.AnnotatedString(fullPath))
+                                copyToClipboard(fullPath)
                                 viewModel.sftpStatus = "Path copied: $fullPath"
                             }
                         ) {

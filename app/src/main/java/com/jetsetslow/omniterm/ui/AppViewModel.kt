@@ -3831,6 +3831,37 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Paint the currently visible tmux pane into a fresh emulator before the interactive attach
+     * starts delivering output. tmux may not redraw an unchanged pane immediately, which used to
+     * leave a resumed session blank until an IME resize sent SIGWINCH and forced a repaint.
+     */
+    private suspend fun paintTmuxVisibleScreen(
+        emulator: TerminalEmulator,
+        creds: SshCredentials,
+        tmuxName: String,
+    ): Boolean {
+        return try {
+            val screenResult = sshTransport.exec(creds, RemoteCommands.tmuxCaptureScreenCommand(tmuxName))
+            check(!screenResult.startsWith("SSH Error:")) { screenResult }
+            val cursorResult = sshTransport.exec(creds, RemoteCommands.tmuxCursorQuery(tmuxName))
+            check(!cursorResult.startsWith("SSH Error:")) { cursorResult }
+            currentCoroutineContext().ensureActive()
+            val cursor = cursorResult.trim().split(' ')
+            val cx = cursor.getOrNull(0)?.toIntOrNull() ?: 0
+            val cy = cursor.getOrNull(1)?.toIntOrNull() ?: 0
+            val repaint = "\u001B[r\u001B[0m\u001B[2J\u001B[H" +
+                screenResult.trimEnd('\n').replace("\n", "\r\n") +
+                "\u001B[${cy + 1};${cx + 1}H\u001B[0m"
+            synchronized(emulator) { emulator.feed(repaint.toByteArray()) }
+            true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
      * Re-sync a persistent session's local scrollback from the pane's authoritative tmux history.
      *
      * tmux does NOT stream every output line to an attached client — output faster than the
@@ -4219,13 +4250,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 shellSession.tmuxName = tmuxName
                 shellSession.controlMode = tmuxControlMode
                 emulator.setCaptureAlternateScreenScrollback(!shellSession.controlMode)
-                if (shellSession.controlMode) {
+                val initialScreenPainted = if (shellSession.controlMode) {
                     session.write(RemoteCommands.tmuxControlAttachCommand(tmuxName, terminalScrollbackLimit).toByteArray())
+                    false
                 } else {
                     // Resume re-attaches an existing session with a fresh emulator: seed its local
-                    // scrollback from the pane's tmux history so back-scroll shows the real past.
+                    // scrollback from the pane's tmux history, then paint the current screen before
+                    // attaching so the UI never waits for a resize-triggered tmux redraw.
                     seedTmuxHistory(emulator, creds, tmuxName)
+                    val painted = paintTmuxVisibleScreen(emulator, creds, tmuxName)
                     session.write(RemoteCommands.tmuxAttachCommand(tmuxName, terminalScrollbackLimit).toByteArray())
+                    painted
                 }
                 check(!session.closed.value) { "SSH channel closed while attaching tmux" }
 
@@ -4241,6 +4276,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         currentSessionId = shellSession.id
                     }
                 }
+                if (initialScreenPainted) TerminalSessionManager.publishTerminalSnapshot(shellSession)
                 wireSessionIo(shellSession)
                 if (shellSession.controlMode) initControlModeSession(shellSession, creds)
                 setupComplete = true

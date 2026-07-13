@@ -258,7 +258,7 @@ fun ServerSelectorBar(
 @Composable
 fun ActionStreamDialog(viewModel: AppViewModel) {
     if (!viewModel.actionStreamRunning && viewModel.actionStreamOutput.isBlank()) return
-    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val copyToClipboard = rememberClipboardCopy()
     AlertDialog(
         onDismissRequest = {
             // While still streaming, ignore back/outside-tap so ongoing output isn't lost.
@@ -293,7 +293,7 @@ fun ActionStreamDialog(viewModel: AppViewModel) {
             TextButton(
                 enabled = viewModel.actionStreamOutput.isNotBlank(),
                 onClick = {
-                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(viewModel.actionStreamOutput))
+                    copyToClipboard(viewModel.actionStreamOutput)
                 },
             ) {
                 Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -1638,9 +1638,9 @@ fun ServersMainView(viewModel: AppViewModel) {
                                             overflow = TextOverflow.Ellipsis,
                                             modifier = Modifier.weight(1f, fill = false),
                                         )
-                                        if (!server.groupName.isNullOrBlank()) {
+                                        server.groupName?.takeIf { it.isNotBlank() }?.let { groupName ->
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            OmniTag(server.groupName!!, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            OmniTag(groupName, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
 
@@ -2030,7 +2030,7 @@ fun AddServerSheet(
     // saved value" (or "remove it" when the matching forget* flag is set), keeping saved passwords out
     // of the UI. For a DUPLICATE there is no saved row to fall back to, so the source's secrets ARE
     // seeded here — that's the whole point of "reuse credentials" — and travel through addServer().
-    var password by remember { mutableStateOf(if (isDuplicate) prefillFrom?.authPassword ?: "" else "") }
+    var password by remember { mutableStateOf(if (isDuplicate) prefillFrom.authPassword ?: "" else "") }
     var forgetPassword by remember { mutableStateOf(false) }
     var selectedKey by remember { mutableStateOf(src?.authKeyAlias ?: "") }
     var selectedProfileId by remember { mutableStateOf<Int?>(src?.authProfileId) }
@@ -2043,14 +2043,14 @@ fun AddServerSheet(
     var compression by remember { mutableStateOf(src?.sshCompression ?: false) }
     var persistentSession by remember { mutableStateOf(src?.persistentSession ?: false) }
     var agentForwarding by remember { mutableStateOf(src?.agentForwarding ?: false) }
-    var sudoPassword by remember { mutableStateOf(if (isDuplicate) prefillFrom?.sudoPassword ?: "" else "") }
+    var sudoPassword by remember { mutableStateOf(if (isDuplicate) prefillFrom.sudoPassword else "") }
     var forgetSudoPassword by remember { mutableStateOf(false) }
     val hasStoredSudoPassword = !serverToEdit?.sudoPassword.isNullOrEmpty()
     var proxyType by remember { mutableStateOf(src?.proxyType ?: "none") }
     var proxyHost by remember { mutableStateOf(src?.proxyHost ?: "") }
     var proxyPort by remember { mutableStateOf(src?.proxyPort?.takeIf { it > 0 }?.toString() ?: "") }
     var proxyUser by remember { mutableStateOf(src?.proxyUser ?: "") }
-    var proxyPassword by remember { mutableStateOf(if (isDuplicate) prefillFrom?.proxyPassword ?: "" else "") }
+    var proxyPassword by remember { mutableStateOf(if (isDuplicate) prefillFrom.proxyPassword else "") }
     var forgetProxyPassword by remember { mutableStateOf(false) }
     val hasStoredProxyPassword = !serverToEdit?.proxyPassword.isNullOrEmpty()
     var proxyKeyAlias by remember { mutableStateOf(src?.proxyKeyAlias ?: "") }
@@ -2184,7 +2184,7 @@ fun AddServerSheet(
                     .heightIn(max = 560.dp)
                     .verticalScroll(rememberScrollState())
             ) {
-                TabRow(selectedTabIndex = activeTab) {
+                PrimaryTabRow(selectedTabIndex = activeTab) {
                     Tab(selected = activeTab == 0, onClick = { activeTab = 0 }) { Text("Connection", fontSize = 12.sp, modifier = Modifier.padding(8.dp)) }
                     Tab(selected = activeTab == 1, onClick = { activeTab = 1 }) { Text("Credentials", fontSize = 12.sp, modifier = Modifier.padding(8.dp)) }
                     Tab(selected = activeTab == 2, onClick = { activeTab = 2 }) { Text("Advanced", fontSize = 12.sp, modifier = Modifier.padding(8.dp)) }

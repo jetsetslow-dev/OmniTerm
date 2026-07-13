@@ -140,7 +140,6 @@ fun highlightLine(line: String, base: Int, lang: CodeLanguage): List<HiToken> {
                 val kw = when (lang) {
                     CodeLanguage.YAML -> word.lowercase() in YAML_LITERALS
                     CodeLanguage.SHELL -> word in SHELL_KEYWORDS
-                    else -> false
                 }
                 if (kw) tokens.add(HiToken(base + i, base + j, HiKind.KEYWORD))
                 i = j

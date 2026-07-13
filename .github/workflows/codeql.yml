@@ -1,5 +1,10 @@
 name: CodeQL
 
+env:
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+
 on:
   push:
     branches:
@@ -96,7 +101,7 @@ jobs:
              test -r /dev/kvm && test -w /dev/kvm; then
             echo "KVM acceleration enabled"
           else
-            echo "::warning::KVM is unavailable on this runner; using software emulation"
+            echo "KVM is unavailable on this runner; using software emulation"
           fi
 
       - name: Validate Room migration matrix
@@ -107,6 +112,7 @@ jobs:
           arch: x86_64
           emulator-boot-timeout: 900
           disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -no-metrics
           script: >-
             ./gradlew connectedOpenSourceDebugAndroidTest --no-daemon
             -Domniterm.publishScan=true

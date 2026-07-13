@@ -55,7 +55,7 @@ fun FleetScreen(viewModel: AppViewModel) {
 
     Column(modifier = Modifier.fillMaxSize()) {
         FleetSummaryBar(viewModel, srvList)
-        TabRow(selectedTabIndex = viewModel.fleetTabIndex) {
+        PrimaryTabRow(selectedTabIndex = viewModel.fleetTabIndex) {
             Tab(
                 selected = viewModel.fleetTabIndex == 0,
                 onClick = { viewModel.fleetTabIndex = 0 }

@@ -1542,7 +1542,7 @@ private fun PaneTerminal(
                 }
             }
 
-            if (currentSession?.reconnecting == true || currentSession?.disconnectError != null) {
+            if (currentSession.reconnecting || currentSession.disconnectError != null) {
                 val reconnecting = currentSession.reconnecting
                 val message = if (reconnecting) {
                     if (currentSession.persistent) {

@@ -63,7 +63,7 @@ fun InfraScreen(viewModel: AppViewModel) {
                 Icon(Icons.Filled.Refresh, contentDescription = "Reload")
             }
         }
-        ScrollableTabRow(
+        PrimaryScrollableTabRow(
             selectedTabIndex = viewModel.activeInfraTab,
             edgePadding = 0.dp,
             modifier = Modifier.fillMaxWidth()
@@ -97,7 +97,7 @@ fun InfraScreen(viewModel: AppViewModel) {
 
 @Composable
 private fun ContainerRuntimeError(error: String) {
-    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val copyToClipboard = rememberClipboardCopy()
     val scroll = rememberScrollState()
     Column(
         Modifier.fillMaxSize().padding(16.dp),
@@ -126,7 +126,7 @@ private fun ContainerRuntimeError(error: String) {
             }
         }
         TextButton(
-            onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(error)) },
+            onClick = { copyToClipboard(error) },
             modifier = Modifier.padding(top = 4.dp),
         ) {
             Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -317,7 +317,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
     var scaleTarget by remember { mutableStateOf<ScaleTarget?>(null) }
     var portsTarget by remember { mutableStateOf<StackSummary?>(null) }
     var editBuilderError by remember { mutableStateOf<String?>(null) }
-    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val copyToClipboard = rememberClipboardCopy()
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
     val stacks = remember(containers) {
@@ -416,7 +416,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                     ) {
                         Text(msg, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface)
                     }
-                    IconButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(msg)) }) {
+                    IconButton(onClick = { copyToClipboard(msg) }) {
                         Icon(Icons.Filled.ContentCopy, contentDescription = "Copy error", modifier = Modifier.size(18.dp))
                     }
                 }

@@ -215,7 +215,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
             val visibleAlerts = alerts.filter { !it.acknowledged && it.mutedUntil < now }
             val acknowledgedAlerts = alerts.filter { it.acknowledged && it.mutedUntil < now }
 
-            TabRow(selectedTabIndex = activeTab) {
+            PrimaryTabRow(selectedTabIndex = activeTab) {
                 Tab(selected = activeTab == 0, onClick = { viewModel.activeAlertsTab = 0 }) { Text("Active (${visibleAlerts.size})", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
                 Tab(selected = activeTab == 1, onClick = { viewModel.activeAlertsTab = 1 }) { Text("Rules", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
                 Tab(selected = activeTab == 2, onClick = { viewModel.activeAlertsTab = 2 }) { Text("History", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
@@ -514,7 +514,7 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.fillMaxSize()) {
-                TabRow(selectedTabIndex = activeScriptTab) {
+                PrimaryTabRow(selectedTabIndex = activeScriptTab) {
                     Tab(
                         selected = activeScriptTab == 0,
                         onClick = { viewModel.activeScriptsTab = 0 }
@@ -884,7 +884,7 @@ fun NetworkToolView(viewModel: AppViewModel) {
 
     ToolScaffold(viewModel, "Network Tools") {
         Column(modifier = Modifier.fillMaxSize()) {
-            ScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp, containerColor = Color.Transparent) {
+            PrimaryScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp, containerColor = Color.Transparent) {
                 tabs.forEachIndexed { i, label ->
                     Tab(selected = tab == i, onClick = { viewModel.activeNetworkTab = i }, text = { Text(label, fontSize = 12.sp) })
                 }
@@ -1955,7 +1955,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
     }
 
     generatedKeyResult?.let { (alias, priv, pub) ->
-        val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+        val copyToClipboard = rememberClipboardCopy()
         AlertDialog(
             onDismissRequest = { generatedKeyResult = null },
             title = { Text("Generated Key: $alias") },
@@ -1968,7 +1968,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
 
                     Text("Public Key", fontWeight = FontWeight.Bold)
                     OutlinedTextField(value = pub, onValueChange = {}, readOnly = true, modifier = Modifier.fillMaxWidth().height(100.dp), textStyle = androidx.compose.ui.text.TextStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 10.sp))
-                    Button(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(pub)) }) { Text("Copy Public Key") }
+                    Button(onClick = { copyToClipboard(pub) }) { Text("Copy Public Key") }
 
                     Text("Install on your server", fontWeight = FontWeight.Bold)
                     Text(
@@ -1987,7 +1987,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         modifier = Modifier.fillMaxWidth().height(100.dp),
                         textStyle = androidx.compose.ui.text.TextStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 10.sp),
                     )
-                    Button(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(installCmd)) }) { Text("Copy Install Command") }
+                    Button(onClick = { copyToClipboard(installCmd) }) { Text("Copy Install Command") }
                     Text(
                         "From a computer with ssh installed you can instead run: ssh-copy-id user@host",
                         fontSize = 11.sp,
@@ -2699,7 +2699,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text("Unlock with biometrics")
-                                val activity = LocalContext.current.getActivity() as? androidx.appcompat.app.AppCompatActivity
+                                val activity = LocalContext.current.getActivity()
                                 Switch(
                                     checked = draftBiometrics,
                                     onCheckedChange = { on ->
@@ -3269,7 +3269,7 @@ fun AboutToolView(viewModel: AppViewModel) {
     var linkFeedback by remember { mutableStateOf("") }
     var diagFeedback by remember { mutableStateOf("") }
     val context = LocalContext.current
-    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val copyToClipboard = rememberClipboardCopy()
     // Advertising ID is flavor-resolved (Play Services in playStore; "N/A" in source-available) and the
     // lookup is a background IPC call, so fetch it once and hold the result for display + copy.
     var advertisingId by remember { mutableStateOf("…") }
@@ -3370,7 +3370,7 @@ fun AboutToolView(viewModel: AppViewModel) {
                     Spacer(modifier = Modifier.height(2.dp))
                     OutlinedButton(
                         onClick = {
-                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(deviceDiagnostics() + "\nAd ID: " + advertisingId))
+                            copyToClipboard(deviceDiagnostics() + "\nAd ID: " + advertisingId)
                             diagFeedback = "Diagnostics copied to clipboard."
                         },
                         modifier = Modifier.fillMaxWidth(),
@@ -3399,7 +3399,7 @@ fun AboutToolView(viewModel: AppViewModel) {
 @Composable
 private fun CrashHistoryCard() {
     val context = LocalContext.current
-    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val copyToClipboard = rememberClipboardCopy()
     var entries by remember { mutableStateOf(com.jetsetslow.omniterm.data.CrashLog.all(context)) }
     var expandedIndex by remember { mutableStateOf(-1) }
     var feedback by remember { mutableStateOf("") }
@@ -3474,7 +3474,7 @@ private fun CrashHistoryCard() {
                                 OutlinedButton(
                                     onClick = {
                                         if (!com.jetsetslow.omniterm.data.CrashLog.openGitHubIssue(context, entry.report)) {
-                                            clipboard.setText(androidx.compose.ui.text.AnnotatedString(entry.report))
+                                            copyToClipboard(entry.report)
                                             feedback = "No browser found — report copied instead."
                                         }
                                     },
@@ -3499,7 +3499,7 @@ private fun CrashHistoryCard() {
                                 }
                                 OutlinedButton(
                                     onClick = {
-                                        clipboard.setText(androidx.compose.ui.text.AnnotatedString(entry.report))
+                                        copyToClipboard(entry.report)
                                         feedback = "Report copied to clipboard."
                                     },
                                     modifier = Modifier.weight(1f),

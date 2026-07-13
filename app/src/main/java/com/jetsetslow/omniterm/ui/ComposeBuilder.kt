@@ -876,7 +876,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
 
     var deploying by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
-    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val copyToClipboard = rememberClipboardCopy()
 
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
@@ -944,7 +944,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                     }
                 }
                 if (msg.isNotBlank()) {
-                    IconButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(msg)) }) {
+                    IconButton(onClick = { copyToClipboard(msg) }) {
                         Icon(Icons.Filled.ContentCopy, contentDescription = "Copy deploy output")
                     }
                 }
@@ -987,7 +987,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
 
             // ── view toggle ──
             val tabs = listOf("Visual", "Raw YAML")
-            TabRow(selectedTabIndex = if (rawMode) 1 else 0, containerColor = Color.Transparent) {
+            PrimaryTabRow(selectedTabIndex = if (rawMode) 1 else 0, containerColor = Color.Transparent) {
                 tabs.forEachIndexed { i, t ->
                     Tab(
                             selected = (i == 1) == rawMode,

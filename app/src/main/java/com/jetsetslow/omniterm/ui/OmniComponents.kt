@@ -1,5 +1,6 @@
 package com.jetsetslow.omniterm.ui
 
+import android.content.ClipData
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -22,6 +23,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,8 +44,25 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import com.jetsetslow.omniterm.ui.theme.OmniColors
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
+import kotlinx.coroutines.launch
+
+/** Copy plain text through Compose's current, suspend-based clipboard API. */
+@Composable
+fun rememberClipboardCopy(): (String) -> Unit {
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
+    return remember(clipboard, scope) {
+        { text ->
+            scope.launch {
+                clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("OmniTerm", text)))
+            }
+        }
+    }
+}
 
 /**
  * Horizontal swipe-to-page gesture for switching tabs/subtabs. Calls [onSwipe] with `forward=true`
