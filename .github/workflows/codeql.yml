@@ -85,15 +85,12 @@ jobs:
       - name: Enable KVM acceleration
         if: github.event_name != 'pull_request'
         run: |
-          if [ ! -e /dev/kvm ]; then
-            echo "::warning::This runner has no /dev/kvm; using software emulation"
-            exit 0
+          if [ -e /dev/kvm ] && sudo chmod a+rw /dev/kvm && \
+             test -r /dev/kvm && test -w /dev/kvm; then
+            echo "KVM acceleration enabled"
+          else
+            echo "::warning::KVM is unavailable on this runner; using software emulation"
           fi
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          test -r /dev/kvm && test -w /dev/kvm
 
       - name: Validate Room migration matrix
         if: github.event_name != 'pull_request'
