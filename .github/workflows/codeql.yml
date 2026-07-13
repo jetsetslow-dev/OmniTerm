@@ -61,10 +61,19 @@ jobs:
           zricethezav/gitleaks@sha256:e1b35e12a8c6fa8901f060459cfb6b2fc4c484d3afbe3b029733a3bbfab07055
           git --redact --no-banner --no-color /repo
 
-      - name: Build, test, and lint both variants
+      # CodeQL needs compiler tracing for both product variants. A fresh hosted runner has no stale
+      # outputs, so cleaning first only discards useful work. PR Check owns PR unit/lint coverage;
+      # the full suites remain here on main because this workflow is the prerelease gate.
+      - name: Compile both variants for CodeQL
         run: >-
-          ./gradlew clean
+          ./gradlew
           :app:assembleOpenSourceDebug :app:assemblePlayStoreDebug
+          --no-daemon --no-build-cache --no-configuration-cache
+
+      - name: Run release-gate tests and lint
+        if: github.event_name != 'pull_request'
+        run: >-
+          ./gradlew
           :app:testOpenSourceDebugUnitTest :app:testPlayStoreDebugUnitTest
           :app:lintOpenSourceDebug :app:lintPlayStoreDebug
           --no-daemon --no-build-cache --no-configuration-cache
