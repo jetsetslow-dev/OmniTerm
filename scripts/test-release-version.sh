@@ -9,6 +9,12 @@ assert_eq() {
   [[ "$1" == "$2" ]] || { echo "expected '$2', got '$1'" >&2; exit 1; }
 }
 
+fake_api_success() { printf '{"tag_name":"v1.2.3"}'; }
+fake_api_404() { printf '{"message":"Not Found","status":404}'; return 1; }
+
+assert_eq "$(capture_stdout_on_success fake_api_success)" '{"tag_name":"v1.2.3"}'
+assert_eq "$(capture_stdout_on_success fake_api_404)" ""
+
 assert_eq "$(version_pack v1.2.3-Alpha)" "10200301"
 assert_eq "$(version_pack v1.2.3-rc.2)" "10200302"
 assert_eq "$(version_pack v1.2.3)" "10200399"

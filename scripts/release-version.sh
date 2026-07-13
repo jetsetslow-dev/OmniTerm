@@ -7,6 +7,17 @@
 # the final release uses build 99. Limits keep the result inside Android's signed
 # 32-bit versionCode range and reserve room for promotion without changing the base.
 
+# Capture a command's stdout only when the command succeeds. Some clients (notably `gh api`)
+# emit a structured error body to stdout on failure; treating that body as a successful response
+# can turn a normal 404 into false release state.
+capture_stdout_on_success() {
+  local output
+  if output="$("$@")"; then
+    printf '%s' "$output"
+  fi
+  return 0
+}
+
 version_validate() {
   local tag="${1:-}"
   [[ "$tag" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-([0-9A-Za-z-]+)(\.[0-9A-Za-z-]+)*)?$ ]] || return 1

@@ -309,6 +309,13 @@ class NetworkToolsTest {
     // ── TTL-stepped ping traceroute hop parsing ──
 
     @Test
+    fun networkProcessExecutablesUseTrustedAbsolutePaths() {
+        assertTrue(ANDROID_PING_BINARY.startsWith("/system/"))
+        assertTrue(ANDROID_TRACEROUTE_BINARIES.isNotEmpty())
+        assertTrue(ANDROID_TRACEROUTE_BINARIES.all { it.startsWith("/system/") })
+    }
+
+    @Test
     fun testTracerouteHopTtlExceededNoColon() {
         // iputils/toybox print "From <ip> icmp_seq=…" (no colon) when there's no reverse DNS.
         val out = """

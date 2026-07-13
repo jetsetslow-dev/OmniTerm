@@ -262,7 +262,8 @@ jobs:
           fi
 
           RELEASE_ALREADY_PUBLISHED=false
-          RELEASE_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_LABEL}" 2>/dev/null || true)"
+          RELEASE_JSON="$(capture_stdout_on_success gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_LABEL}" 2>/dev/null)"
           if [ -n "$RELEASE_JSON" ] && ! git rev-parse -q --verify "refs/tags/$RELEASE_LABEL" >/dev/null; then
             RELEASE_TARGET="$(jq -r '.target_commitish' <<<"$RELEASE_JSON")"
             test "$RELEASE_TARGET" = "$BUILD_SHA" || {
