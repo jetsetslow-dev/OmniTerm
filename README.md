@@ -172,4 +172,7 @@ On a larger workstation, full verification:
 ./gradlew assembleDebug test -Dorg.gradle.jvmargs=-Xmx4g --max-workers=4
 ```
 
-Contributors should also read [CONTRIBUTING.md](CONTRIBUTING.md); maintainers should use the [release runbook](docs/RELEASE_RUNBOOK.md) and [repository security checklist](docs/REPOSITORY_SECURITY.md).
+Contributors should also read [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[AI-first development policy](AI_FIRST_DEVELOPMENT.md); maintainers should use
+the [release runbook](docs/RELEASE_RUNBOOK.md) and
+[repository security checklist](docs/REPOSITORY_SECURITY.md).

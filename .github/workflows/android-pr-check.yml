@@ -61,6 +61,10 @@ jobs:
 
   migration-test:
     name: Validate Room migrations
+    # CodeQL retains the migration matrix on main. PRs run it only after the cheaper build,
+    # dependency-verification, unit-test, and lint gate succeeds, avoiding wasted emulator time.
+    if: github.event_name == 'pull_request'
+    needs: build-and-test
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
