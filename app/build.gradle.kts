@@ -142,32 +142,16 @@ ksp {
   arg("room.schemaLocation", "$projectDir/schemas")
 }
 
+val lowResourceBuild = providers.gradleProperty("omniterm.lowResourceBuild")
+  .map { it.toBoolean() }
+  .getOrElse(false)
+
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
-  maxParallelForks = 1
-  maxHeapSize = "768m"
-  val isLinuxArm64 = System.getProperty("os.name").equals("Linux", ignoreCase = true) &&
-      System.getProperty("os.arch").equals("aarch64", ignoreCase = true)
-  if (isLinuxArm64) {
-    exclude("**/ExampleRobolectricTest.class", "**/GreetingScreenshotTest.class", "**/PinHashRobolectricTest.class", "**/ColdStartRobolectricTest.class")
+  if (lowResourceBuild) {
+    maxParallelForks = 1
+    maxHeapSize = "768m"
+    exclude("**/AppResourcesTest.class", "**/GreetingScreenshotTest.class", "**/PinHashRobolectricTest.class", "**/ColdStartRobolectricTest.class")
   }
-}
-
-tasks.register("rpiDebug") {
-  group = "verification"
-  description = "Low-resource debug build for Raspberry Pi and other small machines."
-  dependsOn("assembleOpenSourceDebug")
-}
-
-tasks.register("rpiTest") {
-  group = "verification"
-  description = "Low-resource unit test run for the open-source debug variant."
-  dependsOn("testOpenSourceDebugUnitTest")
-}
-
-tasks.register("rpiCheck") {
-  group = "verification"
-  description = "Low-resource build and unit test run for the open-source debug variant."
-  dependsOn("rpiDebug", "rpiTest")
 }
 
 dependencies {

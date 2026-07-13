@@ -163,13 +163,9 @@ Open **Tools → Backups Hub** to export or restore a selective backup of OmniTe
 - Tell other developers and homelab enthusiasts.
 
 ## Build from source
-The project defaults to conservative Gradle settings (usable on a Raspberry Pi 5):
+Build the source-available variant and run its unit tests:
 ```bash
-./gradlew rpiCheck --no-daemon
-```
-On a larger workstation, full verification:
-```bash
-./gradlew assembleDebug test -Dorg.gradle.jvmargs=-Xmx4g --max-workers=4
+./gradlew assembleOpenSourceDebug testOpenSourceDebugUnitTest --no-daemon
 ```
 
 Contributors should also read [CONTRIBUTING.md](CONTRIBUTING.md) and the

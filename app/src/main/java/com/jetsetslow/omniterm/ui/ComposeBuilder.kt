@@ -97,7 +97,7 @@ data class TopLevelNetworkDraft(
 data class ComposeStackDraft(
     var projectName: String = "my_stack",
     // The compose top-level `name:` key (the Compose project name written INTO the file, e.g.
-    // `name: core_utilities`). Distinct from [projectName], which is the deploy directory / `-p`
+    // `name: example_stack`). Distinct from [projectName], which is the deploy directory / `-p`
     // flag. Blank means no `name:` line is written. On an existing file, -1 srcLine means it had none.
     var stackName: String = "",
     var stackNameSrcLine: Int = -1,
@@ -1041,7 +1041,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                     value = draft.stackName,
                     onValueChange = { draft = draft.copy(stackName = it.trim()) },
                     label = { Text("Stack name (compose name: key, optional)") },
-                    placeholder = { Text("e.g. core_utilities") },
+                    placeholder = { Text("e.g. example_stack") },
                     singleLine = true,
                     colors = omniTextFieldColors(),
                     modifier = Modifier.fillMaxWidth(),

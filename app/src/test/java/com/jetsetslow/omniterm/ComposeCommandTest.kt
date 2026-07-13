@@ -31,8 +31,8 @@ class ComposeCommandTest {
 
     @Test
     fun deploy_resolves_runtime_and_validates_before_swap() {
-        val path = "/home/ubuntu/core/docker-compose.yml"
-        val cmd = RemoteCommands.composeDeploy(path, "core_utilities", "eA==")
+        val path = "/srv/example/docker-compose.yml"
+        val cmd = RemoteCommands.composeDeploy(path, "example_stack", "eA==")
         assertTrue("resolves usable docker|podman", cmd.contains("docker ps") && cmd.contains("podman ps"))
         assertTrue("falls back to standalone compose", cmd.contains("docker-compose") && cmd.contains("podman-compose"))
         assertTrue("prefers podman-compose when Podman is the usable runtime", cmd.indexOf("grep -qi podman") < cmd.indexOf("docker-compose"))
@@ -44,7 +44,7 @@ class ComposeCommandTest {
         assertTrue("uses mktemp staging", cmd.contains("mktemp"))
         assertTrue("uses portable base64 decode", cmd.contains("base64 -d") && cmd.contains("base64 --decode") && cmd.contains("base64 -D"))
         assertTrue("uses -f with the absolute compose path", cmd.contains("-f '$path'"))
-        assertTrue("up runs against the same -f path", cmd.contains("-f '$path' -p 'core_utilities' up -d"))
+        assertTrue("up runs against the same -f path", cmd.contains("-f '$path' -p 'example_stack' up -d"))
         assertTrue("removes failed new stack file", cmd.contains("removing new compose file"))
         // The new file is staged to a temp and only moved in AFTER validation.
         val stageIdx = cmd.indexOf("mktemp")

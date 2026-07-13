@@ -1,5 +1,5 @@
 # Synthetic adversarial Compose fixture. Never copy a deployed stack into test resources.
-name: core_utilities
+name: structure_fixture
 
 x-common: &common
   restart: unless-stopped
@@ -15,29 +15,29 @@ volumes:
   budget_data:
 
 services:
-  open-webui:
+  frontend:
     <<: *common
-    image: ghcr.io/example/open-webui:1.0
+    image: registry.example.invalid/frontend:1.0
     ports:
       - "8080:8080"
 
-  hawser:
+  worker:
     <<: *common
-    image: ghcr.io/example/hawser:1.0
+    image: registry.example.invalid/worker:1.0
 
-  parser-service:
+  local-builder:
     <<: *common
     build:
       context: ./parser
       dockerfile: Containerfile
 
-  actual-sync:
+  sync-service:
     <<: *common
-    image: registry.example.invalid/actual-sync:1.0
+    image: registry.example.invalid/sync-service:1.0
 
-  ollama:
+  model-runtime:
     <<: *common
-    image: docker.io/example/ollama:1.0
+    image: registry.example.invalid/model-runtime:1.0
     volumes:
       - model_data:/models
 
@@ -45,14 +45,14 @@ services:
     <<: *common
     build: ./model-loader
     depends_on:
-      - ollama
+      - model-runtime
 
-  actual-budget:
+  budget-service:
     <<: *common
-    image: registry.example.invalid/actual-budget:1.0
+    image: registry.example.invalid/budget-service:1.0
     volumes:
       - budget_data:/data
 
-  memos:
+  notes-service:
     <<: *common
-    image: registry.example.invalid/memos:1.0
+    image: registry.example.invalid/notes-service:1.0

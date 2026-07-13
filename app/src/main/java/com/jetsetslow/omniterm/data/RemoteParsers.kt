@@ -547,7 +547,7 @@ object RemoteCommands {
      */
     /**
      * [composeFilePath] is the ABSOLUTE path to the compose file to edit (e.g.
-     * `/home/ubuntu/core/docker-compose.yml`) — exactly the file Docker reported as the running
+     * `/srv/example/docker-compose.yml`) — exactly the file Docker reported as the running
      * stack's config (`com.docker.compose.project.config_files`). We always operate on this exact
      * path and pass it with `-f`; we never `cd` into a directory and guess a relative file name,
      * because that can silently write to the wrong copy of a stack that exists in two places. The
