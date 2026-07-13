@@ -334,7 +334,13 @@ fun ShellScreen(viewModel: AppViewModel) {
     ConfirmHost(confirm)
     val chrome = shellChromePalette()
     val currentSession = viewModel.currentSession
-    val headerSession = viewModel.terminalActionSession
+    // The header identifies exactly the focused terminal. Do not fall back to the other split pane
+    // when the focused pane is empty; that made the top host name actively misleading.
+    val headerSession = if (viewModel.isMultiSsh) {
+        viewModel.multiSshPaneSession(viewModel.multiSshFocusedPane)
+    } else {
+        currentSession
+    }
     val servers by viewModel.servers.collectAsStateWithLifecycle()
     val onlineServers = servers.filter { it.status == "online" }
     // Offline hosts are hidden here like on the other live tabs — new connects only ever offer
@@ -421,15 +427,39 @@ fun ShellScreen(viewModel: AppViewModel) {
                                 confirmLabel = "Send to background",
                                 destructive = false,
                             ) {
-                                viewModel.sendToBackground()
+                                viewModel.sendSessionToBackground(headerSession.id)
                                 val existingSession = viewModel.activeSessions.find { it.serverId == newServerId && it.isConnected }
                                 if (existingSession != null) {
-                                    viewModel.attachSession(existingSession.id)
+                                    if (viewModel.isMultiSsh) {
+                                        viewModel.assignMultiSshPane(viewModel.multiSshFocusedPane, existingSession.id)
+                                    } else {
+                                        viewModel.attachSession(existingSession.id)
+                                    }
                                 } else {
                                     viewModel.connectTerminal()
                                 }
                             }
                         }
+                    },
+                    allowSplitSelection = viewModel.isMultiSsh,
+                    onOpenSplit = viewModel::openMultiSshForServers,
+                    leadingContent = {
+                        Text(
+                            if (viewModel.isMultiSsh) "P${viewModel.multiSshFocusedPane}" else "TERM",
+                            color = OmniColors.cyan,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = OmniFonts.mono,
+                        )
+                    },
+                    trailingContent = {
+                        Text(
+                            if (viewModel.isMultiSsh) "FOCUSED" else "CURRENT",
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = OmniColors.cyan,
+                        )
+                        Icon(Icons.Filled.ArrowDropDown, contentDescription = "Switch host", tint = OmniColors.cyan)
                     },
                     modifier = Modifier
                         .align(Alignment.TopCenter)
@@ -461,21 +491,15 @@ fun ShellScreen(viewModel: AppViewModel) {
                                 viewModel.enterMultiSsh()
                             }
                         }
-                        TerminalHeaderAction("NEW", OmniColors.green, enabled = !viewModel.isTerminalConnecting, modifier = Modifier.weight(1f)) {
-                            viewModel.connectTerminal()
-                        }
-                        // BG detaches currentSession, which split panes don't use — hidden there
-                        // (leave split via SINGLE; panes keep their sessions alive regardless).
-                        if (!viewModel.isMultiSsh) {
-                            TerminalHeaderAction("BG", OmniColors.cyan, enabled = connected, modifier = Modifier.weight(1f)) {
-                                confirm.ask(
-                                    title = "Send Session to Background?",
-                                    message = "OmniTerm will keep the SSH session active in the background. This may increase battery consumption.",
-                                    confirmLabel = "Send to background",
-                                    destructive = false,
-                                ) {
-                                    viewModel.sendToBackground()
-                                }
+                        TerminalOpenPicker(viewModel, actionSession, modifier = Modifier.weight(1f))
+                        TerminalHeaderAction("BG", OmniColors.cyan, enabled = connected, modifier = Modifier.weight(1f)) {
+                            confirm.ask(
+                                title = "Send Session to Background?",
+                                message = "OmniTerm will keep the SSH session active in the background. This may increase battery consumption.",
+                                confirmLabel = "Send to background",
+                                destructive = false,
+                            ) {
+                                actionSession?.let { viewModel.sendSessionToBackground(it.id) }
                             }
                         }
                         // A dropped session that isn't already retrying gets a manual reconnect here,
@@ -605,6 +629,16 @@ private fun TerminalHeaderAction(
 ) {
     val chrome = shellChromePalette()
     val container = background ?: chrome.actionBackground
+    val accessibilityLabel = when {
+        label == "SPLIT" -> "Open split terminal"
+        label == "SINGLE" -> "Return to single terminal"
+        label == "BG" -> "Send current session to background"
+        label == "DISC" -> "Disconnect current session"
+        label == "RECON" -> "Reconnect current session"
+        label.contains("STACK") -> "Stack split panes"
+        label.contains("COLS") -> "Show split panes side by side"
+        else -> label
+    }
     Text(
         label,
         color = if (enabled) color else chrome.disabledText,
@@ -616,8 +650,146 @@ private fun TerminalHeaderAction(
             .clip(RoundedCornerShape(6.dp))
             .clickable(enabled = enabled, onClick = onClick)
             .background(container, RoundedCornerShape(6.dp))
-            .padding(horizontal = 7.dp, vertical = 6.dp),
+            .heightIn(min = 34.dp)
+            .wrapContentHeight(Alignment.CenterVertically)
+            .padding(horizontal = 7.dp, vertical = 6.dp)
+            .semantics { contentDescription = accessibilityLabel },
     )
+}
+
+/**
+ * Top-level session switcher. It replaces the ambiguous NEW-only action with one place to attach a
+ * background session, resume a saved tmux session, or deliberately create a fresh terminal.
+ */
+@Composable
+private fun TerminalOpenPicker(
+    viewModel: AppViewModel,
+    currentSession: ShellSession?,
+    modifier: Modifier = Modifier,
+) {
+    val chrome = shellChromePalette()
+    val focusedPane = viewModel.multiSshFocusedPane
+    val otherPaneSessionId = if (!viewModel.isMultiSsh) null else {
+        if (focusedPane == 1) viewModel.multiSshSessionId2 else viewModel.multiSshSessionId1
+    }
+    val backgroundSessions = viewModel.activeSessions.filter {
+        it.id != currentSession?.id && it.id != otherPaneSessionId
+    }
+    val resumableSessions = viewModel.restorablePersistentSessions.filter { saved ->
+        viewModel.activeSessions.none { it.tmuxName == saved.tmuxName }
+    }
+    var expanded by remember { mutableStateOf(false) }
+
+    Box(modifier) {
+        Text(
+            "OPEN ▾",
+            color = if (viewModel.isTerminalConnecting) chrome.disabledText else OmniColors.green,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            textAlign = TextAlign.Center,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(6.dp))
+                .clickable(enabled = !viewModel.isTerminalConnecting) { expanded = true }
+                .background(chrome.actionBackground, RoundedCornerShape(6.dp))
+                .heightIn(min = 34.dp)
+                .wrapContentHeight(Alignment.CenterVertically)
+                .padding(horizontal = 7.dp, vertical = 6.dp)
+                .semantics { contentDescription = "Open or switch terminal session" },
+        )
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.widthIn(min = 260.dp, max = 340.dp).heightIn(max = 440.dp),
+        ) {
+            currentSession?.let { session ->
+                DropdownMenuItem(
+                    text = {
+                        Column {
+                            Text(
+                                if (viewModel.isMultiSsh) "PANE $focusedPane · ${session.serverName}" else "CURRENT · ${session.serverName}",
+                                fontFamily = OmniFonts.mono,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                            )
+                            if (session.persistent) {
+                                Text(displayTmuxSessionName(session.tmuxName), fontSize = 10.sp, color = OmniColors.amber)
+                            }
+                        }
+                    },
+                    leadingIcon = { Icon(Icons.Filled.Check, contentDescription = null) },
+                    enabled = false,
+                    onClick = {},
+                )
+                HorizontalDivider()
+            }
+            if (backgroundSessions.isNotEmpty()) {
+                DropdownMenuItem(
+                    text = { Text("BACKGROUND SESSIONS", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                    enabled = false,
+                    onClick = {},
+                )
+                backgroundSessions.forEach { session ->
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text(session.serverName, fontFamily = OmniFonts.mono, fontSize = 12.sp)
+                                Text(
+                                    if (session.persistent) displayTmuxSessionName(session.tmuxName) else "Live SSH session",
+                                    fontSize = 10.sp,
+                                    color = if (session.persistent) OmniColors.amber else MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        },
+                        onClick = {
+                            if (viewModel.isMultiSsh) viewModel.assignMultiSshPane(focusedPane, session.id)
+                            else viewModel.attachSession(session.id)
+                            expanded = false
+                        },
+                    )
+                }
+            }
+            if (resumableSessions.isNotEmpty()) {
+                if (backgroundSessions.isNotEmpty()) HorizontalDivider()
+                DropdownMenuItem(
+                    text = { Text("RESUMABLE TMUX", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                    enabled = false,
+                    onClick = {},
+                )
+                resumableSessions.forEach { saved ->
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text(saved.serverName, fontFamily = OmniFonts.mono, fontSize = 12.sp)
+                                Text(displayTmuxSessionName(saved.tmuxName), fontSize = 10.sp, color = OmniColors.amber)
+                            }
+                        },
+                        onClick = {
+                            if (viewModel.isMultiSsh) viewModel.setMultiSshFocus(focusedPane)
+                            viewModel.resumePersistentSession(saved.tmuxName)
+                            expanded = false
+                        },
+                    )
+                }
+            }
+            if (backgroundSessions.isNotEmpty() || resumableSessions.isNotEmpty() || currentSession != null) HorizontalDivider()
+            DropdownMenuItem(
+                text = {
+                    Text(
+                        "New session · ${viewModel.selectedServer?.name ?: "selected host"}",
+                        fontFamily = OmniFonts.mono,
+                    )
+                },
+                leadingIcon = { Text("+", fontSize = 20.sp, color = OmniColors.green) },
+                enabled = !viewModel.isTerminalConnecting,
+                onClick = {
+                    viewModel.connectTerminal()
+                    expanded = false
+                },
+            )
+        }
+    }
 }
 
 @Composable
@@ -837,10 +1009,12 @@ private fun SplitHandle(stacked: Boolean, onReset: (() -> Unit)? = null, onDrag:
 private fun MultiSshPaneHeader(viewModel: AppViewModel, paneIndex: Int, session: ShellSession?, isFocused: Boolean) {
     val chrome = shellChromePalette()
     val servers by viewModel.servers.collectAsStateWithLifecycle()
-    val label = session?.let { s -> servers.find { it.id == s.serverId }?.name ?: s.serverName } ?: "Empty pane"
-    val otherSessionId = if (paneIndex == 1) viewModel.multiSshSessionId2 else viewModel.multiSshSessionId1
-    val selectableSessions = viewModel.activeSessions.filter { it.id != otherSessionId }
-    var showSessionPicker by remember { mutableStateOf(false) }
+    val hostLabel = session?.let { s -> servers.find { it.id == s.serverId }?.name ?: s.serverName }
+    val label = when {
+        session == null -> "Empty pane"
+        session.persistent -> "${hostLabel.orEmpty()} · ${displayTmuxSessionName(session.tmuxName)}"
+        else -> hostLabel.orEmpty()
+    }
     Row(
         Modifier
             .fillMaxWidth()
@@ -871,56 +1045,9 @@ private fun MultiSshPaneHeader(viewModel: AppViewModel, paneIndex: Int, session:
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier.weight(1f),
         )
-        Box {
-            Text(
-                "SESSIONS",
-                color = OmniColors.cyan,
-                fontSize = 9.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(4.dp))
-                    .clickable { showSessionPicker = true }
-                    .padding(horizontal = 6.dp, vertical = 3.dp)
-                    .semantics { contentDescription = "Choose a session for pane $paneIndex" },
-            )
-            DropdownMenu(expanded = showSessionPicker, onDismissRequest = { showSessionPicker = false }) {
-                selectableSessions.forEach { candidate ->
-                    val candidateLabel = servers.find { it.id == candidate.serverId }?.name
-                        ?: candidate.serverName
-                    DropdownMenuItem(
-                        text = {
-                            Column {
-                                Text(candidateLabel, fontFamily = OmniFonts.mono, fontSize = 12.sp)
-                                Text(
-                                    if (candidate.isConnected) "Connected" else "Disconnected",
-                                    fontSize = 10.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                        },
-                        leadingIcon = {
-                            if (candidate.id == session?.id) Icon(Icons.Filled.Check, null)
-                        },
-                        onClick = {
-                            viewModel.assignMultiSshPane(paneIndex, candidate.id)
-                            showSessionPicker = false
-                        },
-                    )
-                }
-                HorizontalDivider()
-                DropdownMenuItem(
-                    text = { Text("New session…") },
-                    onClick = {
-                        // Detach the current session into the background; the empty-pane chooser
-                        // then offers both all existing sessions and every online host.
-                        viewModel.assignMultiSshPane(paneIndex, null)
-                        viewModel.setMultiSshFocus(paneIndex)
-                        showSessionPicker = false
-                    },
-                )
-            }
-        }
+        MultiSshPanePicker(viewModel, paneIndex, session, compact = true)
         if (session != null) {
+            Spacer(Modifier.width(2.dp))
             Text(
                 "BG",
                 color = chrome.mutedText,
@@ -929,9 +1056,10 @@ private fun MultiSshPaneHeader(viewModel: AppViewModel, paneIndex: Int, session:
                 modifier = Modifier
                     .clip(RoundedCornerShape(4.dp))
                     .clickable {
-                        viewModel.assignMultiSshPane(paneIndex, null)
-                        viewModel.setMultiSshFocus(paneIndex)
+                        viewModel.sendSessionToBackground(session.id)
                     }
+                    .heightIn(min = 28.dp)
+                    .wrapContentHeight(Alignment.CenterVertically)
                     .padding(horizontal = 7.dp, vertical = 3.dp)
                     .semantics { contentDescription = "Send $label to background" },
             )
@@ -947,9 +1075,149 @@ private fun MultiSshPaneHeader(viewModel: AppViewModel, paneIndex: Int, session:
                     .background(chrome.dangerBackground)
                     .border(1.dp, OmniColors.red.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
                     .clickable { viewModel.requestDisconnectSession(session.id) }
+                    .heightIn(min = 28.dp)
+                    .wrapContentHeight(Alignment.CenterVertically)
                     .padding(horizontal = 8.dp, vertical = 2.dp)
                     .semantics { contentDescription = "Disconnect $label" },
             )
+        }
+    }
+}
+
+/** One compact menu for either assigning a background session or opening a new host in a pane. */
+@Composable
+private fun MultiSshPanePicker(
+    viewModel: AppViewModel,
+    paneIndex: Int,
+    currentSession: ShellSession?,
+    compact: Boolean,
+) {
+    val servers by viewModel.servers.collectAsStateWithLifecycle()
+    val onlineServers = servers.filter { it.status == "online" }
+    val otherSessionId = if (paneIndex == 1) viewModel.multiSshSessionId2 else viewModel.multiSshSessionId1
+    val selectableSessions = viewModel.activeSessions.filter {
+        it.id != otherSessionId && it.id != currentSession?.id
+    }
+    val resumableSessions = viewModel.restorablePersistentSessions.filter { saved ->
+        viewModel.activeSessions.none { it.tmuxName == saved.tmuxName }
+    }
+    var expanded by remember { mutableStateOf(false) }
+
+    Box {
+        if (compact) {
+            Text(
+                "PICK ▾",
+                color = OmniColors.cyan,
+                fontSize = 9.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(4.dp))
+                    .clickable { expanded = true }
+                    .heightIn(min = 28.dp)
+                    .wrapContentHeight(Alignment.CenterVertically)
+                    .padding(horizontal = 6.dp, vertical = 3.dp)
+                    .semantics { contentDescription = "Choose a session or host for pane $paneIndex" },
+            )
+        } else {
+            OutlinedButton(onClick = { expanded = true }) {
+                Text("Choose session or host", fontSize = 12.sp)
+                Spacer(Modifier.width(4.dp))
+                Icon(Icons.Filled.ArrowDropDown, contentDescription = null, modifier = Modifier.size(18.dp))
+            }
+        }
+
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.widthIn(min = 240.dp, max = 340.dp).heightIn(max = 420.dp),
+        ) {
+            if (selectableSessions.isNotEmpty()) {
+                DropdownMenuItem(
+                    text = { Text("BACKGROUND SESSIONS", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                    enabled = false,
+                    onClick = {},
+                )
+                selectableSessions.forEach { candidate ->
+                    val candidateLabel = servers.find { it.id == candidate.serverId }?.name ?: candidate.serverName
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text(candidateLabel, fontFamily = OmniFonts.mono, fontSize = 12.sp)
+                                Text(
+                                    if (candidate.isConnected) "Connected" else "Disconnected",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        },
+                        onClick = {
+                            viewModel.assignMultiSshPane(paneIndex, candidate.id)
+                            expanded = false
+                        },
+                    )
+                }
+            }
+            if (resumableSessions.isNotEmpty()) {
+                if (selectableSessions.isNotEmpty()) HorizontalDivider()
+                DropdownMenuItem(
+                    text = { Text("RESUMABLE TMUX", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                    enabled = false,
+                    onClick = {},
+                )
+                resumableSessions.forEach { saved ->
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text(saved.serverName, fontFamily = OmniFonts.mono, fontSize = 12.sp)
+                                Text(displayTmuxSessionName(saved.tmuxName), fontSize = 10.sp, color = OmniColors.amber)
+                            }
+                        },
+                        enabled = !viewModel.isTerminalConnecting,
+                        onClick = {
+                            currentSession?.let { viewModel.sendSessionToBackground(it.id) }
+                            viewModel.setMultiSshFocus(paneIndex)
+                            viewModel.resumePersistentSession(saved.tmuxName)
+                            expanded = false
+                        },
+                    )
+                }
+            }
+            if ((selectableSessions.isNotEmpty() || resumableSessions.isNotEmpty()) && onlineServers.isNotEmpty()) HorizontalDivider()
+            if (onlineServers.isNotEmpty()) {
+                DropdownMenuItem(
+                    text = { Text("NEW SESSION", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                    enabled = false,
+                    onClick = {},
+                )
+                onlineServers.forEach { server ->
+                    DropdownMenuItem(
+                        text = {
+                            Column {
+                                Text(server.name, fontFamily = OmniFonts.mono, fontSize = 12.sp)
+                                Text(
+                                    "${server.username}@${server.host}",
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        },
+                        leadingIcon = { StatusDot(true, getServerColor(server), 8.dp) },
+                        enabled = !viewModel.isTerminalConnecting,
+                        onClick = {
+                            currentSession?.let { viewModel.sendSessionToBackground(it.id) }
+                            viewModel.setMultiSshFocus(paneIndex)
+                            viewModel.selectedServerId = server.id
+                            viewModel.connectTerminal()
+                            expanded = false
+                        },
+                    )
+                }
+            }
+            if (selectableSessions.isEmpty() && resumableSessions.isEmpty() && onlineServers.isEmpty()) {
+                DropdownMenuItem(text = { Text("No sessions or online hosts") }, enabled = false, onClick = {})
+            }
         }
     }
 }
@@ -980,20 +1248,10 @@ private fun MultiSshEmptyPane(viewModel: AppViewModel, paneIndex: Int) {
         }
         return
     }
-    val servers by viewModel.servers.collectAsStateWithLifecycle()
-    // Same rule as the header dropdown: new connects only ever offer online hosts.
-    val onlineServers = servers.filter { it.status == "online" }
-    // Sessions not already shown in the other pane are available to assign here.
-    val otherId = if (paneIndex == 1) viewModel.multiSshSessionId2 else viewModel.multiSshSessionId1
-    val available = viewModel.activeSessions.filter { it.id != otherId }
-    // A connect aimed at the other pane is in flight: taps here would be silently dropped by the
-    // one-connect-at-a-time guard, so grey the lists out instead of pretending they work.
-    val connectBusy = viewModel.isTerminalConnecting
     Column(
         Modifier
             .fillMaxSize()
             .clickable { viewModel.setMultiSshFocus(paneIndex) }
-            .verticalScroll(rememberScrollState())
             .padding(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -1008,78 +1266,9 @@ private fun MultiSshEmptyPane(viewModel: AppViewModel, paneIndex: Int) {
             }
         }
         Spacer(Modifier.height(10.dp))
-        if (available.isNotEmpty()) {
-            Text("Assign a session:", color = chrome.disabledText, fontSize = 11.sp)
-            Spacer(Modifier.height(6.dp))
-            available.forEach { s ->
-                Box(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 2.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(MaterialTheme.colorScheme.surfaceContainer)
-                        .clickable { viewModel.assignMultiSshPane(paneIndex, s.id) }
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                ) {
-                    Text(
-                        s.serverName + if (s.isConnected) "" else " (disconnected)",
-                        color = chrome.text,
-                        fontSize = 12.sp,
-                        fontFamily = OmniFonts.mono,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            Spacer(Modifier.height(10.dp))
-        }
-        if (onlineServers.isNotEmpty()) {
-            Text("New session:", color = chrome.disabledText, fontSize = 11.sp)
-            Spacer(Modifier.height(6.dp))
-            onlineServers.forEach { srv ->
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .padding(vertical = 2.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(MaterialTheme.colorScheme.primaryContainer)
-                        .border(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f), RoundedCornerShape(6.dp))
-                        .alpha(if (connectBusy) 0.4f else 1f)
-                        .clickable(enabled = !connectBusy) {
-                            // Focus first so the connect path (activeSshTab + multiSshFocusedPane)
-                            // lands the new session in THIS pane, then point the connect at the
-                            // tapped host rather than whatever the header dropdown last selected.
-                            viewModel.setMultiSshFocus(paneIndex)
-                            viewModel.selectedServerId = srv.id
-                            viewModel.connectTerminal()
-                        }
-                        .padding(horizontal = 10.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Text(
-                        srv.name,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer,
-                        fontSize = 12.sp,
-                        fontFamily = OmniFonts.mono,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "${srv.username}@${srv.host}",
-                        color = chrome.mutedText,
-                        fontSize = 10.sp,
-                        fontFamily = OmniFonts.mono,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        modifier = Modifier.weight(1f),
-                    )
-                }
-            }
-        } else if (available.isEmpty()) {
-            Text("No online hosts.", color = chrome.disabledText, fontSize = 11.sp)
-        }
+        MultiSshPanePicker(viewModel, paneIndex, currentSession = null, compact = false)
+        Spacer(Modifier.height(8.dp))
+        Text("The other pane stays connected.", color = chrome.disabledText, fontSize = 10.sp)
     }
 }
 

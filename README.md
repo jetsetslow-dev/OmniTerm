@@ -61,7 +61,7 @@ Groups make Fleet Broadcast targeting easier; host colors help you tell servers 
 
 ### Terminal
 Open **Term** for an interactive SSH shell on the selected host.
-- **MultiSSH split screen** — tap **SPLIT** to view two sessions at once, side-by-side or stacked (flip with the layout button). The focused pane (cyan border) owns the keyboard and the special-key bar; tap the other pane to move focus. Each pane resizes its own remote PTY and scrolls independently. Tapping a pane's **✕** disconnects just that host and leaves the pane empty (the split stays open); tapping **SINGLE** returns to single-session view while keeping both sessions alive in the background.
+- **MultiSSH split screen** — tap **SPLIT** to view two sessions at once, side-by-side or stacked (flip with the layout button). In split mode only, check two hosts in the top picker to load them into the panes. The focused pane and current host are labelled at the top; the cyan-bordered pane owns the keyboard and special-key bar. **OPEN** and each pane's **PICK** menu can attach a background session, resume saved tmux, or start a new host without filling the terminal with a long server list. **BG** frees a pane while keeping its session connected, and **✕** offers either a resumable tmux detach or a background normal SSH session before disconnecting. **SINGLE** returns to single-session view while keeping both sessions available.
 - **Persistent `tmux`-backed sessions** survive network drops and app restarts, and reconnect automatically.
 - Multiple background sessions with session switching and explicit disconnect prompts.
 - Adjustable, persisted font size with reflowing scrollback on resize.

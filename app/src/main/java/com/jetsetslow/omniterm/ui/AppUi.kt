@@ -37,6 +37,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -79,10 +81,12 @@ fun ServerSelectorBar(
     overrideServer: ServerEntity? = null,
     onlineOnly: Boolean = false,
     onServerChange: () -> Unit = {},
+    allowSplitSelection: Boolean = false,
+    onOpenSplit: (List<Int>) -> Unit = {},
     leadingContent: (@Composable RowScope.() -> Unit)? = null,
     trailingContent: (@Composable RowScope.() -> Unit)? = null,
     // Rendered on its own row under the host info so action chips never squeeze out the
-    // name/user@host/latency text (used by the terminal's SPLIT/NEW/BG/DISC actions).
+    // name/user@host/latency text (used by the terminal's SPLIT/OPEN/BG/DISC actions).
     secondRowContent: (@Composable RowScope.() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -100,11 +104,22 @@ fun ServerSelectorBar(
         return
     }
     var expanded by remember { mutableStateOf(false) }
+    val splitSelection = remember { mutableStateListOf<Int>() }
+    LaunchedEffect(selectableServers.map { it.id }) {
+        splitSelection.removeAll { selectedId -> selectableServers.none { it.id == selectedId } }
+    }
     val accent = getServerColor(srv)
     val latency = if (srv.status == "online") "${srv.lastLatency}ms" else "offline"
     // Anchor width, so the dropdown spans the full bar instead of wrapping its widest row.
     val density = LocalDensity.current
     var anchorWidth by remember { mutableStateOf(0.dp) }
+    fun toggleSplitServer(serverId: Int) {
+        if (serverId in splitSelection) {
+            splitSelection.remove(serverId)
+        } else if (splitSelection.size < 2) {
+            splitSelection.add(serverId)
+        }
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -118,7 +133,17 @@ fun ServerSelectorBar(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(8.dp))
                     .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
-                    .clickable { expanded = true }
+                    .clickable {
+                        if (allowSplitSelection && splitSelection.isEmpty()) {
+                            listOfNotNull(viewModel.multiSshSession1, viewModel.multiSshSession2)
+                                .map { it.serverId }
+                                .distinct()
+                                .take(2)
+                                .forEach(splitSelection::add)
+                            if (splitSelection.isEmpty()) splitSelection.add(srv.id)
+                        }
+                        expanded = true
+                    }
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -160,15 +185,65 @@ fun ServerSelectorBar(
             modifier = if (anchorWidth > 0.dp) Modifier.width(anchorWidth) else Modifier,
         ) {
             selectableServers.forEach { s ->
+                val checkedForSplit = s.id in splitSelection
                 DropdownMenuItem(
                     text = { Text("${s.name} — ${s.username}@${s.host}", fontFamily = OmniFonts.mono) },
                     leadingIcon = { StatusDot(online = s.status == "online", color = getServerColor(s), size = 8.dp) },
-                    onClick = {
-                        expanded = false
-                        if (s.id != viewModel.selectedServerId) {
-                            viewModel.selectedServerId = s.id
-                            onServerChange()
+                    trailingIcon = if (allowSplitSelection) {
+                        {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (checkedForSplit) {
+                                    Text(
+                                        "P${splitSelection.indexOf(s.id) + 1}",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                                Checkbox(
+                                    checked = checkedForSplit,
+                                    enabled = checkedForSplit || splitSelection.size < 2,
+                                    onCheckedChange = { toggleSplitServer(s.id) },
+                                    modifier = Modifier.semantics {
+                                        contentDescription = if (checkedForSplit) {
+                                            "Remove ${s.name} from pane ${splitSelection.indexOf(s.id) + 1}"
+                                        } else {
+                                            "Add ${s.name} to split panes"
+                                        }
+                                    },
+                                )
+                            }
                         }
+                    } else null,
+                    onClick = {
+                        if (allowSplitSelection) {
+                            toggleSplitServer(s.id)
+                        } else {
+                            expanded = false
+                            if (s.id != viewModel.selectedServerId) {
+                                viewModel.selectedServerId = s.id
+                                onServerChange()
+                            }
+                        }
+                    },
+                )
+            }
+            if (allowSplitSelection) {
+                HorizontalDivider()
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            if (splitSelection.size == 2) "Load selected hosts into panes" else "Select two hosts for the panes",
+                            fontWeight = FontWeight.Bold,
+                        )
+                    },
+                    leadingIcon = { Icon(Icons.Filled.VerticalSplit, contentDescription = null) },
+                    trailingIcon = { Text("${splitSelection.size}/2", fontFamily = OmniFonts.mono) },
+                    enabled = splitSelection.size == 2,
+                    onClick = {
+                        val selected = splitSelection.toList()
+                        expanded = false
+                        onOpenSplit(selected)
                     },
                 )
             }
@@ -938,7 +1013,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                             if (session?.persistent == true) {
                                 "Leave ${session.serverName} resumable, or terminate its tmux session and stop anything running there?"
                             } else {
-                                "Disconnect ${session?.serverName ?: "this terminal session"}? Anything still running in that terminal will be stopped."
+                                "Keep ${session?.serverName ?: "this terminal session"} connected in the background, or disconnect and stop anything running in that terminal?"
                             }
                         )
                     },
@@ -962,6 +1037,15 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                                     }
                                 ) {
                                     Text("Leave resumable")
+                                }
+                            } else if (session != null) {
+                                TextButton(
+                                    onClick = {
+                                        viewModel.sendSessionToBackground(sessionId)
+                                        viewModel.cancelPendingDisconnect()
+                                    }
+                                ) {
+                                    Text("Send to background")
                                 }
                             }
                             TextButton(onClick = { viewModel.cancelPendingDisconnect() }) { Text("Cancel") }
