@@ -229,6 +229,9 @@ dependencies {
   implementation(libs.converter.moshi)
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.core)
+  // Room's migration test runtime pulls kotlinx-serialization-json 1.8.1. Keep its transitive
+  // core module aligned in every variant; mixed 1.8.1/1.7.3 binaries fail with AbstractMethodError.
+  implementation(platform(libs.kotlinx.serialization.bom))
   implementation(libs.logging.interceptor)
   implementation(libs.moshi.kotlin)
   implementation(libs.okhttp)

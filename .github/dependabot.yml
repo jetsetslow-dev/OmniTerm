@@ -15,12 +15,6 @@ updates:
       android-major-upgrades:
         patterns: ["*"]
         update-types: ["major"]
-    ignore:
-      # Pre-release biometric changes need explicit device testing and should not be folded into
-      # an automated maintenance bundle.
-      - dependency-name: "androidx.biometric:biometric"
-        versions: ["*-alpha*", "*-beta*", "*-rc*"]
-
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

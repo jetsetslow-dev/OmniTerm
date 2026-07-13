@@ -44,11 +44,11 @@ import com.jetsetslow.omniterm.data.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLocale
 import com.jetsetslow.omniterm.data.BiometricCryptoGate
 import java.io.InputStream
 import java.text.DateFormat
 import java.util.Date
-import java.util.Locale
 
 private fun copySensitiveClipboard(
     context: android.content.Context,
@@ -3888,7 +3888,7 @@ private fun SpeedTestTab(viewModel: AppViewModel) {
         OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.cyan) {
             Column(modifier = Modifier.fillMaxWidth().padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    if (mbps != null) String.format(Locale.getDefault(), "%.1f", mbps) else "—",
+                    if (mbps != null) String.format(LocalLocale.current.platformLocale, "%.1f", mbps) else "—",
                     fontSize = 44.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = OmniFonts.mono,
