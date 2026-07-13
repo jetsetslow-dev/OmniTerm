@@ -38,6 +38,12 @@ android {
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
+  // MigrationTestHelper reads exported Room schemas from the instrumentation APK's assets.
+  // Exporting them for KSP is not enough: package the committed schema matrix for every flavor.
+  sourceSets {
+    getByName("androidTest").assets.directories.add("$projectDir/schemas")
+  }
+
   // Real AdMob IDs are injected from CI secrets (env vars) or local gradle properties; local and
   // debug builds fall back to Google's official sample IDs, which only ever serve test ads.
   val admobTestAppId = "ca-app-pub-3940256099942544~3347511713"
