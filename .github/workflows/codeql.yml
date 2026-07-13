@@ -25,7 +25,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -61,10 +61,19 @@ jobs:
           zricethezav/gitleaks@sha256:e1b35e12a8c6fa8901f060459cfb6b2fc4c484d3afbe3b029733a3bbfab07055
           git --redact --no-banner --no-color /repo
 
-      - name: Build, test, and lint both variants
+      # CodeQL needs compiler tracing for both product variants. A fresh hosted runner has no stale
+      # outputs, so cleaning first only discards useful work. PR Check owns PR unit/lint coverage;
+      # the full suites remain here on main because this workflow is the prerelease gate.
+      - name: Compile both variants for CodeQL
         run: >-
-          ./gradlew clean
+          ./gradlew
           :app:assembleOpenSourceDebug :app:assemblePlayStoreDebug
+          --no-daemon --no-build-cache --no-configuration-cache
+
+      - name: Run release-gate tests and lint
+        if: github.event_name != 'pull_request'
+        run: >-
+          ./gradlew
           :app:testOpenSourceDebugUnitTest :app:testPlayStoreDebugUnitTest
           :app:lintOpenSourceDebug :app:lintPlayStoreDebug
           --no-daemon --no-build-cache --no-configuration-cache
@@ -76,18 +85,20 @@ jobs:
       - name: Enable KVM acceleration
         if: github.event_name != 'pull_request'
         run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
-            | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-          test -r /dev/kvm && test -w /dev/kvm
+          if [ -e /dev/kvm ] && sudo chmod a+rw /dev/kvm && \
+             test -r /dev/kvm && test -w /dev/kvm; then
+            echo "KVM acceleration enabled"
+          else
+            echo "::warning::KVM is unavailable on this runner; using software emulation"
+          fi
 
       - name: Validate Room migration matrix
         if: github.event_name != 'pull_request'
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
-          api-level: 35
+          api-level: 29
           arch: x86_64
+          emulator-boot-timeout: 900
           disable-animations: true
           script: >-
             ./gradlew connectedOpenSourceDebugAndroidTest --no-daemon

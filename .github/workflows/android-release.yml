@@ -55,6 +55,7 @@ on:
   workflow_run:
     workflows: [CodeQL]
     types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
@@ -109,7 +110,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -262,7 +263,8 @@ jobs:
           fi
 
           RELEASE_ALREADY_PUBLISHED=false
-          RELEASE_JSON="$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_LABEL}" 2>/dev/null || true)"
+          RELEASE_JSON="$(capture_stdout_on_success gh api \
+            "repos/${GITHUB_REPOSITORY}/releases/tags/${RELEASE_LABEL}" 2>/dev/null)"
           if [ -n "$RELEASE_JSON" ] && ! git rev-parse -q --verify "refs/tags/$RELEASE_LABEL" >/dev/null; then
             RELEASE_TARGET="$(jq -r '.target_commitish' <<<"$RELEASE_JSON")"
             test "$RELEASE_TARGET" = "$BUILD_SHA" || {
@@ -445,7 +447,7 @@ jobs:
 
       - name: Attest release artifact provenance
         if: env.PUBLISH_EXTERNAL == 'true' && env.RELEASE_ALREADY_PUBLISHED != 'true'
-        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.4.0
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
           subject-path: |
             github-artifacts/*
@@ -551,7 +553,7 @@ jobs:
 
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           fetch-depth: 0
           persist-credentials: false

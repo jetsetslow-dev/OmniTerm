@@ -70,6 +70,13 @@ private const val TERMINAL_INPUT_CHUNK_BYTES = 4096
 private const val TERMINAL_INPUT_QUEUE_MAX_BYTES = 4 * 1024 * 1024
 private const val CONTROL_PENDING_INPUT_MAX_BYTES = 1024 * 1024
 
+/** Trusted Android system executables; never resolve process commands through an inherited PATH. */
+internal const val ANDROID_PING_BINARY = "/system/bin/ping"
+internal val ANDROID_TRACEROUTE_BINARIES = listOf(
+    "/system/bin/traceroute",
+    "/system/xbin/traceroute",
+)
+
 private const val BACKUP_SCHEMA_VERSION = 5
 private const val BACKUP_MAX_INPUT_CHARS = 20 * 1024 * 1024
 private const val BACKUP_MAX_CIPHERTEXT_BYTES = 12 * 1024 * 1024
@@ -5569,7 +5576,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         pingJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 val cmd = buildList {
-                    add("ping")
+                    add(ANDROID_PING_BINARY)
                     if (count > 0) { add("-c"); add(count.toString()) }
                     add("-W"); add("3")
                     add(target)
@@ -5626,16 +5633,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         tracerouteLines = emptyList()
         tracerouteJob = viewModelScope.launch(Dispatchers.IO) {
             try {
-                // Prefer numeric, capped hops; fall back to a bare invocation or explicit paths if flags aren't supported or not in PATH.
+                // Prefer numeric, capped hops, then a bare invocation when flags are unsupported.
+                // Every candidate is an absolute trusted system path; never search an inherited PATH.
                 var process: Process? = null
-                val commandsToTry = listOf(
-                    listOf("traceroute", "-n", "-m", "30", target),
-                    listOf("/system/bin/traceroute", "-n", "-m", "30", target),
-                    listOf("/system/xbin/traceroute", "-n", "-m", "30", target),
-                    listOf("traceroute", target),
-                    listOf("/system/bin/traceroute", target),
-                    listOf("/system/xbin/traceroute", target)
-                )
+                val commandsToTry = ANDROID_TRACEROUTE_BINARIES.flatMap { binary ->
+                    listOf(
+                        listOf(binary, "-n", "-m", "30", target),
+                        listOf(binary, target),
+                    )
+                }
                 for (cmd in commandsToTry) {
                     try {
                         process = ProcessBuilder(cmd).redirectErrorStream(true).start()
@@ -5695,7 +5701,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (!currentCoroutineContext().isActive) return
             val startedNs = System.nanoTime()
             val output = try {
-                val p = ProcessBuilder("ping", "-c", "1", "-W", "2", "-t", ttl.toString(), target)
+                val p = ProcessBuilder(ANDROID_PING_BINARY, "-c", "1", "-W", "2", "-t", ttl.toString(), target)
                     .redirectErrorStream(true).start()
                 tracerouteProcess = p
                 val text = p.inputStream.bufferedReader().readText()
