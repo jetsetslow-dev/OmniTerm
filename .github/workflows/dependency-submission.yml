@@ -21,7 +21,7 @@ jobs:
       contents: write
     steps:
       - name: Check out repository
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
           ref: main
@@ -33,7 +33,7 @@ jobs:
           java-version: "17"
 
       - name: Generate and submit dependency graph
-        uses: gradle/actions/dependency-submission@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        uses: gradle/actions/dependency-submission@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
         with:
           # Report only the dependencies that can ship in a release APK. Resolving every Gradle
           # configuration also publishes build-tool and test-runner internals as if they were app
