@@ -151,6 +151,7 @@ jobs:
         uses: ./.github/actions/setup-android-gradle
         with:
           install-sdk-packages: "true"
+          cache-read-only: "true"
 
       # Version scheme: versionName is the tag without the leading "v"; versionCode packs it as
       #   major*10_000_000 + minor*100_000 + patch*100 + build
@@ -324,17 +325,19 @@ jobs:
             echo "publish_external=$PUBLISH_EXTERNAL"
           } >> "$GITHUB_OUTPUT"
 
-      # Gate the release on the full unit-test suite — including the Robolectric cold-start smoke
-      # test (ColdStartRobolectricTest), so a build that crashes on open can never be signed and
-      # published. Deliberately runs before any secret is decoded.
-      - name: Run unit tests
-        run: ./gradlew testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest --no-daemon -Dorg.gradle.jvmargs=-Xmx2g
-
       - name: Validate release tooling
         run: ./scripts/test-release-version.sh
 
-      - name: Run Android lint
-        run: ./gradlew lintOpenSourceDebug lintPlayStoreDebug --no-daemon --no-configuration-cache -Dorg.gradle.jvmargs=-Xmx2g
+      # Preserve the independent publication gate, but configure Gradle only once for tests and
+      # lint. This still includes the Robolectric cold-start smoke test and runs before secrets are
+      # decoded.
+      - name: Run release unit tests and Android lint
+        run: >-
+          ./gradlew
+          testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest
+          lintOpenSourceDebug lintPlayStoreDebug
+          --no-daemon --no-configuration-cache
+          -Dorg.gradle.jvmargs=-Xmx2g
 
       - name: Decode release keystore
         env:
@@ -372,7 +375,8 @@ jobs:
           if [ "$BUILD_APK" = "true" ] || [ -z "$BUILD_APK" ]; then
             TASKS+=(":app:assembleOpenSourceRelease")
           fi
-          ./gradlew "${TASKS[@]}" --no-daemon -Dorg.gradle.jvmargs=-Xmx2g
+          ./gradlew "${TASKS[@]}" --no-daemon \
+            -Dorg.gradle.jvmargs=-Xmx2g -Domniterm.publishScan=true
 
       # Signing is done; remove the decoded keystore immediately so no later step (artifact
       # upload, third-party actions) can ever see it, even though the runner is ephemeral.
@@ -565,6 +569,7 @@ jobs:
         uses: ./.github/actions/setup-android-gradle
         with:
           install-sdk-packages: "true"
+          cache-read-only: "true"
 
       - name: Resolve release tag and version
         env:
@@ -620,13 +625,14 @@ jobs:
               -alias androiddebugkey -dname CN=Android-Debug -keyalg RSA -keysize 2048 -validity 1
           fi
 
-      # Same cold-start gate as the release job: sideloaded debug builds must open too.
-      - name: Run unit tests
-        run: ./gradlew testOpenSourceDebugUnitTest --no-daemon -Dorg.gradle.jvmargs=-Xmx2g
-
-      # Sideloaders get the openSource flavor (no ad SDK / Play Services dependency).
-      - name: Build debug APK
-        run: ./gradlew :app:assembleOpenSourceDebug --no-daemon -Dorg.gradle.jvmargs=-Xmx2g
+      # Same cold-start gate as the release job, followed by the source-available APK in one Gradle
+      # process. Sideloaders get the openSource flavor (no ad SDK / Play Services dependency).
+      - name: Test and build debug APK
+        run: >-
+          ./gradlew
+          testOpenSourceDebugUnitTest :app:assembleOpenSourceDebug
+          --no-daemon -Dorg.gradle.jvmargs=-Xmx2g
+          -Domniterm.publishScan=true
 
       - name: Stage release artifacts
         run: |

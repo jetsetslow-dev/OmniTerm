@@ -46,7 +46,9 @@ jobs:
         with:
           languages: java-kotlin
           build-mode: manual
-          dependency-caching: true
+          # setup-gradle already restores the same Gradle dependency graph. CodeQL's additional
+          # cache was retaining ~2 GB per key (over 6 GB active) without removing that need.
+          dependency-caching: false
           queries: security-extended
 
       - name: Validate release tooling
@@ -61,22 +63,27 @@ jobs:
           zricethezav/gitleaks@sha256:e1b35e12a8c6fa8901f060459cfb6b2fc4c484d3afbe3b029733a3bbfab07055
           git --redact --no-banner --no-color /repo
 
-      # CodeQL needs compiler tracing for both product variants. A fresh hosted runner has no stale
-      # outputs, so cleaning first only discards useful work. PR Check owns PR unit/lint coverage;
-      # the full suites remain here on main because this workflow is the prerelease gate.
-      - name: Compile both variants for CodeQL
-        run: >-
-          ./gradlew
-          :app:assembleOpenSourceDebug :app:assemblePlayStoreDebug
-          --no-daemon --no-build-cache --no-configuration-cache
-
-      - name: Run release-gate tests and lint
-        if: github.event_name != 'pull_request'
-        run: >-
-          ./gradlew
-          :app:testOpenSourceDebugUnitTest :app:testPlayStoreDebugUnitTest
-          :app:lintOpenSourceDebug :app:lintPlayStoreDebug
-          --no-daemon --no-build-cache --no-configuration-cache
+      # CodeQL needs uncached compiler execution for both variants. On main, add the complete
+      # unit/lint release gate to the SAME Gradle invocation instead of configuring the project a
+      # second time. PR Check owns those complementary tasks before merge.
+      - name: Compile both variants and run the main release gate
+        shell: bash
+        run: |
+          tasks=(
+            :app:assembleOpenSourceDebug
+            :app:assemblePlayStoreDebug
+          )
+          if [ "$GITHUB_EVENT_NAME" != "pull_request" ]; then
+            tasks+=(
+              :app:testOpenSourceDebugUnitTest
+              :app:testPlayStoreDebugUnitTest
+              :app:lintOpenSourceDebug
+              :app:lintPlayStoreDebug
+            )
+          fi
+          ./gradlew "${tasks[@]}" \
+            --no-daemon --no-build-cache --no-configuration-cache \
+            -Domniterm.publishScan=true
 
       # Automatic prereleases are gated on this workflow, so migration validation belongs in the
       # same aggregate result on main rather than a concurrent check that could fail after
@@ -102,6 +109,7 @@ jobs:
           disable-animations: true
           script: >-
             ./gradlew connectedOpenSourceDebugAndroidTest --no-daemon
+            -Domniterm.publishScan=true
             -Pandroid.testInstrumentationRunnerArguments.package=com.jetsetslow.omniterm.data
 
       - name: Perform CodeQL Analysis
