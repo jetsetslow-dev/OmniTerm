@@ -55,6 +55,7 @@ on:
   workflow_run:
     workflows: [CodeQL]
     types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
