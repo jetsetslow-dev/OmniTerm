@@ -164,11 +164,34 @@ class TmuxControlTest {
         assertTrue(threw)
     }
 
+    @Test(expected = IllegalArgumentException::class)
+    fun sendKeysRejectsNonPositiveChunkSize() {
+        TmuxControlCommands.sendKeysHex("%0", "x".encodeToByteArray(), chunkSize = 0)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun paneOutputStateRejectsMalformedPaneId() {
+        TmuxControlCommands.paneOutputState("%0; kill-server", "pause")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun paneOutputStateRejectsUnknownState() {
+        TmuxControlCommands.paneOutputState("%0", "invalid")
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun capturePaneRejectsMalformedPaneId() {
+        TmuxControlCommands.capturePane("%0; kill-server", 10, includeScreen = true)
+    }
+
     @Test
     fun resizeAndCaptureCommandFormats() {
         assertEquals("refresh-client -C 100x30", TmuxControlCommands.refreshClientSize(100, 30))
-        assertEquals("refresh-client -A %0:pause", TmuxControlCommands.paneOutputState("%0", "pause"))
-        assertEquals("refresh-client -A %0:continue", TmuxControlCommands.paneOutputState("%0", "continue"))
+        assertEquals("refresh-client -C 1x1", TmuxControlCommands.refreshClientSize(0, -1))
+        // The leading percent must be escaped when followed by `:state`; bare `%0:pause`
+        // produces `parse error: syntax error` in a real tmux 3.3a control client.
+        assertEquals("refresh-client -A \\%0:pause", TmuxControlCommands.paneOutputState("%0", "pause"))
+        assertEquals("refresh-client -A \\%0:continue", TmuxControlCommands.paneOutputState("%0", "continue"))
         assertEquals(
             "capture-pane -p -e -J -S -10000 -E -1 -t %0",
             TmuxControlCommands.capturePane("%0", 10_000, includeScreen = false),

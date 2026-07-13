@@ -180,6 +180,7 @@ object TmuxControlCommands {
      */
     fun sendKeysHex(paneId: String, data: ByteArray, chunkSize: Int = 128): List<String> {
         require(paneId.matches(Regex("%\\d+"))) { "invalid tmux pane id: $paneId" }
+        require(chunkSize > 0) { "tmux input chunk size must be positive" }
         if (data.isEmpty()) return emptyList()
         val hex = StringBuilder()
         val commands = ArrayList<String>()
@@ -204,7 +205,10 @@ object TmuxControlCommands {
     fun paneOutputState(paneId: String, state: String): String {
         require(paneId.matches(Regex("%\\d+"))) { "invalid tmux pane id: $paneId" }
         require(state in setOf("on", "off", "pause", "continue")) { "invalid pane output state: $state" }
-        return "refresh-client -A $paneId:$state"
+        // In a control-mode command line, a colon-qualified pane id must escape its leading '%'.
+        // tmux 3.3a accepts bare `%0` as a target (`send-keys -t %0`) but parses bare
+        // `%0:pause` as syntax, returning `parse error: syntax error` and aborting our init.
+        return "refresh-client -A \\$paneId:$state"
     }
 
     /** Pane history + visible screen come back as a [TmuxControlEvent.Reply] body. */
