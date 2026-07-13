@@ -26,6 +26,23 @@ updates:
         versions: [">= 2.11.0"]
       - dependency-name: androidx.lifecycle:lifecycle-runtime-compose
         versions: [">= 2.11.0"]
+      # Network, SSH, ads, and consent majors have user-visible protocol/policy implications.
+      # Keep patch/minor security updates automated; migrate these majors with dedicated server,
+      # proxy, SFTP, ad-sandbox, and consent regression coverage instead of a blind grouped bump.
+      - dependency-name: com.squareup.retrofit2:retrofit
+        update-types: ["version-update:semver-major"]
+      - dependency-name: com.squareup.retrofit2:converter-moshi
+        update-types: ["version-update:semver-major"]
+      - dependency-name: com.squareup.okhttp3:logging-interceptor
+        update-types: ["version-update:semver-major"]
+      - dependency-name: com.squareup.okhttp3:okhttp
+        update-types: ["version-update:semver-major"]
+      - dependency-name: com.google.android.gms:play-services-ads
+        update-types: ["version-update:semver-major"]
+      - dependency-name: com.google.android.ump:user-messaging-platform
+        update-types: ["version-update:semver-major"]
+      - dependency-name: com.github.mwiede:jsch
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
