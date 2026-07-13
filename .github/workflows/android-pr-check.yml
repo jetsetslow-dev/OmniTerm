@@ -82,10 +82,14 @@ jobs:
           keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
             -alias androiddebugkey -dname CN=Android-Debug -keyalg RSA -keysize 2048 -validity 1
 
-      # ReactiveCircus requires KVM permissions on Ubuntu. Without this, API 35 falls back to
-      # software emulation and can report boot complete before Android's input service is ready.
+      # KVM is available on most, but not all, standard GitHub-hosted runners. Use it when present;
+      # otherwise keep the slower software-emulation fallback instead of failing before tests.
       - name: Enable KVM acceleration
         run: |
+          if [ ! -e /dev/kvm ]; then
+            echo "::warning::This runner has no /dev/kvm; using software emulation"
+            exit 0
+          fi
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
             | sudo tee /etc/udev/rules.d/99-kvm4all.rules >/dev/null
           sudo udevadm control --reload-rules
@@ -95,8 +99,11 @@ jobs:
       - name: Run exported-schema migration matrix
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
-          api-level: 35
+          # Room migration correctness is API-independent; API 29 is smaller/faster when a free
+          # hosted runner lacks KVM, while still exercising an older supported SQLite platform.
+          api-level: 29
           arch: x86_64
+          emulator-boot-timeout: 900
           disable-animations: true
           script: >-
             ./gradlew connectedOpenSourceDebugAndroidTest --no-daemon
