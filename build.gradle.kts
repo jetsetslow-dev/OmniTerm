@@ -20,12 +20,12 @@ allprojects {
         requested.group == "org.bouncycastle" && requested.name in setOf(
           "bcprov-jdk18on", "bcpkix-jdk18on", "bcutil-jdk18on"
         ) -> {
-          useVersion("1.84")
+          useVersion("1.85")
           because("align Bouncy Castle runtime and Android build tooling to patched releases")
         }
         requested.group == "com.google.guava" && requested.name == "guava" &&
           requested.version.orEmpty().endsWith("-android") -> {
-          useVersion("33.4.0-android")
+          useVersion("33.6.0-android")
           because("replace vulnerable Android-flavoured Guava transitives")
         }
         requested.group == "org.apache.commons" && requested.name == "commons-lang3" -> {
