@@ -1,11 +1,9 @@
 name: PR Check
 
-# Commits often land on main directly (not via PR), so run the same build + unit-test suite on
-# every push to main too — otherwise the Robolectric cold-start gate only fires at release time.
+# Pull requests own pre-merge unit/lint/migration validation. The aggregate CodeQL workflow owns
+# the equivalent main-branch release gate, so running this workflow again after merge only burns a
+# second runner without adding a publication precondition.
 on:
-  push:
-    branches:
-      - main
   pull_request:
     branches:
       - main
@@ -44,16 +42,15 @@ jobs:
           keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
             -alias androiddebugkey -dname CN=Android-Debug -keyalg RSA -keysize 2048 -validity 1
 
-      - name: Build Debug APK
-        run: ./gradlew assembleDebug --no-daemon
-
-      # With product flavors there is no "testDebugUnitTest" umbrella task — the per-variant
-      # task names must be spelled out.
-      - name: Run Unit Tests
-        run: ./gradlew testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest --no-daemon
-
-      - name: Run Android lint
-        run: ./gradlew lintOpenSourceDebug lintPlayStoreDebug --no-daemon --no-configuration-cache
+      # CodeQL already assembles both debug APK flavors on every PR for compiler tracing. Keep one
+      # Gradle process here for the complementary unit/lint gate and publish its diagnostic scan.
+      - name: Run unit tests and Android lint
+        run: >-
+          ./gradlew
+          testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest
+          lintOpenSourceDebug lintPlayStoreDebug
+          --no-daemon --no-configuration-cache
+          -Domniterm.publishScan=true
 
       - name: Delete debug keystore
         if: always()
@@ -104,6 +101,7 @@ jobs:
           disable-animations: true
           script: >-
             ./gradlew connectedOpenSourceDebugAndroidTest --no-daemon
+            -Domniterm.publishScan=true
             -Pandroid.testInstrumentationRunnerArguments.package=com.jetsetslow.omniterm.data
 
       - name: Delete debug keystore

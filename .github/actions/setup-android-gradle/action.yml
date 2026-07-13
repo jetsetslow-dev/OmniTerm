@@ -6,6 +6,10 @@ inputs:
     description: Install Android SDK packages needed by release and CodeQL builds.
     required: false
     default: "false"
+  cache-read-only:
+    description: Restore shared Gradle caches without publishing another job-specific cache entry.
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -18,6 +22,10 @@ runs:
 
     - name: Set up Gradle
       uses: gradle/actions/setup-gradle@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+      with:
+        # Pull requests are always consumers. Release jobs opt in explicitly so the main CodeQL
+        # gate remains the single canonical cache writer for a merged source revision.
+        cache-read-only: ${{ inputs.cache-read-only == 'true' || github.event_name == 'pull_request' }}
 
     # TmuxControlIntegrationTest executes the generated wire commands against a real control
     # client. Keep this dependency in the shared setup so PR, main, and release test suites all
