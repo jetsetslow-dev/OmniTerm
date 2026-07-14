@@ -1,0 +1,4 @@
+[[IgnoredVulns]]
+id = "GHSA-5jmj-h7xm-6q6v"
+ignoreUntil = 2026-08-14
+reason = "OSV omits the upstream fixed boundary; verification metadata contains patched jackson-databind 2.22.1, while the GitHub advisory range ends before 2.22.1."

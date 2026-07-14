@@ -1,13 +1,7 @@
 name: OpenSSF Scorecard
 
-env:
-  GIT_CONFIG_COUNT: 1
-  GIT_CONFIG_KEY_0: init.defaultBranch
-  GIT_CONFIG_VALUE_0: main
-
 on:
-  branch_protection_rule:
-  push:
+  pull_request:
     branches: [main]
   schedule:
     - cron: "17 5 * * 3"

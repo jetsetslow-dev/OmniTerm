@@ -9,6 +9,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
 import org.junit.Test
+import java.nio.file.Files
+import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 
 /**
@@ -22,7 +24,7 @@ class TmuxControlIntegrationTest {
 
     @Test
     fun everyGeneratedCommandIsAcceptedByRealTmuxControlMode() {
-        requireTmuxOrSkipLocalRun()
+        val tmux = requireTmuxOrSkipLocalRun()
         val unique = "${ProcessHandle.current().pid()}-${System.nanoTime()}"
         val socket = "omniterm-junit-$unique"
         val session = "omniterm-junit"
@@ -30,13 +32,13 @@ class TmuxControlIntegrationTest {
         try {
             assertCommandSucceeded(
                 runCommand(
-                    "tmux", "-L", socket, "-f", "/dev/null", "new-session", "-d",
+                    tmux, "-L", socket, "-f", "/dev/null", "new-session", "-d",
                     "-x", "80", "-y", "24", "-s", session, "/bin/sh",
                 ),
                 "start isolated tmux server",
             )
             val paneResult = runCommand(
-                "tmux", "-L", socket, "display-message", "-p", "-t", session, "#{pane_id}",
+                tmux, "-L", socket, "display-message", "-p", "-t", session, "#{pane_id}",
             )
             assertCommandSucceeded(paneResult, "resolve tmux pane")
             val pane = paneResult.output.trim()
@@ -55,7 +57,7 @@ class TmuxControlIntegrationTest {
                 add("detach-client")
             }
 
-            val control = ProcessBuilder("tmux", "-L", socket, "-C", "attach-session", "-t", session)
+            val control = ProcessBuilder(tmux, "-L", socket, "-C", "attach-session", "-t", session)
                 .redirectErrorStream(true)
                 .start()
             control.outputStream.bufferedWriter().use { writer ->
@@ -87,17 +89,22 @@ class TmuxControlIntegrationTest {
             assertTrue(events.any { it is TmuxControlEvent.Exit })
             assertFalse(transcript.decodeToString().contains("parse error", ignoreCase = true))
         } finally {
-            runCatching { runCommand("tmux", "-L", socket, "kill-server") }
+            runCatching { runCommand(tmux, "-L", socket, "kill-server") }
         }
     }
 
-    private fun requireTmuxOrSkipLocalRun() {
-        val available = runCatching { runCommand("tmux", "-V").exitCode == 0 }.getOrDefault(false)
+    private fun requireTmuxOrSkipLocalRun(): String {
+        // Never resolve an executable through the working directory or an inherited PATH. The CI
+        // package installs tmux in /usr/bin; /usr/local/bin covers standard local installations.
+        val executable = TMUX_EXECUTABLES.firstOrNull { Files.isExecutable(Path.of(it)) }
+        val available = executable != null &&
+            runCatching { runCommand(executable, "-V").exitCode == 0 }.getOrDefault(false)
         if (System.getenv("OMNITERM_REQUIRE_TMUX_INTEGRATION") == "true") {
             assertTrue("tmux is required for the CI control-mode integration gate", available)
         } else {
             assumeTrue("tmux is unavailable; CI always installs and requires it", available)
         }
+        return checkNotNull(executable)
     }
 
     private fun assertCommandSucceeded(result: CommandResult, operation: String) {
@@ -117,5 +124,6 @@ class TmuxControlIntegrationTest {
 
     private companion object {
         const val PROCESS_TIMEOUT_SECONDS = 10L
+        val TMUX_EXECUTABLES = listOf("/usr/bin/tmux", "/usr/local/bin/tmux")
     }
 }
