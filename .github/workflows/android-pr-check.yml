@@ -1,5 +1,12 @@
 name: PR Check
 
+# actions/checkout initializes a temporary repository; define its branch name so Git does not emit
+# the legacy-default-branch warning on every job.
+env:
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+
 # Pull requests own pre-merge unit/lint/migration validation. The aggregate CodeQL workflow owns
 # the equivalent main-branch release gate, so running this workflow again after merge only burns a
 # second runner without adding a publication precondition.
@@ -87,7 +94,7 @@ jobs:
              test -r /dev/kvm && test -w /dev/kvm; then
             echo "KVM acceleration enabled"
           else
-            echo "::warning::KVM is unavailable on this runner; using software emulation"
+            echo "KVM is unavailable on this runner; using software emulation"
           fi
 
       - name: Run exported-schema migration matrix
@@ -99,6 +106,7 @@ jobs:
           arch: x86_64
           emulator-boot-timeout: 900
           disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -no-metrics
           script: >-
             ./gradlew connectedOpenSourceDebugAndroidTest --no-daemon
             -Domniterm.publishScan=true

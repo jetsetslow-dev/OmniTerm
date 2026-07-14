@@ -97,7 +97,7 @@ data class TopLevelNetworkDraft(
 data class ComposeStackDraft(
     var projectName: String = "my_stack",
     // The compose top-level `name:` key (the Compose project name written INTO the file, e.g.
-    // `name: core_utilities`). Distinct from [projectName], which is the deploy directory / `-p`
+    // `name: example_stack`). Distinct from [projectName], which is the deploy directory / `-p`
     // flag. Blank means no `name:` line is written. On an existing file, -1 srcLine means it had none.
     var stackName: String = "",
     var stackNameSrcLine: Int = -1,
@@ -876,7 +876,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
 
     var deploying by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
-    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val copyToClipboard = rememberClipboardCopy()
 
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
@@ -944,7 +944,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                     }
                 }
                 if (msg.isNotBlank()) {
-                    IconButton(onClick = { clipboard.setText(androidx.compose.ui.text.AnnotatedString(msg)) }) {
+                    IconButton(onClick = { copyToClipboard(msg) }) {
                         Icon(Icons.Filled.ContentCopy, contentDescription = "Copy deploy output")
                     }
                 }
@@ -987,7 +987,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
 
             // ── view toggle ──
             val tabs = listOf("Visual", "Raw YAML")
-            TabRow(selectedTabIndex = if (rawMode) 1 else 0, containerColor = Color.Transparent) {
+            PrimaryTabRow(selectedTabIndex = if (rawMode) 1 else 0, containerColor = Color.Transparent) {
                 tabs.forEachIndexed { i, t ->
                     Tab(
                             selected = (i == 1) == rawMode,
@@ -1041,7 +1041,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                     value = draft.stackName,
                     onValueChange = { draft = draft.copy(stackName = it.trim()) },
                     label = { Text("Stack name (compose name: key, optional)") },
-                    placeholder = { Text("e.g. core_utilities") },
+                    placeholder = { Text("e.g. example_stack") },
                     singleLine = true,
                     colors = omniTextFieldColors(),
                     modifier = Modifier.fillMaxWidth(),

@@ -1,103 +1,103 @@
 # Synthetic indentation torture fixture. Values are deliberately fictitious.
-name: Core_Utilities
+name: indentation_fixture
 
 services:
-  dockhand:
-    image: registry.example.invalid/dockhand:1.0
+  primary-api:
+    image: registry.example.invalid/primary-api:1.0
     restart: unless-stopped
 
-#  portainer:
-#    image: portainer/portainer-ee:latest
+#  admin-ui:
+#    image: registry.example.invalid/admin-ui:1.0
 #    ports:
 #      - 9443:9443
 
-  newt:
-    image: registry.example.invalid/newt:1.0
+  edge-agent:
+    image: registry.example.invalid/edge-agent:1.0
     environment:
       - ENDPOINT=https://gateway.example.invalid
 
-# portainer_agent:
-#   image: portainer/agent:latest
+# metrics-agent:
+#   image: registry.example.invalid/metrics-agent:1.0
 #   ports:
 #     - 9001:9001
 
-  code-server:
-    image: registry.example.invalid/code-server:1.0
+  code-editor:
+    image: registry.example.invalid/code-editor:1.0
     environment:
       - PASSWORD=${SYNTHETIC_PASSWORD}
 
-  cloudflared_tunnel:
+  secure-tunnel:
     image: registry.example.invalid/tunnel:1.0
     environment:
       - TUNNEL_TOKEN=${SYNTHETIC_TUNNEL_TOKEN}
 
-  tailscale:
+  mesh-agent:
     image: registry.example.invalid/mesh:1.0
     environment:
       - AUTH_KEY=${SYNTHETIC_MESH_KEY}
 
-#  wire-pod:
-#    hostname: synthetic-pod
-#    image: ghcr.io/kercre123/wire-pod:main
+#  device-bridge:
+#    hostname: synthetic-device
+#    image: registry.example.invalid/device-bridge:1.0
 #    ports:
 #      - 444:443
 #      - 8081:8080
 
-  nginx-proxy-manager:
+  reverse-proxy:
     image: registry.example.invalid/reverse-proxy:1.0
     ports:
       - 8080:80
 
-  filebrowser:
-    image: filebrowser/filebrowser
+  file-browser:
+    image: registry.example.invalid/file-browser:1.0
     ports:
       - 446:8080
     restart: always
 
-  # webserver1:
+  # web-a:
   #   image: httpd:latest
   #   ports:
   #     - "8081:80"
 
-  # webserver2:
+  # web-b:
   #   image: httpd:latest
   #   ports:
   #     - "8082:80"
 
-#   postgres:
-#     image: postgres:16
+#   database:
+#     image: registry.example.invalid/database:1.0
 #     environment:
 #       - POSTGRES_PASSWORD=${SYNTHETIC_DATABASE_PASSWORD}
 
-#   n8n:
+#   workflow-engine:
 #     image: registry.example.invalid/automation:1.0
 #     depends_on:
-#       - postgres
+#       - database
 
-#   ollama:
+#   model-runtime:
 #     image: registry.example.invalid/model-runtime:1.0
 
 #   model-loader:
 #     image: registry.example.invalid/model-loader:1.0
 #     depends_on:
-#       - ollama
+#       - model-runtime
 
 #   db-init:
 #     image: registry.example.invalid/db-init:1.0
 #     depends_on:
-#       - postgres
+#       - database
 
-#   dockflare:
+#   dns-helper:
 #     image: registry.example.invalid/dns-helper:1.0
 
 volumes:
-  # dockflare_data:
-  wire-pod-data:
-  wire-pod-model:
-  dockhand_data:
-  # db_storage:
-  # n8n_storage:
+  # dns_cache:
+  bridge_data:
+  bridge_model:
+  api_data:
+  # database_data:
+  # workflow_data:
 
 networks:
-  home_network:
+  fixture_network:
     external: true

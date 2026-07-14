@@ -88,7 +88,7 @@ fun MonitorScreen(viewModel: AppViewModel) {
         }
 
         // Subtabs selection navigation bar
-        ScrollableTabRow(
+        PrimaryScrollableTabRow(
             selectedTabIndex = viewModel.activeMonitorTab,
             edgePadding = 12.dp,
             modifier = Modifier.fillMaxWidth()

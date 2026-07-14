@@ -37,6 +37,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -79,10 +81,12 @@ fun ServerSelectorBar(
     overrideServer: ServerEntity? = null,
     onlineOnly: Boolean = false,
     onServerChange: () -> Unit = {},
+    allowSplitSelection: Boolean = false,
+    onOpenSplit: (List<Int>) -> Unit = {},
     leadingContent: (@Composable RowScope.() -> Unit)? = null,
     trailingContent: (@Composable RowScope.() -> Unit)? = null,
     // Rendered on its own row under the host info so action chips never squeeze out the
-    // name/user@host/latency text (used by the terminal's SPLIT/NEW/BG/DISC actions).
+    // name/user@host/latency text (used by the terminal's SPLIT/OPEN/BG/DISC actions).
     secondRowContent: (@Composable RowScope.() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
@@ -100,11 +104,22 @@ fun ServerSelectorBar(
         return
     }
     var expanded by remember { mutableStateOf(false) }
+    val splitSelection = remember { mutableStateListOf<Int>() }
+    LaunchedEffect(selectableServers.map { it.id }) {
+        splitSelection.removeAll { selectedId -> selectableServers.none { it.id == selectedId } }
+    }
     val accent = getServerColor(srv)
     val latency = if (srv.status == "online") "${srv.lastLatency}ms" else "offline"
     // Anchor width, so the dropdown spans the full bar instead of wrapping its widest row.
     val density = LocalDensity.current
     var anchorWidth by remember { mutableStateOf(0.dp) }
+    fun toggleSplitServer(serverId: Int) {
+        if (serverId in splitSelection) {
+            splitSelection.remove(serverId)
+        } else if (splitSelection.size < 2) {
+            splitSelection.add(serverId)
+        }
+    }
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -118,7 +133,17 @@ fun ServerSelectorBar(
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(8.dp))
                     .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(8.dp))
-                    .clickable { expanded = true }
+                    .clickable {
+                        if (allowSplitSelection && splitSelection.isEmpty()) {
+                            listOfNotNull(viewModel.multiSshSession1, viewModel.multiSshSession2)
+                                .map { it.serverId }
+                                .distinct()
+                                .take(2)
+                                .forEach(splitSelection::add)
+                            if (splitSelection.isEmpty()) splitSelection.add(srv.id)
+                        }
+                        expanded = true
+                    }
                     .padding(horizontal = 12.dp, vertical = 10.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -160,15 +185,65 @@ fun ServerSelectorBar(
             modifier = if (anchorWidth > 0.dp) Modifier.width(anchorWidth) else Modifier,
         ) {
             selectableServers.forEach { s ->
+                val checkedForSplit = s.id in splitSelection
                 DropdownMenuItem(
                     text = { Text("${s.name} — ${s.username}@${s.host}", fontFamily = OmniFonts.mono) },
                     leadingIcon = { StatusDot(online = s.status == "online", color = getServerColor(s), size = 8.dp) },
-                    onClick = {
-                        expanded = false
-                        if (s.id != viewModel.selectedServerId) {
-                            viewModel.selectedServerId = s.id
-                            onServerChange()
+                    trailingIcon = if (allowSplitSelection) {
+                        {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                if (checkedForSplit) {
+                                    Text(
+                                        "P${splitSelection.indexOf(s.id) + 1}",
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                                Checkbox(
+                                    checked = checkedForSplit,
+                                    enabled = checkedForSplit || splitSelection.size < 2,
+                                    onCheckedChange = { toggleSplitServer(s.id) },
+                                    modifier = Modifier.semantics {
+                                        contentDescription = if (checkedForSplit) {
+                                            "Remove ${s.name} from pane ${splitSelection.indexOf(s.id) + 1}"
+                                        } else {
+                                            "Add ${s.name} to split panes"
+                                        }
+                                    },
+                                )
+                            }
                         }
+                    } else null,
+                    onClick = {
+                        if (allowSplitSelection) {
+                            toggleSplitServer(s.id)
+                        } else {
+                            expanded = false
+                            if (s.id != viewModel.selectedServerId) {
+                                viewModel.selectedServerId = s.id
+                                onServerChange()
+                            }
+                        }
+                    },
+                )
+            }
+            if (allowSplitSelection) {
+                HorizontalDivider()
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            if (splitSelection.size == 2) "Load selected hosts into panes" else "Select two hosts for the panes",
+                            fontWeight = FontWeight.Bold,
+                        )
+                    },
+                    leadingIcon = { Icon(Icons.Filled.VerticalSplit, contentDescription = null) },
+                    trailingIcon = { Text("${splitSelection.size}/2", fontFamily = OmniFonts.mono) },
+                    enabled = splitSelection.size == 2,
+                    onClick = {
+                        val selected = splitSelection.toList()
+                        expanded = false
+                        onOpenSplit(selected)
                     },
                 )
             }
@@ -183,7 +258,7 @@ fun ServerSelectorBar(
 @Composable
 fun ActionStreamDialog(viewModel: AppViewModel) {
     if (!viewModel.actionStreamRunning && viewModel.actionStreamOutput.isBlank()) return
-    val clipboard = androidx.compose.ui.platform.LocalClipboardManager.current
+    val copyToClipboard = rememberClipboardCopy()
     AlertDialog(
         onDismissRequest = {
             // While still streaming, ignore back/outside-tap so ongoing output isn't lost.
@@ -218,7 +293,7 @@ fun ActionStreamDialog(viewModel: AppViewModel) {
             TextButton(
                 enabled = viewModel.actionStreamOutput.isNotBlank(),
                 onClick = {
-                    clipboard.setText(androidx.compose.ui.text.AnnotatedString(viewModel.actionStreamOutput))
+                    copyToClipboard(viewModel.actionStreamOutput)
                 },
             ) {
                 Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -938,7 +1013,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                             if (session?.persistent == true) {
                                 "Leave ${session.serverName} resumable, or terminate its tmux session and stop anything running there?"
                             } else {
-                                "Disconnect ${session?.serverName ?: "this terminal session"}? Anything still running in that terminal will be stopped."
+                                "Keep ${session?.serverName ?: "this terminal session"} connected in the background, or disconnect and stop anything running in that terminal?"
                             }
                         )
                     },
@@ -962,6 +1037,15 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                                     }
                                 ) {
                                     Text("Leave resumable")
+                                }
+                            } else if (session != null) {
+                                TextButton(
+                                    onClick = {
+                                        viewModel.sendSessionToBackground(sessionId)
+                                        viewModel.cancelPendingDisconnect()
+                                    }
+                                ) {
+                                    Text("Send to background")
                                 }
                             }
                             TextButton(onClick = { viewModel.cancelPendingDisconnect() }) { Text("Cancel") }
@@ -1554,9 +1638,9 @@ fun ServersMainView(viewModel: AppViewModel) {
                                             overflow = TextOverflow.Ellipsis,
                                             modifier = Modifier.weight(1f, fill = false),
                                         )
-                                        if (!server.groupName.isNullOrBlank()) {
+                                        server.groupName?.takeIf { it.isNotBlank() }?.let { groupName ->
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            OmniTag(server.groupName!!, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            OmniTag(groupName, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     }
 
@@ -1946,7 +2030,7 @@ fun AddServerSheet(
     // saved value" (or "remove it" when the matching forget* flag is set), keeping saved passwords out
     // of the UI. For a DUPLICATE there is no saved row to fall back to, so the source's secrets ARE
     // seeded here — that's the whole point of "reuse credentials" — and travel through addServer().
-    var password by remember { mutableStateOf(if (isDuplicate) prefillFrom?.authPassword ?: "" else "") }
+    var password by remember { mutableStateOf(if (isDuplicate) prefillFrom.authPassword ?: "" else "") }
     var forgetPassword by remember { mutableStateOf(false) }
     var selectedKey by remember { mutableStateOf(src?.authKeyAlias ?: "") }
     var selectedProfileId by remember { mutableStateOf<Int?>(src?.authProfileId) }
@@ -1959,14 +2043,14 @@ fun AddServerSheet(
     var compression by remember { mutableStateOf(src?.sshCompression ?: false) }
     var persistentSession by remember { mutableStateOf(src?.persistentSession ?: false) }
     var agentForwarding by remember { mutableStateOf(src?.agentForwarding ?: false) }
-    var sudoPassword by remember { mutableStateOf(if (isDuplicate) prefillFrom?.sudoPassword ?: "" else "") }
+    var sudoPassword by remember { mutableStateOf(if (isDuplicate) prefillFrom.sudoPassword else "") }
     var forgetSudoPassword by remember { mutableStateOf(false) }
     val hasStoredSudoPassword = !serverToEdit?.sudoPassword.isNullOrEmpty()
     var proxyType by remember { mutableStateOf(src?.proxyType ?: "none") }
     var proxyHost by remember { mutableStateOf(src?.proxyHost ?: "") }
     var proxyPort by remember { mutableStateOf(src?.proxyPort?.takeIf { it > 0 }?.toString() ?: "") }
     var proxyUser by remember { mutableStateOf(src?.proxyUser ?: "") }
-    var proxyPassword by remember { mutableStateOf(if (isDuplicate) prefillFrom?.proxyPassword ?: "" else "") }
+    var proxyPassword by remember { mutableStateOf(if (isDuplicate) prefillFrom.proxyPassword else "") }
     var forgetProxyPassword by remember { mutableStateOf(false) }
     val hasStoredProxyPassword = !serverToEdit?.proxyPassword.isNullOrEmpty()
     var proxyKeyAlias by remember { mutableStateOf(src?.proxyKeyAlias ?: "") }
@@ -2100,7 +2184,7 @@ fun AddServerSheet(
                     .heightIn(max = 560.dp)
                     .verticalScroll(rememberScrollState())
             ) {
-                TabRow(selectedTabIndex = activeTab) {
+                PrimaryTabRow(selectedTabIndex = activeTab) {
                     Tab(selected = activeTab == 0, onClick = { activeTab = 0 }) { Text("Connection", fontSize = 12.sp, modifier = Modifier.padding(8.dp)) }
                     Tab(selected = activeTab == 1, onClick = { activeTab = 1 }) { Text("Credentials", fontSize = 12.sp, modifier = Modifier.padding(8.dp)) }
                     Tab(selected = activeTab == 2, onClick = { activeTab = 2 }) { Text("Advanced", fontSize = 12.sp, modifier = Modifier.padding(8.dp)) }

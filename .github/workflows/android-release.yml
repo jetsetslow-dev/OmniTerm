@@ -1,5 +1,10 @@
 name: Android build & publish
 
+env:
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+
 # One workflow for both build types:
 #   - Manual "Run workflow": pick build_type = release (default) or debug.
 #       release: signed AAB + source-available APK, optional GitHub Release + Play upload.

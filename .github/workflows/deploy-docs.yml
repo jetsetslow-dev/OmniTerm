@@ -1,5 +1,10 @@
 name: Deploy docs to Pages
 
+env:
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+
 # Publishes the /docs site (landing page + app-ads.txt) to GitHub Pages.
 # Runs on pushes to main that touch /docs, and can be triggered manually.
 on:

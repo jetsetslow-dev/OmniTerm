@@ -56,6 +56,6 @@ dependencyResolutionManagement {
   }
 }
 
-rootProject.name = "My Application"
+rootProject.name = "OmniTerm"
 
 include(":app")

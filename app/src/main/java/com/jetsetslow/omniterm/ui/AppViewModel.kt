@@ -1185,6 +1185,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val multiSshSession2: ShellSession? get() = activeSessions.find { it.id == multiSshSessionId2 }
     var multiSshLayout by mutableStateOf(com.jetsetslow.omniterm.ui.MultiSshLayout.SideBySide)
     var multiSshFocusedPane by mutableStateOf(1)
+    private val pendingMultiSshConnections = ArrayDeque<Pair<Int, Int>>()
 
     val isMultiSsh: Boolean get() = activeSshTab == 1
     val focusedTerminalSession: ShellSession?
@@ -1214,6 +1215,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     /** Leave split view. The focused pane's session becomes the single-session current session. */
     fun exitMultiSsh() {
         if (activeSshTab == 0) return
+        pendingMultiSshConnections.clear()
         val keep = multiSshPaneSession(multiSshFocusedPane)?.id
             ?: multiSshSessionId1 ?: multiSshSessionId2
         activeSshTab = 0
@@ -1244,6 +1246,53 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (sessionId != null && sessionId == otherSessionId) return
         if (pane == 1) multiSshSessionId1 = sessionId else multiSshSessionId2 = sessionId
         if (sessionId != null) setMultiSshFocus(pane)
+    }
+
+    /**
+     * Open two selected hosts directly in split view. Existing live sessions are reused; any
+     * missing sessions are connected one at a time because the SSH setup flow (including host-key
+     * and tmux prompts) intentionally has a single foreground owner.
+     */
+    fun openMultiSshForServers(serverIds: List<Int>) {
+        val selected = serverIds.distinct().take(2)
+        if (selected.size != 2 || isTerminalConnecting) return
+
+        pendingMultiSshConnections.clear()
+        activeSshTab = 1
+        multiSshSessionId1 = null
+        multiSshSessionId2 = null
+        multiSshFocusedPane = 1
+
+        val assignedSessionIds = mutableSetOf<String>()
+        selected.forEachIndexed { index, serverId ->
+            val pane = index + 1
+            val existing = activeSessions.firstOrNull {
+                it.serverId == serverId && it.isConnected && it.id !in assignedSessionIds
+            }
+            if (existing != null) {
+                assignedSessionIds.add(existing.id)
+                if (pane == 1) multiSshSessionId1 = existing.id else multiSshSessionId2 = existing.id
+            } else if (servers.value.any { it.id == serverId }) {
+                pendingMultiSshConnections.addLast(pane to serverId)
+            }
+        }
+        startNextMultiSshConnection()
+    }
+
+    private fun startNextMultiSshConnection() {
+        if (isTerminalConnecting || !isMultiSsh) return
+        while (pendingMultiSshConnections.isNotEmpty()) {
+            val (pane, serverId) = pendingMultiSshConnections.removeFirst()
+            if (multiSshPaneSession(pane) != null) continue
+            val server = servers.value.find { it.id == serverId } ?: continue
+            multiSshFocusedPane = pane
+            selectedServerId = serverId
+            connectTerminal(server, forceDisablePersistence = false) { connected ->
+                if (connected) startNextMultiSshConnection() else pendingMultiSshConnections.clear()
+            }
+            return
+        }
+        multiSshFocusedPane = if (multiSshSession1 != null) 1 else 2
     }
 
     /** Clear a pane's session id when its session is torn down, so a stale id doesn't linger. */
@@ -3553,6 +3602,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun cancelConnect() {
+        pendingMultiSshConnections.clear()
         terminalConnectGeneration++
         terminalConnectJob?.cancel()
         terminalConnectJob = null
@@ -3598,7 +3648,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun dismissOfflineConnectPrompt() { offlineConnectPromptServer = null }
 
-    private fun connectTerminal(srv: ServerEntity, forceDisablePersistence: Boolean, initialCommand: String? = null) {
+    private fun connectTerminal(
+        srv: ServerEntity,
+        forceDisablePersistence: Boolean,
+        initialCommand: String? = null,
+        onFinished: ((Boolean) -> Unit)? = null,
+    ) {
         if (isTerminalConnecting) return
         // Capture the destination now. Split-pane focus is still interactive while a connection is
         // in flight; reading it only after SSH completes lets a harmless focus tap redirect the new
@@ -3729,6 +3784,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     isTerminalConnecting = false
                     terminalConnectJob = null
                     terminalConnectionPhase = "Connecting…"
+                    onFinished?.invoke(setupComplete)
                 }
             }
         }
@@ -3771,6 +3827,37 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (emulator.scrollbackRowCount() > 0) return
             emulator.feed(history.replace("\n", "\r\n").toByteArray())
             emulator.feed("\r\n".repeat(emulator.rows).toByteArray())
+        }
+    }
+
+    /**
+     * Paint the currently visible tmux pane into a fresh emulator before the interactive attach
+     * starts delivering output. tmux may not redraw an unchanged pane immediately, which used to
+     * leave a resumed session blank until an IME resize sent SIGWINCH and forced a repaint.
+     */
+    private suspend fun paintTmuxVisibleScreen(
+        emulator: TerminalEmulator,
+        creds: SshCredentials,
+        tmuxName: String,
+    ): Boolean {
+        return try {
+            val screenResult = sshTransport.exec(creds, RemoteCommands.tmuxCaptureScreenCommand(tmuxName))
+            check(!screenResult.startsWith("SSH Error:")) { screenResult }
+            val cursorResult = sshTransport.exec(creds, RemoteCommands.tmuxCursorQuery(tmuxName))
+            check(!cursorResult.startsWith("SSH Error:")) { cursorResult }
+            currentCoroutineContext().ensureActive()
+            val cursor = cursorResult.trim().split(' ')
+            val cx = cursor.getOrNull(0)?.toIntOrNull() ?: 0
+            val cy = cursor.getOrNull(1)?.toIntOrNull() ?: 0
+            val repaint = "\u001B[r\u001B[0m\u001B[2J\u001B[H" +
+                screenResult.trimEnd('\n').replace("\n", "\r\n") +
+                "\u001B[${cy + 1};${cx + 1}H\u001B[0m"
+            synchronized(emulator) { emulator.feed(repaint.toByteArray()) }
+            true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
         }
     }
 
@@ -4110,13 +4197,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun resumePersistentSession(tmuxName: String) {
         val existingSession = activeSessions.find { it.tmuxName == tmuxName }
         if (existingSession != null) {
-            attachSession(existingSession.id)
+            if (isMultiSsh) assignMultiSshPane(multiSshFocusedPane, existingSession.id)
+            else attachSession(existingSession.id)
             return
         }
         val sessionEntity = restorablePersistentSessions.find { it.tmuxName == tmuxName } ?: return
         val srv = servers.value.find { it.id == sessionEntity.serverId } ?: return
 
         if (isTerminalConnecting) return
+        val targetMultiSshPane = multiSshFocusedPane.takeIf { activeSshTab == 1 }
         isTerminalConnecting = true
         terminalConnectError = null
         terminalConnectionPhase = "Connecting…"
@@ -4161,13 +4250,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 shellSession.tmuxName = tmuxName
                 shellSession.controlMode = tmuxControlMode
                 emulator.setCaptureAlternateScreenScrollback(!shellSession.controlMode)
-                if (shellSession.controlMode) {
+                val initialScreenPainted = if (shellSession.controlMode) {
                     session.write(RemoteCommands.tmuxControlAttachCommand(tmuxName, terminalScrollbackLimit).toByteArray())
+                    false
                 } else {
                     // Resume re-attaches an existing session with a fresh emulator: seed its local
-                    // scrollback from the pane's tmux history so back-scroll shows the real past.
+                    // scrollback from the pane's tmux history, then paint the current screen before
+                    // attaching so the UI never waits for a resize-triggered tmux redraw.
                     seedTmuxHistory(emulator, creds, tmuxName)
+                    val painted = paintTmuxVisibleScreen(emulator, creds, tmuxName)
                     session.write(RemoteCommands.tmuxAttachCommand(tmuxName, terminalScrollbackLimit).toByteArray())
+                    painted
                 }
                 check(!session.closed.value) { "SSH channel closed while attaching tmux" }
 
@@ -4176,13 +4269,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 openedSession = null
                 withContext(kotlinx.coroutines.Dispatchers.Main) {
                     check(attemptGeneration == terminalConnectGeneration) { "Connection attempt was superseded" }
-                    if (activeSshTab == 1) {
-                        if (multiSshFocusedPane == 1) multiSshSessionId1 = shellSession.id
+                    if (activeSshTab == 1 && targetMultiSshPane != null) {
+                        if (targetMultiSshPane == 1) multiSshSessionId1 = shellSession.id
                         else multiSshSessionId2 = shellSession.id
                     } else {
                         currentSessionId = shellSession.id
                     }
                 }
+                if (initialScreenPainted) TerminalSessionManager.publishTerminalSnapshot(shellSession)
                 wireSessionIo(shellSession)
                 if (shellSession.controlMode) initControlModeSession(shellSession, creds)
                 setupComplete = true
@@ -4969,12 +5063,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun sendToBackground() {
-        val s = terminalActionSession
-        if (s?.persistent == true) {
-            leaveSessionResumable(s.id)
-            return
-        }
-        if (isMultiSsh && s != null) clearMultiSshRefsFor(s.id) else currentSessionId = null
+        val s = terminalActionSession ?: return
+        sendSessionToBackground(s.id)
+    }
+
+    /** Keep a live SSH channel running, but remove it from the visible terminal pane. */
+    fun sendSessionToBackground(sessionId: String) {
+        val s = activeSessions.find { it.id == sessionId } ?: return
+        if (isMultiSsh) clearMultiSshRefsFor(s.id)
+        if (currentSessionId == s.id) currentSessionId = null
         // Stay on Shell — ShellScreen shows SessionPicker when currentSession==null && activeSessions.isNotEmpty()
         // Always start the service so per-session notifications with Disconnect buttons appear
         val connected = activeSessions.filter { it.isConnected }
