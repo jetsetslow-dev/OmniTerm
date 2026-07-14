@@ -191,6 +191,18 @@ private const val RECONNECT_MAX_ATTEMPTS = 12
  */
 internal fun isCleanShellExit(exitStatus: Int?): Boolean = exitStatus != null && exitStatus >= 0
 
+/**
+ * A shell can report its remote EOF/exit status just before the output collector gets back to the
+ * main thread and removes its [ShellSession]. During that short window [ShellSession.isConnected]
+ * is stale. Navigation must not offer to disconnect/background that already-finished shell, or a
+ * split view with one remaining host produces a second, bogus confirmation dialog.
+ */
+internal fun isLiveTerminalForNavigation(
+    isConnected: Boolean,
+    remoteExited: Boolean,
+    exitStatus: Int?,
+): Boolean = isConnected && !remoteExited && !isCleanShellExit(exitStatus)
+
 enum class Screen {
     Servers,
     Fleet,
@@ -1193,6 +1205,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val terminalActionSession: ShellSession?
         get() = focusedTerminalSession ?: if (isMultiSsh) (multiSshSession1 ?: multiSshSession2) else null
 
+    /**
+     * The foreground session that still needs a decision before leaving the terminal screen.
+     * Unlike [terminalActionSession], this ignores a pane whose remote shell has already exited but
+     * whose main-thread cleanup has not run yet, and falls through to the other live split pane.
+     */
+    val terminalNavigationSession: ShellSession?
+        get() {
+            fun ShellSession.isLive() = isLiveTerminalForNavigation(
+                isConnected = isConnected,
+                remoteExited = session.remoteExited.value,
+                exitStatus = session.exitStatus.value,
+            )
+
+            if (!isMultiSsh) return currentSession?.takeIf { it.isLive() }
+            val focused = multiSshPaneSession(multiSshFocusedPane)
+            if (focused?.isLive() == true) return focused
+            return sequenceOf(multiSshSession1, multiSshSession2)
+                .filterNotNull()
+                .firstOrNull { it.isLive() }
+        }
+
     /** The session for [pane] (1 or 2), or null if that pane is empty. */
     fun multiSshPaneSession(pane: Int): ShellSession? = if (pane == 1) multiSshSession1 else multiSshSession2
 
@@ -1301,7 +1334,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (multiSshSessionId2 == sessionId) multiSshSessionId2 = null
     }
 
-    val isTerminalConnected: Boolean get() = terminalActionSession?.isConnected == true
+    val isTerminalConnected: Boolean get() = terminalNavigationSession != null
     var isTerminalConnecting by mutableStateOf(false)
     // Error from an initial connect that never produced a session (bad creds, host down, …). Unlike
     // [terminalDisconnectError] this isn't tied to a session, so it can surface on the connect prompt.
@@ -5058,12 +5091,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun disconnectTerminal() {
-        val s = terminalActionSession ?: return
+        val s = terminalNavigationSession ?: return
         disconnectSession(s.id)
     }
 
     fun sendToBackground() {
-        val s = terminalActionSession ?: return
+        val s = terminalNavigationSession ?: return
         sendSessionToBackground(s.id)
     }
 
