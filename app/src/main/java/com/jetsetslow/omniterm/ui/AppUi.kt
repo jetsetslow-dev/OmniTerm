@@ -933,7 +933,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
 
             // Disconnect dialog safety check
             if (viewModel.showDisconnectTerminalDialog) {
-                val session = viewModel.terminalActionSession
+                val session = viewModel.terminalNavigationSession
                 AlertDialog(
                     onDismissRequest = {
                         viewModel.showDisconnectTerminalDialog = false
