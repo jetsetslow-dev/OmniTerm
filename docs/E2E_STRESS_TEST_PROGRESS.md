@@ -1,0 +1,114 @@
+# End-to-end stress-test progress
+
+Last updated: 2026-07-15
+
+This is the durable checkpoint for the current physical-device and disposable-lab stress-test campaign. Update it after each verified fix so work can stop and resume without repeating expensive runs.
+
+## Safety boundaries
+
+- Never commit or paste values from `secrets/hosts.txt` or `secrets/wifi.txt`. The whole `secrets/` directory is ignored.
+- Treat the public host as read-only. Run destructive, package, container, proxy, and file-transfer experiments only on the disposable Raspberry Pi lab.
+- Pass lab addresses and credentials as instrumentation arguments at runtime; do not hard-code them in tests, logs, screenshots, or recordings.
+- Use test ads and the configured test-device identifier during device testing. Do not include the identifier in public recordings or repository files.
+
+## Verified on the physical Android device
+
+### Terminal and session lifecycle
+
+- `E2eTerminalStressTest` passed in 75.681 seconds.
+  - 3,500-line ordinary shell output and 4,500 wide tmux lines, including ANSI and Unicode.
+  - 120 resize bursts.
+  - Mixed ordinary/tmux splits in both pane orders.
+  - Exactly one leave prompt for the one remaining live pane.
+  - Ordinary-session background traffic and tmux park/restore with history.
+  - Scroll isolation and reverse-order destructive disconnect.
+- `E2eTerminalLifecycleStressTest` passed in 41.609 seconds.
+  - Mixed ordinary/tmux split across Home, remote output, screen off/on, keyguard dismissal, configuration recreation, Activity close, and Activity relaunch.
+  - Pane order, layout, focus, and both live sessions were restored; post-relaunch input succeeded in both panes.
+- The terminal navigation matrix has a deterministic 10,000-case unit test covering mixed session types, pane orders, and leave actions.
+- Large tmux replay is attached and painted immediately while history hydrates in the background; the 500 KiB replay timeout regression test passes.
+
+### Compose builder, YAML, and syntax highlighting
+
+- `E2eComposeBuilderUiStressTest` passed in 49.661 seconds.
+  - Lossless parse/render for a 335,783-byte, 11,635-line, 400-service Compose fixture.
+  - Comments, anchors, profiles, health checks, mappings, block strings, Unicode, secrets, configs, and custom build structures.
+  - Large visual-mode virtualization and paged raw-editor navigation.
+  - Unsaved edits across portrait and landscape recreation.
+  - Full-screen editor Back behavior and dirty raw-to-visual confirmation.
+- The fixture passes `docker compose config -q` in the disposable lab.
+- Flow-style top-level `volumes` and `networks` parsing has a regression test preventing header loss during a no-op render.
+- Syntax/editor unit coverage includes malformed input, quotes, comments, URLs, anchors, Unicode, shell escaping, the exact 200,000-character paging boundary, and page clamping.
+
+### Network and SSH paths
+
+- `E2eNetworkToolsTest` passed against the disposable lab.
+  - Ping, traceroute, port probe, DNS, WHOIS, speed test, and LAN scan.
+  - Real HTTP through local forwarding and dynamic SOCKS5 forwarding.
+- SOCKS forwarding and jump-host host-key alias handling have regression coverage.
+- Disposable SSH, FTP, SMB, WebDAV, Docker, HTTP proxy, and SOCKS services were used; the public production host was not mutated.
+
+### Build verification
+
+- Focused CodeEditor, ComposeBuilder, terminal buffer/emulator/navigation, and SSH host-key tests passed.
+- `:app:assembleOpenSourceDebugAndroidTest` passed after adding all current device suites.
+
+## Implemented but not yet physically executed
+
+- `E2eAppSurfaceStressTest` compiles and is opt-in. It traverses every top-level screen and nested tab, cycles all app and terminal themes, exercises remote process/service/log/cron/Docker/SFTP loaders, Fleet broadcast, Settings dirty navigation, swipe carry-over, and orientation changes.
+
+Run it with:
+
+```bash
+adb shell am instrument -w \
+  -e class com.jetsetslow.omniterm.E2eAppSurfaceStressTest \
+  -e omniterm_e2e_surfaces yes \
+  com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+## Remaining critical coverage
+
+1. Run `E2eAppSurfaceStressTest`, diagnose any failure once, update this file, and commit a verified fix before moving to another surface.
+2. Exercise Podman deployment, malformed-Compose rollback, and large custom-image builds through both the visual builder and raw YAML UI.
+3. Test alert creation, firing, acknowledgement, mute/unmute, history, notifications, refresh, and auto-refresh under lifecycle and network churn.
+4. Perform a literal Recents swipe with live ordinary/tmux and mixed split sessions. Verify notification resume, background versus resumable semantics, and distinguish task removal from force-stop.
+5. Toggle Wi-Fi during terminal output, tmux restoration, proxy/jump-host connections, and file transfers; verify bounded retries and lossless UI recovery.
+6. Stress SFTP, SMB, FTP, and WebDAV browsing and operations: dual-pane navigation, upload/download/cancel, overwrite conflicts, bookmarks, refresh, large files, and lifecycle recreation.
+7. Cover all Settings combinations, backup/restore, app lock, battery-saver behavior, all themes, configuration changes, Fleet refresh/broadcast, and monitoring auto-refresh.
+8. Trigger a deliberate app-side crash in a controlled test build. Verify startup crash capture, About/history display, redaction, and safe clearing.
+9. Record a sanitized foreground-service-permission proof video. Use a clean test profile/host label, disable notification previews, clear Recents and notification history, crop status/navigation bars where possible, and review every frame before upload.
+10. Run the full unit/instrumentation/migration/static verification set, inspect PR checks, and remove disposable lab artifacts only after their evidence is no longer needed.
+
+## Resume commands
+
+Build and focused local verification:
+
+```bash
+./gradlew :app:testOpenSourceDebugUnitTest
+./gradlew :app:assembleOpenSourceDebug :app:assembleOpenSourceDebugAndroidTest
+```
+
+Install the current test build, replacing `<debug-apk>` and `<test-apk>` with paths reported by Gradle:
+
+```bash
+adb install -r <debug-apk>
+adb install -r <test-apk>
+```
+
+Run the previously verified opt-in suites:
+
+```bash
+adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eTerminalStressTest -e omniterm_e2e_terminal yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
+adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eTerminalLifecycleStressTest -e omniterm_e2e_terminal_lifecycle yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
+adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eComposeBuilderUiStressTest -e omniterm_e2e_compose_ui yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
+adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eNetworkToolsTest -e omniterm_e2e_network yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+`E2eLabSeedTest` requires runtime arguments sourced locally from the ignored secret files. Inspect its `requireArg` calls for the argument names and pass them without shell tracing or copying the resulting command into this document.
+
+## Checkpoint discipline
+
+- Before a costly run, record which unverified item it closes and what pass/fail result ends the iteration.
+- After a fix passes its narrow regression and relevant device path, update this document and create a signed incremental commit.
+- Push the branch and update the draft pull request after each coherent checkpoint.
+- Do not describe the app as exhaustively tested until every item above is either verified or explicitly accepted as an outstanding limitation.

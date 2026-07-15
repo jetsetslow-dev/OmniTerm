@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -186,6 +188,9 @@ private val TOP_ENTRY_CONFIG_KEYS = setOf(
     "ipam", "labels", "name",
 )
 
+private val FLOW_EXTERNAL_TRUE = Regex("(?:^|[,{]\\s*)external\\s*:\\s*true(?:\\s*[,}]|$)")
+private val FLOW_DRIVER = Regex("(?:^|[,{]\\s*)driver\\s*:\\s*([^,}]+)")
+
 private fun isValidPortMapping(value: String): Boolean {
     val raw = value.trim().removeSurrounding("\"").removeSurrounding("'")
     if (raw.isBlank()) return false
@@ -357,8 +362,9 @@ fun parseDockerComposeYaml(
 
         // ── top-level volumes: section ──
         if (inTopVolumes && !inServices && !inTopNetworks) {
-            if (content.endsWith(":") && !content.startsWith("-")) {
-                val keyName = content.removeSuffix(":").unquoteYaml()
+            if (content.contains(":") && !content.startsWith("-")) {
+                val keyName = content.substringBefore(":").trim().unquoteYaml()
+                val inlineValue = content.substringAfter(":").trim().stripYamlInlineComment()
                 // Only LIVE entries establish the section's indent scale: a manually commented
                 // entry ("  # db_storage:") see-throughs to a shifted indent and used to set a
                 // bogus scale, swallowing every live entry after it. Commented entries are
@@ -375,6 +381,7 @@ fun parseDockerComposeYaml(
                     currentTopVol = TopLevelVolumeDraft(
                         name = keyName,
                         isCommentedOut = isCommented,
+                        external = FLOW_EXTERNAL_TRUE.containsMatchIn(inlineValue),
                         srcStart = idx, srcEnd = idx,
                     )
                     continue
@@ -397,8 +404,9 @@ fun parseDockerComposeYaml(
 
         // ── top-level networks: section ──
         if (inTopNetworks && !inServices && !inTopVolumes) {
-            if (content.endsWith(":") && !content.startsWith("-")) {
-                val keyName = content.removeSuffix(":").unquoteYaml()
+            if (content.contains(":") && !content.startsWith("-")) {
+                val keyName = content.substringBefore(":").trim().unquoteYaml()
+                val inlineValue = content.substringAfter(":").trim().stripYamlInlineComment()
                 val isEntry = if (!isCommented) {
                     if (topSectionItemIndent == -1) topSectionItemIndent = indent
                     indent == topSectionItemIndent
@@ -411,6 +419,8 @@ fun parseDockerComposeYaml(
                     currentTopNet = TopLevelNetworkDraft(
                         name = keyName,
                         isCommentedOut = isCommented,
+                        driver = FLOW_DRIVER.find(inlineValue)?.groupValues?.get(1)?.trim()?.unquoteYaml().orEmpty(),
+                        external = FLOW_EXTERNAL_TRUE.containsMatchIn(inlineValue),
                         srcStart = idx, srcEnd = idx,
                     )
                     continue
@@ -847,6 +857,7 @@ fun composeRawEditsDiffer(rawText: String, draft: ComposeStackDraft, parsedBasel
 @Composable
 fun ComposeBuilder(viewModel: AppViewModel) {
     val active = viewModel.activeComposeDraft
+    val fullScreenEditorHost = LocalFullScreenEditorHost.current
     // STABLE seed key identifying a distinct edit session. It must NOT change on every keystroke —
     // otherwise mirroring edits back to the ViewModel (below) would re-seed the parsed baseline to
     // the already-edited draft, so the surgical diff would see "no changes" and silently drop edits
@@ -868,11 +879,31 @@ fun ComposeBuilder(viewModel: AppViewModel) {
         if (viewModel.activeComposeDraft !== draft) viewModel.activeComposeDraft = draft
     }
 
-    var rawMode by remember(seedKey) { mutableStateOf(false) }
-    var rawText by remember(seedKey) { mutableStateOf(draft.originalText ?: generateDockerComposeYaml(draft)) }
+    val restoredRawState = viewModel.activeComposeRawSeedKey == seedKey
+    var rawMode by remember(seedKey) {
+        mutableStateOf(restoredRawState && viewModel.activeComposeRawMode)
+    }
+    var rawText by remember(seedKey) {
+        mutableStateOf(
+            if (restoredRawState) viewModel.activeComposeRawText
+                ?: draft.originalText ?: generateDockerComposeYaml(draft)
+            else draft.originalText ?: generateDockerComposeYaml(draft)
+        )
+    }
+    // Persist in the same composition transaction. A queued LaunchedEffect from the previous tab
+    // could otherwise run after a fast tab switch and overwrite the new mode with stale state.
+    SideEffect {
+        viewModel.rememberComposeRawState(seedKey, rawText, rawMode)
+    }
     // When true, the Raw YAML editor opens as a full-screen overlay matching the SFTP file editor's
     // look/feel (same chrome, find/replace, go-to-line, word-wrap). Edits write straight to rawText.
     var rawFullScreen by remember(seedKey) { mutableStateOf(false) }
+
+    DisposableEffect(seedKey, fullScreenEditorHost) {
+        onDispose {
+            if (rawFullScreen) fullScreenEditorHost.dismiss()
+        }
+    }
 
     var deploying by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<Pair<Boolean, String>?>(null) }
@@ -898,13 +929,16 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                 "Discard changes?",
                 "You have unsaved changes to this stack. Discard them?",
                 confirmLabel = "Discard"
-            ) { viewModel.activeComposeDraft = null }
+            ) { viewModel.clearActiveComposeDraft() }
         } else {
-            viewModel.activeComposeDraft = null
+            viewModel.clearActiveComposeDraft()
         }
     }
 
-    BackHandler(enabled = true) {
+    // The full-screen code editor installs its own BackHandler. Disable the builder-level
+    // handler while that overlay is visible so Android Back closes only the editor instead of
+    // racing both handlers and incorrectly offering to discard the entire compose draft.
+    BackHandler(enabled = !rawFullScreen) {
         attemptClearOrExit()
     }
 
@@ -996,15 +1030,22 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                                     i == 1 && !rawMode -> {
                                         rawText = yamlToDeploy()    // sync visual → raw
                                         rawMode = true
+                                        viewModel.rememberComposeRawState(seedKey, rawText, true)
                                     }
                                     i == 0 && rawMode && composeRawEditsDiffer(rawText, draft, parsedBaseline) -> {
                                         confirm.ask(
                                             "Leave Raw YAML?",
                                             "Raw YAML edits are not applied to the visual form. Switch back and ignore those raw edits for deploy?",
                                             confirmLabel = "Switch",
-                                        ) { rawMode = false }
+                                        ) {
+                                            rawMode = false
+                                            viewModel.rememberComposeRawState(seedKey, rawText, false)
+                                        }
                                     }
-                                    else -> rawMode = i == 1
+                                    else -> {
+                                        rawMode = i == 1
+                                        viewModel.rememberComposeRawState(seedKey, rawText, rawMode)
+                                    }
                                 }
                             },
                             text = { Text(t) },
@@ -1023,7 +1064,31 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                     } else {
                         Spacer(Modifier.weight(1f))
                     }
-                    IconButton(onClick = { rawFullScreen = true }) {
+                    IconButton(onClick = {
+                        rawFullScreen = true
+                        fullScreenEditorHost.show {
+                            FullScreenCodeEditor(
+                                title = draft.fileName.ifBlank { "docker-compose.yml" },
+                                value = rawText,
+                                onValueChange = { rawText = it },
+                                onClose = {
+                                    rawFullScreen = false
+                                    fullScreenEditorHost.dismiss()
+                                },
+                                onSave = {
+                                    rawFullScreen = false
+                                    fullScreenEditorHost.dismiss()
+                                },
+                                subtitle = "${rawText.count { it == '\n' } + 1} lines · ${rawText.length} chars",
+                                dirty = false,
+                                canSave = true,
+                                saveLabel = "Done",
+                                fontSize = 12.sp,
+                                language = CodeLanguage.YAML,
+                                highlightMaxChars = viewModel.editorHighlightLimit,
+                            )
+                        }
+                    }) {
                         Icon(Icons.Filled.Fullscreen, contentDescription = "Edit full screen", tint = OmniColors.cyan)
                     }
                 }
@@ -1181,23 +1246,6 @@ fun ComposeBuilder(viewModel: AppViewModel) {
         }
     }
 
-        // Full-screen Raw YAML editor overlay — same chrome/operations as the SFTP file editor.
-        if (rawFullScreen && rawMode) {
-            FullScreenCodeEditor(
-                title = draft.fileName.ifBlank { "docker-compose.yml" },
-                value = rawText,
-                onValueChange = { rawText = it },
-                onClose = { rawFullScreen = false },
-                onSave = { rawFullScreen = false },
-                subtitle = "${rawText.count { it == '\n' } + 1} lines · ${rawText.length} chars",
-                dirty = false,
-                canSave = true,
-                saveLabel = "Done",
-                fontSize = 12.sp,
-                language = CodeLanguage.YAML,
-                highlightMaxChars = viewModel.editorHighlightLimit,
-            )
-        }
     }
 }
 
@@ -1277,80 +1325,126 @@ private fun VisualEditor(draft: ComposeStackDraft, onChange: (ComposeStackDraft)
         list[index] = transform(list[index])
         onChange(reconcileTopLevelVolumes(draft.copy(services = list)))
     }
+    fun removeSvc(index: Int) {
+        val list = draft.services.toMutableList()
+        list.removeAt(index)
+        onChange(reconcileTopLevelVolumes(draft.copy(services = list)))
+    }
+    fun addSvc() {
+        val list = draft.services.toMutableList()
+        list.add(ComposeServiceDraft(serviceName = "", isExpanded = true))
+        onChange(draft.copy(services = list))
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        draft.services.forEachIndexed { index, svc ->
-            OmniCard(
-                modifier = Modifier.fillMaxWidth(),
-                leftAccent = if (svc.isCommentedOut) OmniColors.textMuted else OmniColors.purple,
+        if (draft.services.size > LARGE_VISUAL_SERVICE_THRESHOLD) {
+            Text(
+                "${draft.services.size} services · list is virtualized for responsive editing",
+                fontSize = 11.sp,
+                color = OmniColors.textMuted,
+            )
+            LazyColumn(
+                modifier = Modifier.fillMaxWidth().height(560.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(
-                        Modifier.fillMaxWidth().clickable { updateSvc(index) { it.copy(isExpanded = !it.isExpanded) } },
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(
-                                if (svc.isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                                contentDescription = null, tint = OmniColors.cyan,
-                            )
-                            Spacer(Modifier.width(6.dp))
-                            Text(
-                                svc.serviceName.ifBlank { "Service ${index + 1}" },
-                                fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono,
-                                color = if (svc.isCommentedOut) OmniColors.textMuted else OmniColors.textPrimary,
-                            )
-                        }
-                        when {
-                            svc.image.isNotBlank() -> OmniTag(svc.image, color = OmniColors.cyan)
-                            svc.containerName.isNotBlank() -> OmniTag(svc.containerName, color = OmniColors.textMuted)
-                        }
-                    }
-
-                    if (svc.isExpanded) {
-                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text("Comment out", fontSize = 12.sp, color = OmniColors.textMuted)
-                                Switch(checked = svc.isCommentedOut, onCheckedChange = { v -> updateSvc(index) { it.copy(isCommentedOut = v) } })
-                            }
-                            IconButton(onClick = {
-                                val list = draft.services.toMutableList()
-                                list.removeAt(index)
-                                onChange(reconcileTopLevelVolumes(draft.copy(services = list)))
-                            }) { Icon(Icons.Filled.Delete, "Delete service", tint = OmniColors.red) }
-                        }
-
-                        Field("Service name", svc.serviceName, "web, db, api") { v -> updateSvc(index) { it.copy(serviceName = v) } }
-                        Field("Image", svc.image, "nginx:latest") { v -> updateSvc(index) { it.copy(image = v) } }
-                        Field("Container name", svc.containerName, "my-nginx") { v -> updateSvc(index) { it.copy(containerName = v) } }
-                        Field("Restart policy", svc.restart, "unless-stopped / always / no") { v -> updateSvc(index) { it.copy(restart = v) } }
-                        Field("Command", svc.command, "optional override") { v -> updateSvc(index) { it.copy(command = v) } }
-
-                        ListEditor("Ports (host:container)", svc.ports, "8080:80") { n -> updateSvc(index) { it.copy(ports = n) } }
-                        ListEditor("Environment (KEY=VALUE)", svc.environment, "NODE_ENV=production") { n -> updateSvc(index) { it.copy(environment = n) } }
-                        ListEditor("Volumes (host:container)", svc.volumes, "./data:/var/lib/data") { n -> updateSvc(index) { it.copy(volumes = n) } }
-                        ListEditor("Networks", svc.networks, "frontend") { n -> updateSvc(index) { it.copy(networks = n) } }
-                        ListEditor("Depends on", svc.dependsOn, "db") { n -> updateSvc(index) { it.copy(dependsOn = n) } }
-                    }
+                itemsIndexed(draft.services, key = { _, service -> service.id }) { index, svc ->
+                    ComposeServiceEditorCard(
+                        index = index,
+                        svc = svc,
+                        onUpdate = { transform -> updateSvc(index, transform) },
+                        onRemove = { removeSvc(index) },
+                    )
+                }
+                item(key = "add-service") {
+                    OmniButton(
+                        label = "Add service",
+                        color = OmniColors.green,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = ::addSvc,
+                    )
                 }
             }
+        } else {
+            draft.services.forEachIndexed { index, svc ->
+                ComposeServiceEditorCard(
+                    index = index,
+                    svc = svc,
+                    onUpdate = { transform -> updateSvc(index, transform) },
+                    onRemove = { removeSvc(index) },
+                )
+            }
+            OmniButton(
+                label = "Add service",
+                color = OmniColors.green,
+                modifier = Modifier.fillMaxWidth(),
+                onClick = ::addSvc,
+            )
         }
-
-        OmniButton(
-            label = "Add service",
-            color = OmniColors.green,
-            modifier = Modifier.fillMaxWidth(),
-            onClick = {
-                val list = draft.services.toMutableList()
-                list.add(ComposeServiceDraft(serviceName = "", isExpanded = true))
-                onChange(draft.copy(services = list))
-            },
-        )
-
         TopLevelSectionsEditor(draft, onChange)
     }
 }
+
+@Composable
+private fun ComposeServiceEditorCard(
+    index: Int,
+    svc: ComposeServiceDraft,
+    onUpdate: ((ComposeServiceDraft) -> ComposeServiceDraft) -> Unit,
+    onRemove: () -> Unit,
+) {
+    OmniCard(
+        modifier = Modifier.fillMaxWidth(),
+        leftAccent = if (svc.isCommentedOut) OmniColors.textMuted else OmniColors.purple,
+    ) {
+        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                Modifier.fillMaxWidth().clickable { onUpdate { it.copy(isExpanded = !it.isExpanded) } },
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        if (svc.isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
+                        contentDescription = null, tint = OmniColors.cyan,
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        svc.serviceName.ifBlank { "Service ${index + 1}" },
+                        fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono,
+                        color = if (svc.isCommentedOut) OmniColors.textMuted else OmniColors.textPrimary,
+                    )
+                }
+                when {
+                    svc.image.isNotBlank() -> OmniTag(svc.image, color = OmniColors.cyan)
+                    svc.containerName.isNotBlank() -> OmniTag(svc.containerName, color = OmniColors.textMuted)
+                }
+            }
+
+            if (svc.isExpanded) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Comment out", fontSize = 12.sp, color = OmniColors.textMuted)
+                        Switch(checked = svc.isCommentedOut, onCheckedChange = { v -> onUpdate { it.copy(isCommentedOut = v) } })
+                    }
+                    IconButton(onClick = onRemove) {
+                        Icon(Icons.Filled.Delete, "Delete service", tint = OmniColors.red)
+                    }
+                }
+                Field("Service name", svc.serviceName, "web, db, api") { v -> onUpdate { it.copy(serviceName = v) } }
+                Field("Image", svc.image, "nginx:latest") { v -> onUpdate { it.copy(image = v) } }
+                Field("Container name", svc.containerName, "my-nginx") { v -> onUpdate { it.copy(containerName = v) } }
+                Field("Restart policy", svc.restart, "unless-stopped / always / no") { v -> onUpdate { it.copy(restart = v) } }
+                Field("Command", svc.command, "optional override") { v -> onUpdate { it.copy(command = v) } }
+                ListEditor("Ports (host:container)", svc.ports, "8080:80") { n -> onUpdate { it.copy(ports = n) } }
+                ListEditor("Environment (KEY=VALUE)", svc.environment, "NODE_ENV=production") { n -> onUpdate { it.copy(environment = n) } }
+                ListEditor("Volumes (host:container)", svc.volumes, "./data:/var/lib/data") { n -> onUpdate { it.copy(volumes = n) } }
+                ListEditor("Networks", svc.networks, "frontend") { n -> onUpdate { it.copy(networks = n) } }
+                ListEditor("Depends on", svc.dependsOn, "db") { n -> onUpdate { it.copy(dependsOn = n) } }
+            }
+        }
+    }
+}
+
+private const val LARGE_VISUAL_SERVICE_THRESHOLD = 40
 
 @Composable
 private fun TopLevelSectionsEditor(draft: ComposeStackDraft, onChange: (ComposeStackDraft) -> Unit) {

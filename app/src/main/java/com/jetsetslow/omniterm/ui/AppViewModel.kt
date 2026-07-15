@@ -60,6 +60,9 @@ private const val BATTERY_SAVER_CHANNEL_ID = "battery_saver"
 /** Cap on the live action panel text: long-running streams keep only the most recent output. */
 private const val ACTION_STREAM_MAX_CHARS = 200_000
 
+/** Hard editor safety limit. Reads above it fail explicitly instead of silently truncating YAML. */
+private const val COMPOSE_EDITOR_MAX_CHARS = 5_000_000
+
 /** Cap per host for Fleet Broadcast output; long-running commands keep the latest tail only. */
 private const val BROADCAST_OUTPUT_MAX_CHARS = 120_000
 
@@ -211,6 +214,15 @@ internal data class TerminalNavigationCandidate(
     val remoteExited: Boolean,
     val exitStatus: Int?,
 )
+
+internal enum class TerminalLeaveAction { DISCONNECT, LEAVE_RESUMABLE, SEND_TO_BACKGROUND }
+
+/** One mixed split decision maps independently to the correct lifecycle action for each pane. */
+internal fun terminalLeaveAction(persistent: Boolean, disconnect: Boolean): TerminalLeaveAction = when {
+    disconnect -> TerminalLeaveAction.DISCONNECT
+    persistent -> TerminalLeaveAction.LEAVE_RESUMABLE
+    else -> TerminalLeaveAction.SEND_TO_BACKGROUND
+}
 
 /**
  * Return the foreground terminal ids that need one decision before navigation completes.
@@ -768,7 +780,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var selectedServerId: Int?
         get() = _selectedServerId
         set(value) {
-            if (value != _selectedServerId) activeComposeDraft = null
+            if (value != _selectedServerId) clearActiveComposeDraft()
             _selectedServerId = value
         }
     val selectedServer: ServerEntity?
@@ -1003,6 +1015,33 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var wolStatusRefreshTick by mutableStateOf(0)
         private set
     var activeComposeDraft by mutableStateOf<com.jetsetslow.omniterm.ui.ComposeStackDraft?>(null)
+    /** Raw Builder state is VM-owned so rotation/multi-window recreation cannot discard edits. */
+    var activeComposeRawText by mutableStateOf<String?>(null)
+        private set
+    var activeComposeRawMode by mutableStateOf(false)
+        private set
+    var activeComposeRawSeedKey by mutableStateOf<String?>(null)
+        private set
+
+    fun beginComposeDraft(draft: com.jetsetslow.omniterm.ui.ComposeStackDraft) {
+        activeComposeRawText = null
+        activeComposeRawMode = false
+        activeComposeRawSeedKey = null
+        activeComposeDraft = draft
+    }
+
+    fun rememberComposeRawState(seedKey: String, text: String, rawMode: Boolean) {
+        activeComposeRawSeedKey = seedKey
+        activeComposeRawText = text
+        activeComposeRawMode = rawMode
+    }
+
+    fun clearActiveComposeDraft() {
+        activeComposeDraft = null
+        activeComposeRawText = null
+        activeComposeRawMode = false
+        activeComposeRawSeedKey = null
+    }
 
     // ── Shared live-action output panel ──
     // Every button-triggered remote action (service start/stop/restart, Docker container and stack
@@ -1216,19 +1255,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // Parallel multi-session management
     val activeSessions get() = TerminalSessionManager.activeSessions
     var restorablePersistentSessions by mutableStateOf<List<com.jetsetslow.omniterm.data.PersistentSessionEntity>>(emptyList()); private set
-    var currentSessionId by mutableStateOf<String?>(null)
+    var currentSessionId: String?
+        get() = TerminalSessionManager.currentSessionId
+        set(value) { TerminalSessionManager.currentSessionId = value }
     val currentSession: ShellSession? get() = activeSessions.find { it.id == currentSessionId }
 
     // ── MultiSSH (split-screen) ──
     // activeSshTab: 0 = single-session terminal, 1 = split view with up to two panes.
     // Pane 1/2 track their own session ids; the focused pane receives keyboard + key-bar input.
-    var activeSshTab by mutableStateOf(0)
-    var multiSshSessionId1 by mutableStateOf<String?>(null)
-    var multiSshSessionId2 by mutableStateOf<String?>(null)
+    var activeSshTab: Int
+        get() = TerminalSessionManager.activeSshTab
+        set(value) { TerminalSessionManager.activeSshTab = value }
+    var multiSshSessionId1: String?
+        get() = TerminalSessionManager.multiSshSessionId1
+        set(value) { TerminalSessionManager.multiSshSessionId1 = value }
+    var multiSshSessionId2: String?
+        get() = TerminalSessionManager.multiSshSessionId2
+        set(value) { TerminalSessionManager.multiSshSessionId2 = value }
     val multiSshSession1: ShellSession? get() = activeSessions.find { it.id == multiSshSessionId1 }
     val multiSshSession2: ShellSession? get() = activeSessions.find { it.id == multiSshSessionId2 }
-    var multiSshLayout by mutableStateOf(com.jetsetslow.omniterm.ui.MultiSshLayout.SideBySide)
-    var multiSshFocusedPane by mutableStateOf(1)
+    var multiSshLayout: com.jetsetslow.omniterm.ui.MultiSshLayout
+        get() = TerminalSessionManager.multiSshLayout
+        set(value) { TerminalSessionManager.multiSshLayout = value }
+    var multiSshFocusedPane: Int
+        get() = TerminalSessionManager.multiSshFocusedPane
+        set(value) { TerminalSessionManager.multiSshFocusedPane = value }
     private val pendingMultiSshConnections = ArrayDeque<Pair<Int, Int>>()
 
     val isMultiSsh: Boolean get() = activeSshTab == 1
@@ -2282,12 +2333,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (cancelConnectionAttempt) cancelConnect()
         sessionIds.forEach { sessionId ->
             val session = activeSessions.find { it.id == sessionId } ?: return@forEach
-            if (disconnect) {
-                disconnectSession(sessionId)
-            } else if (session.persistent) {
-                leaveSessionResumable(sessionId)
-            } else {
-                sendSessionToBackground(sessionId)
+            when (terminalLeaveAction(session.persistent, disconnect)) {
+                TerminalLeaveAction.DISCONNECT -> disconnectSession(sessionId)
+                TerminalLeaveAction.LEAVE_RESUMABLE -> leaveSessionResumable(sessionId)
+                TerminalLeaveAction.SEND_TO_BACKGROUND -> sendSessionToBackground(sessionId)
             }
         }
         commitNavigation(target)
@@ -3964,12 +4013,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }.getOrNull()
 
     private suspend fun seedTmuxHistory(emulator: TerminalEmulator, creds: SshCredentials, tmuxName: String) {
-        val history = captureTmuxHistoryFull(creds, tmuxName)?.trimEnd('\n')
+        val history = withContext(Dispatchers.IO) {
+            captureTmuxHistoryFull(creds, tmuxName)
+        }?.trimEnd('\n')
         if (history.isNullOrBlank()) return
-        synchronized(emulator) {
-            if (emulator.scrollbackRowCount() > 0) return
-            emulator.feed(history.replace("\n", "\r\n").toByteArray())
-            emulator.feed("\r\n".repeat(emulator.rows).toByteArray())
+        // Large history can contain megabytes of ANSI and wide Unicode. Parsing it on Main froze
+        // the whole Activity during resume; the emulator is not observable until this call returns,
+        // so building it on the CPU dispatcher is safe.
+        withContext(Dispatchers.Default) {
+            synchronized(emulator) {
+                if (emulator.scrollbackRowCount() > 0) return@withContext
+                emulator.feed(history.replace("\n", "\r\n").toByteArray())
+                emulator.feed("\r\n".repeat(emulator.rows).toByteArray())
+            }
         }
     }
 
@@ -4021,7 +4077,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      * Returns the resulting change in total row count so the caller can shift its viewport
      * anchor and keep the content under the user's finger stationary; 0 when nothing changed.
      */
-    suspend fun resyncTmuxScrollbackFor(session: ShellSession?): Int {
+    suspend fun resyncTmuxScrollbackFor(
+        session: ShellSession?,
+        allowAlternateScreen: Boolean = false,
+    ): Int {
         session ?: return 0
         val creds = session.creds ?: return 0
         if (!session.persistent || !session.scrollbackDirty || !session.scrollbackSyncMutex.tryLock()) return 0
@@ -4030,7 +4089,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val cols: Int
             val rows: Int
             synchronized(emulator) {
-                if (emulator.isAlternateScreenActive()) return 0
+                if (!allowAlternateScreen && emulator.isAlternateScreenActive()) return 0
                 cols = emulator.cols
                 rows = emulator.rows
             }
@@ -4053,7 +4112,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 scratch.feed(history.replace("\n", "\r\n").toByteArray())
                 scratch.feed("\r\n".repeat(rows).toByteArray())
                 synchronized(emulator) {
-                    if (emulator.isAlternateScreenActive() || emulator.cols != cols) {
+                    if ((!allowAlternateScreen && emulator.isAlternateScreenActive()) || emulator.cols != cols) {
                         // The capture is valid only for the grid/mode observed at the start. Keep it
                         // dirty so a later scroll gesture can retry instead of trusting no-op data.
                         session.scrollbackDirty = true
@@ -4397,10 +4456,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     session.write(RemoteCommands.tmuxControlAttachCommand(tmuxName, terminalScrollbackLimit).toByteArray())
                     false
                 } else {
-                    // Resume re-attaches an existing session with a fresh emulator: seed its local
-                    // scrollback from the pane's tmux history, then paint the current screen before
-                    // attaching so the UI never waits for a resize-triggered tmux redraw.
-                    seedTmuxHistory(emulator, creds, tmuxName)
+                    // Paint the current pane and attach immediately. Potentially megabytes of old
+                    // history are hydrated after the live terminal is usable; making history a
+                    // connection prerequisite caused long blank/frozen resumes on slower devices.
                     val painted = paintTmuxVisibleScreen(emulator, creds, tmuxName)
                     session.write(RemoteCommands.tmuxAttachCommand(tmuxName, terminalScrollbackLimit).toByteArray())
                     painted
@@ -4421,7 +4479,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 if (initialScreenPainted) TerminalSessionManager.publishTerminalSnapshot(shellSession)
                 wireSessionIo(shellSession)
-                if (shellSession.controlMode) initControlModeSession(shellSession, creds)
+                if (shellSession.controlMode) {
+                    initControlModeSession(shellSession, creds)
+                } else {
+                    // The existing re-sync path captures and parses on background dispatchers, then
+                    // atomically adopts the finished scrollback without blocking terminal input/UI.
+                    shellSession.scrollbackDirty = true
+                    shellSession.historyHydrationJob = TerminalSessionManager.scope.launch {
+                        try {
+                            // A normal tmux client itself owns the outer alternate screen by the
+                            // time this background parse finishes. Initial hydration may still
+                            // replace only scrollback; adoptScrollbackFrom leaves that live screen
+                            // untouched. Later gesture-driven syncs keep the stricter TUI guard.
+                            resyncTmuxScrollbackFor(shellSession, allowAlternateScreen = true)
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            shellSession.scrollbackDirty = true
+                            android.util.Log.w("OmniTermSession", "Initial tmux history hydration failed", e)
+                        }
+                    }
+                }
                 setupComplete = true
                 noteSuccessfulSshSession()
                 TerminalSessionManager.updateKeepaliveCount()
@@ -5587,10 +5665,37 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      * Read an existing compose file's raw text so the builder can edit it surgically. Returns null
      * (and shows nothing) on transport failure; returns "" when the file does not exist yet.
      */
+    var composeFileReadError by mutableStateOf<String?>(null)
+        private set
+
     suspend fun readComposeFile(composeFilePath: String): String? {
         val srv = selectedServer ?: return null
-        val out = executeSshCommand(srv, RemoteCommands.composeRead(composeFilePath))
-        if (out.startsWith("SSH Error")) return null
+        composeFileReadError = null
+        val text = StringBuilder()
+        var tooLarge = false
+        val result = sshTransport.execStream(
+            buildCredentials(srv),
+            RemoteCommands.composeRead(composeFilePath),
+        ) { chunk ->
+            if (!tooLarge) {
+                if (text.length.toLong() + chunk.length <= COMPOSE_EDITOR_MAX_CHARS) {
+                    text.append(chunk)
+                } else {
+                    tooLarge = true
+                    text.setLength(0)
+                }
+            }
+        }
+        if (tooLarge) {
+            composeFileReadError =
+                "Compose file is larger than ${COMPOSE_EDITOR_MAX_CHARS / 1_000_000} MB; edit it on the host or split it into multiple files."
+            return null
+        }
+        if (result.startsWith("SSH Error") || text.startsWith("SSH Error")) {
+            composeFileReadError = cleanSshError(result)
+            return null
+        }
+        val out = text.toString()
         return if (out.trim() == "OMNITERM_NO_FILE") "" else out
     }
 

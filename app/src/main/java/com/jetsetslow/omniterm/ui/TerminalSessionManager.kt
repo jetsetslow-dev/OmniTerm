@@ -28,6 +28,19 @@ object TerminalSessionManager {
     /** The list of all active, background-capable SSH terminal sessions. */
     val activeSessions = mutableStateListOf<ShellSession>()
 
+    /**
+     * Process-scoped terminal attachment state. A Recents swipe destroys the Activity/ViewModel
+     * while the foreground service deliberately keeps SSH sessions alive; keeping pane ownership
+     * here lets the next Activity restore the same single/split arrangement instead of presenting
+     * two live sessions as unrelated background terminals.
+     */
+    var currentSessionId by mutableStateOf<String?>(null)
+    var activeSshTab by mutableStateOf(0)
+    var multiSshSessionId1 by mutableStateOf<String?>(null)
+    var multiSshSessionId2 by mutableStateOf<String?>(null)
+    var multiSshLayout by mutableStateOf(MultiSshLayout.SideBySide)
+    var multiSshFocusedPane by mutableStateOf(1)
+
     /** The count of currently connected sessions, used for keep-alive service logic. */
     var activeKeepaliveSessionsCount by mutableStateOf(0)
 
@@ -67,6 +80,7 @@ object TerminalSessionManager {
         }
         s.controlInitJob?.cancel()
         s.controlPaneRefreshJob?.cancel()
+        s.historyHydrationJob?.cancel()
         s.controlReplySignal.close()
         // close() is idempotent; doing it here guarantees the transport reader thread and the
         // SSH connection die with the session even if a caller forgot to close first. Run it off any
@@ -79,6 +93,7 @@ object TerminalSessionManager {
         s.resizeJob?.cancel()
         s.resizeChannel.close()
         activeSessions.remove(s)
+        clearUiReferences(s.id)
         updateKeepaliveCount()
         if (activeKeepaliveSessionsCount == 0) stopKeepAliveService()
         else startKeepAliveService() // Update remaining notifications
@@ -133,6 +148,23 @@ object TerminalSessionManager {
      */
     fun removeSession(session: ShellSession) {
         activeSessions.remove(session)
+        clearUiReferences(session.id)
+    }
+
+    private fun clearUiReferences(sessionId: String) {
+        if (currentSessionId == sessionId) currentSessionId = null
+        if (multiSshSessionId1 == sessionId) multiSshSessionId1 = null
+        if (multiSshSessionId2 == sessionId) multiSshSessionId2 = null
+        if (activeSessions.isEmpty()) resetUiAttachment()
+    }
+
+    private fun resetUiAttachment() {
+        currentSessionId = null
+        activeSshTab = 0
+        multiSshSessionId1 = null
+        multiSshSessionId2 = null
+        multiSshLayout = MultiSshLayout.SideBySide
+        multiSshFocusedPane = 1
     }
 
     /**
@@ -149,6 +181,7 @@ object TerminalSessionManager {
             }
             it.controlInitJob?.cancel()
             it.controlPaneRefreshJob?.cancel()
+            it.historyHydrationJob?.cancel()
             it.controlReplySignal.close()
             // Close off-thread: a synchronous JSch disconnect can block on network I/O and freeze
             // whatever thread (often Main) called clearAll().
@@ -160,5 +193,8 @@ object TerminalSessionManager {
             it.resizeChannel.close()
         }
         activeSessions.clear()
+        resetUiAttachment()
+        updateKeepaliveCount()
+        stopKeepAliveService()
     }
 }

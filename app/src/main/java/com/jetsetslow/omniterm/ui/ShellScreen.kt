@@ -3,6 +3,7 @@ package com.jetsetslow.omniterm.ui
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.content.res.Configuration
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -55,6 +56,7 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -326,12 +328,15 @@ private fun terminalPalette(key: String): TerminalPalette {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ShellScreen(viewModel: AppViewModel) {
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
     val chrome = shellChromePalette()
     val scheme = MaterialTheme.colorScheme
+    val compactIme = WindowInsets.isImeVisible &&
+        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val currentSession = viewModel.currentSession
     // The header identifies exactly the focused terminal. Do not fall back to the other split pane
     // when the focused pane is empty; that made the top host name actively misleading.
@@ -391,7 +396,7 @@ fun ShellScreen(viewModel: AppViewModel) {
                 // The overlaid header is now two rows (host info + action chips), so its height is
                 // measured rather than hardcoded — the terminal starts exactly below it.
                 val density = LocalDensity.current
-                var headerHeight by remember { mutableStateOf(64.dp) }
+                var headerHeight by remember(compactIme) { mutableStateOf(if (compactIme) 0.dp else 64.dp) }
                 Box(Modifier.fillMaxSize().padding(top = headerHeight)) {
                     when {
                         // Split view takes priority: it manages its own connecting/empty panes, so
@@ -412,7 +417,7 @@ fun ShellScreen(viewModel: AppViewModel) {
                         }
                     }
                 }
-                ServerSelectorBar(
+                if (!compactIme) ServerSelectorBar(
                     viewModel = viewModel,
                     // Offline hosts are hidden from the picker — force-connect lives on the Hosts tab.
                     onlineOnly = true,
@@ -557,7 +562,7 @@ fun ShellScreen(viewModel: AppViewModel) {
         // view it targets the focused pane (input routing already follows the focused session).
         val keyBarSession = if (viewModel.isMultiSsh) viewModel.multiSshPaneSession(viewModel.multiSshFocusedPane) else currentSession
         if (keyBarSession?.isConnected == true) {
-            TerminalKeyBar(viewModel)
+            TerminalKeyBar(viewModel, compact = compactIme)
         }
     }
 
@@ -1669,7 +1674,11 @@ private fun PaneTerminal(
                     } else {
                         // Preserve the entire clipboard/IME block, including every newline. The old
                         // path submitted only the first line and silently discarded the remainder.
-                        viewModel.pasteText(newText)
+                        // A software keyboard's Enter is different: it arrives as one newline, but
+                        // an interactive PTY expects the terminal Enter key (CR). Sending the raw LF
+                        // only moved the cursor and left the command pending until another Enter.
+                        if (isSingleTerminalEnter(newText)) viewModel.sendKey(TermKey.ENTER)
+                        else viewModel.pasteText(newText)
                     }
                     inputField = TextFieldValue("")
                     return@BasicTextField
@@ -2213,6 +2222,10 @@ private fun longestCommonAffix(old: String, new: String): Int {
 internal fun insertedCodePointDelta(old: String, new: String): Int =
     (new.codePointCount(0, new.length) - longestCommonAffix(old, new)).coerceAtLeast(0)
 
+/** True only for one IME Enter commit; multi-line clipboard/paste blocks stay byte-preserving. */
+internal fun isSingleTerminalEnter(text: String): Boolean =
+    text == "\n" || text == "\r" || text == "\r\n"
+
 private data class CursorGlyph(val text: String, val startColumn: Int, val width: Int)
 
 private fun rowGlyphAt(row: TermRow, targetCol: Int): CursorGlyph? {
@@ -2232,9 +2245,62 @@ private fun rowGlyphAt(row: TermRow, targetCol: Int): CursorGlyph? {
 }
 
 @Composable
-private fun TerminalKeyBar(viewModel: AppViewModel) {
+private fun TerminalKeyBar(viewModel: AppViewModel, compact: Boolean = false) {
     val chrome = shellChromePalette()
     var showSymbols by remember { mutableStateOf(false) }
+    if (compact) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(chrome.keyBackground)
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+        ) {
+            when {
+                showSymbols -> {
+                    listOf("~", "_", ".", ":", ";", "'", "\"", "`", "\$", "&", "*", "(", ")", "[", "]").forEach { symbol ->
+                        KeyCap(symbol, Modifier.weight(1f)) { viewModel.typeText(symbol) }
+                    }
+                    KeyCap("SYM", Modifier.weight(1f), active = true, activeColor = OmniColors.purple) {
+                        showSymbols = false
+                        viewModel.isFunctionSetVisible = false
+                    }
+                }
+                viewModel.isFunctionSetVisible -> {
+                    (1..12).forEach { number ->
+                        val key = when (number) {
+                            1 -> TermKey.F1; 2 -> TermKey.F2; 3 -> TermKey.F3; 4 -> TermKey.F4
+                            5 -> TermKey.F5; 6 -> TermKey.F6; 7 -> TermKey.F7; 8 -> TermKey.F8
+                            9 -> TermKey.F9; 10 -> TermKey.F10; 11 -> TermKey.F11; else -> TermKey.F12
+                        }
+                        KeyCap("F$number", Modifier.weight(1f)) { viewModel.sendKey(key) }
+                    }
+                    KeyCap("PGUP", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_UP) }
+                    KeyCap("PGDN", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_DOWN) }
+                    KeyCap("ESC", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ESC) }
+                    KeyCap("NAV", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) { viewModel.isFunctionSetVisible = false }
+                }
+                else -> {
+                    KeyCap("TAB", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.TAB) }
+                    KeyCap("ESC", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ESC) }
+                    KeyCap("CTRL", Modifier.weight(1f), active = viewModel.isCtrlPressed) { viewModel.isCtrlPressed = !viewModel.isCtrlPressed }
+                    KeyCap("↑", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.UP) }
+                    KeyCap("ALT", Modifier.weight(1f), active = viewModel.isAltPressed) { viewModel.isAltPressed = !viewModel.isAltPressed }
+                    KeyCap("/", Modifier.weight(1f)) { viewModel.typeText("/") }
+                    KeyCap("SYM", Modifier.weight(1f), active = true, activeColor = OmniColors.purple) { showSymbols = true }
+                    KeyCap("FN", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) { viewModel.isFunctionSetVisible = true }
+                    KeyCap("SHFT", Modifier.weight(1f), active = viewModel.isShiftPressed) { viewModel.isShiftPressed = !viewModel.isShiftPressed }
+                    KeyCap("HOME", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.HOME) }
+                    KeyCap("←", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.LEFT) }
+                    KeyCap("↓", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DOWN) }
+                    KeyCap("→", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.RIGHT) }
+                    KeyCap("END", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.END) }
+                    KeyCap("-", Modifier.weight(1f)) { viewModel.typeText("-") }
+                    KeyCap("↵", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ENTER) }
+                }
+            }
+        }
+        return
+    }
     Column(
         Modifier
             .fillMaxWidth()

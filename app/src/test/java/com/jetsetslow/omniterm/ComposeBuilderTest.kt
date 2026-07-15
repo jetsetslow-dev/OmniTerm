@@ -389,4 +389,29 @@ class ComposeBuilderTest {
         assertTrue(out.contains("# old_app:"))
         assertTrue(out.contains("#     - \"99999:80\""))
     }
+
+    @Test
+    fun flowStyleTopLevelEntriesRoundTripWithoutDeletingSectionHeaders() {
+        val yaml = """
+            services:
+              app:
+                image: busybox
+
+            networks:
+              front: { driver: bridge }
+              external-net: { external: true }
+
+            volumes:
+              data: { name: 'space containing data name' }
+              external-data: { external: true }
+        """.trimIndent()
+
+        val baseline = parseDockerComposeYaml(yaml, "flow")
+        assertEquals(listOf("front", "external-net"), baseline.topNetworks.map { it.name })
+        assertEquals("bridge", baseline.topNetworks.first().driver)
+        assertTrue(baseline.topNetworks.last().external)
+        assertEquals(listOf("data", "external-data"), baseline.topVolumes.map { it.name })
+        assertTrue(baseline.topVolumes.last().external)
+        assertEquals(yaml, renderComposeYaml(baseline.copy(), baseline))
+    }
 }

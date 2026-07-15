@@ -133,6 +133,19 @@ internal class JumpedSession(val target: Session, private val jump: Session) {
 }
 
 /**
+ * JSch normally verifies a host key against the socket endpoint. A jump-host target is dialled
+ * through an ephemeral localhost forward, so that endpoint is unstable and must never become the
+ * trust identity. Match JSch's direct-session naming instead: the bare host on port 22 and the
+ * bracketed host/port form for non-standard ports.
+ */
+internal fun logicalHostKeyAlias(host: String, port: Int): String =
+    if (port == 22) host else "[$host]:$port"
+
+internal fun pinJumpTargetToLogicalHost(session: Session, host: String, port: Int) {
+    session.setHostKeyAlias(logicalHostKeyAlias(host, port))
+}
+
+/**
  * Build (but do not connect) a target [Session] that reaches [creds.host]:[creds.port] through an
  * already-connected SSH jump host. The returned [JumpedSession] owns the jump session and MUST be
  * disconnected via [JumpedSession.disconnect] when the target session is torn down, otherwise the
@@ -194,7 +207,9 @@ internal fun buildJumpedJschSession(creds: SshCredentials, connectTimeoutMs: Int
             proxyType = "none",
         )
         val target = buildJschSession(targetCreds)
-        target.setConfig("HostKeyAlias", "${creds.host}:${creds.port}")
+        // Session.setHostKeyAlias is the JSch API that checkHost() actually reads. Setting a
+        // config entry named HostKeyAlias leaves the alias null and pins 127.0.0.1:<random-port>.
+        pinJumpTargetToLogicalHost(target, creds.host, creds.port)
         JumpedSession(target, jump)
     } catch (e: Throwable) {
         runCatching { jump.delPortForwardingL(lport) }

@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -51,6 +52,7 @@ import androidx.core.content.ContextCompat
 import androidx.appcompat.app.AppCompatActivity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.res.Configuration
 import com.jetsetslow.omniterm.billing.LicenseController
 import com.jetsetslow.omniterm.billing.LicenseState
 
@@ -464,8 +466,12 @@ fun MainAppScreen(viewModel: AppViewModel) {
     val context = LocalContext.current
     var backPressDisabledTime by remember { mutableStateOf(0L) }
     var showExitDialog by remember { mutableStateOf(false) }
+    val fullScreenEditorHost = remember { FullScreenEditorHost() }
 
-    BackHandler {
+    BackHandler(
+        enabled = fullScreenEditorHost.content == null &&
+            viewModel.edittingSftpFile == null && viewModel.edittingShareFile == null,
+    ) {
         if (!viewModel.navigateBack()) {
             val currentTime = System.currentTimeMillis()
             if (currentTime - backPressDisabledTime < 2000) {
@@ -508,7 +514,9 @@ fun MainAppScreen(viewModel: AppViewModel) {
     if (viewModel.isAppLocked && viewModel.isAppLockEnabled) {
         PinLockGateway(viewModel)
     } else {
-        AppCoreScaffold(viewModel)
+        CompositionLocalProvider(LocalFullScreenEditorHost provides fullScreenEditorHost) {
+            AppCoreScaffold(viewModel)
+        }
 
         // Global first-connect host key approval: must overlay every screen AND every dialog
         // (Add Server's Test Connection blocks on it), so it lives here, not in ShellScreen.
@@ -574,6 +582,11 @@ fun MainAppScreen(viewModel: AppViewModel) {
             )
             ConfirmHost(shareEditorConfirm)
         }
+
+        // Compose/YAML editors are requested from inside the Containers screen but rendered here,
+        // alongside the already-hoisted SFTP/share editors, so they receive the whole Activity
+        // window and the real IME insets.
+        fullScreenEditorHost.content?.invoke()
     }
 }
 
@@ -754,7 +767,7 @@ fun PinLockGateway(viewModel: AppViewModel) {
     }
 }
 
-@OptIn(ExperimentalMaterialApi::class)
+@OptIn(ExperimentalMaterialApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun AppCoreScaffold(viewModel: AppViewModel) {
     val context = LocalContext.current
@@ -797,6 +810,13 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
     fun activeFor(key: Any) = key == current || (key == Screen.Tools && isToolSubScreen(current))
     val activeColor = navItems.firstOrNull { activeFor(it.key) }?.color ?: OmniColors.cyan
     val alerts by viewModel.activeAlerts.collectAsStateWithLifecycle()
+    // A landscape software keyboard can consume over half of the physical display. Keeping both
+    // global bars mounted in that state left the terminal with zero drawable rows (and made split
+    // panes effectively unusable). Terminal-local controls remain available; the global chrome
+    // returns as soon as the IME closes.
+    val compactTerminalIme = viewModel.currentScreen == Screen.Shell &&
+        WindowInsets.isImeVisible &&
+        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     val pullRefreshState = rememberPullRefreshState(
         refreshing = viewModel.isRefreshing,
@@ -805,7 +825,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
 
     Scaffold(
         topBar = {
-            Column {
+            if (!compactTerminalIme) Column {
                 OmniAppBar(
                     activeColor = activeColor,
                     alertCount = if (viewModel.alertsEnabled) {
@@ -824,7 +844,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
             }
         },
         bottomBar = {
-            Column {
+            if (!compactTerminalIme) Column {
                 if (showMonetizationUi && !licenseState.adsRemoved) {
                     AdBanner()
                 }

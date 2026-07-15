@@ -117,6 +117,8 @@ class ShellSession(
     @Volatile var scrollbackDirty: Boolean = false
     /** Atomically excludes overlapping capture-pane re-syncs for this session. */
     val scrollbackSyncMutex = Mutex()
+    /** Initial large tmux-history hydration; session-owned so closing never leaves parser work behind. */
+    var historyHydrationJob: Job? = null
 
     // ── tmux control mode (experimental) ──
     /**

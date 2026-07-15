@@ -3,6 +3,8 @@ package com.jetsetslow.omniterm
 import com.jetsetslow.omniterm.ui.isLiveTerminalForNavigation
 import com.jetsetslow.omniterm.ui.TerminalNavigationCandidate
 import com.jetsetslow.omniterm.ui.terminalNavigationSessionIds
+import com.jetsetslow.omniterm.ui.terminalLeaveAction
+import com.jetsetslow.omniterm.ui.TerminalLeaveAction
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -103,6 +105,24 @@ class TerminalNavigationSessionTest {
                 candidates = sessions,
             ),
         )
+    }
+
+    @Test
+    fun mixedPaneTypesMapToTheirOwnLifecycleActionInEitherOrder() {
+        val paneTypes = listOf(false, true)
+        for (orderedTypes in listOf(paneTypes, paneTypes.reversed())) {
+            assertEquals(
+                orderedTypes.map {
+                    if (it) TerminalLeaveAction.LEAVE_RESUMABLE
+                    else TerminalLeaveAction.SEND_TO_BACKGROUND
+                },
+                orderedTypes.map { terminalLeaveAction(persistent = it, disconnect = false) },
+            )
+            assertEquals(
+                listOf(TerminalLeaveAction.DISCONNECT, TerminalLeaveAction.DISCONNECT),
+                orderedTypes.map { terminalLeaveAction(persistent = it, disconnect = true) },
+            )
+        }
     }
 
     @Test
