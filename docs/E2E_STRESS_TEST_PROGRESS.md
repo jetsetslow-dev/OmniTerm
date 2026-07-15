@@ -39,6 +39,12 @@ This is the durable checkpoint for the current physical-device and disposable-la
 - The fixture passes `docker compose config -q` in the disposable lab.
 - Flow-style top-level `volumes` and `networks` parsing has a regression test preventing header loss during a no-op render.
 - Syntax/editor unit coverage includes malformed input, quotes, comments, URLs, anchors, Unicode, shell escaping, the exact 200,000-character paging boundary, and page clamping.
+- `E2eComposeDeployStressTest` passed on the physical device in 54.904 seconds.
+  - A Docker custom-image stack deployed through Raw YAML and a Podman stack deployed through the visual builder.
+  - Malformed YAML failed safely and restored the previous remote file; successful and failed no-edit deployments preserved all three fixtures byte-for-byte.
+  - The draft remained bound to its originating host even when that host had stale offline status, preventing an Infra recomposition from silently deploying through another selected host.
+  - Pinned Podman actions prefer native `podman-compose`; this avoids `podman compose` dispatching to an installed Docker Compose plugin and the wrong runtime socket.
+- The disposable Podman fixture retains read-only filesystems, tmpfs mounts, labels, networks, dependencies, and rootless execution. Its invalid forced nginx UID was removed after an isolated provider run proved it caused a permission failure and an indefinite dependency wait.
 
 ### Network and SSH paths
 
@@ -61,15 +67,14 @@ This is the durable checkpoint for the current physical-device and disposable-la
 
 ## Remaining critical coverage
 
-1. Exercise Podman deployment, malformed-Compose rollback, and large custom-image builds through both the visual builder and raw YAML UI.
-2. Test alert creation, firing, acknowledgement, mute/unmute, history, notifications, refresh, and auto-refresh under lifecycle and network churn.
-3. Perform a literal Recents swipe with live ordinary/tmux and mixed split sessions. Verify notification resume, background versus resumable semantics, and distinguish task removal from force-stop.
-4. Toggle Wi-Fi during terminal output, tmux restoration, proxy/jump-host connections, and file transfers; verify bounded retries and lossless UI recovery.
-5. Stress SFTP, SMB, FTP, and WebDAV browsing and operations: dual-pane navigation, upload/download/cancel, overwrite conflicts, bookmarks, refresh, large files, and lifecycle recreation.
-6. Cover all Settings combinations, backup/restore, app lock, battery-saver behavior, all themes, configuration changes, Fleet refresh/broadcast, and monitoring auto-refresh.
-7. Trigger a deliberate app-side crash in a controlled test build. Verify startup crash capture, About/history display, redaction, and safe clearing.
-8. Record a sanitized foreground-service-permission proof video. Use a clean test profile/host label, disable notification previews, clear Recents and notification history, crop status/navigation bars where possible, and review every frame before upload.
-9. Run the full unit/instrumentation/migration/static verification set, inspect PR checks, and remove disposable lab artifacts only after their evidence is no longer needed.
+1. Test alert creation, firing, acknowledgement, mute/unmute, history, notifications, refresh, and auto-refresh under lifecycle and network churn.
+2. Perform a literal Recents swipe with live ordinary/tmux and mixed split sessions. Verify notification resume, background versus resumable semantics, and distinguish task removal from force-stop.
+3. Toggle Wi-Fi during terminal output, tmux restoration, proxy/jump-host connections, and file transfers; verify bounded retries and lossless UI recovery.
+4. Stress SFTP, SMB, FTP, and WebDAV browsing and operations: dual-pane navigation, upload/download/cancel, overwrite conflicts, bookmarks, refresh, large files, and lifecycle recreation.
+5. Cover all Settings combinations, backup/restore, app lock, battery-saver behavior, all themes, configuration changes, Fleet refresh/broadcast, and monitoring auto-refresh.
+6. Trigger a deliberate app-side crash in a controlled test build. Verify startup crash capture, About/history display, redaction, and safe clearing.
+7. Record a sanitized foreground-service-permission proof video. Use a clean test profile/host label, disable notification previews, clear Recents and notification history, crop status/navigation bars where possible, and review every frame before upload.
+8. Run the full unit/instrumentation/migration/static verification set, inspect PR checks, and remove disposable lab artifacts only after their evidence is no longer needed.
 
 ## Resume commands
 
@@ -93,6 +98,7 @@ Run the previously verified opt-in suites:
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eTerminalStressTest -e omniterm_e2e_terminal yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eTerminalLifecycleStressTest -e omniterm_e2e_terminal_lifecycle yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eComposeBuilderUiStressTest -e omniterm_e2e_compose_ui yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
+adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eComposeDeployStressTest -e omniterm_e2e_compose_deploy yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eNetworkToolsTest -e omniterm_e2e_network yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 ```
 

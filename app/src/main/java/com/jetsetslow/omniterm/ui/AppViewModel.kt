@@ -14,6 +14,7 @@ import com.jetsetslow.omniterm.MainActivity
 import com.jetsetslow.omniterm.R
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
@@ -784,7 +785,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             _selectedServerId = value
         }
     val selectedServer: ServerEntity?
-        get() = servers.value.find { it.id == selectedServerId } ?: servers.value.firstOrNull()
+        get() {
+            val id = selectedServerId
+            return if (id == null) servers.value.firstOrNull() else servers.value.find { it.id == id }
+        }
 
     // RETENTION & CRON STUFF
     var metricsRetentionDays by mutableStateOf(7)
@@ -1015,6 +1019,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var wolStatusRefreshTick by mutableStateOf(0)
         private set
     var activeComposeDraft by mutableStateOf<com.jetsetslow.omniterm.ui.ComposeStackDraft?>(null)
+        private set
+    /** Host and generation owning the current draft; prevents delayed Compose effects crossing hosts. */
+    var activeComposeServerId by mutableStateOf<Int?>(null)
+        private set
+    var activeComposeGeneration by mutableIntStateOf(0)
+        private set
     /** Raw Builder state is VM-owned so rotation/multi-window recreation cannot discard edits. */
     var activeComposeRawText by mutableStateOf<String?>(null)
         private set
@@ -1024,9 +1034,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         private set
 
     fun beginComposeDraft(draft: com.jetsetslow.omniterm.ui.ComposeStackDraft) {
+        activeComposeGeneration++
+        activeComposeServerId = selectedServerId
         activeComposeRawText = null
         activeComposeRawMode = false
         activeComposeRawSeedKey = null
+        activeComposeDraft = draft
+    }
+
+    fun updateComposeDraft(
+        generation: Int,
+        draft: com.jetsetslow.omniterm.ui.ComposeStackDraft,
+    ) {
+        if (generation != activeComposeGeneration || activeComposeServerId != selectedServerId) return
         activeComposeDraft = draft
     }
 
@@ -1037,6 +1057,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun clearActiveComposeDraft() {
+        activeComposeGeneration++
+        activeComposeServerId = null
         activeComposeDraft = null
         activeComposeRawText = null
         activeComposeRawMode = false
@@ -5711,9 +5733,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         workingDir: String = "",
         configFiles: String = "",
         runtime: String = "",
+        expectedServerId: Int? = activeComposeServerId,
         onResult: (Boolean, String) -> Unit,
     ) {
-        val srv = selectedServer ?: return onResult(false, "No host selected.")
+        if (expectedServerId == null || expectedServerId != selectedServerId ||
+            expectedServerId != activeComposeServerId
+        ) {
+            return onResult(false, "Selected host changed. Reopen the Compose file before deploying.")
+        }
+        val srv = servers.value.find { it.id == expectedServerId }
+            ?: return onResult(false, "The Compose file's host is no longer available.")
         viewModelScope.launch {
             val b64 = android.util.Base64.encodeToString(yaml.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
             val cmd = RemoteCommands.composeDeploy(composeFilePath, project, b64, workingDir, configFiles, runtime)

@@ -34,11 +34,12 @@ import kotlinx.coroutines.launch
 fun InfraScreen(viewModel: AppViewModel) {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
     val onlineServers = servers.filter { it.status == "online" }
-    val srv = onlineServers.find { it.id == viewModel.selectedServerId } ?: onlineServers.firstOrNull()
+    val explicitlySelected = servers.find { it.id == viewModel.selectedServerId }
+    val srv = explicitlySelected ?: onlineServers.firstOrNull()
     // Load real container runtime state whenever the selected host changes.
     LaunchedEffect(srv?.id) {
         if (srv != null) {
-            if (viewModel.selectedServerId != srv.id) viewModel.selectedServerId = srv.id
+            if (explicitlySelected == null && viewModel.selectedServerId != srv.id) viewModel.selectedServerId = srv.id
             viewModel.loadDocker()
         }
     }

@@ -38,9 +38,12 @@ import kotlinx.coroutines.delay
 fun MonitorScreen(viewModel: AppViewModel) {
     val serversList by viewModel.servers.collectAsStateWithLifecycle()
     val onlineServers = serversList.filter { it.status == "online" }
-    val srv = onlineServers.find { it.id == viewModel.selectedServerId } ?: onlineServers.firstOrNull()
+    val explicitlySelected = serversList.find { it.id == viewModel.selectedServerId }
+    val srv = explicitlySelected ?: onlineServers.firstOrNull()
     LaunchedEffect(srv?.id) {
-        if (srv != null && viewModel.selectedServerId != srv.id) viewModel.selectedServerId = srv.id
+        if (srv != null && explicitlySelected == null && viewModel.selectedServerId != srv.id) {
+            viewModel.selectedServerId = srv.id
+        }
     }
     if (srv == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {

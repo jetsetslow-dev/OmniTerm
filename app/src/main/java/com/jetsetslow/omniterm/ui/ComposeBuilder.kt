@@ -857,6 +857,8 @@ fun composeRawEditsDiffer(rawText: String, draft: ComposeStackDraft, parsedBasel
 @Composable
 fun ComposeBuilder(viewModel: AppViewModel) {
     val active = viewModel.activeComposeDraft
+    val draftGeneration = viewModel.activeComposeGeneration
+    val draftServerId = viewModel.activeComposeServerId
     val fullScreenEditorHost = LocalFullScreenEditorHost.current
     // STABLE seed key identifying a distinct edit session. It must NOT change on every keystroke —
     // otherwise mirroring edits back to the ViewModel (below) would re-seed the parsed baseline to
@@ -865,9 +867,9 @@ fun ComposeBuilder(viewModel: AppViewModel) {
     // file the absolute path is a perfect stable identity; a brand-new draft uses a constant so its
     // in-progress state survives recompositions, and "New / Clear" (active == null) resets it.
     val seedKey = when {
-        active == null -> "::cleared::"
-        active.composeFilePath.isNotBlank() -> "file:${active.composeFilePath}"
-        else -> "::new::"
+        active == null -> "::cleared::$draftGeneration"
+        active.composeFilePath.isNotBlank() -> "file:${active.composeFilePath}:$draftGeneration"
+        else -> "::new::$draftGeneration"
     }
 
     // Immutable parsed baseline for surgical diffing — captured ONCE per edit session.
@@ -876,7 +878,11 @@ fun ComposeBuilder(viewModel: AppViewModel) {
 
     // Mirror local edits back to the ViewModel so switching tabs doesn't lose them.
     LaunchedEffect(draft) {
-        if (viewModel.activeComposeDraft !== draft) viewModel.activeComposeDraft = draft
+        if (active == null) {
+            viewModel.beginComposeDraft(draft)
+        } else if (viewModel.activeComposeDraft !== draft) {
+            viewModel.updateComposeDraft(draftGeneration, draft)
+        }
     }
 
     val restoredRawState = viewModel.activeComposeRawSeedKey == seedKey
@@ -1235,6 +1241,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                                 workingDir = draft.workingDir,
                                 configFiles = draft.composeConfigFiles,
                                 runtime = draft.runtime,
+                                expectedServerId = draftServerId,
                             ) { ok, out ->
                             deploying = false
                             result = ok to out
