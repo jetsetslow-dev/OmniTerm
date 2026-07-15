@@ -75,18 +75,21 @@ class E2eAppSurfaceStressTest {
             // Real read-only remote feature paths against the disposable RPi.
             composeRule.runOnUiThread { vm.selectedServerId = host.id }
             vm.loadProcesses()
-            await("process loader", 20_000) { !vm.processesLoading }
+            awaitLoader("process loader", 20_000) { vm.processesLoading }
             vm.loadServices()
-            await("service loader", 20_000) { !vm.servicesLoading }
+            awaitLoader("service loader", 20_000) { vm.servicesLoading }
             vm.loadLogs("ALL")
-            await("log loader", 20_000) { !vm.logsLoading }
+            awaitLoader("log loader", 20_000) { vm.logsLoading }
             vm.loadCron()
-            await("cron loader", 20_000) { !vm.cronLoading }
+            awaitLoader("cron loader", 20_000) { vm.cronLoading }
             vm.loadDocker()
-            await("container loader", 30_000) { !vm.dockerLoading }
-            vm.loadSftp("/home/tempadmin")
-            await("SFTP loader", 20_000) { !vm.sftpLoading }
-            assertTrue(vm.sftpError.isNullOrBlank())
+            awaitLoader("container loader", 30_000) { vm.dockerLoading }
+            // The disposable lab username is supplied at seed time. Never couple the broad suite
+            // to one developer's local account name; doing so turns a valid lab into a false SFTP
+            // failure as soon as the runtime fixture uses another user.
+            vm.loadSftp("/home/${host.username}")
+            awaitLoader("SFTP loader", 20_000) { vm.sftpLoading }
+            assertTrue("SFTP loader failed: ${vm.sftpError}", vm.sftpError.isNullOrBlank())
 
             vm.runFleetBroadcast("printf 'FLEET-SURFACE-OK\\n'", resolvedIds = listOf(host.id))
             await("Fleet broadcast", 30_000) { !vm.isBroadcastExecuting && vm.broadcastResults.isNotEmpty() }
@@ -151,6 +154,16 @@ class E2eAppSurfaceStressTest {
         } catch (timeout: kotlinx.coroutines.TimeoutCancellationException) {
             throw AssertionError("$label did not finish within ${timeoutMs}ms", timeout)
         }
+    }
+
+    /**
+     * ViewModel loaders launch on Main and set their loading flag inside the new coroutine. Waiting
+     * only for `!loading` can therefore succeed before the work starts and accidentally assert on
+     * stale state from an earlier screen. Observe both edges so this suite covers the remote call.
+     */
+    private suspend fun awaitLoader(label: String, timeoutMs: Long, isLoading: () -> Boolean) {
+        await("$label start", 5_000, isLoading)
+        await("$label finish", timeoutMs) { !isLoading() }
     }
 
     private companion object {
