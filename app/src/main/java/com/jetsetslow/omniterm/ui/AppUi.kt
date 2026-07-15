@@ -933,68 +933,75 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
 
             // Disconnect dialog safety check
             if (viewModel.showDisconnectTerminalDialog) {
-                val session = viewModel.terminalNavigationSession
+                val sessions = viewModel.pendingTerminalNavigationSessions
+                val count = sessions.size
+                val allPersistent = sessions.isNotEmpty() && sessions.all { it.persistent }
+                val hasPersistent = sessions.any { it.persistent }
+                val hasNormal = sessions.any { !it.persistent }
+                val connecting = viewModel.pendingTerminalNavigationIncludesConnectAttempt
                 AlertDialog(
-                    onDismissRequest = {
-                        viewModel.showDisconnectTerminalDialog = false
-                        viewModel.pendingNavigationScreen = null
+                    onDismissRequest = { viewModel.cancelTerminalNavigation() },
+                    title = {
+                        Text(
+                            when {
+                                count > 1 -> "$count active SSH sessions"
+                                allPersistent -> "Persistent SSH session"
+                                connecting && count == 0 -> "SSH connection in progress"
+                                else -> "Active SSH session"
+                            }
+                        )
                     },
-                    title = { Text(if (session?.persistent == true) "Persistent SSH session" else "Active SSH session") },
                     text = {
                         Text(
-                            if (session?.persistent == true) {
-                                "Leave ${session.serverName} resumable, or terminate its tmux session and stop anything running there?"
-                            } else {
-                                "Choose what to do with the active SSH terminal session.\n\n" +
-                                    "Sending sessions to the background keeps OmniTerm active and may increase battery consumption."
+                            when {
+                                count == 1 && allPersistent ->
+                                    "Leave ${sessions.first().serverName} resumable, or terminate its tmux session and stop anything running there?"
+                                count > 1 && hasPersistent && hasNormal ->
+                                    "Choose what to do with the terminal sessions in both panes. Persistent sessions can be left resumable; other SSH sessions stay connected in the background."
+                                count > 1 && allPersistent ->
+                                    "Leave both persistent sessions resumable, or terminate them and stop anything running there?"
+                                count > 1 ->
+                                    "Choose what to do with the active SSH sessions in both panes. Sending them to the background keeps OmniTerm active and may increase battery consumption."
+                                connecting && count == 0 ->
+                                    "Cancel the connection attempt, or let it finish in the background?"
+                                connecting ->
+                                    "Choose what to do with the active terminal session and connection attempt."
+                                else ->
+                                    "Choose what to do with the active SSH terminal session.\n\n" +
+                                        "Sending sessions to the background keeps OmniTerm active and may increase battery consumption."
                             }
                         )
                     },
                     confirmButton = {
                         TextButton(
-                            onClick = {
-                                val target = viewModel.pendingNavigationScreen
-                                viewModel.disconnectTerminal()
-                                viewModel.showDisconnectTerminalDialog = false
-                                viewModel.pendingNavigationScreen = null
-                                target?.let { viewModel.navigateTo(it) }
-                            }
+                            onClick = { viewModel.completeTerminalNavigation(disconnect = true) }
                         ) {
-                            Text("Disconnect", color = Color.Red)
+                            Text(
+                                when {
+                                    connecting && count == 0 -> "Cancel connection"
+                                    count > 1 -> "Disconnect all"
+                                    else -> "Disconnect"
+                                },
+                                color = Color.Red,
+                            )
                         }
                     },
                     dismissButton = {
                         Row {
-                            if (session?.persistent == true) {
-                                TextButton(
-                                    onClick = {
-                                        val target = viewModel.pendingNavigationScreen
-                                        viewModel.leaveSessionResumable(session.id)
-                                        viewModel.showDisconnectTerminalDialog = false
-                                        viewModel.pendingNavigationScreen = null
-                                        target?.let { viewModel.navigateTo(it) }
+                            TextButton(
+                                onClick = { viewModel.completeTerminalNavigation(disconnect = false) }
+                            ) {
+                                Text(
+                                    when {
+                                        connecting && count == 0 -> "Continue in background"
+                                        allPersistent -> "Leave resumable"
+                                        hasPersistent && hasNormal -> "Keep sessions"
+                                        else -> "Send to background"
                                     }
-                                ) {
-                                    Text("Leave resumable")
-                                }
-                            } else {
-                                TextButton(
-                                    onClick = {
-                                        val target = viewModel.pendingNavigationScreen
-                                        viewModel.sendToBackground()
-                                        viewModel.showDisconnectTerminalDialog = false
-                                        viewModel.pendingNavigationScreen = null
-                                        target?.let { viewModel.navigateTo(it) }
-                                    }
-                                ) {
-                                    Text("Send to background")
-                                }
+                                )
                             }
                             TextButton(
-                                onClick = {
-                                    viewModel.showDisconnectTerminalDialog = false
-                                    viewModel.pendingNavigationScreen = null
-                                }
+                                onClick = { viewModel.cancelTerminalNavigation() }
                             ) {
                                 Text("Stay")
                             }

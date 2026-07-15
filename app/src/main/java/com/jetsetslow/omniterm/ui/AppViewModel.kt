@@ -203,6 +203,35 @@ internal fun isLiveTerminalForNavigation(
     exitStatus: Int?,
 ): Boolean = isConnected && !remoteExited && !isCleanShellExit(exitStatus)
 
+internal data class TerminalNavigationCandidate(
+    val id: String,
+    val isConnected: Boolean,
+    val reconnecting: Boolean,
+    val userClosed: Boolean,
+    val remoteExited: Boolean,
+    val exitStatus: Int?,
+)
+
+/**
+ * Return the foreground terminal ids that need one decision before navigation completes.
+ * Background sessions are intentionally absent: only ids currently attached to the single pane or
+ * either split pane are supplied. The result is stable, pane ordered, and de-duplicated so corrupt
+ * or transitional pane references can never produce repeated confirmation work.
+ */
+internal fun terminalNavigationSessionIds(
+    attachedIds: List<String?>,
+    candidates: List<TerminalNavigationCandidate>,
+): List<String> {
+    val byId = candidates.associateBy { it.id }
+    return attachedIds.filterNotNull().distinct().filter { id ->
+        val session = byId[id] ?: return@filter false
+        !session.userClosed &&
+            !session.remoteExited &&
+            !isCleanShellExit(session.exitStatus) &&
+            (session.isConnected || session.reconnecting)
+    }
+}
+
 enum class Screen {
     Servers,
     Fleet,
@@ -548,6 +577,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var pendingDisconnectSessionId by mutableStateOf<String?>(null)
     var pendingDisconnectAllSessions by mutableStateOf(false)
     var pendingNavigationScreen by mutableStateOf<Screen?>(null)
+    private var pendingTerminalNavigationSessionIds by mutableStateOf<List<String>>(emptyList())
+    var pendingTerminalNavigationIncludesConnectAttempt by mutableStateOf(false)
+        private set
 
     // SECURITY PIN & APP LOCK STATE
     var savedPin by mutableStateOf<String?>(null)
@@ -1225,6 +1257,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 .filterNotNull()
                 .firstOrNull { it.isLive() }
         }
+
+    private fun foregroundTerminalIdsNeedingDecision(): List<String> {
+        val attachedIds = if (isMultiSsh) {
+            listOf(multiSshSessionId1, multiSshSessionId2)
+        } else {
+            listOf(currentSessionId)
+        }
+        return terminalNavigationSessionIds(
+            attachedIds = attachedIds,
+            candidates = activeSessions.map { shell ->
+                TerminalNavigationCandidate(
+                    id = shell.id,
+                    isConnected = shell.isConnected,
+                    reconnecting = shell.reconnecting,
+                    userClosed = shell.userClosed,
+                    remoteExited = shell.session.remoteExited.value,
+                    exitStatus = shell.session.exitStatus.value,
+                )
+            },
+        )
+    }
+
+    /** Sessions captured by the current one-shot leave-terminal transaction, in pane order. */
+    val pendingTerminalNavigationSessions: List<ShellSession>
+        get() = pendingTerminalNavigationSessionIds.mapNotNull { id -> activeSessions.find { it.id == id } }
 
     /** The session for [pane] (1 or 2), or null if that pane is empty. */
     fun multiSshPaneSession(pane: Int): ShellSession? = if (pane == 1) multiSshSession1 else multiSshSession2
@@ -2160,13 +2217,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             showSettingsDiscardDialog = true
             return
         }
-        // Tapping away from active connection SSH shell prompts verification first
-        if (currentScreen == Screen.Shell && isTerminalConnected && screen != Screen.Shell) {
-            pendingNavigationScreen = screen
-            showDisconnectTerminalDialog = true
+        // Leaving Shell is a single transaction across every foreground pane. The old dialog
+        // handled one pane then called navigateTo() again, recursively reopening itself for stale,
+        // reconnecting, persistent, or second-pane state. Capture all relevant ids once instead.
+        if (currentScreen == Screen.Shell && screen != Screen.Shell && beginTerminalNavigation(screen)) {
             return
         }
 
+        commitNavigation(screen)
+    }
+
+    private fun commitNavigation(screen: Screen) {
         if (screen == Screen.Servers) {
             screenHistory.clear()
             screenHistory.add(Screen.Servers)
@@ -2181,6 +2242,55 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         currentScreen = screen
+    }
+
+    /** Returns true when navigation was intercepted for one terminal decision dialog. */
+    private fun beginTerminalNavigation(target: Screen): Boolean {
+        val sessionIds = foregroundTerminalIdsNeedingDecision()
+        val includesConnectAttempt = isTerminalConnecting
+        if (sessionIds.isEmpty() && !includesConnectAttempt) return false
+
+        pendingTerminalNavigationSessionIds = sessionIds
+        pendingTerminalNavigationIncludesConnectAttempt = includesConnectAttempt
+        pendingNavigationScreen = target
+        showDisconnectTerminalDialog = true
+        return true
+    }
+
+    /** Cancel/dismiss the leave-terminal transaction without mutating any session. */
+    fun cancelTerminalNavigation() {
+        showDisconnectTerminalDialog = false
+        pendingNavigationScreen = null
+        pendingTerminalNavigationSessionIds = emptyList()
+        pendingTerminalNavigationIncludesConnectAttempt = false
+    }
+
+    /**
+     * Apply one decision to every pane captured when navigation started, then commit the target
+     * directly without re-entering the terminal guard. Sessions that exited while the dialog was
+     * visible simply disappear from [activeSessions] and are skipped.
+     */
+    fun completeTerminalNavigation(disconnect: Boolean) {
+        val target = pendingNavigationScreen ?: run {
+            cancelTerminalNavigation()
+            return
+        }
+        val sessionIds = pendingTerminalNavigationSessionIds
+        val cancelConnectionAttempt = pendingTerminalNavigationIncludesConnectAttempt && disconnect
+        cancelTerminalNavigation()
+
+        if (cancelConnectionAttempt) cancelConnect()
+        sessionIds.forEach { sessionId ->
+            val session = activeSessions.find { it.id == sessionId } ?: return@forEach
+            if (disconnect) {
+                disconnectSession(sessionId)
+            } else if (session.persistent) {
+                leaveSessionResumable(sessionId)
+            } else {
+                sendSessionToBackground(sessionId)
+            }
+        }
+        commitNavigation(target)
     }
 
     // ── Swipe-to-switch tabs ──────────────────────────────────────────────────────
@@ -2284,9 +2394,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (screenHistory.size > 1) {
             // Check terminal safety if on Shell currently
-            if (currentScreen == Screen.Shell && isTerminalConnected) {
-                pendingNavigationScreen = screenHistory[screenHistory.size - 2]
-                showDisconnectTerminalDialog = true
+            if (currentScreen == Screen.Shell &&
+                beginTerminalNavigation(screenHistory[screenHistory.size - 2])
+            ) {
                 return true
             }
 
@@ -5090,16 +5200,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun disconnectTerminal() {
-        val s = terminalNavigationSession ?: return
-        disconnectSession(s.id)
-    }
-
-    fun sendToBackground() {
-        val s = terminalNavigationSession ?: return
-        sendSessionToBackground(s.id)
-    }
-
     /** Keep a live SSH channel running, but remove it from the visible terminal pane. */
     fun sendSessionToBackground(sessionId: String) {
         val s = activeSessions.find { it.id == sessionId } ?: return
@@ -5119,6 +5219,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun attachSession(sessionId: String) {
+        // A notification can resume a terminal while a leave-terminal dialog is visible. That
+        // external navigation supersedes the pending target; never leave a stale dialog over Shell.
+        cancelTerminalNavigation()
         val session = activeSessions.find { it.id == sessionId }
         if (session == null) {
             // Session was lost (app process was restarted while service notification persisted).

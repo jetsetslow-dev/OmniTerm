@@ -150,7 +150,13 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
   if (lowResourceBuild) {
     maxParallelForks = 1
     maxHeapSize = "768m"
-    exclude("**/AppResourcesTest.class", "**/GreetingScreenshotTest.class", "**/PinHashRobolectricTest.class", "**/ColdStartRobolectricTest.class")
+    exclude(
+      "**/AppResourcesTest.class",
+      "**/GreetingScreenshotTest.class",
+      "**/PinHashRobolectricTest.class",
+      "**/ColdStartRobolectricTest.class",
+      "**/TerminalNavigationRobolectricTest.class",
+    )
   }
 }
 

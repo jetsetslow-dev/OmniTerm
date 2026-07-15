@@ -57,9 +57,9 @@ class TmuxControlIntegrationTest {
                 add("detach-client")
             }
 
-            val control = ProcessBuilder(tmux, "-L", socket, "-C", "attach-session", "-t", session)
-                .redirectErrorStream(true)
-                .start()
+            val control = isolatedTmuxProcessBuilder(
+                tmux, "-L", socket, "-C", "attach-session", "-t", session,
+            ).start()
             control.outputStream.bufferedWriter().use { writer ->
                 commands.forEach {
                     writer.write(it)
@@ -112,13 +112,25 @@ class TmuxControlIntegrationTest {
     }
 
     private fun runCommand(vararg command: String): CommandResult {
-        val process = ProcessBuilder(*command).redirectErrorStream(true).start()
+        val process = isolatedTmuxProcessBuilder(*command).start()
         if (!process.waitFor(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
             process.destroyForcibly()
             fail("command timed out: ${command.joinToString(" ")}")
         }
         return CommandResult(process.exitValue(), process.inputStream.bufferedReader().readText())
     }
+
+    /**
+     * The developer/test runner may itself live inside tmux. Inheriting TMUX makes a supposedly
+     * isolated `tmux -L <socket> -C attach` behave like a nested command for the outer client; the
+     * generated client-scoped commands then fail with "no current client". Remove both client
+     * markers so the explicit test socket is the only tmux context in local runs and CI.
+     */
+    private fun isolatedTmuxProcessBuilder(vararg command: String): ProcessBuilder =
+        ProcessBuilder(*command).redirectErrorStream(true).also { builder ->
+            builder.environment().remove("TMUX")
+            builder.environment().remove("TMUX_PANE")
+        }
 
     private data class CommandResult(val exitCode: Int, val output: String)
 
