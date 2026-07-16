@@ -173,6 +173,15 @@ fun AlertsToolView(viewModel: AppViewModel) {
     val serversList by viewModel.servers.collectAsStateWithLifecycle()
     var showCreateRuleDialog by remember { mutableStateOf(false) }
     var editRule by remember { mutableStateOf<AlertRuleEntity?>(null) }
+    // A mute can expire without a database emission (for example while the host is offline), so a
+    // lightweight minute tick keeps the Active/Muted partition honest even with no telemetry.
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000)
+            now = System.currentTimeMillis()
+        }
+    }
 
 
     ToolScaffold(
@@ -211,9 +220,9 @@ fun AlertsToolView(viewModel: AppViewModel) {
                 }
             }
 
-            val now = System.currentTimeMillis()
             val visibleAlerts = alerts.filter { !it.acknowledged && it.mutedUntil < now }
             val acknowledgedAlerts = alerts.filter { it.acknowledged && it.mutedUntil < now }
+            val mutedAlerts = alerts.filter { it.mutedUntil >= now }
 
             PrimaryTabRow(selectedTabIndex = activeTab) {
                 Tab(selected = activeTab == 0, onClick = { viewModel.activeAlertsTab = 0 }) { Text("Active (${visibleAlerts.size})", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
@@ -224,15 +233,17 @@ fun AlertsToolView(viewModel: AppViewModel) {
             Spacer(modifier = Modifier.height(12.dp))
 
             if (activeTab == 0) {
-                if (visibleAlerts.isEmpty()) {
+                if (visibleAlerts.isEmpty() && mutedAlerts.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("No active alert incidents.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
-                        item {
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                                TextButton(onClick = { viewModel.acknowledgeAllAlerts() }) { Text("Ack All") }
+                        if (visibleAlerts.isNotEmpty()) {
+                            item {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                    TextButton(onClick = { viewModel.acknowledgeAllAlerts() }) { Text("Ack All") }
+                                }
                             }
                         }
                         items(visibleAlerts) { alert ->
@@ -258,6 +269,32 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                             TextButton(onClick = { viewModel.acknowledgeAlert(alert.id) }) { Text("ACKNOWLEDGE") }
                                         }
                                         TextButton(onClick = { viewModel.muteAlertForOneHour(alert.id) }) { Text("MUTE 1H") }
+                                    }
+                                }
+                            }
+                        }
+                        if (mutedAlerts.isNotEmpty()) {
+                            item {
+                                Text(
+                                    "Muted incidents",
+                                    fontWeight = FontWeight.Bold,
+                                    color = OmniColors.purple,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                                )
+                            }
+                            items(mutedAlerts) { alert ->
+                                val srv = serversList.find { it.id == alert.serverId }
+                                OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.purple) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                                            Text(alert.metricName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                            Text("MUTED", color = OmniColors.purple, fontWeight = FontWeight.ExtraBold, fontSize = 11.sp)
+                                        }
+                                        Text("Server: ${srv?.name ?: "server"}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("Until ${formatShortDateTime(alert.mutedUntil)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                            TextButton(onClick = { viewModel.unmuteAlert(alert.id) }) { Text("UNMUTE") }
+                                        }
                                     }
                                 }
                             }

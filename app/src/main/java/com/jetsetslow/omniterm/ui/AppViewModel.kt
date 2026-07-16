@@ -74,6 +74,16 @@ private const val TERMINAL_INPUT_CHUNK_BYTES = 4096
 private const val TERMINAL_INPUT_QUEUE_MAX_BYTES = 4 * 1024 * 1024
 private const val CONTROL_PENDING_INPUT_MAX_BYTES = 1024 * 1024
 
+/** Whether editing a rule invalidates its currently firing incident and breach timer. */
+internal fun alertRuleEvaluationChanged(previous: AlertRuleEntity, next: AlertRuleEntity): Boolean =
+    previous.serverId != next.serverId ||
+        previous.metricName != next.metricName ||
+        previous.mountPoint != next.mountPoint ||
+        previous.thresholdValue != next.thresholdValue ||
+        previous.severity != next.severity ||
+        previous.triggerWindow != next.triggerWindow ||
+        previous.enabled != next.enabled
+
 /** Trusted Android system executables; never resolve process commands through an inherited PATH. */
 internal const val ANDROID_PING_BINARY = "/system/bin/ping"
 internal val ANDROID_TRACEROUTE_BINARIES = listOf(
@@ -1643,6 +1653,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // POLLE & RETRYS TASK LIFECYCLE
     private var pollingJob: Job? = null
     private val telemetryProbeLimiter = kotlinx.coroutines.sync.Semaphore(16)
+    /** Manual refresh and periodic polling must never evaluate the same host concurrently. */
+    private val telemetryProbeMutexes = java.util.concurrent.ConcurrentHashMap<Int, Mutex>()
 
     /** Telemetry refresh cadence (user-customisable), and the wall-clock start of the most recent
      *  cycle, so the UI can show a "next refresh in N" countdown that stays in sync with the poller.
@@ -2017,25 +2029,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val probedServerIds = androidx.compose.runtime.mutableStateMapOf<Int, Boolean>()
 
     private suspend fun probeServer(srv: ServerEntity) {
-        try {
-            // Make the periodic retry visible: an offline host shows "connecting" while its probe
-            // runs (TCP reachability first — up to 4s — then SSH only if the port answered), instead
-            // of silently sitting at Offline through the whole attempt.
-            if (srv.status == "offline") {
-                repository.updateConnectionState(srv.id, "connecting", 0, 0)
-            }
-            val rtt = tcpReachable(srv.host, srv.port)
-            if (rtt < 0) {
+        telemetryProbeMutexes.computeIfAbsent(srv.id) { Mutex() }.withLock {
+            try {
+                // Make the periodic retry visible: an offline host shows "connecting" while its probe
+                // runs (TCP reachability first — up to 4s — then SSH only if the port answered), instead
+                // of silently sitting at Offline through the whole attempt.
+                if (srv.status == "offline") {
+                    repository.updateConnectionState(srv.id, "connecting", 0, 0)
+                }
+                val rtt = tcpReachable(srv.host, srv.port)
+                if (rtt < 0) {
+                    repository.updateConnectionState(srv.id, "offline", 0, 0)
+                    return@withLock
+                }
+                telemetryProbeLimiter.withPermit {
+                    probeServerInner(srv, rtt)
+                }
+            } catch (e: Exception) {
                 repository.updateConnectionState(srv.id, "offline", 0, 0)
-                return
+            } finally {
+                withContext(Dispatchers.Main) { probedServerIds[srv.id] = true }
             }
-            telemetryProbeLimiter.withPermit {
-                probeServerInner(srv, rtt)
-            }
-        } catch (e: Exception) {
-            repository.updateConnectionState(srv.id, "offline", 0, 0)
-        } finally {
-            withContext(Dispatchers.Main) { probedServerIds[srv.id] = true }
         }
     }
 
@@ -2175,6 +2189,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // First time each (rule, host) pair was seen over threshold; cleared on recovery. The rule
     // only fires once the breach has lasted its triggerWindow, so single poll spikes don't alert.
     private val alertBreachSince = java.util.concurrent.ConcurrentHashMap<Pair<Int, Int>, Long>()
+    /** Keeps evaluation, rule mutation, acknowledgement, and mute/recovery transitions atomic. */
+    private val alertStateMutex = Mutex()
 
     private fun triggerWindowMs(window: String): Long =
         (window.trim().removeSuffix("m").toLongOrNull() ?: 0L) * 60_000L
@@ -2182,8 +2198,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun evaluateAlertRules(
         srv: ServerEntity, cpu: Float, ram: Float, disk: Float, latency: Int,
         mounts: List<DiskUsage> = emptyList(),
-    ) {
-        if (!alertsEnabled) return
+    ) = alertStateMutex.withLock {
+        if (!alertsEnabled) return@withLock
         val rules = (repository.getRulesForServer(srv.id) + repository.getRulesForServer(0)).filter { it.enabled }
         val activeAlerts = repository.getActiveAlerts()
         val now = System.currentTimeMillis()
@@ -3344,17 +3360,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleAlertPresets(enabled: Boolean) {
         alertPresetsEnabled = enabled
         viewModelScope.launch {
-            repository.insertSetting("alert_presets", enabled.toString())
-            if (enabled) {
-                val existing = repository.getRulesForServer(0)
-                for ((metric, threshold, severity) in alertRulePresets) {
-                    if (existing.none { it.metricName == metric && it.thresholdValue == threshold }) {
-                        repository.insertRule(AlertRuleEntity(serverId = 0, metricName = metric, thresholdValue = threshold, severity = severity))
+            alertStateMutex.withLock {
+                repository.insertSetting("alert_presets", enabled.toString())
+                if (enabled) {
+                    val existing = repository.getRulesForServer(0)
+                    for ((metric, threshold, severity) in alertRulePresets) {
+                        if (existing.none { it.metricName == metric && it.thresholdValue == threshold }) {
+                            repository.insertRule(AlertRuleEntity(serverId = 0, metricName = metric, thresholdValue = threshold, severity = severity))
+                        }
                     }
+                } else {
+                    val sigs = alertRulePresets.map { it.first to it.second }.toSet()
+                    repository.getAllRules()
+                        .filter { it.serverId == 0 && (it.metricName to it.thresholdValue) in sigs }
+                        .forEach { rule ->
+                            closeAlertsForRule(rule.id)
+                            repository.deleteRule(rule)
+                        }
                 }
-            } else {
-                val sigs = alertRulePresets.map { it.first to it.second }.toSet()
-                repository.getAllRules().filter { it.serverId == 0 && (it.metricName to it.thresholdValue) in sigs }.forEach { repository.deleteRule(it) }
             }
         }
     }
@@ -8835,7 +8858,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun saveAlertsEnabled(enabled: Boolean) {
         alertsEnabled = enabled
         viewModelScope.launch {
-            repository.insertSetting("alerts_enabled", enabled.toString())
+            alertStateMutex.withLock {
+                repository.insertSetting("alerts_enabled", enabled.toString())
+                val active = repository.getActiveAlerts()
+                if (!enabled) {
+                    active.forEach { clearAlertNotification(it.ruleId, it.serverId) }
+                } else {
+                    val now = System.currentTimeMillis()
+                    val rules = repository.getAllRules().associateBy { it.id }
+                    val servers = repository.getAllServers().associateBy { it.id }
+                    active.filter { !it.acknowledged && it.mutedUntil < now }.forEach { alert ->
+                        val rule = rules[alert.ruleId]
+                        val server = servers[alert.serverId]
+                        if (rule != null && server != null) postAlertNotification(server, rule, alert.currentValue)
+                    }
+                }
+            }
         }
     }
 
@@ -9037,25 +9075,55 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // ACTIVE ALERTS CONFLICT CORRECTION
     fun acknowledgeAlert(alertId: Int) {
         viewModelScope.launch {
-            repository.getActiveAlerts().find { it.id == alertId }?.let { recordAlertHistory(it, "acknowledged") }
-            repository.setAcknowledged(alertId, true)
+            alertStateMutex.withLock {
+                repository.getActiveAlerts().find { it.id == alertId }?.let {
+                    recordAlertHistory(it, "acknowledged")
+                    clearAlertNotification(it.ruleId, it.serverId)
+                }
+                repository.setAcknowledged(alertId, true)
+            }
         }
     }
 
     fun acknowledgeAllAlerts() {
         viewModelScope.launch {
-            repository.getActiveAlerts()
-                .filter { !it.acknowledged && it.mutedUntil < System.currentTimeMillis() }
-                .forEach { recordAlertHistory(it, "acknowledged") }
-            repository.acknowledgeAll()
+            alertStateMutex.withLock {
+                repository.getActiveAlerts()
+                    .filter { !it.acknowledged && it.mutedUntil < System.currentTimeMillis() }
+                    .forEach {
+                        recordAlertHistory(it, "acknowledged")
+                        clearAlertNotification(it.ruleId, it.serverId)
+                    }
+                repository.acknowledgeAll()
+            }
         }
     }
 
     fun muteAlertForOneHour(alertId: Int) {
         viewModelScope.launch {
-            val mutedUntil = System.currentTimeMillis() + 60 * 60 * 1000
-            repository.getActiveAlerts().find { it.id == alertId }?.let { recordAlertHistory(it, "muted") }
-            repository.muteAlert(alertId, mutedUntil)
+            alertStateMutex.withLock {
+                val mutedUntil = System.currentTimeMillis() + 60 * 60 * 1000
+                repository.getActiveAlerts().find { it.id == alertId }?.let {
+                    recordAlertHistory(it, "muted")
+                    clearAlertNotification(it.ruleId, it.serverId)
+                }
+                repository.muteAlert(alertId, mutedUntil)
+            }
+        }
+    }
+
+    fun unmuteAlert(alertId: Int) {
+        viewModelScope.launch {
+            alertStateMutex.withLock {
+                val alert = repository.getActiveAlerts().find { it.id == alertId } ?: return@withLock
+                repository.muteAlert(alertId, 0L)
+                recordAlertHistory(alert.copy(mutedUntil = 0L), "unmuted")
+                if (alertsEnabled && !alert.acknowledged) {
+                    val rule = repository.getAllRules().find { it.id == alert.ruleId }
+                    val server = repository.getServerById(alert.serverId)
+                    if (rule != null && server != null) postAlertNotification(server, rule, alert.currentValue)
+                }
+            }
         }
     }
 
@@ -9086,13 +9154,32 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateAlertRule(rule: AlertRuleEntity) {
         viewModelScope.launch {
-            repository.insertRule(rule)
+            alertStateMutex.withLock {
+                val previous = repository.getAllRules().find { it.id == rule.id }
+                // Evaluation changes make the old incident stale and must reset its trigger window.
+                // A documentation-only notes edit must not silently resolve a live incident.
+                val evaluationChanged = previous?.let { alertRuleEvaluationChanged(it, rule) } == true
+                if (evaluationChanged) closeAlertsForRule(rule.id)
+                repository.insertRule(rule)
+            }
         }
     }
 
     fun deleteAlertRule(rule: AlertRuleEntity) {
         viewModelScope.launch {
-            repository.deleteRule(rule)
+            alertStateMutex.withLock {
+                closeAlertsForRule(rule.id)
+                repository.deleteRule(rule)
+            }
+        }
+    }
+
+    private suspend fun closeAlertsForRule(ruleId: Int) {
+        repository.getActiveAlerts().filter { it.ruleId == ruleId }.forEach { alert ->
+            recordAlertHistory(alert, "resolved")
+            repository.deleteAlert(alert.id)
+            clearAlertNotification(alert.ruleId, alert.serverId)
+            alertBreachSince.remove(ruleId to alert.serverId)
         }
     }
 

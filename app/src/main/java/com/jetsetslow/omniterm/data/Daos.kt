@@ -131,7 +131,9 @@ interface ActiveAlertDao {
     @Query("SELECT * FROM active_alerts ORDER BY triggeredTime DESC")
     suspend fun getActiveAlerts(): List<ActiveAlertEntity>
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    // The unique (ruleId, serverId) incident identity makes concurrent/legacy duplicate firing
+    // impossible. IGNORE also preserves an existing incident's acknowledged/muted state.
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAlert(alert: ActiveAlertEntity): Long
 
     @Query("DELETE FROM active_alerts WHERE id = :id")

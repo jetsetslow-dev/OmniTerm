@@ -54,6 +54,17 @@ This is the durable checkpoint for the current physical-device and disposable-la
 - SOCKS forwarding and jump-host host-key alias handling have regression coverage.
 - Disposable SSH, FTP, SMB, WebDAV, Docker, HTTP proxy, and SOCKS services were used; the public production host was not mutated.
 
+### Alerts, notifications, and refresh lifecycle
+
+- `E2eAlertLifecycleStressTest` passed on the physical device in 45.594 seconds.
+  - Created a host-scoped rule through the UI host picker, fired it from real disposable-lab telemetry, and verified its exact Android system notification.
+  - Mute dismissed the notification; the muted incident and Unmute action survived Activity recreation; Unmute reposted the notification.
+  - A real Wi-Fi disable/enable cycle preserved the incident, restored the host, and left the UI responsive.
+  - Global disable/enable reconciled notification state without discarding the incident; acknowledgement dismissed it and recorded history.
+  - Editing the rule closed the old incident as resolved, and a restarted five-second auto-refresh poller fired a new incident without a direct host refresh.
+- Manual and periodic telemetry probes are serialized per host. Active incidents also have a database-unique `(ruleId, serverId)` identity using conflict-ignore semantics, so concurrent refreshes cannot reset acknowledgement/mute state or create duplicate cards.
+- Schema 19 migrates legacy duplicate incidents by retaining the newest row before creating the unique index. Both the full schema 8→19 chain and the targeted duplicate migration passed on-device.
+
 ### Build verification
 
 - Focused CodeEditor, ComposeBuilder, terminal buffer/emulator/navigation, and SSH host-key tests passed.
@@ -67,14 +78,13 @@ This is the durable checkpoint for the current physical-device and disposable-la
 
 ## Remaining critical coverage
 
-1. Test alert creation, firing, acknowledgement, mute/unmute, history, notifications, refresh, and auto-refresh under lifecycle and network churn.
-2. Perform a literal Recents swipe with live ordinary/tmux and mixed split sessions. Verify notification resume, background versus resumable semantics, and distinguish task removal from force-stop.
-3. Toggle Wi-Fi during terminal output, tmux restoration, proxy/jump-host connections, and file transfers; verify bounded retries and lossless UI recovery.
-4. Stress SFTP, SMB, FTP, and WebDAV browsing and operations: dual-pane navigation, upload/download/cancel, overwrite conflicts, bookmarks, refresh, large files, and lifecycle recreation.
-5. Cover all Settings combinations, backup/restore, app lock, battery-saver behavior, all themes, configuration changes, Fleet refresh/broadcast, and monitoring auto-refresh.
-6. Trigger a deliberate app-side crash in a controlled test build. Verify startup crash capture, About/history display, redaction, and safe clearing.
-7. Record a sanitized foreground-service-permission proof video. Use a clean test profile/host label, disable notification previews, clear Recents and notification history, crop status/navigation bars where possible, and review every frame before upload.
-8. Run the full unit/instrumentation/migration/static verification set, inspect PR checks, and remove disposable lab artifacts only after their evidence is no longer needed.
+1. Perform a literal Recents swipe with live ordinary/tmux and mixed split sessions. Verify notification resume, background versus resumable semantics, and distinguish task removal from force-stop.
+2. Toggle Wi-Fi during terminal output, tmux restoration, proxy/jump-host connections, and file transfers; verify bounded retries and lossless UI recovery.
+3. Stress SFTP, SMB, FTP, and WebDAV browsing and operations: dual-pane navigation, upload/download/cancel, overwrite conflicts, bookmarks, refresh, large files, and lifecycle recreation.
+4. Cover all Settings combinations, backup/restore, app lock, battery-saver behavior, all themes, configuration changes, Fleet refresh/broadcast, and monitoring auto-refresh.
+5. Trigger a deliberate app-side crash in a controlled test build. Verify startup crash capture, About/history display, redaction, and safe clearing.
+6. Record a sanitized foreground-service-permission proof video. Use a clean test profile/host label, disable notification previews, clear Recents and notification history, crop status/navigation bars where possible, and review every frame before upload.
+7. Run the full unit/instrumentation/migration/static verification set, inspect PR checks, and remove disposable lab artifacts only after their evidence is no longer needed.
 
 ## Resume commands
 
@@ -100,6 +110,7 @@ adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eTerminalLifecycle
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eComposeBuilderUiStressTest -e omniterm_e2e_compose_ui yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eComposeDeployStressTest -e omniterm_e2e_compose_deploy yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eNetworkToolsTest -e omniterm_e2e_network yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
+adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eAlertLifecycleStressTest -e omniterm_e2e_alerts yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 `E2eLabSeedTest` requires runtime arguments sourced locally from the ignored secret files. Inspect its `requireArg` calls for the argument names and pass them without shell tracing or copying the resulting command into this document.
