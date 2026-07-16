@@ -6639,7 +6639,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val trimmed = newName.trim()
         if (trimmed.isBlank() || trimmed == file.name) return
         shareMutate("Renamed to \"$trimmed\"") {
-            it.rename(joinPath(sharePath, file.name), joinPath(sharePath, trimmed))
+            it.rename(joinPath(sharePath, file.name), joinPath(sharePath, trimmed), file.isDirectory)
         }
     }
 
@@ -7124,7 +7124,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     // A move within the same share (file or folder) is just a rename — no data travels.
                     if (isMove && destShare != null && ref.shareId == destShare.id) {
                         try {
-                            destClient.rename(srcPath, destPath)
+                            destClient.rename(srcPath, destPath, ref.isDirectory)
                             ok++
                         } catch (e: CancellationException) {
                             throw e

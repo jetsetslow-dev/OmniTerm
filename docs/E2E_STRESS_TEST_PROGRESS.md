@@ -58,6 +58,10 @@ This is the durable checkpoint for the current physical-device and disposable-la
   - FTP, SMB, SFTP, and HTTPS WebDAV each completed isolated create/list, 2 MiB upload with monotonic progress, byte-for-byte download, overwrite-not-append, Unicode/space rename, nested directory and empty Unicode file handling, and reverse cleanup.
   - The suite uses unique disposable directories and verified that no protocol left an artifact after completion. The Android crash buffer and app fatal/ANR log scan were empty.
   - The WebDAV lab now uses a dedicated TLS CA and port 8443. Its public CA is trusted only by the debug source set; release variants retain the system-only trust configuration and cleartext WebDAV remains rejected.
+- `E2eFilesUiStressTest` passed the combined FTP/SMB/SFTP/HTTPS-WebDAV UI matrix on the physical device in 77.672 seconds.
+  - Each saved profile completed the visible create, rename, and delete dialogs; nested navigation; bookmark add/remove and unified bookmark persistence; explicit refresh; and Activity recreation while inside the bookmarked directory.
+  - The run exposed a WebDAV collection-MOVE false success: Apache redirected a directory URL without its canonical trailing slash and OkHttp followed the redirect as a successful non-MOVE response. The common rename contract now carries the directory type so WebDAV sends canonical source and destination URLs; the focused WebDAV rerun passed in 28.758 seconds.
+  - Unique directories, pre-test bookmark values, auto-rotation, and Wi-Fi state were restored. No disposable directory, crash-buffer entry, app fatal exception, or ANR remained.
 
 ### Alerts, notifications, and refresh lifecycle
 
@@ -84,7 +88,7 @@ This is the durable checkpoint for the current physical-device and disposable-la
 ## Remaining critical coverage
 
 1. Toggle Wi-Fi during terminal output, tmux restoration, proxy/jump-host connections, and file transfers; verify bounded retries and lossless UI recovery.
-2. Stress the file-browser UI above the verified SFTP/SMB/FTP/HTTPS-WebDAV client matrix: dual-pane navigation, transfer cancellation, overwrite prompts, bookmarks, refresh, larger files, cross-protocol operations, and lifecycle recreation.
+2. Complete file-transfer stress above the verified protocol and mutation UI matrices: dual-pane SFTP navigation, upload/download cancellation, overwrite prompts, larger files, cross-protocol copy/move, backgrounding, and recreation during active transfers.
 3. Cover all Settings combinations, backup/restore, app lock, battery-saver behavior, all themes, configuration changes, Fleet refresh/broadcast, and monitoring auto-refresh.
 4. Trigger a deliberate app-side crash in a controlled test build. Verify startup crash capture, About/history display, redaction, and safe clearing.
 5. Record a sanitized foreground-service-permission proof video. Use a clean test profile/host label, disable notification previews, clear Recents and notification history, crop status/navigation bars where possible, and review every frame before upload.
@@ -116,6 +120,7 @@ adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eComposeDeployStre
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eNetworkToolsTest -e omniterm_e2e_network yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eAlertLifecycleStressTest -e omniterm_e2e_alerts yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eRemoteFilesStressTest -e omniterm_e2e_remote_files yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
+adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eFilesUiStressTest -e omniterm_e2e_files_ui yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 `E2eLabSeedTest` requires runtime arguments sourced locally from the ignored secret files. Inspect its `requireArg` calls for the argument names and pass them without shell tracing or copying the resulting command into this document.

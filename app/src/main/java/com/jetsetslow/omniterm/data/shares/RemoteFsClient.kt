@@ -24,7 +24,7 @@ interface RemoteFsClient : Closeable {
     suspend fun home(): String
     suspend fun list(path: String): List<SftpFile>
     suspend fun mkdir(path: String)
-    suspend fun rename(oldPath: String, newPath: String)
+    suspend fun rename(oldPath: String, newPath: String, isDirectory: Boolean = false)
     suspend fun delete(path: String, isDirectory: Boolean)
     /** Stream the remote file into [output]; returns bytes copied. Does not close [output]. */
     suspend fun downloadTo(path: String, output: OutputStream, onProgress: ((Long, Long) -> Unit)? = null): Long

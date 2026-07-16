@@ -126,12 +126,11 @@ class SmbFsClient(
 
     override suspend fun mkdir(path: String) { withShare { it.mkdir(smbPath(path)) } }
 
-    override suspend fun rename(oldPath: String, newPath: String) {
+    override suspend fun rename(oldPath: String, newPath: String, isDirectory: Boolean) {
         withShare { s ->
             val old = smbPath(oldPath)
-            val isDir = s.folderExists(old)
             val access = EnumSet.of(AccessMask.DELETE, AccessMask.GENERIC_READ)
-            val entry = if (isDir) {
+            val entry = if (isDirectory) {
                 s.openDirectory(old, access, null, SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_OPEN, null)
             } else {
                 s.openFile(old, access, null, SMB2ShareAccess.ALL, SMB2CreateDisposition.FILE_OPEN, null)

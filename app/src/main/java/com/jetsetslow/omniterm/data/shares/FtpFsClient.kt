@@ -140,7 +140,7 @@ class FtpFsClient(
         withFtp { it.check(it.makeDirectory(path), "mkdir") }
     }
 
-    override suspend fun rename(oldPath: String, newPath: String) {
+    override suspend fun rename(oldPath: String, newPath: String, isDirectory: Boolean) {
         withFtp { it.check(it.rename(oldPath, newPath), "rename") }
     }
 

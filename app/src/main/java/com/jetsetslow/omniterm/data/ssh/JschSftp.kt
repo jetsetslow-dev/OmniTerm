@@ -143,7 +143,7 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
 
     override suspend fun mkdir(path: String) { withChannel { ch -> ch.mkdir(path) } }
 
-    override suspend fun rename(oldPath: String, newPath: String) { withChannel { ch -> ch.rename(oldPath, newPath) } }
+    override suspend fun rename(oldPath: String, newPath: String, isDirectory: Boolean) { withChannel { ch -> ch.rename(oldPath, newPath) } }
 
     override suspend fun delete(path: String, isDirectory: Boolean): Unit = withChannel { ch ->
         if (isDirectory) ch.rmdir(path) else ch.rm(path)
