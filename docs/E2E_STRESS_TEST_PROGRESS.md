@@ -54,6 +54,10 @@ This is the durable checkpoint for the current physical-device and disposable-la
   - Real HTTP through local forwarding and dynamic SOCKS5 forwarding.
 - SOCKS forwarding and jump-host host-key alias handling have regression coverage.
 - Disposable SSH, FTP, SMB, WebDAV, Docker, HTTP proxy, and SOCKS services were used; the public production host was not mutated.
+- `E2eRemoteFilesStressTest` passed on the physical device in 28.161 seconds.
+  - FTP, SMB, SFTP, and HTTPS WebDAV each completed isolated create/list, 2 MiB upload with monotonic progress, byte-for-byte download, overwrite-not-append, Unicode/space rename, nested directory and empty Unicode file handling, and reverse cleanup.
+  - The suite uses unique disposable directories and verified that no protocol left an artifact after completion. The Android crash buffer and app fatal/ANR log scan were empty.
+  - The WebDAV lab now uses a dedicated TLS CA and port 8443. Its public CA is trusted only by the debug source set; release variants retain the system-only trust configuration and cleartext WebDAV remains rejected.
 
 ### Alerts, notifications, and refresh lifecycle
 
@@ -80,7 +84,7 @@ This is the durable checkpoint for the current physical-device and disposable-la
 ## Remaining critical coverage
 
 1. Toggle Wi-Fi during terminal output, tmux restoration, proxy/jump-host connections, and file transfers; verify bounded retries and lossless UI recovery.
-2. Stress SFTP, SMB, FTP, and WebDAV browsing and operations: dual-pane navigation, upload/download/cancel, overwrite conflicts, bookmarks, refresh, large files, and lifecycle recreation.
+2. Stress the file-browser UI above the verified SFTP/SMB/FTP/HTTPS-WebDAV client matrix: dual-pane navigation, transfer cancellation, overwrite prompts, bookmarks, refresh, larger files, cross-protocol operations, and lifecycle recreation.
 3. Cover all Settings combinations, backup/restore, app lock, battery-saver behavior, all themes, configuration changes, Fleet refresh/broadcast, and monitoring auto-refresh.
 4. Trigger a deliberate app-side crash in a controlled test build. Verify startup crash capture, About/history display, redaction, and safe clearing.
 5. Record a sanitized foreground-service-permission proof video. Use a clean test profile/host label, disable notification previews, clear Recents and notification history, crop status/navigation bars where possible, and review every frame before upload.
@@ -111,6 +115,7 @@ adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eComposeBuilderUiS
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eComposeDeployStressTest -e omniterm_e2e_compose_deploy yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eNetworkToolsTest -e omniterm_e2e_network yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eAlertLifecycleStressTest -e omniterm_e2e_alerts yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
+adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eRemoteFilesStressTest -e omniterm_e2e_remote_files yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 `E2eLabSeedTest` requires runtime arguments sourced locally from the ignored secret files. Inspect its `requireArg` calls for the argument names and pass them without shell tracing or copying the resulting command into this document.

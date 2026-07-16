@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- The disposable physical-device lab uses its own CA. This source set is packaged only in
+         debuggable builds; release variants retain main's system-only trust configuration. -->
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="@raw/omniterm_e2e_ca" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

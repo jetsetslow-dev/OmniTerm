@@ -82,7 +82,7 @@ class E2eLabSeedTest {
             NetworkShareEntity(name = "$PREFIX SMB", protocol = "SMB", address = host, port = 445, sharePath = "omniterm-e2e", workgroup = "WORKGROUP", username = LAB_USER, password = labPassword, anonymous = false),
             NetworkShareEntity(name = "$PREFIX FTP", protocol = "FTP", address = host, port = 21, sharePath = "/", username = LAB_USER, password = labPassword, anonymous = false),
             NetworkShareEntity(name = "$PREFIX SFTP", protocol = "SFTP", address = host, port = 22, sharePath = "/", username = LAB_USER, password = labPassword, anonymous = false),
-            NetworkShareEntity(name = "$PREFIX WebDAV", protocol = "WEBDAV", address = host, port = 8081, sharePath = "/dav", username = LAB_USER, password = labPassword, anonymous = false, useHttps = false),
+            NetworkShareEntity(name = "$PREFIX WebDAV", protocol = "WEBDAV", address = host, port = 8443, sharePath = "/dav", username = LAB_USER, password = labPassword, anonymous = false, useHttps = true),
         ).forEach { repository.insertNetworkShare(it) }
 
         repository.insertPortForward(PortForwardEntity(serverId = directId, name = "$PREFIX Local HTTP", kind = "local", bindPort = 19080, destHost = "127.0.0.1", destPort = 8080))
