@@ -95,10 +95,25 @@ class SessionService : Service() {
     private fun cleanupAndStop() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         activeNotificationIds.forEach { nm.cancel(it) }
+        cancelSessionChannelNotifications(nm)
         activeNotificationIds.clear()
         releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    /**
+     * Notification ids live longer than this Service instance when Android or an instrumentation
+     * run kills/recreates the process. Reconcile the channel itself as well as the in-memory id set
+     * so a prior incarnation can never leave orphaned terminal rows behind.
+     */
+    private fun cancelSessionChannelNotifications(
+        manager: NotificationManager,
+        keep: Set<Int> = emptySet(),
+    ) {
+        manager.activeNotifications
+            .filter { it.notification.channelId == CHANNEL_ID && it.id !in keep }
+            .forEach { manager.cancel(it.id) }
     }
 
     private fun refreshWakeLock() {
@@ -213,6 +228,7 @@ class SessionService : Service() {
         // Cancel notifications for sessions that no longer exist.
         val stale = activeNotificationIds - currentIds
         stale.forEach { nm.cancel(it) }
+        cancelSessionChannelNotifications(nm, currentIds + MAIN_NOTIFICATION_ID)
         activeNotificationIds.clear()
         activeNotificationIds.addAll(currentIds)
     }
@@ -221,6 +237,7 @@ class SessionService : Service() {
         super.onDestroy()
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         activeNotificationIds.forEach { nm.cancel(it) }
+        cancelSessionChannelNotifications(nm)
         activeNotificationIds.clear()
         releaseWakeLock()
     }

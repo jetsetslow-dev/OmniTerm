@@ -1,6 +1,6 @@
 # End-to-end stress-test progress
 
-Last updated: 2026-07-15
+Last updated: 2026-07-16
 
 This is the durable checkpoint for the current physical-device and disposable-lab stress-test campaign. Update it after each verified fix so work can stop and resume without repeating expensive runs.
 
@@ -26,6 +26,10 @@ This is the durable checkpoint for the current physical-device and disposable-la
   - Mixed ordinary/tmux split across Home, remote output, screen off/on, keyguard dismissal, configuration recreation, and a literal system Recents swipe.
   - The test temporarily locked portrait so Quickstep and ADB shared a coordinate space, verified the OmniTerm accessibility snapshot disappeared after the swipe, and restored the device's rotation settings during cleanup.
   - The persistent pane's real foreground notification resumed the app. Pane order, layout, focus, and both live sessions were intact; post-resume input succeeded in both tmux and ordinary SSH.
+- `E2eTerminalNetworkRecoveryStressTest` passed in 73.726 seconds.
+  - A real 12-second Wi-Fi outage exceeded the seeded ten-second SSH keepalive while direct tmux, HTTP-proxy, SOCKS5-proxy, and SSH-jump interactive sessions were active.
+  - All four original session objects recovered, split-pane order stayed intact, every route accepted fresh commands, and tmux delivered the end of its background stream after reconnection.
+  - Cleanup now reconciles all active Android notifications in the session channel, not only ids remembered by the current Service instance. The suite verified zero terminal notifications after repeated failed/successful service lifecycles.
 - The terminal navigation matrix has a deterministic 10,000-case unit test covering mixed session types, pane orders, and leave actions.
 - Large tmux replay is attached and painted immediately while history hydrates in the background; the 500 KiB replay timeout regression test passes.
 
@@ -87,7 +91,7 @@ This is the durable checkpoint for the current physical-device and disposable-la
 
 ## Remaining critical coverage
 
-1. Toggle Wi-Fi during terminal output, tmux restoration, proxy/jump-host connections, and file transfers; verify bounded retries and lossless UI recovery.
+1. Toggle Wi-Fi during active file transfers and verify bounded cancellation/retry plus lossless UI recovery; terminal, tmux, HTTP/SOCKS proxy, and SSH-jump recovery are verified.
 2. Complete file-transfer stress above the verified protocol and mutation UI matrices: dual-pane SFTP navigation, upload/download cancellation, overwrite prompts, larger files, cross-protocol copy/move, backgrounding, and recreation during active transfers.
 3. Cover all Settings combinations, backup/restore, app lock, battery-saver behavior, all themes, configuration changes, Fleet refresh/broadcast, and monitoring auto-refresh.
 4. Trigger a deliberate app-side crash in a controlled test build. Verify startup crash capture, About/history display, redaction, and safe clearing.
@@ -115,6 +119,7 @@ Run the previously verified opt-in suites:
 ```bash
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eTerminalStressTest -e omniterm_e2e_terminal yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eTerminalLifecycleStressTest -e omniterm_e2e_terminal_lifecycle yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
+adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eTerminalNetworkRecoveryStressTest -e omniterm_e2e_terminal_network yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eComposeBuilderUiStressTest -e omniterm_e2e_compose_ui yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eComposeDeployStressTest -e omniterm_e2e_compose_deploy yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eNetworkToolsTest -e omniterm_e2e_network yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
