@@ -22,9 +22,10 @@ This is the durable checkpoint for the current physical-device and disposable-la
   - Exactly one leave prompt for the one remaining live pane.
   - Ordinary-session background traffic and tmux park/restore with history.
   - Scroll isolation and reverse-order destructive disconnect.
-- `E2eTerminalLifecycleStressTest` passed in 41.609 seconds.
-  - Mixed ordinary/tmux split across Home, remote output, screen off/on, keyguard dismissal, configuration recreation, Activity close, and Activity relaunch.
-  - Pane order, layout, focus, and both live sessions were restored; post-relaunch input succeeded in both panes.
+- `E2eTerminalLifecycleStressTest` passed in 41.068 seconds.
+  - Mixed ordinary/tmux split across Home, remote output, screen off/on, keyguard dismissal, configuration recreation, and a literal system Recents swipe.
+  - The test temporarily locked portrait so Quickstep and ADB shared a coordinate space, verified the OmniTerm accessibility snapshot disappeared after the swipe, and restored the device's rotation settings during cleanup.
+  - The persistent pane's real foreground notification resumed the app. Pane order, layout, focus, and both live sessions were intact; post-resume input succeeded in both tmux and ordinary SSH.
 - The terminal navigation matrix has a deterministic 10,000-case unit test covering mixed session types, pane orders, and leave actions.
 - Large tmux replay is attached and painted immediately while history hydrates in the background; the 500 KiB replay timeout regression test passes.
 
@@ -78,13 +79,12 @@ This is the durable checkpoint for the current physical-device and disposable-la
 
 ## Remaining critical coverage
 
-1. Perform a literal Recents swipe with live ordinary/tmux and mixed split sessions. Verify notification resume, background versus resumable semantics, and distinguish task removal from force-stop.
-2. Toggle Wi-Fi during terminal output, tmux restoration, proxy/jump-host connections, and file transfers; verify bounded retries and lossless UI recovery.
-3. Stress SFTP, SMB, FTP, and WebDAV browsing and operations: dual-pane navigation, upload/download/cancel, overwrite conflicts, bookmarks, refresh, large files, and lifecycle recreation.
-4. Cover all Settings combinations, backup/restore, app lock, battery-saver behavior, all themes, configuration changes, Fleet refresh/broadcast, and monitoring auto-refresh.
-5. Trigger a deliberate app-side crash in a controlled test build. Verify startup crash capture, About/history display, redaction, and safe clearing.
-6. Record a sanitized foreground-service-permission proof video. Use a clean test profile/host label, disable notification previews, clear Recents and notification history, crop status/navigation bars where possible, and review every frame before upload.
-7. Run the full unit/instrumentation/migration/static verification set, inspect PR checks, and remove disposable lab artifacts only after their evidence is no longer needed.
+1. Toggle Wi-Fi during terminal output, tmux restoration, proxy/jump-host connections, and file transfers; verify bounded retries and lossless UI recovery.
+2. Stress SFTP, SMB, FTP, and WebDAV browsing and operations: dual-pane navigation, upload/download/cancel, overwrite conflicts, bookmarks, refresh, large files, and lifecycle recreation.
+3. Cover all Settings combinations, backup/restore, app lock, battery-saver behavior, all themes, configuration changes, Fleet refresh/broadcast, and monitoring auto-refresh.
+4. Trigger a deliberate app-side crash in a controlled test build. Verify startup crash capture, About/history display, redaction, and safe clearing.
+5. Record a sanitized foreground-service-permission proof video. Use a clean test profile/host label, disable notification previews, clear Recents and notification history, crop status/navigation bars where possible, and review every frame before upload.
+6. Run the full unit/instrumentation/migration/static verification set, inspect PR checks, and remove disposable lab artifacts only after their evidence is no longer needed.
 
 ## Resume commands
 
