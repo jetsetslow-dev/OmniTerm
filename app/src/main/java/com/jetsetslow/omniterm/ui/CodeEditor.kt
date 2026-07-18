@@ -637,6 +637,49 @@ private fun EditorBody(
         }
     }
 
+    // Follow the cursor while typing. The field fills the whole scroll content, so Compose's own
+    // bring-into-view targets the field's (full-content) bounds and never moves these ancestor
+    // scroll states — leaving the cursor free to walk off-screen mid-edit. Re-keying on the
+    // viewport size also re-runs this when the IME opens/closes, so a freshly focused cursor that
+    // ends up behind the keyboard is scrolled back into view. Collapsed selections only: range
+    // selections come from find/replace (handled above) or user drags that manage their own view.
+    val fieldPadTopPx = with(density) { 12.dp.toPx() }
+    val fieldPadStartPx = with(density) { 8.dp.toPx() }
+    androidx.compose.runtime.LaunchedEffect(field.selection, textLayoutResult, wrap, verticalScroll.viewportSize) {
+        val layout = textLayoutResult ?: return@LaunchedEffect
+        if (!field.selection.collapsed) return@LaunchedEffect
+        val offset = field.selection.start.coerceIn(0, layout.layoutInput.text.length)
+        val rect = layout.getCursorRect(offset)
+        val margin = rect.height
+        val viewport = verticalScroll.viewportSize
+        if (viewport > 0) {
+            val top = rect.top + fieldPadTopPx
+            val bottom = rect.bottom + fieldPadTopPx
+            val visibleTop = verticalScroll.value.toFloat()
+            val visibleBottom = visibleTop + viewport
+            when {
+                bottom + margin > visibleBottom ->
+                    verticalScroll.scrollTo((bottom + margin - viewport).toInt().coerceAtLeast(0))
+                top - margin < visibleTop ->
+                    verticalScroll.scrollTo((top - margin).toInt().coerceAtLeast(0))
+            }
+        }
+        if (!wrap) {
+            val hViewport = horizontalScroll.viewportSize
+            if (hViewport > 0) {
+                val left = rect.left + fieldPadStartPx
+                val visibleLeft = horizontalScroll.value.toFloat()
+                val visibleRight = visibleLeft + hViewport
+                when {
+                    left + margin > visibleRight ->
+                        horizontalScroll.scrollTo((left + margin - hViewport).toInt().coerceAtLeast(0))
+                    left - margin < visibleLeft ->
+                        horizontalScroll.scrollTo((left - margin).toInt().coerceAtLeast(0))
+                }
+            }
+        }
+    }
+
     Row(modifier = modifier.fillMaxSize().verticalScroll(verticalScroll)) {
         // Line-number gutter, scrolling in lockstep with the text (shared verticalScroll on the Row).
         // When NOT wrapping, every logical line is exactly one visual line, so a plain stacked Column
