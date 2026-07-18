@@ -30,6 +30,11 @@ This is the durable checkpoint for the current physical-device and disposable-la
   - Persistent/tmux panes expose `LEAVE` directly and ordinary panes expose `BG`, including mixed split orders.
   - The destructive Disconnect dialog contains only Disconnect/Cancel; it no longer nests background or resumable actions.
   - Accessibility assertions cover both toolbar actions and the pure destructive gate.
+- `E2eTerminalNavigationMatrixTest` passed on the physical device in 47.230 seconds without contacting a remote host.
+  - Real Compose UI clicks covered every direct bottom-tab destination (Servers, Fleet, Monitor, Files, Containers, and Tools) from a two-pane terminal, with accidental Stay and system-Back dialog dismissal preserving both sessions and pane attachments.
+  - Unsplit, one-pane split, two-pane split, first-pane disconnected, both panes disconnected, ordinary Background, mixed ordinary/tmux `Keep sessions`, single/all-tmux `Leave resumable`, and destructive `Disconnect`/`Disconnect all` combinations all committed the original destination exactly once.
+  - Backgrounding both ordinary panes preserves the user's split layout with two empty pane pickers and live background sessions; returning to Term and leaving again does not re-prompt because no session is attached to either pane.
+  - The suite explicitly closes the terminal IME before direct-tab checks, covering the landscape behavior where global chrome is intentionally hidden while the keyboard is visible.
 - `E2eTerminalNetworkRecoveryStressTest` passed in 73.726 seconds.
   - A real 12-second Wi-Fi outage exceeded the seeded ten-second SSH keepalive while direct tmux, HTTP-proxy, SOCKS5-proxy, and SSH-jump interactive sessions were active.
   - All four original session objects recovered, split-pane order stayed intact, every route accepted fresh commands, and tmux delivered the end of its background stream after reconnection.
@@ -118,6 +123,10 @@ This is the durable checkpoint for the current physical-device and disposable-la
 
 - Focused CodeEditor, ComposeBuilder, terminal buffer/emulator/navigation, and SSH host-key tests passed.
 - `:app:assembleOpenSourceDebugAndroidTest` passed after adding all current device suites.
+- The full `testOpenSourceDebugUnitTest` and `testPlayStoreDebugUnitTest` tasks passed. The real-tmux contract gate now waits for the isolated control client to appear in `list-clients` before sending client-scoped commands, eliminating a startup race that intermittently returned `no current client`; its focused regression passed in 29 seconds.
+- `lintOpenSourceDebug` and `lintPlayStoreDebug` both passed, followed by successful open-source, Play Store, and instrumentation debug APK assemblies in one fixed-point run.
+  - The first full lint exposed an API-24/25 crash risk in stale session-notification cleanup: `Notification.channelId` exists only on API 26+. Pre-channel devices now identify only OmniTerm session rows using a compat group plus exact legacy title/text signatures, preserving monitoring and battery-saver notifications.
+- Dependabot is healthy on the default branch: Gradle and GitHub Actions weekly schedules are valid, security updates are enabled, no update PR limit is occupied, the July 13 grouped Gradle PR merged with all gates green, and its config validation passed. The next scheduled checks are July 20 at 04:00 and 04:30 Asia/Kolkata; no repository change is required.
 - `E2eAppSurfaceStressTest` passed on the physical device in 62.100 seconds.
   - Every top-level route and nested tab composed without a crash.
   - All app and terminal themes, orientation changes, Settings dirty navigation, and cross-screen swipe carry-over completed.
@@ -127,7 +136,7 @@ This is the durable checkpoint for the current physical-device and disposable-la
 
 ## Remaining critical coverage
 
-1. Run the full unit/instrumentation/migration/static verification set, inspect PR checks, and remove disposable lab artifacts only after their evidence is no longer needed.
+1. Run the on-device Room migration package, inspect final PR checks, and remove disposable lab artifacts only after their evidence is no longer needed.
 
 ## Resume commands
 
@@ -160,6 +169,7 @@ adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eFilesUiStressTest
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eFileTransferLifecycleStressTest -e omniterm_e2e_transfer_lifecycle yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eSettingsStateStressTest -e omniterm_e2e_settings_state yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eForegroundServiceProofTest -e omniterm_e2e_foreground_proof yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
+adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eTerminalNavigationMatrixTest -e omniterm_e2e_terminal_nav_matrix yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 `E2eLabSeedTest` requires runtime arguments sourced locally from the ignored secret files. Inspect its `requireArg` calls for the argument names and pass them without shell tracing or copying the resulting command into this document.

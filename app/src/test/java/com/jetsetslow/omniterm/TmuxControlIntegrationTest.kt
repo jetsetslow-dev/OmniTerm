@@ -60,6 +60,7 @@ class TmuxControlIntegrationTest {
             val control = isolatedTmuxProcessBuilder(
                 tmux, "-L", socket, "-C", "attach-session", "-t", session,
             ).start()
+            awaitControlClient(tmux, socket, control)
             control.outputStream.bufferedWriter().use { writer ->
                 commands.forEach {
                     writer.write(it)
@@ -121,6 +122,32 @@ class TmuxControlIntegrationTest {
     }
 
     /**
+     * The control process is started asynchronously. Writing client-scoped commands before tmux
+     * has registered the new client intermittently returns "no current client" even though the
+     * same commands are valid. Probe the isolated server instead of adding an arbitrary sleep so
+     * the contract test begins at a deterministic control-ready boundary.
+     */
+    private fun awaitControlClient(tmux: String, socket: String, control: Process) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(PROCESS_TIMEOUT_SECONDS)
+        var lastProbe = ""
+        while (System.nanoTime() < deadline) {
+            if (!control.isAlive) {
+                fail("tmux control client exited before attach:\n${control.inputStream.readBytes().decodeToString()}")
+            }
+            val probe = runCommand(tmux, "-L", socket, "list-clients", "-F", "#{client_name}")
+            lastProbe = probe.output
+            if (probe.exitCode == 0 && probe.output.isNotBlank()) return
+            Thread.sleep(CONTROL_READY_POLL_MILLIS)
+        }
+        control.destroyForcibly()
+        control.waitFor(1, TimeUnit.SECONDS)
+        fail(
+            "tmux control client did not attach; last list-clients output:\n$lastProbe\n" +
+                control.inputStream.readBytes().decodeToString(),
+        )
+    }
+
+    /**
      * The developer/test runner may itself live inside tmux. Inheriting TMUX makes a supposedly
      * isolated `tmux -L <socket> -C attach` behave like a nested command for the outer client; the
      * generated client-scoped commands then fail with "no current client". Remove both client
@@ -136,6 +163,7 @@ class TmuxControlIntegrationTest {
 
     private companion object {
         const val PROCESS_TIMEOUT_SECONDS = 10L
+        const val CONTROL_READY_POLL_MILLIS = 25L
         val TMUX_EXECUTABLES = listOf("/usr/bin/tmux", "/usr/local/bin/tmux")
     }
 }
