@@ -8,6 +8,24 @@ import org.junit.Test
 
 /** Deterministic unit tests for the pure-Kotlin ANSI emulator. No Android/network deps. */
 class TerminalEmulatorTest {
+    @Test(timeout = 15_000)
+    fun largeMostlyAsciiHistoryReplaysWithinAUsefulBound() {
+        val emulator = TerminalEmulator(100, 30, scrollbackLimit = 5_000)
+        val payload = buildString(500_000) {
+            var line = 0
+            while (length < 500_000) {
+                append("row=")
+                append(line++)
+                append(" abcdefghijklmnopqrstuvwxyz 0123456789 café-東京-🙂\r\n")
+            }
+        }.toByteArray()
+
+        emulator.feed(payload)
+
+        assertTrue(emulator.scrollbackRowCount() > 1_000)
+        assertTrue(emulator.rowCount() <= 5_030)
+    }
+
 
     private val esc = "\u001B"
 

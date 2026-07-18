@@ -112,10 +112,13 @@ class WebDavFsClient(
         http.newCall(req).execute().use { it.failIfNotOk("mkdir") }
     }
 
-    override suspend fun rename(oldPath: String, newPath: String) = withContext(Dispatchers.IO) {
-        val req = request(urlFor(oldPath))
+    override suspend fun rename(oldPath: String, newPath: String, isDirectory: Boolean) = withContext(Dispatchers.IO) {
+        // Apache and several NAS implementations redirect a collection URL that omits its trailing
+        // slash. OkHttp may follow that redirect as a successful GET, making a no-op MOVE look like
+        // a completed rename. Emit canonical collection URLs on both sides instead.
+        val req = request(urlFor(oldPath, trailingSlash = isDirectory))
             .method("MOVE", null)
-            .header("Destination", urlFor(newPath).toString())
+            .header("Destination", urlFor(newPath, trailingSlash = isDirectory).toString())
             .header("Overwrite", "T")
             .build()
         http.newCall(req).execute().use { it.failIfNotOk("rename") }
@@ -151,6 +154,10 @@ class WebDavFsClient(
             val req = request(urlFor(path)).put(reqBody).build()
             http.newCall(req).execute().use { it.failIfNotOk("upload") }
         }
+    }
+
+    override fun cancelActiveTransfers() {
+        http.dispatcher.cancelAll()
     }
 
     // ── PROPFIND multistatus parsing ──

@@ -1,5 +1,12 @@
 package com.jetsetslow.omniterm.ui
 
+import android.graphics.Typeface
+import android.text.Editable
+import android.text.InputType
+import android.text.TextWatcher
+import android.util.TypedValue
+import android.view.Gravity
+import android.widget.EditText
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -39,13 +46,17 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jetsetslow.omniterm.ui.theme.OmniColors
@@ -157,19 +168,178 @@ fun CodeEditor(
                 onClose = { showFind = false },
             )
         }
-        EditorBody(
-            modifier = Modifier.weight(1f),
-            scrollToCursorTrigger = scrollToCursorTrigger,
-            field = field,
-            onChange = { field = it; onValueChange(it.text) },
-            enabled = enabled,
-            fontSize = fontSize,
-            language = language,
-            highlightMaxChars = highlightMaxChars,
-            wrap = wrap,
+        if (field.text.length > NATIVE_LARGE_EDITOR_THRESHOLD) {
+            Text(
+                "Large file mode · syntax colors and line gutter are disabled for responsiveness",
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 3.dp),
+            )
+            NativeLargeEditorBody(
+                modifier = Modifier.weight(1f),
+                field = field,
+                onChange = { field = it; onValueChange(it.text) },
+                enabled = enabled,
+                fontSize = fontSize,
+                wrap = wrap,
+                scrollToCursorTrigger = scrollToCursorTrigger,
+            )
+        } else {
+            EditorBody(
+                modifier = Modifier.weight(1f),
+                scrollToCursorTrigger = scrollToCursorTrigger,
+                field = field,
+                onChange = { field = it; onValueChange(it.text) },
+                enabled = enabled,
+                fontSize = fontSize,
+                language = language,
+                highlightMaxChars = highlightMaxChars,
+                wrap = wrap,
+            )
+        }
+    }
+}
+
+private class NativeEditorController {
+    var applying = false
+    var displayedText = ""
+    var windowStart = 0
+    var windowEnd = 0
+    var lastScrollTrigger = 0
+    var lastWrap: Boolean? = null
+}
+
+/**
+ * Native, paged EditText fallback. Android's EditText still creates a Layout for its entire text,
+ * even though only a viewport is visible; a several-hundred-KB compose file can therefore monopolise
+ * the main thread. Keep the complete value in [field], but render/edit only one lossless window.
+ */
+@Composable
+private fun NativeLargeEditorBody(
+    modifier: Modifier,
+    field: TextFieldValue,
+    onChange: (TextFieldValue) -> Unit,
+    enabled: Boolean,
+    fontSize: androidx.compose.ui.unit.TextUnit,
+    wrap: Boolean,
+    scrollToCursorTrigger: Int,
+) {
+    val controller = remember { NativeEditorController() }
+    var requestedWindowStart by remember { androidx.compose.runtime.mutableIntStateOf(0) }
+    val currentOnChange by androidx.compose.runtime.rememberUpdatedState(onChange)
+    val currentField by androidx.compose.runtime.rememberUpdatedState(field)
+    val backgroundColor = MaterialTheme.colorScheme.surface.toArgb()
+    val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
+    val windowStart = requestedWindowStart.coerceIn(0, field.text.length)
+    val windowEnd = largeEditorWindowEnd(field.text, windowStart)
+
+    Column(modifier = modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(
+                enabled = windowStart > 0,
+                onClick = { requestedWindowStart = (windowStart - LARGE_EDITOR_WINDOW_CHARS).coerceAtLeast(0) },
+            ) { Text("Previous") }
+            Text(
+                "Chars ${windowStart + 1}–$windowEnd of ${field.text.length}",
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+                textAlign = TextAlign.Center,
+            )
+            TextButton(
+                enabled = windowEnd < field.text.length,
+                onClick = { requestedWindowStart = windowEnd },
+            ) { Text("Next") }
+        }
+        AndroidView(
+        modifier = Modifier.fillMaxWidth().weight(1f),
+        factory = { context ->
+            EditText(context).apply {
+                tag = "code-editor-native"
+                gravity = Gravity.TOP or Gravity.START
+                typeface = Typeface.MONOSPACE
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize.value)
+                inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE or
+                    InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS
+                isSingleLine = false
+                isVerticalScrollBarEnabled = true
+                isHorizontalScrollBarEnabled = true
+                setHorizontallyScrolling(!wrap)
+                controller.lastWrap = wrap
+                setPadding(12, 12, 12, 12)
+                setBackgroundColor(backgroundColor)
+                setTextColor(textColor)
+                controller.applying = true
+                val visibleText = field.text.substring(windowStart, windowEnd)
+                setText(visibleText)
+                controller.displayedText = visibleText
+                controller.windowStart = windowStart
+                controller.windowEnd = windowEnd
+                setSelection(
+                    (field.selection.start - windowStart).coerceIn(0, visibleText.length),
+                    (field.selection.end - windowStart).coerceIn(0, visibleText.length),
+                )
+                controller.applying = false
+                addTextChangedListener(object : TextWatcher {
+                    override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) = Unit
+                    override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) = Unit
+                    override fun afterTextChanged(s: Editable?) {
+                        if (controller.applying || s == null) return
+                        val nextWindow = s.toString()
+                        val base = currentField.text
+                        val start = controller.windowStart.coerceIn(0, base.length)
+                        val end = controller.windowEnd.coerceIn(start, base.length)
+                        val next = base.substring(0, start) + nextWindow + base.substring(end)
+                        controller.displayedText = nextWindow
+                        controller.windowEnd = start + nextWindow.length
+                        val selectionStartGlobal = start + selectionStart.coerceIn(0, nextWindow.length)
+                        val selectionEndGlobal = start + selectionEnd.coerceIn(0, nextWindow.length)
+                        currentOnChange(TextFieldValue(next, TextRange(selectionStartGlobal, selectionEndGlobal)))
+                    }
+                })
+            }
+        },
+        update = { editor ->
+            controller.applying = true
+            val visibleText = field.text.substring(windowStart, windowEnd)
+            if (controller.displayedText != visibleText || controller.windowStart != windowStart) {
+                editor.setText(visibleText)
+                controller.displayedText = visibleText
+            }
+            controller.windowStart = windowStart
+            controller.windowEnd = windowEnd
+            val start = (field.selection.start - windowStart).coerceIn(0, visibleText.length)
+            val end = (field.selection.end - windowStart).coerceIn(0, visibleText.length)
+            if (editor.selectionStart != start || editor.selectionEnd != end) editor.setSelection(start, end)
+            editor.isEnabled = enabled
+            editor.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize.value)
+            if (controller.lastWrap != wrap) {
+                editor.setHorizontallyScrolling(!wrap)
+                controller.lastWrap = wrap
+            }
+            editor.setBackgroundColor(backgroundColor)
+            editor.setTextColor(textColor)
+            if (scrollToCursorTrigger > 0 && scrollToCursorTrigger != controller.lastScrollTrigger) {
+                controller.lastScrollTrigger = scrollToCursorTrigger
+                editor.requestFocus()
+                editor.post { editor.bringPointIntoView(editor.selectionStart) }
+            }
+            controller.applying = false
+        },
         )
     }
 }
+
+private const val NATIVE_LARGE_EDITOR_THRESHOLD = 200_000
+// Kept deliberately small for older physical devices: even the platform EditText lays out every
+// character in its assigned page, and 32K-char pages still caused multi-second frames on API 35.
+private const val LARGE_EDITOR_WINDOW_CHARS = 4_096
+
+internal fun largeEditorWindowEnd(text: String, start: Int): Int =
+    (start.coerceIn(0, text.length) + LARGE_EDITOR_WINDOW_CHARS).coerceAtMost(text.length)
 
 /**
  * Full-screen editor chrome around [CodeEditor]: a top bar (close + title/subtitle + dirty dot +
@@ -481,29 +651,42 @@ private fun EditorBody(
         ) {
             // Offset of the first char of each logical line, so we can find its starting VISUAL line
             // in the wrapped layout and size each number to match that logical line's total height.
-            val lineStartOffsets = remember(field.text) { logicalLineStartOffsets(field.text) }
             val layout = textLayoutResult
-            for (n in 1..lineCount) {
-                // Height this logical line occupies on screen. When wrapping, that's the sum of all
-                // its visual (wrapped) rows; otherwise it's a single row. Once measured, we lock each
-                // number's row to that height so it stays aligned with the text it labels.
-                val rowHeight = if (wrap && layout != null) {
-                    val startOffset = lineStartOffsets.getOrElse(n - 1) { 0 }
-                    val endOffset = lineStartOffsets.getOrNull(n)?.minus(1) ?: field.text.length
-                    val firstVisual = layout.getLineForOffset(startOffset)
-                    val lastVisual = layout.getLineForOffset(endOffset.coerceAtLeast(startOffset))
-                    with(density) {
-                        (layout.getLineBottom(lastVisual) - layout.getLineTop(firstVisual)).toDp()
-                    }
-                } else null
+            if (lineCount > LARGE_EDITOR_GUTTER_LINE_THRESHOLD) {
+                // Thousands of individual Text composables made large YAML editors spend seconds
+                // just constructing the gutter. One multi-line layout has identical non-wrapped
+                // metrics and remains a safe, responsive approximation when word-wrap is enabled.
                 Text(
-                    n.toString(),
+                    remember(lineCount) { (1..lineCount).joinToString("\n") },
                     fontFamily = OmniFonts.mono,
                     fontSize = fontSize,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
                     textAlign = TextAlign.End,
-                    modifier = if (rowHeight != null) Modifier.height(rowHeight) else Modifier,
                 )
+            } else {
+                val lineStartOffsets = remember(field.text) { logicalLineStartOffsets(field.text) }
+                for (n in 1..lineCount) {
+                    // Height this logical line occupies on screen. When wrapping, that's the sum of all
+                    // its visual (wrapped) rows; otherwise it's a single row. Once measured, we lock each
+                    // number's row to that height so it stays aligned with the text it labels.
+                    val rowHeight = if (wrap && layout != null) {
+                        val startOffset = lineStartOffsets.getOrElse(n - 1) { 0 }
+                        val endOffset = lineStartOffsets.getOrNull(n)?.minus(1) ?: field.text.length
+                        val firstVisual = layout.getLineForOffset(startOffset)
+                        val lastVisual = layout.getLineForOffset(endOffset.coerceAtLeast(startOffset))
+                        with(density) {
+                            (layout.getLineBottom(lastVisual) - layout.getLineTop(firstVisual)).toDp()
+                        }
+                    } else null
+                    Text(
+                        n.toString(),
+                        fontFamily = OmniFonts.mono,
+                        fontSize = fontSize,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
+                        textAlign = TextAlign.End,
+                        modifier = if (rowHeight != null) Modifier.height(rowHeight) else Modifier,
+                    )
+                }
             }
         }
         BasicTextField(
@@ -516,6 +699,7 @@ private fun EditorBody(
             cursorBrush = SolidColor(OmniColors.amber),
             modifier = Modifier
                 .fillMaxSize()
+                .testTag("code-editor-input")
                 // Wrap mode: soft-wrap and no horizontal scroll. Otherwise: scroll horizontally so
                 // long lines extend off-screen instead of wrapping.
                 .then(if (wrap) Modifier else Modifier.horizontalScroll(horizontalScroll))
@@ -523,6 +707,8 @@ private fun EditorBody(
         )
     }
 }
+
+private const val LARGE_EDITOR_GUTTER_LINE_THRESHOLD = 2_000
 
 /**
  * Character offset of the first char of each logical (newline-delimited) line in [text]. The gutter
@@ -573,4 +759,25 @@ internal fun goToLine(field: TextFieldValue, text: String, line: Int): TextField
         current++
     }
     return field.copy(selection = TextRange(offset.coerceIn(0, text.length)))
+}
+/**
+ * Hoists editor overlays above [AppCoreScaffold]. Screens inside the scaffold are constrained by
+ * its bars and consume its window insets, so rendering a "full-screen" editor locally both clips
+ * it to the screen's content slot and loses the real IME inset.
+ */
+class FullScreenEditorHost {
+    var content by mutableStateOf<(@Composable () -> Unit)?>(null)
+        private set
+
+    fun show(content: @Composable () -> Unit) {
+        this.content = content
+    }
+
+    fun dismiss() {
+        content = null
+    }
+}
+
+val LocalFullScreenEditorHost = staticCompositionLocalOf<FullScreenEditorHost> {
+    error("FullScreenEditorHost is not installed")
 }

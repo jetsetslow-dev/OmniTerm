@@ -3,6 +3,7 @@ package com.jetsetslow.omniterm
 import com.jetsetslow.omniterm.data.term.TerminalEmulator
 import com.jetsetslow.omniterm.ui.dropBoundaryDuplication
 import com.jetsetslow.omniterm.ui.insertedCodePointDelta
+import com.jetsetslow.omniterm.ui.isSingleTerminalEnter
 import com.jetsetslow.omniterm.ui.joinRowsRespectingWraps
 import com.jetsetslow.omniterm.ui.logicalLineAt
 import com.jetsetslow.omniterm.ui.terminalLinkAt
@@ -13,6 +14,15 @@ import org.junit.Test
 
 /** Tests for the scrollback↔screen boundary de-duplication used by "Full buffer" copy. */
 class TerminalBufferTextTest {
+
+    @Test
+    fun singleImeNewlineIsTerminalEnterButPasteBlockIsNot() {
+        assertEquals(true, isSingleTerminalEnter("\n"))
+        assertEquals(true, isSingleTerminalEnter("\r"))
+        assertEquals(true, isSingleTerminalEnter("\r\n"))
+        assertEquals(false, isSingleTerminalEnter("command\n"))
+        assertEquals(false, isSingleTerminalEnter("one\ntwo\n"))
+    }
 
     @Test
     fun pasteDeltaCountsSupplementaryCharactersAsSingleCodePoints() {

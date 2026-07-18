@@ -3,6 +3,7 @@ package com.jetsetslow.omniterm.ui
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
 import android.graphics.Paint
 import android.graphics.Typeface
+import android.content.res.Configuration
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -55,6 +56,7 @@ import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -326,12 +328,15 @@ private fun terminalPalette(key: String): TerminalPalette {
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ShellScreen(viewModel: AppViewModel) {
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
     val chrome = shellChromePalette()
     val scheme = MaterialTheme.colorScheme
+    val compactIme = WindowInsets.isImeVisible &&
+        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val currentSession = viewModel.currentSession
     // The header identifies exactly the focused terminal. Do not fall back to the other split pane
     // when the focused pane is empty; that made the top host name actively misleading.
@@ -391,7 +396,7 @@ fun ShellScreen(viewModel: AppViewModel) {
                 // The overlaid header is now two rows (host info + action chips), so its height is
                 // measured rather than hardcoded — the terminal starts exactly below it.
                 val density = LocalDensity.current
-                var headerHeight by remember { mutableStateOf(64.dp) }
+                var headerHeight by remember(compactIme) { mutableStateOf(if (compactIme) 0.dp else 64.dp) }
                 Box(Modifier.fillMaxSize().padding(top = headerHeight)) {
                     when {
                         // Split view takes priority: it manages its own connecting/empty panes, so
@@ -412,7 +417,7 @@ fun ShellScreen(viewModel: AppViewModel) {
                         }
                     }
                 }
-                ServerSelectorBar(
+                if (!compactIme) ServerSelectorBar(
                     viewModel = viewModel,
                     // Offline hosts are hidden from the picker — force-connect lives on the Hosts tab.
                     onlineOnly = true,
@@ -420,13 +425,18 @@ fun ShellScreen(viewModel: AppViewModel) {
                     onServerChange = {
                         val newServerId = viewModel.selectedServerId
                         if (headerSession != null && headerSession.serverId != newServerId) {
+                            val persistent = headerSession.persistent
                             confirm.ask(
-                                title = "Send Session to Background?",
-                                message = "OmniTerm will keep the SSH session active while you switch hosts. This may increase battery consumption.",
-                                confirmLabel = "Send to background",
+                                title = if (persistent) "Leave Session Resumable?" else "Send Session to Background?",
+                                message = if (persistent) {
+                                    "OmniTerm will detach from this terminal while its tmux session keeps running on the host."
+                                } else {
+                                    "OmniTerm will keep the SSH session active while you switch hosts. This may increase battery consumption."
+                                },
+                                confirmLabel = if (persistent) "Leave resumable" else "Send to background",
                                 destructive = false,
                             ) {
-                                viewModel.sendSessionToBackground(headerSession.id)
+                                viewModel.leaveOrBackgroundSession(headerSession.id)
                                 val existingSession = viewModel.activeSessions.find { it.serverId == newServerId && it.isConnected }
                                 if (existingSession != null) {
                                     if (viewModel.isMultiSsh) {
@@ -507,20 +517,25 @@ fun ShellScreen(viewModel: AppViewModel) {
                             }
                         }
                         TerminalOpenPicker(viewModel, actionSession, modifier = Modifier.weight(1f))
+                        val persistent = actionSession?.persistent == true
                         TerminalHeaderAction(
-                            "BG",
+                            if (persistent) "LEAVE" else "BG",
                             scheme.onPrimaryContainer,
                             scheme.primaryContainer,
-                            enabled = connected,
+                            enabled = actionSession != null && (persistent || connected),
                             modifier = Modifier.weight(1f),
                         ) {
                             confirm.ask(
-                                title = "Send Session to Background?",
-                                message = "OmniTerm will keep the SSH session active in the background. This may increase battery consumption.",
-                                confirmLabel = "Send to background",
+                                title = if (persistent) "Leave Session Resumable?" else "Send Session to Background?",
+                                message = if (persistent) {
+                                    "OmniTerm will detach and close this local SSH connection. The tmux session and anything running inside it stay available to resume."
+                                } else {
+                                    "OmniTerm will keep the SSH session active in the background. This may increase battery consumption."
+                                },
+                                confirmLabel = if (persistent) "Leave resumable" else "Send to background",
                                 destructive = false,
                             ) {
-                                actionSession?.let { viewModel.sendSessionToBackground(it.id) }
+                                actionSession?.let { viewModel.leaveOrBackgroundSession(it.id) }
                             }
                         }
                         // A dropped session that isn't already retrying gets a manual reconnect here,
@@ -557,7 +572,7 @@ fun ShellScreen(viewModel: AppViewModel) {
         // view it targets the focused pane (input routing already follows the focused session).
         val keyBarSession = if (viewModel.isMultiSsh) viewModel.multiSshPaneSession(viewModel.multiSshFocusedPane) else currentSession
         if (keyBarSession?.isConnected == true) {
-            TerminalKeyBar(viewModel)
+            TerminalKeyBar(viewModel, compact = compactIme)
         }
     }
 
@@ -665,6 +680,7 @@ private fun TerminalHeaderAction(
         label == "SPLIT" -> "Open split terminal"
         label == "SINGLE" -> "Return to single terminal"
         label == "BG" -> "Send current session to background"
+        label == "LEAVE" -> "Leave current tmux session resumable"
         label == "DISC" -> "Disconnect current session"
         label == "RECON" -> "Reconnect current session"
         label.contains("STACK") -> "Stack split panes"
@@ -1083,19 +1099,21 @@ private fun MultiSshPaneHeader(viewModel: AppViewModel, paneIndex: Int, session:
         if (session != null) {
             Spacer(Modifier.width(2.dp))
             Text(
-                "BG",
+                if (session.persistent) "LEAVE" else "BG",
                 color = chrome.mutedText,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .clip(RoundedCornerShape(4.dp))
                     .clickable {
-                        viewModel.sendSessionToBackground(session.id)
+                        viewModel.leaveOrBackgroundSession(session.id)
                     }
                     .heightIn(min = 28.dp)
                     .wrapContentHeight(Alignment.CenterVertically)
                     .padding(horizontal = 7.dp, vertical = 3.dp)
-                    .semantics { contentDescription = "Send $label to background" },
+                    .semantics {
+                        contentDescription = if (session.persistent) "Leave $label resumable" else "Send $label to background"
+                    },
             )
             // Solid chip, not a bare glyph: the close affordance must read on every terminal
             // palette and stay a comfortable tap target.
@@ -1210,7 +1228,7 @@ private fun MultiSshPanePicker(
                         },
                         enabled = !viewModel.isTerminalConnecting,
                         onClick = {
-                            currentSession?.let { viewModel.sendSessionToBackground(it.id) }
+                            currentSession?.let { viewModel.leaveOrBackgroundSession(it.id) }
                             viewModel.setMultiSshFocus(paneIndex)
                             viewModel.resumePersistentSession(saved.tmuxName)
                             expanded = false
@@ -1242,7 +1260,7 @@ private fun MultiSshPanePicker(
                         leadingIcon = { StatusDot(true, getServerColor(server), 8.dp) },
                         enabled = !viewModel.isTerminalConnecting,
                         onClick = {
-                            currentSession?.let { viewModel.sendSessionToBackground(it.id) }
+                            currentSession?.let { viewModel.leaveOrBackgroundSession(it.id) }
                             viewModel.setMultiSshFocus(paneIndex)
                             viewModel.selectedServerId = server.id
                             viewModel.connectTerminal()
@@ -1669,7 +1687,11 @@ private fun PaneTerminal(
                     } else {
                         // Preserve the entire clipboard/IME block, including every newline. The old
                         // path submitted only the first line and silently discarded the remainder.
-                        viewModel.pasteText(newText)
+                        // A software keyboard's Enter is different: it arrives as one newline, but
+                        // an interactive PTY expects the terminal Enter key (CR). Sending the raw LF
+                        // only moved the cursor and left the command pending until another Enter.
+                        if (isSingleTerminalEnter(newText)) viewModel.sendKey(TermKey.ENTER)
+                        else viewModel.pasteText(newText)
                     }
                     inputField = TextFieldValue("")
                     return@BasicTextField
@@ -2213,6 +2235,10 @@ private fun longestCommonAffix(old: String, new: String): Int {
 internal fun insertedCodePointDelta(old: String, new: String): Int =
     (new.codePointCount(0, new.length) - longestCommonAffix(old, new)).coerceAtLeast(0)
 
+/** True only for one IME Enter commit; multi-line clipboard/paste blocks stay byte-preserving. */
+internal fun isSingleTerminalEnter(text: String): Boolean =
+    text == "\n" || text == "\r" || text == "\r\n"
+
 private data class CursorGlyph(val text: String, val startColumn: Int, val width: Int)
 
 private fun rowGlyphAt(row: TermRow, targetCol: Int): CursorGlyph? {
@@ -2232,9 +2258,62 @@ private fun rowGlyphAt(row: TermRow, targetCol: Int): CursorGlyph? {
 }
 
 @Composable
-private fun TerminalKeyBar(viewModel: AppViewModel) {
+private fun TerminalKeyBar(viewModel: AppViewModel, compact: Boolean = false) {
     val chrome = shellChromePalette()
     var showSymbols by remember { mutableStateOf(false) }
+    if (compact) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .background(chrome.keyBackground)
+                .padding(horizontal = 4.dp, vertical = 4.dp),
+        ) {
+            when {
+                showSymbols -> {
+                    listOf("~", "_", ".", ":", ";", "'", "\"", "`", "\$", "&", "*", "(", ")", "[", "]").forEach { symbol ->
+                        KeyCap(symbol, Modifier.weight(1f)) { viewModel.typeText(symbol) }
+                    }
+                    KeyCap("SYM", Modifier.weight(1f), active = true, activeColor = OmniColors.purple) {
+                        showSymbols = false
+                        viewModel.isFunctionSetVisible = false
+                    }
+                }
+                viewModel.isFunctionSetVisible -> {
+                    (1..12).forEach { number ->
+                        val key = when (number) {
+                            1 -> TermKey.F1; 2 -> TermKey.F2; 3 -> TermKey.F3; 4 -> TermKey.F4
+                            5 -> TermKey.F5; 6 -> TermKey.F6; 7 -> TermKey.F7; 8 -> TermKey.F8
+                            9 -> TermKey.F9; 10 -> TermKey.F10; 11 -> TermKey.F11; else -> TermKey.F12
+                        }
+                        KeyCap("F$number", Modifier.weight(1f)) { viewModel.sendKey(key) }
+                    }
+                    KeyCap("PGUP", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_UP) }
+                    KeyCap("PGDN", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_DOWN) }
+                    KeyCap("ESC", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ESC) }
+                    KeyCap("NAV", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) { viewModel.isFunctionSetVisible = false }
+                }
+                else -> {
+                    KeyCap("TAB", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.TAB) }
+                    KeyCap("ESC", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ESC) }
+                    KeyCap("CTRL", Modifier.weight(1f), active = viewModel.isCtrlPressed) { viewModel.isCtrlPressed = !viewModel.isCtrlPressed }
+                    KeyCap("↑", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.UP) }
+                    KeyCap("ALT", Modifier.weight(1f), active = viewModel.isAltPressed) { viewModel.isAltPressed = !viewModel.isAltPressed }
+                    KeyCap("/", Modifier.weight(1f)) { viewModel.typeText("/") }
+                    KeyCap("SYM", Modifier.weight(1f), active = true, activeColor = OmniColors.purple) { showSymbols = true }
+                    KeyCap("FN", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) { viewModel.isFunctionSetVisible = true }
+                    KeyCap("SHFT", Modifier.weight(1f), active = viewModel.isShiftPressed) { viewModel.isShiftPressed = !viewModel.isShiftPressed }
+                    KeyCap("HOME", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.HOME) }
+                    KeyCap("←", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.LEFT) }
+                    KeyCap("↓", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DOWN) }
+                    KeyCap("→", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.RIGHT) }
+                    KeyCap("END", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.END) }
+                    KeyCap("-", Modifier.weight(1f)) { viewModel.typeText("-") }
+                    KeyCap("↵", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ENTER) }
+                }
+            }
+        }
+        return
+    }
     Column(
         Modifier
             .fillMaxWidth()

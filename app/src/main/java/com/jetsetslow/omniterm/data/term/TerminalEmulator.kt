@@ -606,7 +606,14 @@ class TerminalEmulator(
         }
         if (curRow !in 0 until rows || curCol !in 0 until cols) return
         clearWideGlyphAt(screen[curRow], curCol)
-        val value = String(Character.toChars(codePoint))
+        // Terminal traffic is overwhelmingly printable ASCII. Reusing the immutable one-character
+        // strings avoids allocating/classifying a fresh String for every cell while replaying a
+        // large tmux history (hundreds of thousands of characters on resume).
+        val value = if (codePoint in ASCII_FIRST..ASCII_LAST) {
+            ASCII_GLYPHS[codePoint - ASCII_FIRST]
+        } else {
+            String(Character.toChars(codePoint))
+        }
         screen[curRow][curCol].set(
             value, penFg, penBg, penBold, penInverse, penItalic, penUnderline, penDim, width,
         )
@@ -734,6 +741,7 @@ class TerminalEmulator(
     }
 
     private fun codePointWidth(codePoint: Int): Int {
+        if (codePoint in ASCII_FIRST..ASCII_LAST) return 1
         val type = Character.getType(codePoint)
         if (type == Character.NON_SPACING_MARK.toInt() ||
             type == Character.COMBINING_SPACING_MARK.toInt() ||
@@ -1036,6 +1044,11 @@ class TerminalEmulator(
     }
 
     companion object {
+        private const val ASCII_FIRST = 0x20
+        private const val ASCII_LAST = 0x7E
+        private val ASCII_GLYPHS = Array(ASCII_LAST - ASCII_FIRST + 1) { index ->
+            (ASCII_FIRST + index).toChar().toString()
+        }
         private const val MAX_CONTROL_SEQUENCE_CHARS = 1024
         const val DEFAULT_FG: Int = 0xFFC8D4E8.toInt() // Nexus.textPrimary
         const val DEFAULT_BG: Int = 0xFF000000.toInt() // Nexus.bg0 (AMOLED black)

@@ -11,6 +11,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.ByteArrayInputStream
+import java.io.Closeable
 import java.io.InputStream
 import java.io.OutputStream
 
@@ -28,6 +29,9 @@ import java.io.OutputStream
  * on the same connection. Jump-host sessions are not pooled (see [buildJumpedJschSession]).
  */
 class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
+
+    private val activeChannels = java.util.concurrent.ConcurrentHashMap.newKeySet<ChannelSftp>()
+    private val activeStreams = java.util.concurrent.ConcurrentHashMap.newKeySet<Closeable>()
 
     private val isJump: Boolean =
         creds.proxyType == "ssh" && creds.proxyHost.isNotBlank() && creds.proxyPort > 0
@@ -76,6 +80,7 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
             val cancellationHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
                 if (cause is CancellationException) runCatching { channel.disconnect() }
             }
+            activeChannels += channel
             try {
                 return@withContext block(channel)
             } catch (e: CancellationException) {
@@ -89,6 +94,7 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
                 }
                 throw e
             } finally {
+                activeChannels -= channel
                 cancellationHandle?.dispose()
                 channel.disconnect()
                 lease.close()
@@ -112,10 +118,11 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
             val session = buildJumpedJschSession(creds, CONNECT_TIMEOUT_MS).also { jumped = it }.target
             session.connect(CONNECT_TIMEOUT_MS)
             channel = (session.openChannel("sftp") as ChannelSftp).also { it.connect(CONNECT_TIMEOUT_MS) }
+            activeChannels += channel
             return block(channel)
         } finally {
             cancellationHandle?.dispose()
-            channel?.disconnect()
+            channel?.let { activeChannels -= it; it.disconnect() }
             jumped?.disconnect()
         }
     }
@@ -143,7 +150,7 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
 
     override suspend fun mkdir(path: String) { withChannel { ch -> ch.mkdir(path) } }
 
-    override suspend fun rename(oldPath: String, newPath: String) { withChannel { ch -> ch.rename(oldPath, newPath) } }
+    override suspend fun rename(oldPath: String, newPath: String, isDirectory: Boolean) { withChannel { ch -> ch.rename(oldPath, newPath) } }
 
     override suspend fun delete(path: String, isDirectory: Boolean): Unit = withChannel { ch ->
         if (isDirectory) ch.rmdir(path) else ch.rm(path)
@@ -185,8 +192,13 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
         onProgress: ((Long, Long) -> Unit)?,
     ) {
         val job = currentCoroutineContext()[Job]
-        withChannel(retryBlockOnStaleSession = false, timeoutMs = TRANSFER_TIMEOUT_MS) { ch ->
-            ch.put(input, path, progressMonitor(totalBytes, onProgress, job), ChannelSftp.OVERWRITE)
+        activeStreams += input
+        try {
+            withChannel(retryBlockOnStaleSession = false, timeoutMs = TRANSFER_TIMEOUT_MS) { ch ->
+                ch.put(input, path, progressMonitor(totalBytes, onProgress, job), ChannelSftp.OVERWRITE)
+            }
+        } finally {
+            activeStreams -= input
         }
     }
 
@@ -199,14 +211,20 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
         return withChannel(retryBlockOnStaleSession = false, timeoutMs = TRANSFER_TIMEOUT_MS) { ch ->
         val total = runCatching { ch.lstat(path).size }.getOrDefault(0L)
         var copied = 0L
-        ch.get(path, progressMonitor(total, onProgress, job)).use { input ->
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            while (true) {
-                val read = input.read(buffer)
-                if (read < 0) break
-                output.write(buffer, 0, read)
-                copied += read
+        val input = ch.get(path, progressMonitor(total, onProgress, job))
+        activeStreams += input
+        try {
+            input.use {
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                while (true) {
+                    val read = it.read(buffer)
+                    if (read < 0) break
+                    output.write(buffer, 0, read)
+                    copied += read
+                }
             }
+        } finally {
+            activeStreams -= input
         }
         copied
         }
@@ -243,6 +261,14 @@ class JschSftp(private val creds: SshCredentials) : RemoteFsClient {
                 onProgress(if (totalBytes > 0) totalBytes else transferred, totalBytes)
             }
         }
+    }
+
+    override fun cancelActiveTransfers() {
+        // JSch can remain blocked inside put()/get() after a channel disconnect, especially when
+        // the caller side is a pipe-backed SAF provider. Close the active stream first so the
+        // blocking read/write unwinds, then tear down the transport channel.
+        activeStreams.toList().forEach { stream -> runCatching { stream.close() } }
+        activeChannels.toList().forEach { channel -> runCatching { channel.disconnect() } }
     }
 
     companion object {

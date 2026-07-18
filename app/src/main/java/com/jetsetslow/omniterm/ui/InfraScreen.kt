@@ -34,11 +34,12 @@ import kotlinx.coroutines.launch
 fun InfraScreen(viewModel: AppViewModel) {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
     val onlineServers = servers.filter { it.status == "online" }
-    val srv = onlineServers.find { it.id == viewModel.selectedServerId } ?: onlineServers.firstOrNull()
+    val explicitlySelected = servers.find { it.id == viewModel.selectedServerId }
+    val srv = explicitlySelected ?: onlineServers.firstOrNull()
     // Load real container runtime state whenever the selected host changes.
     LaunchedEffect(srv?.id) {
         if (srv != null) {
-            if (viewModel.selectedServerId != srv.id) viewModel.selectedServerId = srv.id
+            if (explicitlySelected == null && viewModel.selectedServerId != srv.id) viewModel.selectedServerId = srv.id
             viewModel.loadDocker()
         }
     }
@@ -386,17 +387,17 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
         val yaml = viewModel.readComposeFile(composePath)
         if (yaml != null && yaml.isNotBlank()) {
             editBuilderError = null
-            viewModel.activeComposeDraft = parseDockerComposeYaml(
+            viewModel.beginComposeDraft(parseDockerComposeYaml(
                 yaml, project,
                 workingDir = workingDir,
                 fileName = composePath.substringAfterLast('/'),
                 composeFilePath = composePath,
                 composeConfigFiles = configFiles,
                 runtime = runtime,
-            )
+            ))
             viewModel.activeInfraTab = 1
         } else {
-            editBuilderError = "Could not read compose file: $composePath"
+            editBuilderError = viewModel.composeFileReadError ?: "Could not read compose file: $composePath"
         }
     }
     LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {

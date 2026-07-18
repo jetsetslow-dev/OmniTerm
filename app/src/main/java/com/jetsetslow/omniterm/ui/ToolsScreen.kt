@@ -25,6 +25,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -173,6 +174,15 @@ fun AlertsToolView(viewModel: AppViewModel) {
     val serversList by viewModel.servers.collectAsStateWithLifecycle()
     var showCreateRuleDialog by remember { mutableStateOf(false) }
     var editRule by remember { mutableStateOf<AlertRuleEntity?>(null) }
+    // A mute can expire without a database emission (for example while the host is offline), so a
+    // lightweight minute tick keeps the Active/Muted partition honest even with no telemetry.
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(Unit) {
+        while (true) {
+            delay(60_000)
+            now = System.currentTimeMillis()
+        }
+    }
 
 
     ToolScaffold(
@@ -211,9 +221,9 @@ fun AlertsToolView(viewModel: AppViewModel) {
                 }
             }
 
-            val now = System.currentTimeMillis()
             val visibleAlerts = alerts.filter { !it.acknowledged && it.mutedUntil < now }
             val acknowledgedAlerts = alerts.filter { it.acknowledged && it.mutedUntil < now }
+            val mutedAlerts = alerts.filter { it.mutedUntil >= now }
 
             PrimaryTabRow(selectedTabIndex = activeTab) {
                 Tab(selected = activeTab == 0, onClick = { viewModel.activeAlertsTab = 0 }) { Text("Active (${visibleAlerts.size})", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
@@ -224,15 +234,17 @@ fun AlertsToolView(viewModel: AppViewModel) {
             Spacer(modifier = Modifier.height(12.dp))
 
             if (activeTab == 0) {
-                if (visibleAlerts.isEmpty()) {
+                if (visibleAlerts.isEmpty() && mutedAlerts.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         Text("No active alert incidents.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
-                        item {
-                            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                                TextButton(onClick = { viewModel.acknowledgeAllAlerts() }) { Text("Ack All") }
+                        if (visibleAlerts.isNotEmpty()) {
+                            item {
+                                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                                    TextButton(onClick = { viewModel.acknowledgeAllAlerts() }) { Text("Ack All") }
+                                }
                             }
                         }
                         items(visibleAlerts) { alert ->
@@ -258,6 +270,32 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                             TextButton(onClick = { viewModel.acknowledgeAlert(alert.id) }) { Text("ACKNOWLEDGE") }
                                         }
                                         TextButton(onClick = { viewModel.muteAlertForOneHour(alert.id) }) { Text("MUTE 1H") }
+                                    }
+                                }
+                            }
+                        }
+                        if (mutedAlerts.isNotEmpty()) {
+                            item {
+                                Text(
+                                    "Muted incidents",
+                                    fontWeight = FontWeight.Bold,
+                                    color = OmniColors.purple,
+                                    modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
+                                )
+                            }
+                            items(mutedAlerts) { alert ->
+                                val srv = serversList.find { it.id == alert.serverId }
+                                OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.purple) {
+                                    Column(modifier = Modifier.padding(12.dp)) {
+                                        Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
+                                            Text(alert.metricName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                            Text("MUTED", color = OmniColors.purple, fontWeight = FontWeight.ExtraBold, fontSize = 11.sp)
+                                        }
+                                        Text("Server: ${srv?.name ?: "server"}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("Until ${formatShortDateTime(alert.mutedUntil)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
+                                            TextButton(onClick = { viewModel.unmuteAlert(alert.id) }) { Text("UNMUTE") }
+                                        }
                                     }
                                 }
                             }
@@ -2535,31 +2573,31 @@ fun SettingsToolView(viewModel: AppViewModel) {
     ConfirmHost(confirm)
 
     // Staged drafts for all settings; applied to the ViewModel only on Save.
-    var draftDark by remember { mutableStateOf(viewModel.isDarkModeEnabled) }
-    var draftAmoled by remember { mutableStateOf(viewModel.isAmoledEnabled) }
-    var draftHighlightLimit by remember { mutableStateOf(viewModel.editorHighlightLimit) }
-    var draftAccessibility by remember { mutableStateOf(viewModel.isAccessibilityEnabled) }
-    var draftTextScale by remember { mutableStateOf(viewModel.textScale) }
-    var draftIntervalSec by remember { mutableStateOf((viewModel.telemetryIntervalMs / 1000).toInt()) }
-    var draftKeepOn by remember { mutableStateOf(viewModel.defaultKeepScreenOn) }
-    var draftBgKeepAlive by remember { mutableStateOf(viewModel.isBackgroundKeepAlive) }
-    var draftBatterySaver by remember { mutableStateOf(viewModel.batterySaverEnabled) }
-    var draftBatterySaverPct by remember { mutableStateOf(viewModel.batterySaverThresholdPct) }
-    var draftRetention by remember { mutableStateOf(viewModel.metricsRetentionDays) }
-    var draftAlertHistoryLimit by remember { mutableStateOf(viewModel.alertHistoryLimit) }
-    var draftTerminalFontSize by remember { mutableStateOf(viewModel.terminalFontSize) }
-    var draftTerminalTheme by remember { mutableStateOf(viewModel.terminalTheme) }
-    var draftTerminalScrollbackLimit by remember { mutableStateOf(viewModel.terminalScrollbackLimit) }
-    var draftSmartSwipe by remember { mutableStateOf(viewModel.smartSwipeInput) }
-    var draftLinkDetection by remember { mutableStateOf(viewModel.terminalLinkDetection) }
-    var draftLinkInApp by remember { mutableStateOf(viewModel.linkOpenInApp) }
-    var draftTmuxControl by remember { mutableStateOf(viewModel.tmuxControlMode) }
-    var draftAppLock by remember { mutableStateOf(viewModel.isAppLockEnabled) }
-    var draftAppLockGrace by remember { mutableStateOf(viewModel.appLockGraceMs) }
-    var draftBiometrics by remember { mutableStateOf(viewModel.useBiometrics) }
-    var draftBlockScreenshots by remember { mutableStateOf(viewModel.isFlagSecureEnabled) }
-    var draftSftpWarnFileCount by remember { mutableStateOf(viewModel.sftpLargeBatchFileThreshold.toString()) }
-    var draftSftpWarnGb by remember { mutableStateOf((viewModel.sftpLargeBatchBytesThreshold / 1_000_000_000L).coerceAtLeast(1L).toString()) }
+    var draftDark by rememberSaveable { mutableStateOf(viewModel.isDarkModeEnabled) }
+    var draftAmoled by rememberSaveable { mutableStateOf(viewModel.isAmoledEnabled) }
+    var draftHighlightLimit by rememberSaveable { mutableStateOf(viewModel.editorHighlightLimit) }
+    var draftAccessibility by rememberSaveable { mutableStateOf(viewModel.isAccessibilityEnabled) }
+    var draftTextScale by rememberSaveable { mutableStateOf(viewModel.textScale) }
+    var draftIntervalSec by rememberSaveable { mutableStateOf((viewModel.telemetryIntervalMs / 1000).toInt()) }
+    var draftKeepOn by rememberSaveable { mutableStateOf(viewModel.defaultKeepScreenOn) }
+    var draftBgKeepAlive by rememberSaveable { mutableStateOf(viewModel.isBackgroundKeepAlive) }
+    var draftBatterySaver by rememberSaveable { mutableStateOf(viewModel.batterySaverEnabled) }
+    var draftBatterySaverPct by rememberSaveable { mutableStateOf(viewModel.batterySaverThresholdPct) }
+    var draftRetention by rememberSaveable { mutableStateOf(viewModel.metricsRetentionDays) }
+    var draftAlertHistoryLimit by rememberSaveable { mutableStateOf(viewModel.alertHistoryLimit) }
+    var draftTerminalFontSize by rememberSaveable { mutableStateOf(viewModel.terminalFontSize) }
+    var draftTerminalTheme by rememberSaveable { mutableStateOf(viewModel.terminalTheme) }
+    var draftTerminalScrollbackLimit by rememberSaveable { mutableStateOf(viewModel.terminalScrollbackLimit) }
+    var draftSmartSwipe by rememberSaveable { mutableStateOf(viewModel.smartSwipeInput) }
+    var draftLinkDetection by rememberSaveable { mutableStateOf(viewModel.terminalLinkDetection) }
+    var draftLinkInApp by rememberSaveable { mutableStateOf(viewModel.linkOpenInApp) }
+    var draftTmuxControl by rememberSaveable { mutableStateOf(viewModel.tmuxControlMode) }
+    var draftAppLock by rememberSaveable { mutableStateOf(viewModel.isAppLockEnabled) }
+    var draftAppLockGrace by rememberSaveable { mutableStateOf(viewModel.appLockGraceMs) }
+    var draftBiometrics by rememberSaveable { mutableStateOf(viewModel.useBiometrics) }
+    var draftBlockScreenshots by rememberSaveable { mutableStateOf(viewModel.isFlagSecureEnabled) }
+    var draftSftpWarnFileCount by rememberSaveable { mutableStateOf(viewModel.sftpLargeBatchFileThreshold.toString()) }
+    var draftSftpWarnGb by rememberSaveable { mutableStateOf((viewModel.sftpLargeBatchBytesThreshold / 1_000_000_000L).coerceAtLeast(1L).toString()) }
     val draftSftpWarnFileCountValue = draftSftpWarnFileCount.toIntOrNull()?.coerceIn(1, 10_000)
     val currentSftpWarnGb = (viewModel.sftpLargeBatchBytesThreshold / 1_000_000_000L).coerceAtLeast(1L)
     val draftSftpWarnGbValue = draftSftpWarnGb.toLongOrNull()?.coerceAtLeast(1L)
@@ -2594,7 +2632,6 @@ fun SettingsToolView(viewModel: AppViewModel) {
 
     // Mirror dirty state to the ViewModel so navigation can guard against unsaved changes.
     LaunchedEffect(dirty) { viewModel.settingsDirty = dirty }
-    DisposableEffect(Unit) { onDispose { viewModel.settingsDirty = false } }
 
     fun resetDrafts() {
         draftDark = viewModel.isDarkModeEnabled

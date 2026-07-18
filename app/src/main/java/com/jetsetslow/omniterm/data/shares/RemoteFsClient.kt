@@ -24,12 +24,14 @@ interface RemoteFsClient : Closeable {
     suspend fun home(): String
     suspend fun list(path: String): List<SftpFile>
     suspend fun mkdir(path: String)
-    suspend fun rename(oldPath: String, newPath: String)
+    suspend fun rename(oldPath: String, newPath: String, isDirectory: Boolean = false)
     suspend fun delete(path: String, isDirectory: Boolean)
     /** Stream the remote file into [output]; returns bytes copied. Does not close [output]. */
     suspend fun downloadTo(path: String, output: OutputStream, onProgress: ((Long, Long) -> Unit)? = null): Long
     /** Stream [input] to the remote path, overwriting. Does not close [input]. */
     suspend fun uploadStream(path: String, input: InputStream, totalBytes: Long, onProgress: ((Long, Long) -> Unit)? = null)
+    /** Interrupt blocking transfer I/O promptly; metadata clients may fall back to [close]. */
+    fun cancelActiveTransfers() { close() }
     override fun close() {}
 }
 

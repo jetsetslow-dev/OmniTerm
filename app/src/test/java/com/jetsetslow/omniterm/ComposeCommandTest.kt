@@ -145,6 +145,10 @@ class ComposeCommandTest {
         val cmd = RemoteCommands.dockerComposeAction("proj", "/srv/proj", "compose.yml", "up", runtime = "podman")
         assertTrue("pinned Podman uses Podman's compose wrapper when available", cmd.contains("podman compose"))
         assertTrue("pinned Podman may use the Podman provider", cmd.contains("podman-compose"))
+        assertTrue(
+            "native podman-compose must win over podman compose's potentially Docker-backed dispatcher",
+            cmd.indexOf("command -v podman-compose") < cmd.indexOf("podman compose version"),
+        )
         assertTrue("pinned Podman must not silently deploy with Docker Compose", !cmd.contains("docker-compose"))
         assertValidShell(cmd)
     }

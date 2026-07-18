@@ -28,6 +28,9 @@ class SessionService : Service() {
         const val ACTION_DISCONNECT_ALL = "com.jetsetslow.omniterm.action.DISCONNECT_ALL"
         const val EXTRA_SESSIONS = "sessions" // List of "id\nname" strings
         const val EXTRA_SESSION_ID = "SESSION_ID"
+        private const val NOTIFICATION_GROUP = "omniterm_sessions"
+        private const val MAIN_NOTIFICATION_TITLE = "OmniTerm Service"
+        private const val SESSION_NOTIFICATION_TEXT = "Background SSH session — tap to resume."
         private const val WAKE_LOCK_TIMEOUT_MS = 10 * 60 * 1000L
         private const val WAKE_LOCK_RENEW_MS = 5 * 60 * 1000L
     }
@@ -95,10 +98,38 @@ class SessionService : Service() {
     private fun cleanupAndStop() {
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         activeNotificationIds.forEach { nm.cancel(it) }
+        cancelSessionChannelNotifications(nm)
         activeNotificationIds.clear()
         releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    /**
+     * Notification ids live longer than this Service instance when Android or an instrumentation
+     * run kills/recreates the process. Reconcile the channel itself as well as the in-memory id set
+     * so a prior incarnation can never leave orphaned terminal rows behind.
+     */
+    private fun cancelSessionChannelNotifications(
+        manager: NotificationManager,
+        keep: Set<Int> = emptySet(),
+    ) {
+        manager.activeNotifications
+            .filter { it.id !in keep && isSessionNotification(it.notification) }
+            .forEach { manager.cancel(it.id) }
+    }
+
+    private fun isSessionNotification(notification: Notification): Boolean {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            return notification.channelId == CHANNEL_ID
+        }
+        // Notification channels do not exist on API 24-25. The compat group identifies all new
+        // rows, while the fixed title/text signatures also clean rows posted by an older app
+        // process before the group marker was introduced. Do not treat every ongoing notification
+        // as ours: monitoring and battery-saver notifications must survive session cleanup.
+        return NotificationCompat.getGroup(notification) == NOTIFICATION_GROUP ||
+            notification.extras.getCharSequence(Notification.EXTRA_TITLE)?.toString() == MAIN_NOTIFICATION_TITLE ||
+            notification.extras.getCharSequence(Notification.EXTRA_TEXT)?.toString() == SESSION_NOTIFICATION_TEXT
     }
 
     private fun refreshWakeLock() {
@@ -143,11 +174,12 @@ class SessionService : Service() {
         )
 
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("OmniTerm Service")
+            .setContentTitle(MAIN_NOTIFICATION_TITLE)
             .setContentText("SSH sessions are active in the background.")
             .setSmallIcon(R.drawable.ic_stat_omniterm)
             .setContentIntent(contentPendingIntent)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setGroup(NOTIFICATION_GROUP)
             .setOngoing(true)
             .addAction(0, "Disconnect All", disconnectAllPendingIntent)
             .build()
@@ -200,9 +232,10 @@ class SessionService : Service() {
 
             val n = NotificationCompat.Builder(this, CHANNEL_ID)
                 .setContentTitle("Terminal: $name")
-                .setContentText("Background SSH session — tap to resume.")
+                .setContentText(SESSION_NOTIFICATION_TEXT)
                 .setSmallIcon(R.drawable.ic_stat_omniterm)
                 .setContentIntent(resumePendingIntent)
+                .setGroup(NOTIFICATION_GROUP)
                 .setOngoing(true)
                 .addAction(0, "Disconnect", disconnectPendingIntent)
                 .build()
@@ -213,6 +246,7 @@ class SessionService : Service() {
         // Cancel notifications for sessions that no longer exist.
         val stale = activeNotificationIds - currentIds
         stale.forEach { nm.cancel(it) }
+        cancelSessionChannelNotifications(nm, currentIds + MAIN_NOTIFICATION_ID)
         activeNotificationIds.clear()
         activeNotificationIds.addAll(currentIds)
     }
@@ -221,6 +255,7 @@ class SessionService : Service() {
         super.onDestroy()
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         activeNotificationIds.forEach { nm.cancel(it) }
+        cancelSessionChannelNotifications(nm)
         activeNotificationIds.clear()
         releaseWakeLock()
     }

@@ -1,5 +1,6 @@
 package com.jetsetslow.omniterm.data.ssh
 
+import com.jcraft.jsch.JSch
 import com.jcraft.jsch.HostKeyRepository
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
@@ -53,6 +54,18 @@ class SshHostKeyApprovalTest {
         assertFalse(SshHostKeyTrust.awaitApproval({ invoked = true }, request, 0L))
         assertFalse(invoked)
         assertTrue(request.deferred.isCompleted)
+    }
+
+    @Test
+    fun `jump target host key uses stable logical identity instead of ephemeral forward`() {
+        val session = JSch().getSession("user", "127.0.0.1", 49152)
+
+        pinJumpTargetToLogicalHost(session, "target.example", 22)
+
+        assertEquals("target.example", session.hostKeyAlias)
+        assertEquals("[target.example]:2222", logicalHostKeyAlias("target.example", 2222))
+        assertFalse(session.hostKeyAlias.contains("127.0.0.1"))
+        assertFalse(session.hostKeyAlias.contains("49152"))
     }
 
     @Test

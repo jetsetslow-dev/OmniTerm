@@ -57,9 +57,10 @@ class TmuxControlIntegrationTest {
                 add("detach-client")
             }
 
-            val control = ProcessBuilder(tmux, "-L", socket, "-C", "attach-session", "-t", session)
-                .redirectErrorStream(true)
-                .start()
+            val control = isolatedTmuxProcessBuilder(
+                tmux, "-L", socket, "-C", "attach-session", "-t", session,
+            ).start()
+            awaitControlClient(tmux, socket, control)
             control.outputStream.bufferedWriter().use { writer ->
                 commands.forEach {
                     writer.write(it)
@@ -112,7 +113,7 @@ class TmuxControlIntegrationTest {
     }
 
     private fun runCommand(vararg command: String): CommandResult {
-        val process = ProcessBuilder(*command).redirectErrorStream(true).start()
+        val process = isolatedTmuxProcessBuilder(*command).start()
         if (!process.waitFor(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
             process.destroyForcibly()
             fail("command timed out: ${command.joinToString(" ")}")
@@ -120,10 +121,49 @@ class TmuxControlIntegrationTest {
         return CommandResult(process.exitValue(), process.inputStream.bufferedReader().readText())
     }
 
+    /**
+     * The control process is started asynchronously. Writing client-scoped commands before tmux
+     * has registered the new client intermittently returns "no current client" even though the
+     * same commands are valid. Probe the isolated server instead of adding an arbitrary sleep so
+     * the contract test begins at a deterministic control-ready boundary.
+     */
+    private fun awaitControlClient(tmux: String, socket: String, control: Process) {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(PROCESS_TIMEOUT_SECONDS)
+        var lastProbe = ""
+        while (System.nanoTime() < deadline) {
+            if (!control.isAlive) {
+                fail("tmux control client exited before attach:\n${control.inputStream.readBytes().decodeToString()}")
+            }
+            val probe = runCommand(tmux, "-L", socket, "list-clients", "-F", "#{client_name}")
+            lastProbe = probe.output
+            if (probe.exitCode == 0 && probe.output.isNotBlank()) return
+            Thread.sleep(CONTROL_READY_POLL_MILLIS)
+        }
+        control.destroyForcibly()
+        control.waitFor(1, TimeUnit.SECONDS)
+        fail(
+            "tmux control client did not attach; last list-clients output:\n$lastProbe\n" +
+                control.inputStream.readBytes().decodeToString(),
+        )
+    }
+
+    /**
+     * The developer/test runner may itself live inside tmux. Inheriting TMUX makes a supposedly
+     * isolated `tmux -L <socket> -C attach` behave like a nested command for the outer client; the
+     * generated client-scoped commands then fail with "no current client". Remove both client
+     * markers so the explicit test socket is the only tmux context in local runs and CI.
+     */
+    private fun isolatedTmuxProcessBuilder(vararg command: String): ProcessBuilder =
+        ProcessBuilder(*command).redirectErrorStream(true).also { builder ->
+            builder.environment().remove("TMUX")
+            builder.environment().remove("TMUX_PANE")
+        }
+
     private data class CommandResult(val exitCode: Int, val output: String)
 
     private companion object {
         const val PROCESS_TIMEOUT_SECONDS = 10L
+        const val CONTROL_READY_POLL_MILLIS = 25L
         val TMUX_EXECUTABLES = listOf("/usr/bin/tmux", "/usr/local/bin/tmux")
     }
 }

@@ -29,7 +29,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     // against the exact prior shape. Versions ≤7 predate schema export (several v5 builds shipped
     // with differing schemas), so upgrades from those still fall back to a destructive wipe — but
     // from v8 on, a version bump without a Migration must fail loudly instead of deleting data.
-    version = 18,
+    version = 19,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -173,6 +173,21 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // One rule can have one live incident per concrete host. Keep the newest legacy row before
+        // enforcing that identity; older builds could race manual and periodic telemetry probes.
+        private val MIGRATION_18_19 = object : Migration(18, 19) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "DELETE FROM active_alerts WHERE id NOT IN (" +
+                        "SELECT MAX(id) FROM active_alerts GROUP BY ruleId, serverId)"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS index_active_alerts_ruleId_serverId " +
+                        "ON active_alerts (ruleId, serverId)"
+                )
+            }
+        }
+
         /** Complete non-destructive migration chain for builders and schema regression tests. */
         internal val ALL_MIGRATIONS: Array<Migration> = arrayOf(
             MIGRATION_8_9,
@@ -185,6 +200,7 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_15_16,
             MIGRATION_16_17,
             MIGRATION_17_18,
+            MIGRATION_18_19,
         )
 
         fun getDatabase(context: Context): AppDatabase {

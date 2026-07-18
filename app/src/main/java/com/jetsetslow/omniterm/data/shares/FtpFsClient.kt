@@ -29,6 +29,7 @@ class FtpFsClient(
 
     private val lock = Mutex()
     private var ftp: FTPClient? = null
+    private val transferClients = java.util.concurrent.ConcurrentHashMap.newKeySet<FTPClient>()
 
     private fun connectLocked(): FTPClient {
         ftp?.let { existing ->
@@ -104,9 +105,11 @@ class FtpFsClient(
      */
     private suspend fun <T> withTransferFtp(block: (FTPClient) -> T): T = withContext(Dispatchers.IO) {
         val client = dial()
+        transferClients += client
         try {
             block(client)
         } finally {
+            transferClients -= client
             runCatching { if (client.isConnected) client.logout() }
             runCatching { if (client.isConnected) client.disconnect() }
         }
@@ -140,7 +143,7 @@ class FtpFsClient(
         withFtp { it.check(it.makeDirectory(path), "mkdir") }
     }
 
-    override suspend fun rename(oldPath: String, newPath: String) {
+    override suspend fun rename(oldPath: String, newPath: String, isDirectory: Boolean) {
         withFtp { it.check(it.rename(oldPath, newPath), "rename") }
     }
 
@@ -172,5 +175,9 @@ class FtpFsClient(
 
     override fun close() {
         teardownLocked()
+    }
+
+    override fun cancelActiveTransfers() {
+        transferClients.toList().forEach { client -> runCatching { client.disconnect() } }
     }
 }

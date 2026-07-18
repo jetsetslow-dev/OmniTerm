@@ -14,6 +14,7 @@ import com.jetsetslow.omniterm.MainActivity
 import com.jetsetslow.omniterm.R
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
@@ -60,6 +61,9 @@ private const val BATTERY_SAVER_CHANNEL_ID = "battery_saver"
 /** Cap on the live action panel text: long-running streams keep only the most recent output. */
 private const val ACTION_STREAM_MAX_CHARS = 200_000
 
+/** Hard editor safety limit. Reads above it fail explicitly instead of silently truncating YAML. */
+private const val COMPOSE_EDITOR_MAX_CHARS = 5_000_000
+
 /** Cap per host for Fleet Broadcast output; long-running commands keep the latest tail only. */
 private const val BROADCAST_OUTPUT_MAX_CHARS = 120_000
 
@@ -69,6 +73,16 @@ private const val BROADCAST_TIMEOUT_MS = 10 * 60 * 1000L
 private const val TERMINAL_INPUT_CHUNK_BYTES = 4096
 private const val TERMINAL_INPUT_QUEUE_MAX_BYTES = 4 * 1024 * 1024
 private const val CONTROL_PENDING_INPUT_MAX_BYTES = 1024 * 1024
+
+/** Whether editing a rule invalidates its currently firing incident and breach timer. */
+internal fun alertRuleEvaluationChanged(previous: AlertRuleEntity, next: AlertRuleEntity): Boolean =
+    previous.serverId != next.serverId ||
+        previous.metricName != next.metricName ||
+        previous.mountPoint != next.mountPoint ||
+        previous.thresholdValue != next.thresholdValue ||
+        previous.severity != next.severity ||
+        previous.triggerWindow != next.triggerWindow ||
+        previous.enabled != next.enabled
 
 /** Trusted Android system executables; never resolve process commands through an inherited PATH. */
 internal const val ANDROID_PING_BINARY = "/system/bin/ping"
@@ -202,6 +216,44 @@ internal fun isLiveTerminalForNavigation(
     remoteExited: Boolean,
     exitStatus: Int?,
 ): Boolean = isConnected && !remoteExited && !isCleanShellExit(exitStatus)
+
+internal data class TerminalNavigationCandidate(
+    val id: String,
+    val isConnected: Boolean,
+    val reconnecting: Boolean,
+    val userClosed: Boolean,
+    val remoteExited: Boolean,
+    val exitStatus: Int?,
+)
+
+internal enum class TerminalLeaveAction { DISCONNECT, LEAVE_RESUMABLE, SEND_TO_BACKGROUND }
+
+/** One mixed split decision maps independently to the correct lifecycle action for each pane. */
+internal fun terminalLeaveAction(persistent: Boolean, disconnect: Boolean): TerminalLeaveAction = when {
+    disconnect -> TerminalLeaveAction.DISCONNECT
+    persistent -> TerminalLeaveAction.LEAVE_RESUMABLE
+    else -> TerminalLeaveAction.SEND_TO_BACKGROUND
+}
+
+/**
+ * Return the foreground terminal ids that need one decision before navigation completes.
+ * Background sessions are intentionally absent: only ids currently attached to the single pane or
+ * either split pane are supplied. The result is stable, pane ordered, and de-duplicated so corrupt
+ * or transitional pane references can never produce repeated confirmation work.
+ */
+internal fun terminalNavigationSessionIds(
+    attachedIds: List<String?>,
+    candidates: List<TerminalNavigationCandidate>,
+): List<String> {
+    val byId = candidates.associateBy { it.id }
+    return attachedIds.filterNotNull().distinct().filter { id ->
+        val session = byId[id] ?: return@filter false
+        !session.userClosed &&
+            !session.remoteExited &&
+            !isCleanShellExit(session.exitStatus) &&
+            (session.isConnected || session.reconnecting)
+    }
+}
 
 enum class Screen {
     Servers,
@@ -548,6 +600,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var pendingDisconnectSessionId by mutableStateOf<String?>(null)
     var pendingDisconnectAllSessions by mutableStateOf(false)
     var pendingNavigationScreen by mutableStateOf<Screen?>(null)
+    private var pendingTerminalNavigationSessionIds by mutableStateOf<List<String>>(emptyList())
+    var pendingTerminalNavigationIncludesConnectAttempt by mutableStateOf(false)
+        private set
 
     // SECURITY PIN & APP LOCK STATE
     var savedPin by mutableStateOf<String?>(null)
@@ -736,11 +791,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var selectedServerId: Int?
         get() = _selectedServerId
         set(value) {
-            if (value != _selectedServerId) activeComposeDraft = null
+            if (value != _selectedServerId) clearActiveComposeDraft()
             _selectedServerId = value
         }
     val selectedServer: ServerEntity?
-        get() = servers.value.find { it.id == selectedServerId } ?: servers.value.firstOrNull()
+        get() {
+            val id = selectedServerId
+            return if (id == null) servers.value.firstOrNull() else servers.value.find { it.id == id }
+        }
 
     // RETENTION & CRON STUFF
     var metricsRetentionDays by mutableStateOf(7)
@@ -836,6 +894,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // per-file semantics — cancelling one row of a batch upload lets the remaining files continue —
     // and works identically across SFTP/SMB/FTP/WebDAV without needing to interrupt blocking IO.
     private val cancelledTransferIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val activeTransferAborters = java.util.concurrent.ConcurrentHashMap<String, () -> Unit>()
 
     /** Thrown from a progress callback to abort the surrounding stream copy. */
     private class TransferCancelledException : RuntimeException("Transfer cancelled")
@@ -843,12 +902,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun cancelSftpTransfer(id: String) {
         if (sftpTransfers.any { it.id == id && it.status == SftpTransferStatus.InProgress }) {
             cancelledTransferIds.add(id)
+            activeTransferAborters[id]?.invoke()
         }
     }
 
     fun cancelAllRunningTransfers() {
         sftpTransfers.filter { it.status == SftpTransferStatus.InProgress }
-            .forEach { cancelledTransferIds.add(it.id) }
+            .forEach {
+                cancelledTransferIds.add(it.id)
+                activeTransferAborters[it.id]?.invoke()
+            }
     }
 
     /** Progress callback for [transferId] that also aborts the copy once a cancel is requested. */
@@ -971,6 +1034,51 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     var wolStatusRefreshTick by mutableStateOf(0)
         private set
     var activeComposeDraft by mutableStateOf<com.jetsetslow.omniterm.ui.ComposeStackDraft?>(null)
+        private set
+    /** Host and generation owning the current draft; prevents delayed Compose effects crossing hosts. */
+    var activeComposeServerId by mutableStateOf<Int?>(null)
+        private set
+    var activeComposeGeneration by mutableIntStateOf(0)
+        private set
+    /** Raw Builder state is VM-owned so rotation/multi-window recreation cannot discard edits. */
+    var activeComposeRawText by mutableStateOf<String?>(null)
+        private set
+    var activeComposeRawMode by mutableStateOf(false)
+        private set
+    var activeComposeRawSeedKey by mutableStateOf<String?>(null)
+        private set
+
+    fun beginComposeDraft(draft: com.jetsetslow.omniterm.ui.ComposeStackDraft) {
+        activeComposeGeneration++
+        activeComposeServerId = selectedServerId
+        activeComposeRawText = null
+        activeComposeRawMode = false
+        activeComposeRawSeedKey = null
+        activeComposeDraft = draft
+    }
+
+    fun updateComposeDraft(
+        generation: Int,
+        draft: com.jetsetslow.omniterm.ui.ComposeStackDraft,
+    ) {
+        if (generation != activeComposeGeneration || activeComposeServerId != selectedServerId) return
+        activeComposeDraft = draft
+    }
+
+    fun rememberComposeRawState(seedKey: String, text: String, rawMode: Boolean) {
+        activeComposeRawSeedKey = seedKey
+        activeComposeRawText = text
+        activeComposeRawMode = rawMode
+    }
+
+    fun clearActiveComposeDraft() {
+        activeComposeGeneration++
+        activeComposeServerId = null
+        activeComposeDraft = null
+        activeComposeRawText = null
+        activeComposeRawMode = false
+        activeComposeRawSeedKey = null
+    }
 
     // ── Shared live-action output panel ──
     // Every button-triggered remote action (service start/stop/restart, Docker container and stack
@@ -1184,19 +1292,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // Parallel multi-session management
     val activeSessions get() = TerminalSessionManager.activeSessions
     var restorablePersistentSessions by mutableStateOf<List<com.jetsetslow.omniterm.data.PersistentSessionEntity>>(emptyList()); private set
-    var currentSessionId by mutableStateOf<String?>(null)
+    var currentSessionId: String?
+        get() = TerminalSessionManager.currentSessionId
+        set(value) { TerminalSessionManager.currentSessionId = value }
     val currentSession: ShellSession? get() = activeSessions.find { it.id == currentSessionId }
 
     // ── MultiSSH (split-screen) ──
     // activeSshTab: 0 = single-session terminal, 1 = split view with up to two panes.
     // Pane 1/2 track their own session ids; the focused pane receives keyboard + key-bar input.
-    var activeSshTab by mutableStateOf(0)
-    var multiSshSessionId1 by mutableStateOf<String?>(null)
-    var multiSshSessionId2 by mutableStateOf<String?>(null)
+    var activeSshTab: Int
+        get() = TerminalSessionManager.activeSshTab
+        set(value) { TerminalSessionManager.activeSshTab = value }
+    var multiSshSessionId1: String?
+        get() = TerminalSessionManager.multiSshSessionId1
+        set(value) { TerminalSessionManager.multiSshSessionId1 = value }
+    var multiSshSessionId2: String?
+        get() = TerminalSessionManager.multiSshSessionId2
+        set(value) { TerminalSessionManager.multiSshSessionId2 = value }
     val multiSshSession1: ShellSession? get() = activeSessions.find { it.id == multiSshSessionId1 }
     val multiSshSession2: ShellSession? get() = activeSessions.find { it.id == multiSshSessionId2 }
-    var multiSshLayout by mutableStateOf(com.jetsetslow.omniterm.ui.MultiSshLayout.SideBySide)
-    var multiSshFocusedPane by mutableStateOf(1)
+    var multiSshLayout: com.jetsetslow.omniterm.ui.MultiSshLayout
+        get() = TerminalSessionManager.multiSshLayout
+        set(value) { TerminalSessionManager.multiSshLayout = value }
+    var multiSshFocusedPane: Int
+        get() = TerminalSessionManager.multiSshFocusedPane
+        set(value) { TerminalSessionManager.multiSshFocusedPane = value }
     private val pendingMultiSshConnections = ArrayDeque<Pair<Int, Int>>()
 
     val isMultiSsh: Boolean get() = activeSshTab == 1
@@ -1225,6 +1345,31 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 .filterNotNull()
                 .firstOrNull { it.isLive() }
         }
+
+    private fun foregroundTerminalIdsNeedingDecision(): List<String> {
+        val attachedIds = if (isMultiSsh) {
+            listOf(multiSshSessionId1, multiSshSessionId2)
+        } else {
+            listOf(currentSessionId)
+        }
+        return terminalNavigationSessionIds(
+            attachedIds = attachedIds,
+            candidates = activeSessions.map { shell ->
+                TerminalNavigationCandidate(
+                    id = shell.id,
+                    isConnected = shell.isConnected,
+                    reconnecting = shell.reconnecting,
+                    userClosed = shell.userClosed,
+                    remoteExited = shell.session.remoteExited.value,
+                    exitStatus = shell.session.exitStatus.value,
+                )
+            },
+        )
+    }
+
+    /** Sessions captured by the current one-shot leave-terminal transaction, in pane order. */
+    val pendingTerminalNavigationSessions: List<ShellSession>
+        get() = pendingTerminalNavigationSessionIds.mapNotNull { id -> activeSessions.find { it.id == id } }
 
     /** The session for [pane] (1 or 2), or null if that pane is empty. */
     fun multiSshPaneSession(pane: Int): ShellSession? = if (pane == 1) multiSshSession1 else multiSshSession2
@@ -1513,6 +1658,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // POLLE & RETRYS TASK LIFECYCLE
     private var pollingJob: Job? = null
     private val telemetryProbeLimiter = kotlinx.coroutines.sync.Semaphore(16)
+    /** Manual refresh and periodic polling must never evaluate the same host concurrently. */
+    private val telemetryProbeMutexes = java.util.concurrent.ConcurrentHashMap<Int, Mutex>()
 
     /** Telemetry refresh cadence (user-customisable), and the wall-clock start of the most recent
      *  cycle, so the UI can show a "next refresh in N" countdown that stays in sync with the poller.
@@ -1887,25 +2034,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     val probedServerIds = androidx.compose.runtime.mutableStateMapOf<Int, Boolean>()
 
     private suspend fun probeServer(srv: ServerEntity) {
-        try {
-            // Make the periodic retry visible: an offline host shows "connecting" while its probe
-            // runs (TCP reachability first — up to 4s — then SSH only if the port answered), instead
-            // of silently sitting at Offline through the whole attempt.
-            if (srv.status == "offline") {
-                repository.updateConnectionState(srv.id, "connecting", 0, 0)
-            }
-            val rtt = tcpReachable(srv.host, srv.port)
-            if (rtt < 0) {
+        telemetryProbeMutexes.computeIfAbsent(srv.id) { Mutex() }.withLock {
+            try {
+                // Make the periodic retry visible: an offline host shows "connecting" while its probe
+                // runs (TCP reachability first — up to 4s — then SSH only if the port answered), instead
+                // of silently sitting at Offline through the whole attempt.
+                if (srv.status == "offline") {
+                    repository.updateConnectionState(srv.id, "connecting", 0, 0)
+                }
+                val rtt = tcpReachable(srv.host, srv.port)
+                if (rtt < 0) {
+                    repository.updateConnectionState(srv.id, "offline", 0, 0)
+                    return@withLock
+                }
+                telemetryProbeLimiter.withPermit {
+                    probeServerInner(srv, rtt)
+                }
+            } catch (e: Exception) {
                 repository.updateConnectionState(srv.id, "offline", 0, 0)
-                return
+            } finally {
+                withContext(Dispatchers.Main) { probedServerIds[srv.id] = true }
             }
-            telemetryProbeLimiter.withPermit {
-                probeServerInner(srv, rtt)
-            }
-        } catch (e: Exception) {
-            repository.updateConnectionState(srv.id, "offline", 0, 0)
-        } finally {
-            withContext(Dispatchers.Main) { probedServerIds[srv.id] = true }
         }
     }
 
@@ -2045,6 +2194,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // First time each (rule, host) pair was seen over threshold; cleared on recovery. The rule
     // only fires once the breach has lasted its triggerWindow, so single poll spikes don't alert.
     private val alertBreachSince = java.util.concurrent.ConcurrentHashMap<Pair<Int, Int>, Long>()
+    /** Keeps evaluation, rule mutation, acknowledgement, and mute/recovery transitions atomic. */
+    private val alertStateMutex = Mutex()
 
     private fun triggerWindowMs(window: String): Long =
         (window.trim().removeSuffix("m").toLongOrNull() ?: 0L) * 60_000L
@@ -2052,8 +2203,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun evaluateAlertRules(
         srv: ServerEntity, cpu: Float, ram: Float, disk: Float, latency: Int,
         mounts: List<DiskUsage> = emptyList(),
-    ) {
-        if (!alertsEnabled) return
+    ) = alertStateMutex.withLock {
+        if (!alertsEnabled) return@withLock
         val rules = (repository.getRulesForServer(srv.id) + repository.getRulesForServer(0)).filter { it.enabled }
         val activeAlerts = repository.getActiveAlerts()
         val now = System.currentTimeMillis()
@@ -2160,13 +2311,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             showSettingsDiscardDialog = true
             return
         }
-        // Tapping away from active connection SSH shell prompts verification first
-        if (currentScreen == Screen.Shell && isTerminalConnected && screen != Screen.Shell) {
-            pendingNavigationScreen = screen
-            showDisconnectTerminalDialog = true
+        // Leaving Shell is a single transaction across every foreground pane. The old dialog
+        // handled one pane then called navigateTo() again, recursively reopening itself for stale,
+        // reconnecting, persistent, or second-pane state. Capture all relevant ids once instead.
+        if (currentScreen == Screen.Shell && screen != Screen.Shell && beginTerminalNavigation(screen)) {
             return
         }
 
+        commitNavigation(screen)
+    }
+
+    private fun commitNavigation(screen: Screen) {
         if (screen == Screen.Servers) {
             screenHistory.clear()
             screenHistory.add(Screen.Servers)
@@ -2181,6 +2336,53 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
         currentScreen = screen
+    }
+
+    /** Returns true when navigation was intercepted for one terminal decision dialog. */
+    private fun beginTerminalNavigation(target: Screen): Boolean {
+        val sessionIds = foregroundTerminalIdsNeedingDecision()
+        val includesConnectAttempt = isTerminalConnecting
+        if (sessionIds.isEmpty() && !includesConnectAttempt) return false
+
+        pendingTerminalNavigationSessionIds = sessionIds
+        pendingTerminalNavigationIncludesConnectAttempt = includesConnectAttempt
+        pendingNavigationScreen = target
+        showDisconnectTerminalDialog = true
+        return true
+    }
+
+    /** Cancel/dismiss the leave-terminal transaction without mutating any session. */
+    fun cancelTerminalNavigation() {
+        showDisconnectTerminalDialog = false
+        pendingNavigationScreen = null
+        pendingTerminalNavigationSessionIds = emptyList()
+        pendingTerminalNavigationIncludesConnectAttempt = false
+    }
+
+    /**
+     * Apply one decision to every pane captured when navigation started, then commit the target
+     * directly without re-entering the terminal guard. Sessions that exited while the dialog was
+     * visible simply disappear from [activeSessions] and are skipped.
+     */
+    fun completeTerminalNavigation(disconnect: Boolean) {
+        val target = pendingNavigationScreen ?: run {
+            cancelTerminalNavigation()
+            return
+        }
+        val sessionIds = pendingTerminalNavigationSessionIds
+        val cancelConnectionAttempt = pendingTerminalNavigationIncludesConnectAttempt && disconnect
+        cancelTerminalNavigation()
+
+        if (cancelConnectionAttempt) cancelConnect()
+        sessionIds.forEach { sessionId ->
+            val session = activeSessions.find { it.id == sessionId } ?: return@forEach
+            when (terminalLeaveAction(session.persistent, disconnect)) {
+                TerminalLeaveAction.DISCONNECT -> disconnectSession(sessionId)
+                TerminalLeaveAction.LEAVE_RESUMABLE -> leaveSessionResumable(sessionId)
+                TerminalLeaveAction.SEND_TO_BACKGROUND -> sendSessionToBackground(sessionId)
+            }
+        }
+        commitNavigation(target)
     }
 
     // ── Swipe-to-switch tabs ──────────────────────────────────────────────────────
@@ -2284,9 +2486,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (screenHistory.size > 1) {
             // Check terminal safety if on Shell currently
-            if (currentScreen == Screen.Shell && isTerminalConnected) {
-                pendingNavigationScreen = screenHistory[screenHistory.size - 2]
-                showDisconnectTerminalDialog = true
+            if (currentScreen == Screen.Shell &&
+                beginTerminalNavigation(screenHistory[screenHistory.size - 2])
+            ) {
                 return true
             }
 
@@ -3163,17 +3365,24 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun toggleAlertPresets(enabled: Boolean) {
         alertPresetsEnabled = enabled
         viewModelScope.launch {
-            repository.insertSetting("alert_presets", enabled.toString())
-            if (enabled) {
-                val existing = repository.getRulesForServer(0)
-                for ((metric, threshold, severity) in alertRulePresets) {
-                    if (existing.none { it.metricName == metric && it.thresholdValue == threshold }) {
-                        repository.insertRule(AlertRuleEntity(serverId = 0, metricName = metric, thresholdValue = threshold, severity = severity))
+            alertStateMutex.withLock {
+                repository.insertSetting("alert_presets", enabled.toString())
+                if (enabled) {
+                    val existing = repository.getRulesForServer(0)
+                    for ((metric, threshold, severity) in alertRulePresets) {
+                        if (existing.none { it.metricName == metric && it.thresholdValue == threshold }) {
+                            repository.insertRule(AlertRuleEntity(serverId = 0, metricName = metric, thresholdValue = threshold, severity = severity))
+                        }
                     }
+                } else {
+                    val sigs = alertRulePresets.map { it.first to it.second }.toSet()
+                    repository.getAllRules()
+                        .filter { it.serverId == 0 && (it.metricName to it.thresholdValue) in sigs }
+                        .forEach { rule ->
+                            closeAlertsForRule(rule.id)
+                            repository.deleteRule(rule)
+                        }
                 }
-            } else {
-                val sigs = alertRulePresets.map { it.first to it.second }.toSet()
-                repository.getAllRules().filter { it.serverId == 0 && (it.metricName to it.thresholdValue) in sigs }.forEach { repository.deleteRule(it) }
             }
         }
     }
@@ -3854,12 +4063,19 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }.getOrNull()
 
     private suspend fun seedTmuxHistory(emulator: TerminalEmulator, creds: SshCredentials, tmuxName: String) {
-        val history = captureTmuxHistoryFull(creds, tmuxName)?.trimEnd('\n')
+        val history = withContext(Dispatchers.IO) {
+            captureTmuxHistoryFull(creds, tmuxName)
+        }?.trimEnd('\n')
         if (history.isNullOrBlank()) return
-        synchronized(emulator) {
-            if (emulator.scrollbackRowCount() > 0) return
-            emulator.feed(history.replace("\n", "\r\n").toByteArray())
-            emulator.feed("\r\n".repeat(emulator.rows).toByteArray())
+        // Large history can contain megabytes of ANSI and wide Unicode. Parsing it on Main froze
+        // the whole Activity during resume; the emulator is not observable until this call returns,
+        // so building it on the CPU dispatcher is safe.
+        withContext(Dispatchers.Default) {
+            synchronized(emulator) {
+                if (emulator.scrollbackRowCount() > 0) return@withContext
+                emulator.feed(history.replace("\n", "\r\n").toByteArray())
+                emulator.feed("\r\n".repeat(emulator.rows).toByteArray())
+            }
         }
     }
 
@@ -3911,7 +4127,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      * Returns the resulting change in total row count so the caller can shift its viewport
      * anchor and keep the content under the user's finger stationary; 0 when nothing changed.
      */
-    suspend fun resyncTmuxScrollbackFor(session: ShellSession?): Int {
+    suspend fun resyncTmuxScrollbackFor(
+        session: ShellSession?,
+        allowAlternateScreen: Boolean = false,
+    ): Int {
         session ?: return 0
         val creds = session.creds ?: return 0
         if (!session.persistent || !session.scrollbackDirty || !session.scrollbackSyncMutex.tryLock()) return 0
@@ -3920,7 +4139,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val cols: Int
             val rows: Int
             synchronized(emulator) {
-                if (emulator.isAlternateScreenActive()) return 0
+                if (!allowAlternateScreen && emulator.isAlternateScreenActive()) return 0
                 cols = emulator.cols
                 rows = emulator.rows
             }
@@ -3943,7 +4162,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 scratch.feed(history.replace("\n", "\r\n").toByteArray())
                 scratch.feed("\r\n".repeat(rows).toByteArray())
                 synchronized(emulator) {
-                    if (emulator.isAlternateScreenActive() || emulator.cols != cols) {
+                    if ((!allowAlternateScreen && emulator.isAlternateScreenActive()) || emulator.cols != cols) {
                         // The capture is valid only for the grid/mode observed at the start. Keep it
                         // dirty so a later scroll gesture can retry instead of trusting no-op data.
                         session.scrollbackDirty = true
@@ -4287,10 +4506,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     session.write(RemoteCommands.tmuxControlAttachCommand(tmuxName, terminalScrollbackLimit).toByteArray())
                     false
                 } else {
-                    // Resume re-attaches an existing session with a fresh emulator: seed its local
-                    // scrollback from the pane's tmux history, then paint the current screen before
-                    // attaching so the UI never waits for a resize-triggered tmux redraw.
-                    seedTmuxHistory(emulator, creds, tmuxName)
+                    // Paint the current pane and attach immediately. Potentially megabytes of old
+                    // history are hydrated after the live terminal is usable; making history a
+                    // connection prerequisite caused long blank/frozen resumes on slower devices.
                     val painted = paintTmuxVisibleScreen(emulator, creds, tmuxName)
                     session.write(RemoteCommands.tmuxAttachCommand(tmuxName, terminalScrollbackLimit).toByteArray())
                     painted
@@ -4311,7 +4529,27 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 if (initialScreenPainted) TerminalSessionManager.publishTerminalSnapshot(shellSession)
                 wireSessionIo(shellSession)
-                if (shellSession.controlMode) initControlModeSession(shellSession, creds)
+                if (shellSession.controlMode) {
+                    initControlModeSession(shellSession, creds)
+                } else {
+                    // The existing re-sync path captures and parses on background dispatchers, then
+                    // atomically adopts the finished scrollback without blocking terminal input/UI.
+                    shellSession.scrollbackDirty = true
+                    shellSession.historyHydrationJob = TerminalSessionManager.scope.launch {
+                        try {
+                            // A normal tmux client itself owns the outer alternate screen by the
+                            // time this background parse finishes. Initial hydration may still
+                            // replace only scrollback; adoptScrollbackFrom leaves that live screen
+                            // untouched. Later gesture-driven syncs keep the stricter TUI guard.
+                            resyncTmuxScrollbackFor(shellSession, allowAlternateScreen = true)
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            shellSession.scrollbackDirty = true
+                            android.util.Log.w("OmniTermSession", "Initial tmux history hydration failed", e)
+                        }
+                    }
+                }
                 setupComplete = true
                 noteSuccessfulSshSession()
                 TerminalSessionManager.updateKeepaliveCount()
@@ -5090,16 +5328,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun disconnectTerminal() {
-        val s = terminalNavigationSession ?: return
-        disconnectSession(s.id)
-    }
-
-    fun sendToBackground() {
-        val s = terminalNavigationSession ?: return
-        sendSessionToBackground(s.id)
-    }
-
     /** Keep a live SSH channel running, but remove it from the visible terminal pane. */
     fun sendSessionToBackground(sessionId: String) {
         val s = activeSessions.find { it.id == sessionId } ?: return
@@ -5118,7 +5346,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Apply the non-destructive lifecycle action that matches this session type. */
+    fun leaveOrBackgroundSession(sessionId: String) {
+        val session = activeSessions.find { it.id == sessionId } ?: return
+        if (session.persistent) leaveSessionResumable(sessionId) else sendSessionToBackground(sessionId)
+    }
+
     fun attachSession(sessionId: String) {
+        // A notification can resume a terminal while a leave-terminal dialog is visible. That
+        // external navigation supersedes the pending target; never leave a stale dialog over Shell.
+        cancelTerminalNavigation()
         val session = activeSessions.find { it.id == sessionId }
         if (session == null) {
             // Session was lost (app process was restarted while service notification persisted).
@@ -5484,10 +5721,37 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      * Read an existing compose file's raw text so the builder can edit it surgically. Returns null
      * (and shows nothing) on transport failure; returns "" when the file does not exist yet.
      */
+    var composeFileReadError by mutableStateOf<String?>(null)
+        private set
+
     suspend fun readComposeFile(composeFilePath: String): String? {
         val srv = selectedServer ?: return null
-        val out = executeSshCommand(srv, RemoteCommands.composeRead(composeFilePath))
-        if (out.startsWith("SSH Error")) return null
+        composeFileReadError = null
+        val text = StringBuilder()
+        var tooLarge = false
+        val result = sshTransport.execStream(
+            buildCredentials(srv),
+            RemoteCommands.composeRead(composeFilePath),
+        ) { chunk ->
+            if (!tooLarge) {
+                if (text.length.toLong() + chunk.length <= COMPOSE_EDITOR_MAX_CHARS) {
+                    text.append(chunk)
+                } else {
+                    tooLarge = true
+                    text.setLength(0)
+                }
+            }
+        }
+        if (tooLarge) {
+            composeFileReadError =
+                "Compose file is larger than ${COMPOSE_EDITOR_MAX_CHARS / 1_000_000} MB; edit it on the host or split it into multiple files."
+            return null
+        }
+        if (result.startsWith("SSH Error") || text.startsWith("SSH Error")) {
+            composeFileReadError = cleanSshError(result)
+            return null
+        }
+        val out = text.toString()
         return if (out.trim() == "OMNITERM_NO_FILE") "" else out
     }
 
@@ -5503,9 +5767,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         workingDir: String = "",
         configFiles: String = "",
         runtime: String = "",
+        expectedServerId: Int? = activeComposeServerId,
         onResult: (Boolean, String) -> Unit,
     ) {
-        val srv = selectedServer ?: return onResult(false, "No host selected.")
+        if (expectedServerId == null || expectedServerId != selectedServerId ||
+            expectedServerId != activeComposeServerId
+        ) {
+            return onResult(false, "Selected host changed. Reopen the Compose file before deploying.")
+        }
+        val srv = servers.value.find { it.id == expectedServerId }
+            ?: return onResult(false, "The Compose file's host is no longer available.")
         viewModelScope.launch {
             val b64 = android.util.Base64.encodeToString(yaml.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
             val cmd = RemoteCommands.composeDeploy(composeFilePath, project, b64, workingDir, configFiles, runtime)
@@ -6379,7 +6650,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val trimmed = newName.trim()
         if (trimmed.isBlank() || trimmed == file.name) return
         shareMutate("Renamed to \"$trimmed\"") {
-            it.rename(joinPath(sharePath, file.name), joinPath(sharePath, trimmed))
+            it.rename(joinPath(sharePath, file.name), joinPath(sharePath, trimmed), file.isDirectory)
         }
     }
 
@@ -6415,7 +6686,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         // closes the browser mid-transfer — closing the browsing client used to kill it.
         var client: RemoteFsClient? = null
         try {
-            client = shareFsClient(share)
+            val transferClient = shareFsClient(share)
+            client = transferClient
+            activeTransferAborters[transferId] = { transferClient.cancelActiveTransfers() }
             val bytes = withContext(Dispatchers.IO) {
                 context.contentResolver.openOutputStream(uri).use { output ->
                     output ?: throw java.io.IOException("Could not open destination.")
@@ -6426,8 +6699,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (browsingShare?.id == share.id) shareStatus = "Downloaded \"$remoteName\""
             return true
         } catch (e: CancellationException) {
+            withContext(NonCancellable + Dispatchers.IO) { runCatching { context.contentResolver.delete(uri, null, null) } }
             throw e
         } catch (e: Exception) {
+            // A failed/cancelled SAF write is not a usable download. Remove the partial document
+            // instead of leaving a corrupt file beside a transfer row that says it failed.
+            withContext(NonCancellable + Dispatchers.IO) { runCatching { context.contentResolver.delete(uri, null, null) } }
             if (browsingShare?.id == share.id) shareError = e.message ?: "Download failed"
             finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = e.message ?: "Download failed")
             return false
@@ -6451,25 +6728,35 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             var client: RemoteFsClient? = null
             val batchId = beginTransferBatch(picked.size)
             try {
-                client = shareFsClient(share)
+                val transferClient = shareFsClient(share)
+                client = transferClient
                 for ((index, uri) in picked.withIndex()) {
                     val name = queryDisplayName(context, uri)?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
                         ?: "upload_${System.currentTimeMillis()}_${index + 1}"
                     val remotePath = joinPath(destDir, name)
+                    val stagedPath = transferStagingPath(remotePath)
                     val transferId = addTransfer(-share.id, shareEndpointLabel(share), "Upload", name, remotePath, sourceUri = uri.toString())
+                    activeTransferAborters[transferId] = { transferClient.cancelActiveTransfers() }
                     try {
                         val totalBytes = queryOpenableSize(context, uri)
                         withContext(Dispatchers.IO) {
                             context.contentResolver.openInputStream(uri).use { input ->
                                 input ?: throw java.io.IOException("Could not read the selected file from this device.")
-                                client.uploadStream(remotePath, input, totalBytes, transferProgress(transferId))
+                                val counting = CountingUploadInput(input)
+                                client.uploadStream(stagedPath, counting, totalBytes, transferProgress(transferId))
+                                if (totalBytes > 0 && counting.bytesRead != totalBytes) {
+                                    throw java.io.IOException("Local source ended early: got ${counting.bytesRead} of $totalBytes bytes.")
+                                }
                             }
                         }
+                        commitStagedRemoteFile(client, stagedPath, remotePath)
                         ok++
                         finishSftpTransfer(transferId, SftpTransferStatus.Success, totalBytes, totalBytes, "Uploaded")
                     } catch (e: CancellationException) {
+                        withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
                         throw e
                     } catch (e: Exception) {
+                        withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
                         val msg = e.message ?: "upload failed"
                         if (firstErr == null) firstErr = "$name: $msg"
                         finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = msg)
@@ -6864,7 +7151,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     // A move within the same share (file or folder) is just a rename — no data travels.
                     if (isMove && destShare != null && ref.shareId == destShare.id) {
                         try {
-                            destClient.rename(srcPath, destPath)
+                            destClient.rename(srcPath, destPath, ref.isDirectory)
                             ok++
                         } catch (e: CancellationException) {
                             throw e
@@ -6892,6 +7179,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     crossPasteProgress = ref.name
+                    val stagedDestPath = transferStagingPath(destPath)
                     val transferId = addTransfer(
                         endpointId = ref.shareId?.let { -it } ?: ref.serverId ?: 0,
                         endpointName = ref.sourceLabel,
@@ -6899,15 +7187,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         name = ref.name,
                         remotePath = "$destLabel:$destPath",
                     )
+                    activeTransferAborters[transferId] = {
+                        src.cancelActiveTransfers()
+                        destClient.cancelActiveTransfers()
+                    }
                     try {
-                        val copied = streamCopyBetween(src, srcPath, destClient, destPath, ref.size, transferId)
+                        val copied = streamCopyBetween(src, srcPath, destClient, stagedDestPath, ref.size, transferId)
+                        commitStagedRemoteFile(destClient, stagedDestPath, destPath)
                         if (isMove) src.delete(srcPath, false)
                         ok++
                         copiedFiles++
                         finishSftpTransfer(transferId, SftpTransferStatus.Success, copied, copied, "${if (isMove) "Moved" else "Copied"} $copied bytes to $destLabel")
                     } catch (e: CancellationException) {
+                        withContext(NonCancellable + Dispatchers.IO) { runCatching { destClient.delete(stagedDestPath, false) } }
                         throw e
                     } catch (e: Exception) {
+                        withContext(NonCancellable + Dispatchers.IO) { runCatching { destClient.delete(stagedDestPath, false) } }
                         val msg = e.message ?: "copy failed"
                         if (firstErr == null) firstErr = "${ref.name}: $msg"
                         finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = msg)
@@ -7036,6 +7331,45 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Return a hidden sibling used for an in-flight upload/copy. The user-visible destination is
+     * left untouched until every expected byte has arrived.
+     */
+    private fun transferStagingPath(destPath: String): String {
+        val parent = destPath.substringBeforeLast('/', "").ifBlank { "/" }
+        val name = destPath.substringAfterLast('/').take(80)
+        return joinPath(parent, ".$name.omniterm-part-${UUID.randomUUID()}")
+    }
+
+    /**
+     * Commit a completely written staging file without destroying an existing destination first.
+     * Protocols do not agree on rename-overwrite semantics, so an existing file is moved aside,
+     * the stage is installed, and the old file is deleted only after that succeeds. A failed commit
+     * restores the old name best-effort and always removes the staging artifact.
+     */
+    private suspend fun commitStagedRemoteFile(client: RemoteFsClient, stagedPath: String, destPath: String) {
+        val parent = destPath.substringBeforeLast('/', "").ifBlank { "/" }
+        val destName = destPath.substringAfterLast('/')
+        val exists = client.list(parent).any { it.name == destName && !it.isDirectory }
+        val backupPath = if (exists) transferStagingPath("$destPath.previous") else null
+        try {
+            if (backupPath != null) client.rename(destPath, backupPath, false)
+            try {
+                client.rename(stagedPath, destPath, false)
+            } catch (e: Exception) {
+                if (backupPath != null) runCatching { client.rename(backupPath, destPath, false) }
+                throw e
+            }
+            if (backupPath != null) runCatching { client.delete(backupPath, false) }
+        } catch (e: CancellationException) {
+            withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
+            throw e
+        } catch (e: Exception) {
+            runCatching { client.delete(stagedPath, false) }
+            throw e
+        }
+    }
+
+    /**
      * Recursively copy a directory tree between two endpoints. Creates [destPath], then walks
      * [srcPath] breadth-first, streaming each file with [streamCopyBetween] and recursing into
      * subfolders. Each file is one row in the transfer log; [crossPasteProgress] shows the
@@ -7066,13 +7400,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 crossPasteProgress = "$rootName/${entry.name}"
                 val transferId = addTransfer(0, destLabel, if (isMove) "Move" else "Copy", "$rootName/${entry.name}", "$destLabel:$childDest")
+                activeTransferAborters[transferId] = {
+                    src.cancelActiveTransfers()
+                    dest.cancelActiveTransfers()
+                }
+                val stagedChildDest = transferStagingPath(childDest)
                 try {
-                    val copied = streamCopyBetween(src, childSrc, dest, childDest, entry.size, transferId)
+                    val copied = streamCopyBetween(src, childSrc, dest, stagedChildDest, entry.size, transferId)
+                    commitStagedRemoteFile(dest, stagedChildDest, childDest)
                     finishSftpTransfer(transferId, SftpTransferStatus.Success, copied, copied, "Copied $copied bytes")
                     files++
                 } catch (e: CancellationException) {
+                    withContext(NonCancellable + Dispatchers.IO) { runCatching { dest.delete(stagedChildDest, false) } }
                     throw e
                 } catch (e: Exception) {
+                    withContext(NonCancellable + Dispatchers.IO) { runCatching { dest.delete(stagedChildDest, false) } }
                     finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = e.message ?: "copy failed")
                     throw e  // fail the whole folder so a move never deletes a partially-copied tree.
                 }
@@ -7848,6 +8190,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val remoteDir = sftpPath
             val remotePath = joinPath(remoteDir, remoteName)
             val transferId = addSftpTransfer(srv, "Download", remoteName, remotePath)
+            activeTransferAborters[transferId] = { client.cancelActiveTransfers() }
             try {
                 val bytes = withContext(Dispatchers.IO) {
                     context.contentResolver.openOutputStream(uri).use { output ->
@@ -7857,10 +8200,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 finishSftpTransfer(transferId, SftpTransferStatus.Success, bytes, bytes, "Downloaded $bytes bytes")
             } catch (e: CancellationException) {
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { context.contentResolver.delete(uri, null, null) } }
                 throw e
             } catch (e: Exception) {
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { context.contentResolver.delete(uri, null, null) } }
                 if (selectedServerId == srv.id) sftpError = e.message
                 finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = e.message ?: "Download failed")
+            } finally {
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { client.close() } }
             }
         }
     }
@@ -7885,8 +8232,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 for (name in names) {
                     val remotePath = joinPath(remoteDir, name)
                     val transferId = addSftpTransfer(srv, "Download", name, remotePath)
+                    activeTransferAborters[transferId] = { client.cancelActiveTransfers() }
+                    var destUri: android.net.Uri? = null
                     try {
-                        val destUri = createDocumentInTree(context, folderUri, name)
+                        destUri = createDocumentInTree(context, folderUri, name)
                         val copied = withContext(Dispatchers.IO) {
                             context.contentResolver.openOutputStream(destUri).use { output ->
                                 output ?: throw java.io.IOException("Could not open destination for $name.")
@@ -7896,8 +8245,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         ok++
                         finishSftpTransfer(transferId, SftpTransferStatus.Success, copied, copied, "Downloaded $copied bytes")
                     } catch (e: CancellationException) {
+                        withContext(NonCancellable + Dispatchers.IO) { destUri?.let { runCatching { context.contentResolver.delete(it, null, null) } } }
                         throw e
                     } catch (e: Exception) {
+                        withContext(NonCancellable + Dispatchers.IO) { destUri?.let { runCatching { context.contentResolver.delete(it, null, null) } } }
                         val msg = e.message ?: "Download failed"
                         if (firstErr == null) firstErr = "$name: $msg"
                         finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = msg)
@@ -7906,6 +8257,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } finally {
                 endTransferBatch(batchId)
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { client.close() } }
             }
             sftpSelected.removeAll(names.toSet())
             sftpError = firstErr
@@ -7938,21 +8290,30 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     val name = queryDisplayName(context, uri)?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
                         ?: "upload_${System.currentTimeMillis()}_${index + 1}"
                     val remotePath = joinPath(remoteDir, name)
+                    val stagedPath = transferStagingPath(remotePath)
                     val transferId = addSftpTransfer(srv, "Upload", name, remotePath, sourceUri = uri.toString())
+                    activeTransferAborters[transferId] = { client.cancelActiveTransfers() }
                     try {
                         val totalBytes = queryOpenableSize(context, uri)
                         val uploaded = withContext(Dispatchers.IO) {
                             context.contentResolver.openInputStream(uri).use { input ->
                                 input ?: throw java.io.IOException("Could not read the selected file from this device.")
-                                client.uploadStream(remotePath, input, totalBytes, transferProgress(transferId))
+                                val counting = CountingUploadInput(input)
+                                client.uploadStream(stagedPath, counting, totalBytes, transferProgress(transferId))
+                                if (totalBytes > 0 && counting.bytesRead != totalBytes) {
+                                    throw java.io.IOException("Local source ended early: got ${counting.bytesRead} of $totalBytes bytes.")
+                                }
                                 totalBytes.coerceAtLeast(0L)
                             }
                         }
+                        commitStagedRemoteFile(client, stagedPath, remotePath)
                         ok++
                         finishSftpTransfer(transferId, SftpTransferStatus.Success, uploaded, uploaded, if (uploaded > 0L) "Uploaded $uploaded bytes" else "Uploaded")
                     } catch (e: CancellationException) {
+                        withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
                         throw e
                     } catch (e: Exception) {
+                        withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
                         val msg = e.message ?: "unknown error"
                         if (firstErr == null) firstErr = "$name: $msg"
                         finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = msg)
@@ -7961,6 +8322,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } finally {
                 endTransferBatch(batchId)
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { client.close() } }
             }
             if (selectedServerId == srv.id) sftpError = firstErr?.let { "Upload failed: $it" }
             sftpStatus = if (firstErr == null) "Uploaded $ok file(s)" else "Uploaded $ok of ${picked.size} file(s) — see error"
@@ -8053,6 +8415,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         totalBytes: Long? = null,
         message: String = "",
     ) {
+        activeTransferAborters.remove(id)
         // A cancelled row reports as Failure with a fixed message the UI renders as "Cancelled";
         // it is never retryable (the user just asked for it to stop).
         val wasCancelled = cancelledTransferIds.remove(id)
@@ -8070,12 +8433,55 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun retrySftpTransfer(item: SftpTransferItem) {
-        // Negative ids are network-share transfers; retry would re-upload to the selected SSH
-        // host instead of the share, so those rows are never marked retryable (see below).
-        if (!item.retryable || item.sourceUri == null || item.serverId < 0) return
+        if (!item.retryable || item.sourceUri == null) return
         val uri = runCatching { android.net.Uri.parse(item.sourceUri) }.getOrNull() ?: return
         val context = getApplication<android.app.Application>()
-        sftpUploadMany(listOf(uri), context)
+        // Retry is bound to the row's original endpoint and destination. Using selectedServer or
+        // the currently browsed folder here can upload a failed file to an unrelated host after
+        // the user navigates elsewhere while the first attempt is failing.
+        viewModelScope.launch {
+            val share = if (item.serverId < 0) {
+                repository.getAllNetworkShares().firstOrNull { it.id == -item.serverId }
+            } else null
+            val server = if (item.serverId >= 0) repository.getServerById(item.serverId) else null
+            val client = when {
+                share != null -> shareFsClient(share)
+                server != null -> sftpClientFor(server)
+                else -> {
+                    finishSftpTransfer(item.id, SftpTransferStatus.Failure, message = "Original endpoint no longer exists")
+                    return@launch
+                }
+            }
+            val endpointName = share?.let(::shareEndpointLabel) ?: requireNotNull(server).name
+            val retryId = addTransfer(item.serverId, endpointName, "Upload", item.name, item.remotePath, item.sourceUri)
+            activeTransferAborters[retryId] = { client.cancelActiveTransfers() }
+            val stagedPath = transferStagingPath(item.remotePath)
+            try {
+                val totalBytes = queryOpenableSize(context, uri)
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri).use { input ->
+                        input ?: throw java.io.IOException("Could not read the original selected file.")
+                        val counting = CountingUploadInput(input)
+                        client.uploadStream(stagedPath, counting, totalBytes, transferProgress(retryId))
+                        if (totalBytes > 0 && counting.bytesRead != totalBytes) {
+                            throw java.io.IOException("Local source ended early: got ${counting.bytesRead} of $totalBytes bytes.")
+                        }
+                    }
+                }
+                commitStagedRemoteFile(client, stagedPath, item.remotePath)
+                finishSftpTransfer(retryId, SftpTransferStatus.Success, totalBytes, totalBytes, "Uploaded on retry")
+                share?.takeIf { browsingShare?.id == it.id }?.let { loadShareDir(sharePath, clearError = false) }
+                server?.let { refreshSftpIfStillViewing(it.id, item.remotePath.substringBeforeLast('/', "").ifBlank { "/" }) }
+            } catch (e: CancellationException) {
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
+                throw e
+            } catch (e: Exception) {
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
+                finishSftpTransfer(retryId, SftpTransferStatus.Failure, message = e.message ?: "Retry failed")
+            } finally {
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { client.close() } }
+            }
+        }
     }
 
     private fun queryDisplayName(context: android.content.Context, uri: android.net.Uri): String? =
@@ -8093,6 +8499,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 if (idx >= 0 && c.moveToFirst() && !c.isNull(idx)) c.getLong(idx).coerceAtLeast(0L) else 0L
             } ?: 0L
         }.getOrDefault(0L)
+
+    /** Counts the bytes actually consumed so a provider that ends early cannot commit a short upload. */
+    private class CountingUploadInput(input: java.io.InputStream) : java.io.FilterInputStream(input) {
+        var bytesRead: Long = 0L
+            private set
+        override fun read(): Int = super.read().also { if (it >= 0) bytesRead++ }
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+            super.read(buffer, offset, length).also { if (it > 0) bytesRead += it }
+    }
 
     /**
      * Save an edited file and confirm it persisted. We write the new content, then read the remote
@@ -8161,7 +8576,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         broadcastJob = viewModelScope.launch {
             val allServers = repository.getAllServers()
             val selected = when {
-                resolvedIds != null -> allServers.filter { it.status == "online" && it.id in resolvedIds }
+                // The confirmation dialog already resolved the exact target set. Cached reachability
+                // can change between confirmation and execution (or simply be stale after resume),
+                // so do not silently drop an explicitly confirmed host here; attempt it and surface
+                // the real SSH result for that row.
+                resolvedIds != null -> allServers.filter { it.id in resolvedIds }
                 broadcastTargetMode == FleetTargetMode.Servers -> allServers.filter { it.status == "online" && it.id in targetIds }
                 else -> allServers.filter { it.status == "online" && it.groupName.orEmpty() in targetGroups }
             }
@@ -8598,7 +9017,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun saveAlertsEnabled(enabled: Boolean) {
         alertsEnabled = enabled
         viewModelScope.launch {
-            repository.insertSetting("alerts_enabled", enabled.toString())
+            alertStateMutex.withLock {
+                repository.insertSetting("alerts_enabled", enabled.toString())
+                val active = repository.getActiveAlerts()
+                if (!enabled) {
+                    active.forEach { clearAlertNotification(it.ruleId, it.serverId) }
+                } else {
+                    val now = System.currentTimeMillis()
+                    val rules = repository.getAllRules().associateBy { it.id }
+                    val servers = repository.getAllServers().associateBy { it.id }
+                    active.filter { !it.acknowledged && it.mutedUntil < now }.forEach { alert ->
+                        val rule = rules[alert.ruleId]
+                        val server = servers[alert.serverId]
+                        if (rule != null && server != null) postAlertNotification(server, rule, alert.currentValue)
+                    }
+                }
+            }
         }
     }
 
@@ -8610,11 +9044,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveKeepScreenOnToggle(enabled: Boolean) {
-        viewModelScope.launch {
-            repository.insertSetting("keep_screen_on", enabled.toString())
-            defaultKeepScreenOn = enabled
-            isKeepScreenOnEnabled = enabled
-        }
+        // Apply the user's intent immediately. Keeping these state writes behind the suspended
+        // database insert lets an older enable complete after battery saver has released the flag,
+        // incorrectly turning the screen lock back on.
+        defaultKeepScreenOn = enabled
+        isKeepScreenOnEnabled = enabled
+        viewModelScope.launch { repository.insertSetting("keep_screen_on", enabled.toString()) }
     }
 
     // ── Battery saver ─────────────────────────────────────────────────────────
@@ -8800,25 +9235,55 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // ACTIVE ALERTS CONFLICT CORRECTION
     fun acknowledgeAlert(alertId: Int) {
         viewModelScope.launch {
-            repository.getActiveAlerts().find { it.id == alertId }?.let { recordAlertHistory(it, "acknowledged") }
-            repository.setAcknowledged(alertId, true)
+            alertStateMutex.withLock {
+                repository.getActiveAlerts().find { it.id == alertId }?.let {
+                    recordAlertHistory(it, "acknowledged")
+                    clearAlertNotification(it.ruleId, it.serverId)
+                }
+                repository.setAcknowledged(alertId, true)
+            }
         }
     }
 
     fun acknowledgeAllAlerts() {
         viewModelScope.launch {
-            repository.getActiveAlerts()
-                .filter { !it.acknowledged && it.mutedUntil < System.currentTimeMillis() }
-                .forEach { recordAlertHistory(it, "acknowledged") }
-            repository.acknowledgeAll()
+            alertStateMutex.withLock {
+                repository.getActiveAlerts()
+                    .filter { !it.acknowledged && it.mutedUntil < System.currentTimeMillis() }
+                    .forEach {
+                        recordAlertHistory(it, "acknowledged")
+                        clearAlertNotification(it.ruleId, it.serverId)
+                    }
+                repository.acknowledgeAll()
+            }
         }
     }
 
     fun muteAlertForOneHour(alertId: Int) {
         viewModelScope.launch {
-            val mutedUntil = System.currentTimeMillis() + 60 * 60 * 1000
-            repository.getActiveAlerts().find { it.id == alertId }?.let { recordAlertHistory(it, "muted") }
-            repository.muteAlert(alertId, mutedUntil)
+            alertStateMutex.withLock {
+                val mutedUntil = System.currentTimeMillis() + 60 * 60 * 1000
+                repository.getActiveAlerts().find { it.id == alertId }?.let {
+                    recordAlertHistory(it, "muted")
+                    clearAlertNotification(it.ruleId, it.serverId)
+                }
+                repository.muteAlert(alertId, mutedUntil)
+            }
+        }
+    }
+
+    fun unmuteAlert(alertId: Int) {
+        viewModelScope.launch {
+            alertStateMutex.withLock {
+                val alert = repository.getActiveAlerts().find { it.id == alertId } ?: return@withLock
+                repository.muteAlert(alertId, 0L)
+                recordAlertHistory(alert.copy(mutedUntil = 0L), "unmuted")
+                if (alertsEnabled && !alert.acknowledged) {
+                    val rule = repository.getAllRules().find { it.id == alert.ruleId }
+                    val server = repository.getServerById(alert.serverId)
+                    if (rule != null && server != null) postAlertNotification(server, rule, alert.currentValue)
+                }
+            }
         }
     }
 
@@ -8849,13 +9314,32 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateAlertRule(rule: AlertRuleEntity) {
         viewModelScope.launch {
-            repository.insertRule(rule)
+            alertStateMutex.withLock {
+                val previous = repository.getAllRules().find { it.id == rule.id }
+                // Evaluation changes make the old incident stale and must reset its trigger window.
+                // A documentation-only notes edit must not silently resolve a live incident.
+                val evaluationChanged = previous?.let { alertRuleEvaluationChanged(it, rule) } == true
+                if (evaluationChanged) closeAlertsForRule(rule.id)
+                repository.insertRule(rule)
+            }
         }
     }
 
     fun deleteAlertRule(rule: AlertRuleEntity) {
         viewModelScope.launch {
-            repository.deleteRule(rule)
+            alertStateMutex.withLock {
+                closeAlertsForRule(rule.id)
+                repository.deleteRule(rule)
+            }
+        }
+    }
+
+    private suspend fun closeAlertsForRule(ruleId: Int) {
+        repository.getActiveAlerts().filter { it.ruleId == ruleId }.forEach { alert ->
+            recordAlertHistory(alert, "resolved")
+            repository.deleteAlert(alert.id)
+            clearAlertNotification(alert.ruleId, alert.serverId)
+            alertBreachSince.remove(ruleId to alert.serverId)
         }
     }
 

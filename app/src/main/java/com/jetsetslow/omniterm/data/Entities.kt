@@ -131,7 +131,10 @@ data class AlertRuleEntity(
     val notes: String = ""
 )
 
-@Entity(tableName = "active_alerts")
+@Entity(
+    tableName = "active_alerts",
+    indices = [Index(value = ["ruleId", "serverId"], unique = true)],
+)
 data class ActiveAlertEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val ruleId: Int,

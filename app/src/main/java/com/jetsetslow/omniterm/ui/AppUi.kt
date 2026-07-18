@@ -36,6 +36,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -51,6 +52,7 @@ import androidx.core.content.ContextCompat
 import androidx.appcompat.app.AppCompatActivity
 import android.content.Context
 import android.content.ContextWrapper
+import android.content.res.Configuration
 import com.jetsetslow.omniterm.billing.LicenseController
 import com.jetsetslow.omniterm.billing.LicenseState
 
@@ -464,8 +466,12 @@ fun MainAppScreen(viewModel: AppViewModel) {
     val context = LocalContext.current
     var backPressDisabledTime by remember { mutableStateOf(0L) }
     var showExitDialog by remember { mutableStateOf(false) }
+    val fullScreenEditorHost = remember { FullScreenEditorHost() }
 
-    BackHandler {
+    BackHandler(
+        enabled = fullScreenEditorHost.content == null &&
+            viewModel.edittingSftpFile == null && viewModel.edittingShareFile == null,
+    ) {
         if (!viewModel.navigateBack()) {
             val currentTime = System.currentTimeMillis()
             if (currentTime - backPressDisabledTime < 2000) {
@@ -508,7 +514,9 @@ fun MainAppScreen(viewModel: AppViewModel) {
     if (viewModel.isAppLocked && viewModel.isAppLockEnabled) {
         PinLockGateway(viewModel)
     } else {
-        AppCoreScaffold(viewModel)
+        CompositionLocalProvider(LocalFullScreenEditorHost provides fullScreenEditorHost) {
+            AppCoreScaffold(viewModel)
+        }
 
         // Global first-connect host key approval: must overlay every screen AND every dialog
         // (Add Server's Test Connection blocks on it), so it lives here, not in ShellScreen.
@@ -574,6 +582,11 @@ fun MainAppScreen(viewModel: AppViewModel) {
             )
             ConfirmHost(shareEditorConfirm)
         }
+
+        // Compose/YAML editors are requested from inside the Containers screen but rendered here,
+        // alongside the already-hoisted SFTP/share editors, so they receive the whole Activity
+        // window and the real IME insets.
+        fullScreenEditorHost.content?.invoke()
     }
 }
 
@@ -754,7 +767,7 @@ fun PinLockGateway(viewModel: AppViewModel) {
     }
 }
 
-@OptIn(ExperimentalMaterialApi::class)
+@OptIn(ExperimentalMaterialApi::class, ExperimentalLayoutApi::class)
 @Composable
 fun AppCoreScaffold(viewModel: AppViewModel) {
     val context = LocalContext.current
@@ -797,6 +810,13 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
     fun activeFor(key: Any) = key == current || (key == Screen.Tools && isToolSubScreen(current))
     val activeColor = navItems.firstOrNull { activeFor(it.key) }?.color ?: OmniColors.cyan
     val alerts by viewModel.activeAlerts.collectAsStateWithLifecycle()
+    // A landscape software keyboard can consume over half of the physical display. Keeping both
+    // global bars mounted in that state left the terminal with zero drawable rows (and made split
+    // panes effectively unusable). Terminal-local controls remain available; the global chrome
+    // returns as soon as the IME closes.
+    val compactTerminalIme = viewModel.currentScreen == Screen.Shell &&
+        WindowInsets.isImeVisible &&
+        LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
 
     val pullRefreshState = rememberPullRefreshState(
         refreshing = viewModel.isRefreshing,
@@ -805,7 +825,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
 
     Scaffold(
         topBar = {
-            Column {
+            if (!compactTerminalIme) Column {
                 OmniAppBar(
                     activeColor = activeColor,
                     alertCount = if (viewModel.alertsEnabled) {
@@ -824,7 +844,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
             }
         },
         bottomBar = {
-            Column {
+            if (!compactTerminalIme) Column {
                 if (showMonetizationUi && !licenseState.adsRemoved) {
                     AdBanner()
                 }
@@ -933,68 +953,75 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
 
             // Disconnect dialog safety check
             if (viewModel.showDisconnectTerminalDialog) {
-                val session = viewModel.terminalNavigationSession
+                val sessions = viewModel.pendingTerminalNavigationSessions
+                val count = sessions.size
+                val allPersistent = sessions.isNotEmpty() && sessions.all { it.persistent }
+                val hasPersistent = sessions.any { it.persistent }
+                val hasNormal = sessions.any { !it.persistent }
+                val connecting = viewModel.pendingTerminalNavigationIncludesConnectAttempt
                 AlertDialog(
-                    onDismissRequest = {
-                        viewModel.showDisconnectTerminalDialog = false
-                        viewModel.pendingNavigationScreen = null
+                    onDismissRequest = { viewModel.cancelTerminalNavigation() },
+                    title = {
+                        Text(
+                            when {
+                                count > 1 -> "$count active SSH sessions"
+                                allPersistent -> "Persistent SSH session"
+                                connecting && count == 0 -> "SSH connection in progress"
+                                else -> "Active SSH session"
+                            }
+                        )
                     },
-                    title = { Text(if (session?.persistent == true) "Persistent SSH session" else "Active SSH session") },
                     text = {
                         Text(
-                            if (session?.persistent == true) {
-                                "Leave ${session.serverName} resumable, or terminate its tmux session and stop anything running there?"
-                            } else {
-                                "Choose what to do with the active SSH terminal session.\n\n" +
-                                    "Sending sessions to the background keeps OmniTerm active and may increase battery consumption."
+                            when {
+                                count == 1 && allPersistent ->
+                                    "Leave ${sessions.first().serverName} resumable, or terminate its tmux session and stop anything running there?"
+                                count > 1 && hasPersistent && hasNormal ->
+                                    "Choose what to do with the terminal sessions in both panes. Persistent sessions can be left resumable; other SSH sessions stay connected in the background."
+                                count > 1 && allPersistent ->
+                                    "Leave both persistent sessions resumable, or terminate them and stop anything running there?"
+                                count > 1 ->
+                                    "Choose what to do with the active SSH sessions in both panes. Sending them to the background keeps OmniTerm active and may increase battery consumption."
+                                connecting && count == 0 ->
+                                    "Cancel the connection attempt, or let it finish in the background?"
+                                connecting ->
+                                    "Choose what to do with the active terminal session and connection attempt."
+                                else ->
+                                    "Choose what to do with the active SSH terminal session.\n\n" +
+                                        "Sending sessions to the background keeps OmniTerm active and may increase battery consumption."
                             }
                         )
                     },
                     confirmButton = {
                         TextButton(
-                            onClick = {
-                                val target = viewModel.pendingNavigationScreen
-                                viewModel.disconnectTerminal()
-                                viewModel.showDisconnectTerminalDialog = false
-                                viewModel.pendingNavigationScreen = null
-                                target?.let { viewModel.navigateTo(it) }
-                            }
+                            onClick = { viewModel.completeTerminalNavigation(disconnect = true) }
                         ) {
-                            Text("Disconnect", color = Color.Red)
+                            Text(
+                                when {
+                                    connecting && count == 0 -> "Cancel connection"
+                                    count > 1 -> "Disconnect all"
+                                    else -> "Disconnect"
+                                },
+                                color = Color.Red,
+                            )
                         }
                     },
                     dismissButton = {
                         Row {
-                            if (session?.persistent == true) {
-                                TextButton(
-                                    onClick = {
-                                        val target = viewModel.pendingNavigationScreen
-                                        viewModel.leaveSessionResumable(session.id)
-                                        viewModel.showDisconnectTerminalDialog = false
-                                        viewModel.pendingNavigationScreen = null
-                                        target?.let { viewModel.navigateTo(it) }
+                            TextButton(
+                                onClick = { viewModel.completeTerminalNavigation(disconnect = false) }
+                            ) {
+                                Text(
+                                    when {
+                                        connecting && count == 0 -> "Continue in background"
+                                        allPersistent -> "Leave resumable"
+                                        hasPersistent && hasNormal -> "Keep sessions"
+                                        else -> "Send to background"
                                     }
-                                ) {
-                                    Text("Leave resumable")
-                                }
-                            } else {
-                                TextButton(
-                                    onClick = {
-                                        val target = viewModel.pendingNavigationScreen
-                                        viewModel.sendToBackground()
-                                        viewModel.showDisconnectTerminalDialog = false
-                                        viewModel.pendingNavigationScreen = null
-                                        target?.let { viewModel.navigateTo(it) }
-                                    }
-                                ) {
-                                    Text("Send to background")
-                                }
+                                )
                             }
                             TextButton(
-                                onClick = {
-                                    viewModel.showDisconnectTerminalDialog = false
-                                    viewModel.pendingNavigationScreen = null
-                                }
+                                onClick = { viewModel.cancelTerminalNavigation() }
                             ) {
                                 Text("Stay")
                             }
@@ -1007,13 +1034,13 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                 val session = viewModel.activeSessions.find { it.id == sessionId }
                 AlertDialog(
                     onDismissRequest = { viewModel.cancelPendingDisconnect() },
-                    title = { Text(if (session?.persistent == true) "Close persistent session?" else "Disconnect session?") },
+                    title = { Text(if (session?.persistent == true) "Terminate tmux session?" else "Disconnect session?") },
                     text = {
                         Text(
                             if (session?.persistent == true) {
-                                "Leave ${session.serverName} resumable, or terminate its tmux session and stop anything running there?"
+                                "This disconnects the local SSH session and terminates its remote tmux session, stopping anything running inside it. Use Leave in the terminal toolbar when you want to resume it later."
                             } else {
-                                "Keep ${session?.serverName ?: "this terminal session"} connected in the background, or disconnect and stop anything running in that terminal?"
+                                "Disconnect ${session?.serverName ?: "this terminal session"} and stop anything running in that terminal? Use Background in the terminal toolbar to keep it connected."
                             }
                         )
                     },
@@ -1028,28 +1055,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                         }
                     },
                     dismissButton = {
-                        Row {
-                            if (session?.persistent == true) {
-                                TextButton(
-                                    onClick = {
-                                        viewModel.leaveSessionResumable(sessionId)
-                                        viewModel.cancelPendingDisconnect()
-                                    }
-                                ) {
-                                    Text("Leave resumable")
-                                }
-                            } else if (session != null) {
-                                TextButton(
-                                    onClick = {
-                                        viewModel.sendSessionToBackground(sessionId)
-                                        viewModel.cancelPendingDisconnect()
-                                    }
-                                ) {
-                                    Text("Send to background")
-                                }
-                            }
-                            TextButton(onClick = { viewModel.cancelPendingDisconnect() }) { Text("Cancel") }
-                        }
+                        TextButton(onClick = { viewModel.cancelPendingDisconnect() }) { Text("Cancel") }
                     },
                 )
             }
@@ -1084,15 +1090,23 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
             var needsPermissions by remember { mutableStateOf(false) }
             var permissionPromptDismissed by rememberSaveable { mutableStateOf(false) }
             val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-            DisposableEffect(lifecycleOwner) {
+            val backgroundKeepAlive = viewModel.isBackgroundKeepAlive
+            val activeSessionCount = viewModel.activeSessions.size
+            fun refreshPermissionNeed() {
+                val hasNotif = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU ||
+                    ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                val pm = context.getSystemService(android.os.PowerManager::class.java)
+                val hasBatt = pm?.isIgnoringBatteryOptimizations(context.packageName) == true
+                needsPermissions = backgroundKeepAlive && activeSessionCount > 0 && (!hasNotif || !hasBatt)
+            }
+            // The lifecycle observer is installed after the Activity's initial ON_RESUME. React to
+            // in-app state changes too, otherwise enabling keep-alive for an already-connected
+            // session stays silent until an unrelated background/foreground cycle.
+            LaunchedEffect(backgroundKeepAlive, activeSessionCount) { refreshPermissionNeed() }
+            DisposableEffect(lifecycleOwner, backgroundKeepAlive, activeSessionCount) {
                 val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                     if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                        val hasNotif = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU ||
-                            ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                        val pm = context.getSystemService(android.os.PowerManager::class.java)
-                        val hasBatt = pm?.isIgnoringBatteryOptimizations(context.packageName) == true
-                        needsPermissions = viewModel.isBackgroundKeepAlive &&
-                            viewModel.activeSessions.isNotEmpty() && (!hasNotif || !hasBatt)
+                        refreshPermissionNeed()
                     }
                 }
                 lifecycleOwner.lifecycle.addObserver(observer)
@@ -1278,6 +1292,10 @@ fun FirstRunDialog(viewModel: AppViewModel, onNotNow: () -> Unit = {}) {
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
+            // The service may already be running from a session that was backgrounded before the
+            // runtime grant. Android does not retroactively reveal that blocked notification, so
+            // repost the current session payload immediately after permission is granted.
+            viewModel.startKeepAliveService()
             launchBatteryOptimizationSettings()
         } else {
             runCatching {

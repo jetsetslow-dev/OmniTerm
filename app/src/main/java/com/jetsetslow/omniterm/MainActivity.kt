@@ -22,7 +22,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivity : AppCompatActivity() {
   private var appViewModel: AppViewModel? = null
-  private companion object {
+  companion object {
+    const val EXTRA_E2E_FORCE_STARTUP_CRASH = "com.jetsetslow.omniterm.extra.E2E_FORCE_STARTUP_CRASH"
     const val crashPrefsName = "startup_crash_report"
     const val crashKey = "last_crash"
     const val crashTimeKey = "last_crash_time"
@@ -66,6 +67,13 @@ class MainActivity : AppCompatActivity() {
 
     try {
       enableEdgeToEdge()
+      if (BuildConfig.DEBUG && intent?.getBooleanExtra(EXTRA_E2E_FORCE_STARTUP_CRASH, false) == true) {
+        // Opt-in instrumentation hook: exercises the real startup recovery UI without shipping a
+        // crash button or killing the instrumentation process that must verify the result.
+        throw IllegalStateException(
+          "Controlled E2E startup crash: password=hunter2 Authorization: Bearer e2e-token host=192.0.2.123 /home/omnitermlab/private",
+        )
+      }
       // Acquire ViewModel before setContent so handleIntent can set the correct initial
       // screen (e.g. Shell from a notification tap) before the first frame is rendered.
       if (appViewModel == null) {
@@ -77,7 +85,9 @@ class MainActivity : AppCompatActivity() {
       }
       showAppContent()
     } catch (t: Throwable) {
-      val report = "${crashEnvironment()}\nThread: main\n${formatCrash(t)}"
+      val report = com.jetsetslow.omniterm.data.CrashLog.redactSensitive(
+        "${crashEnvironment()}\nThread: main\n${formatCrash(t)}",
+      )
       prefs.edit().putString(crashKey, report).putLong(crashTimeKey, System.currentTimeMillis()).apply()
       runCatching { com.jetsetslow.omniterm.data.CrashLog.record(this, report) }
       showCrashReport(report)
@@ -196,7 +206,9 @@ class MainActivity : AppCompatActivity() {
       // Prepend version/build/device: release traces are obfuscated, and deobfuscating one needs
       // the mapping.txt from this exact build — so the version (= which mapping) must travel with
       // every report the user copies or shares.
-      val report = "${crashEnvironment()}\nThread: ${thread.name}\n${com.jetsetslow.omniterm.data.CrashLog.formatThrowable(throwable)}"
+      val report = com.jetsetslow.omniterm.data.CrashLog.redactSensitive(
+        "${crashEnvironment()}\nThread: ${thread.name}\n${com.jetsetslow.omniterm.data.CrashLog.formatThrowable(throwable)}",
+      )
       // The single key drives the on-launch crash screen; the history (About → Crash history) keeps
       // the last N so a non-startup crash like a draw NPE can still be reviewed and sent later.
       appContext.getSharedPreferences(crashPrefsName, Context.MODE_PRIVATE)
@@ -314,6 +326,7 @@ class MainActivity : AppCompatActivity() {
       setOnClickListener {
         getSharedPreferences(crashPrefsName, Context.MODE_PRIVATE)
           .edit().remove(crashKey).remove(crashTimeKey).apply()
+        intent?.removeExtra(EXTRA_E2E_FORCE_STARTUP_CRASH)
         recreate()
       }
     })
@@ -356,4 +369,5 @@ class MainActivity : AppCompatActivity() {
     })
     setContentView(ScrollView(this).apply { addView(content) })
   }
+
 }
