@@ -104,6 +104,10 @@ This is the durable checkpoint for the current physical-device and disposable-la
 - The controlled startup crash suite passed in 10.409 seconds.
   - Startup capture, history persistence, recovery, clearing, and redaction of credentials, authorization data, URI userinfo, private keys, IP addresses, and private paths were verified.
 - `CrashLogRedactionTest` passed locally. The controlled crash uses only reserved test-network data and the hook is debug-only.
+- The Android 15 adaptive-icon render check passed on the physical device in 6.320 seconds.
+  - The biometric prompt's monochrome source was an opaque full-colour tile, which Android reduced to a featureless grey circle.
+  - Both adaptive launcher variants now use a transparent OmniTerm infinity/terminal vector mask; the device render asserts meaningful alpha coverage and rejects an opaque tile.
+  - The reproducible real-prompt visual fixture safely skips on this device because no strong biometric is currently enrolled; secure biometric enrollment was not modified through root.
 
 ### Build verification
 
