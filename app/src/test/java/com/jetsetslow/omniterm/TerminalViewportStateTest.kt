@@ -96,6 +96,17 @@ class TerminalViewportStateTest {
     }
 
     @Test
+    fun capTrimDriftShiftsAnchorSoContentStaysStationary() {
+        val v = tailFollowing()
+        v.consumeScroll(100f, 10f, 100, 20) // scrolled up to row 70
+        // Streaming output at the scrollback cap trimmed 7 head rows: the same content now sits
+        // 7 indices earlier, so the anchor must move back with it instead of sliding tailward.
+        v.applyRowDelta(-7)
+        assertEquals(63, v.firstVisibleRow)
+        assertTrue(v.scrolledUp)
+    }
+
+    @Test
     fun contentShrinkClampsScrolledUpViewport() {
         val v = tailFollowing()
         v.consumeScroll(100f, 10f, 100, 20)

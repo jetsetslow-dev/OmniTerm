@@ -1367,6 +1367,20 @@ private fun PaneTerminal(
         viewport.onContentChanged(snapshot.totalRows, visibleRowCount)
     }
 
+    // While scrolled up, streaming output that hits the scrollback cap trims rows off the head:
+    // every absolute row index then points one row later in the content, so a fixed anchor makes
+    // the view slide toward the tail ("can't scroll up while output floods"). Shift the anchor by
+    // the trim delta so the rows under the user's finger stay stationary.
+    var lastTrimmedRows by remember(sessionId) { mutableStateOf(snapshot.trimmedRows) }
+    LaunchedEffect(snapshot.trimmedRows) {
+        val drift = (snapshot.trimmedRows - lastTrimmedRows).toInt()
+        lastTrimmedRows = snapshot.trimmedRows
+        if (drift > 0 && viewport.scrolledUp) {
+            viewport.applyRowDelta(-drift)
+            viewModel.updateTerminalViewportFor(currentSession, viewport.firstVisibleRow, visibleRowCount, viewport.followTail)
+        }
+    }
+
     LaunchedEffect(viewport.firstVisibleRow, visibleRowCount, viewport.followTail) {
         viewModel.updateTerminalViewportFor(currentSession, viewport.firstVisibleRow, visibleRowCount, viewport.followTail)
     }

@@ -61,14 +61,32 @@ identifiers appear in this document.
 - 2026-07-18: Focused unit regressions green: `CodeEditorTest`, `ColdStartRobolectricTest`,
   `TerminalNavigationRobolectricTest`.
 
+- 2026-07-18: Terminal field reports (Claude CLI in a session: history unscrollable, input dead
+  after a few idle seconds) reproduced and fixed via the new opt-in device suite
+  `E2eTerminalScrollHistoryReproTest` (arg `omniterm_e2e_scroll_repro=yes`, VM-level against the
+  disposable lab, Ink-style cursor-up/erase redraw workload):
+  - Root cause of the "idle" input death: `pasteText` wrapped the ENTIRE payload — including the
+    trailing Enter — in bracketed-paste markers. Readline treats everything inside
+    `ESC[200~…ESC[201~` as literal, so the pasted command was echoed but never executed. It only
+    ever worked in the first seconds after connect, before the prompt's `?2004h` had been
+    processed — which users perceive as "input breaks after idling", in and out of tmux. The
+    IME's multi-line commit path funnels through the same paste. Fixed by sending trailing CRs
+    after the closing marker (`bracketedPastePayload`, unit-tested in
+    `BracketedPastePayloadTest`); interior newlines stay literal as the mode intends.
+  - History integrity under an Ink-style workload verified at the emulator level for plain and
+    tmux sessions (early history + transcript retained live and across the capture-pane resync;
+    scrollback populated). The repro also covers typing after 7 s and 10 s idles with a resync
+    between. Passed 2/2 after the fixes (47.1 s, 47.2 s).
+  - Residual scroll defect found by analysis and fixed: with the scrollback cap reached, every
+    streamed line trims a head row, so a scrolled-up viewport's absolute anchor slid toward the
+    tail ("can't scroll up while output floods"). The emulator now counts linear head evictions
+    (`trimmedRowCount`, excluded during reflow/adoption which re-anchor on their own), snapshots
+    carry the counter, and ShellScreen shifts the anchor by the trim delta while scrolled up.
+    Unit coverage in `TerminalEmulatorTest.trimmedRowCountTracksOnlyLinearHeadEvictions` and
+    `TerminalViewportStateTest.capTrimDriftShiftsAnchorSoContentStaysStationary`.
+
 ## Active
 
-- Terminal scrollback investigation (user report: running the Claude CLI in a session, pasting a
-  large prompt, then unable to scroll back through history — both tmux and plain sessions).
-  Code-level findings so far: `resyncTmuxScrollbackFor` intentionally no-ops while the pane is in
-  the alternate screen; a scrolled-up viewport can also slide when the scrollback cap trims rows
-  under heavy streaming (fixed `firstVisibleRow` over a shifting buffer). Needs an on-device
-  reproduction with an Ink-style redraw workload before any fix.
 - Differential gap audit against the canonical ledger.
 - Play Store evidence review (full video re-review, screenshot set, manifest).
 

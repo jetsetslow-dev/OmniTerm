@@ -134,6 +134,27 @@ class TerminalEmulatorTest {
     }
 
     @Test
+    fun trimmedRowCountTracksOnlyLinearHeadEvictions() {
+        val e = TerminalEmulator(10, 2, scrollbackLimit = 2)
+        assertEquals(0L, e.trimmedRowCount)
+        // 5 lines through a 2-row screen with a 2-row cap: 1 head row evicted while streaming.
+        e.feedStr("L0\r\nL1\r\nL2\r\nL3\r\nL4")
+        assertEquals(1L, e.trimmedRowCount)
+        // Shrinking the user limit drops head rows in the same coordinate space: counted.
+        e.setScrollbackLimit(1)
+        assertEquals(2L, e.trimmedRowCount)
+        // Reflow rebuilds coordinates and re-anchors separately: not counted.
+        e.resize(8, 2)
+        val afterResize = e.trimmedRowCount
+        assertEquals(2L, afterResize)
+        // History adoption reports its own row delta to the viewport: not counted.
+        val scratch = TerminalEmulator(8, 2, scrollbackLimit = 1)
+        scratch.feedStr("H0\r\nH1\r\nH2\r\nH3")
+        e.adoptScrollbackFrom(scratch)
+        assertEquals(afterResize, e.trimmedRowCount)
+    }
+
+    @Test
     fun changingScrollbackLimitTrimsExistingRows() {
         val e = TerminalEmulator(10, 2, scrollbackLimit = 10)
         e.feedStr("L0\r\nL1\r\nL2\r\nL3\r\nL4")
