@@ -132,9 +132,16 @@ identifiers appear in this document.
 
 ## Resume point
 
-Remaining: pre-push gate (full unit suites, both lints, `git diff --check`, signature
-verification, pinned Gitleaks, `origin/main...HEAD` secret/privacy audit), one batched push, and
-the PR #31 body update; then confirm required checks on the final head. Campaign-teardown items
-that stay open until the user closes the campaign: restore `flag_secure` to its secure default
-(it remains "false" from the lab seed for capture evidence) and sweep any remaining disposable
-lab fixtures (the screenshot fixture already removes its own `omniterm-demo` container).
+2026-07-18: Campaign checkpoint complete. The pre-push gate passed in full (both unit suites and
+both lints in one 17.5-minute run, `git diff --check` clean, every branch commit
+signature-verified, pinned full-history Gitleaks clean, `origin/main...HEAD` audit found only
+RFC 5737 documentation addresses), the batch of seven signed commits was pushed as `84942c8`,
+PR #31's body records scope and remaining risk, and every required check passed on that exact
+head (Build & Test, CodeQL + Analyze Java/Kotlin, Validate Room migrations, secret scans,
+dependency review; Scorecard skips on PRs by design).
+
+Open items that intentionally wait for the campaign owner: merge decision on PR #31 (requires
+independent approval); restore `flag_secure` to its secure default on the test device (still
+"false" from the lab seed so capture evidence remains reproducible); final disposable-lab sweep
+(the screenshot fixture already removes its own `omniterm-demo` container); Play Console uploads
+from `artifacts/play-store/` only when explicitly authorized.
