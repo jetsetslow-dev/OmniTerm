@@ -93,6 +93,10 @@ This is the durable checkpoint for the current physical-device and disposable-la
 
 - The focused Settings draft lifecycle passed in 14.281 seconds.
   - An unsaved text-size draft survived Activity recreation in Compose save state, retained the same ViewModel, and guarded navigation until explicit discard.
+- The Settings/backup/security method passed in 83.833 seconds.
+  - Theme, font, scrollback, link, tmux-control, accessibility, AMOLED, syntax-highlight, telemetry, and large-transfer threshold bounds were exercised.
+  - Selective encrypted settings export rejected a wrong passphrase and corrupted envelope, restored valid settings into live state, and excluded device-local lock data.
+  - PIN setup, wrong-PIN handling, zero-grace background relock, typed unlock, biometric enablement, and lock disable cleanup passed.
 - `batterySaverFleetCancellationAndAutoRefreshRemainCoherent` passed in 29.696 seconds.
   - Rooted Android battery simulation engaged saver, released keep-screen-on, resumed polling after manual refresh, and restored device battery state during cleanup.
   - The run exposed and fixed an asynchronous keep-screen-on write that could re-enable the flag after battery saver released it.
@@ -114,9 +118,8 @@ This is the durable checkpoint for the current physical-device and disposable-la
 
 ## Remaining critical coverage
 
-1. Complete one clean formal run of the remaining Settings/backup/PIN method after the harness was split; its encryption, wrong-password/corruption, valid restore, and PIN stages reached their assertions before a later battery assertion exposed the now-fixed keep-screen race.
-2. Record a sanitized foreground-service-permission proof video. Use a clean test profile/host label, disable notification previews, clear Recents and notification history, crop status/navigation bars where possible, and review every frame before upload.
-3. Run the full unit/instrumentation/migration/static verification set, inspect PR checks, and remove disposable lab artifacts only after their evidence is no longer needed.
+1. Record a sanitized foreground-service-permission proof video. Use a clean test profile/host label, disable notification previews, clear Recents and notification history, crop status/navigation bars where possible, and review every frame before upload.
+2. Run the full unit/instrumentation/migration/static verification set, inspect PR checks, and remove disposable lab artifacts only after their evidence is no longer needed.
 
 ## Resume commands
 
