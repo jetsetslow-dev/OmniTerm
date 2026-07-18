@@ -8,14 +8,19 @@ import org.junit.Test
 class CrashLogRedactionTest {
     @Test
     fun credentialsHostsKeysAndPrivatePathsAreRemovedWithoutLosingFrames() {
+        // Assemble the sentinel at runtime so source-control scanners do not mistake the
+        // deliberately fake redaction fixture for committed key material.
+        val privateKeyLabel = listOf("OPENSSH", "PRIVATE", "KEY").joinToString(" ")
+        val beginPrivateKey = "-----BEGIN $privateKeyLabel-----"
+        val endPrivateKey = "-----END $privateKeyLabel-----"
         val report = """
             java.lang.IllegalStateException: password=hunter2 token:abc123 host 192.0.2.123
             Authorization: Bearer bearer-secret
             ssh://alice:p@ss@example.invalid/home/alice/project
             /data/user/0/com.example.app/files/private
-            -----BEGIN OPENSSH PRIVATE KEY-----
+            $beginPrivateKey
             secret-key-material
-            -----END OPENSSH PRIVATE KEY-----
+            $endPrivateKey
                 at com.example.Safe.frame(Safe.kt:42)
         """.trimIndent()
 

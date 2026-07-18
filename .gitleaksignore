@@ -1,0 +1,3 @@
+# Historical false positive: a deliberately fake PEM marker in CrashLogRedactionTest.
+# The current test assembles this marker at runtime instead of committing a secret-shaped line.
+747e7e2fdc6db815ba506dc419ea145069004eac:app/src/test/java/com/jetsetslow/omniterm/CrashLogRedactionTest.kt:private-key:16

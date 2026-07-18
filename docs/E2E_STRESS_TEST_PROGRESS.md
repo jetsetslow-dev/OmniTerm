@@ -134,6 +134,7 @@ This is the durable checkpoint for the current physical-device and disposable-la
   - Real process, service, log, cron, Docker, and SFTP loaders were observed from start through completion against the disposable lab.
   - Fleet broadcast completed and returned its expected marker.
   - Loader synchronization observes both loading-state edges, preventing a false pass or stale error before a launched coroutine starts.
+- The first hosted PR run found one Gitleaks false positive in the deliberately fake private-key redaction fixture; no real credential was present. The fixture now assembles its PEM sentinel at runtime, and the exact historical finding is narrowly fingerprint-ignored so full-history scanning remains enabled.
 
 ## Remaining critical coverage
 
