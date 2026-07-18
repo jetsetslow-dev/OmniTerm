@@ -275,7 +275,7 @@ class TerminalEmulator(
         for (i in screenStart + nr until rewrapped.size) softWrapped.remove(rewrapped[i])
         scrollback.clear()
         for (i in 0 until screenStart) scrollback.addLast(rewrapped[i])
-        trimScrollbackToLimit()
+        trimScrollbackToLimit(countTrims = false)
 
         scrollTop = 0; scrollBottom = rows - 1
         curRow = (newCursorRow - screenStart).coerceIn(0, rows - 1)
@@ -351,6 +351,7 @@ class TerminalEmulator(
             cols = cols,
             firstRow = 0,
             totalRows = total,
+            trimmedRows = trimmedRowCount,
         )
     }
 
@@ -369,6 +370,7 @@ class TerminalEmulator(
             cols = cols,
             firstRow = start,
             totalRows = total,
+            trimmedRows = trimmedRowCount,
         )
     }
 
@@ -407,14 +409,25 @@ class TerminalEmulator(
             scrollback.addLast(row)
             source.softWrapped[row]?.let { softWrapped[row] = it }
         }
-        trimScrollbackToLimit()
+        trimScrollbackToLimit(countTrims = false)
     }
 
-    private fun trimScrollbackToLimit() {
+    /**
+     * Total scrollback rows ever evicted head-first while the row coordinate space stayed linear
+     * (feed-time cap trims and user limit shrinks). A scrolled-up viewport uses the delta to
+     * shift its anchor so content doesn't slide underneath it while streaming output trims the
+     * head. Reflow and history adoption rebuild the coordinate space and re-anchor on their own,
+     * so their evictions are excluded. Monotonic.
+     */
+    var trimmedRowCount: Long = 0L
+        private set
+
+    private fun trimScrollbackToLimit(countTrims: Boolean = true) {
         while (scrollback.size > scrollbackLimit) {
             val evicted = scrollback.removeFirst()
             scrollbackSpanCache.remove(evicted)
             softWrapped.remove(evicted)
+            if (countTrims) trimmedRowCount++
         }
     }
 
@@ -1114,6 +1127,8 @@ data class TerminalSnapshot(
     val cols: Int,
     val firstRow: Int = 0,
     val totalRows: Int = rows.size,
+    /** Cumulative head-trimmed rows (see [TerminalEmulator.trimmedRowCount]); anchors scrolled-up viewports. */
+    val trimmedRows: Long = 0L,
 ) {
     companion object {
         val EMPTY = TerminalSnapshot(emptyList(), 0, 0, true, 80, 0, 0)

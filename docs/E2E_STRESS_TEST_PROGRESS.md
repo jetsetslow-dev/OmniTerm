@@ -112,7 +112,8 @@ This is the durable checkpoint for the current physical-device and disposable-la
 - The Android 15 adaptive-icon render check passed on the physical device in 6.320 seconds.
   - The biometric prompt's monochrome source was an opaque full-colour tile, which Android reduced to a featureless grey circle.
   - Both adaptive launcher variants now use a transparent OmniTerm infinity/terminal vector mask; the device render asserts meaningful alpha coverage and rejects an opaque tile.
-  - The reproducible real-prompt visual fixture safely skips on this device because no strong biometric is currently enrolled; secure biometric enrollment was not modified through root.
+  - Before enrollment, the reproducible real-prompt visual fixture safely skipped rather than modifying secure biometric state through root.
+  - After strong biometric enrollment, the real cryptographic system-prompt fixture passed in 19.034 seconds and cancelled without a fingerprint touch. Android's biometric service confirmed the active session belonged to OmniTerm; the secure prompt correctly blocked screenshots and accessibility capture.
 - `E2eForegroundServiceProofTest` passed on the physical device in 42.414 seconds; the exact recorded rerun passed in 42.338 seconds.
   - Enabling background keep-alive for an already-active session now recomputes the permission need immediately instead of waiting for an unrelated Activity resume.
   - Granting notification permission reposts the already-running service payload, because Android does not retroactively reveal a foreground-service notification that was started while permission was denied.

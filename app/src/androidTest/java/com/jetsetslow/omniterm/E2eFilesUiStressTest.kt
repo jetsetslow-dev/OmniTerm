@@ -57,9 +57,9 @@ class E2eFilesUiStressTest {
         try {
             composeRule.runOnUiThread {
                 vm.navigateTo(Screen.SFTP)
-                vm.activeSftpTab = 1
+                vm.activeSftpTab = 2
             }
-            composeRule.waitUntil(15_000) { vm.currentScreen == Screen.SFTP && vm.activeSftpTab == 1 }
+            composeRule.waitUntil(15_000) { vm.currentScreen == Screen.SFTP && vm.activeSftpTab == 2 }
 
             for (share in shares) {
                 val protocol = share.protocol.uppercase()

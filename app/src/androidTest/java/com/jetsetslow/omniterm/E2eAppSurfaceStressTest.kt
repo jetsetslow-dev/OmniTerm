@@ -87,8 +87,13 @@ class E2eAppSurfaceStressTest {
             // The disposable lab username is supplied at seed time. Never couple the broad suite
             // to one developer's local account name; doing so turns a valid lab into a false SFTP
             // failure as soon as the runtime fixture uses another user.
+            // Await the load's OUTCOME rather than the loading-flag start edge: with a warm pooled
+            // SFTP session a LAN listing completes faster than one poll interval, so the
+            // true-then-false pulse can be missed entirely and the start await times out.
             vm.loadSftp("/home/${host.username}")
-            awaitLoader("SFTP loader", 20_000) { vm.sftpLoading }
+            await("SFTP listing applied", 20_000) {
+                vm.sftpPath == "/home/${host.username}" && !vm.sftpLoading
+            }
             assertTrue("SFTP loader failed: ${vm.sftpError}", vm.sftpError.isNullOrBlank())
 
             vm.runFleetBroadcast("printf 'FLEET-SURFACE-OK\\n'", resolvedIds = listOf(host.id))
@@ -146,10 +151,10 @@ class E2eAppSurfaceStressTest {
         }
     }
 
-    private suspend fun await(label: String, timeoutMs: Long, predicate: () -> Boolean) {
+    private suspend fun await(label: String, timeoutMs: Long, pollMs: Long = 100, predicate: () -> Boolean) {
         try {
             withTimeout(timeoutMs) {
-                while (!predicate()) delay(100)
+                while (!predicate()) delay(pollMs)
             }
         } catch (timeout: kotlinx.coroutines.TimeoutCancellationException) {
             throw AssertionError("$label did not finish within ${timeoutMs}ms", timeout)
@@ -160,9 +165,11 @@ class E2eAppSurfaceStressTest {
      * ViewModel loaders launch on Main and set their loading flag inside the new coroutine. Waiting
      * only for `!loading` can therefore succeed before the work starts and accidentally assert on
      * stale state from an earlier screen. Observe both edges so this suite covers the remote call.
+     * The start edge is polled at millisecond granularity: on a warm pooled SSH session a LAN
+     * loader's true-then-false pulse is shorter than the default poll interval and was missed.
      */
     private suspend fun awaitLoader(label: String, timeoutMs: Long, isLoading: () -> Boolean) {
-        await("$label start", 5_000, isLoading)
+        await("$label start", 5_000, pollMs = 1, predicate = isLoading)
         await("$label finish", timeoutMs) { !isLoading() }
     }
 

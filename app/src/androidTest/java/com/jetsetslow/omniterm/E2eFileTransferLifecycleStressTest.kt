@@ -66,7 +66,7 @@ class E2eFileTransferLifecycleStressTest {
             }
             composeRule.runOnUiThread {
                 vm.navigateTo(Screen.SFTP)
-                vm.activeSftpTab = 1
+                vm.activeSftpTab = 2
             }
 
             // Every protocol must abort a live upload promptly and remove only its hidden staging
