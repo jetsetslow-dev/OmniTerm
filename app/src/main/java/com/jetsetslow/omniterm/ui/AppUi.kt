@@ -1090,15 +1090,23 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
             var needsPermissions by remember { mutableStateOf(false) }
             var permissionPromptDismissed by rememberSaveable { mutableStateOf(false) }
             val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
-            DisposableEffect(lifecycleOwner) {
+            val backgroundKeepAlive = viewModel.isBackgroundKeepAlive
+            val activeSessionCount = viewModel.activeSessions.size
+            fun refreshPermissionNeed() {
+                val hasNotif = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU ||
+                    ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                val pm = context.getSystemService(android.os.PowerManager::class.java)
+                val hasBatt = pm?.isIgnoringBatteryOptimizations(context.packageName) == true
+                needsPermissions = backgroundKeepAlive && activeSessionCount > 0 && (!hasNotif || !hasBatt)
+            }
+            // The lifecycle observer is installed after the Activity's initial ON_RESUME. React to
+            // in-app state changes too, otherwise enabling keep-alive for an already-connected
+            // session stays silent until an unrelated background/foreground cycle.
+            LaunchedEffect(backgroundKeepAlive, activeSessionCount) { refreshPermissionNeed() }
+            DisposableEffect(lifecycleOwner, backgroundKeepAlive, activeSessionCount) {
                 val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                     if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                        val hasNotif = android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU ||
-                            ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS) == android.content.pm.PackageManager.PERMISSION_GRANTED
-                        val pm = context.getSystemService(android.os.PowerManager::class.java)
-                        val hasBatt = pm?.isIgnoringBatteryOptimizations(context.packageName) == true
-                        needsPermissions = viewModel.isBackgroundKeepAlive &&
-                            viewModel.activeSessions.isNotEmpty() && (!hasNotif || !hasBatt)
+                        refreshPermissionNeed()
                     }
                 }
                 lifecycleOwner.lifecycle.addObserver(observer)
@@ -1284,6 +1292,10 @@ fun FirstRunDialog(viewModel: AppViewModel, onNotNow: () -> Unit = {}) {
         androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
     ) { granted ->
         if (granted) {
+            // The service may already be running from a session that was backgrounded before the
+            // runtime grant. Android does not retroactively reveal that blocked notification, so
+            // repost the current session payload immediately after permission is granted.
+            viewModel.startKeepAliveService()
             launchBatteryOptimizationSettings()
         } else {
             runCatching {

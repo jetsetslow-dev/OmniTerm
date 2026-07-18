@@ -108,6 +108,11 @@ This is the durable checkpoint for the current physical-device and disposable-la
   - The biometric prompt's monochrome source was an opaque full-colour tile, which Android reduced to a featureless grey circle.
   - Both adaptive launcher variants now use a transparent OmniTerm infinity/terminal vector mask; the device render asserts meaningful alpha coverage and rejects an opaque tile.
   - The reproducible real-prompt visual fixture safely skips on this device because no strong biometric is currently enrolled; secure biometric enrollment was not modified through root.
+- `E2eForegroundServiceProofTest` passed on the physical device in 42.414 seconds; the exact recorded rerun passed in 42.338 seconds.
+  - Enabling background keep-alive for an already-active session now recomputes the permission need immediately instead of waiting for an unrelated Activity resume.
+  - Granting notification permission reposts the already-running service payload, because Android does not retroactively reveal a foreground-service notification that was started while permission was denied.
+  - The opt-in flow keeps endpoint setup behind `FLAG_SECURE`, uses the neutral label `E2E Foreground Demo`, proves the in-app disclosure, Android permission dialog, and live service/session notification, then restores keep-alive, capture, and session state.
+  - The ignored local proof artifact is `artifacts/omniterm-foreground-service-proof-sanitized-final.mp4` (15.700 seconds, SHA-256 `840bda42d424f8cd2814c288016f19a72ba93075aecea4bc9adef06f704e003c`). It was sampled across every second and manually reviewed at full resolution around each transition. Setup, battery-settings transition, endpoint data, and unrelated notification cards are absent; the notification portion is cropped to OmniTerm's card.
 
 ### Build verification
 
@@ -122,8 +127,7 @@ This is the durable checkpoint for the current physical-device and disposable-la
 
 ## Remaining critical coverage
 
-1. Record a sanitized foreground-service-permission proof video. Use a clean test profile/host label, disable notification previews, clear Recents and notification history, crop status/navigation bars where possible, and review every frame before upload.
-2. Run the full unit/instrumentation/migration/static verification set, inspect PR checks, and remove disposable lab artifacts only after their evidence is no longer needed.
+1. Run the full unit/instrumentation/migration/static verification set, inspect PR checks, and remove disposable lab artifacts only after their evidence is no longer needed.
 
 ## Resume commands
 
@@ -155,6 +159,7 @@ adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eRemoteFilesStress
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eFilesUiStressTest -e omniterm_e2e_files_ui yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eFileTransferLifecycleStressTest -e omniterm_e2e_transfer_lifecycle yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eSettingsStateStressTest -e omniterm_e2e_settings_state yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
+adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eForegroundServiceProofTest -e omniterm_e2e_foreground_proof yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 `E2eLabSeedTest` requires runtime arguments sourced locally from the ignored secret files. Inspect its `requireArg` calls for the argument names and pass them without shell tracing or copying the resulting command into this document.
