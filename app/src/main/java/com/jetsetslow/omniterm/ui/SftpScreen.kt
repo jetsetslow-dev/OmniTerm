@@ -93,25 +93,25 @@ fun SftpScreen(viewModel: AppViewModel) {
             }
             viewModel.ensureSftpLoadedForSelectedServer()
         }
-        // Only the SFTP subtab needs an online SSH host; Shares/Bookmarks/Transfers work without.
-        else if (viewModel.activeSftpTab == 0) viewModel.activeSftpTab = 1
+        // Only the SFTP subtab needs an online SSH host; Bookmarks/Shares/Transfers work without.
+        else if (viewModel.activeSftpTab == 1) viewModel.activeSftpTab = 0
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
-        if (srv != null && viewModel.activeSftpTab == 0) {
+        if (srv != null && viewModel.activeSftpTab == 1) {
             // The host picker belongs to the SFTP subtab only — Transfers and Bookmarks span every
             // endpoint and Shares has its own list, so a host bar there is misleading clutter.
             // The reset itself is driven by SftpFilesTab's LaunchedEffect on the selected host.
             ServerSelectorBar(viewModel, onlineOnly = true, onServerChange = {
-                viewModel.activeSftpTab = 0
+                viewModel.activeSftpTab = 1
             })
         }
-        // Subtab order groups the two browsing surfaces first (SFTP host, then network Shares),
-        // Bookmarks as the jump list between them, and the Transfers activity log last.
+        // Subtab order puts the Bookmarks jump list first, then the two browsing surfaces
+        // (SFTP host, then network Shares), and the Transfers activity log last.
         PrimaryTabRow(selectedTabIndex = viewModel.activeSftpTab) {
-            Tab(selected = viewModel.activeSftpTab == 0, enabled = srv != null, onClick = { viewModel.activeSftpTab = 0 }) { Text("SFTP", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
-            Tab(selected = viewModel.activeSftpTab == 1, onClick = { viewModel.activeSftpTab = 1 }) { Text("Shares", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
-            Tab(selected = viewModel.activeSftpTab == 2, onClick = { viewModel.activeSftpTab = 2 }) { Text("Bookmarks", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+            Tab(selected = viewModel.activeSftpTab == 0, onClick = { viewModel.activeSftpTab = 0 }) { Text("Bookmarks", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+            Tab(selected = viewModel.activeSftpTab == 1, enabled = srv != null, onClick = { viewModel.activeSftpTab = 1 }) { Text("SFTP", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+            Tab(selected = viewModel.activeSftpTab == 2, onClick = { viewModel.activeSftpTab = 2 }) { Text("Shares", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
             Tab(selected = viewModel.activeSftpTab == 3, onClick = { viewModel.activeSftpTab = 3 }) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("Transfers", fontSize = OmniTextSize.Dense)
@@ -132,9 +132,9 @@ fun SftpScreen(viewModel: AppViewModel) {
                 .padding(12.dp)
         ) {
             when (viewModel.activeSftpTab) {
-                0 -> if (srv != null) SftpFilesTab(viewModel) else NoOnlineSshHostMessage()
-                1 -> NetworkSharesTab(viewModel)
-                2 -> SftpBookmarksTab(viewModel)
+                0 -> SftpBookmarksTab(viewModel)
+                1 -> if (srv != null) SftpFilesTab(viewModel) else NoOnlineSshHostMessage()
+                2 -> NetworkSharesTab(viewModel)
                 3 -> SftpTransfersTab(viewModel)
             }
         }

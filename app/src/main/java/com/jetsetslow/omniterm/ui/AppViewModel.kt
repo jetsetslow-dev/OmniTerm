@@ -885,7 +885,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // SFTP SCREEN FILE BROWSER
-    var activeSftpTab by mutableStateOf(0) // 0: SFTP files, 1: Shares, 2: Bookmarks, 3: Transfers
+    var activeSftpTab by mutableStateOf(0) // 0: Bookmarks, 1: SFTP files, 2: Shares, 3: Transfers
     val sftpTransfers = mutableStateListOf<SftpTransferItem>()
 
     // ── Transfer cancellation ──
@@ -2567,8 +2567,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      */
     private fun refreshSftpSubtab() {
         when (activeSftpTab) {
-            0 -> pullSpin { loadSftp(clearError = true) }
-            1 -> pullSpin {
+            1 -> pullSpin { loadSftp(clearError = true) }
+            2 -> pullSpin {
                 if (browsingShare != null) loadShareDir(sharePath, clearError = true)
                 else refreshNetworkSharesAvailability()
             }
@@ -7869,13 +7869,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     val online = servers.value.any { it.id == bookmark.serverId && it.status == "online" }
                     if (!online) return@launch
                     selectedServerId = bookmark.serverId
-                    activeSftpTab = 0
+                    activeSftpTab = 1
                     loadSftp(bookmark.path)
                 }
                 bookmark.shareId != null -> {
                     val share = repository.getAllNetworkShares().firstOrNull { it.id == bookmark.shareId } ?: return@launch
                     if (share.lastStatus == "offline") return@launch
-                    activeSftpTab = 1
+                    activeSftpTab = 2
                     openShareBrowser(share, startPath = bookmark.path)
                 }
             }

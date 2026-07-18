@@ -1745,6 +1745,8 @@ fun ServersMainView(viewModel: AppViewModel) {
                                                 label = "SFTP",
                                                 onClick = {
                                                     viewModel.selectedServerId = server.id
+                                                    // Land on the SFTP files subtab, not the Bookmarks default.
+                                                    viewModel.activeSftpTab = 1
                                                     viewModel.navigateTo(Screen.SFTP)
                                                 },
                                                 color = identityColor,
