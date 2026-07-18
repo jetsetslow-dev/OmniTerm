@@ -514,6 +514,22 @@ private const val PIN_PBKDF2_ITERATIONS = 210_000
 internal const val PIN_MAX_ATTEMPTS = 5
 internal const val PIN_LOCKOUT_MS = 30_000L
 
+/**
+ * Build the wire payload for a paste. When the remote enabled bracketed paste (DECSET 2004),
+ * readline treats EVERYTHING between the markers as literal text — including a trailing Enter —
+ * so a pasted command ending in a newline was echoed at the prompt but never executed (and the
+ * IME's multi-line commit path funnels through the same paste). Matching mainstream terminals,
+ * the pasted body is wrapped but any trailing CRs are sent AFTER the closing marker so they act
+ * as real Enter presses. Interior newlines stay inside the bracket (literal, as the mode
+ * intends). Pure for unit-testing; [normalized] must already use CR line endings.
+ */
+internal fun bracketedPastePayload(normalized: String, bracketed: Boolean): String {
+    if (!bracketed) return normalized
+    val body = normalized.trimEnd('\r')
+    val trailingEnters = normalized.substring(body.length)
+    return "\u001B[200~$body\u001B[201~$trailingEnters"
+}
+
 /** True while PIN entry is throttled after too many failures. */
 internal fun isPinThrottled(lockedUntilMs: Long, nowMs: Long): Boolean = nowMs < lockedUntilMs
 
@@ -5221,8 +5237,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (text.isEmpty() || !session.isConnected) return
         val normalized = text.replace("\r\n", "\n").replace('\n', '\r')
         val bracketed = synchronized(session.emulator) { session.emulator.bracketedPasteMode }
-        val payload = if (bracketed) "\u001B[200~$normalized\u001B[201~" else normalized
-        sendBytes(payload.toByteArray())
+        sendBytes(bracketedPastePayload(normalized, bracketed).toByteArray())
     }
 
     /**
