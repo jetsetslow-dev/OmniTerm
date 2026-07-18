@@ -122,6 +122,16 @@ class MainActivity : AppCompatActivity() {
     }
   }
 
+  override fun onDestroy() {
+    super.onDestroy()
+    // A finishing destroy takes any bound system biometric prompt with it and its callback may
+    // never fire; release the single-flight claim so the next launch can prompt again. Config
+    // changes skip this — androidx restores the live prompt and its retained callback across them.
+    if (isFinishing) {
+      com.jetsetslow.omniterm.data.BiometricCryptoGate.onHostActivityFinished()
+    }
+  }
+
   private var pendingSessionId: String? = null
 
   private fun handleIntent(intent: android.content.Intent?) {

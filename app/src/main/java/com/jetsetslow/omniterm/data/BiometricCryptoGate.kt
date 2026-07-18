@@ -18,6 +18,26 @@ object BiometricCryptoGate {
     private const val TRANSFORMATION = "AES/GCM/NoPadding"
     private val challenge = byteArrayOf(0x4f, 0x6d, 0x6e, 0x69)
 
+    // Single-flight gate: androidx's BiometricFragment refuses to show a second dialog while one
+    // is up, but a concurrent authenticate() still rebinds the activity-scoped client callback and
+    // replaces the in-flight CryptoObject with a cipher the framework session never authorized —
+    // which would make doFinal() fail after a genuinely successful authentication. Both the lock
+    // screen's auto-prompt and its "Use biometrics" button (and any recreation re-trigger) funnel
+    // through here, so one in-flight authentication at a time is the correct global invariant.
+    private val authInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    val isAuthenticationInFlight: Boolean get() = authInFlight.get()
+
+    /**
+     * Called when the hosting activity is destroyed while finishing: any system prompt bound to it
+     * is gone for good and no further callback can arrive, so drop the in-flight claim rather than
+     * leaving biometrics dead until process restart. Configuration changes must NOT call this —
+     * androidx restores the live prompt across recreation and its retained callback still fires.
+     */
+    fun onHostActivityFinished() {
+        authInFlight.set(false)
+    }
+
     fun canAuthenticate(activity: AppCompatActivity): Boolean =
         BiometricManager.from(activity).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) ==
             BiometricManager.BIOMETRIC_SUCCESS
@@ -30,7 +50,9 @@ object BiometricCryptoGate {
         onUnavailable: () -> Unit = {},
         onError: () -> Unit = {},
     ) {
+        if (!authInFlight.compareAndSet(false, true)) return
         if (!canAuthenticate(activity)) {
+            authInFlight.set(false)
             onUnavailable()
             return
         }
@@ -44,6 +66,7 @@ object BiometricCryptoGate {
                 }
             }
             .getOrElse {
+                authInFlight.set(false)
                 onUnavailable()
                 return
             }
@@ -53,6 +76,7 @@ object BiometricCryptoGate {
             ContextCompat.getMainExecutor(activity),
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    authInFlight.set(false)
                     val resultCipher = result.cryptoObject?.cipher
                     val ok = runCatching {
                         resultCipher?.doFinal(challenge)?.isNotEmpty() == true
@@ -61,6 +85,7 @@ object BiometricCryptoGate {
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    authInFlight.set(false)
                     onError()
                 }
             },
@@ -71,7 +96,11 @@ object BiometricCryptoGate {
             .setAllowedAuthenticators(BiometricManager.Authenticators.BIOMETRIC_STRONG)
             .setNegativeButtonText("Cancel")
             .build()
-        prompt.authenticate(info, BiometricPrompt.CryptoObject(cipher))
+        runCatching { prompt.authenticate(info, BiometricPrompt.CryptoObject(cipher)) }
+            .onFailure {
+                authInFlight.set(false)
+                onUnavailable()
+            }
     }
 
     private fun initCipher(): Cipher =
