@@ -127,6 +127,7 @@ This is the durable checkpoint for the current physical-device and disposable-la
 - `lintOpenSourceDebug` and `lintPlayStoreDebug` both passed, followed by successful open-source, Play Store, and instrumentation debug APK assemblies in one fixed-point run.
   - The first full lint exposed an API-24/25 crash risk in stale session-notification cleanup: `Notification.channelId` exists only on API 26+. Pre-channel devices now identify only OmniTerm session rows using a compat group plus exact legacy title/text signatures, preserving monitoring and battery-saver notifications.
 - Dependabot is healthy on the default branch: Gradle and GitHub Actions weekly schedules are valid, security updates are enabled, no update PR limit is occupied, the July 13 grouped Gradle PR merged with all gates green, and its config validation passed. The next scheduled checks are July 20 at 04:00 and 04:30 Asia/Kolkata; no repository change is required.
+- The on-device `com.jetsetslow.omniterm.data` package passed 3/3 tests in 4.308 seconds: the complete supported Room migration chain, targeted duplicate-incident migration, and repository cascade behavior.
 - `E2eAppSurfaceStressTest` passed on the physical device in 62.100 seconds.
   - Every top-level route and nested tab composed without a crash.
   - All app and terminal themes, orientation changes, Settings dirty navigation, and cross-screen swipe carry-over completed.
@@ -136,7 +137,7 @@ This is the durable checkpoint for the current physical-device and disposable-la
 
 ## Remaining critical coverage
 
-1. Run the on-device Room migration package, inspect final PR checks, and remove disposable lab artifacts only after their evidence is no longer needed.
+1. Inspect final PR checks and remove disposable lab artifacts only after their evidence is no longer needed.
 
 ## Resume commands
 
