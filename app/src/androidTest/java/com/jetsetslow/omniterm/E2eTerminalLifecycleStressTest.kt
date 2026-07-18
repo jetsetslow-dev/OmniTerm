@@ -29,6 +29,7 @@ class E2eTerminalLifecycleStressTest {
     @Test
     fun mixedSplitSurvivesHomeScreenOffRecreationAndLiteralRecentsSwipe() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val device = E2eAccessibility(instrumentation)
         assumeTrue(InstrumentationRegistry.getArguments().getString("omniterm_e2e_terminal_lifecycle") == "yes")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
             instrumentation.targetContext.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
@@ -75,6 +76,27 @@ class E2eTerminalLifecycleStressTest {
             vm.multiSshLayout = MultiSshLayout.Stacked
             vm.setMultiSshFocus(2)
             assertEquals(listOf(direct.id, persistent.id), listOf(vm.multiSshSessionId1, vm.multiSshSessionId2))
+
+            // The toolbar exposes the correct non-destructive action directly for each focused
+            // pane. Disconnect is a separate, destructive gate and must never hide Background or
+            // Leave-resumable choices inside its confirmation dialog.
+            await("tmux leave toolbar action", 10_000) {
+                device.hasDescription("Leave current tmux session resumable")
+            }
+            device.clickDescription("Disconnect current session")
+            await("pure tmux disconnect gate", 5_000) { device.hasText("Terminate tmux session?") }
+            assertFalse(device.hasText("Leave resumable"))
+            device.clickText("Cancel")
+
+            vm.setMultiSshFocus(1)
+            await("ordinary background toolbar action", 10_000) {
+                device.hasDescription("Send current session to background")
+            }
+            device.clickDescription("Disconnect current session")
+            await("pure ordinary disconnect gate", 5_000) { device.hasText("Disconnect session?") }
+            assertFalse(device.hasText("Send to background"))
+            device.clickText("Cancel")
+            vm.setMultiSshFocus(2)
 
             vm.pasteText("(sleep 2; printf 'TMUX-DURING-HOME\\n') &\n")
             scenario.moveToState(Lifecycle.State.CREATED)

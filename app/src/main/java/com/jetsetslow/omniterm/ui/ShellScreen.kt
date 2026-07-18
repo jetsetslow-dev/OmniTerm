@@ -425,13 +425,18 @@ fun ShellScreen(viewModel: AppViewModel) {
                     onServerChange = {
                         val newServerId = viewModel.selectedServerId
                         if (headerSession != null && headerSession.serverId != newServerId) {
+                            val persistent = headerSession.persistent
                             confirm.ask(
-                                title = "Send Session to Background?",
-                                message = "OmniTerm will keep the SSH session active while you switch hosts. This may increase battery consumption.",
-                                confirmLabel = "Send to background",
+                                title = if (persistent) "Leave Session Resumable?" else "Send Session to Background?",
+                                message = if (persistent) {
+                                    "OmniTerm will detach from this terminal while its tmux session keeps running on the host."
+                                } else {
+                                    "OmniTerm will keep the SSH session active while you switch hosts. This may increase battery consumption."
+                                },
+                                confirmLabel = if (persistent) "Leave resumable" else "Send to background",
                                 destructive = false,
                             ) {
-                                viewModel.sendSessionToBackground(headerSession.id)
+                                viewModel.leaveOrBackgroundSession(headerSession.id)
                                 val existingSession = viewModel.activeSessions.find { it.serverId == newServerId && it.isConnected }
                                 if (existingSession != null) {
                                     if (viewModel.isMultiSsh) {
@@ -512,20 +517,25 @@ fun ShellScreen(viewModel: AppViewModel) {
                             }
                         }
                         TerminalOpenPicker(viewModel, actionSession, modifier = Modifier.weight(1f))
+                        val persistent = actionSession?.persistent == true
                         TerminalHeaderAction(
-                            "BG",
+                            if (persistent) "LEAVE" else "BG",
                             scheme.onPrimaryContainer,
                             scheme.primaryContainer,
-                            enabled = connected,
+                            enabled = actionSession != null && (persistent || connected),
                             modifier = Modifier.weight(1f),
                         ) {
                             confirm.ask(
-                                title = "Send Session to Background?",
-                                message = "OmniTerm will keep the SSH session active in the background. This may increase battery consumption.",
-                                confirmLabel = "Send to background",
+                                title = if (persistent) "Leave Session Resumable?" else "Send Session to Background?",
+                                message = if (persistent) {
+                                    "OmniTerm will detach and close this local SSH connection. The tmux session and anything running inside it stay available to resume."
+                                } else {
+                                    "OmniTerm will keep the SSH session active in the background. This may increase battery consumption."
+                                },
+                                confirmLabel = if (persistent) "Leave resumable" else "Send to background",
                                 destructive = false,
                             ) {
-                                actionSession?.let { viewModel.sendSessionToBackground(it.id) }
+                                actionSession?.let { viewModel.leaveOrBackgroundSession(it.id) }
                             }
                         }
                         // A dropped session that isn't already retrying gets a manual reconnect here,
@@ -670,6 +680,7 @@ private fun TerminalHeaderAction(
         label == "SPLIT" -> "Open split terminal"
         label == "SINGLE" -> "Return to single terminal"
         label == "BG" -> "Send current session to background"
+        label == "LEAVE" -> "Leave current tmux session resumable"
         label == "DISC" -> "Disconnect current session"
         label == "RECON" -> "Reconnect current session"
         label.contains("STACK") -> "Stack split panes"
@@ -1088,19 +1099,21 @@ private fun MultiSshPaneHeader(viewModel: AppViewModel, paneIndex: Int, session:
         if (session != null) {
             Spacer(Modifier.width(2.dp))
             Text(
-                "BG",
+                if (session.persistent) "LEAVE" else "BG",
                 color = chrome.mutedText,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier
                     .clip(RoundedCornerShape(4.dp))
                     .clickable {
-                        viewModel.sendSessionToBackground(session.id)
+                        viewModel.leaveOrBackgroundSession(session.id)
                     }
                     .heightIn(min = 28.dp)
                     .wrapContentHeight(Alignment.CenterVertically)
                     .padding(horizontal = 7.dp, vertical = 3.dp)
-                    .semantics { contentDescription = "Send $label to background" },
+                    .semantics {
+                        contentDescription = if (session.persistent) "Leave $label resumable" else "Send $label to background"
+                    },
             )
             // Solid chip, not a bare glyph: the close affordance must read on every terminal
             // palette and stay a comfortable tap target.
@@ -1215,7 +1228,7 @@ private fun MultiSshPanePicker(
                         },
                         enabled = !viewModel.isTerminalConnecting,
                         onClick = {
-                            currentSession?.let { viewModel.sendSessionToBackground(it.id) }
+                            currentSession?.let { viewModel.leaveOrBackgroundSession(it.id) }
                             viewModel.setMultiSshFocus(paneIndex)
                             viewModel.resumePersistentSession(saved.tmuxName)
                             expanded = false
@@ -1247,7 +1260,7 @@ private fun MultiSshPanePicker(
                         leadingIcon = { StatusDot(true, getServerColor(server), 8.dp) },
                         enabled = !viewModel.isTerminalConnecting,
                         onClick = {
-                            currentSession?.let { viewModel.sendSessionToBackground(it.id) }
+                            currentSession?.let { viewModel.leaveOrBackgroundSession(it.id) }
                             viewModel.setMultiSshFocus(paneIndex)
                             viewModel.selectedServerId = server.id
                             viewModel.connectTerminal()

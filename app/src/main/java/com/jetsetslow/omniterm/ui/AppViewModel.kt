@@ -894,6 +894,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // per-file semantics — cancelling one row of a batch upload lets the remaining files continue —
     // and works identically across SFTP/SMB/FTP/WebDAV without needing to interrupt blocking IO.
     private val cancelledTransferIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private val activeTransferAborters = java.util.concurrent.ConcurrentHashMap<String, () -> Unit>()
 
     /** Thrown from a progress callback to abort the surrounding stream copy. */
     private class TransferCancelledException : RuntimeException("Transfer cancelled")
@@ -901,12 +902,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     fun cancelSftpTransfer(id: String) {
         if (sftpTransfers.any { it.id == id && it.status == SftpTransferStatus.InProgress }) {
             cancelledTransferIds.add(id)
+            activeTransferAborters[id]?.invoke()
         }
     }
 
     fun cancelAllRunningTransfers() {
         sftpTransfers.filter { it.status == SftpTransferStatus.InProgress }
-            .forEach { cancelledTransferIds.add(it.id) }
+            .forEach {
+                cancelledTransferIds.add(it.id)
+                activeTransferAborters[it.id]?.invoke()
+            }
     }
 
     /** Progress callback for [transferId] that also aborts the copy once a cancel is requested. */
@@ -5341,6 +5346,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** Apply the non-destructive lifecycle action that matches this session type. */
+    fun leaveOrBackgroundSession(sessionId: String) {
+        val session = activeSessions.find { it.id == sessionId } ?: return
+        if (session.persistent) leaveSessionResumable(sessionId) else sendSessionToBackground(sessionId)
+    }
+
     fun attachSession(sessionId: String) {
         // A notification can resume a terminal while a leave-terminal dialog is visible. That
         // external navigation supersedes the pending target; never leave a stale dialog over Shell.
@@ -6675,7 +6686,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         // closes the browser mid-transfer — closing the browsing client used to kill it.
         var client: RemoteFsClient? = null
         try {
-            client = shareFsClient(share)
+            val transferClient = shareFsClient(share)
+            client = transferClient
+            activeTransferAborters[transferId] = { transferClient.cancelActiveTransfers() }
             val bytes = withContext(Dispatchers.IO) {
                 context.contentResolver.openOutputStream(uri).use { output ->
                     output ?: throw java.io.IOException("Could not open destination.")
@@ -6686,8 +6699,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             if (browsingShare?.id == share.id) shareStatus = "Downloaded \"$remoteName\""
             return true
         } catch (e: CancellationException) {
+            withContext(NonCancellable + Dispatchers.IO) { runCatching { context.contentResolver.delete(uri, null, null) } }
             throw e
         } catch (e: Exception) {
+            // A failed/cancelled SAF write is not a usable download. Remove the partial document
+            // instead of leaving a corrupt file beside a transfer row that says it failed.
+            withContext(NonCancellable + Dispatchers.IO) { runCatching { context.contentResolver.delete(uri, null, null) } }
             if (browsingShare?.id == share.id) shareError = e.message ?: "Download failed"
             finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = e.message ?: "Download failed")
             return false
@@ -6711,25 +6728,35 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             var client: RemoteFsClient? = null
             val batchId = beginTransferBatch(picked.size)
             try {
-                client = shareFsClient(share)
+                val transferClient = shareFsClient(share)
+                client = transferClient
                 for ((index, uri) in picked.withIndex()) {
                     val name = queryDisplayName(context, uri)?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
                         ?: "upload_${System.currentTimeMillis()}_${index + 1}"
                     val remotePath = joinPath(destDir, name)
+                    val stagedPath = transferStagingPath(remotePath)
                     val transferId = addTransfer(-share.id, shareEndpointLabel(share), "Upload", name, remotePath, sourceUri = uri.toString())
+                    activeTransferAborters[transferId] = { transferClient.cancelActiveTransfers() }
                     try {
                         val totalBytes = queryOpenableSize(context, uri)
                         withContext(Dispatchers.IO) {
                             context.contentResolver.openInputStream(uri).use { input ->
                                 input ?: throw java.io.IOException("Could not read the selected file from this device.")
-                                client.uploadStream(remotePath, input, totalBytes, transferProgress(transferId))
+                                val counting = CountingUploadInput(input)
+                                client.uploadStream(stagedPath, counting, totalBytes, transferProgress(transferId))
+                                if (totalBytes > 0 && counting.bytesRead != totalBytes) {
+                                    throw java.io.IOException("Local source ended early: got ${counting.bytesRead} of $totalBytes bytes.")
+                                }
                             }
                         }
+                        commitStagedRemoteFile(client, stagedPath, remotePath)
                         ok++
                         finishSftpTransfer(transferId, SftpTransferStatus.Success, totalBytes, totalBytes, "Uploaded")
                     } catch (e: CancellationException) {
+                        withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
                         throw e
                     } catch (e: Exception) {
+                        withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
                         val msg = e.message ?: "upload failed"
                         if (firstErr == null) firstErr = "$name: $msg"
                         finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = msg)
@@ -7152,6 +7179,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     crossPasteProgress = ref.name
+                    val stagedDestPath = transferStagingPath(destPath)
                     val transferId = addTransfer(
                         endpointId = ref.shareId?.let { -it } ?: ref.serverId ?: 0,
                         endpointName = ref.sourceLabel,
@@ -7159,15 +7187,22 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         name = ref.name,
                         remotePath = "$destLabel:$destPath",
                     )
+                    activeTransferAborters[transferId] = {
+                        src.cancelActiveTransfers()
+                        destClient.cancelActiveTransfers()
+                    }
                     try {
-                        val copied = streamCopyBetween(src, srcPath, destClient, destPath, ref.size, transferId)
+                        val copied = streamCopyBetween(src, srcPath, destClient, stagedDestPath, ref.size, transferId)
+                        commitStagedRemoteFile(destClient, stagedDestPath, destPath)
                         if (isMove) src.delete(srcPath, false)
                         ok++
                         copiedFiles++
                         finishSftpTransfer(transferId, SftpTransferStatus.Success, copied, copied, "${if (isMove) "Moved" else "Copied"} $copied bytes to $destLabel")
                     } catch (e: CancellationException) {
+                        withContext(NonCancellable + Dispatchers.IO) { runCatching { destClient.delete(stagedDestPath, false) } }
                         throw e
                     } catch (e: Exception) {
+                        withContext(NonCancellable + Dispatchers.IO) { runCatching { destClient.delete(stagedDestPath, false) } }
                         val msg = e.message ?: "copy failed"
                         if (firstErr == null) firstErr = "${ref.name}: $msg"
                         finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = msg)
@@ -7296,6 +7331,45 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Return a hidden sibling used for an in-flight upload/copy. The user-visible destination is
+     * left untouched until every expected byte has arrived.
+     */
+    private fun transferStagingPath(destPath: String): String {
+        val parent = destPath.substringBeforeLast('/', "").ifBlank { "/" }
+        val name = destPath.substringAfterLast('/').take(80)
+        return joinPath(parent, ".$name.omniterm-part-${UUID.randomUUID()}")
+    }
+
+    /**
+     * Commit a completely written staging file without destroying an existing destination first.
+     * Protocols do not agree on rename-overwrite semantics, so an existing file is moved aside,
+     * the stage is installed, and the old file is deleted only after that succeeds. A failed commit
+     * restores the old name best-effort and always removes the staging artifact.
+     */
+    private suspend fun commitStagedRemoteFile(client: RemoteFsClient, stagedPath: String, destPath: String) {
+        val parent = destPath.substringBeforeLast('/', "").ifBlank { "/" }
+        val destName = destPath.substringAfterLast('/')
+        val exists = client.list(parent).any { it.name == destName && !it.isDirectory }
+        val backupPath = if (exists) transferStagingPath("$destPath.previous") else null
+        try {
+            if (backupPath != null) client.rename(destPath, backupPath, false)
+            try {
+                client.rename(stagedPath, destPath, false)
+            } catch (e: Exception) {
+                if (backupPath != null) runCatching { client.rename(backupPath, destPath, false) }
+                throw e
+            }
+            if (backupPath != null) runCatching { client.delete(backupPath, false) }
+        } catch (e: CancellationException) {
+            withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
+            throw e
+        } catch (e: Exception) {
+            runCatching { client.delete(stagedPath, false) }
+            throw e
+        }
+    }
+
+    /**
      * Recursively copy a directory tree between two endpoints. Creates [destPath], then walks
      * [srcPath] breadth-first, streaming each file with [streamCopyBetween] and recursing into
      * subfolders. Each file is one row in the transfer log; [crossPasteProgress] shows the
@@ -7326,13 +7400,21 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 crossPasteProgress = "$rootName/${entry.name}"
                 val transferId = addTransfer(0, destLabel, if (isMove) "Move" else "Copy", "$rootName/${entry.name}", "$destLabel:$childDest")
+                activeTransferAborters[transferId] = {
+                    src.cancelActiveTransfers()
+                    dest.cancelActiveTransfers()
+                }
+                val stagedChildDest = transferStagingPath(childDest)
                 try {
-                    val copied = streamCopyBetween(src, childSrc, dest, childDest, entry.size, transferId)
+                    val copied = streamCopyBetween(src, childSrc, dest, stagedChildDest, entry.size, transferId)
+                    commitStagedRemoteFile(dest, stagedChildDest, childDest)
                     finishSftpTransfer(transferId, SftpTransferStatus.Success, copied, copied, "Copied $copied bytes")
                     files++
                 } catch (e: CancellationException) {
+                    withContext(NonCancellable + Dispatchers.IO) { runCatching { dest.delete(stagedChildDest, false) } }
                     throw e
                 } catch (e: Exception) {
+                    withContext(NonCancellable + Dispatchers.IO) { runCatching { dest.delete(stagedChildDest, false) } }
                     finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = e.message ?: "copy failed")
                     throw e  // fail the whole folder so a move never deletes a partially-copied tree.
                 }
@@ -8108,6 +8190,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             val remoteDir = sftpPath
             val remotePath = joinPath(remoteDir, remoteName)
             val transferId = addSftpTransfer(srv, "Download", remoteName, remotePath)
+            activeTransferAborters[transferId] = { client.cancelActiveTransfers() }
             try {
                 val bytes = withContext(Dispatchers.IO) {
                     context.contentResolver.openOutputStream(uri).use { output ->
@@ -8117,10 +8200,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 finishSftpTransfer(transferId, SftpTransferStatus.Success, bytes, bytes, "Downloaded $bytes bytes")
             } catch (e: CancellationException) {
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { context.contentResolver.delete(uri, null, null) } }
                 throw e
             } catch (e: Exception) {
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { context.contentResolver.delete(uri, null, null) } }
                 if (selectedServerId == srv.id) sftpError = e.message
                 finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = e.message ?: "Download failed")
+            } finally {
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { client.close() } }
             }
         }
     }
@@ -8145,8 +8232,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 for (name in names) {
                     val remotePath = joinPath(remoteDir, name)
                     val transferId = addSftpTransfer(srv, "Download", name, remotePath)
+                    activeTransferAborters[transferId] = { client.cancelActiveTransfers() }
+                    var destUri: android.net.Uri? = null
                     try {
-                        val destUri = createDocumentInTree(context, folderUri, name)
+                        destUri = createDocumentInTree(context, folderUri, name)
                         val copied = withContext(Dispatchers.IO) {
                             context.contentResolver.openOutputStream(destUri).use { output ->
                                 output ?: throw java.io.IOException("Could not open destination for $name.")
@@ -8156,8 +8245,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         ok++
                         finishSftpTransfer(transferId, SftpTransferStatus.Success, copied, copied, "Downloaded $copied bytes")
                     } catch (e: CancellationException) {
+                        withContext(NonCancellable + Dispatchers.IO) { destUri?.let { runCatching { context.contentResolver.delete(it, null, null) } } }
                         throw e
                     } catch (e: Exception) {
+                        withContext(NonCancellable + Dispatchers.IO) { destUri?.let { runCatching { context.contentResolver.delete(it, null, null) } } }
                         val msg = e.message ?: "Download failed"
                         if (firstErr == null) firstErr = "$name: $msg"
                         finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = msg)
@@ -8166,6 +8257,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } finally {
                 endTransferBatch(batchId)
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { client.close() } }
             }
             sftpSelected.removeAll(names.toSet())
             sftpError = firstErr
@@ -8198,21 +8290,30 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     val name = queryDisplayName(context, uri)?.substringAfterLast('/')?.takeIf { it.isNotBlank() }
                         ?: "upload_${System.currentTimeMillis()}_${index + 1}"
                     val remotePath = joinPath(remoteDir, name)
+                    val stagedPath = transferStagingPath(remotePath)
                     val transferId = addSftpTransfer(srv, "Upload", name, remotePath, sourceUri = uri.toString())
+                    activeTransferAborters[transferId] = { client.cancelActiveTransfers() }
                     try {
                         val totalBytes = queryOpenableSize(context, uri)
                         val uploaded = withContext(Dispatchers.IO) {
                             context.contentResolver.openInputStream(uri).use { input ->
                                 input ?: throw java.io.IOException("Could not read the selected file from this device.")
-                                client.uploadStream(remotePath, input, totalBytes, transferProgress(transferId))
+                                val counting = CountingUploadInput(input)
+                                client.uploadStream(stagedPath, counting, totalBytes, transferProgress(transferId))
+                                if (totalBytes > 0 && counting.bytesRead != totalBytes) {
+                                    throw java.io.IOException("Local source ended early: got ${counting.bytesRead} of $totalBytes bytes.")
+                                }
                                 totalBytes.coerceAtLeast(0L)
                             }
                         }
+                        commitStagedRemoteFile(client, stagedPath, remotePath)
                         ok++
                         finishSftpTransfer(transferId, SftpTransferStatus.Success, uploaded, uploaded, if (uploaded > 0L) "Uploaded $uploaded bytes" else "Uploaded")
                     } catch (e: CancellationException) {
+                        withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
                         throw e
                     } catch (e: Exception) {
+                        withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
                         val msg = e.message ?: "unknown error"
                         if (firstErr == null) firstErr = "$name: $msg"
                         finishSftpTransfer(transferId, SftpTransferStatus.Failure, message = msg)
@@ -8221,6 +8322,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } finally {
                 endTransferBatch(batchId)
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { client.close() } }
             }
             if (selectedServerId == srv.id) sftpError = firstErr?.let { "Upload failed: $it" }
             sftpStatus = if (firstErr == null) "Uploaded $ok file(s)" else "Uploaded $ok of ${picked.size} file(s) — see error"
@@ -8313,6 +8415,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         totalBytes: Long? = null,
         message: String = "",
     ) {
+        activeTransferAborters.remove(id)
         // A cancelled row reports as Failure with a fixed message the UI renders as "Cancelled";
         // it is never retryable (the user just asked for it to stop).
         val wasCancelled = cancelledTransferIds.remove(id)
@@ -8330,12 +8433,55 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun retrySftpTransfer(item: SftpTransferItem) {
-        // Negative ids are network-share transfers; retry would re-upload to the selected SSH
-        // host instead of the share, so those rows are never marked retryable (see below).
-        if (!item.retryable || item.sourceUri == null || item.serverId < 0) return
+        if (!item.retryable || item.sourceUri == null) return
         val uri = runCatching { android.net.Uri.parse(item.sourceUri) }.getOrNull() ?: return
         val context = getApplication<android.app.Application>()
-        sftpUploadMany(listOf(uri), context)
+        // Retry is bound to the row's original endpoint and destination. Using selectedServer or
+        // the currently browsed folder here can upload a failed file to an unrelated host after
+        // the user navigates elsewhere while the first attempt is failing.
+        viewModelScope.launch {
+            val share = if (item.serverId < 0) {
+                repository.getAllNetworkShares().firstOrNull { it.id == -item.serverId }
+            } else null
+            val server = if (item.serverId >= 0) repository.getServerById(item.serverId) else null
+            val client = when {
+                share != null -> shareFsClient(share)
+                server != null -> sftpClientFor(server)
+                else -> {
+                    finishSftpTransfer(item.id, SftpTransferStatus.Failure, message = "Original endpoint no longer exists")
+                    return@launch
+                }
+            }
+            val endpointName = share?.let(::shareEndpointLabel) ?: requireNotNull(server).name
+            val retryId = addTransfer(item.serverId, endpointName, "Upload", item.name, item.remotePath, item.sourceUri)
+            activeTransferAborters[retryId] = { client.cancelActiveTransfers() }
+            val stagedPath = transferStagingPath(item.remotePath)
+            try {
+                val totalBytes = queryOpenableSize(context, uri)
+                withContext(Dispatchers.IO) {
+                    context.contentResolver.openInputStream(uri).use { input ->
+                        input ?: throw java.io.IOException("Could not read the original selected file.")
+                        val counting = CountingUploadInput(input)
+                        client.uploadStream(stagedPath, counting, totalBytes, transferProgress(retryId))
+                        if (totalBytes > 0 && counting.bytesRead != totalBytes) {
+                            throw java.io.IOException("Local source ended early: got ${counting.bytesRead} of $totalBytes bytes.")
+                        }
+                    }
+                }
+                commitStagedRemoteFile(client, stagedPath, item.remotePath)
+                finishSftpTransfer(retryId, SftpTransferStatus.Success, totalBytes, totalBytes, "Uploaded on retry")
+                share?.takeIf { browsingShare?.id == it.id }?.let { loadShareDir(sharePath, clearError = false) }
+                server?.let { refreshSftpIfStillViewing(it.id, item.remotePath.substringBeforeLast('/', "").ifBlank { "/" }) }
+            } catch (e: CancellationException) {
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
+                throw e
+            } catch (e: Exception) {
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { client.delete(stagedPath, false) } }
+                finishSftpTransfer(retryId, SftpTransferStatus.Failure, message = e.message ?: "Retry failed")
+            } finally {
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { client.close() } }
+            }
+        }
     }
 
     private fun queryDisplayName(context: android.content.Context, uri: android.net.Uri): String? =
@@ -8353,6 +8499,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 if (idx >= 0 && c.moveToFirst() && !c.isNull(idx)) c.getLong(idx).coerceAtLeast(0L) else 0L
             } ?: 0L
         }.getOrDefault(0L)
+
+    /** Counts the bytes actually consumed so a provider that ends early cannot commit a short upload. */
+    private class CountingUploadInput(input: java.io.InputStream) : java.io.FilterInputStream(input) {
+        var bytesRead: Long = 0L
+            private set
+        override fun read(): Int = super.read().also { if (it >= 0) bytesRead++ }
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int =
+            super.read(buffer, offset, length).also { if (it > 0) bytesRead += it }
+    }
 
     /**
      * Save an edited file and confirm it persisted. We write the new content, then read the remote
@@ -8421,7 +8576,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         broadcastJob = viewModelScope.launch {
             val allServers = repository.getAllServers()
             val selected = when {
-                resolvedIds != null -> allServers.filter { it.status == "online" && it.id in resolvedIds }
+                // The confirmation dialog already resolved the exact target set. Cached reachability
+                // can change between confirmation and execution (or simply be stale after resume),
+                // so do not silently drop an explicitly confirmed host here; attempt it and surface
+                // the real SSH result for that row.
+                resolvedIds != null -> allServers.filter { it.id in resolvedIds }
                 broadcastTargetMode == FleetTargetMode.Servers -> allServers.filter { it.status == "online" && it.id in targetIds }
                 else -> allServers.filter { it.status == "online" && it.groupName.orEmpty() in targetGroups }
             }
@@ -8885,11 +9044,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveKeepScreenOnToggle(enabled: Boolean) {
-        viewModelScope.launch {
-            repository.insertSetting("keep_screen_on", enabled.toString())
-            defaultKeepScreenOn = enabled
-            isKeepScreenOnEnabled = enabled
-        }
+        // Apply the user's intent immediately. Keeping these state writes behind the suspended
+        // database insert lets an older enable complete after battery saver has released the flag,
+        // incorrectly turning the screen lock back on.
+        defaultKeepScreenOn = enabled
+        isKeepScreenOnEnabled = enabled
+        viewModelScope.launch { repository.insertSetting("keep_screen_on", enabled.toString()) }
     }
 
     // ── Battery saver ─────────────────────────────────────────────────────────

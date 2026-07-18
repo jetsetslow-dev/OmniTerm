@@ -1034,13 +1034,13 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                 val session = viewModel.activeSessions.find { it.id == sessionId }
                 AlertDialog(
                     onDismissRequest = { viewModel.cancelPendingDisconnect() },
-                    title = { Text(if (session?.persistent == true) "Close persistent session?" else "Disconnect session?") },
+                    title = { Text(if (session?.persistent == true) "Terminate tmux session?" else "Disconnect session?") },
                     text = {
                         Text(
                             if (session?.persistent == true) {
-                                "Leave ${session.serverName} resumable, or terminate its tmux session and stop anything running there?"
+                                "This disconnects the local SSH session and terminates its remote tmux session, stopping anything running inside it. Use Leave in the terminal toolbar when you want to resume it later."
                             } else {
-                                "Keep ${session?.serverName ?: "this terminal session"} connected in the background, or disconnect and stop anything running in that terminal?"
+                                "Disconnect ${session?.serverName ?: "this terminal session"} and stop anything running in that terminal? Use Background in the terminal toolbar to keep it connected."
                             }
                         )
                     },
@@ -1055,28 +1055,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                         }
                     },
                     dismissButton = {
-                        Row {
-                            if (session?.persistent == true) {
-                                TextButton(
-                                    onClick = {
-                                        viewModel.leaveSessionResumable(sessionId)
-                                        viewModel.cancelPendingDisconnect()
-                                    }
-                                ) {
-                                    Text("Leave resumable")
-                                }
-                            } else if (session != null) {
-                                TextButton(
-                                    onClick = {
-                                        viewModel.sendSessionToBackground(sessionId)
-                                        viewModel.cancelPendingDisconnect()
-                                    }
-                                ) {
-                                    Text("Send to background")
-                                }
-                            }
-                            TextButton(onClick = { viewModel.cancelPendingDisconnect() }) { Text("Cancel") }
-                        }
+                        TextButton(onClick = { viewModel.cancelPendingDisconnect() }) { Text("Cancel") }
                     },
                 )
             }

@@ -156,6 +156,10 @@ class WebDavFsClient(
         }
     }
 
+    override fun cancelActiveTransfers() {
+        http.dispatcher.cancelAll()
+    }
+
     // ── PROPFIND multistatus parsing ──
 
     private data class DavEntry(

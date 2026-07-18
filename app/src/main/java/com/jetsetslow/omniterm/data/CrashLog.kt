@@ -43,7 +43,7 @@ object CrashLog {
     fun record(context: Context, report: String) = synchronized(lock) {
         val prefs = context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val entries = read(prefs).toMutableList()
-        entries.add(0, Entry(System.currentTimeMillis(), report))
+        entries.add(0, Entry(System.currentTimeMillis(), redactSensitive(report)))
         // commit (not apply): the process is usually dying right after a crash, so the write must
         // flush synchronously or the very crash we're recording could be lost.
         write(prefs, entries.take(MAX_ENTRIES), durable = true)
@@ -156,6 +156,28 @@ object CrashLog {
         val writer = StringWriter()
         t.printStackTrace(PrintWriter(writer))
         return writer.toString()
+    }
+
+    /** Sanitize reports before persistence, display, clipboard, backup, or share boundaries. */
+    fun redactSensitive(report: String): String {
+        var safe = report
+        safe = safe.replace(
+            Regex("-----BEGIN [^-]*(?:PRIVATE KEY|OPENSSH KEY)-----[\\s\\S]*?-----END [^-]*(?:PRIVATE KEY|OPENSSH KEY)-----", RegexOption.IGNORE_CASE),
+            "<redacted-private-key>",
+        )
+        safe = safe.replace(
+            Regex("(?i)(\\b(?:authorization|proxy-authorization)\\s*[:=]\\s*)(?:bearer|basic)?\\s*\\S+"),
+            "$1<redacted>",
+        )
+        safe = safe.replace(
+            Regex("(?i)(\\b(?:password|passwd|passphrase|secret|token|api[_-]?key|private[_-]?key)\\b\\s*[:=]\\s*)([^\\s,;]+)"),
+            "$1<redacted>",
+        )
+        safe = safe.replace(Regex("(?i)([a-z][a-z0-9+.-]*://)[^/@\\s:]+(?::[^/@\\s]*)?@"), "$1<redacted>@")
+        safe = safe.replace(Regex("(?<![A-Za-z0-9_])(?:\\d{1,3}\\.){3}\\d{1,3}(?![A-Za-z0-9_])"), "<redacted-ip>")
+        safe = safe.replace(Regex("/(?:home|Users)/[^/\\s]+"), "/home/<redacted>")
+        safe = safe.replace(Regex("/data/(?:user/\\d+|data)/[^/\\s]+"), "/data/user/<redacted>")
+        return safe
     }
 
     private fun read(prefs: android.content.SharedPreferences): List<Entry> {

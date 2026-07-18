@@ -1,6 +1,6 @@
 # End-to-end stress-test progress
 
-Last updated: 2026-07-16
+Last updated: 2026-07-18
 
 This is the durable checkpoint for the current physical-device and disposable-lab stress-test campaign. Update it after each verified fix so work can stop and resume without repeating expensive runs.
 
@@ -26,6 +26,10 @@ This is the durable checkpoint for the current physical-device and disposable-la
   - Mixed ordinary/tmux split across Home, remote output, screen off/on, keyguard dismissal, configuration recreation, and a literal system Recents swipe.
   - The test temporarily locked portrait so Quickstep and ADB shared a coordinate space, verified the OmniTerm accessibility snapshot disappeared after the swipe, and restored the device's rotation settings during cleanup.
   - The persistent pane's real foreground notification resumed the app. Pane order, layout, focus, and both live sessions were intact; post-resume input succeeded in both tmux and ordinary SSH.
+- The expanded `E2eTerminalLifecycleStressTest` passed in 47.988 seconds after the adaptive toolbar change.
+  - Persistent/tmux panes expose `LEAVE` directly and ordinary panes expose `BG`, including mixed split orders.
+  - The destructive Disconnect dialog contains only Disconnect/Cancel; it no longer nests background or resumable actions.
+  - Accessibility assertions cover both toolbar actions and the pure destructive gate.
 - `E2eTerminalNetworkRecoveryStressTest` passed in 73.726 seconds.
   - A real 12-second Wi-Fi outage exceeded the seeded ten-second SSH keepalive while direct tmux, HTTP-proxy, SOCKS5-proxy, and SSH-jump interactive sessions were active.
   - All four original session objects recovered, split-pane order stayed intact, every route accepted fresh commands, and tmux delivered the end of its background stream after reconnection.
@@ -66,6 +70,13 @@ This is the durable checkpoint for the current physical-device and disposable-la
   - Each saved profile completed the visible create, rename, and delete dialogs; nested navigation; bookmark add/remove and unified bookmark persistence; explicit refresh; and Activity recreation while inside the bookmarked directory.
   - The run exposed a WebDAV collection-MOVE false success: Apache redirected a directory URL without its canonical trailing slash and OkHttp followed the redirect as a successful non-MOVE response. The common rename contract now carries the directory type so WebDAV sends canonical source and destination URLs; the focused WebDAV rerun passed in 28.758 seconds.
   - Unique directories, pre-test bookmark values, auto-rotation, and Wi-Fi state were restored. No disposable directory, crash-buffer entry, app fatal exception, or ANR remained.
+- `E2eFileTransferLifecycleStressTest` passed on the physical device in 90.030 seconds.
+  - Live FTP, SMB, SFTP, and HTTPS WebDAV uploads cancelled within their bounded waits and left neither final nor hidden staging files.
+  - A 32 MiB SFTP upload survived CREATED/RESUMED transitions and Activity recreation with the same retained ViewModel and exact remote size.
+  - Cancelled downloads deleted their partial SAF documents; short local providers failed before commit; Retry stayed bound to the original endpoint and path after UI navigation.
+  - A real Wi-Fi disable/enable cycle cancelled a blocked FTP upload, recovered the endpoint, and left no partial data.
+  - The UI overwrite gate, FTP→SMB copy, SMB→HTTPS-WebDAV move, SHA-256 verification, and independent dual-pane SFTP navigation all passed.
+  - Transfers now stage to hidden siblings and atomically commit with destination backup/restore. SFTP cancellation closes its active stream before the JSch channel so pipe-backed providers cannot remain blocked.
 
 ### Alerts, notifications, and refresh lifecycle
 
@@ -77,6 +88,18 @@ This is the durable checkpoint for the current physical-device and disposable-la
   - Editing the rule closed the old incident as resolved, and a restarted five-second auto-refresh poller fired a new incident without a direct host refresh.
 - Manual and periodic telemetry probes are serialized per host. Active incidents also have a database-unique `(ruleId, serverId)` identity using conflict-ignore semantics, so concurrent refreshes cannot reset acknowledgement/mute state or create duplicate cards.
 - Schema 19 migrates legacy duplicate incidents by retaining the newest row before creating the unique index. Both the full schema 8→19 chain and the targeted duplicate migration passed on-device.
+
+### Settings, crash capture, Fleet, and power state
+
+- The focused Settings draft lifecycle passed in 14.281 seconds.
+  - An unsaved text-size draft survived Activity recreation in Compose save state, retained the same ViewModel, and guarded navigation until explicit discard.
+- `batterySaverFleetCancellationAndAutoRefreshRemainCoherent` passed in 29.696 seconds.
+  - Rooted Android battery simulation engaged saver, released keep-screen-on, resumed polling after manual refresh, and restored device battery state during cleanup.
+  - The run exposed and fixed an asynchronous keep-screen-on write that could re-enable the flag after battery saver released it.
+  - Explicitly confirmed Fleet targets are no longer silently removed by stale cached offline status. A small probe, 180 KiB truncation/tail marker, infinite-stream cancellation, and the next five-second refresh cycle passed.
+- The controlled startup crash suite passed in 10.409 seconds.
+  - Startup capture, history persistence, recovery, clearing, and redaction of credentials, authorization data, URI userinfo, private keys, IP addresses, and private paths were verified.
+- `CrashLogRedactionTest` passed locally. The controlled crash uses only reserved test-network data and the hook is debug-only.
 
 ### Build verification
 
@@ -91,12 +114,9 @@ This is the durable checkpoint for the current physical-device and disposable-la
 
 ## Remaining critical coverage
 
-1. Toggle Wi-Fi during active file transfers and verify bounded cancellation/retry plus lossless UI recovery; terminal, tmux, HTTP/SOCKS proxy, and SSH-jump recovery are verified.
-2. Complete file-transfer stress above the verified protocol and mutation UI matrices: dual-pane SFTP navigation, upload/download cancellation, overwrite prompts, larger files, cross-protocol copy/move, backgrounding, and recreation during active transfers.
-3. Cover all Settings combinations, backup/restore, app lock, battery-saver behavior, all themes, configuration changes, Fleet refresh/broadcast, and monitoring auto-refresh.
-4. Trigger a deliberate app-side crash in a controlled test build. Verify startup crash capture, About/history display, redaction, and safe clearing.
-5. Record a sanitized foreground-service-permission proof video. Use a clean test profile/host label, disable notification previews, clear Recents and notification history, crop status/navigation bars where possible, and review every frame before upload.
-6. Run the full unit/instrumentation/migration/static verification set, inspect PR checks, and remove disposable lab artifacts only after their evidence is no longer needed.
+1. Complete one clean formal run of the remaining Settings/backup/PIN method after the harness was split; its encryption, wrong-password/corruption, valid restore, and PIN stages reached their assertions before a later battery assertion exposed the now-fixed keep-screen race.
+2. Record a sanitized foreground-service-permission proof video. Use a clean test profile/host label, disable notification previews, clear Recents and notification history, crop status/navigation bars where possible, and review every frame before upload.
+3. Run the full unit/instrumentation/migration/static verification set, inspect PR checks, and remove disposable lab artifacts only after their evidence is no longer needed.
 
 ## Resume commands
 
@@ -126,6 +146,8 @@ adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eNetworkToolsTest 
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eAlertLifecycleStressTest -e omniterm_e2e_alerts yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eRemoteFilesStressTest -e omniterm_e2e_remote_files yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eFilesUiStressTest -e omniterm_e2e_files_ui yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
+adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eFileTransferLifecycleStressTest -e omniterm_e2e_transfer_lifecycle yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
+adb shell am instrument -w -e class com.jetsetslow.omniterm.E2eSettingsStateStressTest -e omniterm_e2e_settings_state yes com.jetsetslow.omniterm.app.oss.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 `E2eLabSeedTest` requires runtime arguments sourced locally from the ignored secret files. Inspect its `requireArg` calls for the argument names and pass them without shell tracing or copying the resulting command into this document.
