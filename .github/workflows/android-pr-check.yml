@@ -24,8 +24,49 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Detect whether this PR touches anything that can affect the build. Docs, workflow YAML, and
+  # published artifacts cannot change compiled output, so the heavy jobs below are skipped for them.
+  # Because "Build & Test" and "Validate Room migrations" are REQUIRED checks, each heavy job has a
+  # companion no-op job reporting the SAME check name, so a skipped build still satisfies branch
+  # protection (a required check that simply doesn't report would leave the PR unmergeable).
+  changes:
+    name: Detect code changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: filter
+        # Plain git diff (no third-party action — the repo's Actions policy only allows a specific
+        # SHA-pinned set). Positive include-paths: any changed file under these prefixes means a
+        # build is required. Anything else (docs, workflow YAML, artifacts) leaves code=false.
+        # .github/actions/** is included because the composite setup action affects every build; if
+        # git diff fails for any reason we fail safe to code=true (run the full build).
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+          if ! changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" 2>/dev/null); then
+            echo "git diff failed; running full build to be safe."
+            echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "Changed files:"; echo "$changed"
+          if echo "$changed" | grep -qE '^(app/|gradle/|scripts/|\.github/actions/|gradle\.properties|build\.gradle\.kts|settings\.gradle\.kts|gradlew$|gradlew\.bat$)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build-and-test:
     name: Build & Test
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -63,12 +104,22 @@ jobs:
         if: always()
         run: rm -f debug.keystore
 
+  build-and-test-skip:
+    # Companion no-op: satisfies the required "Build & Test" check on PRs that change no code.
+    name: Build & Test
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "No build-affecting files changed; skipping Build & Test."
+
   migration-test:
     name: Validate Room migrations
     # CodeQL retains the migration matrix on main. PRs run it only after the cheaper build,
     # dependency-verification, unit-test, and lint gate succeeds, avoiding wasted emulator time.
-    if: github.event_name == 'pull_request'
-    needs: build-and-test
+    needs: [changes, build-and-test]
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -115,3 +166,13 @@ jobs:
       - name: Delete debug keystore
         if: always()
         run: rm -f debug.keystore
+
+  migration-test-skip:
+    # Companion no-op: satisfies the required "Validate Room migrations" check on no-code PRs.
+    name: Validate Room migrations
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "No build-affecting files changed; skipping Room migration matrix."
