@@ -555,12 +555,15 @@ jobs:
       # Releases page and 'git tag' stay bounded. Nothing here creates versionCodes, so pruning an
       # old release never affects Play — those versionCodes are already consumed and immutable.
       - name: Prune old releases
+        # A prune problem must never fail the release itself (the AAB is already published to Play
+        # and GitHub by now), so this step never propagates a non-zero exit.
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           KEEP: "5"
         run: |
-          set -euo pipefail
+          set -uo pipefail
           # Version releases only, newest first. Never touch debug-* or any non-v[0-9] tag. sort -V
           # orders semver-ish tags; the tac reverses to descending. Draft releases are excluded so a
           # half-finished build can never displace a published one from the keep window.
@@ -575,18 +578,24 @@ jobs:
             echo "Nothing to prune."
             exit 0
           fi
+          rc=0
           for tag in "${TAGS[@]:$KEEP}"; do
             # Belt-and-suspenders: only ever delete something that still matches the version pattern.
             case "$tag" in
               v[0-9]*)
-                echo "Pruning release and tag: $tag"
-                gh release delete "$tag" --cleanup-tag --yes
+                # Delete the GitHub Release object only, NOT the git tag: the repo's
+                # protect-release-tags ruleset forbids deleting v* tags (consumed Play
+                # versionCodes are immutable), so --cleanup-tag would 422. The tag stays as a
+                # provenance marker; the Releases page is what we keep bounded.
+                echo "Pruning release: $tag (tag retained)"
+                gh release delete "$tag" --yes || { echo "Failed to delete release $tag; continuing." >&2; rc=1; }
                 ;;
               *)
                 echo "Skipping unexpected tag: $tag" >&2
                 ;;
             esac
           done
+          [ "$rc" -eq 0 ] || echo "One or more releases could not be pruned; see log above."
 
   debug:
     name: Build and publish debug APK
