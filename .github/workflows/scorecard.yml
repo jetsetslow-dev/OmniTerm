@@ -1,6 +1,11 @@
 name: OpenSSF Scorecard
 
 on:
+  # Refresh the analysis on every merge to main, not only on PRs and the weekly cron. Without a
+  # push trigger the code-scanning results on main go stale between Wednesdays, which surfaces in
+  # GitHub Mobile as a "configuration file not found" status for the Scorecard category.
+  push:
+    branches: [main]
   pull_request:
     branches: [main]
   schedule:

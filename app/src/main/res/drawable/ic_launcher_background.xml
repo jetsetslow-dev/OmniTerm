@@ -1,12 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Solid backdrop matching the neon tile's edge colour; the full-bleed bitmap foreground
-     covers it almost entirely, this just guarantees seamless edges under any mask/parallax. -->
+<!-- Dark backdrop for the neon mark. The foreground bitmap is now transparent (its baked tile was
+     removed so the mark reads in small surfaces like the biometric prompt), so this layer must
+     supply the depth the baked tile used to. A diagonal gradient (lighter top-left -> near-black
+     bottom-right) reproduces the original tile's vignette so the neon keeps its contrast. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <path
-        android:fillColor="#141821"
-        android:pathData="M0,0h108v108h-108z" />
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr xmlns:aapt="http://schemas.android.com/aapt" name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="8" android:startY="8"
+                android:endX="100" android:endY="100">
+                <item android:offset="0.0" android:color="#FF1D242D" />
+                <item android:offset="0.5" android:color="#FF141821" />
+                <item android:offset="1.0" android:color="#FF0B0E15" />
+            </gradient>
+        </aapt:attr>
+    </path>
 </vector>

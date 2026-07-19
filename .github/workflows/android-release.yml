@@ -551,6 +551,43 @@ jobs:
           RELEASE_PRERELEASE: ${{ needs.release.outputs.release_prerelease }}
         run: gh release edit "$RELEASE_LABEL" --draft=false --prerelease="$RELEASE_PRERELEASE"
 
+      # Retain only the most recent version releases; older ones (and their tags) are pruned so the
+      # Releases page and 'git tag' stay bounded. Nothing here creates versionCodes, so pruning an
+      # old release never affects Play — those versionCodes are already consumed and immutable.
+      - name: Prune old releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          KEEP: "5"
+        run: |
+          set -euo pipefail
+          # Version releases only, newest first. Never touch debug-* or any non-v[0-9] tag. sort -V
+          # orders semver-ish tags; the tac reverses to descending. Draft releases are excluded so a
+          # half-finished build can never displace a published one from the keep window.
+          mapfile -t TAGS < <(
+            gh release list --limit 200 --json tagName,isDraft \
+              --jq '.[] | select(.isDraft | not) | select(.tagName | test("^v[0-9]")) | .tagName' \
+              | sort -V | tac
+          )
+          echo "Found ${#TAGS[@]} version release(s); keeping newest $KEEP."
+          # Guard: if the listing looks empty or malformed, do nothing rather than risk over-deleting.
+          if [ "${#TAGS[@]}" -le "$KEEP" ]; then
+            echo "Nothing to prune."
+            exit 0
+          fi
+          for tag in "${TAGS[@]:$KEEP}"; do
+            # Belt-and-suspenders: only ever delete something that still matches the version pattern.
+            case "$tag" in
+              v[0-9]*)
+                echo "Pruning release and tag: $tag"
+                gh release delete "$tag" --cleanup-tag --yes
+                ;;
+              *)
+                echo "Skipping unexpected tag: $tag" >&2
+                ;;
+            esac
+          done
+
   debug:
     name: Build and publish debug APK
     if: github.event_name == 'workflow_dispatch' && inputs.build_type == 'debug'
