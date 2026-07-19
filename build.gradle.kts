@@ -4,7 +4,7 @@ buildscript {
   configurations.configureEach {
     resolutionStrategy.dependencySubstitution {
       val patchedModules = mapOf(
-        "com.google.guava:guava:30.1.1-jre" to "com.google.guava:guava:33.6.0-jre",
+        "com.google.guava:guava:33.6.0-jre" to "com.google.guava:guava:33.6.0-jre",
         "org.apache.commons:commons-lang3:3.16.0" to "org.apache.commons:commons-lang3:3.19.0",
         "org.bitbucket.b_c:jose4j:0.9.5" to "org.bitbucket.b_c:jose4j:0.9.6",
         "org.bouncycastle:bcprov-jdk18on:1.79" to "org.bouncycastle:bcprov-jdk18on:1.85",
@@ -36,7 +36,7 @@ allprojects {
   configurations.configureEach {
     resolutionStrategy.dependencySubstitution {
       val patchedModules = mapOf(
-        "com.google.guava:guava:30.1.1-jre" to "com.google.guava:guava:33.6.0-jre",
+        "com.google.guava:guava:33.6.0-jre" to "com.google.guava:guava:33.6.0-jre",
         "org.apache.commons:commons-lang3:3.16.0" to "org.apache.commons:commons-lang3:3.19.0",
         "org.bouncycastle:bcprov-jdk18on:1.79" to "org.bouncycastle:bcprov-jdk18on:1.85",
         "org.bouncycastle:bcpkix-jdk18on:1.79" to "org.bouncycastle:bcpkix-jdk18on:1.85",
