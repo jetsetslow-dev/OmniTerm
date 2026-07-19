@@ -23,8 +23,49 @@ permissions:
   contents: read
 
 jobs:
+  # On PRs, skip the heavy CodeQL/compile job when nothing build-affecting changed. On push to main
+  # (the prerelease gate) this detector reports code=true so analysis ALWAYS runs — a docs-only push
+  # must never bypass the release gate. "Analyze Java/Kotlin" is a required check, so a companion
+  # no-op reports the same name on skipped PRs to keep branch protection satisfied.
+  changes:
+    name: Detect code changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.decide.outputs.code }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: decide
+        # Plain git diff (no third-party action — repo Actions policy allows only a pinned set).
+        # push/schedule always run the full analysis (main-branch prerelease gate never skips); on
+        # PRs, include-path prefixes decide. git diff failure fails safe to code=true.
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if ! changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" 2>/dev/null); then
+            echo "git diff failed; running full analysis to be safe."
+            echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "Changed files:"; echo "$changed"
+          if echo "$changed" | grep -qE '^(app/|gradle/|scripts/|\.github/actions/|gradle\.properties|build\.gradle\.kts|settings\.gradle\.kts|gradlew$|gradlew\.bat$)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
   analyze:
     name: Analyze Java/Kotlin
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -130,3 +171,14 @@ jobs:
       - name: Delete debug keystore
         if: always()
         run: rm -f debug.keystore
+
+  analyze-skip:
+    # Companion no-op: satisfies the required "Analyze Java/Kotlin" check on PRs that change no code.
+    # Only reachable on pull_request (push/schedule set code=true), so the release gate never skips.
+    name: Analyze Java/Kotlin
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "No build-affecting files changed; skipping CodeQL analysis for this PR."
