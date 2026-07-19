@@ -331,6 +331,10 @@ class RemoteParsersTest {
         assertTrue("expected capture depth", cmd.contains("-S -12000"))
         assertTrue("expected to stop above the visible screen", cmd.contains("-E -1"))
         assertTrue("no raw semicolon from the name", !cmd.contains("bad; rm"))
+        assertTrue(
+            "expected inner-TUI guard: capture must emit nothing while the pane's alternate screen is on",
+            cmd.contains("#{alternate_on}"),
+        )
     }
 
     @Test

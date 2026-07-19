@@ -77,6 +77,8 @@ fun CodeEditor(
     onValueChange: (String) -> Unit,
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
+    /** Read-only: text can be scrolled, searched, and selected/copied, but not modified. */
+    readOnly: Boolean = false,
     fontSize: androidx.compose.ui.unit.TextUnit = 13.sp,
     language: CodeLanguage = CodeLanguage.NONE,
     /** Max chars to highlight before falling back to plain text (user-configurable; 0 disables). */
@@ -119,7 +121,7 @@ fun CodeEditor(
     }
 
     fun replaceCurrent() {
-        if (matches.isEmpty() || currentMatchIndex !in matches.indices) return
+        if (readOnly || matches.isEmpty() || currentMatchIndex !in matches.indices) return
         val (start, end) = matches[currentMatchIndex]
         val next = value.substring(0, start) + replacement + value.substring(end)
         onValueChange(next)
@@ -128,7 +130,7 @@ fun CodeEditor(
     }
 
     fun replaceAll() {
-        if (query.isEmpty()) return
+        if (readOnly || query.isEmpty()) return
         val next = runCatching {
             if (useRegex) {
                 val opts = if (caseSensitive) emptySet() else setOf(RegexOption.IGNORE_CASE)
@@ -180,6 +182,7 @@ fun CodeEditor(
                 field = field,
                 onChange = { field = it; onValueChange(it.text) },
                 enabled = enabled,
+                readOnly = readOnly,
                 fontSize = fontSize,
                 wrap = wrap,
                 scrollToCursorTrigger = scrollToCursorTrigger,
@@ -191,6 +194,7 @@ fun CodeEditor(
                 field = field,
                 onChange = { field = it; onValueChange(it.text) },
                 enabled = enabled,
+                readOnly = readOnly,
                 fontSize = fontSize,
                 language = language,
                 highlightMaxChars = highlightMaxChars,
@@ -207,6 +211,8 @@ private class NativeEditorController {
     var windowEnd = 0
     var lastScrollTrigger = 0
     var lastWrap: Boolean? = null
+    /** The EditText's original key listener, parked here while read-only mode nulls it out. */
+    var savedKeyListener: android.text.method.KeyListener? = null
 }
 
 /**
@@ -220,6 +226,7 @@ private fun NativeLargeEditorBody(
     field: TextFieldValue,
     onChange: (TextFieldValue) -> Unit,
     enabled: Boolean,
+    readOnly: Boolean = false,
     fontSize: androidx.compose.ui.unit.TextUnit,
     wrap: Boolean,
     scrollToCursorTrigger: Int,
@@ -272,6 +279,8 @@ private fun NativeLargeEditorBody(
                 setPadding(12, 12, 12, 12)
                 setBackgroundColor(backgroundColor)
                 setTextColor(textColor)
+                setTextIsSelectable(true)
+                controller.savedKeyListener = keyListener
                 controller.applying = true
                 val visibleText = field.text.substring(windowStart, windowEnd)
                 setText(visibleText)
@@ -315,6 +324,15 @@ private fun NativeLargeEditorBody(
             val end = (field.selection.end - windowStart).coerceIn(0, visibleText.length)
             if (editor.selectionStart != start || editor.selectionEnd != end) editor.setSelection(start, end)
             editor.isEnabled = enabled
+            // Read-only keeps scrolling/selection/copy alive (unlike isEnabled=false) by removing
+            // only the key listener; the original is parked on the controller for edit mode.
+            if (readOnly && editor.keyListener != null) {
+                controller.savedKeyListener = editor.keyListener
+                editor.keyListener = null
+            } else if (!readOnly && editor.keyListener == null) {
+                editor.keyListener = controller.savedKeyListener
+                    ?: android.text.method.TextKeyListener.getInstance()
+            }
             editor.setTextSize(TypedValue.COMPLEX_UNIT_SP, fontSize.value)
             if (controller.lastWrap != wrap) {
                 editor.setHorizontallyScrolling(!wrap)
@@ -369,6 +387,8 @@ fun FullScreenCodeEditor(
     canSave: Boolean = dirty,
     error: String? = null,
     saveLabel: String = "Save",
+    /** Read-only: browse/search/copy without the risk of accidental edits; Save stays disabled. */
+    readOnly: Boolean = false,
     fontSize: androidx.compose.ui.unit.TextUnit = 14.sp,
     language: CodeLanguage = CodeLanguage.NONE,
     highlightMaxChars: Int = HIGHLIGHT_MAX_CHARS_DEFAULT,
@@ -468,6 +488,7 @@ fun FullScreenCodeEditor(
                 value = value,
                 onValueChange = onValueChange,
                 enabled = !saving,
+                readOnly = readOnly,
                 fontSize = fontSize,
                 language = language,
                 highlightMaxChars = highlightMaxChars,
@@ -609,6 +630,7 @@ private fun EditorBody(
     field: TextFieldValue,
     onChange: (TextFieldValue) -> Unit,
     enabled: Boolean,
+    readOnly: Boolean = false,
     fontSize: androidx.compose.ui.unit.TextUnit,
     language: CodeLanguage,
     highlightMaxChars: Int,
@@ -736,6 +758,7 @@ private fun EditorBody(
             value = field,
             onValueChange = onChange,
             enabled = enabled,
+            readOnly = readOnly,
             visualTransformation = highlight,
             onTextLayout = { textLayoutResult = it },
             textStyle = TextStyle(fontFamily = OmniFonts.mono, fontSize = fontSize, color = MaterialTheme.colorScheme.onSurface),
