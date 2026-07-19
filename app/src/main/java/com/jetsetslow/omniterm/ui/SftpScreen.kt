@@ -3047,49 +3047,55 @@ fun SftpFileEditor(
     )
 }
 
+/**
+ * Add/edit/clone dialog state. [prefill] seeds the endpoint and path fields; [replacing] is
+ * non-null only for edits, where saving removes the original bookmark.
+ */
+private data class BookmarkEditorState(
+    val prefill: AppViewModel.EndpointBookmark?,
+    val replacing: AppViewModel.EndpointBookmark?,
+)
+
 @Composable
 fun SftpBookmarksTab(viewModel: AppViewModel) {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
     val shares by viewModel.networkShares.collectAsStateWithLifecycle()
-    var newBookmarkPath by remember { mutableStateOf("") }
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
     // Bookmarks span every host and share; reload on entry so stars set elsewhere show up.
     LaunchedEffect(Unit) { viewModel.loadAllBookmarks() }
-    val srv = viewModel.selectedServer
+    var editor by remember { mutableStateOf<BookmarkEditorState?>(null) }
+
+    editor?.let { state ->
+        BookmarkEditDialog(
+            servers = servers,
+            shares = shares,
+            state = state,
+            onDismiss = { editor = null },
+            onSave = { serverId, shareId, path ->
+                viewModel.saveEndpointBookmark(serverId, shareId, path, replacing = state.replacing)
+                editor = null
+            },
+        )
+    }
 
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        if (srv != null) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                OutlinedTextField(
-                    value = newBookmarkPath,
-                    onValueChange = { newBookmarkPath = it },
-                    label = { Text("Add path on ${srv.name}") },
-                    modifier = Modifier.weight(1f)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Button(
-                    onClick = {
-                        if (newBookmarkPath.isNotBlank()) {
-                            viewModel.addSftpBookmark(newBookmarkPath.trim())
-                            newBookmarkPath = ""
-                            viewModel.loadAllBookmarks()
-                        }
-                    }
-                ) {
-                    Text("Add")
-                }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                "Quick-access bookmarks — every host and share. Offline endpoints are greyed out.",
+                fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Button(onClick = { editor = BookmarkEditorState(prefill = null, replacing = null) }) {
+                Icon(Icons.Filled.BookmarkAdd, contentDescription = null)
+                Spacer(modifier = Modifier.width(4.dp))
+                Text("Add")
             }
         }
-
-        Spacer(modifier = Modifier.height(4.dp))
-        Text(
-            "Quick-access bookmarks — every host and share. Offline endpoints are greyed out.",
-            fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
 
         if (viewModel.allBookmarks.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -3147,6 +3153,12 @@ fun SftpBookmarksTab(viewModel: AppViewModel) {
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
+                        IconButton(onClick = { editor = BookmarkEditorState(prefill = bmk, replacing = bmk) }) {
+                            Icon(Icons.Filled.Edit, contentDescription = "Edit bookmark", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                        IconButton(onClick = { editor = BookmarkEditorState(prefill = bmk, replacing = null) }) {
+                            Icon(Icons.Filled.ContentCopy, contentDescription = "Clone bookmark", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                         IconButton(onClick = {
                             confirm.ask("Remove Bookmark?", "Remove ${bmk.path} on ${bmk.endpointName}?", confirmLabel = "Remove") {
                                 viewModel.removeEndpointBookmark(bmk)
@@ -3159,6 +3171,94 @@ fun SftpBookmarksTab(viewModel: AppViewModel) {
             }
         }
     }
+}
+
+/**
+ * Add / edit / clone a bookmark with an explicit endpoint choice. The endpoint starts
+ * unselected on a plain add — bookmarks are host-specific, so a hidden default to whatever
+ * server happens to be selected in the SFTP tab would silently file them on the wrong host.
+ */
+@Composable
+private fun BookmarkEditDialog(
+    servers: List<ServerEntity>,
+    shares: List<NetworkShareEntity>,
+    state: BookmarkEditorState,
+    onDismiss: () -> Unit,
+    onSave: (serverId: Int?, shareId: Int?, path: String) -> Unit,
+) {
+    var path by remember { mutableStateOf(state.prefill?.path ?: "") }
+    var selServerId by remember { mutableStateOf(state.prefill?.serverId) }
+    var selShareId by remember { mutableStateOf(state.prefill?.shareId) }
+    var menuExpanded by remember { mutableStateOf(false) }
+    val endpointLabel = when {
+        selServerId != null -> servers.firstOrNull { it.id == selServerId }?.name ?: "Unknown host"
+        selShareId != null -> shares.firstOrNull { it.id == selShareId }?.let { "${it.name} (${it.protocol})" } ?: "Unknown share"
+        else -> "Select server or share…"
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                when {
+                    state.replacing != null -> "Edit Bookmark"
+                    state.prefill != null -> "Clone Bookmark"
+                    else -> "Add Bookmark"
+                }
+            )
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(modifier = Modifier.fillMaxWidth()) {
+                    OutlinedButton(onClick = { menuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
+                        Icon(
+                            if (selShareId != null) Icons.Filled.Lan else Icons.Filled.Dns,
+                            contentDescription = null,
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(endpointLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                        servers.forEach { server ->
+                            DropdownMenuItem(
+                                text = { Text(server.name) },
+                                leadingIcon = { Icon(Icons.Filled.Dns, contentDescription = null) },
+                                onClick = {
+                                    selServerId = server.id
+                                    selShareId = null
+                                    menuExpanded = false
+                                },
+                            )
+                        }
+                        shares.forEach { share ->
+                            DropdownMenuItem(
+                                text = { Text("${share.name} (${share.protocol})") },
+                                leadingIcon = { Icon(Icons.Filled.Lan, contentDescription = null) },
+                                onClick = {
+                                    selShareId = share.id
+                                    selServerId = null
+                                    menuExpanded = false
+                                },
+                            )
+                        }
+                    }
+                }
+                OutlinedTextField(
+                    value = path,
+                    onValueChange = { path = it },
+                    label = { Text("Path") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                enabled = (selServerId != null || selShareId != null) && path.isNotBlank(),
+                onClick = { onSave(selServerId, selShareId, path.trim()) },
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 /** Converts a glob (`*`/`?`) to a case-insensitive Regex; every other character is literal. */

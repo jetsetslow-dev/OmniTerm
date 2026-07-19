@@ -7874,6 +7874,41 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * Create a bookmark on an explicitly chosen server or share (Bookmarks tab add, clone and
+     * edit flows). When [replacing] is set the old bookmark is removed first, so an edit that
+     * moves a bookmark between endpoints behaves as one operation.
+     */
+    fun saveEndpointBookmark(serverId: Int?, shareId: Int?, path: String, replacing: EndpointBookmark? = null) {
+        if (serverId == null && shareId == null) return
+        val normalized = path.trim().ifBlank { "/" }
+        viewModelScope.launch {
+            replacing?.let { old ->
+                val oldKey = when {
+                    old.serverId != null -> "sftp_bookmarks_${old.serverId}"
+                    old.shareId != null -> "share_bookmarks_${old.shareId}"
+                    else -> null
+                }
+                if (oldKey != null) {
+                    val remaining = repository.getSetting(oldKey).orEmpty()
+                        .split("|||").filter { it.isNotBlank() && it != old.path }
+                    repository.insertSetting(oldKey, remaining.joinToString("|||"))
+                    if (old.serverId != null && old.serverId == selectedServerId) sftpBookmarks.remove(old.path)
+                    if (old.shareId != null && old.shareId == browsingShare?.id) shareBookmarks.remove(old.path)
+                }
+            }
+            val key = if (serverId != null) "sftp_bookmarks_$serverId" else "share_bookmarks_$shareId"
+            val existing = repository.getSetting(key).orEmpty().split("|||").filter { it.isNotBlank() }
+            if (normalized !in existing) {
+                repository.insertSetting(key, (existing + normalized).joinToString("|||"))
+            }
+            // Keep the per-endpoint lists that drive the star toggles in sync.
+            if (serverId != null && serverId == selectedServerId && normalized !in sftpBookmarks) sftpBookmarks.add(normalized)
+            if (shareId != null && shareId == browsingShare?.id && normalized !in shareBookmarks) shareBookmarks.add(normalized)
+            loadAllBookmarks()
+        }
+    }
+
+    /**
      * Follow a bookmark to its endpoint. Availability is enforced by the UI (greyed rows), but
      * re-checked here so a stale tap can't dial an offline endpoint.
      */
