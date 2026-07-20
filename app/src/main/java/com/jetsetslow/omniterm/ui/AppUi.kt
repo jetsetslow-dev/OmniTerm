@@ -470,7 +470,8 @@ fun MainAppScreen(viewModel: AppViewModel) {
 
     BackHandler(
         enabled = fullScreenEditorHost.content == null &&
-            viewModel.edittingSftpFile == null && viewModel.edittingShareFile == null,
+            viewModel.edittingSftpFile == null && viewModel.edittingShareFile == null &&
+            viewModel.imagePreview == null,
     ) {
         if (!viewModel.navigateBack()) {
             val currentTime = System.currentTimeMillis()
@@ -581,6 +582,12 @@ fun MainAppScreen(viewModel: AppViewModel) {
                 showSudo = false,
             )
             ConfirmHost(shareEditorConfirm)
+        }
+
+        // In-app image viewer for a remote file (SFTP or share) — same Activity-level hosting as
+        // the editors so it overlays every screen.
+        viewModel.imagePreview?.let { preview ->
+            ImagePreviewOverlay(preview = preview, onClose = { viewModel.closeImagePreview() })
         }
 
         // Compose/YAML editors are requested from inside the Containers screen but rendered here,

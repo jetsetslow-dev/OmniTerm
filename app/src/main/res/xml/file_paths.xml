@@ -8,4 +8,9 @@
     <cache-path
         name="crash-reports"
         path="crash-reports/" />
+    <!-- Remote files streamed to cache so the device's own viewer apps (photos, video player,
+         PDF reader) can open them via ACTION_VIEW. Cleared on each new preview. -->
+    <cache-path
+        name="remote-previews"
+        path="remote-previews/" />
 </paths>

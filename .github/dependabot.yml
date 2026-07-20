@@ -45,6 +45,11 @@ updates:
         update-types: ["version-update:semver-major"]
       - dependency-name: com.github.mwiede:jsch
         update-types: ["version-update:semver-major"]
+      # CodeQL's Kotlin extractor rejects 2.4.10 ("kotlin-version-too-new"), which fails the
+      # Analyze Java/Kotlin job that gates auto-prereleases. Unignore once the CodeQL bundle
+      # supports the newer Kotlin patch line.
+      - dependency-name: org.jetbrains.kotlin.plugin.compose
+        versions: [">= 2.4.10, < 2.5.0"]
   - package-ecosystem: github-actions
     directory: "/"
     schedule:

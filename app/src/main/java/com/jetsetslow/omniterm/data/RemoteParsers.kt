@@ -203,6 +203,14 @@ object RemoteCommands {
     fun tmuxCursorQuery(name: String): String =
         "tmux display-message -p -t ${tmuxSafeName(name)} '#{cursor_x} #{cursor_y}' 2>/dev/null || true"
 
+    /**
+     * Prints `1` when a full-screen TUI owns the pane's alternate screen, else `0`. Drives
+     * touch-scroll routing: TUIs get PageUp/PageDown (they own their scrolling; the terminal
+     * side has no history for them), plain shells keep the local-buffer scroll.
+     */
+    fun tmuxAlternateOnQuery(name: String): String =
+        "tmux display-message -p -t ${tmuxSafeName(name)} '#{alternate_on}' 2>/dev/null || true"
+
     /** Cursor position for an exact pane id, avoiding an active-pane change between side queries. */
     fun tmuxPaneCursorQuery(paneId: String): String {
         val safe = paneId.takeIf { it.matches(Regex("%\\d+")) } ?: "%0"
@@ -238,11 +246,17 @@ object RemoteCommands {
      * stops at the last history line ABOVE the visible screen — the attach repaint provides the
      * screen itself, so including it here would duplicate a screenful at the boundary. Fails
      * silently (empty output) when the session or history doesn't exist.
+     *
+     * Guarded on `#{alternate_on}`: while a full-screen TUI owns the pane's alternate screen,
+     * capture-pane returns TUI frames instead of the primary screen's history (verified on tmux
+     * 3.3a), which would seed/replace local scrollback with stale TUI junk. Empty output makes
+     * callers keep their dirty flag armed and retry after the TUI exits.
      */
     fun tmuxCaptureHistoryCommand(name: String, maxLines: Int): String {
         val safe = name.filter { it.isLetterOrDigit() || it == '-' }.ifBlank { "omniterm" }
         val lines = maxLines.coerceIn(1_000, 50_000)
-        return "tmux capture-pane -p -e -J -S -$lines -E -1 -t $safe 2>/dev/null || true"
+        return "if [ \"\$(tmux display-message -p -t $safe '#{alternate_on}' 2>/dev/null)\" = 1 ]; " +
+            "then :; else tmux capture-pane -p -e -J -S -$lines -E -1 -t $safe 2>/dev/null; fi || true"
     }
 
     /**
@@ -458,8 +472,11 @@ object RemoteCommands {
 
     /**
      * Create [archiveName] inside [dir] from [entries] (names relative to [dir]). [format] is one of
-     * "zip", "tar.gz", "tar". `cd` into the dir first so stored paths stay relative. For zip we
-     * recurse (-r); tar handles dirs natively. Combined stderr is returned.
+     * "zip", "tar.gz", "tar", "7z". `cd` into the dir first so stored paths stay relative. For zip we
+     * recurse (-r); tar handles dirs natively. 7z needs a 7-Zip binary on the host (7z/7zz/7za are
+     * tried in turn); its stdout chatter is suppressed so success stays quiet like zip/tar. RAR
+     * creation is deliberately absent — the `rar` compressor is proprietary and almost never
+     * installed. Combined stderr is returned.
      */
     fun archiveCreate(dir: String, archiveName: String, entries: List<String>, format: String): String {
         val names = entries.joinToString(" ") { shellQuote(it) }
@@ -467,25 +484,45 @@ object RemoteCommands {
         val body = when (format) {
             "zip" -> "zip -r -q $out $names"
             "tar" -> "tar -cf $out $names"
+            "7z" -> sevenZipInvocation("a -y $out $names")
             else -> "tar -czf $out $names"   // tar.gz default
         }
         return "cd ${shellQuote(dir)} && $body 2>&1"
     }
 
+    /** Run the first available 7-Zip binary with [args], or fail with a clear stderr message. */
+    private fun sevenZipInvocation(args: String): String =
+        "if command -v 7z >/dev/null 2>&1; then 7z $args >/dev/null; " +
+            "elif command -v 7zz >/dev/null 2>&1; then 7zz $args >/dev/null; " +
+            "elif command -v 7za >/dev/null 2>&1; then 7za $args >/dev/null; " +
+            "else echo '7-Zip is not installed on the host' >&2; false; fi"
+
     /**
      * Extract [archiveName] (in [dir]) into a subfolder of the same name (minus extension) so a
      * messy archive can't scatter files across the current folder. Auto-detects by extension.
+     * zip/tar variants use tools present on virtually every host; .7z and .rar depend on optional
+     * tools (7z/7zz/7za, unrar with a bsdtar fallback) and fail with a clear message when absent.
      */
     fun archiveExtract(dir: String, archiveName: String): String {
         val base = archiveName
-            .removeSuffix(".zip").removeSuffix(".tar.gz").removeSuffix(".tgz").removeSuffix(".tar")
+            .removeSuffix(".zip").removeSuffix(".tar.gz").removeSuffix(".tgz")
+            .removeSuffix(".tar.bz2").removeSuffix(".tbz2")
+            .removeSuffix(".tar.xz").removeSuffix(".txz")
+            .removeSuffix(".7z").removeSuffix(".rar").removeSuffix(".tar")
         val a = shellQuote(archiveName)
         val destQuoted = shellQuote(base)
         val lower = archiveName.lowercase()
         val extract = when {
             lower.endsWith(".zip") -> "unzip -o -q $a -d $destQuoted"
             lower.endsWith(".tar.gz") || lower.endsWith(".tgz") -> "tar -xzf $a -C $destQuoted"
+            lower.endsWith(".tar.bz2") || lower.endsWith(".tbz2") -> "tar -xjf $a -C $destQuoted"
+            lower.endsWith(".tar.xz") || lower.endsWith(".txz") -> "tar -xJf $a -C $destQuoted"
             lower.endsWith(".tar") -> "tar -xf $a -C $destQuoted"
+            lower.endsWith(".7z") -> sevenZipInvocation("x -y -o$destQuoted $a")
+            lower.endsWith(".rar") ->
+                "if command -v unrar >/dev/null 2>&1; then unrar x -o+ $a $destQuoted/ >/dev/null; " +
+                    "elif command -v bsdtar >/dev/null 2>&1; then bsdtar -xf $a -C $destQuoted; " +
+                    "else echo 'unrar (or bsdtar) is not installed on the host' >&2; false; fi"
             else -> "echo 'Unsupported archive type' >&2; false"
         }
         return "cd ${shellQuote(dir)} && mkdir -p $destQuoted && $extract 2>&1"

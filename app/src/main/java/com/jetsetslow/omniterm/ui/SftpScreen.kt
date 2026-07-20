@@ -1066,6 +1066,19 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                                     onDismissRequest = { menuForName = null },
                                 ) {
                                     if (!file.isDirectory) {
+                                        if (viewModel.isImageFile(file.name)) {
+                                            DropdownMenuItem(
+                                                text = { Text("View image") },
+                                                leadingIcon = { Icon(Icons.Filled.Image, null) },
+                                                onClick = { menuForName = null; viewModel.openShareImagePreview(file) },
+                                            )
+                                        }
+                                        DropdownMenuItem(
+                                            text = { Text("Open with device app") },
+                                            leadingIcon = { Icon(Icons.Filled.OpenInNew, null) },
+                                            enabled = !viewModel.openWithBusy,
+                                            onClick = { menuForName = null; viewModel.openShareFileWithDevice(file, context) },
+                                        )
                                         DropdownMenuItem(
                                             text = { Text("Edit text file") },
                                             leadingIcon = { Icon(Icons.Filled.EditNote, null) },
@@ -1735,7 +1748,12 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                 Icon(Icons.Filled.Archive, contentDescription = "Compress to archive")
                             }
                             DropdownMenu(expanded = archiveMenu, onDismissRequest = { archiveMenu = false }) {
-                                listOf("zip" to "ZIP (.zip)", "tar.gz" to "Gzipped tar (.tar.gz)", "tar" to "Tar (.tar)").forEach { (fmt, label) ->
+                                listOf(
+                                    "zip" to "ZIP (.zip)",
+                                    "tar.gz" to "Gzipped tar (.tar.gz)",
+                                    "tar" to "Tar (.tar)",
+                                    "7z" to "7-Zip (.7z, needs 7z on host)",
+                                ).forEach { (fmt, label) ->
                                     DropdownMenuItem(
                                         text = { Text(label, fontSize = 13.sp) },
                                         onClick = { archiveMenu = false; viewModel.sftpArchiveSelection(fmt) },
@@ -2383,6 +2401,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
 
         // Selected cell Actions popup drawer
         selectedFileForOption?.let { file ->
+            val openWithContext = androidx.compose.ui.platform.LocalContext.current
             AlertDialog(
                 onDismissRequest = { selectedFileForOption = null },
                 title = { Text(file.name, fontFamily = OmniFonts.mono) },
@@ -2392,6 +2411,29 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         if (!file.isDirectory) {
+                            if (viewModel.isImageFile(file.name)) {
+                                TextButton(
+                                    onClick = {
+                                        selectedFileForOption = null
+                                        viewModel.openSftpImagePreview(file)
+                                    }
+                                ) {
+                                    Icon(Icons.Filled.Image, null)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("View Image")
+                                }
+                            }
+                            TextButton(
+                                enabled = !viewModel.openWithBusy,
+                                onClick = {
+                                    selectedFileForOption = null
+                                    viewModel.openSftpFileWithDevice(file, openWithContext)
+                                }
+                            ) {
+                                Icon(Icons.Filled.OpenInNew, null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Open with Device App")
+                            }
                             TextButton(
                                 onClick = {
                                     pendingDownloadName = file.name
@@ -3005,6 +3047,9 @@ fun SftpFileEditor(
     showSudo: Boolean = true,
 ) {
     var buffer by remember(file.name) { mutableStateOf(file.content) }
+    // Files open read-only so browsing a config can't corrupt it with a stray IME keystroke;
+    // the pencil toggle in the top bar enables editing (and with it, Save).
+    var editMode by remember(file.name) { mutableStateOf(false) }
     val dirty = buffer != file.content
     val lineCount = remember(buffer) { buffer.count { it == '\n' } + 1 }
 
@@ -3024,23 +3069,34 @@ fun SftpFileEditor(
         onValueChange = { buffer = it },
         onClose = { attemptDismiss() },
         onSave = { onSave(buffer) },
-        subtitle = "$lineCount lines · ${buffer.length} chars" + if (sudo) " · sudo" else "",
+        subtitle = "$lineCount lines · ${buffer.length} chars" +
+            (if (!editMode) " · read-only" else "") + (if (sudo) " · sudo" else ""),
         subtitleColor = if (sudo) OmniColors.red else null,
         dirty = dirty,
         saving = saving,
-        canSave = dirty,
+        canSave = dirty && editMode,
         error = error,
         saveLabel = if (sudo) "Save as root" else "Save & verify",
+        readOnly = !editMode,
         language = remember(file.name) { languageForFileName(file.name) },
         highlightMaxChars = highlightLimit,
-        topBarAction = if (!showSudo) null else {
-            {
-                IconToggleButton(checked = sudo, onCheckedChange = { onToggleSudo() }) {
+        topBarAction = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                IconToggleButton(checked = editMode, onCheckedChange = { editMode = it }) {
                     Icon(
-                        Icons.Filled.AdminPanelSettings,
-                        contentDescription = if (sudo) "Save as root: on" else "Save as root: off",
-                        tint = if (sudo) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant,
+                        if (editMode) Icons.Filled.Edit else Icons.Filled.EditOff,
+                        contentDescription = if (editMode) "Edit mode: on" else "Edit mode: off (read-only)",
+                        tint = if (editMode) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+                if (showSudo) {
+                    IconToggleButton(checked = sudo, onCheckedChange = { onToggleSudo() }) {
+                        Icon(
+                            Icons.Filled.AdminPanelSettings,
+                            contentDescription = if (sudo) "Save as root: on" else "Save as root: off",
+                            tint = if (sudo) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         },
@@ -3114,7 +3170,7 @@ fun SftpBookmarksTab(viewModel: AppViewModel) {
                 // (an untested share is still worth attempting — browsing dials it anyway).
                 val available = when {
                     bmk.serverId != null -> servers.any { it.id == bmk.serverId && it.status == "online" }
-                    share != null -> share.lastStatus != "offline"
+                    share != null -> !shareUnavailable(share)
                     else -> false
                 }
                 val endpointColor = if (bmk.shareId != null) shareProtocolColor(share?.protocol ?: "") else OmniColors.cyan

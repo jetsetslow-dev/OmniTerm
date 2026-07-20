@@ -1,20 +1,26 @@
 // Android's own plugin classpath includes bundletool, SDK, and Jetifier libraries. Substitute
 // vulnerable versions before Gradle loads those tools, not just in the app's configurations.
+//
+// The module and versions are deliberately separate strings: the map KEYS are the VULNERABLE
+// transitive versions this protection exists to catch, and Dependabot's Gradle parser treats any
+// full "group:name:version" literal as a dependency declaration and "bumps" the key — turning the
+// substitution into a useless identity mapping (seen in its PRs #37/#38). Keeping the coordinate
+// split stops the false positives without ignoring the real dependencies.
 buildscript {
   configurations.configureEach {
     resolutionStrategy.dependencySubstitution {
-      val patchedModules = mapOf(
-        "com.google.guava:guava:30.1.1-jre" to "com.google.guava:guava:33.6.0-jre",
-        "org.apache.commons:commons-lang3:3.16.0" to "org.apache.commons:commons-lang3:3.19.0",
-        "org.bitbucket.b_c:jose4j:0.9.5" to "org.bitbucket.b_c:jose4j:0.9.6",
-        "org.bouncycastle:bcprov-jdk18on:1.79" to "org.bouncycastle:bcprov-jdk18on:1.85",
-        "org.bouncycastle:bcpkix-jdk18on:1.79" to "org.bouncycastle:bcpkix-jdk18on:1.85",
-        "org.bouncycastle:bcutil-jdk18on:1.79" to "org.bouncycastle:bcutil-jdk18on:1.85",
-        "org.jdom:jdom2:2.0.6" to "org.jdom:jdom2:2.0.6.1",
+      val patchedModules = listOf(
+        Triple("com.google.guava:guava", "30.1.1-jre", "33.6.0-jre"),
+        Triple("org.apache.commons:commons-lang3", "3.16.0", "3.19.0"),
+        Triple("org.bitbucket.b_c:jose4j", "0.9.5", "0.9.6"),
+        Triple("org.bouncycastle:bcprov-jdk18on", "1.79", "1.85"),
+        Triple("org.bouncycastle:bcpkix-jdk18on", "1.79", "1.85"),
+        Triple("org.bouncycastle:bcutil-jdk18on", "1.79", "1.85"),
+        Triple("org.jdom:jdom2", "2.0.6", "2.0.6.1"),
       )
-      patchedModules.forEach { (vulnerableCoordinate, patchedCoordinate) ->
-        substitute(module(vulnerableCoordinate))
-          .using(module(patchedCoordinate))
+      patchedModules.forEach { (moduleId, vulnerableVersion, patchedVersion) ->
+        substitute(module("$moduleId:$vulnerableVersion"))
+          .using(module("$moduleId:$patchedVersion"))
           .because("Avoid loading vulnerable transitive build dependencies")
       }
     }
@@ -35,16 +41,18 @@ plugins {
 allprojects {
   configurations.configureEach {
     resolutionStrategy.dependencySubstitution {
-      val patchedModules = mapOf(
-        "com.google.guava:guava:30.1.1-jre" to "com.google.guava:guava:33.6.0-jre",
-        "org.apache.commons:commons-lang3:3.16.0" to "org.apache.commons:commons-lang3:3.19.0",
-        "org.bouncycastle:bcprov-jdk18on:1.79" to "org.bouncycastle:bcprov-jdk18on:1.85",
-        "org.bouncycastle:bcpkix-jdk18on:1.79" to "org.bouncycastle:bcpkix-jdk18on:1.85",
-        "org.bouncycastle:bcutil-jdk18on:1.79" to "org.bouncycastle:bcutil-jdk18on:1.85",
+      // Split coordinates for the same reason as the buildscript block above: the keys must stay
+      // at the VULNERABLE versions, and Dependabot rewrites full-coordinate literals.
+      val patchedModules = listOf(
+        Triple("com.google.guava:guava", "30.1.1-jre", "33.6.0-jre"),
+        Triple("org.apache.commons:commons-lang3", "3.16.0", "3.19.0"),
+        Triple("org.bouncycastle:bcprov-jdk18on", "1.79", "1.85"),
+        Triple("org.bouncycastle:bcpkix-jdk18on", "1.79", "1.85"),
+        Triple("org.bouncycastle:bcutil-jdk18on", "1.79", "1.85"),
       )
-      patchedModules.forEach { (vulnerableCoordinate, patchedCoordinate) ->
-        substitute(module(vulnerableCoordinate))
-          .using(module(patchedCoordinate))
+      patchedModules.forEach { (moduleId, vulnerableVersion, patchedVersion) ->
+        substitute(module("$moduleId:$vulnerableVersion"))
+          .using(module("$moduleId:$patchedVersion"))
           .because("Avoid resolving vulnerable transitive build dependencies")
       }
     }

@@ -64,6 +64,12 @@ private const val ACTION_STREAM_MAX_CHARS = 200_000
 /** Hard editor safety limit. Reads above it fail explicitly instead of silently truncating YAML. */
 private const val COMPOSE_EDITOR_MAX_CHARS = 5_000_000
 
+/** Longest edge of a decoded image preview: bounded memory and under the GPU texture limit. */
+private const val IMAGE_PREVIEW_MAX_DIMENSION = 4096
+
+/** How long a pane's `#{alternate_on}` answer stays fresh for touch-scroll routing. */
+private const val PANE_ALT_CACHE_MS = 2_500L
+
 /** Cap per host for Fleet Broadcast output; long-running commands keep the latest tail only. */
 private const val BROADCAST_OUTPUT_MAX_CHARS = 120_000
 
@@ -3377,6 +3383,20 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     private fun customRulesOnly(rules: List<AlertRuleEntity>): List<AlertRuleEntity> =
         rules.filterNot { isPristineDefaultRule(it) }
 
+    /**
+     * Insert any default alert-rule preset that isn't already present (fleet-wide, serverId=0).
+     * Needed after a backup restore too: backups strip pristine presets, so a restored
+     * `alert_presets=true` setting would otherwise show an ON toggle with no rules behind it.
+     */
+    private suspend fun seedMissingDefaultAlertRules() {
+        val existing = repository.getRulesForServer(0)
+        for ((metric, threshold, severity) in alertRulePresets) {
+            if (existing.none { it.metricName == metric && it.thresholdValue == threshold }) {
+                repository.insertRule(AlertRuleEntity(serverId = 0, metricName = metric, thresholdValue = threshold, severity = severity))
+            }
+        }
+    }
+
     /** Enable/disable the default alert rules across all current hosts. */
     fun toggleAlertPresets(enabled: Boolean) {
         alertPresetsEnabled = enabled
@@ -3384,12 +3404,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
             alertStateMutex.withLock {
                 repository.insertSetting("alert_presets", enabled.toString())
                 if (enabled) {
-                    val existing = repository.getRulesForServer(0)
-                    for ((metric, threshold, severity) in alertRulePresets) {
-                        if (existing.none { it.metricName == metric && it.thresholdValue == threshold }) {
-                            repository.insertRule(AlertRuleEntity(serverId = 0, metricName = metric, thresholdValue = threshold, severity = severity))
-                        }
-                    }
+                    seedMissingDefaultAlertRules()
                 } else {
                     val sigs = alertRulePresets.map { it.first to it.second }.toSet()
                     repository.getAllRules()
@@ -4135,10 +4150,17 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      * The pane's real history (bounded by history-limit) lives server-side; this fetches it via
      * side-channel `capture-pane`, re-parses it through a scratch emulator at the live grid's
      * width, and swaps it in wholesale — which also replaces the attach-seed's padding and any
-     * partial repaint junk. Called when the user scrolls off the tail with new output pending
-     * ([ShellSession.scrollbackDirty]); skipped while a full-screen TUI owns the alt screen,
-     * because tmux history covers only the normal screen and swapping would trade captured TUI
-     * frames for unrelated shell history.
+     * partial repaint junk (including frames a full-screen TUI like Claude Code scrolled into
+     * the locally captured scrollback while it ran). Called when the user scrolls off the tail
+     * with new output pending ([ShellSession.scrollbackDirty]); skipped while a full-screen TUI
+     * owns the alt screen, because tmux history covers only the normal screen and swapping would
+     * trade captured TUI frames for unrelated shell history.
+     *
+     * The local emulator's alt state signals an inner TUI only in control mode (pane bytes are
+     * fed directly). On a regular attach the tmux client itself holds the outer alt screen for
+     * the whole session, so checking it locally would disable re-sync permanently; there the
+     * inner-TUI skip comes from the capture command's remote `#{alternate_on}` guard instead
+     * (it returns nothing while a TUI owns the pane, which keeps the dirty flag armed).
      *
      * Returns the resulting change in total row count so the caller can shift its viewport
      * anchor and keep the content under the user's finger stationary; 0 when nothing changed.
@@ -4152,10 +4174,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         if (!session.persistent || !session.scrollbackDirty || !session.scrollbackSyncMutex.tryLock()) return 0
         try {
             val emulator = session.emulator
+            val altGuardApplies = !allowAlternateScreen && session.controlMode
             val cols: Int
             val rows: Int
             synchronized(emulator) {
-                if (!allowAlternateScreen && emulator.isAlternateScreenActive()) return 0
+                if (altGuardApplies && emulator.isAlternateScreenActive()) return 0
                 cols = emulator.cols
                 rows = emulator.rows
             }
@@ -4178,7 +4201,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 scratch.feed(history.replace("\n", "\r\n").toByteArray())
                 scratch.feed("\r\n".repeat(rows).toByteArray())
                 synchronized(emulator) {
-                    if ((!allowAlternateScreen && emulator.isAlternateScreenActive()) || emulator.cols != cols) {
+                    if ((altGuardApplies && emulator.isAlternateScreenActive()) || emulator.cols != cols) {
                         // The capture is valid only for the grid/mode observed at the start. Keep it
                         // dirty so a later scroll gesture can retry instead of trusting no-op data.
                         session.scrollbackDirty = true
@@ -5308,6 +5331,40 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val seq = "[<$button;1;1M".toByteArray()
         repeat(ticks.coerceIn(1, 10)) { seq.forEach { out.add(it) } }
         sendBytesTo(s, out.toByteArray())
+    }
+
+    /**
+     * True when a full-screen TUI owns [session]'s pane — the touch-scroll routing signal (see
+     * [TuiScrollRouter]). Control mode and raw PTY sessions read the emulator's own alternate
+     * screen, which is authoritative there. Regular tmux attach can't know locally (the tmux
+     * client itself holds the outer alternate screen for the whole session), so it asks the
+     * server for the pane's `#{alternate_on}`, cached briefly per session so a gesture costs at
+     * most one side-channel query.
+     */
+    suspend fun isPaneTuiActiveFor(session: ShellSession?): Boolean {
+        val s = session ?: return false
+        if (!s.isConnected) return false
+        if (!s.persistent || s.controlMode) {
+            return synchronized(s.emulator) { s.emulator.isAlternateScreenActive() }
+        }
+        val now = System.currentTimeMillis()
+        if (now - s.paneAltCheckedAtMs < PANE_ALT_CACHE_MS) return s.paneAltActive
+        val creds = s.creds ?: return false
+        val out = withContext(Dispatchers.IO) {
+            runCatching { sshTransport.exec(creds, RemoteCommands.tmuxAlternateOnQuery(s.tmuxName)) }.getOrNull()
+        }
+        val active = out?.trim() == "1"
+        s.paneAltActive = active
+        s.paneAltCheckedAtMs = System.currentTimeMillis()
+        return active
+    }
+
+    /** Type [count] PageUp/PageDown presses into [session]'s PTY (tmux forwards them to the app). */
+    fun terminalSendPageKeysFor(session: ShellSession?, up: Boolean, count: Int) {
+        val s = session ?: return
+        if (!s.isConnected || count <= 0) return
+        val key = if (up) "\u001B[5~" else "\u001B[6~"
+        sendBytesTo(s, key.repeat(count).toByteArray())
     }
 
     /**
@@ -7040,6 +7097,198 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ── In-app image preview (SFTP + Shares) ──────────────────────────────────────────────────
+    // Streams the remote file into a transient in-memory buffer, decodes a display-sized bitmap
+    // (subsampled to ≤IMAGE_PREVIEW_MAX_DIMENSION px), and lets the raw bytes go immediately —
+    // only the small rendered bitmap stays referenced until the viewer closes. That keeps big
+    // photos viewable without a persistent cache or a trip through another app.
+
+    data class RemoteImagePreview(
+        val name: String,
+        val sizeBytes: Long,
+        val bitmap: android.graphics.Bitmap? = null,
+        val error: String? = null,
+        /** 0..1 while downloading when the total size is known. */
+        val progress: Float? = null,
+    )
+
+    var imagePreview by mutableStateOf<RemoteImagePreview?>(null)
+        private set
+    private var imagePreviewJob: Job? = null
+
+    /** Raw-download ceiling. The buffer is transient, but a runaway file could still eat the heap. */
+    private val imagePreviewMaxBytes = 64L * 1024 * 1024
+
+    private val imagePreviewExtensions =
+        setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif")
+
+    /** True for filenames the in-app image viewer will attempt to decode. */
+    fun isImageFile(name: String): Boolean {
+        val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        return ext in imagePreviewExtensions
+    }
+
+    fun closeImagePreview() {
+        imagePreviewJob?.cancel()
+        imagePreviewJob = null
+        imagePreview = null // drops the only reference to the decoded bitmap
+    }
+
+    fun openSftpImagePreview(file: SftpFile) {
+        val path = joinPath(sftpPath, file.name)
+        loadImagePreview(file.name, file.size) { out, onProgress ->
+            (sftpClientOrNull() ?: throw IllegalStateException("No SFTP connection"))
+                .downloadTo(path, out, onProgress)
+        }
+    }
+
+    fun openShareImagePreview(file: SftpFile) {
+        val share = browsingShare ?: return
+        val path = joinPath(sharePath, file.name)
+        loadImagePreview(file.name, file.size) { out, onProgress ->
+            browserClient(share).downloadTo(path, out, onProgress)
+        }
+    }
+
+    private fun loadImagePreview(
+        name: String,
+        sizeBytes: Long,
+        download: suspend (java.io.OutputStream, (Long, Long) -> Unit) -> Unit,
+    ) {
+        if (sizeBytes > imagePreviewMaxBytes) {
+            imagePreview = RemoteImagePreview(
+                name, sizeBytes,
+                error = "Too large to preview (${formatBytes(sizeBytes)}; limit " +
+                    "${formatBytes(imagePreviewMaxBytes)}) — use Download to Device.",
+            )
+            return
+        }
+        imagePreviewJob?.cancel()
+        imagePreview = RemoteImagePreview(name, sizeBytes)
+        imagePreviewJob = viewModelScope.launch {
+            try {
+                val bitmap = withContext(Dispatchers.IO) {
+                    val out = java.io.ByteArrayOutputStream(sizeBytes.coerceIn(0, imagePreviewMaxBytes).toInt())
+                    download(out) { done, total ->
+                        val denominator = if (total > 0) total else sizeBytes
+                        val current = imagePreview
+                        if (denominator > 0 && current?.name == name && current.bitmap == null) {
+                            imagePreview = current.copy(progress = (done.toFloat() / denominator).coerceIn(0f, 1f))
+                        }
+                    }
+                    decodeSampledBitmap(out.toByteArray()) // raw bytes go out of scope right here
+                }
+                imagePreview = imagePreview?.takeIf { it.name == name }?.copy(
+                    bitmap = bitmap,
+                    progress = null,
+                    error = if (bitmap == null) "Couldn't decode $name as an image." else null,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                imagePreview = imagePreview?.takeIf { it.name == name }
+                    ?.copy(error = e.message ?: "Preview failed", progress = null)
+            }
+        }
+    }
+
+    // ── Open a remote file with the device's own viewer apps ─────────────────────────────────
+    // Streams the file into a FileProvider-exposed cache subdirectory and fires ACTION_VIEW, so
+    // videos (and any format the device has an app for) open in the system player without OmniTerm
+    // bundling one. The cache dir is cleared on each new open; nothing accumulates.
+
+    var openWithBusy by mutableStateOf(false)
+        private set
+    private val openWithMaxBytes = 256L * 1024 * 1024
+
+    fun openSftpFileWithDevice(file: SftpFile, context: android.content.Context) {
+        val path = joinPath(sftpPath, file.name)
+        openRemoteFileWithDevice(file.name, file.size, context, onStatus = { sftpStatus = it }) { out, onProgress ->
+            (sftpClientOrNull() ?: throw IllegalStateException("No SFTP connection"))
+                .downloadTo(path, out, onProgress)
+        }
+    }
+
+    fun openShareFileWithDevice(file: SftpFile, context: android.content.Context) {
+        val share = browsingShare ?: return
+        val path = joinPath(sharePath, file.name)
+        openRemoteFileWithDevice(file.name, file.size, context, onStatus = { shareStatus = it }) { out, onProgress ->
+            browserClient(share).downloadTo(path, out, onProgress)
+        }
+    }
+
+    private fun openRemoteFileWithDevice(
+        name: String,
+        sizeBytes: Long,
+        context: android.content.Context,
+        onStatus: (String) -> Unit,
+        download: suspend (java.io.OutputStream, (Long, Long) -> Unit) -> Unit,
+    ) {
+        if (openWithBusy) return
+        if (sizeBytes > openWithMaxBytes) {
+            onStatus("Too large to open here (${formatBytes(sizeBytes)}) — use Download to Device.")
+            return
+        }
+        val appContext = context.applicationContext
+        openWithBusy = true
+        viewModelScope.launch {
+            try {
+                val target = withContext(Dispatchers.IO) {
+                    val dir = java.io.File(appContext.cacheDir, "remote-previews")
+                    dir.mkdirs()
+                    dir.listFiles()?.forEach { it.delete() }
+                    val safeName = name.substringAfterLast('/').substringAfterLast('\\').ifBlank { "file" }
+                    val file = java.io.File(dir, safeName)
+                    file.outputStream().use { out ->
+                        download(out) { done, total ->
+                            val denominator = if (total > 0) total else sizeBytes
+                            if (denominator > 0) {
+                                onStatus("Preparing $safeName… ${(done * 100 / denominator).toInt()}%")
+                            }
+                        }
+                    }
+                    file
+                }
+                val uri = androidx.core.content.FileProvider.getUriForFile(
+                    appContext, "${appContext.packageName}.fileprovider", target,
+                )
+                val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+                val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "*/*"
+                val view = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, mime)
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                val chooser = android.content.Intent.createChooser(view, "Open ${target.name} with…")
+                    .apply { addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK) }
+                appContext.startActivity(chooser)
+                onStatus("Opened ${target.name}")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: android.content.ActivityNotFoundException) {
+                onStatus("No app on this device can open ${name.substringAfterLast('.')} files.")
+            } catch (e: Exception) {
+                onStatus("Open failed: ${e.message}")
+            } finally {
+                openWithBusy = false
+            }
+        }
+    }
+
+    /**
+     * Decode [bytes] subsampled so neither dimension exceeds [maxDimension] — bounded memory for
+     * arbitrarily large photos, and safely under the GPU texture-size limit. Null when the bytes
+     * aren't a decodable image (wrong extension, unsupported codec on this API level).
+     */
+    private fun decodeSampledBitmap(bytes: ByteArray, maxDimension: Int = IMAGE_PREVIEW_MAX_DIMENSION): android.graphics.Bitmap? {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (bounds.outWidth / sample > maxDimension || bounds.outHeight / sample > maxDimension) sample *= 2
+        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        return android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
+    }
+
     /** Write edited text back to the share, then refresh. [onSaved] runs on verified success. */
     fun shareSaveText(file: SftpFile, text: String, onSaved: () -> Unit) {
         val share = browsingShare ?: return
@@ -7920,11 +8169,15 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     if (!online) return@launch
                     selectedServerId = bookmark.serverId
                     activeSftpTab = 1
+                    // If this host's SFTP state isn't loaded yet, the tab's ensure-effect will
+                    // reset and issue its own loadSftp of the session path, cancelling ours —
+                    // seed the session path so either load lands on the bookmark.
+                    sftpSessionPaths[bookmark.serverId] = bookmark.path
                     loadSftp(bookmark.path)
                 }
                 bookmark.shareId != null -> {
                     val share = repository.getAllNetworkShares().firstOrNull { it.id == bookmark.shareId } ?: return@launch
-                    if (share.lastStatus == "offline") return@launch
+                    if (shareUnavailable(share)) return@launch
                     activeSftpTab = 2
                     openShareBrowser(share, startPath = bookmark.path)
                 }
@@ -7962,13 +8215,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Create an archive from the current selection (or a single [only] entry) in the current folder,
-     * server-side via the host's zip/tar. [format] is "zip" | "tar.gz" | "tar". Refreshes on success.
+     * server-side via the host's zip/tar/7z. [format] is "zip" | "tar.gz" | "tar" | "7z". Refreshes on success.
      */
     fun sftpArchiveSelection(format: String, only: SftpFile? = null) {
         val srv = selectedServer ?: return
         val names = if (only != null) listOf(only.name) else sftpSelected.toList()
         if (names.isEmpty()) return
-        val ext = when (format) { "zip" -> "zip"; "tar" -> "tar"; else -> "tar.gz" }
+        val ext = when (format) { "zip" -> "zip"; "tar" -> "tar"; "7z" -> "7z"; else -> "tar.gz" }
         val stamp = java.text.SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(java.util.Date())
         val base = if (names.size == 1) names.first().substringBeforeLast('.', names.first()) else "archive-$stamp"
         val archiveName = "$base.$ext"
@@ -8006,10 +8259,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    /** True for filenames the in-app extractor understands (zip / tar / tar.gz / tgz). */
+    /** True for filenames the in-app extractor understands (zip / tar variants / 7z / rar). */
     fun isArchiveFile(name: String): Boolean {
         val l = name.lowercase()
-        return l.endsWith(".zip") || l.endsWith(".tar.gz") || l.endsWith(".tgz") || l.endsWith(".tar")
+        return l.endsWith(".zip") || l.endsWith(".tar.gz") || l.endsWith(".tgz") || l.endsWith(".tar") ||
+            l.endsWith(".tar.bz2") || l.endsWith(".tbz2") || l.endsWith(".tar.xz") || l.endsWith(".txz") ||
+            l.endsWith(".7z") || l.endsWith(".rar")
     }
 
     fun sftpDelete(file: SftpFile) {
@@ -8228,6 +8483,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val markers = listOf(
             "permission denied", "no such file", "sudo:", "a password is required",
             "incorrect password", "not in the sudoers", "operation not permitted",
+            "command not found", "not installed", "unsupported archive",
         )
         return if (markers.any { first.contains(it, ignoreCase = true) }) first else null
     }
@@ -10447,6 +10703,12 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
 
+                    // Backups strip pristine default alert rules, so a restored alert_presets=true
+                    // needs its preset rows recreated or the toggle shows ON with no rules behind it.
+                    if (repository.getSetting("alert_presets") == "true") {
+                        seedMissingDefaultAlertRules()
+                    }
+
                     // Crash logs (opt-in). Merge into the on-device history newest-first; deduped by
                     // timestamp so re-importing the same backup doesn't pile up duplicates.
                     val crashArr = root.optJSONArray("crashLogs") ?: org.json.JSONArray()
@@ -10593,6 +10855,14 @@ internal fun queryWhoisServer(server: String, target: String): String {
         socket.getInputStream().bufferedReader().readText()
     }
 }
+
+/**
+ * True when the last availability probe marked this share unreachable. Probes write
+ * "unreachable" (never "offline"); the set matches the Shares list's red states so the
+ * Bookmarks tab greys out exactly what the Shares tab calls Unavailable.
+ */
+internal fun shareUnavailable(share: NetworkShareEntity): Boolean =
+    share.lastStatus.lowercase(Locale.ROOT) in setOf("unreachable", "offline", "failed", "error")
 
 internal fun cleanWhoisServerUri(server: String): String =
     server.trim()
