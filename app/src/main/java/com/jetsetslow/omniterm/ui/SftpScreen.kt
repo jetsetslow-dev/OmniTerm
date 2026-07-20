@@ -1066,6 +1066,19 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                                     onDismissRequest = { menuForName = null },
                                 ) {
                                     if (!file.isDirectory) {
+                                        if (viewModel.isImageFile(file.name)) {
+                                            DropdownMenuItem(
+                                                text = { Text("View image") },
+                                                leadingIcon = { Icon(Icons.Filled.Image, null) },
+                                                onClick = { menuForName = null; viewModel.openShareImagePreview(file) },
+                                            )
+                                        }
+                                        DropdownMenuItem(
+                                            text = { Text("Open with device app") },
+                                            leadingIcon = { Icon(Icons.Filled.OpenInNew, null) },
+                                            enabled = !viewModel.openWithBusy,
+                                            onClick = { menuForName = null; viewModel.openShareFileWithDevice(file, context) },
+                                        )
                                         DropdownMenuItem(
                                             text = { Text("Edit text file") },
                                             leadingIcon = { Icon(Icons.Filled.EditNote, null) },
@@ -2388,6 +2401,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
 
         // Selected cell Actions popup drawer
         selectedFileForOption?.let { file ->
+            val openWithContext = androidx.compose.ui.platform.LocalContext.current
             AlertDialog(
                 onDismissRequest = { selectedFileForOption = null },
                 title = { Text(file.name, fontFamily = OmniFonts.mono) },
@@ -2397,6 +2411,29 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         if (!file.isDirectory) {
+                            if (viewModel.isImageFile(file.name)) {
+                                TextButton(
+                                    onClick = {
+                                        selectedFileForOption = null
+                                        viewModel.openSftpImagePreview(file)
+                                    }
+                                ) {
+                                    Icon(Icons.Filled.Image, null)
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("View Image")
+                                }
+                            }
+                            TextButton(
+                                enabled = !viewModel.openWithBusy,
+                                onClick = {
+                                    selectedFileForOption = null
+                                    viewModel.openSftpFileWithDevice(file, openWithContext)
+                                }
+                            ) {
+                                Icon(Icons.Filled.OpenInNew, null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("Open with Device App")
+                            }
                             TextButton(
                                 onClick = {
                                     pendingDownloadName = file.name

@@ -64,6 +64,9 @@ private const val ACTION_STREAM_MAX_CHARS = 200_000
 /** Hard editor safety limit. Reads above it fail explicitly instead of silently truncating YAML. */
 private const val COMPOSE_EDITOR_MAX_CHARS = 5_000_000
 
+/** Longest edge of a decoded image preview: bounded memory and under the GPU texture limit. */
+private const val IMAGE_PREVIEW_MAX_DIMENSION = 4096
+
 /** Cap per host for Fleet Broadcast output; long-running commands keep the latest tail only. */
 private const val BROADCAST_OUTPUT_MAX_CHARS = 120_000
 
@@ -7055,6 +7058,198 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 shareError = e.message ?: "Could not open file for editing"
             }
         }
+    }
+
+    // ── In-app image preview (SFTP + Shares) ──────────────────────────────────────────────────
+    // Streams the remote file into a transient in-memory buffer, decodes a display-sized bitmap
+    // (subsampled to ≤IMAGE_PREVIEW_MAX_DIMENSION px), and lets the raw bytes go immediately —
+    // only the small rendered bitmap stays referenced until the viewer closes. That keeps big
+    // photos viewable without a persistent cache or a trip through another app.
+
+    data class RemoteImagePreview(
+        val name: String,
+        val sizeBytes: Long,
+        val bitmap: android.graphics.Bitmap? = null,
+        val error: String? = null,
+        /** 0..1 while downloading when the total size is known. */
+        val progress: Float? = null,
+    )
+
+    var imagePreview by mutableStateOf<RemoteImagePreview?>(null)
+        private set
+    private var imagePreviewJob: Job? = null
+
+    /** Raw-download ceiling. The buffer is transient, but a runaway file could still eat the heap. */
+    private val imagePreviewMaxBytes = 64L * 1024 * 1024
+
+    private val imagePreviewExtensions =
+        setOf("jpg", "jpeg", "png", "gif", "webp", "bmp", "heic", "heif", "avif")
+
+    /** True for filenames the in-app image viewer will attempt to decode. */
+    fun isImageFile(name: String): Boolean {
+        val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+        return ext in imagePreviewExtensions
+    }
+
+    fun closeImagePreview() {
+        imagePreviewJob?.cancel()
+        imagePreviewJob = null
+        imagePreview = null // drops the only reference to the decoded bitmap
+    }
+
+    fun openSftpImagePreview(file: SftpFile) {
+        val path = joinPath(sftpPath, file.name)
+        loadImagePreview(file.name, file.size) { out, onProgress ->
+            (sftpClientOrNull() ?: throw IllegalStateException("No SFTP connection"))
+                .downloadTo(path, out, onProgress)
+        }
+    }
+
+    fun openShareImagePreview(file: SftpFile) {
+        val share = browsingShare ?: return
+        val path = joinPath(sharePath, file.name)
+        loadImagePreview(file.name, file.size) { out, onProgress ->
+            browserClient(share).downloadTo(path, out, onProgress)
+        }
+    }
+
+    private fun loadImagePreview(
+        name: String,
+        sizeBytes: Long,
+        download: suspend (java.io.OutputStream, (Long, Long) -> Unit) -> Unit,
+    ) {
+        if (sizeBytes > imagePreviewMaxBytes) {
+            imagePreview = RemoteImagePreview(
+                name, sizeBytes,
+                error = "Too large to preview (${formatBytes(sizeBytes)}; limit " +
+                    "${formatBytes(imagePreviewMaxBytes)}) — use Download to Device.",
+            )
+            return
+        }
+        imagePreviewJob?.cancel()
+        imagePreview = RemoteImagePreview(name, sizeBytes)
+        imagePreviewJob = viewModelScope.launch {
+            try {
+                val bitmap = withContext(Dispatchers.IO) {
+                    val out = java.io.ByteArrayOutputStream(sizeBytes.coerceIn(0, imagePreviewMaxBytes).toInt())
+                    download(out) { done, total ->
+                        val denominator = if (total > 0) total else sizeBytes
+                        val current = imagePreview
+                        if (denominator > 0 && current?.name == name && current.bitmap == null) {
+                            imagePreview = current.copy(progress = (done.toFloat() / denominator).coerceIn(0f, 1f))
+                        }
+                    }
+                    decodeSampledBitmap(out.toByteArray()) // raw bytes go out of scope right here
+                }
+                imagePreview = imagePreview?.takeIf { it.name == name }?.copy(
+                    bitmap = bitmap,
+                    progress = null,
+                    error = if (bitmap == null) "Couldn't decode $name as an image." else null,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                imagePreview = imagePreview?.takeIf { it.name == name }
+                    ?.copy(error = e.message ?: "Preview failed", progress = null)
+            }
+        }
+    }
+
+    // ── Open a remote file with the device's own viewer apps ─────────────────────────────────
+    // Streams the file into a FileProvider-exposed cache subdirectory and fires ACTION_VIEW, so
+    // videos (and any format the device has an app for) open in the system player without OmniTerm
+    // bundling one. The cache dir is cleared on each new open; nothing accumulates.
+
+    var openWithBusy by mutableStateOf(false)
+        private set
+    private val openWithMaxBytes = 256L * 1024 * 1024
+
+    fun openSftpFileWithDevice(file: SftpFile, context: android.content.Context) {
+        val path = joinPath(sftpPath, file.name)
+        openRemoteFileWithDevice(file.name, file.size, context, onStatus = { sftpStatus = it }) { out, onProgress ->
+            (sftpClientOrNull() ?: throw IllegalStateException("No SFTP connection"))
+                .downloadTo(path, out, onProgress)
+        }
+    }
+
+    fun openShareFileWithDevice(file: SftpFile, context: android.content.Context) {
+        val share = browsingShare ?: return
+        val path = joinPath(sharePath, file.name)
+        openRemoteFileWithDevice(file.name, file.size, context, onStatus = { shareStatus = it }) { out, onProgress ->
+            browserClient(share).downloadTo(path, out, onProgress)
+        }
+    }
+
+    private fun openRemoteFileWithDevice(
+        name: String,
+        sizeBytes: Long,
+        context: android.content.Context,
+        onStatus: (String) -> Unit,
+        download: suspend (java.io.OutputStream, (Long, Long) -> Unit) -> Unit,
+    ) {
+        if (openWithBusy) return
+        if (sizeBytes > openWithMaxBytes) {
+            onStatus("Too large to open here (${formatBytes(sizeBytes)}) — use Download to Device.")
+            return
+        }
+        val appContext = context.applicationContext
+        openWithBusy = true
+        viewModelScope.launch {
+            try {
+                val target = withContext(Dispatchers.IO) {
+                    val dir = java.io.File(appContext.cacheDir, "remote-previews")
+                    dir.mkdirs()
+                    dir.listFiles()?.forEach { it.delete() }
+                    val safeName = name.substringAfterLast('/').substringAfterLast('\\').ifBlank { "file" }
+                    val file = java.io.File(dir, safeName)
+                    file.outputStream().use { out ->
+                        download(out) { done, total ->
+                            val denominator = if (total > 0) total else sizeBytes
+                            if (denominator > 0) {
+                                onStatus("Preparing $safeName… ${(done * 100 / denominator).toInt()}%")
+                            }
+                        }
+                    }
+                    file
+                }
+                val uri = androidx.core.content.FileProvider.getUriForFile(
+                    appContext, "${appContext.packageName}.fileprovider", target,
+                )
+                val ext = name.substringAfterLast('.', "").lowercase(Locale.ROOT)
+                val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(ext) ?: "*/*"
+                val view = android.content.Intent(android.content.Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, mime)
+                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                val chooser = android.content.Intent.createChooser(view, "Open ${target.name} with…")
+                    .apply { addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK) }
+                appContext.startActivity(chooser)
+                onStatus("Opened ${target.name}")
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: android.content.ActivityNotFoundException) {
+                onStatus("No app on this device can open ${name.substringAfterLast('.')} files.")
+            } catch (e: Exception) {
+                onStatus("Open failed: ${e.message}")
+            } finally {
+                openWithBusy = false
+            }
+        }
+    }
+
+    /**
+     * Decode [bytes] subsampled so neither dimension exceeds [maxDimension] — bounded memory for
+     * arbitrarily large photos, and safely under the GPU texture-size limit. Null when the bytes
+     * aren't a decodable image (wrong extension, unsupported codec on this API level).
+     */
+    private fun decodeSampledBitmap(bytes: ByteArray, maxDimension: Int = IMAGE_PREVIEW_MAX_DIMENSION): android.graphics.Bitmap? {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        var sample = 1
+        while (bounds.outWidth / sample > maxDimension || bounds.outHeight / sample > maxDimension) sample *= 2
+        val opts = android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        return android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, opts)
     }
 
     /** Write edited text back to the share, then refresh. [onSaved] runs on verified success. */
