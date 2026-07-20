@@ -101,6 +101,7 @@ import com.jetsetslow.omniterm.ui.theme.OmniColors
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.ceil
 
 @Composable
@@ -1468,7 +1469,26 @@ private fun PaneTerminal(
             // Scrollable (rather than a raw drag detector) so swipes get standard fling momentum —
             // row-stepping without it made deep scrollback a slog of repeated full-screen drags.
             // The drag/boundary/tail-follow rules live in TerminalViewportState (unit-tested).
-            val terminalScrollState = rememberScrollableState { deltaPx ->
+            //
+            // Full-screen TUIs (pagers, editors, interactive CLIs — anything on the pane's
+            // alternate screen) have no terminal-side history to scroll, so gestures that start
+            // at the live tail are routed by TuiScrollRouter: TUIs get PageUp/PageDown presses
+            // (the paging keys virtually every TUI understands), plain shells keep the local
+            // scroll. Routing may need a side-channel `#{alternate_on}` query; the first deltas
+            // buffer until it resolves (or a short timeout falls back to local scrolling).
+            val tuiRouter = remember(currentSession.id) { TuiScrollRouter() }
+            val tuiRouterScope = rememberCoroutineScope()
+            var tuiRouterIdleGeneration by remember(currentSession.id) { mutableStateOf(0) }
+            LaunchedEffect(tuiRouterIdleGeneration, currentSession.id) {
+                if (tuiRouterIdleGeneration > 0) {
+                    delay(900)
+                    tuiRouter.reset()
+                }
+            }
+            // Ordinary local-buffer scroll: honest boundary consumption plus the scrolled-up
+            // history resync retries. Used directly when no TUI gesture is in flight, and for
+            // replaying buffered deltas when a gesture resolves to the local route.
+            fun localScroll(deltaPx: Float): Float =
                 viewport.consumeScroll(deltaPx, cellHeight, latestTotalRows, latestVisibleRows) {
                     viewModel.updateTerminalViewportFor(currentSession, viewport.firstVisibleRow, visibleRowCount, viewport.followTail)
                     // Dirty history can re-arm while we remain scrolled up (new output or a resize),
@@ -1479,6 +1499,37 @@ private fun PaneTerminal(
                             viewport.applyRowDelta(viewModel.resyncTmuxScrollbackFor(currentSession))
                         }
                     }
+                }
+            fun applyTuiAction(action: TuiScrollRouter.Action) {
+                when (action) {
+                    is TuiScrollRouter.Action.Pages ->
+                        viewModel.terminalSendPageKeysFor(currentSession, action.up, action.count)
+                    is TuiScrollRouter.Action.Local -> localScroll(action.deltaPx)
+                    TuiScrollRouter.Action.Buffered -> Unit
+                }
+            }
+            val terminalScrollState = rememberScrollableState { deltaPx ->
+                val pagePx = (latestVisibleRows * cellHeight * 0.8f).coerceAtLeast(1f)
+                val routerOwnsGesture = tuiRouter.routedToTui || tuiRouter.awaitingResolution ||
+                    (tuiRouter.isIdle && viewport.followTail)
+                if (routerOwnsGesture) {
+                    val startedPending = tuiRouter.isIdle
+                    val action = tuiRouter.onDelta(deltaPx, pagePx)
+                    if (startedPending && tuiRouter.awaitingResolution) {
+                        tuiRouterScope.launch {
+                            val tui = withTimeoutOrNull(600) { viewModel.isPaneTuiActiveFor(currentSession) } ?: false
+                            applyTuiAction(tuiRouter.resolve(tui, pagePx))
+                        }
+                    }
+                    applyTuiAction(action)
+                    tuiRouterIdleGeneration++
+                    // Consume the full delta while the router owns the gesture so flings decay
+                    // against it, not the (motionless) local viewport.
+                    deltaPx
+                } else {
+                    // Router resolved LOCAL (or the viewport is already off the tail): plain
+                    // local scrolling with its original honest boundary behavior.
+                    localScroll(deltaPx)
                 }
             }
 
@@ -2321,7 +2372,9 @@ private fun TerminalKeyBar(viewModel: AppViewModel, compact: Boolean = false) {
                     KeyCap("↓", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DOWN) }
                     KeyCap("→", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.RIGHT) }
                     KeyCap("END", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.END) }
+                    KeyCap("DEL", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DELETE) }
                     KeyCap("-", Modifier.weight(1f)) { viewModel.typeText("-") }
+                    KeyCap("⌫", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.BACKSPACE) }
                     KeyCap("↵", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ENTER) }
                 }
             }
@@ -2358,6 +2411,7 @@ private fun TerminalKeyBar(viewModel: AppViewModel, compact: Boolean = false) {
                 KeyCap("↑", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.UP) }
                 KeyCap("ALT", Modifier.weight(1f), active = viewModel.isAltPressed) { viewModel.isAltPressed = !viewModel.isAltPressed }
                 KeyCap("/", Modifier.weight(1f)) { viewModel.typeText("/") }
+                KeyCap("⌫", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.BACKSPACE) }
                 KeyCap("SYM", Modifier.weight(1f), active = true, activeColor = OmniColors.purple) { showSymbols = true }
                 KeyCap("FN", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) { viewModel.isFunctionSetVisible = true }
             }
@@ -2369,6 +2423,7 @@ private fun TerminalKeyBar(viewModel: AppViewModel, compact: Boolean = false) {
                 KeyCap("↓", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DOWN) }
                 KeyCap("→", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.RIGHT) }
                 KeyCap("END", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.END) }
+                KeyCap("DEL", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DELETE) }
                 KeyCap("-", Modifier.weight(1f)) { viewModel.typeText("-") }
                 KeyCap("↵", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ENTER) }
             }

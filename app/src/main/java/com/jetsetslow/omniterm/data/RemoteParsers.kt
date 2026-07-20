@@ -203,6 +203,14 @@ object RemoteCommands {
     fun tmuxCursorQuery(name: String): String =
         "tmux display-message -p -t ${tmuxSafeName(name)} '#{cursor_x} #{cursor_y}' 2>/dev/null || true"
 
+    /**
+     * Prints `1` when a full-screen TUI owns the pane's alternate screen, else `0`. Drives
+     * touch-scroll routing: TUIs get PageUp/PageDown (they own their scrolling; the terminal
+     * side has no history for them), plain shells keep the local-buffer scroll.
+     */
+    fun tmuxAlternateOnQuery(name: String): String =
+        "tmux display-message -p -t ${tmuxSafeName(name)} '#{alternate_on}' 2>/dev/null || true"
+
     /** Cursor position for an exact pane id, avoiding an active-pane change between side queries. */
     fun tmuxPaneCursorQuery(paneId: String): String {
         val safe = paneId.takeIf { it.matches(Regex("%\\d+")) } ?: "%0"

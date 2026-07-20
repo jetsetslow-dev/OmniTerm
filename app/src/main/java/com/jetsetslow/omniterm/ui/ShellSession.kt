@@ -117,6 +117,14 @@ class ShellSession(
     @Volatile var scrollbackDirty: Boolean = false
     /** Atomically excludes overlapping capture-pane re-syncs for this session. */
     val scrollbackSyncMutex = Mutex()
+    /**
+     * Short-lived cache of the pane's `#{alternate_on}` state (a full-screen TUI owns the pane),
+     * so touch-scroll routing doesn't need a side-channel round trip on every gesture. Only used
+     * for regular-attach persistent sessions — control mode and raw PTYs read the emulator's own
+     * alternate-screen state, which is authoritative there.
+     */
+    @Volatile var paneAltActive: Boolean = false
+    @Volatile var paneAltCheckedAtMs: Long = 0L
     /** Initial large tmux-history hydration; session-owned so closing never leaves parser work behind. */
     var historyHydrationJob: Job? = null
 

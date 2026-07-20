@@ -67,6 +67,9 @@ private const val COMPOSE_EDITOR_MAX_CHARS = 5_000_000
 /** Longest edge of a decoded image preview: bounded memory and under the GPU texture limit. */
 private const val IMAGE_PREVIEW_MAX_DIMENSION = 4096
 
+/** How long a pane's `#{alternate_on}` answer stays fresh for touch-scroll routing. */
+private const val PANE_ALT_CACHE_MS = 2_500L
+
 /** Cap per host for Fleet Broadcast output; long-running commands keep the latest tail only. */
 private const val BROADCAST_OUTPUT_MAX_CHARS = 120_000
 
@@ -5328,6 +5331,40 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val seq = "[<$button;1;1M".toByteArray()
         repeat(ticks.coerceIn(1, 10)) { seq.forEach { out.add(it) } }
         sendBytesTo(s, out.toByteArray())
+    }
+
+    /**
+     * True when a full-screen TUI owns [session]'s pane — the touch-scroll routing signal (see
+     * [TuiScrollRouter]). Control mode and raw PTY sessions read the emulator's own alternate
+     * screen, which is authoritative there. Regular tmux attach can't know locally (the tmux
+     * client itself holds the outer alternate screen for the whole session), so it asks the
+     * server for the pane's `#{alternate_on}`, cached briefly per session so a gesture costs at
+     * most one side-channel query.
+     */
+    suspend fun isPaneTuiActiveFor(session: ShellSession?): Boolean {
+        val s = session ?: return false
+        if (!s.isConnected) return false
+        if (!s.persistent || s.controlMode) {
+            return synchronized(s.emulator) { s.emulator.isAlternateScreenActive() }
+        }
+        val now = System.currentTimeMillis()
+        if (now - s.paneAltCheckedAtMs < PANE_ALT_CACHE_MS) return s.paneAltActive
+        val creds = s.creds ?: return false
+        val out = withContext(Dispatchers.IO) {
+            runCatching { sshTransport.exec(creds, RemoteCommands.tmuxAlternateOnQuery(s.tmuxName)) }.getOrNull()
+        }
+        val active = out?.trim() == "1"
+        s.paneAltActive = active
+        s.paneAltCheckedAtMs = System.currentTimeMillis()
+        return active
+    }
+
+    /** Type [count] PageUp/PageDown presses into [session]'s PTY (tmux forwards them to the app). */
+    fun terminalSendPageKeysFor(session: ShellSession?, up: Boolean, count: Int) {
+        val s = session ?: return
+        if (!s.isConnected || count <= 0) return
+        val key = if (up) "\u001B[5~" else "\u001B[6~"
+        sendBytesTo(s, key.repeat(count).toByteArray())
     }
 
     /**
