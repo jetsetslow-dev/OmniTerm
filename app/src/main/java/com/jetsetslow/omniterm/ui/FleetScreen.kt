@@ -353,7 +353,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                     },
                     modifier = Modifier.weight(1f),
                 ) {
-                    Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Filled.Search, contentDescription = "Search", modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("Presets")
                 }
@@ -362,7 +362,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                     onClick = { openPresetEditor() },
                     modifier = Modifier.weight(1f),
                 ) {
-                    Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Icon(Icons.Filled.Save, contentDescription = "Save", modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
                     Text("Save")
                 }
@@ -506,7 +506,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                         value = presetSearch,
                         onValueChange = { presetSearch = it },
                         label = { Text("Search presets") },
-                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = "Search") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )

@@ -239,7 +239,7 @@ fun ServerSelectorBar(
                             fontWeight = FontWeight.Bold,
                         )
                     },
-                    leadingIcon = { Icon(Icons.Filled.VerticalSplit, contentDescription = null) },
+                    leadingIcon = { Icon(Icons.Filled.VerticalSplit, contentDescription = "Vertical Split") },
                     trailingIcon = { Text("${splitSelection.size}/2", fontFamily = OmniFonts.mono) },
                     enabled = splitSelection.size == 2,
                     onClick = {
@@ -298,7 +298,7 @@ fun ActionStreamDialog(viewModel: AppViewModel) {
                     copyToClipboard(viewModel.actionStreamOutput)
                 },
             ) {
-                Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(Icons.Filled.ContentCopy, contentDescription = "Content Copy", modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
                 Text("Copy")
             }
@@ -1216,7 +1216,7 @@ private fun FreePlanBanner(state: LicenseState, controller: LicenseController) {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(Icons.Filled.WorkspacePremium, contentDescription = null, tint = OmniColors.cyan, modifier = Modifier.size(18.dp))
+                Icon(Icons.Filled.WorkspacePremium, contentDescription = "Workspace Premium", tint = OmniColors.cyan, modifier = Modifier.size(18.dp))
                 Text(
                     // Reflect what the free build actually is: ad-supported and limited to 1 host until
                     // ads are removed; once ads are gone it's just the host/credential limit.
@@ -1541,7 +1541,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Filled.Dns, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color.LightGray)
+                        Icon(Icons.Filled.Dns, contentDescription = "Dns", modifier = Modifier.size(64.dp), tint = Color.LightGray)
                         Spacer(modifier = Modifier.height(8.dp))
                         if (srvList.isEmpty()) {
                             // True first run (no hosts at all): a short checklist instead of a
@@ -1714,7 +1714,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                                         // (login vs trust vs network), raw error underneath.
                                         Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
                                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Icon(Icons.Filled.Warning, contentDescription = null, tint = OmniColors.red, modifier = Modifier.size(16.dp))
+                                                Icon(Icons.Filled.Warning, contentDescription = "Warning", tint = OmniColors.red, modifier = Modifier.size(16.dp))
                                                 Spacer(Modifier.width(6.dp))
                                                 Text(
                                                     "Online · ${sshFailureSummary(server.authError)}",

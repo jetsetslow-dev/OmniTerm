@@ -190,7 +190,7 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
                         onClick = { showSaveDialog = true },
                         modifier = Modifier.weight(1f),
                     ) {
-                        Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Filled.Save, contentDescription = "Save", modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
                         Text("Save")
                     }
@@ -319,12 +319,12 @@ fun CronMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedButton(onClick = { viewModel.loadCron() }, enabled = !viewModel.cronLoading) {
-                            Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Filled.Refresh, contentDescription = "Refresh", modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("Reload", fontSize = 12.sp)
                         }
                         Button(onClick = { createNew = true }, enabled = !viewModel.cronLoading) {
-                            Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Filled.Add, contentDescription = "Add", modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
                             Text("Add", fontSize = 12.sp)
                         }
@@ -926,7 +926,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                 ) {
                     Text(it, fontSize = 14.sp)
                     IconButton(onClick = { viewModel.serviceActionFeedback = null }) {
-                        Icon(Icons.Filled.Close, contentDescription = null)
+                        Icon(Icons.Filled.Close, contentDescription = "Close")
                     }
                 }
             }

@@ -105,7 +105,7 @@ private fun ContainerRuntimeError(error: String) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Icon(Icons.Filled.ErrorOutline, contentDescription = null, tint = Color.Red, modifier = Modifier.size(40.dp))
+        Icon(Icons.Filled.ErrorOutline, contentDescription = "Error Outline", tint = Color.Red, modifier = Modifier.size(40.dp))
         Spacer(Modifier.height(8.dp))
         Text("Could not query containers", fontWeight = FontWeight.Bold)
         Box(
@@ -130,7 +130,7 @@ private fun ContainerRuntimeError(error: String) {
             onClick = { copyToClipboard(error) },
             modifier = Modifier.padding(top = 4.dp),
         ) {
-            Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+            Icon(Icons.Filled.ContentCopy, contentDescription = "Content Copy", modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
             Text("Copy error")
         }
@@ -410,7 +410,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                         .padding(10.dp),
                     verticalAlignment = Alignment.Top,
                 ) {
-                    Icon(Icons.Filled.ErrorOutline, contentDescription = null, tint = OmniColors.red, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Filled.ErrorOutline, contentDescription = "Error Outline", tint = OmniColors.red, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
                     androidx.compose.foundation.text.selection.SelectionContainer(
                         modifier = Modifier.weight(1f),
@@ -434,7 +434,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Filled.Layers, contentDescription = null, tint = OmniColors.cyan)
+                            Icon(Icons.Filled.Layers, contentDescription = "Layers", tint = OmniColors.cyan)
                             Spacer(Modifier.width(12.dp))
                             Column {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -604,7 +604,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
-                            Icon(Icons.Filled.Layers, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Icon(Icons.Filled.Layers, contentDescription = "Layers", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                             Spacer(Modifier.width(12.dp))
                             Column {
                                 Row(verticalAlignment = Alignment.CenterVertically) {

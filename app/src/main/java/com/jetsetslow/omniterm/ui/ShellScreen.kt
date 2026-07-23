@@ -771,7 +771,7 @@ private fun TerminalOpenPicker(
                             }
                         }
                     },
-                    leadingIcon = { Icon(Icons.Filled.Check, contentDescription = null) },
+                    leadingIcon = { Icon(Icons.Filled.Check, contentDescription = "Check") },
                     enabled = false,
                     onClick = {},
                 )
@@ -1213,7 +1213,7 @@ private fun MultiSshPanePicker(
             OutlinedButton(onClick = { expanded = true }) {
                 Text("Choose session or host", fontSize = 12.sp)
                 Spacer(Modifier.width(4.dp))
-                Icon(Icons.Filled.ArrowDropDown, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(Icons.Filled.ArrowDropDown, contentDescription = "Arrow Drop Down", modifier = Modifier.size(18.dp))
             }
         }
 
@@ -2123,7 +2123,7 @@ private fun PaneTerminal(
                                 enabled = copyDialogText.isNotBlank(),
                                 modifier = Modifier.weight(1f),
                             ) {
-                                Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Icon(Icons.Filled.ContentCopy, contentDescription = "Content Copy", modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
                                 Text("Copy all")
                             }
@@ -2441,18 +2441,19 @@ private fun TerminalKeyBar(viewModel: AppViewModel, compact: Boolean = false) {
             }
         } else if (!viewModel.isFunctionSetVisible) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-                KeyCap("TAB", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.TAB) }
                 KeyCap("ESC", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ESC) }
-                KeyCap("CTRL", Modifier.weight(1f), active = viewModel.isCtrlPressed) { viewModel.isCtrlPressed = !viewModel.isCtrlPressed }
-                KeyCap("↑", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.UP) }
+                KeyCap("TAB", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.TAB) }
                 KeyCap("ALT", Modifier.weight(1f), active = viewModel.isAltPressed) { viewModel.isAltPressed = !viewModel.isAltPressed }
                 KeyCap("/", Modifier.weight(1f)) { viewModel.typeText("/") }
-                KeyCap("⌫", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.BACKSPACE) }
+                KeyCap("↑", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.UP) }
                 KeyCap("SYM", Modifier.weight(1f), active = true, activeColor = OmniColors.purple) { showSymbols = true }
                 KeyCap("FN", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) { viewModel.isFunctionSetVisible = true }
+                KeyCap("-", Modifier.weight(1f)) { viewModel.typeText("-") }
+                KeyCap("⌫", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.BACKSPACE) }
             }
             Spacer(Modifier.height(4.dp))
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+                KeyCap("CTRL", Modifier.weight(1f), active = viewModel.isCtrlPressed) { viewModel.isCtrlPressed = !viewModel.isCtrlPressed }
                 KeyCap("SHFT", Modifier.weight(1f), active = viewModel.isShiftPressed) { viewModel.isShiftPressed = !viewModel.isShiftPressed }
                 KeyCap("HOME", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.HOME) }
                 KeyCap("←", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.LEFT) }
@@ -2460,7 +2461,6 @@ private fun TerminalKeyBar(viewModel: AppViewModel, compact: Boolean = false) {
                 KeyCap("→", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.RIGHT) }
                 KeyCap("END", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.END) }
                 KeyCap("DEL", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DELETE) }
-                KeyCap("-", Modifier.weight(1f)) { viewModel.typeText("-") }
                 KeyCap("↵", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ENTER) }
             }
         } else {

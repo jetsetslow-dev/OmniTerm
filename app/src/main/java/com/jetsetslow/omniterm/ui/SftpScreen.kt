@@ -196,7 +196,7 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
             onClick = { showScanDialog = true },
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Icon(Icons.Filled.Radar, contentDescription = null, modifier = Modifier.size(18.dp))
+            Icon(Icons.Filled.Radar, contentDescription = "Radar", modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(8.dp))
             Text("Scan LAN for shares", fontSize = 12.sp)
         }
@@ -782,7 +782,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                         },
                         singleLine = true,
                         textStyle = TextStyle(fontFamily = OmniFonts.mono, fontSize = 14.sp),
-                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = "Search") },
                         trailingIcon = {
                             if (viewModel.shareSearchQuery.isNotEmpty()) {
                                 IconButton(onClick = { viewModel.shareSearchQuery = "" }) {
@@ -1225,7 +1225,7 @@ private fun CrossClipboardBar(
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                     Icon(
                         if (viewModel.crossClipboardIsMove) Icons.Filled.ContentCut else Icons.Filled.ContentCopy,
-                        contentDescription = null,
+                        contentDescription = "Content Cut",
                         tint = OmniColors.green,
                     )
                     Spacer(modifier = Modifier.width(8.dp))
@@ -1408,7 +1408,7 @@ private fun NetworkShareDialog(
                             .clip(RoundedCornerShape(8.dp))
                             .padding(vertical = 4.dp)
                     ) {
-                        Icon(Icons.Filled.Lock, contentDescription = null, tint = OmniColors.green)
+                        Icon(Icons.Filled.Lock, contentDescription = "Lock", tint = OmniColors.green)
                         Spacer(Modifier.width(6.dp))
                         Column {
                             Text("HTTPS (TLS) required")
@@ -1783,7 +1783,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                             onValueChange = { pathInput = it },
                             singleLine = true,
                             textStyle = TextStyle(fontFamily = OmniFonts.mono, fontSize = 14.sp),
-                            leadingIcon = { Icon(Icons.Filled.FolderOpen, contentDescription = null, tint = OmniColors.amber) },
+                            leadingIcon = { Icon(Icons.Filled.FolderOpen, contentDescription = "Folder Open", tint = OmniColors.amber) },
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                             keyboardActions = KeyboardActions(onGo = {
                                 val target = pathInput.trim()
@@ -1818,7 +1818,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                 }
                                 .padding(horizontal = 10.dp, vertical = 8.dp),
                         ) {
-                            Icon(Icons.Filled.FolderOpen, contentDescription = null, tint = OmniColors.amber, modifier = Modifier.size(18.dp))
+                            Icon(Icons.Filled.FolderOpen, contentDescription = "Folder Open", tint = OmniColors.amber, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
                             // Long paths: keep the path on one line but horizontally scrollable, and
                             // auto-scroll to the end so the current (deepest) folder — the part that
@@ -1893,7 +1893,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                         text = { Text(option.label, fontSize = 13.sp) },
                                         leadingIcon = {
                                             if (viewModel.sftpSortOption == option) {
-                                                Icon(Icons.Filled.Check, contentDescription = null, tint = OmniColors.cyan)
+                                                Icon(Icons.Filled.Check, contentDescription = "Check", tint = OmniColors.cyan)
                                             }
                                         },
                                         onClick = {
@@ -1996,7 +1996,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         },
                         singleLine = true,
                         textStyle = TextStyle(fontFamily = OmniFonts.mono, fontSize = 14.sp),
-                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
+                        leadingIcon = { Icon(Icons.Filled.Search, contentDescription = "Search") },
                         trailingIcon = {
                             if (viewModel.sftpSearchQuery.isNotEmpty()) {
                                 IconButton(onClick = { viewModel.sftpSearchQuery = "" }) {
@@ -2123,7 +2123,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.weight(1f)) {
                         Icon(
                             if (viewModel.sftpClipboardIsMove) Icons.Filled.ContentCut else Icons.Filled.ContentCopy,
-                            contentDescription = null,
+                            contentDescription = "Content Cut",
                             tint = OmniColors.green,
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -2270,7 +2270,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
                                     imageVector = if (hit.isDirectory) Icons.Filled.Folder else Icons.AutoMirrored.Filled.InsertDriveFile,
-                                    contentDescription = null,
+                                    contentDescription = "Folder",
                                     tint = if (hit.isDirectory) OmniColors.amber else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                                 Spacer(modifier = Modifier.width(12.dp))
@@ -2348,14 +2348,14 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                 if (selectionMode) {
                                     Icon(
                                         imageVector = if (isSelected) Icons.Filled.CheckBox else Icons.Filled.CheckBoxOutlineBlank,
-                                        contentDescription = null,
+                                        contentDescription = "Check Box",
                                         tint = if (isSelected) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                 }
                                 Icon(
                                     imageVector = if (file.isDirectory) Icons.Filled.Folder else Icons.AutoMirrored.Filled.InsertDriveFile,
-                                    contentDescription = null,
+                                    contentDescription = "Folder",
                                     tint = if (file.isDirectory) OmniColors.amber else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                                 Spacer(modifier = Modifier.width(12.dp))
@@ -2371,7 +2371,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
 
                             if (!selectionMode) {
                                 IconButton(onClick = { selectedFileForOption = file }) {
-                                    Icon(Icons.Filled.MoreVert, contentDescription = null)
+                                    Icon(Icons.Filled.MoreVert, contentDescription = "More Vert")
                                 }
                             }
                         }
@@ -2949,7 +2949,7 @@ fun SftpTransfersTab(viewModel: AppViewModel) {
                                         item.direction == "Download" -> Icons.Filled.Downloading
                                         else -> Icons.Filled.Upload
                                     },
-                                    contentDescription = null,
+                                    contentDescription = "Error",
                                     tint = accent
                                 )
                                 Spacer(modifier = Modifier.width(12.dp))
@@ -3147,7 +3147,7 @@ fun SftpBookmarksTab(viewModel: AppViewModel) {
             )
             Spacer(modifier = Modifier.width(8.dp))
             Button(onClick = { editor = BookmarkEditorState(prefill = null, replacing = null) }) {
-                Icon(Icons.Filled.BookmarkAdd, contentDescription = null)
+                Icon(Icons.Filled.BookmarkAdd, contentDescription = "Bookmark Add")
                 Spacer(modifier = Modifier.width(4.dp))
                 Text("Add")
             }
@@ -3188,7 +3188,7 @@ fun SftpBookmarksTab(viewModel: AppViewModel) {
                     ) {
                         Icon(
                             if (bmk.shareId != null) Icons.Filled.Lan else Icons.Filled.Bookmark,
-                            contentDescription = null,
+                            contentDescription = "Lan",
                             tint = if (available) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(modifier = Modifier.width(12.dp))
@@ -3268,7 +3268,7 @@ private fun BookmarkEditDialog(
                     OutlinedButton(onClick = { menuExpanded = true }, modifier = Modifier.fillMaxWidth()) {
                         Icon(
                             if (selShareId != null) Icons.Filled.Lan else Icons.Filled.Dns,
-                            contentDescription = null,
+                            contentDescription = "Lan",
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(endpointLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -3277,7 +3277,7 @@ private fun BookmarkEditDialog(
                         servers.forEach { server ->
                             DropdownMenuItem(
                                 text = { Text(server.name) },
-                                leadingIcon = { Icon(Icons.Filled.Dns, contentDescription = null) },
+                                leadingIcon = { Icon(Icons.Filled.Dns, contentDescription = "Dns") },
                                 onClick = {
                                     selServerId = server.id
                                     selShareId = null
@@ -3288,7 +3288,7 @@ private fun BookmarkEditDialog(
                         shares.forEach { share ->
                             DropdownMenuItem(
                                 text = { Text("${share.name} (${share.protocol})") },
-                                leadingIcon = { Icon(Icons.Filled.Lan, contentDescription = null) },
+                                leadingIcon = { Icon(Icons.Filled.Lan, contentDescription = "Lan") },
                                 onClick = {
                                     selShareId = share.id
                                     selServerId = null

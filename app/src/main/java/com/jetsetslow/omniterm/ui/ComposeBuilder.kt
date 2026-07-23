@@ -1058,7 +1058,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
             ) {
                 Icon(
                     if (ok) Icons.Filled.CheckCircle else Icons.Filled.Error,
-                    contentDescription = null,
+                    contentDescription = "Check Circle",
                     tint = if (ok) OmniColors.green else OmniColors.red,
                     modifier = Modifier.size(18.dp),
                 )
@@ -1613,7 +1613,7 @@ private fun ComposeServiceEditorCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         if (svc.isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = null, tint = OmniColors.cyan,
+                        contentDescription = "Expand Less", tint = OmniColors.cyan,
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
@@ -1669,7 +1669,7 @@ private fun TopLevelSectionsEditor(draft: ComposeStackDraft, onChange: (ComposeS
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = null, tint = OmniColors.amber,
+                        contentDescription = "Expand Less", tint = OmniColors.amber,
                     )
                     Spacer(Modifier.width(6.dp))
                     Text("Top-level volumes", fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
@@ -1745,7 +1745,7 @@ private fun TopLevelSectionsEditor(draft: ComposeStackDraft, onChange: (ComposeS
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = null, tint = OmniColors.cyan,
+                        contentDescription = "Expand Less", tint = OmniColors.cyan,
                     )
                     Spacer(Modifier.width(6.dp))
                     Text("Top-level networks", fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)

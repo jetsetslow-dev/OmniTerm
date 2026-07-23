@@ -253,7 +253,7 @@ fun AlertPopupHeader(
     ) {
         Icon(
             Icons.Filled.NotificationsActive,
-            contentDescription = null,
+            contentDescription = "Notifications Active",
             tint = OmniColors.red,
             modifier = Modifier.size(20.dp),
         )
@@ -1192,7 +1192,7 @@ private fun HostScanTab(viewModel: AppViewModel, onUseHost: (String) -> Unit) {
                 Spacer(modifier = Modifier.width(8.dp))
                 Text("Scanning network…")
             } else {
-                Icon(Icons.Filled.Lan, contentDescription = null, modifier = Modifier.size(18.dp))
+                Icon(Icons.Filled.Lan, contentDescription = "Lan", modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(if (hosts.isEmpty()) "Scan network" else "Rescan network")
             }
@@ -1283,7 +1283,7 @@ private fun LanHostPicker(viewModel: AppViewModel) {
         },
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Icon(Icons.Filled.Lan, contentDescription = null, modifier = Modifier.size(18.dp))
+        Icon(Icons.Filled.Lan, contentDescription = "Lan", modifier = Modifier.size(18.dp))
         Spacer(modifier = Modifier.width(8.dp))
         Text("Pick LAN host", fontSize = 12.sp)
     }
@@ -1567,7 +1567,7 @@ private fun WolTab(viewModel: AppViewModel) {
         ) {
             Text("Saved targets", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Button(onClick = { prefill = null; showAddWol = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), modifier = Modifier.height(36.dp)) {
-                Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(Icons.Filled.Add, contentDescription = "Add", modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
                 Text("Add target", fontSize = 12.sp)
             }
@@ -1626,7 +1626,7 @@ private fun WolTab(viewModel: AppViewModel) {
                                 contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp),
                                 modifier = Modifier.height(36.dp),
                             ) {
-                                Icon(Icons.Filled.Power, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Icon(Icons.Filled.Power, contentDescription = "Power", modifier = Modifier.size(15.dp))
                                 Spacer(Modifier.width(4.dp))
                                 Text("Wake", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                             }
@@ -1745,7 +1745,7 @@ private fun WolLanScanner(viewModel: AppViewModel, onPick: (AppViewModel.Scanned
         },
         modifier = Modifier.fillMaxWidth(),
     ) {
-        Icon(Icons.Filled.Lan, contentDescription = null, modifier = Modifier.size(18.dp))
+        Icon(Icons.Filled.Lan, contentDescription = "Lan", modifier = Modifier.size(18.dp))
         Spacer(modifier = Modifier.width(8.dp))
         Text("Scan LAN to add a target", fontSize = 12.sp)
     }
@@ -2055,7 +2055,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         onClick = { pickTarget = "private"; keyFileLauncher.launch(arrayOf("*/*")) },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(Icons.Filled.Folder, contentDescription = null)
+                        Icon(Icons.Filled.Folder, contentDescription = "Folder")
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Load private key from file")
                     }
@@ -2072,7 +2072,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         onClick = { pickTarget = "public"; keyFileLauncher.launch(arrayOf("*/*")) },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(Icons.Filled.Folder, contentDescription = null)
+                        Icon(Icons.Filled.Folder, contentDescription = "Folder")
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Load public key (.pub) from file")
                     }
@@ -2186,7 +2186,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         onClick = { pickTarget = "private"; keyFileLauncher.launch(arrayOf("*/*")) },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(Icons.Filled.Folder, contentDescription = null)
+                        Icon(Icons.Filled.Folder, contentDescription = "Folder")
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Load private key from file")
                     }
@@ -3589,7 +3589,7 @@ fun AboutToolView(viewModel: AppViewModel) {
                         },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(Icons.Filled.Code, contentDescription = null)
+                        Icon(Icons.Filled.Code, contentDescription = "Code")
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("View on GitHub")
                     }
@@ -3601,7 +3601,7 @@ fun AboutToolView(viewModel: AppViewModel) {
                         },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(Icons.Filled.PrivacyTip, contentDescription = null)
+                        Icon(Icons.Filled.PrivacyTip, contentDescription = "Privacy Tip")
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Privacy Policy")
                     }
@@ -3636,7 +3636,7 @@ fun AboutToolView(viewModel: AppViewModel) {
                         },
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(Icons.Filled.ContentCopy, contentDescription = null)
+                        Icon(Icons.Filled.ContentCopy, contentDescription = "Content Copy")
                         Spacer(modifier = Modifier.width(8.dp))
                         Text("Copy diagnostics")
                     }
@@ -3703,7 +3703,7 @@ private fun CrashHistoryCard() {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(
                                 Icons.Filled.BugReport,
-                                contentDescription = null,
+                                contentDescription = "Bug Report",
                                 tint = OmniColors.red,
                                 modifier = Modifier.size(18.dp),
                             )
