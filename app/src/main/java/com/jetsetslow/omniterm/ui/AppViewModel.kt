@@ -3995,6 +3995,14 @@ class AppViewModel @JvmOverloads constructor(
 
     fun dismissOfflineConnectPrompt() { offlineConnectPromptServer = null }
 
+    fun connectTerminalByServerId(id: Int) {
+        val server = servers.value.find { it.id == id }
+        if (server != null) {
+            connectTerminal(server, forceDisablePersistence = false)
+            navigateTo(Screen.Shell)
+        }
+    }
+
     private fun connectTerminal(
         srv: ServerEntity,
         forceDisablePersistence: Boolean,
@@ -4002,6 +4010,7 @@ class AppViewModel @JvmOverloads constructor(
         onFinished: ((Boolean) -> Unit)? = null,
     ) {
         if (isTerminalConnecting) return
+        ShortcutHelper.pushServerShortcut(getApplication(), srv)
         // Capture the destination now. Split-pane focus is still interactive while a connection is
         // in flight; reading it only after SSH completes lets a harmless focus tap redirect the new
         // session into the wrong pane.

@@ -134,8 +134,11 @@ class MainActivity : AppCompatActivity() {
 
   private var pendingSessionId: String? = null
 
+  private var pendingShortcutServerId: Int? = null
+
   private fun handleIntent(intent: android.content.Intent?) {
     val sessionId = intent?.getStringExtra(SessionService.EXTRA_SESSION_ID)
+    val shortcutId = if (intent?.hasExtra("shortcut_server_id") == true) intent.getIntExtra("shortcut_server_id", 0) else null
     // Notification disconnect actions are handled by the non-exported SessionService. The exported
     // launcher Activity only honors resume/navigation intents.
     if (sessionId != null) {
@@ -144,6 +147,15 @@ class MainActivity : AppCompatActivity() {
         vm.attachSession(sessionId)
       } else {
         pendingSessionId = sessionId
+      }
+    }
+    
+    if (shortcutId != null && shortcutId != 0) {
+      val vm = appViewModel
+      if (vm != null) {
+        vm.connectTerminalByServerId(shortcutId)
+      } else {
+        pendingShortcutServerId = shortcutId
       }
     }
   }
@@ -158,10 +170,14 @@ class MainActivity : AppCompatActivity() {
       // Intent is handled in onCreate (cold start) and onNewIntent (warm start).
       // Process any pendingSessionId that was set before the ViewModel was ready.
       androidx.compose.runtime.LaunchedEffect(Unit) {
-          pendingSessionId?.let {
-              viewModel.attachSession(it)
-              pendingSessionId = null
-          }
+        pendingSessionId?.let {
+          viewModel.attachSession(it)
+          pendingSessionId = null
+        }
+        pendingShortcutServerId?.let {
+          viewModel.connectTerminalByServerId(it)
+          pendingShortcutServerId = null
+        }
       }
       val keepOn = viewModel.isKeepScreenOnEnabled
       val window = this.window
