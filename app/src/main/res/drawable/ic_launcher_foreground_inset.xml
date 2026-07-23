@@ -1,30 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Transparent adaptive foreground. Using transparent vector ensures that small system surfaces (notably Android 16 BiometricPrompt) do not flatten into an opaque block. -->
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <!-- Bold Hexagon -->
-    <path
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#FF66E8FF"
-        android:strokeWidth="8"
-        android:strokeLineJoin="round"
-        android:pathData="M54,26 L78,40 L78,68 L54,82 L30,68 L30,40 Z" />
-    <!-- Infinity Loop inscribed inside -->
-    <path
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#FF63F5B0"
-        android:strokeWidth="4"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M38,54 C38,44 48,44 54,54 C60,64 70,64 70,54 C70,44 60,44 54,54 C48,64 38,64 38,54 Z" />
-    <!-- Cursor -->
-    <path
-        android:fillColor="@android:color/transparent"
-        android:strokeColor="#FF63F5B0"
-        android:strokeWidth="4"
-        android:strokeLineCap="round"
-        android:pathData="M62,64 L70,64" />
-</vector>
+<!-- Keep the 108dp adaptive foreground inside Android's 72dp safe zone so circle/squircle masks
+     never crop the terminal mark. Density-specific source artwork remains unchanged. -->
+<inset xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@mipmap/ic_launcher_fg"
+    android:insetLeft="18dp"
+    android:insetTop="18dp"
+    android:insetRight="18dp"
+    android:insetBottom="18dp" />
