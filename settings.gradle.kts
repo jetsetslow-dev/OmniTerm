@@ -59,3 +59,4 @@ dependencyResolutionManagement {
 rootProject.name = "OmniTerm"
 
 include(":app")
+include(":benchmark")

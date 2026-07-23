@@ -1,0 +1,8 @@
+# Baseline Profile placeholder
+# When a macrobenchmark module is properly run on a rooted device or emulator,
+# this file will be populated with the hot code paths for Jetsetslow OmniTerm
+# to optimize cold-startup time and improve scrolling jank.
+
+# For example:
+# Lcom/jetsetslow/omniterm/MainActivity;
+# Hcom/jetsetslow/omniterm/ui/AppViewModel;-><init>()V
