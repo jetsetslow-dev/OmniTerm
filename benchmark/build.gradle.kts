@@ -4,26 +4,27 @@ plugins {
 
 android {
     namespace = "com.jetsetslow.omniterm.benchmark"
-    compileSdk = 34
+    compileSdk = 36
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    kotlinOptions {
-        jvmTarget = "17"
-    }
 
     defaultConfig {
         minSdk = 28
-        targetSdk = 34
+        targetSdk = 36
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        // :app has a "distribution" flavor dimension this module doesn't declare.
+        missingDimensionStrategy("distribution", "playStore")
     }
 
     buildTypes {
         create("benchmark") {
             isDebuggable = true
             signingConfig = getByName("debug").signingConfig
+            // :app has no "benchmark" build type; benchmark against its release build.
+            matchingFallbacks += "release"
         }
     }
     

@@ -15,7 +15,7 @@ class BaselineProfileGenerator {
     @Test
     fun generate() {
         baselineProfileRule.collect(
-            packageName = "com.jetsetslow.omniterm",
+            packageName = "com.jetsetslow.omniterm.app",
             profileBlock = {
                 // This block defines the critical user journey for the app
                 pressHome()
