@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Single-colour adaptive-icon mark used by themed/system surfaces. Black is intentional: the
-     system normally tints this alpha geometry, while a surface that draws it without tint still
-     gets visible contrast on Android 16's light biometric prompt. -->
+<!-- Alpha-only adaptive-icon mask used by Android's themed launcher and biometric prompt.
+     The full-colour foreground is an opaque tile, so using it as the monochrome layer collapses
+     to a featureless grey circle. Keep this mark inside the 72dp adaptive-icon safe zone. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
@@ -9,16 +9,16 @@
     android:viewportHeight="108">
     <path
         android:fillColor="@android:color/transparent"
-        android:strokeColor="#FF000000"
-        android:strokeWidth="7"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="8"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:pathData="M22,54 C22,34 40,34 54,54 C68,74 86,74 86,54 C86,34 68,34 54,54 C40,74 22,74 22,54" />
+        android:pathData="M18,54 C18,31 40,30 54,54 C68,78 90,77 90,54 C90,31 68,30 54,54 C40,78 18,77 18,54" />
     <path
         android:fillColor="@android:color/transparent"
-        android:strokeColor="#FF000000"
+        android:strokeColor="#FFFFFFFF"
         android:strokeWidth="5"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:pathData="M38,45 L47,54 L38,63 M58,63 L70,63" />
+        android:pathData="M38,45 L48,54 L38,63 M58,63 L71,63" />
 </vector>
