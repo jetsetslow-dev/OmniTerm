@@ -54,9 +54,6 @@ class OmniTermWidget : GlanceAppWidget() {
             } else {
                 val displayServers = servers.take(4) // Show top 4
                 displayServers.forEach { server ->
-                    val cpuStr = if (server.cpuUsage >= 0) "${server.cpuUsage.toInt()}%" else "--"
-                    val ramStr = if (server.ramUsage >= 0) "${server.ramUsage.toInt()}%" else "--"
-                    
                     Row(
                         modifier = GlanceModifier.fillMaxWidth().padding(vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
@@ -67,7 +64,7 @@ class OmniTermWidget : GlanceAppWidget() {
                             modifier = GlanceModifier.defaultWeight()
                         )
                         Text(
-                            text = "C: $cpuStr  R: $ramStr",
+                            text = server.host,
                             style = TextStyle(color = ColorProvider(Color(0xFF88CC88)))
                         )
                     }
