@@ -11,6 +11,10 @@ import com.jetsetslow.omniterm.ui.TerminalSessionManager
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -194,6 +198,56 @@ class TerminalNavigationRobolectricTest {
         assertNull(viewModel.pendingNavigationScreen)
     }
 
+    @Test
+    fun globalAlertsPopupDoesNotEnterTerminalLeaveTransaction() {
+        val session = addSession("alerted")
+        viewModel.currentSessionId = session.id
+
+        viewModel.openAlertsPopup()
+
+        assertTrue(viewModel.showAlertsPopup)
+        assertEquals(Screen.Shell, viewModel.currentScreen)
+        assertFalse(viewModel.showDisconnectTerminalDialog)
+        assertNull(viewModel.pendingNavigationScreen)
+        assertTrue(session.isConnected)
+        assertTrue(TerminalSessionManager.activeSessions.contains(session))
+
+        viewModel.closeAlertsPopup()
+        assertFalse(viewModel.showAlertsPopup)
+        assertEquals(Screen.Shell, viewModel.currentScreen)
+    }
+
+    @Test
+    fun resizeBurstConflatesToFinalSigwinchWithoutOutOfOrderIntermediateSizes() = runTest {
+        val transport = BlockingResizeTerminalSession()
+        val shell = ShellSession(
+            serverId = 99,
+            serverName = "resize-host",
+            session = transport,
+            emulator = TerminalEmulator(80, 24),
+            id = "resize",
+        )
+        TerminalSessionManager.addSession(shell)
+        viewModel.currentSessionId = shell.id
+
+        viewModel.resizeTerminalFor(shell, 90, 30)
+        withTimeout(5_000) { transport.firstResizeStarted.await() }
+        viewModel.resizeTerminalFor(shell, 100, 35)
+        viewModel.resizeTerminalFor(shell, 110, 40)
+        viewModel.resizeTerminalFor(shell, 120, 45)
+        transport.releaseFirstResize.complete(Unit)
+
+        withTimeout(5_000) {
+            while (transport.callsSnapshot().size < 2) delay(10)
+        }
+
+        assertEquals(listOf(90 to 30, 120 to 45), transport.callsSnapshot())
+        assertEquals(120, shell.emulator.cols)
+        assertEquals(45, shell.emulator.rows)
+        assertEquals(120, shell.lastCols)
+        assertEquals(45, shell.lastRows)
+    }
+
     private fun enterSplit(first: ShellSession, second: ShellSession) {
         viewModel.activeSshTab = 1
         viewModel.multiSshSessionId1 = first.id
@@ -229,6 +283,35 @@ class TerminalNavigationRobolectricTest {
 
         override suspend fun write(bytes: ByteArray) = Unit
         override suspend fun resize(cols: Int, rows: Int) = Unit
+        override fun close() {
+            closed.value = true
+        }
+    }
+
+    private class BlockingResizeTerminalSession : TerminalSession {
+        override val output: Flow<ByteArray> = emptyFlow()
+        override val closed = MutableStateFlow(false)
+        override val exitStatus = MutableStateFlow<Int?>(null)
+        override val remoteExited = MutableStateFlow(false)
+        val firstResizeStarted = CompletableDeferred<Unit>()
+        val releaseFirstResize = CompletableDeferred<Unit>()
+        private val calls = mutableListOf<Pair<Int, Int>>()
+
+        override suspend fun write(bytes: ByteArray) = Unit
+
+        override suspend fun resize(cols: Int, rows: Int) {
+            val first = synchronized(calls) {
+                calls += cols to rows
+                calls.size == 1
+            }
+            if (first) {
+                firstResizeStarted.complete(Unit)
+                releaseFirstResize.await()
+            }
+        }
+
+        fun callsSnapshot(): List<Pair<Int, Int>> = synchronized(calls) { calls.toList() }
+
         override fun close() {
             closed.value = true
         }

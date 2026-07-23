@@ -27,6 +27,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -58,6 +61,9 @@ data class ComposeServiceDraft(
     var containerName: String = "",
     var restart: String = "",
     var command: String = "",
+    // Podman rootless UID/GID mapping. `keep-id` maps the SSH user's host identity into the
+    // container; other values are preserved when parsing an existing Compose file.
+    var usernsMode: String = "",
     var isCommentedOut: Boolean = false,
     var isExpanded: Boolean = true,
     val ports: MutableList<String> = mutableListOf(),
@@ -125,6 +131,13 @@ data class ComposeStackDraft(
     var composeConfigFiles: String = "",
     // Container runtime that owns this stack: "docker", "podman", or blank for auto/new drafts.
     var runtime: String = "",
+    // podman-compose's supported x-podman.in_pod extension. Blank [podmanPodName] asks the
+    // provider to use its stable default `pod_<project>` name.
+    var podmanPodEnabled: Boolean = false,
+    var podmanPodName: String = "",
+    // Source positions allow existing YAML to be updated surgically.
+    var xPodmanSrcHeader: Int = -1,
+    var xPodmanInPodSrcLine: Int = -1,
 )
 
 private fun String.unquoteYaml(): String =
@@ -248,6 +261,11 @@ fun validateComposeDraft(draft: ComposeStackDraft): List<String> {
     draft.topNetworks.filter { !it.isCommentedOut && it.external && it.driver.isNotBlank() }.forEach {
         issues += "${it.name.ifBlank { "Network" }} cannot set both external: true and driver."
     }
+    if (draft.runtime == "podman" && draft.podmanPodEnabled &&
+        draft.podmanPodName.isNotBlank() && !isValidComposeName(draft.podmanPodName)
+    ) {
+        issues += "Pod name has invalid characters. Use letters, numbers, dots, dashes, or underscores."
+    }
     return issues.distinct()
 }
 
@@ -281,6 +299,7 @@ fun parseDockerComposeYaml(
     var inServices = false
     var inTopVolumes = false
     var inTopNetworks = false
+    var inXPodman = false
     var current: ComposeServiceDraft? = null
     var currentTopVol: TopLevelVolumeDraft? = null
     var currentTopNet: TopLevelNetworkDraft? = null
@@ -297,7 +316,7 @@ fun parseDockerComposeYaml(
             // not a commented-out service. Keep it out of the structured view.
             val phantom = it.isCommentedOut && it.srcStart == it.srcEnd &&
                 it.image.isBlank() && it.containerName.isBlank() && it.restart.isBlank() &&
-                it.command.isBlank() &&
+                it.command.isBlank() && it.usernsMode.isBlank() &&
                 listOf(it.ports, it.environment, it.volumes, it.networks, it.dependsOn).all { l -> l.isEmpty() }
             if (!phantom) draft.services.add(it)
             current = null
@@ -342,7 +361,7 @@ fun parseDockerComposeYaml(
                     val v = content.substringAfter(":").trim().unquoteYaml().stripYamlInlineComment()
                     if (v.isNotEmpty()) { draft.stackName = v; draft.stackNameSrcLine = idx }
                     finish(); finishTopVol(); finishTopNet()
-                    inServices = false; inTopVolumes = false; inTopNetworks = false
+                    inServices = false; inTopVolumes = false; inTopNetworks = false; inXPodman = false
                     serviceIndent = -1; topSectionItemIndent = -1
                     continue
                 }
@@ -353,11 +372,38 @@ fun parseDockerComposeYaml(
                 inServices = sectionKey == "services"
                 inTopVolumes = sectionKey == "volumes"
                 inTopNetworks = sectionKey == "networks"
+                inXPodman = sectionKey == "x-podman"
                 if (inTopVolumes) draft.volumesSrcHeader = idx
                 if (inTopNetworks) draft.networksSrcHeader = idx
+                if (inXPodman) draft.xPodmanSrcHeader = idx
                 serviceIndent = -1; topSectionItemIndent = -1
                 continue
             }
+        }
+
+        // Podman Compose extension documented by podman-compose. `true` selects its default
+        // pod_<project> name, `false` disables grouping, and any other scalar is a custom pod name.
+        if (inXPodman && indent > 0 && content.contains(":")) {
+            val key = content.substringBefore(":").trim()
+            if (key == "in_pod") {
+                val value = content.substringAfter(":").trim().unquoteYaml().stripYamlInlineComment()
+                draft.xPodmanInPodSrcLine = idx
+                when {
+                    value.equals("false", ignoreCase = true) -> {
+                        draft.podmanPodEnabled = false
+                        draft.podmanPodName = ""
+                    }
+                    value.equals("true", ignoreCase = true) || value.isBlank() -> {
+                        draft.podmanPodEnabled = true
+                        draft.podmanPodName = ""
+                    }
+                    else -> {
+                        draft.podmanPodEnabled = true
+                        draft.podmanPodName = value
+                    }
+                }
+            }
+            continue
         }
 
         // ── top-level volumes: section ──
@@ -521,6 +567,7 @@ fun parseDockerComposeYaml(
                     "container_name" -> { svc.containerName = value; svc.scalarLine["container_name"] = idx }
                     "restart" -> { svc.restart = value; svc.scalarLine["restart"] = idx }
                     "command" -> { svc.command = value; svc.scalarLine["command"] = idx }
+                    "userns_mode" -> { svc.usernsMode = value; svc.scalarLine["userns_mode"] = idx }
                     // Inline KEY=VALUE handled when it appears as an environment list item above.
                 }
             }
@@ -529,12 +576,14 @@ fun parseDockerComposeYaml(
     finish()
     finishTopVol()
     finishTopNet()
+    // podman-compose defaults to grouping in pod_<project> when x-podman.in_pod is absent.
+    if (runtime == "podman" && draft.xPodmanSrcHeader < 0) draft.podmanPodEnabled = true
     if (draft.services.isEmpty()) draft.services.add(ComposeServiceDraft())
     return draft
 }
 
 /** Generate one service's YAML block (2-space service key, 4-space body), no trailing newline. */
-private fun generateServiceBlock(svc: ComposeServiceDraft): String {
+private fun generateServiceBlock(svc: ComposeServiceDraft, podmanRuntime: Boolean): String {
     val sb = StringBuilder()
     val name = svc.serviceName.ifBlank { "service" }
     val c = if (svc.isCommentedOut) "# " else ""
@@ -544,6 +593,9 @@ private fun generateServiceBlock(svc: ComposeServiceDraft): String {
     scalar("container_name", svc.containerName)
     scalar("restart", svc.restart)
     scalar("command", svc.command)
+    // `keep-id` is a Podman rootless mapping. Retain it in the draft while switching runtimes,
+    // but never leak that Podman-only value into newly generated Docker YAML.
+    if (podmanRuntime || svc.usernsMode != "keep-id") scalar("userns_mode", svc.usernsMode)
     fun list(k: String, items: List<String>, quote: Boolean) {
         val v = items.filter { it.isNotBlank() }
         if (v.isEmpty()) return
@@ -564,9 +616,17 @@ fun generateDockerComposeYaml(draft: ComposeStackDraft): String {
     // No top-level `version:` — it's obsolete in the Compose Spec and recent Docker/Podman Compose
     // print a deprecation warning for it. Omitting it keeps deploy output clean.
     if (draft.stackName.isNotBlank()) sb.append("name: ${yamlPlainOrSingleQuoted(draft.stackName)}\n")
+    if (draft.runtime == "podman") {
+        val inPod = when {
+            !draft.podmanPodEnabled -> "false"
+            draft.podmanPodName.isBlank() -> "true"
+            else -> yamlPlainOrSingleQuoted(draft.podmanPodName)
+        }
+        sb.append("x-podman:\n  in_pod: $inPod\n")
+    }
     sb.append("services:\n")
     for (svc in draft.services) {
-        sb.append(generateServiceBlock(svc))
+        sb.append(generateServiceBlock(svc, podmanRuntime = draft.runtime == "podman"))
         sb.append("\n")
     }
     val vols = draft.topVolumes.filter { it.name.isNotBlank() }
@@ -701,6 +761,7 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
         applyScalar("container_name", svc.containerName, src.containerName)
         applyScalar("restart", svc.restart, src.restart)
         applyScalar("command", svc.command, src.command)
+        applyScalar("userns_mode", svc.usernsMode, src.usernsMode)
 
         fun applyArray(key: String, items: List<String>, old: List<String>, quote: Boolean) {
             val cleaned = items.filter { it.isNotBlank() }
@@ -809,6 +870,25 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
         brandNewNets.forEach { insert(anchor, networkBlock(it).joinToString("\n")) }
     }
 
+    // ── Podman pod grouping extension ──
+    if (draft.runtime == "podman" &&
+        (draft.podmanPodEnabled != parsedFrom.podmanPodEnabled ||
+            draft.podmanPodName != parsedFrom.podmanPodName)
+    ) {
+        val inPod = when {
+            !draft.podmanPodEnabled -> "false"
+            draft.podmanPodName.isBlank() -> "true"
+            else -> yamlPlainOrSingleQuoted(draft.podmanPodName)
+        }
+        when {
+            parsedFrom.xPodmanInPodSrcLine in slot.indices ->
+                slot[parsedFrom.xPodmanInPodSrcLine] = "  in_pod: $inPod"
+            parsedFrom.xPodmanSrcHeader in slot.indices ->
+                insert(parsedFrom.xPodmanSrcHeader, "  in_pod: $inPod")
+            else -> prepend.add("x-podman:\n  in_pod: $inPod")
+        }
+    }
+
     // Flatten: prepended lines, then each surviving slot followed by anything inserted after it.
     val sb = StringBuilder()
     var firstOut = true
@@ -823,7 +903,7 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
     for (svc in draft.services) {
         if (svc.id in originals) continue
         if (svc.serviceName.isBlank() && svc.image.isBlank()) continue   // skip empty placeholder rows
-        generateServiceBlock(svc).split("\n").forEach { emit(it) }
+        generateServiceBlock(svc, podmanRuntime = draft.runtime == "podman").split("\n").forEach { emit(it) }
     }
 
     // Brand-new top-level volumes (no srcStart) — append as a fresh section or into the existing header.
@@ -875,6 +955,20 @@ fun ComposeBuilder(viewModel: AppViewModel) {
     // Immutable parsed baseline for surgical diffing — captured ONCE per edit session.
     val parsedBaseline = remember(seedKey) { active }
     var draft by remember(seedKey) { mutableStateOf(active ?: ComposeStackDraft()) }
+    // A host with exactly one usable runtime has no runtime picker. Pin new drafts to that runtime
+    // once discovery completes so Podman-only controls are not accidentally hidden behind a blank
+    // auto-resolver value.
+    LaunchedEffect(seedKey, viewModel.availableContainerRuntimes) {
+        if (active == null && draft.runtime.isBlank() &&
+            viewModel.availableContainerRuntimes.size == 1
+        ) {
+            val onlyRuntime = viewModel.availableContainerRuntimes.single()
+            draft = draft.copy(
+                runtime = onlyRuntime,
+                podmanPodEnabled = onlyRuntime == "podman",
+            )
+        }
+    }
 
     // Mirror local edits back to the ViewModel so switching tabs doesn't lose them.
     LaunchedEffect(draft) {
@@ -1195,7 +1289,18 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                     )
                     FilterChip(
                         selected = draft.runtime == "podman",
-                        onClick = { draft = draft.copy(runtime = "podman") },
+                        onClick = {
+                            draft = draft.copy(
+                                runtime = "podman",
+                                // Match podman-compose's existing default when entering Podman for
+                                // the first time; the modifier card can explicitly turn it off.
+                                podmanPodEnabled = if (draft.runtime == "podman") {
+                                    draft.podmanPodEnabled
+                                } else {
+                                    true
+                                },
+                            )
+                        },
                         label = { Text("Podman") },
                     )
                 }
@@ -1326,7 +1431,7 @@ private fun reconcileTopLevelVolumes(draft: ComposeStackDraft): ComposeStackDraf
 }
 
 @Composable
-private fun VisualEditor(draft: ComposeStackDraft, onChange: (ComposeStackDraft) -> Unit) {
+fun VisualEditor(draft: ComposeStackDraft, onChange: (ComposeStackDraft) -> Unit) {
     fun updateSvc(index: Int, transform: (ComposeServiceDraft) -> ComposeServiceDraft) {
         val list = draft.services.toMutableList()
         list[index] = transform(list[index])
@@ -1344,6 +1449,9 @@ private fun VisualEditor(draft: ComposeStackDraft, onChange: (ComposeStackDraft)
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        if (draft.runtime == "podman") {
+            PodmanModifiersEditor(draft = draft, onChange = onChange)
+        }
         if (draft.services.size > LARGE_VISUAL_SERVICE_THRESHOLD) {
             Text(
                 "${draft.services.size} services · list is virtualized for responsive editing",
@@ -1388,6 +1496,100 @@ private fun VisualEditor(draft: ComposeStackDraft, onChange: (ComposeStackDraft)
             )
         }
         TopLevelSectionsEditor(draft, onChange)
+    }
+}
+
+/**
+ * Podman-only composition controls backed by real Compose/provider settings:
+ * `userns_mode: keep-id` for rootless identity mapping and `x-podman.in_pod` for pod grouping.
+ */
+@Composable
+fun PodmanModifiersEditor(
+    draft: ComposeStackDraft,
+    onChange: (ComposeStackDraft) -> Unit,
+) {
+    val activeServices = draft.services.filterNot { it.isCommentedOut }
+    val keepIdEnabled = activeServices.isNotEmpty() &&
+        activeServices.all { it.usernsMode == "keep-id" }
+
+    OmniCard(
+        modifier = Modifier.fillMaxWidth().testTag("podman-modifiers"),
+        leftAccent = OmniColors.purple,
+    ) {
+        Column(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text("Podman modifiers", fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
+            Text(
+                "Podman runs as the SSH user. Keep-ID maps that user's UID/GID into each container.",
+                fontSize = 11.sp,
+                color = OmniColors.textMuted,
+            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text("Rootless keep-ID mapping", fontSize = 12.sp)
+                Switch(
+                    checked = keepIdEnabled,
+                    onCheckedChange = { enabled ->
+                        val services = draft.services.map { service ->
+                            when {
+                                enabled -> service.copy(usernsMode = "keep-id")
+                                service.usernsMode == "keep-id" -> service.copy(usernsMode = "")
+                                else -> service
+                            }
+                        }.toMutableList()
+                        onChange(draft.copy(services = services))
+                    },
+                    modifier = Modifier
+                        .testTag("podman-rootless-toggle")
+                        .semantics { contentDescription = "Rootless keep-ID mapping" },
+                )
+            }
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Group services in a pod", fontSize = 12.sp)
+                    Text(
+                        "Services share Podman pod namespaces using x-podman.in_pod.",
+                        fontSize = 10.sp,
+                        color = OmniColors.textMuted,
+                    )
+                }
+                Switch(
+                    checked = draft.podmanPodEnabled,
+                    onCheckedChange = { enabled ->
+                        onChange(
+                            draft.copy(
+                                podmanPodEnabled = enabled,
+                                podmanPodName = if (enabled) draft.podmanPodName else "",
+                            ),
+                        )
+                    },
+                    modifier = Modifier
+                        .testTag("podman-pod-toggle")
+                        .semantics { contentDescription = "Group services in a Podman pod" },
+                )
+            }
+            if (draft.podmanPodEnabled) {
+                OutlinedTextField(
+                    value = draft.podmanPodName,
+                    onValueChange = { onChange(draft.copy(podmanPodName = it.trim())) },
+                    label = { Text("Pod name (optional)") },
+                    placeholder = { Text("pod_<project>") },
+                    supportingText = { Text("Blank uses Podman Compose's default pod_<project>.") },
+                    singleLine = true,
+                    colors = omniTextFieldColors(),
+                    modifier = Modifier.fillMaxWidth().testTag("podman-pod-name"),
+                )
+            }
+        }
     }
 }
 
@@ -1639,7 +1841,7 @@ private fun Field(label: String, value: String, placeholder: String, onChange: (
 
 @Composable
 fun ListEditor(title: String, items: List<String>, placeholderText: String, onChange: (MutableList<String>) -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp).testTag("compose-list-$title")) {
         Text(title, fontSize = 13.sp, color = OmniColors.cyan, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 6.dp))
         Column(
             Modifier
@@ -1659,14 +1861,17 @@ fun ListEditor(title: String, items: List<String>, placeholderText: String, onCh
                         placeholder = { Text(placeholderText) },
                         singleLine = true,
                         colors = omniTextFieldColors(),
-                        modifier = Modifier.weight(1f),
+                        modifier = Modifier.weight(1f).testTag("compose-list-$title-item-$i"),
                     )
                     IconButton(onClick = {
                         val n = items.toMutableList(); n.removeAt(i); onChange(n)
                     }) { Icon(Icons.Filled.Delete, "Remove", tint = OmniColors.red, modifier = Modifier.size(20.dp)) }
                 }
             }
-            TextButton(onClick = { val n = items.toMutableList(); n.add(""); onChange(n) }) {
+            TextButton(
+                onClick = { val n = items.toMutableList(); n.add(""); onChange(n) },
+                modifier = Modifier.semantics { contentDescription = "Add $title" },
+            ) {
                 Icon(Icons.Filled.Add, null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
                 Text("Add", fontSize = 12.sp)

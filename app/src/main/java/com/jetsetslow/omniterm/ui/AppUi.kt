@@ -764,13 +764,29 @@ fun PinLockGateway(viewModel: AppViewModel) {
 
             if (viewModel.useBiometrics) {
                 Spacer(modifier = Modifier.height(12.dp))
-                TextButton(onClick = triggerBiometric) {
-                    Icon(Icons.Filled.Fingerprint, contentDescription = null, tint = Color.White)
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text("Use biometrics", color = Color.White)
-                }
+                BiometricUnlockButton(onClick = triggerBiometric)
             }
         }
+    }
+}
+
+/** High-contrast in-app biometric affordance; the subsequent prompt and its glyph are OS-owned. */
+@Composable
+fun BiometricUnlockButton(onClick: () -> Unit) {
+    OutlinedButton(
+        onClick = onClick,
+        modifier = Modifier.heightIn(min = 48.dp),
+        border = androidx.compose.foundation.BorderStroke(1.dp, OmniColors.cyan),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+    ) {
+        Icon(
+            Icons.Filled.Fingerprint,
+            contentDescription = "Use fingerprint to unlock",
+            tint = OmniColors.cyan,
+            modifier = Modifier.size(28.dp),
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Text("Use biometrics", color = Color.White, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -842,7 +858,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                     },
                     keepScreenOn = viewModel.isKeepScreenOnEnabled,
                     onHome = { viewModel.navigateTo(Screen.Servers) },
-                    onAlerts = { viewModel.navigateTo(Screen.Alerts) },
+                    onAlerts = { viewModel.openAlertsPopup() },
                     onToggleKeepScreenOn = { viewModel.requestKeepScreenOnToggle() },
                 )
                 if (showMonetizationUi && !licenseState.unlocked) {
@@ -906,6 +922,15 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
 
             // Global live-output panel for any button-triggered remote action, regardless of tab.
             ActionStreamDialog(viewModel)
+
+            // Global, navigation-free incident panel. It intentionally overlays Shell as well as
+            // ordinary tabs so alert triage never invokes the terminal disconnect/background gate.
+            if (viewModel.showAlertsPopup) {
+                AlertsPopup(
+                    viewModel = viewModel,
+                    onDismiss = { viewModel.closeAlertsPopup() },
+                )
+            }
 
             // Biometric/PIN gate for privileged (sudo) actions, shown when one is staged.
             SudoAuthDialog(viewModel)

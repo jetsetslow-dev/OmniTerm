@@ -42,7 +42,10 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.focus.FocusRequester
@@ -940,7 +943,6 @@ private fun ActiveTerminal(viewModel: AppViewModel, confirm: ConfirmController) 
  */
 @Composable
 private fun MultiSshTerminalView(viewModel: AppViewModel, confirm: ConfirmController) {
-    val chrome = shellChromePalette()
     val stacked = viewModel.multiSshLayout == MultiSshLayout.Stacked
     val pane1 = viewModel.multiSshSession1
     val pane2 = viewModel.multiSshSession2
@@ -949,15 +951,13 @@ private fun MultiSshTerminalView(viewModel: AppViewModel, confirm: ConfirmContro
     @Composable
     fun paneContent(paneIndex: Int, session: ShellSession?, modifier: Modifier) {
         val isFocused = focused == paneIndex
-        Box(
-            modifier
-                .clip(RoundedCornerShape(6.dp))
-                .border(
-                    width = if (isFocused) 2.dp else 1.dp,
-                    color = if (isFocused) OmniColors.cyan else chrome.border,
-                    shape = RoundedCornerShape(6.dp),
-                )
-                .background(chrome.paneBackground),
+        val accessibilityLabel = session?.serverName ?: "Empty pane"
+        TerminalPaneFrame(
+            paneIndex = paneIndex,
+            label = accessibilityLabel,
+            isFocused = isFocused,
+            onRequestFocus = { viewModel.setMultiSshFocus(paneIndex) },
+            modifier = modifier,
         ) {
             Column(Modifier.fillMaxSize()) {
                 MultiSshPaneHeader(viewModel, paneIndex, session, isFocused)
@@ -1009,6 +1009,42 @@ private fun MultiSshTerminalView(viewModel: AppViewModel, confirm: ConfirmContro
             paneContent(2, pane2, Modifier.fillMaxHeight().weight(1f - fraction))
         }
     }
+}
+
+/**
+ * Shared split-pane frame and accessibility contract. Kept independent from [AppViewModel] so
+ * focus semantics can be verified deterministically without opening real SSH connections.
+ */
+@Composable
+fun TerminalPaneFrame(
+    paneIndex: Int,
+    label: String,
+    isFocused: Boolean,
+    onRequestFocus: () -> Unit,
+    modifier: Modifier = Modifier,
+    content: @Composable BoxScope.() -> Unit,
+) {
+    val chrome = shellChromePalette()
+    Box(
+        modifier
+            .clip(RoundedCornerShape(6.dp))
+            .border(
+                width = if (isFocused) 2.dp else 1.dp,
+                color = if (isFocused) OmniColors.cyan else chrome.border,
+                shape = RoundedCornerShape(6.dp),
+            )
+            .background(chrome.paneBackground)
+            .semantics(mergeDescendants = false) {
+                contentDescription = "Terminal pane $paneIndex: $label"
+                selected = isFocused
+                stateDescription = if (isFocused) "Active terminal pane" else "Inactive terminal pane"
+                onClick(label = "Focus terminal pane $paneIndex") {
+                    onRequestFocus()
+                    true
+                }
+            },
+        content = content,
+    )
 }
 
 /**
