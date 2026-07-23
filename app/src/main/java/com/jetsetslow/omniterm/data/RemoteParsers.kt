@@ -240,6 +240,10 @@ object RemoteCommands {
         return "tmux kill-session -t $safe 2>/dev/null"
     }
 
+    /** Clear only the active pane's server-side history; the visible screen remains intact. */
+    fun tmuxClearHistoryCommand(name: String): String =
+        "tmux clear-history -t ${tmuxSafeName(name)} 2>/dev/null || true"
+
     /**
      * Dump the pane's scrollback history (colours preserved via -e, wrapped lines re-joined via
      * -J) so a re-attaching client can seed its local buffer with the real tmux history. `-E -1`

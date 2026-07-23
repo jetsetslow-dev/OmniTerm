@@ -5254,12 +5254,37 @@ class AppViewModel @JvmOverloads constructor(
 
     fun clearTerminalScrollbackFor(session: ShellSession?) {
         val s = session ?: return
-        synchronized(s.emulator) {
-            s.emulator.clearScrollback()
+        fun clearLocalBuffer() {
+            synchronized(s.emulator) {
+                s.emulator.clearScrollback()
+            }
+            s.viewportFirstRow = 0
+            s.followTail = true
+            TerminalSessionManager.publishTerminalSnapshot(s)
         }
-        s.viewportFirstRow = 0
-        s.followTail = true
-        TerminalSessionManager.publishTerminalSnapshot(s)
+
+        // Clear immediately for a responsive UI and disarm capture-pane re-sync; otherwise a
+        // persistent tmux session can restore the just-cleared server history on the next scroll.
+        s.scrollbackDirty = false
+        clearLocalBuffer()
+        if (!s.persistent) return
+
+        viewModelScope.launch {
+            s.scrollbackSyncMutex.withLock {
+                if (s.controlMode) {
+                    val paneId = s.activePaneId ?: return@withLock
+                    runCatching { awaitControlReply(s, TmuxControlCommands.clearHistory(paneId)) }
+                } else {
+                    val creds = s.creds ?: return@withLock
+                    withContext(Dispatchers.IO) {
+                        sshTransport.exec(creds, RemoteCommands.tmuxClearHistoryCommand(s.tmuxName))
+                    }
+                }
+                // A re-sync already in flight may have adopted history before this clear obtained
+                // the mutex. Clear locally once more after the authoritative tmux operation.
+                clearLocalBuffer()
+            }
+        }
     }
 
     private fun sendBytes(bytes: ByteArray) = sendBytesTo(focusedTerminalSession, bytes)
