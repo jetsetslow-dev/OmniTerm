@@ -24,8 +24,9 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Detect whether this PR touches anything that can affect the build. Docs, workflow YAML, and
-  # published artifacts cannot change compiled output, so the heavy jobs below are skipped for them.
+  # Detect whether this PR touches anything that can affect the build. Docs, unrelated workflow
+  # YAML, and published artifacts cannot change compiled output, so the heavy jobs below skip them.
+  # This workflow definition itself is included so changes to the required gate are exercised.
   # Because "Build & Test" and "Validate Room migrations" are REQUIRED checks, each heavy job has a
   # companion no-op job reporting the SAME check name, so a skipped build still satisfies branch
   # protection (a required check that simply doesn't report would leave the PR unmergeable).
@@ -57,7 +58,7 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           echo "Changed files:"; echo "$changed"
-          if echo "$changed" | grep -qE '^(app/|gradle/|scripts/|\.github/actions/|gradle\.properties|build\.gradle\.kts|settings\.gradle\.kts|gradlew$|gradlew\.bat$)'; then
+          if echo "$changed" | grep -qE '^(app/|gradle/|scripts/|\.github/actions/|\.github/workflows/android-pr-check\.yml$|gradle\.properties|build\.gradle\.kts|settings\.gradle\.kts|gradlew$|gradlew\.bat$)'; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
@@ -79,8 +80,10 @@ jobs:
       - name: Set up Android Gradle
         uses: ./.github/actions/setup-android-gradle
 
-      - name: Validate release tooling
-        run: ./scripts/test-release-version.sh
+      - name: Validate release and CI tooling
+        run: |
+          ./scripts/test-release-version.sh
+          ./scripts/test-ci-gradle-gate.sh
 
       # Verification APKs never need signing continuity. Always use an ephemeral key so untrusted
       # build/test code cannot access the stable sideload signing key.
