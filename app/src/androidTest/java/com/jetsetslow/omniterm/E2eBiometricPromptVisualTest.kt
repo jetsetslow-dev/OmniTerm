@@ -50,15 +50,15 @@ class E2eBiometricPromptVisualTest {
     }
 
     @Test
-    fun manifestSystemLogoRendersOriginalLauncherArtwork() {
+    fun manifestSystemLogoUsesOriginalBitmapOutsideAdaptiveIconWrapper() {
         val appInfo = composeRule.activity.applicationInfo
         val packageManager = composeRule.activity.packageManager
         val activityInfo = packageManager.getActivityInfo(
             composeRule.activity.componentName,
             0,
         )
-        assertEquals(R.mipmap.ic_launcher, appInfo.logo)
-        assertEquals(R.mipmap.ic_launcher, activityInfo.logo)
+        assertEquals(R.mipmap.ic_launcher_fg, appInfo.logo)
+        assertEquals(R.mipmap.ic_launcher_fg, activityInfo.logo)
 
         val launcher = composeRule.activity.getDrawable(R.mipmap.ic_launcher)
         assertTrue("Launcher icon is not adaptive", launcher is AdaptiveIconDrawable)
@@ -70,6 +70,10 @@ class E2eBiometricPromptVisualTest {
         )
 
         val systemLogo = requireNotNull(activityInfo.loadLogo(packageManager))
+        assertTrue(
+            "System logo must bypass Android 16 adaptive-icon flattening",
+            systemLogo is BitmapDrawable,
+        )
         val bitmap = Bitmap.createBitmap(216, 216, Bitmap.Config.ARGB_8888)
         systemLogo.setBounds(0, 0, bitmap.width, bitmap.height)
         systemLogo.draw(Canvas(bitmap))
