@@ -1538,6 +1538,12 @@ class AppViewModel @JvmOverloads constructor(
         val selected = serverIds.distinct().take(2)
         if (selected.size != 2 || isTerminalConnecting) return
 
+        val srv1 = servers.value.find { it.id == selected[0] }
+        val srv2 = servers.value.find { it.id == selected[1] }
+        if (srv1 != null && srv2 != null) {
+            ShortcutHelper.pushSplitTerminalShortcut(getApplication(), srv1, srv2)
+        }
+
         pendingMultiSshConnections.clear()
         activeSshTab = 1
         multiSshSessionId1 = null
@@ -6767,7 +6773,16 @@ class AppViewModel @JvmOverloads constructor(
         TerminalSessionManager.scope.launch(Dispatchers.IO) { runCatching { client.close() } }
     }
 
+    fun openShareBrowserById(id: Int) {
+        val share = networkShares.value.find { it.id == id }
+        if (share != null) {
+            navigateTo(Screen.NetworkShares)
+            openShareBrowser(share)
+        }
+    }
+
     fun openShareBrowser(share: NetworkShareEntity, startPath: String? = null) {
+        ShortcutHelper.pushNetworkShareShortcut(getApplication(), share)
         if (browsingShare?.id == share.id) {
             if (startPath != null) loadShareDir(startPath)
             return

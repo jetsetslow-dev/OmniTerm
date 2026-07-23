@@ -135,10 +135,17 @@ class MainActivity : AppCompatActivity() {
   private var pendingSessionId: String? = null
 
   private var pendingShortcutServerId: Int? = null
+  private var pendingSplitServerId1: Int? = null
+  private var pendingSplitServerId2: Int? = null
+  private var pendingShareId: Int? = null
 
   private fun handleIntent(intent: android.content.Intent?) {
     val sessionId = intent?.getStringExtra(SessionService.EXTRA_SESSION_ID)
     val shortcutId = if (intent?.hasExtra("shortcut_server_id") == true) intent.getIntExtra("shortcut_server_id", 0) else null
+    val splitId1 = if (intent?.hasExtra("shortcut_split_server1_id") == true) intent.getIntExtra("shortcut_split_server1_id", 0) else null
+    val splitId2 = if (intent?.hasExtra("shortcut_split_server2_id") == true) intent.getIntExtra("shortcut_split_server2_id", 0) else null
+    val shareId = if (intent?.hasExtra("shortcut_share_id") == true) intent.getIntExtra("shortcut_share_id", 0) else null
+
     // Notification disconnect actions are handled by the non-exported SessionService. The exported
     // launcher Activity only honors resume/navigation intents.
     if (sessionId != null) {
@@ -156,6 +163,25 @@ class MainActivity : AppCompatActivity() {
         vm.connectTerminalByServerId(shortcutId)
       } else {
         pendingShortcutServerId = shortcutId
+      }
+    }
+
+    if (splitId1 != null && splitId2 != null && splitId1 != 0 && splitId2 != 0) {
+      val vm = appViewModel
+      if (vm != null) {
+        vm.openMultiSshForServers(listOf(splitId1, splitId2))
+      } else {
+        pendingSplitServerId1 = splitId1
+        pendingSplitServerId2 = splitId2
+      }
+    }
+
+    if (shareId != null && shareId != 0) {
+      val vm = appViewModel
+      if (vm != null) {
+        vm.openShareBrowserById(shareId)
+      } else {
+        pendingShareId = shareId
       }
     }
   }
@@ -177,6 +203,15 @@ class MainActivity : AppCompatActivity() {
         pendingShortcutServerId?.let {
           viewModel.connectTerminalByServerId(it)
           pendingShortcutServerId = null
+        }
+        if (pendingSplitServerId1 != null && pendingSplitServerId2 != null) {
+          viewModel.openMultiSshForServers(listOf(pendingSplitServerId1!!, pendingSplitServerId2!!))
+          pendingSplitServerId1 = null
+          pendingSplitServerId2 = null
+        }
+        pendingShareId?.let {
+          viewModel.openShareBrowserById(it)
+          pendingShareId = null
         }
       }
       val keepOn = viewModel.isKeepScreenOnEnabled
