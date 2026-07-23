@@ -6,18 +6,26 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Bold Hexagon -->
     <path
         android:fillColor="@android:color/transparent"
         android:strokeColor="#FF000000"
         android:strokeWidth="8"
-        android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:pathData="M18,54 C18,31 40,30 54,54 C68,78 90,77 90,54 C90,31 68,30 54,54 C40,78 18,77 18,54" />
+        android:pathData="M54,26 L78,40 L78,68 L54,82 L30,68 L30,40 Z" />
+    <!-- Infinity Loop inscribed inside -->
     <path
         android:fillColor="@android:color/transparent"
         android:strokeColor="#FF000000"
-        android:strokeWidth="5"
+        android:strokeWidth="4"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:pathData="M38,45 L48,54 L38,63 M58,63 L71,63" />
+        android:pathData="M38,54 C38,44 48,44 54,54 C60,64 70,64 70,54 C70,44 60,44 54,54 C48,64 38,64 38,54 Z" />
+    <!-- Cursor -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#FF000000"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:pathData="M62,64 L70,64" />
 </vector>
