@@ -333,17 +333,16 @@ class JschSshTransport : SshTransport {
             }
         }
         try {
-            onPhaseChange?.invoke("Resolving host…")
+            onPhaseChange?.invoke("Resolving target…")
             session = if (isJump(creds)) {
-                onPhaseChange?.invoke("Connecting via jump host…")
+                onPhaseChange?.invoke("Authenticating bastion…")
                 jumped = buildJumpedJschSession(creds, CONNECT_TIMEOUT_MS)
                 jumped.target
             } else {
                 newSession(creds)
             }
-            onPhaseChange?.invoke("Handshaking…")
+            onPhaseChange?.invoke("Authenticating target…")
             session.connect(CONNECT_TIMEOUT_MS)
-            onPhaseChange?.invoke("Authenticating…")
             channel = (session.openChannel("shell") as ChannelShell).apply {
                 setPtyType("xterm-256color")
                 setPtySize(cols.coerceAtLeast(1), rows.coerceAtLeast(1), cols * 8, rows * 16)

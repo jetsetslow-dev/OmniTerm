@@ -110,7 +110,7 @@ internal fun buildJschSession(creds: SshCredentials): Session {
  * SSH jump hosts ("ssh") are NOT handled here — they require a separate live jump session and a
  * local port-forward (see [buildJumpedJschSession]).
  */
-private fun applyProxy(session: Session, creds: SshCredentials) {
+internal fun applyProxy(session: Session, creds: SshCredentials) {
     val host = creds.proxyHost.trim()
     if (host.isEmpty() || creds.proxyPort <= 0) return
     when (creds.proxyType) {

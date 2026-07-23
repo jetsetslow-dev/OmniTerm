@@ -279,6 +279,78 @@ enum class Screen {
     About
 }
 
+sealed interface SshConnectionPhase {
+    val label: String
+
+    data object Connecting : SshConnectionPhase { override val label = "Connecting…" }
+    data object Resolving : SshConnectionPhase { override val label = "Resolving target…" }
+    data object AuthenticatingBastion : SshConnectionPhase { override val label = "Authenticating bastion…" }
+    data object AuthenticatingTarget : SshConnectionPhase { override val label = "Authenticating target…" }
+    data object OpeningChannel : SshConnectionPhase { override val label = "Opening channel…" }
+}
+
+sealed interface SshConnectionFailure {
+    val userMessage: String
+
+    data object Authentication : SshConnectionFailure {
+        override val userMessage = "Authentication failed (bad key or password)"
+    }
+    data object Refused : SshConnectionFailure {
+        override val userMessage = "Connection refused — the server isn't accepting SSH yet (it may still be booting). Try again in a moment."
+    }
+    data object Timeout : SshConnectionFailure {
+        override val userMessage = "Connection timed out — the host didn't respond. Check it's powered on and reachable."
+    }
+    data object HostNotFound : SshConnectionFailure {
+        override val userMessage = "Host not found — check the hostname or IP address."
+    }
+    data object NetworkUnreachable : SshConnectionFailure {
+        override val userMessage = "Network unreachable — the host can't be reached from this network."
+    }
+    data object Dropped : SshConnectionFailure {
+        override val userMessage = "Connection dropped during handshake — the server may not be ready yet. Try again in a moment."
+    }
+    data object HostKeyVerification : SshConnectionFailure {
+        override val userMessage = "Host key verification failed."
+    }
+    data class Unknown(override val userMessage: String) : SshConnectionFailure
+}
+
+sealed interface TerminalConnectionState {
+    data object Idle : TerminalConnectionState
+    data class Connecting(val phase: SshConnectionPhase) : TerminalConnectionState
+    data class Connected(val sessionId: String) : TerminalConnectionState
+    data class Failed(val failure: SshConnectionFailure) : TerminalConnectionState
+}
+
+internal fun classifySshConnectionFailure(raw: String): SshConnectionFailure {
+    val msg = raw.removePrefix("SSH Error:").trim()
+    fun has(vararg needles: String) = needles.any { msg.contains(it, ignoreCase = true) }
+    return when {
+        has("Auth fail", "auth cancel", "USERAUTH fail") -> SshConnectionFailure.Authentication
+        has("Connection refused") -> SshConnectionFailure.Refused
+        has("timed out", "timeout", "socket is not established", "connection timed") -> SshConnectionFailure.Timeout
+        has("UnknownHost", "Name or service not known", "nodename nor servname", "No address associated") ->
+            SshConnectionFailure.HostNotFound
+        has("Network is unreachable", "No route to host") -> SshConnectionFailure.NetworkUnreachable
+        has("Connection reset", "Broken pipe", "connection closed by") -> SshConnectionFailure.Dropped
+        has("reject HostKey", "HostKey has been changed") -> SshConnectionFailure.HostKeyVerification
+        msg.isBlank() -> SshConnectionFailure.Unknown("Connection failed — the host didn't respond as expected.")
+        else -> SshConnectionFailure.Unknown(msg)
+    }
+}
+
+internal fun classifySshConnectionPhase(raw: String, viaJumpHost: Boolean): SshConnectionPhase = when {
+    raw.contains("resolv", ignoreCase = true) -> SshConnectionPhase.Resolving
+    raw.contains("bastion", ignoreCase = true) || raw.contains("jump host", ignoreCase = true) ->
+        SshConnectionPhase.AuthenticatingBastion
+    raw.contains("target", ignoreCase = true) || raw.contains("authenticat", ignoreCase = true) ->
+        SshConnectionPhase.AuthenticatingTarget
+    raw.contains("channel", ignoreCase = true) -> SshConnectionPhase.OpeningChannel
+    viaJumpHost && raw.contains("handshak", ignoreCase = true) -> SshConnectionPhase.AuthenticatingTarget
+    else -> SshConnectionPhase.Connecting
+}
+
 /** Non-printable keys the terminal key-bar / hardware keyboard can send. */
 enum class TermKey {
     ENTER, BACKSPACE, TAB, ESC,
@@ -606,7 +678,10 @@ private val builtInFleetPresets: List<QuickScriptEntity> = listOf(
     QuickScriptEntity(0, "KRN", "Kernel", "uname -sr 2>/dev/null || powershell -NoProfile -Command \"[Environment]::OSVersion.VersionString\"", "cyan", false, "Fleet", 7, availableForQuick = false, availableForFleet = true),
 )
 
-class AppViewModel(application: Application) : AndroidViewModel(application) {
+class AppViewModel @JvmOverloads constructor(
+    application: Application,
+    private val sshTransport: SshTransport = JschSshTransport(),
+) : AndroidViewModel(application) {
     private val db = AppDatabase.getDatabase(application)
     private val repository = AppRepository(db)
     private val freePlayStoreLimit = 1
@@ -618,6 +693,13 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
 
     // NAVIGATION CONFIRMATION DIALOG (Tapping away from Terminal while active)
     var showDisconnectTerminalDialog by mutableStateOf(false)
+    /**
+     * Global incident overlay opened from the app-bar alert badge. This deliberately is not a
+     * [Screen]: inspecting or acting on an alert must not mutate navigation state (and, in
+     * particular, must never enter the live-terminal leave/disconnect transaction).
+     */
+    var showAlertsPopup by mutableStateOf(false)
+        private set
     var showKeepScreenOnBatteryWarning by mutableStateOf(false)
     var pendingDisconnectSessionId by mutableStateOf<String?>(null)
     var pendingDisconnectAllSessions by mutableStateOf(false)
@@ -1307,7 +1389,6 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // TERMINAL EMULATOR SHELL STATE (interactive PTY shell)
-    private val sshTransport: SshTransport = JschSshTransport()
     private var termCols = 80
     private var termRows = 24
 
@@ -1506,6 +1587,10 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     // Error from an initial connect that never produced a session (bad creds, host down, …). Unlike
     // [terminalDisconnectError] this isn't tied to a session, so it can surface on the connect prompt.
     var terminalConnectError by mutableStateOf<String?>(null)
+    var terminalConnectionFailure by mutableStateOf<SshConnectionFailure?>(null)
+        private set
+    private val _terminalConnectionState = MutableStateFlow<TerminalConnectionState>(TerminalConnectionState.Idle)
+    val terminalConnectionState: StateFlow<TerminalConnectionState> = _terminalConnectionState.asStateFlow()
     val terminalDisconnectError: String? get() = terminalActionSession?.disconnectError ?: terminalConnectError
     var hostKeyChangedServer by mutableStateOf<com.jetsetslow.omniterm.data.ServerEntity?>(null)
     // Set when the user asks to connect to a host whose last probe found the SSH port unreachable.
@@ -1952,28 +2037,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
      * "it just failed silently." We classify the common cases explicitly and only fall back to the
      * trimmed raw text for genuinely unrecognized failures.
      */
-    private fun cleanSshError(raw: String): String {
-        val msg = raw.removePrefix("SSH Error:").trim()
-        fun has(vararg needles: String) = needles.any { msg.contains(it, ignoreCase = true) }
-        return when {
-            has("Auth fail", "auth cancel", "USERAUTH fail") ->
-                "Authentication failed (bad key or password)"
-            has("Connection refused") ->
-                "Connection refused — the server isn't accepting SSH yet (it may still be booting). Try again in a moment."
-            has("timed out", "timeout", "socket is not established", "connection timed") ->
-                "Connection timed out — the host didn't respond. Check it's powered on and reachable."
-            has("UnknownHost", "Name or service not known", "nodename nor servname", "No address associated") ->
-                "Host not found — check the hostname or IP address."
-            has("Network is unreachable", "No route to host") ->
-                "Network unreachable — the host can't be reached from this network."
-            has("Connection reset", "Broken pipe", "connection closed by") ->
-                "Connection dropped during handshake — the server may not be ready yet. Try again in a moment."
-            has("reject HostKey", "HostKey has been changed") ->
-                "Host key verification failed."
-            msg.isBlank() -> "Connection failed — the host didn't respond as expected."
-            else -> msg
-        }
-    }
+    private fun cleanSshError(raw: String): String = classifySshConnectionFailure(raw).userMessage
 
     private fun healthFromMetrics(cpu: Float, ram: Float, disk: Float, rtt: Int): Int =
         healthConfig.score(cpu, ram, disk, rtt)
@@ -2325,6 +2389,14 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     // MULTI-SCREEN NAVIGATION ENGINE (custom, failsafe backstack)
+    fun openAlertsPopup() {
+        showAlertsPopup = true
+    }
+
+    fun closeAlertsPopup() {
+        showAlertsPopup = false
+    }
+
     fun navigateTo(screen: Screen) {
         // Unsaved Settings changes must be saved or explicitly discarded before leaving.
         if (currentScreen == Screen.Settings && settingsDirty && screen != Screen.Settings) {
@@ -3881,6 +3953,8 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         terminalConnectJob = null
         isTerminalConnecting = false
         terminalConnectionPhase = "Connecting…"
+        terminalConnectionFailure = null
+        _terminalConnectionState.value = TerminalConnectionState.Idle
     }
 
     fun connectTerminal() {
@@ -3934,7 +4008,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val targetMultiSshPane = multiSshFocusedPane.takeIf { activeSshTab == 1 }
         isTerminalConnecting = true
         terminalConnectError = null
+        terminalConnectionFailure = null
         terminalConnectionPhase = "Connecting…"
+        _terminalConnectionState.value = TerminalConnectionState.Connecting(SshConnectionPhase.Connecting)
         val attemptGeneration = ++terminalConnectGeneration
 
         terminalConnectJob = viewModelScope.launch {
@@ -3958,6 +4034,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                         tmuxVerifiedServerIds.add(srv.id)
                     } else {
                         isTerminalConnecting = false
+                        _terminalConnectionState.value = TerminalConnectionState.Idle
                         tmuxInstallPromptServer = srv
                         return@launch
                     }
@@ -3966,7 +4043,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val emulator = TerminalEmulator(termCols, termRows, scrollbackLimit = terminalScrollbackLimit)
                 val session = sshTransport.openShell(creds, termCols, termRows) { phase ->
                     viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                        if (attemptGeneration == terminalConnectGeneration) terminalConnectionPhase = phase
+                        if (attemptGeneration == terminalConnectGeneration) {
+                            val typedPhase = classifySshConnectionPhase(phase, creds.proxyType == "ssh")
+                            terminalConnectionPhase = typedPhase.label
+                            _terminalConnectionState.value = TerminalConnectionState.Connecting(typedPhase)
+                        }
                     }
                 }
                 openedSession = session
@@ -4017,6 +4098,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     } else {
                         currentSessionId = shellSession.id
                     }
+                    _terminalConnectionState.value = TerminalConnectionState.Connected(shellSession.id)
                 }
                 wireSessionIo(shellSession)
                 if (shellSession.controlMode) initControlModeSession(shellSession, creds)
@@ -4043,9 +4125,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     val msg = e.message ?: "Connection failed."
                     if (msg.contains("reject HostKey", ignoreCase = true) ||
                         msg.contains("HostKey has been changed", ignoreCase = true)) {
+                        val failure = SshConnectionFailure.HostKeyVerification
+                        terminalConnectionFailure = failure
+                        terminalConnectError = failure.userMessage
+                        _terminalConnectionState.value = TerminalConnectionState.Failed(failure)
                         hostKeyChangedServer = srv
                     } else {
-                        terminalConnectError = cleanSshError(msg)
+                        val failure = classifySshConnectionFailure(msg)
+                        terminalConnectionFailure = failure
+                        terminalConnectError = failure.userMessage
+                        _terminalConnectionState.value = TerminalConnectionState.Failed(failure)
                     }
                 }
             } finally {
@@ -4499,7 +4588,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         val targetMultiSshPane = multiSshFocusedPane.takeIf { activeSshTab == 1 }
         isTerminalConnecting = true
         terminalConnectError = null
+        terminalConnectionFailure = null
         terminalConnectionPhase = "Connecting…"
+        _terminalConnectionState.value = TerminalConnectionState.Connecting(SshConnectionPhase.Connecting)
         val attemptGeneration = ++terminalConnectGeneration
 
         terminalConnectJob = viewModelScope.launch {
@@ -4512,12 +4603,18 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     false -> {
                         forgetPersistentSession(tmuxName)
                         isTerminalConnecting = false
+                        val failure = SshConnectionFailure.Dropped
+                        terminalConnectionFailure = failure
                         terminalConnectError = "Server disconnected; tmux session is no longer running."
+                        _terminalConnectionState.value = TerminalConnectionState.Failed(failure)
                         return@launch
                     }
                     null -> {
                         isTerminalConnecting = false
+                        val failure = SshConnectionFailure.NetworkUnreachable
+                        terminalConnectionFailure = failure
                         terminalConnectError = "Unable to reach server; tmux session may still be running."
+                        _terminalConnectionState.value = TerminalConnectionState.Failed(failure)
                         return@launch
                     }
                     true -> Unit
@@ -4525,7 +4622,11 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                 val emulator = TerminalEmulator(termCols, termRows, scrollbackLimit = terminalScrollbackLimit)
                 val session = sshTransport.openShell(creds, termCols, termRows) { phase ->
                     viewModelScope.launch(kotlinx.coroutines.Dispatchers.Main) {
-                        if (attemptGeneration == terminalConnectGeneration) terminalConnectionPhase = phase
+                        if (attemptGeneration == terminalConnectGeneration) {
+                            val typedPhase = classifySshConnectionPhase(phase, creds.proxyType == "ssh")
+                            terminalConnectionPhase = typedPhase.label
+                            _terminalConnectionState.value = TerminalConnectionState.Connecting(typedPhase)
+                        }
                     }
                 }
                 openedSession = session
@@ -4565,6 +4666,7 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     } else {
                         currentSessionId = shellSession.id
                     }
+                    _terminalConnectionState.value = TerminalConnectionState.Connected(shellSession.id)
                 }
                 if (initialScreenPainted) TerminalSessionManager.publishTerminalSnapshot(shellSession)
                 wireSessionIo(shellSession)
@@ -4600,9 +4702,16 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
                     val msg = e.message ?: "Connection failed."
                     if (msg.contains("reject HostKey", ignoreCase = true) ||
                         msg.contains("HostKey has been changed", ignoreCase = true)) {
+                        val failure = SshConnectionFailure.HostKeyVerification
+                        terminalConnectionFailure = failure
+                        terminalConnectError = failure.userMessage
+                        _terminalConnectionState.value = TerminalConnectionState.Failed(failure)
                         hostKeyChangedServer = srv
                     } else {
-                        terminalConnectError = cleanSshError(msg)
+                        val failure = classifySshConnectionFailure(msg)
+                        terminalConnectionFailure = failure
+                        terminalConnectError = failure.userMessage
+                        _terminalConnectionState.value = TerminalConnectionState.Failed(failure)
                     }
                 }
             } finally {
@@ -6619,9 +6728,9 @@ class AppViewModel(application: Application) : AndroidViewModel(application) {
         shareClient = null
         shareClientShareId = null
         // Teardown can block on socket close, so it must leave the main thread — and it can't use
-        // viewModelScope because that is already cancelled when onCleared calls this.
-        @OptIn(DelicateCoroutinesApi::class)
-        GlobalScope.launch(Dispatchers.IO) { runCatching { client.close() } }
+        // viewModelScope because that is already cancelled when onCleared calls this. Reuse the
+        // process-owned session cleanup scope instead of an unstructured GlobalScope coroutine.
+        TerminalSessionManager.scope.launch(Dispatchers.IO) { runCatching { client.close() } }
     }
 
     fun openShareBrowser(share: NetworkShareEntity, startPath: String? = null) {

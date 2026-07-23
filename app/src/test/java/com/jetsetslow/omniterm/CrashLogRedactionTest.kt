@@ -32,4 +32,16 @@ class CrashLogRedactionTest {
         assertTrue(safe.contains("at com.example.Safe.frame(Safe.kt:42)"))
         assertTrue(safe.contains("<redacted>"))
     }
+
+    @Test
+    fun shareBoundaryRedactsEvenIfCallerPassesRawReport() {
+        val shared = CrashLog.sharePayload(
+            "password=share-boundary-secret host=192.0.2.55 at com.example.Frame.run(Frame.kt:7)",
+        )
+
+        assertFalse(shared.contains("share-boundary-secret"))
+        assertFalse(shared.contains("192.0.2.55"))
+        assertTrue(shared.contains("OmniTerm crash report"))
+        assertTrue(shared.contains("at com.example.Frame.run(Frame.kt:7)"))
+    }
 }

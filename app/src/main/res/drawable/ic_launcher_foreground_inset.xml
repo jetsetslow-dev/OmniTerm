@@ -1,9 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Keep the 108dp adaptive foreground inside Android's 72dp safe zone so circle/squircle masks
-     never crop the terminal mark. Density-specific source artwork remains unchanged. -->
-<inset xmlns:android="http://schemas.android.com/apk/res/android"
-    android:drawable="@mipmap/ic_launcher_fg"
-    android:insetLeft="18dp"
-    android:insetTop="18dp"
-    android:insetRight="18dp"
-    android:insetBottom="18dp" />
+<!-- Transparent adaptive foreground. The previous foreground bitmap was an opaque rounded tile;
+     compact system surfaces (notably Android 16 BiometricPrompt) could flatten/mask that tile and
+     leave no distinguishable mark. Keep the mark itself within the documented 66dp safe zone. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#FF66E8FF"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M22,54 C22,34 40,34 54,54 C68,74 86,74 86,54 C86,34 68,34 54,54 C40,74 22,74 22,54" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#FF63F5B0"
+        android:strokeWidth="5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M38,45 L47,54 L38,63 M58,63 L70,63" />
+</vector>

@@ -130,7 +130,9 @@ object CrashLog {
      * the destination — nothing is sent automatically. Exposed only through the app's FileProvider.
      */
     fun shareReport(context: Context, report: String) {
-        val full = "OmniTerm crash report\n\n$report"
+        // Defense in depth: callers normally pass an already-sanitized stored report, but this is
+        // the final clipboard/file/IPC boundary and must never trust that invariant.
+        val full = sharePayload(report)
         val send = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_SUBJECT, "OmniTerm crash report")
@@ -151,6 +153,9 @@ object CrashLog {
             Intent.createChooser(send, "Share crash report").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         )
     }
+
+    internal fun sharePayload(report: String): String =
+        "OmniTerm crash report\n\n${redactSensitive(report)}"
 
     fun formatThrowable(t: Throwable): String {
         val writer = StringWriter()

@@ -11,6 +11,7 @@ import java.security.KeyStore
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
+import java.lang.ref.WeakReference
 
 object BiometricCryptoGate {
     private const val ANDROID_KEYSTORE = "AndroidKeyStore"
@@ -25,6 +26,7 @@ object BiometricCryptoGate {
     // screen's auto-prompt and its "Use biometrics" button (and any recreation re-trigger) funnel
     // through here, so one in-flight authentication at a time is the correct global invariant.
     private val authInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile private var authHost = WeakReference<AppCompatActivity>(null)
 
     val isAuthenticationInFlight: Boolean get() = authInFlight.get()
 
@@ -36,12 +38,14 @@ object BiometricCryptoGate {
      */
     fun onHostActivityFinished() {
         authInFlight.set(false)
+        authHost.clear()
     }
 
     fun canAuthenticate(activity: AppCompatActivity): Boolean =
         BiometricManager.from(activity).canAuthenticate(BiometricManager.Authenticators.BIOMETRIC_STRONG) ==
             BiometricManager.BIOMETRIC_SUCCESS
 
+    @Synchronized
     fun authenticate(
         activity: AppCompatActivity,
         title: String,
@@ -50,9 +54,17 @@ object BiometricCryptoGate {
         onUnavailable: () -> Unit = {},
         onError: () -> Unit = {},
     ) {
-        if (!authInFlight.compareAndSet(false, true)) return
+        // Reconstructing BiometricPrompt with the new Activity is how androidx rebinds the
+        // callback for an authentication that survived configuration change. Same-Activity
+        // double taps remain strict no-ops so they cannot replace the active callback.
+        if (authInFlight.get()) {
+            if (authHost.get() !== activity) {
+                authHost = WeakReference(activity)
+                createPrompt(activity, onAuthenticated, onError)
+            }
+            return
+        }
         if (!canAuthenticate(activity)) {
-            authInFlight.set(false)
             onUnavailable()
             return
         }
@@ -66,30 +78,13 @@ object BiometricCryptoGate {
                 }
             }
             .getOrElse {
-                authInFlight.set(false)
                 onUnavailable()
                 return
             }
 
-        val prompt = BiometricPrompt(
-            activity,
-            ContextCompat.getMainExecutor(activity),
-            object : BiometricPrompt.AuthenticationCallback() {
-                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    authInFlight.set(false)
-                    val resultCipher = result.cryptoObject?.cipher
-                    val ok = runCatching {
-                        resultCipher?.doFinal(challenge)?.isNotEmpty() == true
-                    }.getOrDefault(false)
-                    if (ok) onAuthenticated() else onError()
-                }
-
-                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    authInFlight.set(false)
-                    onError()
-                }
-            },
-        )
+        if (!authInFlight.compareAndSet(false, true)) return
+        authHost = WeakReference(activity)
+        val prompt = createPrompt(activity, onAuthenticated, onError)
         val info = BiometricPrompt.PromptInfo.Builder()
             .setTitle(title)
             .setSubtitle(subtitle)
@@ -98,9 +93,39 @@ object BiometricCryptoGate {
             .build()
         runCatching { prompt.authenticate(info, BiometricPrompt.CryptoObject(cipher)) }
             .onFailure {
-                authInFlight.set(false)
+                clearInFlight()
                 onUnavailable()
             }
+    }
+
+    private fun createPrompt(
+        activity: AppCompatActivity,
+        onAuthenticated: () -> Unit,
+        onError: () -> Unit,
+    ): BiometricPrompt =
+        BiometricPrompt(
+            activity,
+            ContextCompat.getMainExecutor(activity),
+            object : BiometricPrompt.AuthenticationCallback() {
+                override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
+                    clearInFlight()
+                    val resultCipher = result.cryptoObject?.cipher
+                    val ok = runCatching {
+                        resultCipher?.doFinal(challenge)?.isNotEmpty() == true
+                    }.getOrDefault(false)
+                    if (ok) onAuthenticated() else onError()
+                }
+
+                override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
+                    clearInFlight()
+                    onError()
+                }
+            },
+        )
+
+    private fun clearInFlight() {
+        authInFlight.set(false)
+        authHost.clear()
     }
 
     private fun initCipher(): Cipher =

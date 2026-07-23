@@ -397,6 +397,7 @@ fun OmniAppBar(
                     .background(OmniColors.red.copy(alpha = 0.12f))
                     .border(1.dp, OmniColors.red.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
                     .clickable { onAlerts() }
+                    .semantics { contentDescription = "Open alerts popup" }
                     .padding(horizontal = 8.dp, vertical = 4.dp),
             ) {
                 Text("ALERTS $alertCount", color = OmniColors.red, fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold, fontSize = 12.sp)

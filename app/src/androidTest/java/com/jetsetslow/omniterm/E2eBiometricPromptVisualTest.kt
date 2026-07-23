@@ -4,7 +4,7 @@ import android.os.ParcelFileDescriptor
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.AdaptiveIconDrawable
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import com.jetsetslow.omniterm.data.BiometricCryptoGate
 import kotlinx.coroutines.CompletableDeferred
@@ -12,6 +12,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
@@ -33,6 +34,28 @@ class E2eBiometricPromptVisualTest {
         val visibleFraction = pixels.count { (it ushr 24) != 0 }.toDouble() / pixels.size
         assertTrue("Monochrome icon is effectively empty: $visibleFraction", visibleFraction > 0.05)
         assertTrue("Monochrome icon is an opaque tile: $visibleFraction", visibleFraction < 0.55)
+        val darkVisibleFraction = pixels.count {
+            val alpha = it ushr 24
+            val red = it ushr 16 and 0xff
+            val green = it ushr 8 and 0xff
+            val blue = it and 0xff
+            alpha != 0 && red + green + blue < 3 * 64
+        }.toDouble() / pixels.size
+        assertTrue(
+            "Monochrome mark has no untinted contrast for a light biometric surface",
+            darkVisibleFraction > 0.05,
+        )
+    }
+
+    @Test
+    fun manifestExposesExplicitApplicationAndActivityLogos() {
+        val appInfo = composeRule.activity.applicationInfo
+        val activityInfo = composeRule.activity.packageManager.getActivityInfo(
+            composeRule.activity.componentName,
+            0,
+        )
+        assertEquals(R.mipmap.ic_launcher, appInfo.logo)
+        assertEquals(R.mipmap.ic_launcher, activityInfo.logo)
     }
 
     @Test
