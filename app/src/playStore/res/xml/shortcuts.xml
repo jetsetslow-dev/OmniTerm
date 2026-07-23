@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Static launcher shortcuts: always available from long-press, even before any dynamic
+     server shortcuts are pushed. Each uses a custom action MainActivity routes internally
+     (static shortcut intents cannot carry extras). targetPackage must equal the flavor's
+     applicationId, so this file exists once per flavor. -->
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="static_new_host"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_add"
+        android:shortcutShortLabel="@string/shortcut_new_host_short"
+        android:shortcutLongLabel="@string/shortcut_new_host_long">
+        <intent
+            android:action="com.jetsetslow.omniterm.action.NEW_HOST"
+            android:targetPackage="com.jetsetslow.omniterm.app"
+            android:targetClass="com.jetsetslow.omniterm.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="static_sftp"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_share"
+        android:shortcutShortLabel="@string/shortcut_sftp_short"
+        android:shortcutLongLabel="@string/shortcut_sftp_long">
+        <intent
+            android:action="com.jetsetslow.omniterm.action.SFTP"
+            android:targetPackage="com.jetsetslow.omniterm.app"
+            android:targetClass="com.jetsetslow.omniterm.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="static_network_tools"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_terminal"
+        android:shortcutShortLabel="@string/shortcut_network_short"
+        android:shortcutLongLabel="@string/shortcut_network_long">
+        <intent
+            android:action="com.jetsetslow.omniterm.action.NETWORK_TOOLS"
+            android:targetPackage="com.jetsetslow.omniterm.app"
+            android:targetClass="com.jetsetslow.omniterm.MainActivity" />
+    </shortcut>
+</shortcuts>

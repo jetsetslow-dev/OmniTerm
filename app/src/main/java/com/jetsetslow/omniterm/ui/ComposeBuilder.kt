@@ -36,6 +36,8 @@ import androidx.compose.ui.unit.sp
 import com.jetsetslow.omniterm.ui.theme.OmniColors
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
 import java.util.UUID
+import androidx.compose.ui.res.stringResource
+import com.jetsetslow.omniterm.R
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Model
@@ -1058,7 +1060,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
             ) {
                 Icon(
                     if (ok) Icons.Filled.CheckCircle else Icons.Filled.Error,
-                    contentDescription = "Check Circle",
+                    contentDescription = null,
                     tint = if (ok) OmniColors.green else OmniColors.red,
                     modifier = Modifier.size(18.dp),
                 )
@@ -1082,7 +1084,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                         Icon(Icons.Filled.ContentCopy, contentDescription = "Copy deploy output")
                     }
                 }
-                TextButton(onClick = { result = null }) { Text("Dismiss") }
+                TextButton(onClick = { result = null }) { Text(stringResource(R.string.dismiss)) }
             }
         }
 
@@ -1092,11 +1094,11 @@ fun ComposeBuilder(viewModel: AppViewModel) {
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Column {
-                    Text("Compose Builder", fontWeight = FontWeight.Bold, fontSize = 20.sp, color = OmniColors.cyan)
+                    Text(stringResource(R.string.compose_builder), fontWeight = FontWeight.Bold, fontSize = 20.sp, color = OmniColors.cyan)
                     Text(if (isExisting) "Editing existing stack" else "New stack", fontSize = 11.sp, color = OmniColors.textMuted)
                 }
                 if (active != null) {
-                    TextButton(onClick = { attemptClearOrExit() }) { Text("New / Clear") }
+                    TextButton(onClick = { attemptClearOrExit() }) { Text(stringResource(R.string.new_clear)) }
                 }
             }
 
@@ -1109,7 +1111,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                         .border(1.dp, OmniColors.bg2, RoundedCornerShape(8.dp))
                         .padding(horizontal = 10.dp, vertical = 8.dp),
                 ) {
-                    Text("COMPOSE FILE", fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = OmniColors.textMuted)
+                    Text(stringResource(R.string.compose_file), fontSize = 9.sp, fontWeight = FontWeight.Bold, letterSpacing = 1.sp, color = OmniColors.textMuted)
                     Text(
                         draft.composeFilePath,
                         fontFamily = OmniFonts.mono,
@@ -1156,8 +1158,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
             if (rawMode) {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     if (isExisting) {
-                        Text(
-                            "Editing the file directly. Nothing is changed until you deploy, and the file is validated first.",
+                        Text(stringResource(R.string.editing_the_file_directly_nothing_is),
                             fontSize = 11.sp, color = OmniColors.textMuted,
                             modifier = Modifier.weight(1f),
                         )
@@ -1205,8 +1206,8 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                 OutlinedTextField(
                     value = draft.stackName,
                     onValueChange = { draft = draft.copy(stackName = it.trim()) },
-                    label = { Text("Stack name (compose name: key, optional)") },
-                    placeholder = { Text("e.g. example_stack") },
+                    label = { Text(stringResource(R.string.stack_name_compose_name_key_optional)) },
+                    placeholder = { Text(stringResource(R.string.e_g_example_stack)) },
                     singleLine = true,
                     colors = omniTextFieldColors(),
                     modifier = Modifier.fillMaxWidth(),
@@ -1239,7 +1240,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                         tint = OmniColors.cyan,
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text("Preview", fontWeight = FontWeight.Bold, color = OmniColors.cyan)
+                    Text(stringResource(R.string.preview), fontWeight = FontWeight.Bold, color = OmniColors.cyan)
                 }
                 if (previewExpanded) {
                     Box(
@@ -1260,8 +1261,8 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                 OutlinedTextField(
                     value = draft.projectName,
                     onValueChange = { draft = draft.copy(projectName = it) },
-                    label = { Text("Project name (~/<name> deploy directory)") },
-                    placeholder = { Text("e.g. my_stack") },
+                    label = { Text(stringResource(R.string.project_name_name_deploy_directory)) },
+                    placeholder = { Text(stringResource(R.string.e_g_my_stack)) },
                     singleLine = true,
                     colors = omniTextFieldColors(),
                     modifier = Modifier.fillMaxWidth(),
@@ -1279,13 +1280,13 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Text("Runtime", fontSize = 12.sp, color = OmniColors.textMuted)
+                    Text(stringResource(R.string.runtime), fontSize = 12.sp, color = OmniColors.textMuted)
                     // Blank runtime deploys via the auto-resolver, which prefers Docker — so
                     // Docker renders as the default selection until the user picks explicitly.
                     FilterChip(
                         selected = draft.runtime != "podman",
                         onClick = { draft = draft.copy(runtime = "docker") },
-                        label = { Text("Docker") },
+                        label = { Text(stringResource(R.string.docker)) },
                     )
                     FilterChip(
                         selected = draft.runtime == "podman",
@@ -1301,7 +1302,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                                 },
                             )
                         },
-                        label = { Text("Podman") },
+                        label = { Text(stringResource(R.string.podman)) },
                     )
                 }
             } else if (isExisting && bothRuntimes && draft.runtime.isNotBlank()) {
@@ -1520,9 +1521,8 @@ fun PodmanModifiersEditor(
             modifier = Modifier.fillMaxWidth().padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text("Podman modifiers", fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
-            Text(
-                "Podman runs as the SSH user. Keep-ID maps that user's UID/GID into each container.",
+            Text(stringResource(R.string.podman_modifiers), fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
+            Text(stringResource(R.string.podman_runs_as_the_ssh_user),
                 fontSize = 11.sp,
                 color = OmniColors.textMuted,
             )
@@ -1531,7 +1531,7 @@ fun PodmanModifiersEditor(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Text("Rootless keep-ID mapping", fontSize = 12.sp)
+                Text(stringResource(R.string.rootless_keep_id_mapping), fontSize = 12.sp)
                 Switch(
                     checked = keepIdEnabled,
                     onCheckedChange = { enabled ->
@@ -1555,9 +1555,8 @@ fun PodmanModifiersEditor(
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 Column(Modifier.weight(1f)) {
-                    Text("Group services in a pod", fontSize = 12.sp)
-                    Text(
-                        "Services share Podman pod namespaces using x-podman.in_pod.",
+                    Text(stringResource(R.string.group_services_in_a_pod), fontSize = 12.sp)
+                    Text(stringResource(R.string.services_share_podman_pod_namespaces_using),
                         fontSize = 10.sp,
                         color = OmniColors.textMuted,
                     )
@@ -1581,9 +1580,9 @@ fun PodmanModifiersEditor(
                 OutlinedTextField(
                     value = draft.podmanPodName,
                     onValueChange = { onChange(draft.copy(podmanPodName = it.trim())) },
-                    label = { Text("Pod name (optional)") },
-                    placeholder = { Text("pod_<project>") },
-                    supportingText = { Text("Blank uses Podman Compose's default pod_<project>.") },
+                    label = { Text(stringResource(R.string.pod_name_optional)) },
+                    placeholder = { Text(stringResource(R.string.pod_project)) },
+                    supportingText = { Text(stringResource(R.string.blank_uses_podman_compose_s_default)) },
                     singleLine = true,
                     colors = omniTextFieldColors(),
                     modifier = Modifier.fillMaxWidth().testTag("podman-pod-name"),
@@ -1599,9 +1598,10 @@ private fun ComposeServiceEditorCard(
     svc: ComposeServiceDraft,
     onUpdate: ((ComposeServiceDraft) -> ComposeServiceDraft) -> Unit,
     onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     OmniCard(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         leftAccent = if (svc.isCommentedOut) OmniColors.textMuted else OmniColors.purple,
     ) {
         Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1613,7 +1613,7 @@ private fun ComposeServiceEditorCard(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         if (svc.isExpanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = "Expand Less", tint = OmniColors.cyan,
+                        contentDescription = null, tint = OmniColors.cyan,
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
@@ -1631,7 +1631,7 @@ private fun ComposeServiceEditorCard(
             if (svc.isExpanded) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("Comment out", fontSize = 12.sp, color = OmniColors.textMuted)
+                        Text(stringResource(R.string.comment_out), fontSize = 12.sp, color = OmniColors.textMuted)
                         Switch(checked = svc.isCommentedOut, onCheckedChange = { v -> onUpdate { it.copy(isCommentedOut = v) } })
                     }
                     IconButton(onClick = onRemove) {
@@ -1669,18 +1669,17 @@ private fun TopLevelSectionsEditor(draft: ComposeStackDraft, onChange: (ComposeS
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = "Expand Less", tint = OmniColors.amber,
+                        contentDescription = null, tint = OmniColors.amber,
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text("Top-level volumes", fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
+                    Text(stringResource(R.string.top_level_volumes), fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
                 }
                 if (draft.topVolumes.isNotEmpty()) {
                     OmniTag("${draft.topVolumes.size}", color = OmniColors.amber)
                 }
             }
             if (expanded) {
-                Text(
-                    "Named volumes referenced by services must be declared here. Set external: true to use a pre-existing volume Docker manages outside this stack.",
+                Text(stringResource(R.string.named_volumes_referenced_by_services_must),
                     fontSize = 11.sp, color = OmniColors.textMuted,
                 )
                 draft.topVolumes.forEachIndexed { i, vol ->
@@ -1693,14 +1692,14 @@ private fun TopLevelSectionsEditor(draft: ComposeStackDraft, onChange: (ComposeS
                                 list[i] = vol.copy(name = v.trim())
                                 onChange(draft.copy(topVolumes = list))
                             },
-                            label = { Text("Volume name") },
-                            placeholder = { Text("mydata") },
+                            label = { Text(stringResource(R.string.volume_name)) },
+                            placeholder = { Text(stringResource(R.string.mydata)) },
                             singleLine = true,
                             colors = omniTextFieldColors(),
                             modifier = Modifier.weight(1f).then(if (dimmed) Modifier.alpha(0.45f) else Modifier),
                         )
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("Ext", fontSize = 10.sp, color = OmniColors.textMuted)
+                            Text(stringResource(R.string.ext), fontSize = 10.sp, color = OmniColors.textMuted)
                             Switch(
                                 checked = vol.external,
                                 onCheckedChange = { v ->
@@ -1711,7 +1710,7 @@ private fun TopLevelSectionsEditor(draft: ComposeStackDraft, onChange: (ComposeS
                             )
                         }
                         if (dimmed) {
-                            Text("# commented", fontSize = 9.sp, color = OmniColors.textMuted, fontFamily = OmniFonts.mono)
+                            Text(stringResource(R.string.commented), fontSize = 9.sp, color = OmniColors.textMuted, fontFamily = OmniFonts.mono)
                         }
                         IconButton(onClick = {
                             val list = draft.topVolumes.toMutableList()
@@ -1727,7 +1726,7 @@ private fun TopLevelSectionsEditor(draft: ComposeStackDraft, onChange: (ComposeS
                 }) {
                     Icon(Icons.Filled.Add, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Add volume", fontSize = 12.sp)
+                    Text(stringResource(R.string.add_volume), fontSize = 12.sp)
                 }
             }
         }
@@ -1745,18 +1744,17 @@ private fun TopLevelSectionsEditor(draft: ComposeStackDraft, onChange: (ComposeS
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(
                         if (expanded) Icons.Filled.ExpandLess else Icons.Filled.ExpandMore,
-                        contentDescription = "Expand Less", tint = OmniColors.cyan,
+                        contentDescription = null, tint = OmniColors.cyan,
                     )
                     Spacer(Modifier.width(6.dp))
-                    Text("Top-level networks", fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
+                    Text(stringResource(R.string.top_level_networks), fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
                 }
                 if (draft.topNetworks.isNotEmpty()) {
                     OmniTag("${draft.topNetworks.size}", color = OmniColors.cyan)
                 }
             }
             if (expanded) {
-                Text(
-                    "Custom networks referenced by services must be declared here. Set a driver (bridge/overlay/…) or external: true to attach to a network Docker manages outside this stack.",
+                Text(stringResource(R.string.custom_networks_referenced_by_services_must),
                     fontSize = 11.sp, color = OmniColors.textMuted,
                 )
                 draft.topNetworks.forEachIndexed { i, net ->
@@ -1771,14 +1769,14 @@ private fun TopLevelSectionsEditor(draft: ComposeStackDraft, onChange: (ComposeS
                                     list[i] = net.copy(name = v.trim())
                                     onChange(draft.copy(topNetworks = list))
                                 },
-                                label = { Text("Network name") },
-                                placeholder = { Text("frontend") },
+                                label = { Text(stringResource(R.string.network_name)) },
+                                placeholder = { Text(stringResource(R.string.frontend)) },
                                 singleLine = true,
                                 colors = omniTextFieldColors(),
                                 modifier = Modifier.weight(1f).then(dimMod),
                             )
                             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text("Ext", fontSize = 10.sp, color = OmniColors.textMuted)
+                                Text(stringResource(R.string.ext), fontSize = 10.sp, color = OmniColors.textMuted)
                                 Switch(
                                     checked = net.external,
                                     onCheckedChange = { v ->
@@ -1789,7 +1787,7 @@ private fun TopLevelSectionsEditor(draft: ComposeStackDraft, onChange: (ComposeS
                                 )
                             }
                             if (dimmed) {
-                                Text("# commented", fontSize = 9.sp, color = OmniColors.textMuted, fontFamily = OmniFonts.mono)
+                                Text(stringResource(R.string.commented), fontSize = 9.sp, color = OmniColors.textMuted, fontFamily = OmniFonts.mono)
                             }
                             IconButton(onClick = {
                                 val list = draft.topNetworks.toMutableList()
@@ -1804,8 +1802,8 @@ private fun TopLevelSectionsEditor(draft: ComposeStackDraft, onChange: (ComposeS
                                 list[i] = net.copy(driver = v.trim())
                                 onChange(draft.copy(topNetworks = list))
                             },
-                            label = { Text("Driver (optional)") },
-                            placeholder = { Text("bridge / overlay / macvlan") },
+                            label = { Text(stringResource(R.string.driver_optional)) },
+                            placeholder = { Text(stringResource(R.string.bridge_overlay_macvlan)) },
                             singleLine = true,
                             colors = omniTextFieldColors(),
                             modifier = Modifier.fillMaxWidth().then(dimMod),
@@ -1819,7 +1817,7 @@ private fun TopLevelSectionsEditor(draft: ComposeStackDraft, onChange: (ComposeS
                 }) {
                     Icon(Icons.Filled.Add, null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Add network", fontSize = 12.sp)
+                    Text(stringResource(R.string.add_network), fontSize = 12.sp)
                 }
             }
         }
@@ -1827,7 +1825,7 @@ private fun TopLevelSectionsEditor(draft: ComposeStackDraft, onChange: (ComposeS
 }
 
 @Composable
-private fun Field(label: String, value: String, placeholder: String, onChange: (String) -> Unit) {
+private fun Field(label: String, value: String, placeholder: String, modifier: Modifier = Modifier, onChange: (String) -> Unit) {
     OutlinedTextField(
         value = value,
         onValueChange = onChange,
@@ -1835,13 +1833,13 @@ private fun Field(label: String, value: String, placeholder: String, onChange: (
         placeholder = { Text(placeholder) },
         singleLine = true,
         colors = omniTextFieldColors(),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
     )
 }
 
 @Composable
-fun ListEditor(title: String, items: List<String>, placeholderText: String, onChange: (MutableList<String>) -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(top = 12.dp).testTag("compose-list-$title")) {
+fun ListEditor(title: String, items: List<String>, placeholderText: String, modifier: Modifier = Modifier, onChange: (MutableList<String>) -> Unit) {
+    Column(modifier.fillMaxWidth().padding(top = 12.dp).testTag("compose-list-$title")) {
         Text(title, fontSize = 13.sp, color = OmniColors.cyan, fontWeight = FontWeight.Bold, modifier = Modifier.padding(bottom = 6.dp))
         Column(
             Modifier
@@ -1874,7 +1872,7 @@ fun ListEditor(title: String, items: List<String>, placeholderText: String, onCh
             ) {
                 Icon(Icons.Filled.Add, null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("Add", fontSize = 12.sp)
+                Text(stringResource(R.string.add), fontSize = 12.sp)
             }
         }
     }

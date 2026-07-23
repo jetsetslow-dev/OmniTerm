@@ -27,6 +27,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.jetsetslow.omniterm.data.QuickScriptEntity
+import androidx.compose.ui.res.stringResource
+import com.jetsetslow.omniterm.R
 
 data class ScriptEditorDraft(
     val emoji: String,
@@ -105,19 +107,19 @@ fun SharedScriptEditorDialog(
                 OutlinedTextField(
                     value = emojiInput,
                     onValueChange = { emojiInput = it.take(6).uppercase() },
-                    label = { Text("Shortcut label") },
+                    label = { Text(stringResource(R.string.shortcut_label)) },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
                     value = nameInput,
                     onValueChange = { nameInput = it },
-                    label = { Text("Script name") },
+                    label = { Text(stringResource(R.string.script_name)) },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
                     value = cmdInput,
                     onValueChange = { cmdInput = it },
-                    label = { Text("Command") },
+                    label = { Text(stringResource(R.string.command)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 2,
                 )
@@ -125,7 +127,7 @@ fun SharedScriptEditorDialog(
                     OutlinedTextField(
                         value = categoryInput,
                         onValueChange = { categoryInput = it },
-                        label = { Text("Category / group") },
+                        label = { Text(stringResource(R.string.category_group)) },
                         modifier = Modifier.fillMaxWidth(),
                         trailingIcon = {
                             IconButton(onClick = { categoryMenuExpanded = true }) {
@@ -142,11 +144,11 @@ fun SharedScriptEditorDialog(
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = availableForQuick, onCheckedChange = { availableForQuick = it })
-                        Text("Quick")
+                        Text(stringResource(R.string.quick))
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = availableForFleet, onCheckedChange = { availableForFleet = it })
-                        Text("Fleet")
+                        Text(stringResource(R.string.fleet))
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -154,7 +156,7 @@ fun SharedScriptEditorDialog(
                         OutlinedTextField(
                             value = targetOs,
                             onValueChange = { targetOs = it },
-                            label = { Text("Quick OS") },
+                            label = { Text(stringResource(R.string.quick_os)) },
                             enabled = availableForQuick,
                             modifier = Modifier.fillMaxWidth(),
                             trailingIcon = {
@@ -173,7 +175,7 @@ fun SharedScriptEditorDialog(
                         OutlinedTextField(
                             value = targetSystem,
                             onValueChange = { targetSystem = it },
-                            label = { Text("Quick system") },
+                            label = { Text(stringResource(R.string.quick_system)) },
                             enabled = availableForQuick,
                             modifier = Modifier.fillMaxWidth(),
                             trailingIcon = {
@@ -192,8 +194,8 @@ fun SharedScriptEditorDialog(
                 OutlinedTextField(
                     value = notesInput,
                     onValueChange = { notesInput = it },
-                    label = { Text("Notes (optional)") },
-                    placeholder = { Text("What this script does, caveats, etc.") },
+                    label = { Text(stringResource(R.string.notes_optional)) },
+                    placeholder = { Text(stringResource(R.string.what_this_script_does_caveats_etc)) },
                     modifier = Modifier.fillMaxWidth(),
                     minLines = 2,
                 )
@@ -222,7 +224,7 @@ fun SharedScriptEditorDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = { attemptDismiss() }) { Text("Cancel") }
+            TextButton(onClick = { attemptDismiss() }) { Text(stringResource(R.string.cancel)) }
         },
     )
 }

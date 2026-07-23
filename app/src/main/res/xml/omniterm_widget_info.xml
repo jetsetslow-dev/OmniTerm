@@ -8,6 +8,8 @@
     android:initialLayout="@layout/glance_default_loading_layout"
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen"
+    android:widgetFeatures="reconfigurable"
     android:configure="com.jetsetslow.omniterm.ui.widget.OmniTermWidgetConfigActivity"
-    android:description="@string/app_name">
+    android:previewImage="@mipmap/ic_launcher"
+    android:description="@string/widget_description">
 </appwidget-provider>

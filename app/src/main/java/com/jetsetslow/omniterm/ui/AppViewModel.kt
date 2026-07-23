@@ -17,8 +17,10 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.glance.appwidget.updateAll
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.jetsetslow.omniterm.ui.widget.OmniTermWidget
 import com.jetsetslow.omniterm.data.*
 import com.jetsetslow.omniterm.data.shares.RemoteFsClient
 import com.jetsetslow.omniterm.data.shares.ShareClients
@@ -721,6 +723,10 @@ class AppViewModel @JvmOverloads constructor(
     var dotsFlashRed by mutableStateOf(false)
     /** Blocks screenshots and the task-switcher preview (FLAG_SECURE). Defaults on for sensitive ops. */
     var isFlagSecureEnabled by mutableStateOf(true)
+        private set
+
+    /** When true, IPs/hostnames are replaced by host names across the app (display only). */
+    var hideSensitiveInfo by mutableStateOf(false)
         private set
 
     // App lock always engages on cold start: every process relaunch demands the PIN/biometric when
@@ -1538,6 +1544,12 @@ class AppViewModel @JvmOverloads constructor(
         val selected = serverIds.distinct().take(2)
         if (selected.size != 2 || isTerminalConnecting) return
 
+        val srv1 = servers.value.find { it.id == selected[0] }
+        val srv2 = servers.value.find { it.id == selected[1] }
+        if (srv1 != null && srv2 != null) {
+            runCatching { ShortcutHelper.pushSplitTerminalShortcut(getApplication(), srv1, srv2) }
+        }
+
         pendingMultiSshConnections.clear()
         activeSshTab = 1
         multiSshSessionId1 = null
@@ -1975,6 +1987,9 @@ class AppViewModel @JvmOverloads constructor(
                 // screens are sensitive even when the user has not configured an app lock.
                 isFlagSecureEnabled = list.find { it.key == "flag_secure" }?.value
                     ?.toBooleanStrictOrNull() ?: true
+                hideSensitiveInfo = list.find { it.key == "hide_sensitive_info" }?.value
+                    ?.toBooleanStrictOrNull() ?: false
+                HostDisplay.hideSensitiveInfo = hideSensitiveInfo
                 metricsRetentionDays = retentionVal
                 if (!initialKeepScreenOnLoaded || defaultKeepScreenOn != keepScreenOn) {
                     defaultKeepScreenOn = keepScreenOn
@@ -2103,6 +2118,10 @@ class AppViewModel @JvmOverloads constructor(
 
                 val cutoff = System.currentTimeMillis() - (metricsRetentionDays * 24L * 60 * 60 * 1000)
                 repository.pruneMetrics(cutoff)
+
+                // One widget refresh per cycle, delayed so the concurrent probes above have
+                // written fresh status/metrics before the widget re-reads the DB.
+                refreshHomeWidgets(delayMs = 10_000)
 
                 delay(telemetryIntervalMs)
             }
@@ -2277,9 +2296,9 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    // First time each (rule, host) pair was seen over threshold; cleared on recovery. The rule
-    // only fires once the breach has lasted its triggerWindow, so single poll spikes don't alert.
-    private val alertBreachSince = java.util.concurrent.ConcurrentHashMap<Pair<Int, Int>, Long>()
+    // Sustained-breach windows per (rule, host), with jitter hysteresis and sampling-gap
+    // restart so triggering stays consistent across noisy metrics and polling pauses.
+    private val alertBreachTracker = AlertBreachTracker()
     /** Keeps evaluation, rule mutation, acknowledgement, and mute/recovery transitions atomic. */
     private val alertStateMutex = Mutex()
 
@@ -2307,13 +2326,14 @@ class AppViewModel @JvmOverloads constructor(
             }
             val breachKey = r.id to srv.id
             val overThreshold = currentValue != null && currentValue > r.thresholdValue
-            val triggered = if (overThreshold) {
-                val since = alertBreachSince.getOrPut(breachKey) { now }
-                now - since >= triggerWindowMs(r.triggerWindow)
-            } else {
-                alertBreachSince.remove(breachKey)
-                false
-            }
+            // A sampling gap longer than a few poll intervals means we observed nothing —
+            // the window must restart rather than count the unobserved time as breached.
+            val staleGapMs = (telemetryIntervalMs * 3).coerceAtLeast(90_000L)
+            val triggered = alertBreachTracker.onSample(
+                breachKey, overThreshold, now,
+                windowMs = triggerWindowMs(r.triggerWindow),
+                staleGapMs = staleGapMs,
+            )
 
             if (triggered) {
                 // Check the incident for this rule on this concrete host. Global rules share the
@@ -2335,8 +2355,9 @@ class AppViewModel @JvmOverloads constructor(
                     repository.insertAlert(alert)
                     postAlertNotification(srv, r, currentValue ?: 0f)
                 }
-            } else if (!overThreshold) {
-                // If it was firing but recovered, remove it
+            } else if (!overThreshold && alertBreachTracker.clearedFor(breachKey)) {
+                // Recovered — but only after enough consecutive clean samples (hysteresis),
+                // so one jittery dip doesn't flap an incident closed and re-open.
                 val firingAlert = activeAlerts.find { it.ruleId == r.id && it.serverId == srv.id }
                 if (firingAlert != null) {
                     recordAlertHistory(firingAlert, "resolved", srv.name)
@@ -2395,6 +2416,25 @@ class AppViewModel @JvmOverloads constructor(
 
     fun closeAlertsPopup() {
         showAlertsPopup = false
+    }
+
+    /** Set by the "New host" static launcher shortcut; ServersMainView consumes it to open the add sheet. */
+    var addServerSheetRequested by mutableStateOf(false)
+
+    /**
+     * Re-render all home-screen widgets from current DB state. [delayMs] lets the telemetry
+     * loop wait for in-flight probes to land before the widget reads their results.
+     */
+    fun refreshHomeWidgets(delayMs: Long = 0) {
+        viewModelScope.launch {
+            if (delayMs > 0) delay(delayMs)
+            runCatching { OmniTermWidget().updateAll(getApplication()) }
+        }
+    }
+
+    fun requestAddServerFromShortcut() {
+        navigateTo(Screen.Servers)
+        addServerSheetRequested = true
     }
 
     fun navigateTo(screen: Screen) {
@@ -2900,6 +2940,9 @@ class AppViewModel @JvmOverloads constructor(
                 runCatching { buildCredentials(it) }.getOrNull()
             }
             repository.updateServer(server)
+            // Keep any existing launcher shortcut label in sync with a rename.
+            runCatching { ShortcutHelper.refreshServerShortcutIfPresent(getApplication(), server) }
+            refreshHomeWidgets()
             previousCreds?.let {
                 sshTransport.forgetCredentials(it)
                 JschSftp.forgetCredentials(it)
@@ -2933,6 +2976,9 @@ class AppViewModel @JvmOverloads constructor(
                 JschSftp.forgetCredentials(it)
             }
             repository.deleteServerAndDependents(server.id)
+            // Dead launcher entries must not survive the host they point at.
+            runCatching { ShortcutHelper.removeShortcutsForServer(getApplication(), server.id) }
+            refreshHomeWidgets()
             restorablePersistentSessions = restorablePersistentSessions.filter { it.serverId != server.id }
             SshHostKeyTrust.removeHost(server.host, server.port)
             if (selectedServerId == server.id) {
@@ -3995,11 +4041,48 @@ class AppViewModel @JvmOverloads constructor(
 
     fun dismissOfflineConnectPrompt() { offlineConnectPromptServer = null }
 
+    /**
+     * Launcher-shortcut / widget entry point. Resolves the host from the DB rather than the
+     * [servers] flow: on a cold start the flow may not have emitted yet, and a stale shortcut
+     * must produce feedback instead of a silent no-op.
+     */
     fun connectTerminalByServerId(id: Int) {
-        val server = servers.value.find { it.id == id }
-        if (server != null) {
+        viewModelScope.launch {
+            val server = repository.getServerById(id)
+            if (server == null) {
+                shortcutTargetMissingToast(R.string.shortcut_host_missing)
+                return@launch
+            }
+            // Let the servers flow catch up so downstream UI (selector bars etc.) sees the host.
+            withTimeoutOrNull(5_000) { servers.first { list -> list.any { it.id == id } } }
             connectTerminal(server, forceDisablePersistence = false)
             navigateTo(Screen.Shell)
+        }
+    }
+
+    /** Split-terminal shortcut entry point; same DB-first resolution as single connects. */
+    fun openMultiSshByServerIds(id1: Int, id2: Int) {
+        viewModelScope.launch {
+            val s1 = repository.getServerById(id1)
+            val s2 = repository.getServerById(id2)
+            if (s1 == null || s2 == null) {
+                shortcutTargetMissingToast(R.string.shortcut_host_missing)
+                return@launch
+            }
+            // openMultiSshForServers gates its queue on the servers flow; wait for both hosts.
+            withTimeoutOrNull(5_000) {
+                servers.first { list -> list.any { it.id == id1 } && list.any { it.id == id2 } }
+            }
+            openMultiSshForServers(listOf(id1, id2))
+        }
+    }
+
+    private fun shortcutTargetMissingToast(resId: Int) {
+        viewModelScope.launch(Dispatchers.Main) {
+            android.widget.Toast.makeText(
+                getApplication(), getApplication<Application>().getString(resId),
+                android.widget.Toast.LENGTH_LONG,
+            ).show()
         }
     }
 
@@ -4010,6 +4093,12 @@ class AppViewModel @JvmOverloads constructor(
         onFinished: ((Boolean) -> Unit)? = null,
     ) {
         if (isTerminalConnecting) return
+        // Publish/refresh the launcher shortcut for this host; connecting is the usage signal
+        // that keeps frequently used hosts ranked in the launcher's dynamic shortcut list.
+        runCatching {
+            ShortcutHelper.pushServerShortcut(getApplication(), srv)
+            ShortcutHelper.reportServerShortcutUsed(getApplication(), srv.id)
+        }
         // Capture the destination now. Split-pane focus is still interactive while a connection is
         // in flight; reading it only after SSH completes lets a harmless focus tap redirect the new
         // session into the wrong pane.
@@ -6422,6 +6511,7 @@ class AppViewModel @JvmOverloads constructor(
     fun deleteNetworkShare(share: NetworkShareEntity) {
         viewModelScope.launch {
             repository.deleteNetworkShare(share)
+            runCatching { ShortcutHelper.removeShortcutForShare(getApplication(), share.id) }
             repository.deleteSetting("share_bookmarks_${share.id}")
             allBookmarks.removeAll { it.shareId == share.id }
             if (browsingShare?.id == share.id) closeShareBrowser()
@@ -6766,9 +6856,14 @@ class AppViewModel @JvmOverloads constructor(
         TerminalSessionManager.scope.launch(Dispatchers.IO) { runCatching { client.close() } }
     }
 
+    /** Shortcut entry point; DB-first so cold starts and stale shortcuts behave (see connectTerminalByServerId). */
     fun openShareBrowserById(id: Int) {
-        val share = networkShares.value.find { it.id == id }
-        if (share != null) {
+        viewModelScope.launch {
+            val share = repository.getAllNetworkShares().firstOrNull { it.id == id }
+            if (share == null) {
+                shortcutTargetMissingToast(R.string.shortcut_share_missing)
+                return@launch
+            }
             navigateTo(Screen.SFTP)
             openShareBrowser(share)
         }
@@ -6779,6 +6874,7 @@ class AppViewModel @JvmOverloads constructor(
             if (startPath != null) loadShareDir(startPath)
             return
         }
+        runCatching { ShortcutHelper.pushNetworkShareShortcut(getApplication(), share) }
         shareJob?.cancel()
         closeShareBrowserClient()
         browsingShare = share
@@ -9499,6 +9595,14 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    fun saveHideSensitiveInfo(enabled: Boolean) {
+        viewModelScope.launch {
+            repository.insertSetting("hide_sensitive_info", enabled.toString())
+            hideSensitiveInfo = enabled
+            HostDisplay.hideSensitiveInfo = enabled
+        }
+    }
+
     fun saveKeepScreenOnToggle(enabled: Boolean) {
         // Apply the user's intent immediately. Keeping these state writes behind the suspended
         // database insert lets an older enable complete after battery saver has released the flag,
@@ -9795,7 +9899,7 @@ class AppViewModel @JvmOverloads constructor(
             recordAlertHistory(alert, "resolved")
             repository.deleteAlert(alert.id)
             clearAlertNotification(alert.ruleId, alert.serverId)
-            alertBreachSince.remove(ruleId to alert.serverId)
+            alertBreachTracker.forget(ruleId to alert.serverId)
         }
     }
 

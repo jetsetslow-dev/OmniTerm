@@ -17,9 +17,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.state.updateAppWidgetState
+import androidx.lifecycle.lifecycleScope
 import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.ServerEntity
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -55,6 +55,14 @@ class OmniTermWidgetConfigActivity : ComponentActivity() {
                 servers = withContext(Dispatchers.IO) {
                     AppDatabase.getDatabase(this@OmniTermWidgetConfigActivity).serverDao().getAllServers()
                 }
+                // Reconfiguration re-opens this screen: start from the widget's saved selection.
+                getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
+                    .getStringSet("widget_$appWidgetId", null)
+                    ?.mapNotNull { it.toIntOrNull() }
+                    ?.let { saved ->
+                        selectedIds.clear()
+                        selectedIds.addAll(saved)
+                    }
             }
 
             MaterialTheme {
@@ -105,11 +113,11 @@ class OmniTermWidgetConfigActivity : ComponentActivity() {
         val prefs = getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
         prefs.edit().putStringSet("widget_$appWidgetId", selectedIds.map { it.toString() }.toSet()).apply()
 
-        CoroutineScope(Dispatchers.IO).launch {
+        lifecycleScope.launch(Dispatchers.IO) {
             val manager = GlanceAppWidgetManager(this@OmniTermWidgetConfigActivity)
             val glanceId = manager.getGlanceIdBy(appWidgetId)
             OmniTermWidget().update(this@OmniTermWidgetConfigActivity, glanceId)
-            
+
             val resultValue = Intent().apply {
                 putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
             }

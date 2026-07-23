@@ -61,6 +61,8 @@ import com.jetsetslow.omniterm.data.BiometricCryptoGate
 import com.jetsetslow.omniterm.data.ServerEntity
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import androidx.compose.ui.res.stringResource
+import com.jetsetslow.omniterm.R
 
 fun Context.getActivity(): AppCompatActivity? = when (this) {
     is AppCompatActivity -> this
@@ -156,7 +158,7 @@ fun ServerSelectorBar(
                 StatusDot(online = srv.status == "online", color = accent, size = 8.dp)
                 Text(srv.name, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, fontSize = 16.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
                 Text(
-                    "${srv.username}@${srv.host} · $latency",
+                    "${HostDisplay.userAtHost(srv)} · $latency",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -166,7 +168,7 @@ fun ServerSelectorBar(
                 if (trailingContent != null) {
                     trailingContent()
                 } else {
-                    Text("Host", fontSize = 10.sp, fontWeight = FontWeight.Bold, color = accent, letterSpacing = 1.sp)
+                    Text(stringResource(R.string.host), fontSize = 10.sp, fontWeight = FontWeight.Bold, color = accent, letterSpacing = 1.sp)
                     Icon(Icons.Filled.ArrowDropDown, contentDescription = "Switch host", tint = accent)
                 }
             }
@@ -189,7 +191,7 @@ fun ServerSelectorBar(
             selectableServers.forEach { s ->
                 val checkedForSplit = s.id in splitSelection
                 DropdownMenuItem(
-                    text = { Text("${s.name} — ${s.username}@${s.host}", fontFamily = OmniFonts.mono) },
+                    text = { Text("${HostDisplay.name(s)} — ${HostDisplay.userAtHost(s)}", fontFamily = OmniFonts.mono) },
                     leadingIcon = { StatusDot(online = s.status == "online", color = getServerColor(s), size = 8.dp) },
                     trailingIcon = if (allowSplitSelection) {
                         {
@@ -239,7 +241,7 @@ fun ServerSelectorBar(
                             fontWeight = FontWeight.Bold,
                         )
                     },
-                    leadingIcon = { Icon(Icons.Filled.VerticalSplit, contentDescription = "Vertical Split") },
+                    leadingIcon = { Icon(Icons.Filled.VerticalSplit, contentDescription = null) },
                     trailingIcon = { Text("${splitSelection.size}/2", fontFamily = OmniFonts.mono) },
                     enabled = splitSelection.size == 2,
                     onClick = {
@@ -283,7 +285,7 @@ fun ActionStreamDialog(viewModel: AppViewModel) {
                     .verticalScroll(outScroll).padding(8.dp)
             ) {
                 if (viewModel.actionStreamRunning && viewModel.actionStreamOutput.isBlank()) {
-                    Text("Running…", fontFamily = OmniFonts.mono, fontSize = 11.sp, color = Color.Gray)
+                    Text(stringResource(R.string.running_2), fontFamily = OmniFonts.mono, fontSize = 11.sp, color = Color.Gray)
                 } else {
                     androidx.compose.foundation.text.selection.SelectionContainer {
                         Text(viewModel.actionStreamOutput, fontFamily = OmniFonts.mono, fontSize = 11.sp, color = Color.White)
@@ -298,9 +300,9 @@ fun ActionStreamDialog(viewModel: AppViewModel) {
                     copyToClipboard(viewModel.actionStreamOutput)
                 },
             ) {
-                Icon(Icons.Filled.ContentCopy, contentDescription = "Content Copy", modifier = Modifier.size(16.dp))
+                Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("Copy")
+                Text(stringResource(R.string.copy))
             }
         },
         confirmButton = {
@@ -327,11 +329,11 @@ fun HealthBreakdownDialog(viewModel: AppViewModel, server: ServerEntity, onDismi
                 HorizontalDivider()
                 when {
                     breakdown.offline ->
-                        Text("Host is offline or unreachable — score is forced to 0.", color = Color.Red, fontSize = 14.sp)
+                        Text(stringResource(R.string.host_is_offline_or_unreachable_score), color = Color.Red, fontSize = 14.sp)
                     breakdown.healthy ->
-                        Text("All metrics within healthy thresholds. No deductions (start 100).", color = OmniColors.green, fontSize = 14.sp)
+                        Text(stringResource(R.string.all_metrics_within_healthy_thresholds_no), color = OmniColors.green, fontSize = 14.sp)
                     else -> {
-                        Text("Starting from 100, the following deductions apply:", fontSize = 14.sp)
+                        Text(stringResource(R.string.starting_from_100_the_following_deductions), fontSize = 14.sp)
                         breakdown.factors.forEach { f ->
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                                 Text(f.label, fontSize = 14.sp, modifier = Modifier.weight(1f))
@@ -341,10 +343,10 @@ fun HealthBreakdownDialog(viewModel: AppViewModel, server: ServerEntity, onDismi
                     }
                 }
                 HorizontalDivider()
-                Text("Thresholds and weights are editable in Tools → Settings → Health scoring.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.thresholds_and_weights_are_editable_in), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) } },
     )
 }
 
@@ -396,7 +398,7 @@ fun ConfirmHost(controller: ConfirmController) {
                 Text(req.confirmLabel, color = if (req.destructive) OmniColors.red else MaterialTheme.colorScheme.primary)
             }
         },
-        dismissButton = { TextButton(onClick = { controller.dismiss() }) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = { controller.dismiss() }) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -427,16 +429,16 @@ fun SudoAuthDialog(viewModel: AppViewModel) {
 
     AlertDialog(
         onDismissRequest = { viewModel.cancelPendingSudoAction() },
-        title = { Text("Authenticate for sudo") },
+        title = { Text(stringResource(R.string.authenticate_for_sudo)) },
         text = {
             Column {
-                Text("Confirm to run this privileged action with the stored sudo password.", fontSize = 14.sp)
+                Text(stringResource(R.string.confirm_to_run_this_privileged_action), fontSize = 14.sp)
                 if (viewModel.savedPin != null) {
                     Spacer(Modifier.height(8.dp))
                     OutlinedTextField(
                         value = pin,
                         onValueChange = { pin = it; error = null },
-                        label = { Text("PIN") },
+                        label = { Text(stringResource(R.string.pin)) },
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
@@ -445,7 +447,7 @@ fun SudoAuthDialog(viewModel: AppViewModel) {
                     error?.let { Text(it, color = OmniColors.red, fontSize = 12.sp, modifier = Modifier.padding(top = 4.dp)) }
                 } else {
                     Spacer(Modifier.height(8.dp))
-                    Text("Use your biometric prompt to continue.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.use_your_biometric_prompt_to_continue), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         },
@@ -454,10 +456,10 @@ fun SudoAuthDialog(viewModel: AppViewModel) {
                 TextButton(onClick = {
                     val err = viewModel.verifyPinForSensitiveAction(pin)
                     if (err == null) viewModel.confirmPendingSudoAction() else error = err
-                }) { Text("Confirm") }
+                }) { Text(stringResource(R.string.confirm)) }
             }
         },
-        dismissButton = { TextButton(onClick = { viewModel.cancelPendingSudoAction() }) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = { viewModel.cancelPendingSudoAction() }) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -491,8 +493,8 @@ fun MainAppScreen(viewModel: AppViewModel) {
     if (showExitDialog) {
         AlertDialog(
             onDismissRequest = { showExitDialog = false },
-            title = { Text("Exit OmniTerm?") },
-            text = { Text("Exiting will terminate all active background SSH sessions.") },
+            title = { Text(stringResource(R.string.exit_omniterm)) },
+            text = { Text(stringResource(R.string.exiting_will_terminate_all_active_background)) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -501,12 +503,12 @@ fun MainAppScreen(viewModel: AppViewModel) {
                         context.getActivity()?.finish()
                     }
                 ) {
-                    Text("Terminate & Exit", color = Color.Red)
+                    Text(stringResource(R.string.terminate_exit), color = Color.Red)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showExitDialog = false }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.cancel))
                 }
             }
         )
@@ -646,10 +648,10 @@ fun TmuxInstallDialog(viewModel: AppViewModel) {
         dismissButton = {
             Row {
                 TextButton(onClick = { viewModel.connectWithoutPersistence() }, enabled = !installing) {
-                    Text("Connect non-resumable")
+                    Text(stringResource(R.string.connect_non_resumable))
                 }
                 TextButton(onClick = { viewModel.dismissTmuxInstallPrompt() }, enabled = !installing) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.cancel))
                 }
             }
         },
@@ -661,16 +663,15 @@ fun OfflineConnectDialog(viewModel: AppViewModel) {
     val srv = viewModel.offlineConnectPromptServer ?: return
     AlertDialog(
         onDismissRequest = { viewModel.dismissOfflineConnectPrompt() },
-        title = { Text("Host Appears Offline") },
+        title = { Text(stringResource(R.string.host_appears_offline)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
-                    "${srv.name} (${srv.host}:${srv.port}) didn't answer on its SSH port at the last " +
+                    "${HostDisplay.name(srv)} (${HostDisplay.host(srv)}:${srv.port}) didn't answer on its SSH port at the last " +
                         "check, so it looks offline.",
                     fontSize = 13.sp,
                 )
-                Text(
-                    "The status may be out of date — connect anyway to try, or cancel and wait for it to come back online.",
+                Text(stringResource(R.string.the_status_may_be_out_of),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -678,12 +679,12 @@ fun OfflineConnectDialog(viewModel: AppViewModel) {
         },
         confirmButton = {
             TextButton(onClick = { viewModel.connectTerminalConfirmedOffline() }) {
-                Text("Connect anyway")
+                Text(stringResource(R.string.connect_anyway))
             }
         },
         dismissButton = {
             TextButton(onClick = { viewModel.dismissOfflineConnectPrompt() }) {
-                Text("Cancel")
+                Text(stringResource(R.string.cancel))
             }
         },
     )
@@ -719,8 +720,7 @@ fun PinLockGateway(viewModel: AppViewModel) {
             horizontalAlignment = Alignment.CenterHorizontally,
             modifier = Modifier.padding(24.dp)
         ) {
-            Text(
-                text = "OmniTerm",
+            Text(stringResource(R.string.omniterm),
                 fontSize = 42.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = OmniFonts.mono,
@@ -741,7 +741,7 @@ fun PinLockGateway(viewModel: AppViewModel) {
                     viewModel.lockScreenError = null
                     viewModel.currentPinInput = input.filter { it.isDigit() }.take(8)
                 },
-                label = { Text("PIN") },
+                label = { Text(stringResource(R.string.pin)) },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(
@@ -760,7 +760,7 @@ fun PinLockGateway(viewModel: AppViewModel) {
                 onClick = { viewModel.submitPinCode() },
                 enabled = viewModel.currentPinInput.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth(0.75f),
-            ) { Text("Unlock") }
+            ) { Text(stringResource(R.string.unlock)) }
 
             if (viewModel.useBiometrics) {
                 Spacer(modifier = Modifier.height(12.dp))
@@ -786,7 +786,7 @@ fun BiometricUnlockButton(onClick: () -> Unit) {
             modifier = Modifier.size(28.dp),
         )
         Spacer(modifier = Modifier.width(10.dp))
-        Text("Use biometrics", color = Color.White, fontWeight = FontWeight.SemiBold)
+        Text(stringResource(R.string.use_biometrics), color = Color.White, fontWeight = FontWeight.SemiBold)
     }
 }
 
@@ -939,7 +939,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
             if (viewModel.showBatterySaverDialog) {
                 AlertDialog(
                     onDismissRequest = { viewModel.showBatterySaverDialog = false },
-                    title = { Text("Battery saver engaged") },
+                    title = { Text(stringResource(R.string.battery_saver_engaged)) },
                     text = {
                         Text(
                             "Battery reached ${viewModel.batterySaverEngagedAtPct}% (threshold " +
@@ -951,10 +951,10 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                         )
                     },
                     confirmButton = {
-                        TextButton(onClick = { viewModel.showBatterySaverDialog = false }) { Text("Keep saving") }
+                        TextButton(onClick = { viewModel.showBatterySaverDialog = false }) { Text(stringResource(R.string.keep_saving)) }
                     },
                     dismissButton = {
-                        TextButton(onClick = { viewModel.resumeFromBatterySaver() }) { Text("Resume now") }
+                        TextButton(onClick = { viewModel.resumeFromBatterySaver() }) { Text(stringResource(R.string.resume_now)) }
                     },
                 )
             }
@@ -963,8 +963,8 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
             if (viewModel.showKeepScreenOnBatteryWarning) {
                 AlertDialog(
                     onDismissRequest = { viewModel.showKeepScreenOnBatteryWarning = false },
-                    title = { Text("Keep Screen On?") },
-                    text = { Text("Keeping the screen on prevents display sleep and will increase battery consumption.") },
+                    title = { Text(stringResource(R.string.keep_screen_on)) },
+                    text = { Text(stringResource(R.string.keeping_the_screen_on_prevents_display)) },
                     confirmButton = {
                         TextButton(
                             onClick = {
@@ -972,12 +972,12 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                                 viewModel.showKeepScreenOnBatteryWarning = false
                             }
                         ) {
-                            Text("Enable")
+                            Text(stringResource(R.string.enable))
                         }
                     },
                     dismissButton = {
                         TextButton(onClick = { viewModel.showKeepScreenOnBatteryWarning = false }) {
-                            Text("Cancel")
+                            Text(stringResource(R.string.cancel))
                         }
                     },
                 )
@@ -1055,7 +1055,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                             TextButton(
                                 onClick = { viewModel.cancelTerminalNavigation() }
                             ) {
-                                Text("Stay")
+                                Text(stringResource(R.string.stay))
                             }
                         }
                     }
@@ -1087,7 +1087,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                         }
                     },
                     dismissButton = {
-                        TextButton(onClick = { viewModel.cancelPendingDisconnect() }) { Text("Cancel") }
+                        TextButton(onClick = { viewModel.cancelPendingDisconnect() }) { Text(stringResource(R.string.cancel)) }
                     },
                 )
             }
@@ -1095,8 +1095,8 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
             if (viewModel.pendingDisconnectAllSessions) {
                 AlertDialog(
                     onDismissRequest = { viewModel.cancelPendingDisconnect() },
-                    title = { Text("Disconnect all sessions?") },
-                    text = { Text("Disconnect all active terminal sessions? Any running shell processes in those PTYs will be terminated.") },
+                    title = { Text(stringResource(R.string.disconnect_all_sessions)) },
+                    text = { Text(stringResource(R.string.disconnect_all_active_terminal_sessions_any)) },
                     confirmButton = {
                         TextButton(
                             onClick = {
@@ -1104,11 +1104,11 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                                 viewModel.cancelPendingDisconnect()
                             }
                         ) {
-                            Text("Disconnect all", color = Color.Red)
+                            Text(stringResource(R.string.disconnect_all), color = Color.Red)
                         }
                     },
                     dismissButton = {
-                        TextButton(onClick = { viewModel.cancelPendingDisconnect() }) { Text("Cancel") }
+                        TextButton(onClick = { viewModel.cancelPendingDisconnect() }) { Text(stringResource(R.string.cancel)) }
                     },
                 )
             }
@@ -1158,7 +1158,7 @@ private fun HostLimitReconciliationDialog(viewModel: AppViewModel) {
     var selectedId by remember(servers) { mutableStateOf(servers.firstOrNull()?.id) }
     AlertDialog(
         onDismissRequest = {},
-        title = { Text("Choose host to keep") },
+        title = { Text(stringResource(R.string.choose_host_to_keep)) },
         text = {
             Column(
                 modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
@@ -1184,7 +1184,7 @@ private fun HostLimitReconciliationDialog(viewModel: AppViewModel) {
                         Column(Modifier.weight(1f)) {
                             Text(server.name, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
-                                "${server.username}@${server.host}:${server.port}",
+                                "${HostDisplay.userAtHost(server)}:${server.port}",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
@@ -1199,7 +1199,7 @@ private fun HostLimitReconciliationDialog(viewModel: AppViewModel) {
             TextButton(
                 enabled = selectedId != null,
                 onClick = { selectedId?.let(viewModel::keepOnlyHostAfterLimitChange) },
-            ) { Text("Keep selected") }
+            ) { Text(stringResource(R.string.keep_selected)) }
         },
     )
 }
@@ -1216,7 +1216,7 @@ private fun FreePlanBanner(state: LicenseState, controller: LicenseController) {
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Icon(Icons.Filled.WorkspacePremium, contentDescription = "Workspace Premium", tint = OmniColors.cyan, modifier = Modifier.size(18.dp))
+                Icon(Icons.Filled.WorkspacePremium, contentDescription = null, tint = OmniColors.cyan, modifier = Modifier.size(18.dp))
                 Text(
                     // Reflect what the free build actually is: ad-supported and limited to 1 host until
                     // ads are removed; once ads are gone it's just the host/credential limit.
@@ -1246,7 +1246,7 @@ private fun FreePlanBanner(state: LicenseState, controller: LicenseController) {
                 enabled = !state.loading,
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
             ) {
-                Text("Restore", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.restore), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             // Cheaper ads-only removal. Its only entry point in the app — shown next to the full
             // Unlock here (not as a separate bottom strip) so the ad area stays just ad + nav. Hidden
@@ -1343,12 +1343,12 @@ fun FirstRunDialog(viewModel: AppViewModel, onNotNow: () -> Unit = {}) {
 
     AlertDialog(
         onDismissRequest = onNotNow,
-        title = { Text("Keep sessions active in background?") },
+        title = { Text(stringResource(R.string.keep_sessions_active_in_background)) },
         text = {
             Column {
-                Text("Notification access and a battery-optimization exemption improve background SSH reliability. They are optional; foreground terminals continue to work without them.")
+                Text(stringResource(R.string.notification_access_and_a_battery_optimization))
                 Spacer(Modifier.height(8.dp))
-                Text("Please tap below to grant them.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.please_tap_below_to_grant_them), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         },
         confirmButton = {
@@ -1363,10 +1363,10 @@ fun FirstRunDialog(viewModel: AppViewModel, onNotNow: () -> Unit = {}) {
                     }
                 }
             ) {
-                Text("Grant Permissions")
+                Text(stringResource(R.string.grant_permissions))
             }
         },
-        dismissButton = { TextButton(onClick = onNotNow) { Text("Not now") } },
+        dismissButton = { TextButton(onClick = onNotNow) { Text(stringResource(R.string.not_now)) } },
     )
 }
 
@@ -1381,7 +1381,15 @@ fun isToolSubScreen(screen: Screen): Boolean {
 @Composable
 fun ServersMainView(viewModel: AppViewModel) {
     val srvList by viewModel.servers.collectAsStateWithLifecycle()
+    val context = LocalContext.current
     var showAddSheet by remember { mutableStateOf(false) }
+    // The "New host" static launcher shortcut lands here with a one-shot request flag.
+    LaunchedEffect(viewModel.addServerSheetRequested) {
+        if (viewModel.addServerSheetRequested) {
+            viewModel.addServerSheetRequested = false
+            showAddSheet = true
+        }
+    }
     var editingServer by remember { mutableStateOf<ServerEntity?>(null) }
     // Source host for a "Duplicate": opens the add-sheet pre-filled from it (see AddServerSheet).
     var duplicatingFrom by remember { mutableStateOf<ServerEntity?>(null) }
@@ -1427,7 +1435,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                 OutlinedTextField(
                     value = viewModel.serverSearchText,
                     onValueChange = { viewModel.serverSearchText = it },
-                    placeholder = { Text("Hostname or IP") },
+                    placeholder = { Text(stringResource(R.string.hostname_or_ip)) },
                     leadingIcon = { Icon(Icons.Filled.Search, contentDescription = "Search") },
                     trailingIcon = {
                         if (viewModel.serverSearchText.isNotEmpty()) {
@@ -1468,8 +1476,7 @@ fun ServersMainView(viewModel: AppViewModel) {
             }
 
             if (hostLimitReached) {
-                Text(
-                    "Free Play Store build is limited to 1 saved host. Unlock OmniTerm to add more.",
+                Text(stringResource(R.string.free_play_store_build_is_limited),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = 12.sp,
                     modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
@@ -1511,14 +1518,14 @@ fun ServersMainView(viewModel: AppViewModel) {
                     ) {
                         Text(text = "${viewModel.selectedServerIdsForBulk.size} servers selected", fontWeight = FontWeight.Medium)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(onClick = { viewModel.selectAllServers() }) { Text("Select All") }
+                            TextButton(onClick = { viewModel.selectAllServers() }) { Text(stringResource(R.string.select_all)) }
                             Button(
                                 enabled = viewModel.selectedServerIdsForBulk.isNotEmpty(),
                                 onClick = {
                                     bulkGroupName = viewModel.selectedGroupChip.takeUnless { it == "All" }.orEmpty()
                                     showBulkGroupDialog = true
                                 }
-                            ) { Text("Group") }
+                            ) { Text(stringResource(R.string.group)) }
                             IconButton(onClick = { viewModel.clearBulkSelect() }) { Icon(Icons.Filled.Close, "Cancel") }
                         }
                     }
@@ -1541,12 +1548,12 @@ fun ServersMainView(viewModel: AppViewModel) {
                     contentAlignment = Alignment.Center
                 ) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Filled.Dns, contentDescription = "Dns", modifier = Modifier.size(64.dp), tint = Color.LightGray)
+                        Icon(Icons.Filled.Dns, contentDescription = null, modifier = Modifier.size(64.dp), tint = Color.LightGray)
                         Spacer(modifier = Modifier.height(8.dp))
                         if (srvList.isEmpty()) {
                             // True first run (no hosts at all): a short checklist instead of a
                             // bare "not found", so a beginner knows what they need before tapping +.
-                            Text("Connect your first server", fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.connect_your_first_server), fontWeight = FontWeight.Bold)
                             Column(
                                 horizontalAlignment = Alignment.Start,
                                 modifier = Modifier.padding(top = 8.dp, start = 32.dp, end = 32.dp),
@@ -1566,18 +1573,17 @@ fun ServersMainView(viewModel: AppViewModel) {
                                 }
                             }
                         } else {
-                            Text("No servers found", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(stringResource(R.string.no_servers_found), color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Button(
                             onClick = { showAddSheet = true },
                             modifier = Modifier.padding(top = 16.dp),
                             enabled = !hostLimitReached,
                         ) {
-                            Text("Add Host Server")
+                            Text(stringResource(R.string.add_host_server))
                         }
                         if (hostLimitReached) {
-                            Text(
-                                "Free Play Store build is limited to 1 saved host. Unlock OmniTerm to add more.",
+                            Text(stringResource(R.string.free_play_store_build_is_limited),
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 fontSize = 12.sp,
                                 modifier = Modifier.padding(top = 8.dp, start = 24.dp, end = 24.dp),
@@ -1681,7 +1687,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
                                         Text(
-                                            text = "${server.username}@${server.host}:${server.port}",
+                                            text = "${HostDisplay.userAtHost(server)}:${server.port}",
                                             fontSize = 14.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1,
@@ -1714,7 +1720,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                                         // (login vs trust vs network), raw error underneath.
                                         Column(modifier = Modifier.fillMaxWidth().padding(top = 4.dp)) {
                                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                                Icon(Icons.Filled.Warning, contentDescription = "Warning", tint = OmniColors.red, modifier = Modifier.size(16.dp))
+                                                Icon(Icons.Filled.Warning, contentDescription = null, tint = OmniColors.red, modifier = Modifier.size(16.dp))
                                                 Spacer(Modifier.width(6.dp))
                                                 Text(
                                                     "Online · ${sshFailureSummary(server.authError)}",
@@ -1802,7 +1808,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                                         Row(verticalAlignment = Alignment.CenterVertically) {
                                             CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                                             Spacer(modifier = Modifier.width(8.dp))
-                                            Text("Checking host…", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                            Text(stringResource(R.string.checking_host), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         }
                                     } else {
                                         Row(
@@ -1811,9 +1817,9 @@ fun ServersMainView(viewModel: AppViewModel) {
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Column(modifier = Modifier.weight(1f)) {
-                                                Text("Offline · unreachable", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.Red)
+                                                Text(stringResource(R.string.offline_unreachable), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.Red)
                                                 Text(
-                                                    "No TCP route to ${server.host}:${server.port} — host down, wrong address/port, or network blocked",
+                                                    "No TCP route to ${HostDisplay.host(server)}:${server.port} — host down, wrong address/port, or network blocked",
                                                     fontSize = 10.sp,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 )
@@ -1864,7 +1870,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                         ) {
                             Icon(Icons.Filled.Edit, null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Edit Server Configuration")
+                            Text(stringResource(R.string.edit_server_configuration))
                         }
                         TextButton(
                             onClick = {
@@ -1877,7 +1883,17 @@ fun ServersMainView(viewModel: AppViewModel) {
                         ) {
                             Icon(Icons.Filled.ContentCopy, null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Duplicate Host (reuse credentials)")
+                            Text(stringResource(R.string.duplicate_host_reuse_credentials))
+                        }
+                        TextButton(
+                            onClick = {
+                                selectedForActionSheet = null
+                                ShortcutHelper.pinServerShortcut(context, srv)
+                            }
+                        ) {
+                            Icon(Icons.Filled.PushPin, null)
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(R.string.pin_to_home_screen))
                         }
                         TextButton(
                             onClick = {
@@ -1893,7 +1909,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                         ) {
                             Icon(Icons.Filled.Terminal, null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Open Terminal Console")
+                            Text(stringResource(R.string.open_terminal_console))
                         }
                         TextButton(
                             onClick = {
@@ -1904,7 +1920,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                         ) {
                             Icon(Icons.Filled.Speed, null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Monitor Live Metrics")
+                            Text(stringResource(R.string.monitor_live_metrics))
                         }
                         TextButton(
                             onClick = {
@@ -1915,7 +1931,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                         ) {
                             Icon(Icons.Filled.Layers, null)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Infrastructure & Containers")
+                            Text(stringResource(R.string.infrastructure_containers))
                         }
                         TextButton(
                             onClick = {
@@ -1929,12 +1945,12 @@ fun ServersMainView(viewModel: AppViewModel) {
                         ) {
                             Icon(Icons.Filled.Delete, null, tint = Color.Red)
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Delete Server Host Connection", color = Color.Red)
+                            Text(stringResource(R.string.delete_server_host_connection), color = Color.Red)
                         }
                     }
                 },
                 confirmButton = {
-                    TextButton(onClick = { selectedForActionSheet = null }) { Text("Dismiss") }
+                    TextButton(onClick = { selectedForActionSheet = null }) { Text(stringResource(R.string.dismiss)) }
                 }
             )
         }
@@ -1944,7 +1960,7 @@ fun ServersMainView(viewModel: AppViewModel) {
             var groupMenuOpen by remember { mutableStateOf(false) }
             AlertDialog(
                 onDismissRequest = { showBulkGroupDialog = false },
-                title = { Text("Assign Group") },
+                title = { Text(stringResource(R.string.assign_group)) },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("${viewModel.selectedServerIdsForBulk.size} selected server(s) will be moved to this group.")
@@ -1952,7 +1968,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                             OutlinedTextField(
                                 value = bulkGroupName,
                                 onValueChange = { bulkGroupName = it },
-                                label = { Text("Group name") },
+                                label = { Text(stringResource(R.string.group_name)) },
                                 singleLine = true,
                                 trailingIcon = {
                                     IconButton(onClick = { groupMenuOpen = true }) {
@@ -1967,7 +1983,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                                 }
                             }
                         }
-                        Text("Pick an existing group or type a new group name.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.pick_an_existing_group_or_type), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 },
                 confirmButton = {
@@ -1977,10 +1993,10 @@ fun ServersMainView(viewModel: AppViewModel) {
                             showBulkGroupDialog = false
                             bulkGroupName = ""
                         }
-                    ) { Text("Apply") }
+                    ) { Text(stringResource(R.string.apply)) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { showBulkGroupDialog = false }) { Text("Cancel") }
+                    TextButton(onClick = { showBulkGroupDialog = false }) { Text(stringResource(R.string.cancel)) }
                 }
             )
         }
@@ -2237,9 +2253,9 @@ fun AddServerSheet(
                     .verticalScroll(rememberScrollState())
             ) {
                 PrimaryTabRow(selectedTabIndex = activeTab) {
-                    Tab(selected = activeTab == 0, onClick = { activeTab = 0 }) { Text("Connection", fontSize = 12.sp, modifier = Modifier.padding(8.dp)) }
-                    Tab(selected = activeTab == 1, onClick = { activeTab = 1 }) { Text("Credentials", fontSize = 12.sp, modifier = Modifier.padding(8.dp)) }
-                    Tab(selected = activeTab == 2, onClick = { activeTab = 2 }) { Text("Advanced", fontSize = 12.sp, modifier = Modifier.padding(8.dp)) }
+                    Tab(selected = activeTab == 0, onClick = { activeTab = 0 }) { Text(stringResource(R.string.connection), fontSize = 12.sp, modifier = Modifier.padding(8.dp)) }
+                    Tab(selected = activeTab == 1, onClick = { activeTab = 1 }) { Text(stringResource(R.string.credentials), fontSize = 12.sp, modifier = Modifier.padding(8.dp)) }
+                    Tab(selected = activeTab == 2, onClick = { activeTab = 2 }) { Text(stringResource(R.string.advanced), fontSize = 12.sp, modifier = Modifier.padding(8.dp)) }
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -2250,9 +2266,9 @@ fun AddServerSheet(
 
                 if (activeTab == 0) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Display Name (Unique)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-                        OutlinedTextField(value = host, onValueChange = { host = it }, label = { Text("IP Address / Hostname") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), singleLine = true)
-                        OutlinedTextField(value = port, onValueChange = { port = it }, label = { Text("SSH Port") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+                        OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text(stringResource(R.string.display_name_unique)) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
+                        OutlinedTextField(value = host, onValueChange = { host = it }, label = { Text(stringResource(R.string.ip_address_hostname)) }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), singleLine = true)
+                        OutlinedTextField(value = port, onValueChange = { port = it }, label = { Text(stringResource(R.string.ssh_port)) }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
 
                         // Group label: pick an existing one (prevents typo-forked labels) or type a new one.
                         var groupMenuOpen by remember { mutableStateOf(false) }
@@ -2260,7 +2276,7 @@ fun AddServerSheet(
                             OutlinedTextField(
                                 value = group,
                                 onValueChange = { group = it },
-                                label = { Text("Group (optional)") },
+                                label = { Text(stringResource(R.string.group_optional)) },
                                 modifier = Modifier.fillMaxWidth(),
                                 singleLine = true,
                                 trailingIcon = {
@@ -2276,7 +2292,7 @@ fun AddServerSheet(
                             }
                         }
 
-                        Text("Accent color", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.accent_color), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                             OmniColors.namedColors.forEach { (cname, c) ->
                                 Box(
@@ -2300,11 +2316,11 @@ fun AddServerSheet(
                         OutlinedTextField(
                             value = user,
                             onValueChange = { user = it },
-                            label = { Text("SSH Username") },
+                            label = { Text(stringResource(R.string.ssh_username)) },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true,
                             enabled = authType != "profile",
-                            supportingText = if (authType == "profile") { { Text("Provided by the selected profile") } } else null,
+                            supportingText = if (authType == "profile") { { Text(stringResource(R.string.provided_by_the_selected_profile)) } } else null,
                         )
                         @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                         androidx.compose.foundation.layout.FlowRow(
@@ -2313,15 +2329,15 @@ fun AddServerSheet(
                         ) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 RadioButton(selected = authType == "password", onClick = { authType = "password" })
-                                Text("Password")
+                                Text(stringResource(R.string.password))
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 RadioButton(selected = authType == "key", onClick = { authType = "key" })
-                                Text("SSH Private Key")
+                                Text(stringResource(R.string.ssh_private_key))
                             }
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 RadioButton(selected = authType == "profile", onClick = { authType = "profile" })
-                                Text("Profile")
+                                Text(stringResource(R.string.profile))
                             }
                         }
 
@@ -2337,13 +2353,12 @@ fun AddServerSheet(
                             )
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Checkbox(checked = saveProfile, onCheckedChange = { saveProfile = it })
-                                Text("Save securely to Credential Store", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(stringResource(R.string.save_securely_to_credential_store), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             if (saveProfile) {
-                                Text("A new credentials profile will be built for this connection automatically.", fontSize = 11.sp, color = Color(0xFF10B981), modifier = Modifier.padding(start = 12.dp))
+                                Text(stringResource(R.string.a_new_credentials_profile_will_be), fontSize = 11.sp, color = Color(0xFF10B981), modifier = Modifier.padding(start = 12.dp))
                             } else {
-                                Text(
-                                    "Either way the password is stored encrypted on this device so OmniTerm can reconnect; the Credential Store just makes it reusable across hosts.",
+                                Text(stringResource(R.string.either_way_the_password_is_stored),
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.padding(start = 12.dp),
@@ -2351,9 +2366,9 @@ fun AddServerSheet(
                             }
                         } else if (authType == "key") {
                             if (savedKeys.isEmpty()) {
-                                Text("No SSH keys saved yet. Go to Tools → Keys to generate or import one.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                                Text(stringResource(R.string.no_ssh_keys_saved_yet_go), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                             } else {
-                                Text("Select Keypair Alias:")
+                                Text(stringResource(R.string.select_keypair_alias))
                                 @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                                 androidx.compose.foundation.layout.FlowRow(
                                     horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -2370,9 +2385,9 @@ fun AddServerSheet(
                             }
                         } else if (authType == "profile") {
                             if (savedProfiles.isEmpty()) {
-                                Text("No credentials profiles found. Go to Tools -> Auth to create one or enter a raw password.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                                Text(stringResource(R.string.no_credentials_profiles_found_go_to), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                             } else {
-                                Text("Select Credentials Profile:")
+                                Text(stringResource(R.string.select_credentials_profile))
                                 LazyColumn(modifier = Modifier.height(100.dp)) {
                                     items(savedProfiles) { profile ->
                                         Row(
@@ -2422,14 +2437,14 @@ fun AddServerSheet(
                             if (testingConnection) {
                                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
                             } else {
-                                Text("Test Connection")
+                                Text(stringResource(R.string.test_connection))
                             }
                         }
                     }
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Server Notes") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
-                        Text("Keep alive interval:")
+                        OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text(stringResource(R.string.server_notes)) }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+                        Text(stringResource(R.string.keep_alive_interval))
                         val intervals = listOf("10s", "20s", "30s", "60s", "120s")
                         @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                         androidx.compose.foundation.layout.FlowRow(
@@ -2446,12 +2461,12 @@ fun AddServerSheet(
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = compression, onCheckedChange = { compression = it })
-                            Text("Use SSH Payload compression")
+                            Text(stringResource(R.string.use_ssh_payload_compression))
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = persistentSession, onCheckedChange = { persistentSession = it })
                             Column {
-                                Text("Persistent session (tmux)")
+                                Text(stringResource(R.string.persistent_session_tmux))
                                 Text(
                                     "Runs shells inside tmux so a dropped connection reconnects and " +
                                         "long-running commands keep going. Requires tmux on the host — " +
@@ -2464,7 +2479,7 @@ fun AddServerSheet(
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(checked = agentForwarding, onCheckedChange = { agentForwarding = it })
                             Column {
-                                Text("Forward SSH agent (ssh -A)")
+                                Text(stringResource(R.string.forward_ssh_agent_ssh_a))
                                 Text(
                                     "Lets onward SSH hops from this host authenticate with the key you " +
                                         "connect with, without copying it to the server. Only enable for hosts you trust.",
@@ -2484,7 +2499,7 @@ fun AddServerSheet(
                         )
 
                         Spacer(Modifier.height(12.dp))
-                        Text("Proxy / SSH jump", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                        Text(stringResource(R.string.proxy_ssh_jump), fontWeight = FontWeight.Bold, fontSize = 14.sp)
                         @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                         androidx.compose.foundation.layout.FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -2497,8 +2512,8 @@ fun AddServerSheet(
                         }
                         if (proxyType != "none") {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                OutlinedTextField(value = proxyHost, onValueChange = { proxyHost = it }, label = { Text("Proxy host") }, modifier = Modifier.weight(2f), singleLine = true)
-                                OutlinedTextField(value = proxyPort, onValueChange = { proxyPort = it.filter { c -> c.isDigit() } }, label = { Text("Port") }, modifier = Modifier.weight(1f), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                                OutlinedTextField(value = proxyHost, onValueChange = { proxyHost = it }, label = { Text(stringResource(R.string.proxy_host)) }, modifier = Modifier.weight(2f), singleLine = true)
+                                OutlinedTextField(value = proxyPort, onValueChange = { proxyPort = it.filter { c -> c.isDigit() } }, label = { Text(stringResource(R.string.port)) }, modifier = Modifier.weight(1f), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
                             }
                             Spacer(Modifier.height(8.dp))
                             OutlinedTextField(value = proxyUser, onValueChange = { proxyUser = it }, label = { Text(if (proxyType == "ssh") "Jump user (optional)" else "Proxy user (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
@@ -2514,9 +2529,9 @@ fun AddServerSheet(
                             )
                             if (proxyType == "ssh") {
                                 Spacer(Modifier.height(8.dp))
-                                Text("Jump host key (optional):", fontSize = 12.sp)
+                                Text(stringResource(R.string.jump_host_key_optional), fontSize = 12.sp)
                                 if (savedKeys.isEmpty()) {
-                                    Text("No SSH keys saved yet. Go to Tools → Keys to generate or import one.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
+                                    Text(stringResource(R.string.no_ssh_keys_saved_yet_go), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                                 } else {
                                     @OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
                                     androidx.compose.foundation.layout.FlowRow(
@@ -2553,7 +2568,7 @@ fun AddServerSheet(
                         if (authType == "key" && selectedKey.isBlank()) { errorText = "Select a key."; return@Button }
                         activeTab = 2
                     }
-                }) { Text("Next") }
+                }) { Text(stringResource(R.string.next)) }
             } else {
                 Button(
                     onClick = {
@@ -2583,7 +2598,7 @@ fun AddServerSheet(
     confirmDuplicateHost?.let { duplicate ->
         AlertDialog(
             onDismissRequest = { confirmDuplicateHost = null },
-            title = { Text("Duplicate IP address") },
+            title = { Text(stringResource(R.string.duplicate_ip_address)) },
             text = {
                 Text("Host ${duplicate.name} already uses ${duplicate.host}. You can still save this server if it intentionally uses a different credential profile.")
             },
@@ -2591,10 +2606,10 @@ fun AddServerSheet(
                 Button(onClick = {
                     confirmDuplicateHost = null
                     saveServerDraft()
-                }) { Text("Save anyway") }
+                }) { Text(stringResource(R.string.save_anyway)) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmDuplicateHost = null }) { Text("Review") }
+                TextButton(onClick = { confirmDuplicateHost = null }) { Text(stringResource(R.string.review)) }
             },
         )
     }

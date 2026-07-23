@@ -137,7 +137,7 @@ private fun ZoomableImage(bitmap: android.graphics.Bitmap) {
     val imageBitmap = remember(bitmap) { bitmap.asImageBitmap() }
     Image(
         bitmap = imageBitmap,
-        contentDescription = "Icon",
+        contentDescription = null,
         contentScale = ContentScale.Fit,
         modifier = Modifier
             .fillMaxSize()

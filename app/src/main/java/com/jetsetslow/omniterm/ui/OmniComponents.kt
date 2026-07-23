@@ -49,6 +49,8 @@ import androidx.compose.ui.platform.LocalClipboard
 import com.jetsetslow.omniterm.ui.theme.OmniColors
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
 import kotlinx.coroutines.launch
+import androidx.compose.ui.res.stringResource
+import com.jetsetslow.omniterm.R
 
 /** Copy plain text through Compose's current, suspend-based clipboard API. */
 @Composable
@@ -133,10 +135,10 @@ fun GaugeBar(value: Float, modifier: Modifier = Modifier, color: Color = OmniCol
 }
 
 @Composable
-fun StatusDot(online: Boolean, color: Color = OmniColors.green, size: Dp = 8.dp, contentDescription: String? = null) {
+fun StatusDot(online: Boolean, modifier: Modifier = Modifier, color: Color = OmniColors.green, size: Dp = 8.dp, contentDescription: String? = null) {
     val c = if (online) color else OmniColors.red
     val desc = contentDescription ?: if (online) "Server online" else "Server offline"
-    Box(Modifier.size(size).clip(CircleShape).background(c).semantics { this.contentDescription = desc })
+    Box(modifier.size(size).clip(CircleShape).background(c).semantics { this.contentDescription = desc })
 }
 
 /** Circular health score gauge with the value in the centre (display font). */
@@ -355,9 +357,10 @@ fun OmniAppBar(
     onHome: () -> Unit,
     onAlerts: () -> Unit,
     onToggleKeepScreenOn: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             // Edge-to-edge: surface fills behind the status bar, content sits below it.
             .background(MaterialTheme.colorScheme.surface)
@@ -373,8 +376,7 @@ fun OmniAppBar(
         ) {
             Box(Modifier.size(8.dp).clip(CircleShape).background(activeColor))
             Spacer(Modifier.width(8.dp))
-            Text(
-                "OMNITERM",
+            Text(stringResource(R.string.omniterm_2),
                 color = MaterialTheme.colorScheme.onSurface,
                 fontFamily = OmniFonts.display,
                 fontWeight = FontWeight.Bold,
@@ -411,9 +413,9 @@ fun OmniAppBar(
 data class OmniNavItem(val key: Any, val label: String, val icon: ImageVector, val color: Color)
 
 @Composable
-fun OmniBottomNav(items: List<OmniNavItem>, isActive: (Any) -> Boolean, onNavigate: (Any) -> Unit) {
+fun OmniBottomNav(items: List<OmniNavItem>, isActive: (Any) -> Boolean, onNavigate: (Any) -> Unit, modifier: Modifier = Modifier) {
     Row(
-        Modifier
+        modifier
             .fillMaxWidth()
             .background(MaterialTheme.colorScheme.surface)
             .drawBehind { drawRect(OmniColors.border, size = Size(size.width, 1f)) }
@@ -597,7 +599,7 @@ fun HostPickerDialog(
                     androidx.compose.material3.OutlinedTextField(
                         value = query,
                         onValueChange = { query = it },
-                        label = { Text("Search hosts") },
+                        label = { Text(stringResource(R.string.search_hosts)) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -605,8 +607,7 @@ fun HostPickerDialog(
                 if (!singleSelect && (onSelectAll != null || onClear != null)) {
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                         if (onSelectAll != null) {
-                            Text(
-                                "Select all",
+                            Text(stringResource(R.string.select_all_2),
                                 fontSize = 12.sp, fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.clickable { onSelectAll() }.padding(4.dp),
@@ -614,8 +615,7 @@ fun HostPickerDialog(
                         }
                         if (onClear != null) {
                             Spacer(Modifier.width(12.dp))
-                            Text(
-                                "Clear",
+                            Text(stringResource(R.string.clear),
                                 fontSize = 12.sp, fontWeight = FontWeight.Bold,
                                 color = OmniColors.red,
                                 modifier = Modifier.clickable { onClear() }.padding(4.dp),
@@ -645,7 +645,7 @@ fun HostPickerDialog(
                         val enabled = isSelectable(s)
                         HostPickerRow(
                             name = s.name,
-                            detail = "${s.username}@${s.host}" + if (enabled) "" else " · offline",
+                            detail = HostDisplay.userAtHost(s) + if (enabled) "" else " · offline",
                             online = s.status == "online",
                             dotColor = OmniColors.serverAccent(s.serverColor, s.name),
                             checked = s.id in selectedIds,
@@ -661,7 +661,7 @@ fun HostPickerDialog(
             }
         },
         confirmButton = {
-            androidx.compose.material3.TextButton(onClick = onDismiss) { Text("Done") }
+            androidx.compose.material3.TextButton(onClick = onDismiss) { Text(stringResource(R.string.done)) }
         },
     )
 }
@@ -676,9 +676,10 @@ private fun HostPickerRow(
     enabled: Boolean,
     singleSelect: Boolean,
     onClick: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(6.dp))
             .clickable(enabled = enabled) { onClick() }
