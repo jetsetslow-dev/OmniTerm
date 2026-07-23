@@ -161,6 +161,9 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
 }
 
 dependencies {
+    implementation("androidx.glance:glance-appwidget:1.1.0")
+    // Material3 for Glance
+    implementation("androidx.glance:glance-material3:1.1.0")
   constraints {
     implementation(libs.guava.android) {
       because("Play Ads transitively requests a Guava release with published security advisories")

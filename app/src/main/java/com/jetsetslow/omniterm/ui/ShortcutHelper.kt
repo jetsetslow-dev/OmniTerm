@@ -55,7 +55,7 @@ object ShortcutHelper {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
         }
 
-        val name = share.name.takeIf { !it.isNullOrBlank() } ?: share.host
+        val name = share.name.takeIf { !it.isNullOrBlank() } ?: share.address
         val shortcut = ShortcutInfoCompat.Builder(context, "share_${share.id}")
             .setShortLabel("Share: $name")
             .setLongLabel("Open Network Share $name")
