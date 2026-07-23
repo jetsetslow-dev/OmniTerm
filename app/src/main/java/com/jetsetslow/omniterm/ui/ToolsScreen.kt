@@ -33,6 +33,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -192,39 +193,20 @@ fun AlertsPopup(
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth()
                 .padding(horizontal = 16.dp)
-                .heightIn(max = 620.dp),
-            shape = RoundedCornerShape(16.dp),
+                .widthIn(max = 480.dp)
+                .fillMaxWidth()
+                .heightIn(max = 560.dp),
+            shape = RoundedCornerShape(14.dp),
             tonalElevation = 8.dp,
         ) {
-            Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(Icons.Filled.NotificationsActive, contentDescription = null, tint = OmniColors.red)
-                    Spacer(Modifier.width(8.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("Active alerts", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                        Text(
-                            "${active.size} firing · ${muted.size} muted",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 11.sp,
-                        )
-                    }
-                    IconButton(onClick = onDismiss) {
-                        Icon(Icons.Filled.Close, contentDescription = "Close alerts popup")
-                    }
-                }
-
-                if (active.isNotEmpty()) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                        TextButton(onClick = { viewModel.acknowledgeAllAlerts() }) {
-                            Text("ACKNOWLEDGE ALL")
-                        }
-                    }
-                }
+            Column(Modifier.fillMaxWidth().padding(12.dp)) {
+                AlertPopupHeader(
+                    activeCount = active.size,
+                    mutedCount = muted.size,
+                    onAcknowledgeAll = viewModel::acknowledgeAllAlerts,
+                    onDismiss = onDismiss,
+                )
 
                 if (active.isEmpty() && muted.isEmpty()) {
                     Box(
@@ -234,41 +216,16 @@ fun AlertsPopup(
                         Text("No active alert incidents.", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
-                    LazyColumn(
+                    AlertPopupIncidentList(
+                        active = active,
+                        muted = muted,
+                        servers = servers,
                         modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
-                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        items(active, key = { "active-${it.id}" }) { alert ->
-                            AlertPopupIncidentCard(
-                                alert = alert,
-                                server = servers.find { it.id == alert.serverId },
-                                muted = false,
-                                onAcknowledge = { viewModel.acknowledgeAlert(alert.id) },
-                                onMuteToggle = { viewModel.muteAlertForOneHour(alert.id) },
-                                onRefresh = { if (alert.serverId > 0) viewModel.refreshServer(alert.serverId) },
-                            )
-                        }
-                        if (muted.isNotEmpty()) {
-                            item {
-                                Text(
-                                    "Muted incidents",
-                                    fontWeight = FontWeight.Bold,
-                                    color = OmniColors.purple,
-                                    modifier = Modifier.padding(top = 6.dp, start = 4.dp),
-                                )
-                            }
-                        }
-                        items(muted, key = { "muted-${it.id}" }) { alert ->
-                            AlertPopupIncidentCard(
-                                alert = alert,
-                                server = servers.find { it.id == alert.serverId },
-                                muted = true,
-                                onAcknowledge = null,
-                                onMuteToggle = { viewModel.unmuteAlert(alert.id) },
-                                onRefresh = { if (alert.serverId > 0) viewModel.refreshServer(alert.serverId) },
-                            )
-                        }
-                    }
+                        onAcknowledge = viewModel::acknowledgeAlert,
+                        onMute = viewModel::muteAlertForOneHour,
+                        onUnmute = viewModel::unmuteAlert,
+                        onRefresh = viewModel::refreshServer,
+                    )
                 }
 
                 HorizontalDivider(Modifier.padding(top = 12.dp))
@@ -276,9 +233,98 @@ fun AlertsPopup(
                     "Rules and incident history are available in Tools → Alerts & Rules.",
                     modifier = Modifier.padding(top = 10.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 11.sp,
+                    fontSize = OmniTextSize.Meta,
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun AlertPopupHeader(
+    activeCount: Int,
+    mutedCount: Int,
+    onAcknowledgeAll: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            Icons.Filled.NotificationsActive,
+            contentDescription = null,
+            tint = OmniColors.red,
+            modifier = Modifier.size(20.dp),
+        )
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text("Active alerts", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "$activeCount firing · $mutedCount muted",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = OmniTextSize.Meta,
+            )
+        }
+        IconButton(onClick = onDismiss) {
+            Icon(Icons.Filled.Close, contentDescription = "Close alerts popup")
+        }
+    }
+
+    if (activeCount > 0) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = onAcknowledgeAll) {
+                Text("ACKNOWLEDGE ALL", fontSize = OmniTextSize.Meta)
+            }
+        }
+    }
+}
+
+@Composable
+fun AlertPopupIncidentList(
+    active: List<ActiveAlertEntity>,
+    muted: List<ActiveAlertEntity>,
+    servers: List<ServerEntity>,
+    onAcknowledge: (Int) -> Unit,
+    onMute: (Int) -> Unit,
+    onUnmute: (Int) -> Unit,
+    onRefresh: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    LazyColumn(
+        modifier = modifier.testTag("alerts-popup-list"),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        items(active, key = { "active-${it.id}" }) { alert ->
+            AlertPopupIncidentCard(
+                alert = alert,
+                server = servers.find { it.id == alert.serverId },
+                muted = false,
+                onAcknowledge = { onAcknowledge(alert.id) },
+                onMuteToggle = { onMute(alert.id) },
+                onRefresh = { if (alert.serverId > 0) onRefresh(alert.serverId) },
+            )
+        }
+        if (muted.isNotEmpty()) {
+            item(key = "muted-heading") {
+                Text(
+                    "Muted incidents",
+                    fontWeight = FontWeight.Bold,
+                    fontSize = OmniTextSize.Dense,
+                    color = OmniColors.purple,
+                    modifier = Modifier.padding(top = 4.dp, start = 4.dp),
+                )
+            }
+        }
+        items(muted, key = { "muted-${it.id}" }) { alert ->
+            AlertPopupIncidentCard(
+                alert = alert,
+                server = servers.find { it.id == alert.serverId },
+                muted = true,
+                onAcknowledge = null,
+                onMuteToggle = { onUnmute(alert.id) },
+                onRefresh = { if (alert.serverId > 0) onRefresh(alert.serverId) },
+            )
         }
     }
 }
@@ -298,25 +344,25 @@ fun AlertPopupIncidentCard(
         else -> OmniColors.amber
     }
     OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = accent) {
-        Column(Modifier.fillMaxWidth().padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(alert.metricName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                Text(alert.metricName, fontWeight = FontWeight.Bold, fontSize = OmniTextSize.Dense)
                 Text(
                     if (muted) "MUTED" else alert.severity,
                     color = accent,
                     fontWeight = FontWeight.ExtraBold,
-                    fontSize = 11.sp,
+                    fontSize = OmniTextSize.Tag,
                 )
             }
             Text(
                 "${server?.name ?: "Server"} · current ${alert.currentValue} · threshold ${alert.thresholdValue}",
-                fontSize = 12.sp,
+                fontSize = OmniTextSize.Meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             if (muted) {
                 Text(
                     "Muted until ${formatShortDateTime(alert.mutedUntil)}",
-                    fontSize = 11.sp,
+                    fontSize = OmniTextSize.Tag,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -324,11 +370,17 @@ fun AlertPopupIncidentCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
             ) {
-                TextButton(onClick = onRefresh, enabled = alert.serverId > 0) { Text("REFRESH") }
-                if (onAcknowledge != null) {
-                    TextButton(onClick = onAcknowledge) { Text("ACKNOWLEDGE") }
+                TextButton(onClick = onRefresh, enabled = alert.serverId > 0) {
+                    Text("REFRESH", fontSize = OmniTextSize.Meta)
                 }
-                TextButton(onClick = onMuteToggle) { Text(if (muted) "UNMUTE" else "MUTE 1H") }
+                if (onAcknowledge != null) {
+                    TextButton(onClick = onAcknowledge) {
+                        Text("ACKNOWLEDGE", fontSize = OmniTextSize.Meta)
+                    }
+                }
+                TextButton(onClick = onMuteToggle) {
+                    Text(if (muted) "UNMUTE" else "MUTE 1H", fontSize = OmniTextSize.Meta)
+                }
             }
         }
     }

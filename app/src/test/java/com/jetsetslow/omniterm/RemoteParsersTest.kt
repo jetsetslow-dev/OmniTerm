@@ -338,6 +338,12 @@ class RemoteParsersTest {
     }
 
     @Test
+    fun tmuxClearHistoryCommandTargetsSanitisedSession() {
+        val cmd = com.jetsetslow.omniterm.data.RemoteCommands.tmuxClearHistoryCommand("bad; rm -rf /")
+        assertEquals("tmux clear-history -t badrm-rf 2>/dev/null || true", cmd)
+    }
+
+    @Test
     fun shellQuoteNeutralisesSpecialCharacters() {
         val q = com.jetsetslow.omniterm.data.RemoteCommands::shellQuote
         // Plain text is wrapped in single quotes.

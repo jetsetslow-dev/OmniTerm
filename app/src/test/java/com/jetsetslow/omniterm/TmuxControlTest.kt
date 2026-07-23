@@ -184,6 +184,11 @@ class TmuxControlTest {
         TmuxControlCommands.capturePane("%0; kill-server", 10, includeScreen = true)
     }
 
+    @Test(expected = IllegalArgumentException::class)
+    fun clearHistoryRejectsMalformedPaneId() {
+        TmuxControlCommands.clearHistory("%0; kill-server")
+    }
+
     @Test
     fun resizeAndCaptureCommandFormats() {
         assertEquals("refresh-client -C 100x30", TmuxControlCommands.refreshClientSize(100, 30))
@@ -200,5 +205,6 @@ class TmuxControlTest {
             "capture-pane -p -e -J -S -500 -t %1",
             TmuxControlCommands.capturePane("%1", 500, includeScreen = true),
         )
+        assertEquals("clear-history -t %1", TmuxControlCommands.clearHistory("%1"))
     }
 }

@@ -54,6 +54,7 @@ class TmuxControlIntegrationTest {
                 add(TmuxControlCommands.paneOutputState(pane, "on"))
                 add(TmuxControlCommands.capturePane(pane, 10, includeScreen = false))
                 add(TmuxControlCommands.capturePane(pane, 10, includeScreen = true))
+                add(TmuxControlCommands.clearHistory(pane))
                 add("detach-client")
             }
 

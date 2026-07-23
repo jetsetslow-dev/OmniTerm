@@ -218,6 +218,12 @@ object TmuxControlCommands {
         return "capture-pane -p -e -J -S -${historyLines.coerceAtLeast(0)}$tail -t $paneId"
     }
 
+    /** Clear the target pane's history without touching its visible screen. */
+    fun clearHistory(paneId: String): String {
+        require(paneId.matches(Regex("%\\d+"))) { "invalid tmux pane id: $paneId" }
+        return "clear-history -t $paneId"
+    }
+
     /** Active pane id + cursor for the initial repaint seed (reply body: `%N x y`). */
     fun activePaneQuery(): String =
         "display-message -p '#{pane_id} #{cursor_x} #{cursor_y}'"

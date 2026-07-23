@@ -1,9 +1,11 @@
 package com.jetsetslow.omniterm
 
-import android.os.ParcelFileDescriptor
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.drawable.AdaptiveIconDrawable
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.InsetDrawable
+import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import com.jetsetslow.omniterm.data.BiometricCryptoGate
@@ -22,7 +24,7 @@ class E2eBiometricPromptVisualTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
 
     @Test
-    fun monochromeAdaptiveIconContainsTransparentLogoGeometry() {
+    fun monochromeAdaptiveIconContainsOriginalHighContrastGeometry() {
         val drawable = composeRule.activity.getDrawable(R.mipmap.ic_launcher)
         assertTrue("Launcher icon is not adaptive", drawable is AdaptiveIconDrawable)
         val monochrome = requireNotNull((drawable as AdaptiveIconDrawable).monochrome)
@@ -34,28 +36,55 @@ class E2eBiometricPromptVisualTest {
         val visibleFraction = pixels.count { (it ushr 24) != 0 }.toDouble() / pixels.size
         assertTrue("Monochrome icon is effectively empty: $visibleFraction", visibleFraction > 0.05)
         assertTrue("Monochrome icon is an opaque tile: $visibleFraction", visibleFraction < 0.55)
-        val darkVisibleFraction = pixels.count {
+        val brightVisibleFraction = pixels.count {
             val alpha = it ushr 24
             val red = it ushr 16 and 0xff
             val green = it ushr 8 and 0xff
             val blue = it and 0xff
-            alpha != 0 && red + green + blue < 3 * 64
+            alpha != 0 && red + green + blue > 3 * 192
         }.toDouble() / pixels.size
         assertTrue(
-            "Monochrome mark has no untinted contrast for a light biometric surface",
-            darkVisibleFraction > 0.05,
+            "Original high-contrast monochrome mark is missing",
+            brightVisibleFraction > 0.05,
         )
     }
 
     @Test
-    fun manifestExposesExplicitApplicationAndActivityLogos() {
+    fun manifestSystemLogoRendersOriginalLauncherArtwork() {
         val appInfo = composeRule.activity.applicationInfo
-        val activityInfo = composeRule.activity.packageManager.getActivityInfo(
+        val packageManager = composeRule.activity.packageManager
+        val activityInfo = packageManager.getActivityInfo(
             composeRule.activity.componentName,
             0,
         )
         assertEquals(R.mipmap.ic_launcher, appInfo.logo)
         assertEquals(R.mipmap.ic_launcher, activityInfo.logo)
+
+        val launcher = composeRule.activity.getDrawable(R.mipmap.ic_launcher)
+        assertTrue("Launcher icon is not adaptive", launcher is AdaptiveIconDrawable)
+        val foreground = (launcher as AdaptiveIconDrawable).foreground
+        assertTrue("Original inset foreground was replaced", foreground is InsetDrawable)
+        assertTrue(
+            "Original bitmap logo artwork was replaced",
+            (foreground as InsetDrawable).drawable is BitmapDrawable,
+        )
+
+        val systemLogo = requireNotNull(activityInfo.loadLogo(packageManager))
+        val bitmap = Bitmap.createBitmap(216, 216, Bitmap.Config.ARGB_8888)
+        systemLogo.setBounds(0, 0, bitmap.width, bitmap.height)
+        systemLogo.draw(Canvas(bitmap))
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        val visibleColors = pixels.asSequence()
+            .filter { (it ushr 24) != 0 }
+            .map { it and 0x00ffffff }
+            .distinct()
+            .take(64)
+            .count()
+        assertTrue(
+            "System logo collapsed to a blank tile: $visibleColors visible colors",
+            visibleColors >= 64,
+        )
     }
 
     @Test
