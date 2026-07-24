@@ -1,0 +1,129 @@
+name: Dependabot verification-metadata fixup
+
+# actions/checkout initializes a temporary repository; define its branch name so Git does not emit
+# the legacy-default-branch warning on every job.
+env:
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+
+# Dependabot bumps dependency versions but has no way to know gradle/verification-metadata.xml
+# needs new checksums for them, so every Dependabot PR fails the "Validate release SBOM
+# generation" required check with no path to green. This workflow regenerates the file and opens
+# a follow-up PR with the fix.
+#
+# pull_request_target runs with base-branch permissions/secrets, which is normally dangerous when
+# combined with checking out and building the PR's own code (a "pwn request": untrusted code runs
+# with elevated permissions). This workflow deliberately never does that: it never checks out
+# Dependabot's branch or ref at all. Instead it reads only the two version-catalog files
+# (gradle/libs.versions.toml, gradle/verification-metadata.xml) from the PR head via the read-only
+# Contents API, applies just those file contents on top of a fresh checkout of main, regenerates
+# checksums there, and pushes the result to a brand-new branch + PR — so no PR-supplied code (a
+# build.gradle.kts, an init script, anything executable) is ever present when ./gradlew runs.
+on:
+  pull_request_target:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-verification-metadata-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  fixup:
+    name: Regenerate verification-metadata.xml
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Check out main
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: main
+          persist-credentials: true
+
+      # Pull only the two version-catalog files Dependabot's own PRs ever touch, via the read-only
+      # Contents API — never a checkout of the PR's ref/branch. No other file, and no executable
+      # code, from the PR is ever written into this workspace.
+      - name: Apply the PR's version-catalog changes on top of main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          for f in gradle/libs.versions.toml gradle/verification-metadata.xml; do
+            gh api "repos/${GITHUB_REPOSITORY}/contents/${f}?ref=${HEAD_SHA}" \
+              --jq '.content' | base64 -d > "$f"
+          done
+
+      - name: Set up Android Gradle
+        uses: ./.github/actions/setup-android-gradle
+
+      # Only resolves and inspects the release dependency graph; never signs or packages anything,
+      # so a throwaway keystore and Google's published sample AdMob IDs are sufficient (real
+      # secrets stay confined to android-release.yml).
+      - name: Provide ephemeral release keystore
+        run: |
+          umask 077
+          keytool -genkeypair -keystore release-check.keystore -storepass android -keypass android \
+            -alias androidcheckkey -dname CN=Android-SBOM-Check -keyalg RSA -keysize 2048 -validity 1
+
+      - name: Regenerate verification metadata for both release configs
+        env:
+          ADMOB_APP_ID: "ca-app-pub-0000000000000000~0000000000"
+          ADMOB_BANNER_UNIT_ID: "ca-app-pub-0000000000000000/0000000000"
+          KEYSTORE_PATH: ${{ github.workspace }}/release-check.keystore
+          STORE_PASSWORD: android
+          KEY_ALIAS: androidcheckkey
+          KEY_PASSWORD: android
+        run: |
+          set -euo pipefail
+          for config in playStoreReleaseRuntimeClasspath openSourceReleaseRuntimeClasspath; do
+            echo "::group::cyclonedxBom --write-verification-metadata ($config)"
+            SBOM_CONFIGURATION="$config" \
+              ./gradlew cyclonedxBom --init-script .github/cyclonedx.init.gradle.kts \
+              --write-verification-metadata sha256,sha512 --no-daemon
+            echo "::endgroup::"
+          done
+
+      - name: Delete ephemeral release keystore
+        if: always()
+        run: rm -f release-check.keystore
+
+      - name: Open a follow-up PR with the regenerated metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- gradle/verification-metadata.xml gradle/libs.versions.toml; then
+            echo "verification-metadata.xml already covers this PR's dependencies; nothing to open."
+            exit 0
+          fi
+
+          fixup_branch="dependabot-verification-metadata/pr-${PR_NUMBER}"
+          git checkout -b "$fixup_branch"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add gradle/libs.versions.toml gradle/verification-metadata.xml
+          git commit -m "chore: regenerate verification-metadata.xml for dependency bump (#${PR_NUMBER})"
+          git push --force origin "$fixup_branch"
+
+          existing="$(gh pr list --head "$fixup_branch" --json number --jq '.[0].number' || true)"
+          if [ -n "$existing" ]; then
+            echo "Follow-up PR #$existing already open for $fixup_branch; pushed an update."
+            exit 0
+          fi
+
+          gh pr create \
+            --base "$PR_HEAD_REF" \
+            --head "$fixup_branch" \
+            --title "chore: regenerate verification-metadata.xml for #${PR_NUMBER}" \
+            --body "Adds the checksums Dependabot PR #${PR_NUMBER} needs to pass the required \"Validate release SBOM generation\" check. Generated by regenerating against main plus this PR's version-catalog changes — no other file from the PR was read or executed. Merge this into #${PR_NUMBER}'s branch, or merge #${PR_NUMBER} directly if it prefers to carry this diff itself."
