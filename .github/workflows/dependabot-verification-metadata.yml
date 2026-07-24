@@ -9,14 +9,17 @@ env:
 
 # Dependabot bumps dependency versions but has no way to know gradle/verification-metadata.xml
 # needs new checksums for them, so every Dependabot PR fails the "Validate release SBOM
-# generation" required check with no path to green. This workflow regenerates the file and pushes
-# a fixup commit back onto the PR branch automatically.
+# generation" required check with no path to green. This workflow regenerates the file and opens
+# a follow-up PR with the fix.
 #
-# pull_request_target runs with base-branch permissions/secrets against the PR's code, which is
-# normally dangerous — this only stays safe because the job is hard-gated to github.actor ==
-# 'dependabot[bot]' (Dependabot's PRs are version-catalog/build-file edits from a trusted,
-# deterministic source, never arbitrary contributor code) and the token is scoped to nothing but
-# `contents: write` on this one job. Nothing here touches secrets, signing, or publishing.
+# pull_request_target runs with base-branch permissions/secrets, which is normally dangerous when
+# combined with checking out and building the PR's own code (a "pwn request": untrusted code runs
+# with elevated permissions). This workflow deliberately never does that: it never checks out
+# Dependabot's branch or ref at all. Instead it reads only the two version-catalog files
+# (gradle/libs.versions.toml, gradle/verification-metadata.xml) from the PR head via the read-only
+# Contents API, applies just those file contents on top of a fresh checkout of main, regenerates
+# checksums there, and pushes the result to a brand-new branch + PR — so no PR-supplied code (a
+# build.gradle.kts, an init script, anything executable) is ever present when ./gradlew runs.
 on:
   pull_request_target:
     branches:
@@ -37,16 +40,27 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write
+      pull-requests: write
     steps:
-      - name: Check out PR head commit
+      - name: Check out main
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          # Pin to the immutable head SHA rather than the (mutable, attacker-influenceable) head
-          # ref name — the ref could be force-pushed to a different commit between event dispatch
-          # and this checkout running with elevated pull_request_target permissions.
-          ref: ${{ github.event.pull_request.head.sha }}
-          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: main
           persist-credentials: true
+
+      # Pull only the two version-catalog files Dependabot's own PRs ever touch, via the read-only
+      # Contents API — never a checkout of the PR's ref/branch. No other file, and no executable
+      # code, from the PR is ever written into this workspace.
+      - name: Apply the PR's version-catalog changes on top of main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          for f in gradle/libs.versions.toml gradle/verification-metadata.xml; do
+            gh api "repos/${GITHUB_REPOSITORY}/contents/${f}?ref=${HEAD_SHA}" \
+              --jq '.content' | base64 -d > "$f"
+          done
 
       - name: Set up Android Gradle
         uses: ./.github/actions/setup-android-gradle
@@ -82,19 +96,34 @@ jobs:
         if: always()
         run: rm -f release-check.keystore
 
-      - name: Push fixup commit if the file changed
-        # The branch name is passed through an env var, never interpolated directly into the
-        # script body, so a crafted ref name can't be read/executed as shell syntax.
+      - name: Open a follow-up PR with the regenerated metadata
         env:
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
-          if git diff --quiet -- gradle/verification-metadata.xml; then
-            echo "verification-metadata.xml already covers this PR's dependencies; nothing to push."
+          if git diff --quiet -- gradle/verification-metadata.xml gradle/libs.versions.toml; then
+            echo "verification-metadata.xml already covers this PR's dependencies; nothing to open."
             exit 0
           fi
+
+          fixup_branch="dependabot-verification-metadata/pr-${PR_NUMBER}"
+          git checkout -b "$fixup_branch"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add gradle/verification-metadata.xml
-          git commit -m "chore: regenerate verification-metadata.xml for dependency bump"
-          git push origin "HEAD:refs/heads/$HEAD_REF"
+          git add gradle/libs.versions.toml gradle/verification-metadata.xml
+          git commit -m "chore: regenerate verification-metadata.xml for dependency bump (#${PR_NUMBER})"
+          git push --force origin "$fixup_branch"
+
+          existing="$(gh pr list --head "$fixup_branch" --json number --jq '.[0].number' || true)"
+          if [ -n "$existing" ]; then
+            echo "Follow-up PR #$existing already open for $fixup_branch; pushed an update."
+            exit 0
+          fi
+
+          gh pr create \
+            --base "$PR_HEAD_REF" \
+            --head "$fixup_branch" \
+            --title "chore: regenerate verification-metadata.xml for #${PR_NUMBER}" \
+            --body "Adds the checksums Dependabot PR #${PR_NUMBER} needs to pass the required \"Validate release SBOM generation\" check. Generated by regenerating against main plus this PR's version-catalog changes — no other file from the PR was read or executed. Merge this into #${PR_NUMBER}'s branch, or merge #${PR_NUMBER} directly if it prefers to carry this diff itself."
