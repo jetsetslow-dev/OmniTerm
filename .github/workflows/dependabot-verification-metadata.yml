@@ -38,10 +38,13 @@ jobs:
     permissions:
       contents: write
     steps:
-      - name: Check out PR branch
+      - name: Check out PR head commit
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.event.pull_request.head.ref }}
+          # Pin to the immutable head SHA rather than the (mutable, attacker-influenceable) head
+          # ref name — the ref could be force-pushed to a different commit between event dispatch
+          # and this checkout running with elevated pull_request_target permissions.
+          ref: ${{ github.event.pull_request.head.sha }}
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           persist-credentials: true
 
@@ -80,6 +83,10 @@ jobs:
         run: rm -f release-check.keystore
 
       - name: Push fixup commit if the file changed
+        # The branch name is passed through an env var, never interpolated directly into the
+        # script body, so a crafted ref name can't be read/executed as shell syntax.
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
           if git diff --quiet -- gradle/verification-metadata.xml; then
@@ -90,4 +97,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add gradle/verification-metadata.xml
           git commit -m "chore: regenerate verification-metadata.xml for dependency bump"
-          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
+          git push origin "HEAD:refs/heads/$HEAD_REF"
