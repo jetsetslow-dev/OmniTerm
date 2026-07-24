@@ -179,3 +179,67 @@ jobs:
     timeout-minutes: 2
     steps:
       - run: echo "No build-affecting files changed; skipping Room migration matrix."
+
+  sbom-check:
+    name: Validate release SBOM generation
+    # The release workflow's SBOM step resolves playStoreReleaseRuntimeClasspath and
+    # openSourceReleaseRuntimeClasspath — graphs neither Build & Test nor CodeQL ever touches, since
+    # both only assemble/test the debug variants. A dependency whose POM Gradle never needed to
+    # fetch under normal resolution (module-metadata-only artifacts, or ones only reached via
+    # :benchmark's special "tested APK" resolution) can still be missing from
+    # gradle/verification-metadata.xml and only surfaces here. Run the same cyclonedxBom step PR-side
+    # with harmless placeholder credentials, so a gap fails the PR instead of surfacing only after
+    # merge on main. No secrets, signing, or publishing involved — that stays exclusive to
+    # android-release.yml.
+    needs: [changes, build-and-test]
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Android Gradle
+        uses: ./.github/actions/setup-android-gradle
+
+      # cyclonedxBom only resolves and inspects the release dependency graph; it never signs or
+      # packages anything, so a throwaway keystore and Google's published sample AdMob IDs are
+      # sufficient here (real secrets stay confined to android-release.yml).
+      - name: Provide ephemeral release keystore
+        run: |
+          umask 077
+          keytool -genkeypair -keystore release-check.keystore -storepass android -keypass android \
+            -alias androidcheckkey -dname CN=Android-SBOM-Check -keyalg RSA -keysize 2048 -validity 1
+
+      - name: Generate release SBOMs
+        env:
+          ADMOB_APP_ID: "ca-app-pub-0000000000000000~0000000000"
+          ADMOB_BANNER_UNIT_ID: "ca-app-pub-0000000000000000/0000000000"
+          KEYSTORE_PATH: ${{ github.workspace }}/release-check.keystore
+          STORE_PASSWORD: android
+          KEY_ALIAS: androidcheckkey
+          KEY_PASSWORD: android
+        run: |
+          set -euo pipefail
+          for config in playStoreReleaseRuntimeClasspath openSourceReleaseRuntimeClasspath; do
+            echo "::group::cyclonedxBom ($config)"
+            SBOM_CONFIGURATION="$config" \
+              ./gradlew cyclonedxBom --init-script .github/cyclonedx.init.gradle.kts --no-daemon
+            echo "::endgroup::"
+          done
+
+      - name: Delete ephemeral release keystore
+        if: always()
+        run: rm -f release-check.keystore
+
+  sbom-check-skip:
+    # Companion no-op: keeps this workflow's job set consistent on PRs that change no code.
+    name: Validate release SBOM generation
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "No build-affecting files changed; skipping release SBOM validation."

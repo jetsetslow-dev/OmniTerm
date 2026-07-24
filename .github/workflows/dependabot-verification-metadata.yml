@@ -1,0 +1,93 @@
+name: Dependabot verification-metadata fixup
+
+# actions/checkout initializes a temporary repository; define its branch name so Git does not emit
+# the legacy-default-branch warning on every job.
+env:
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+
+# Dependabot bumps dependency versions but has no way to know gradle/verification-metadata.xml
+# needs new checksums for them, so every Dependabot PR fails the "Validate release SBOM
+# generation" required check with no path to green. This workflow regenerates the file and pushes
+# a fixup commit back onto the PR branch automatically.
+#
+# pull_request_target runs with base-branch permissions/secrets against the PR's code, which is
+# normally dangerous — this only stays safe because the job is hard-gated to github.actor ==
+# 'dependabot[bot]' (Dependabot's PRs are version-catalog/build-file edits from a trusted,
+# deterministic source, never arbitrary contributor code) and the token is scoped to nothing but
+# `contents: write` on this one job. Nothing here touches secrets, signing, or publishing.
+on:
+  pull_request_target:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-verification-metadata-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  fixup:
+    name: Regenerate verification-metadata.xml
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - name: Check out PR branch
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          persist-credentials: true
+
+      - name: Set up Android Gradle
+        uses: ./.github/actions/setup-android-gradle
+
+      # Only resolves and inspects the release dependency graph; never signs or packages anything,
+      # so a throwaway keystore and Google's published sample AdMob IDs are sufficient (real
+      # secrets stay confined to android-release.yml).
+      - name: Provide ephemeral release keystore
+        run: |
+          umask 077
+          keytool -genkeypair -keystore release-check.keystore -storepass android -keypass android \
+            -alias androidcheckkey -dname CN=Android-SBOM-Check -keyalg RSA -keysize 2048 -validity 1
+
+      - name: Regenerate verification metadata for both release configs
+        env:
+          ADMOB_APP_ID: "ca-app-pub-0000000000000000~0000000000"
+          ADMOB_BANNER_UNIT_ID: "ca-app-pub-0000000000000000/0000000000"
+          KEYSTORE_PATH: ${{ github.workspace }}/release-check.keystore
+          STORE_PASSWORD: android
+          KEY_ALIAS: androidcheckkey
+          KEY_PASSWORD: android
+        run: |
+          set -euo pipefail
+          for config in playStoreReleaseRuntimeClasspath openSourceReleaseRuntimeClasspath; do
+            echo "::group::cyclonedxBom --write-verification-metadata ($config)"
+            SBOM_CONFIGURATION="$config" \
+              ./gradlew cyclonedxBom --init-script .github/cyclonedx.init.gradle.kts \
+              --write-verification-metadata sha256,sha512 --no-daemon
+            echo "::endgroup::"
+          done
+
+      - name: Delete ephemeral release keystore
+        if: always()
+        run: rm -f release-check.keystore
+
+      - name: Push fixup commit if the file changed
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- gradle/verification-metadata.xml; then
+            echo "verification-metadata.xml already covers this PR's dependencies; nothing to push."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add gradle/verification-metadata.xml
+          git commit -m "chore: regenerate verification-metadata.xml for dependency bump"
+          git push origin "HEAD:${{ github.event.pull_request.head.ref }}"
