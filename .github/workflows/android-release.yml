@@ -336,13 +336,19 @@ jobs:
       # Preserve the independent publication gate, but configure Gradle only once for tests and
       # lint. This still includes the Robolectric cold-start smoke test and runs before secrets are
       # decoded.
+      #
+      # -Xmx4g matches scripts/ci-gradle-gate.sh (PR Check / CodeQL's gate), not the 2g this step
+      # ran with previously: a smaller heap put enough GC pressure on Robolectric's coroutine
+      # dispatch that TerminalNavigationRobolectricTest's hard-coded 5s withTimeout blew its budget
+      # reproducibly here (twice, same test, same line) despite passing cleanly moments earlier in
+      # PR Check on the identical commit.
       - name: Run release unit tests and Android lint
         run: >-
           ./gradlew
           testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest
           lintOpenSourceDebug lintPlayStoreDebug
           --no-daemon --no-configuration-cache
-          -Dorg.gradle.jvmargs=-Xmx2g
+          -Dorg.gradle.jvmargs=-Xmx4g
 
       - name: Decode release keystore
         env:
