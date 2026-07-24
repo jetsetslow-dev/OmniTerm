@@ -4300,6 +4300,11 @@ class AppViewModel @JvmOverloads constructor(
      * Paint the currently visible tmux pane into a fresh emulator before the interactive attach
      * starts delivering output. tmux may not redraw an unchanged pane immediately, which used to
      * leave a resumed session blank until an IME resize sent SIGWINCH and forced a repaint.
+     *
+     * Skipped while a full-screen TUI owns the pane's alternate screen: capture-pane would return
+     * the TUI's frame, and painting that into our normal screen leaves it stranded under the shell
+     * once the TUI exits (tmux's per-row `ESC[K` only erases from the cursor column rightward). The
+     * attach repaint covers the screen on its own, so not painting here is safe.
      */
     private suspend fun paintTmuxVisibleScreen(
         emulator: TerminalEmulator,
@@ -4307,8 +4312,10 @@ class AppViewModel @JvmOverloads constructor(
         tmuxName: String,
     ): Boolean {
         return try {
-            val screenResult = sshTransport.exec(creds, RemoteCommands.tmuxCaptureScreenCommand(tmuxName))
+            val screenResult = sshTransport.exec(creds, RemoteCommands.tmuxCaptureScreenIfNoTuiCommand(tmuxName))
             check(!screenResult.startsWith("SSH Error:")) { screenResult }
+            // Empty = a TUI owns the pane (guard tripped) or there is nothing to paint.
+            if (screenResult.isBlank()) return false
             val cursorResult = sshTransport.exec(creds, RemoteCommands.tmuxCursorQuery(tmuxName))
             check(!cursorResult.startsWith("SSH Error:")) { cursorResult }
             currentCoroutineContext().ensureActive()

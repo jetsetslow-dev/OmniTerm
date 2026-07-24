@@ -224,6 +224,24 @@ object RemoteCommands {
     fun tmuxCaptureScreenCommand(name: String): String =
         "tmux capture-pane -p -e -t ${tmuxSafeName(name)} 2>/dev/null || true"
 
+    /**
+     * [tmuxCaptureScreenCommand] guarded on `#{alternate_on}`, for the REGULAR-attach pre-paint.
+     *
+     * While a full-screen TUI (Claude Code, vim, htop) owns the pane's alternate screen,
+     * capture-pane returns that TUI's frame. Painting it into our NORMAL screen leaves the frame
+     * sitting underneath once the TUI exits: tmux restores the shell screen with per-row `ESC[K`,
+     * which erases only from the cursor column rightward, so every row longer than the new content
+     * keeps a tail of TUI text. That is the "screen doesn't clear after exiting Claude" artifact.
+     *
+     * Empty output means "don't paint" — a regular attach makes tmux repaint the pane anyway, so
+     * skipping costs nothing while the TUI is up. Same guard as [tmuxCaptureHistoryCommand].
+     */
+    fun tmuxCaptureScreenIfNoTuiCommand(name: String): String {
+        val safe = tmuxSafeName(name)
+        return "if [ \"\$(tmux display-message -p -t $safe '#{alternate_on}' 2>/dev/null)\" = 1 ]; " +
+            "then :; else tmux capture-pane -p -e -t $safe 2>/dev/null; fi || true"
+    }
+
     /** Visible screen for an exact pane id (control-mode atomic repaint). */
     fun tmuxCapturePaneScreenCommand(paneId: String): String {
         val safe = paneId.takeIf { it.matches(Regex("%\\d+")) } ?: "%0"
