@@ -19,6 +19,7 @@ import com.jetsetslow.omniterm.ui.MainAppScreen
 import com.jetsetslow.omniterm.ui.flavorRequestInAppReview
 import com.jetsetslow.omniterm.ui.theme.MyApplicationTheme
 import java.util.concurrent.atomic.AtomicBoolean
+import androidx.compose.ui.res.stringResource
 
 class MainActivity : AppCompatActivity() {
   private var appViewModel: AppViewModel? = null
@@ -134,8 +135,33 @@ class MainActivity : AppCompatActivity() {
 
   private var pendingSessionId: String? = null
 
+  private var pendingShortcutServerId: Int? = null
+  private var pendingSplitServerId1: Int? = null
+  private var pendingSplitServerId2: Int? = null
+  private var pendingShareId: Int? = null
+  private var pendingStaticShortcutAction: String? = null
+
+  /** Static launcher shortcuts carry no extras, so they route by custom action string. */
+  private fun dispatchStaticShortcut(vm: com.jetsetslow.omniterm.ui.AppViewModel, action: String) {
+    when (action) {
+      "com.jetsetslow.omniterm.action.NEW_HOST" -> vm.requestAddServerFromShortcut()
+      "com.jetsetslow.omniterm.action.SFTP" -> vm.navigateTo(com.jetsetslow.omniterm.ui.Screen.SFTP)
+      "com.jetsetslow.omniterm.action.NETWORK_TOOLS" -> vm.navigateTo(com.jetsetslow.omniterm.ui.Screen.Network)
+    }
+  }
+
   private fun handleIntent(intent: android.content.Intent?) {
     val sessionId = intent?.getStringExtra(SessionService.EXTRA_SESSION_ID)
+    val staticAction = intent?.action?.takeIf { it.startsWith("com.jetsetslow.omniterm.action.") }
+    if (staticAction != null) {
+      val vm = appViewModel
+      if (vm != null) dispatchStaticShortcut(vm, staticAction) else pendingStaticShortcutAction = staticAction
+    }
+    val shortcutId = if (intent?.hasExtra("shortcut_server_id") == true) intent.getIntExtra("shortcut_server_id", 0) else null
+    val splitId1 = if (intent?.hasExtra("shortcut_split_server1_id") == true) intent.getIntExtra("shortcut_split_server1_id", 0) else null
+    val splitId2 = if (intent?.hasExtra("shortcut_split_server2_id") == true) intent.getIntExtra("shortcut_split_server2_id", 0) else null
+    val shareId = if (intent?.hasExtra("shortcut_share_id") == true) intent.getIntExtra("shortcut_share_id", 0) else null
+
     // Notification disconnect actions are handled by the non-exported SessionService. The exported
     // launcher Activity only honors resume/navigation intents.
     if (sessionId != null) {
@@ -144,6 +170,34 @@ class MainActivity : AppCompatActivity() {
         vm.attachSession(sessionId)
       } else {
         pendingSessionId = sessionId
+      }
+    }
+    
+    if (shortcutId != null && shortcutId != 0) {
+      val vm = appViewModel
+      if (vm != null) {
+        vm.connectTerminalByServerId(shortcutId)
+      } else {
+        pendingShortcutServerId = shortcutId
+      }
+    }
+
+    if (splitId1 != null && splitId2 != null && splitId1 != 0 && splitId2 != 0) {
+      val vm = appViewModel
+      if (vm != null) {
+        vm.openMultiSshByServerIds(splitId1, splitId2)
+      } else {
+        pendingSplitServerId1 = splitId1
+        pendingSplitServerId2 = splitId2
+      }
+    }
+
+    if (shareId != null && shareId != 0) {
+      val vm = appViewModel
+      if (vm != null) {
+        vm.openShareBrowserById(shareId)
+      } else {
+        pendingShareId = shareId
       }
     }
   }
@@ -158,10 +212,27 @@ class MainActivity : AppCompatActivity() {
       // Intent is handled in onCreate (cold start) and onNewIntent (warm start).
       // Process any pendingSessionId that was set before the ViewModel was ready.
       androidx.compose.runtime.LaunchedEffect(Unit) {
-          pendingSessionId?.let {
-              viewModel.attachSession(it)
-              pendingSessionId = null
-          }
+        pendingSessionId?.let {
+          viewModel.attachSession(it)
+          pendingSessionId = null
+        }
+        pendingShortcutServerId?.let {
+          viewModel.connectTerminalByServerId(it)
+          pendingShortcutServerId = null
+        }
+        if (pendingSplitServerId1 != null && pendingSplitServerId2 != null) {
+          viewModel.openMultiSshByServerIds(pendingSplitServerId1!!, pendingSplitServerId2!!)
+          pendingSplitServerId1 = null
+          pendingSplitServerId2 = null
+        }
+        pendingShareId?.let {
+          viewModel.openShareBrowserById(it)
+          pendingShareId = null
+        }
+        pendingStaticShortcutAction?.let {
+          dispatchStaticShortcut(viewModel, it)
+          pendingStaticShortcutAction = null
+        }
       }
       val keepOn = viewModel.isKeepScreenOnEnabled
       val window = this.window

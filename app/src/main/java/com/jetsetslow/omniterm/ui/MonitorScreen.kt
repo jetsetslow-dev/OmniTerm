@@ -33,6 +33,8 @@ import androidx.compose.ui.unit.sp
 import com.jetsetslow.omniterm.data.*
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+import androidx.compose.ui.res.stringResource
+import com.jetsetslow.omniterm.R
 
 @Composable
 fun MonitorScreen(viewModel: AppViewModel) {
@@ -47,7 +49,7 @@ fun MonitorScreen(viewModel: AppViewModel) {
     }
     if (srv == null) {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("No online hosts available to monitor. Offline hosts reappear after the next successful probe.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.no_online_hosts_available_to_monitor), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         return
     }
@@ -79,14 +81,14 @@ fun MonitorScreen(viewModel: AppViewModel) {
             AlertDialog(
                 onDismissRequest = { showRebootDialog = false },
                 title = { Text("Reboot ${srv.name}?") },
-                text = { Text("This runs `sudo reboot` on ${srv.host}. The host will drop offline until it comes back up. Requires passwordless sudo for the SSH user.") },
+                text = { Text("This runs `sudo reboot` on ${HostDisplay.host(srv)}. The host will drop offline until it comes back up. Requires passwordless sudo for the SSH user.") },
                 confirmButton = {
                     TextButton(onClick = {
                         showRebootDialog = false
                         viewModel.rebootSelectedServer()
-                    }) { Text("Reboot", color = OmniColors.red) }
+                    }) { Text(stringResource(R.string.reboot), color = OmniColors.red) }
                 },
-                dismissButton = { TextButton(onClick = { showRebootDialog = false }) { Text("Cancel") } },
+                dismissButton = { TextButton(onClick = { showRebootDialog = false }) { Text(stringResource(R.string.cancel)) } },
             )
         }
 
@@ -148,7 +150,7 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
             message = buildString {
                 appendLine("$ $command")
                 appendLine()
-                append("Runs on ${srv.username}@${srv.host}.")
+                append("Runs on ${HostDisplay.userAtHost(srv)}.")
                 if (danger.isNotEmpty()) {
                     appendLine()
                     appendLine()
@@ -170,12 +172,12 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
     ) {
         item {
             OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.green) {
-                Text("Custom command", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.custom_command), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = customCommand,
                     onValueChange = { customCommand = it },
-                    placeholder = { Text("Enter host command script here...") },
+                    placeholder = { Text(stringResource(R.string.enter_host_command_script_here)) },
                     prefix = { Text("$ ", fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold) },
                     textStyle = LocalTextStyle.current.copy(fontFamily = OmniFonts.mono, fontSize = 14.sp),
                     modifier = Modifier.fillMaxWidth(),
@@ -192,14 +194,14 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
                     ) {
                         Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Save")
+                        Text(stringResource(R.string.save))
                     }
                     Button(
                         enabled = customCommand.isNotBlank() && srv.status == "online",
                         onClick = { confirmAndRun("custom · ${srv.name}", customCommand) },
                         modifier = Modifier.weight(1f),
                     ) {
-                        Text("Run")
+                        Text(stringResource(R.string.run))
                     }
                 }
             }
@@ -207,8 +209,7 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
 
         if (metrics == null) {
             item {
-                Text(
-                    "Host OS and system details will appear after the next monitor refresh.",
+                Text(stringResource(R.string.host_os_and_system_details_will),
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -218,7 +219,7 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
         if (visibleScripts.isEmpty()) {
             item {
                 OmniCard(modifier = Modifier.fillMaxWidth()) {
-                    Text("No quick scripts match this host.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.no_quick_scripts_match_this_host), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         } else {
@@ -315,18 +316,18 @@ fun CronMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(srv.name, fontWeight = FontWeight.Bold)
-                        Text("${srv.username}@${srv.host}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(HostDisplay.userAtHost(srv), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                         OutlinedButton(onClick = { viewModel.loadCron() }, enabled = !viewModel.cronLoading) {
                             Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Reload", fontSize = 12.sp)
+                            Text(stringResource(R.string.reload), fontSize = 12.sp)
                         }
                         Button(onClick = { createNew = true }, enabled = !viewModel.cronLoading) {
                             Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text("Add", fontSize = 12.sp)
+                            Text(stringResource(R.string.add), fontSize = 12.sp)
                         }
                     }
                 }
@@ -361,7 +362,7 @@ fun CronMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
                                         onDelete = {
                                             confirm.ask(
                                                 "Delete cron entry?",
-                                                "Delete this crontab entry for ${srv.username}@${srv.host}? This rewrites the remote user's crontab.",
+                                                "Delete this crontab entry for ${HostDisplay.userAtHost(srv)}? This rewrites the remote user's crontab.",
                                                 confirmLabel = "Delete",
                                             ) {
                                                 val next = cronLines.filterNot { it.index == line.index }.joinToString("\n") { it.raw }
@@ -503,7 +504,7 @@ private fun CronScheduleDialog(
                 modifier = Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                Text("Schedule", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.schedule), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
                     listOf("hourly" to "Hourly", "daily" to "Daily", "weekly" to "Weekly", "monthly" to "Monthly", "custom" to "Custom").forEach { (key, label) ->
                         FilterChip(
@@ -523,14 +524,14 @@ private fun CronScheduleDialog(
                 OutlinedTextField(
                     value = name,
                     onValueChange = { name = it },
-                    label = { Text("Label (optional)") },
+                    label = { Text(stringResource(R.string.label_optional)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
                     value = command,
                     onValueChange = { command = it },
-                    label = { Text("Command") },
+                    label = { Text(stringResource(R.string.command)) },
                     textStyle = LocalTextStyle.current.copy(fontFamily = OmniFonts.mono, fontSize = 12.sp),
                     minLines = 3,
                     modifier = Modifier.fillMaxWidth(),
@@ -544,14 +545,14 @@ private fun CronScheduleDialog(
                     val label = name.trim().takeIf { it.isNotBlank() }?.let { " # OmniTerm: $it" } ?: ""
                     onSave("$expression ${command.trim()}$label")
                 },
-            ) { Text("Save") }
+            ) { Text(stringResource(R.string.save)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
 @Composable
-private fun CronPartField(label: String, value: String, onChange: (String) -> Unit, hint: String) {
+private fun CronPartField(label: String, value: String, onChange: (String) -> Unit, hint: String, modifier: Modifier = Modifier) {
     OutlinedTextField(
         value = value,
         onValueChange = { raw -> onChange(raw.filter { it.isDigit() || it in setOf('*', '/', ',', '-') }.take(24)) },
@@ -559,7 +560,7 @@ private fun CronPartField(label: String, value: String, onChange: (String) -> Un
         placeholder = { Text(hint) },
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii),
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
     )
 }
 
@@ -615,7 +616,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
             OmniCard(modifier = Modifier.fillMaxWidth()) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Column {
-                        Text("CPU UTILISATION", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.cpu_utilisation), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("Load: ${m.load1} · ${m.load5} · ${m.load15}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         m.cpuTempC?.let {
                             Text("Temp: ${it.roundToInt()}°C", fontSize = 12.sp, color = if (it >= 80f) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant)
@@ -647,7 +648,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
 
         item {
             OmniCard(modifier = Modifier.fillMaxWidth()) {
-                Text("MEMORY OCCUPANCY", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.memory_occupancy), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     "${RemoteParsers.humanBytes(m.memUsedBytes)} of ${RemoteParsers.humanBytes(m.memTotalBytes)} occupied (${m.memPercent.roundToInt()}%)",
@@ -661,7 +662,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
         item {
             OmniCard(modifier = Modifier.fillMaxWidth()) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Disk Mounts", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.disk_mounts), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (m.diskReadPerSec > 0 || m.diskWritePerSec > 0) {
                         Text(
                             "R ${RemoteParsers.humanBytes(m.diskReadPerSec)}/s · W ${RemoteParsers.humanBytes(m.diskWritePerSec)}/s",
@@ -706,7 +707,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
         item {
             OmniCard(modifier = Modifier.fillMaxWidth()) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("Network", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.network), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("TCP: ${m.tcpConnections}", fontSize = 11.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Spacer(modifier = Modifier.height(6.dp))
@@ -716,7 +717,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                 )
                 if (m.netInterfaces.isEmpty()) {
                     Spacer(modifier = Modifier.height(4.dp))
-                    Text("Per-interface rates appear after the next refresh.", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.per_interface_rates_appear_after_the), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
                     m.netInterfaces.forEach { iface ->
                         Spacer(modifier = Modifier.height(4.dp))
@@ -751,7 +752,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
         if (history.size >= 2) {
             item {
                 OmniCard(modifier = Modifier.fillMaxWidth()) {
-                    Text("7-DAY HISTORY", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.str_7_day_history), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(8.dp))
                     val hourlyBuckets = history.groupBy { it.timestamp / (3_600_000L) }
                         .entries.sortedBy { it.key }
@@ -771,9 +772,9 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
 
 
 @Composable
-private fun StatRow(label: String, value: String) {
+private fun StatRow(label: String, value: String, modifier: Modifier = Modifier) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        modifier = modifier.fillMaxWidth().padding(vertical = 4.dp),
         horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Text(label, fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -804,12 +805,12 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                 FilterChip(
                     selected = viewModel.processSortByCpu,
                     onClick = { viewModel.processSortByCpu = true },
-                    label = { Text("↓ CPU") }
+                    label = { Text(stringResource(R.string.cpu)) }
                 )
                 FilterChip(
                     selected = !viewModel.processSortByCpu,
                     onClick = { viewModel.processSortByCpu = false },
-                    label = { Text("↓ MEM") }
+                    label = { Text(stringResource(R.string.mem)) }
                 )
             }
             Text("${simProcesses.size} Procs", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -848,11 +849,11 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
                             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                                 Column(horizontalAlignment = Alignment.End) {
                                     Text("${proc.cpu}%", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = if (proc.cpu > 20f) Color.Red else MaterialTheme.colorScheme.onSurface)
-                                    Text("CPU", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(stringResource(R.string.cpu_2), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                                 Column(horizontalAlignment = Alignment.End) {
                                     Text("${proc.mem}%", fontWeight = FontWeight.Bold, fontSize = 14.sp, color = if (proc.mem > 20f) Color.Red else MaterialTheme.colorScheme.onSurface)
-                                    Text("MEM", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(stringResource(R.string.mem_2), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
                         }
@@ -926,7 +927,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
                 ) {
                     Text(it, fontSize = 14.sp)
                     IconButton(onClick = { viewModel.serviceActionFeedback = null }) {
-                        Icon(Icons.Filled.Close, contentDescription = null)
+                        Icon(Icons.Filled.Close, contentDescription = "Dismiss")
                     }
                 }
             }
@@ -1055,7 +1056,7 @@ fun LogsTab(viewModel: AppViewModel) {
                 }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("LIVE", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.live), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Switch(
                     checked = viewModel.isLogsLive,
                     onCheckedChange = { viewModel.isLogsLive = it },

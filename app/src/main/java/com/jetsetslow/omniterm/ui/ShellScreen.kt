@@ -106,6 +106,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.ceil
+import androidx.compose.ui.res.stringResource
+import com.jetsetslow.omniterm.R
 
 @Composable
 private fun SessionPicker(viewModel: AppViewModel) {
@@ -115,14 +117,14 @@ private fun SessionPicker(viewModel: AppViewModel) {
         sessions.none { it.tmuxName == r.tmuxName }
     }
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Text("Active Sessions", color = chrome.text, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.display, fontSize = 20.sp)
+        Text(stringResource(R.string.active_sessions), color = chrome.text, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.display, fontSize = 20.sp)
         Spacer(Modifier.height(4.dp))
-        Text("Tap a session to resume, or start a new one.", color = chrome.mutedText, fontSize = 12.sp)
+        Text(stringResource(R.string.tap_a_session_to_resume_or), color = chrome.mutedText, fontSize = 12.sp)
         Spacer(Modifier.height(12.dp))
 
         if (sessions.isEmpty() && restorableSessions.isEmpty()) {
             Box(Modifier.weight(1f), contentAlignment = Alignment.Center) {
-                Text("No active sessions.", color = chrome.disabledText)
+                Text(stringResource(R.string.no_active_sessions), color = chrome.disabledText)
             }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.weight(1f)) {
@@ -176,8 +178,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                 }
                 if (restorableSessions.isNotEmpty()) {
                     item {
-                        Text(
-                            "Saved persistent sessions",
+                        Text(stringResource(R.string.saved_persistent_sessions),
                             color = chrome.mutedText,
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp,
@@ -204,7 +205,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                                         color = chrome.mutedText,
                                         fontFamily = OmniFonts.mono,
                                     )
-                                    Text("Tap to reattach tmux session", fontSize = 12.sp, color = OmniColors.amber)
+                                    Text(stringResource(R.string.tap_to_reattach_tmux_session), fontSize = 12.sp, color = OmniColors.amber)
                                 }
                                 IconButton(onClick = { viewModel.resumePersistentSession(s.tmuxName) }) {
                                     Icon(Icons.Filled.Refresh, contentDescription = "Resume", tint = OmniColors.cyan)
@@ -583,21 +584,21 @@ fun ShellScreen(viewModel: AppViewModel) {
     viewModel.hostKeyChangedServer?.let { changedSrv ->
         AlertDialog(
             onDismissRequest = { viewModel.dismissHostKeyChangedDialog() },
-            title = { Text("Host Key Changed", color = MaterialTheme.colorScheme.error) },
+            title = { Text(stringResource(R.string.host_key_changed), color = MaterialTheme.colorScheme.error) },
             text = {
                 Text(
-                    "The SSH host key for ${changedSrv.host} has changed since you last connected.\n\n" +
+                    "The SSH host key for ${HostDisplay.host(changedSrv)} has changed since you last connected.\n\n" +
                     "This may indicate a man-in-the-middle attack. Only proceed if you know the server's key was legitimately regenerated.",
                 )
             },
             confirmButton = {
                 TextButton(onClick = { viewModel.removeTrustedKeyAndRetry(changedSrv) }) {
-                    Text("Remove & Reconnect", color = MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.remove_reconnect), color = MaterialTheme.colorScheme.error)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { viewModel.dismissHostKeyChangedDialog() }) {
-                    Text("Cancel")
+                    Text(stringResource(R.string.cancel))
                 }
             },
         )
@@ -618,10 +619,10 @@ fun HostKeyApprovalDialog(viewModel: AppViewModel) {
     val req = viewModel.pendingHostKeyApproval ?: return
     AlertDialog(
         onDismissRequest = { viewModel.approveHostKey(false) },
-        title = { Text("Trust This Server?") },
+        title = { Text(stringResource(R.string.trust_this_server)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("A new SSH host key was presented for:")
+                Text(stringResource(R.string.a_new_ssh_host_key_was))
                 Text(req.host, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
                 Text("Key type: ${req.keyType}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -632,8 +633,7 @@ fun HostKeyApprovalDialog(viewModel: AppViewModel) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    "Verify this fingerprint matches the server before trusting. Once trusted, it will be stored and checked on future connections.",
+                Text(stringResource(R.string.verify_this_fingerprint_matches_the_server),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -657,12 +657,12 @@ fun HostKeyApprovalDialog(viewModel: AppViewModel) {
         },
         confirmButton = {
             TextButton(onClick = { viewModel.approveHostKey(true) }) {
-                Text("Trust & Connect")
+                Text(stringResource(R.string.trust_connect))
             }
         },
         dismissButton = {
             TextButton(onClick = { viewModel.approveHostKey(false) }) {
-                Text("Reject")
+                Text(stringResource(R.string.reject))
             }
         },
     )
@@ -734,8 +734,7 @@ private fun TerminalOpenPicker(
     var expanded by remember { mutableStateOf(false) }
 
     Box(modifier) {
-        Text(
-            "OPEN ▾",
+        Text(stringResource(R.string.open),
             color = if (viewModel.isTerminalConnecting) chrome.disabledText else scheme.onPrimaryContainer,
             fontSize = 10.sp,
             fontWeight = FontWeight.Bold,
@@ -779,7 +778,7 @@ private fun TerminalOpenPicker(
             }
             if (backgroundSessions.isNotEmpty()) {
                 DropdownMenuItem(
-                    text = { Text("BACKGROUND SESSIONS", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                    text = { Text(stringResource(R.string.background_sessions), fontSize = 10.sp, fontWeight = FontWeight.Bold) },
                     enabled = false,
                     onClick = {},
                 )
@@ -806,7 +805,7 @@ private fun TerminalOpenPicker(
             if (resumableSessions.isNotEmpty()) {
                 if (backgroundSessions.isNotEmpty()) HorizontalDivider()
                 DropdownMenuItem(
-                    text = { Text("RESUMABLE TMUX", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                    text = { Text(stringResource(R.string.resumable_tmux), fontSize = 10.sp, fontWeight = FontWeight.Bold) },
                     enabled = false,
                     onClick = {},
                 )
@@ -861,7 +860,7 @@ private fun ConnectPrompt(srv: ServerEntity, viewModel: AppViewModel) {
             Spacer(Modifier.height(14.dp))
             Text(srv.name, color = chrome.text, fontWeight = FontWeight.Bold, fontSize = 18.sp, fontFamily = OmniFonts.mono)
             Text(
-                "${srv.username}@${srv.host}:${srv.port}",
+                "${HostDisplay.userAtHost(srv)}:${srv.port}",
                 color = chrome.mutedText,
                 fontSize = 14.sp,
                 modifier = Modifier.padding(vertical = 4.dp),
@@ -875,8 +874,7 @@ private fun ConnectPrompt(srv: ServerEntity, viewModel: AppViewModel) {
                         .border(1.dp, OmniColors.red.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
                         .padding(horizontal = 14.dp, vertical = 10.dp),
                 ) {
-                    Text(
-                        "CONNECTION FAILED",
+                    Text(stringResource(R.string.connection_failed),
                         color = OmniColors.red,
                         fontSize = 11.sp,
                         fontFamily = OmniFonts.mono,
@@ -901,7 +899,7 @@ private fun ConnectPrompt(srv: ServerEntity, viewModel: AppViewModel) {
                     .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
                     .padding(horizontal = 22.dp, vertical = 12.dp),
             ) {
-                Text("Connect", color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Text(stringResource(R.string.connect), color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             }
         }
     }
@@ -917,7 +915,7 @@ private fun ConnectingView(phase: String, onCancel: () -> Unit) {
             Text(phase, color = chrome.mutedText, fontFamily = OmniFonts.mono, fontSize = 14.sp)
             Spacer(Modifier.height(16.dp))
             TextButton(onClick = onCancel) {
-                Text("Cancel", color = OmniColors.red)
+                Text(stringResource(R.string.cancel), color = OmniColors.red)
             }
         }
     }
@@ -1053,14 +1051,14 @@ fun TerminalPaneFrame(
  * Double-tap resets to a balanced 50/50. A grip bar makes the hit target obvious and easy to grab.
  */
 @Composable
-private fun SplitHandle(stacked: Boolean, onReset: (() -> Unit)? = null, onDrag: (Float) -> Unit) {
+private fun SplitHandle(stacked: Boolean, modifier: Modifier = Modifier, onReset: (() -> Unit)? = null, onDrag: (Float) -> Unit) {
     val haptics = LocalHapticFeedback.current
     val chrome = shellChromePalette()
     // A comfortably large touch target (whole strip) wrapping a thin visible grip.
     val strip = if (stacked) {
-        Modifier.fillMaxWidth().height(22.dp)
+        modifier.fillMaxWidth().height(22.dp)
     } else {
-        Modifier.fillMaxHeight().width(22.dp)
+        modifier.fillMaxHeight().width(22.dp)
     }
     Box(
         strip
@@ -1180,6 +1178,7 @@ private fun MultiSshPanePicker(
     paneIndex: Int,
     currentSession: ShellSession?,
     compact: Boolean,
+    modifier: Modifier = Modifier,
 ) {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
     val scheme = MaterialTheme.colorScheme
@@ -1193,10 +1192,9 @@ private fun MultiSshPanePicker(
     }
     var expanded by remember { mutableStateOf(false) }
 
-    Box {
+    Box(modifier) {
         if (compact) {
-            Text(
-                "PICK ▾",
+            Text(stringResource(R.string.pick),
                 color = scheme.onPrimaryContainer,
                 fontSize = 9.sp,
                 fontWeight = FontWeight.Bold,
@@ -1211,7 +1209,7 @@ private fun MultiSshPanePicker(
             )
         } else {
             OutlinedButton(onClick = { expanded = true }) {
-                Text("Choose session or host", fontSize = 12.sp)
+                Text(stringResource(R.string.choose_session_or_host), fontSize = 12.sp)
                 Spacer(Modifier.width(4.dp))
                 Icon(Icons.Filled.ArrowDropDown, contentDescription = null, modifier = Modifier.size(18.dp))
             }
@@ -1224,7 +1222,7 @@ private fun MultiSshPanePicker(
         ) {
             if (selectableSessions.isNotEmpty()) {
                 DropdownMenuItem(
-                    text = { Text("BACKGROUND SESSIONS", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                    text = { Text(stringResource(R.string.background_sessions), fontSize = 10.sp, fontWeight = FontWeight.Bold) },
                     enabled = false,
                     onClick = {},
                 )
@@ -1251,7 +1249,7 @@ private fun MultiSshPanePicker(
             if (resumableSessions.isNotEmpty()) {
                 if (selectableSessions.isNotEmpty()) HorizontalDivider()
                 DropdownMenuItem(
-                    text = { Text("RESUMABLE TMUX", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                    text = { Text(stringResource(R.string.resumable_tmux), fontSize = 10.sp, fontWeight = FontWeight.Bold) },
                     enabled = false,
                     onClick = {},
                 )
@@ -1276,7 +1274,7 @@ private fun MultiSshPanePicker(
             if ((selectableSessions.isNotEmpty() || resumableSessions.isNotEmpty()) && onlineServers.isNotEmpty()) HorizontalDivider()
             if (onlineServers.isNotEmpty()) {
                 DropdownMenuItem(
-                    text = { Text("NEW SESSION", fontSize = 10.sp, fontWeight = FontWeight.Bold) },
+                    text = { Text(stringResource(R.string.new_session), fontSize = 10.sp, fontWeight = FontWeight.Bold) },
                     enabled = false,
                     onClick = {},
                 )
@@ -1286,7 +1284,7 @@ private fun MultiSshPanePicker(
                             Column {
                                 Text(server.name, fontFamily = OmniFonts.mono, fontSize = 12.sp)
                                 Text(
-                                    "${server.username}@${server.host}",
+                                    HostDisplay.userAtHost(server),
                                     fontSize = 10.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     maxLines = 1,
@@ -1294,7 +1292,7 @@ private fun MultiSshPanePicker(
                                 )
                             }
                         },
-                        leadingIcon = { StatusDot(true, getServerColor(server), 8.dp) },
+                        leadingIcon = { StatusDot(online = true, color = getServerColor(server), size = 8.dp) },
                         enabled = !viewModel.isTerminalConnecting,
                         onClick = {
                             currentSession?.let { viewModel.leaveOrBackgroundSession(it.id) }
@@ -1307,7 +1305,7 @@ private fun MultiSshPanePicker(
                 }
             }
             if (selectableSessions.isEmpty() && resumableSessions.isEmpty() && onlineServers.isEmpty()) {
-                DropdownMenuItem(text = { Text("No sessions or online hosts") }, enabled = false, onClick = {})
+                DropdownMenuItem(text = { Text(stringResource(R.string.no_sessions_or_online_hosts)) }, enabled = false, onClick = {})
             }
         }
     }
@@ -1334,7 +1332,7 @@ private fun MultiSshEmptyPane(viewModel: AppViewModel, paneIndex: Int) {
             Text(viewModel.terminalConnectionPhase, color = chrome.mutedText, fontFamily = OmniFonts.mono, fontSize = 12.sp, textAlign = TextAlign.Center)
             Spacer(Modifier.height(8.dp))
             TextButton(onClick = { viewModel.cancelConnect() }) {
-                Text("Cancel", color = OmniColors.red, fontSize = 12.sp)
+                Text(stringResource(R.string.cancel), color = OmniColors.red, fontSize = 12.sp)
             }
         }
         return
@@ -1347,7 +1345,7 @@ private fun MultiSshEmptyPane(viewModel: AppViewModel, paneIndex: Int) {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text("Empty pane", color = chrome.mutedText, fontFamily = OmniFonts.mono, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+        Text(stringResource(R.string.empty_pane), color = chrome.mutedText, fontFamily = OmniFonts.mono, fontSize = 13.sp, fontWeight = FontWeight.Bold)
         // A failed connect into this pane must not vanish with the connecting state — the single
         // view surfaces it on ConnectPrompt; this is the split-view equivalent.
         if (viewModel.multiSshFocusedPane == paneIndex) {
@@ -1359,7 +1357,7 @@ private fun MultiSshEmptyPane(viewModel: AppViewModel, paneIndex: Int) {
         Spacer(Modifier.height(10.dp))
         MultiSshPanePicker(viewModel, paneIndex, currentSession = null, compact = false)
         Spacer(Modifier.height(8.dp))
-        Text("The other pane stays connected.", color = chrome.disabledText, fontSize = 10.sp)
+        Text(stringResource(R.string.the_other_pane_stays_connected), color = chrome.disabledText, fontSize = 10.sp)
     }
 }
 
@@ -1707,7 +1705,7 @@ private fun PaneTerminal(
                     )
                     if (!reconnecting && !currentSession.isConnected) {
                         TextButton(onClick = { viewModel.retrySession(currentSession.id) }) {
-                            Text("Retry", color = OmniColors.cyan, fontSize = 11.sp)
+                            Text(stringResource(R.string.retry), color = OmniColors.cyan, fontSize = 11.sp)
                         }
                     }
                 }
@@ -1949,7 +1947,7 @@ private fun PaneTerminal(
                             // Rendered as Switch rows: the switch shows current state at a glance, and
                             // flipping it acts immediately. Unlike the copy actions, these stay on the
                             // menu after toggling so the user can adjust both without re-opening it.
-                            Text("This session", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                            Text(stringResource(R.string.this_session), fontWeight = FontWeight.Bold, fontSize = 18.sp)
                             TerminalToggleRow(
                                 title = "Swipe-typing",
                                 subtitle = if (viewModel.smartSwipeInput) "On — text streams as you swipe/autocorrect"
@@ -1967,8 +1965,8 @@ private fun PaneTerminal(
                                 onCheckedChange = { viewModel.toggleKeepScreenOnDirect() },
                             )
                             HorizontalDivider()
-                            Text("Copy terminal text", fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                            Text("Choose the terminal text range to copy.", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(stringResource(R.string.copy_terminal_text), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                            Text(stringResource(R.string.choose_the_terminal_text_range_to), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Button(
                                 onClick = {
                                     val start = viewport.firstVisibleRow.coerceIn(0, snapshot.totalRows)
@@ -1976,7 +1974,7 @@ private fun PaneTerminal(
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
-                                Text("Visible screen")
+                                Text(stringResource(R.string.visible_screen))
                             }
                             OutlinedButton(
                                 onClick = {
@@ -1984,7 +1982,7 @@ private fun PaneTerminal(
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
-                                Text("Full buffer")
+                                Text(stringResource(R.string.full_buffer))
                             }
                             OutlinedButton(
                                 onClick = {
@@ -1999,13 +1997,13 @@ private fun PaneTerminal(
                                 },
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
-                                Text("Clear scrollback")
+                                Text(stringResource(R.string.clear_scrollback))
                             }
                             TextButton(
                                 onClick = { showCopyOptions = false },
                                 modifier = Modifier.align(Alignment.End),
                             ) {
-                                Text("Cancel")
+                                Text(stringResource(R.string.cancel))
                             }
                         }
                     }
@@ -2017,15 +2015,15 @@ private fun PaneTerminal(
             AlertDialog(
                 onDismissRequest = { pendingLargePaste = null },
                 title = { Text("Paste ${paste.length} characters?") },
-                text = { Text("You're about to paste a large block of text into the terminal. Confirm to send it.") },
+                text = { Text(stringResource(R.string.you_re_about_to_paste_a)) },
                 confirmButton = {
                     TextButton(onClick = {
                         pendingLargePaste = null
                         viewModel.pasteText(paste)
-                    }) { Text("Paste") }
+                    }) { Text(stringResource(R.string.paste)) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { pendingLargePaste = null }) { Text("Cancel") }
+                    TextButton(onClick = { pendingLargePaste = null }) { Text(stringResource(R.string.cancel)) }
                 },
             )
         }
@@ -2055,7 +2053,7 @@ private fun PaneTerminal(
                     Column(Modifier.fillMaxSize().padding(horizontal = 14.dp, vertical = 12.dp)) {
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             Text(title, fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
-                            Text("Drag to select, or Copy all", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(stringResource(R.string.drag_to_select_or_copy_all), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Spacer(Modifier.height(8.dp))
                         val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
@@ -2108,7 +2106,7 @@ private fun PaneTerminal(
                         Spacer(Modifier.height(10.dp))
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             OutlinedButton(onClick = { dismiss() }, modifier = Modifier.weight(1f)) {
-                                Text("Close")
+                                Text(stringResource(R.string.close))
                             }
                             Button(
                                 onClick = {
@@ -2125,7 +2123,7 @@ private fun PaneTerminal(
                             ) {
                                 Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("Copy all")
+                                Text(stringResource(R.string.copy_all))
                             }
                         }
                     }
@@ -2143,9 +2141,10 @@ private fun TerminalToggleRow(
     subtitle: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable { onCheckedChange(!checked) }
             .padding(vertical = 4.dp),
@@ -2394,23 +2393,25 @@ private fun TerminalKeyBar(viewModel: AppViewModel, compact: Boolean = false) {
                     KeyCap("NAV", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) { viewModel.isFunctionSetVisible = false }
                 }
                 else -> {
-                    KeyCap("TAB", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.TAB) }
+                    // Same logical order as the two-row bar: modifiers, typing, nav cluster
+                    // (HOME ← ↑ ↓ → END), editing keys, then layer toggles and ENTER last.
                     KeyCap("ESC", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ESC) }
+                    KeyCap("TAB", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.TAB) }
                     KeyCap("CTRL", Modifier.weight(1f), active = viewModel.isCtrlPressed) { viewModel.isCtrlPressed = !viewModel.isCtrlPressed }
-                    KeyCap("↑", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.UP) }
                     KeyCap("ALT", Modifier.weight(1f), active = viewModel.isAltPressed) { viewModel.isAltPressed = !viewModel.isAltPressed }
-                    KeyCap("/", Modifier.weight(1f)) { viewModel.typeText("/") }
-                    KeyCap("SYM", Modifier.weight(1f), active = true, activeColor = OmniColors.purple) { showSymbols = true }
-                    KeyCap("FN", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) { viewModel.isFunctionSetVisible = true }
                     KeyCap("SHFT", Modifier.weight(1f), active = viewModel.isShiftPressed) { viewModel.isShiftPressed = !viewModel.isShiftPressed }
+                    KeyCap("/", Modifier.weight(1f)) { viewModel.typeText("/") }
+                    KeyCap("-", Modifier.weight(1f)) { viewModel.typeText("-") }
                     KeyCap("HOME", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.HOME) }
                     KeyCap("←", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.LEFT) }
+                    KeyCap("↑", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.UP) }
                     KeyCap("↓", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DOWN) }
                     KeyCap("→", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.RIGHT) }
                     KeyCap("END", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.END) }
                     KeyCap("DEL", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DELETE) }
-                    KeyCap("-", Modifier.weight(1f)) { viewModel.typeText("-") }
                     KeyCap("⌫", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.BACKSPACE) }
+                    KeyCap("SYM", Modifier.weight(1f), active = true, activeColor = OmniColors.purple) { showSymbols = true }
+                    KeyCap("FN", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) { viewModel.isFunctionSetVisible = true }
                     KeyCap("↵", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ENTER) }
                 }
             }
@@ -2440,28 +2441,32 @@ private fun TerminalKeyBar(viewModel: AppViewModel, compact: Boolean = false) {
                 }
             }
         } else if (!viewModel.isFunctionSetVisible) {
+            // Keys are arranged as vertical pairs so related actions share a column:
+            // PGUP/PGDN, HOME/←, ↑/↓, END/→, FN/SYM, -/↵, ⌫/DEL. Arrows sit centred.
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-                KeyCap("TAB", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.TAB) }
                 KeyCap("ESC", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ESC) }
-                KeyCap("CTRL", Modifier.weight(1f), active = viewModel.isCtrlPressed) { viewModel.isCtrlPressed = !viewModel.isCtrlPressed }
-                KeyCap("↑", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.UP) }
+                KeyCap("TAB", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.TAB) }
                 KeyCap("ALT", Modifier.weight(1f), active = viewModel.isAltPressed) { viewModel.isAltPressed = !viewModel.isAltPressed }
-                KeyCap("/", Modifier.weight(1f)) { viewModel.typeText("/") }
-                KeyCap("⌫", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.BACKSPACE) }
-                KeyCap("SYM", Modifier.weight(1f), active = true, activeColor = OmniColors.purple) { showSymbols = true }
+                KeyCap("PGUP", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_UP) }
+                KeyCap("HOME", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.HOME) }
+                KeyCap("↑", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.UP) }
+                KeyCap("END", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.END) }
                 KeyCap("FN", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) { viewModel.isFunctionSetVisible = true }
+                KeyCap("-", Modifier.weight(1f)) { viewModel.typeText("-") }
+                KeyCap("⌫", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.BACKSPACE) }
             }
             Spacer(Modifier.height(4.dp))
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
+                KeyCap("CTRL", Modifier.weight(1f), active = viewModel.isCtrlPressed) { viewModel.isCtrlPressed = !viewModel.isCtrlPressed }
                 KeyCap("SHFT", Modifier.weight(1f), active = viewModel.isShiftPressed) { viewModel.isShiftPressed = !viewModel.isShiftPressed }
-                KeyCap("HOME", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.HOME) }
+                KeyCap("/", Modifier.weight(1f)) { viewModel.typeText("/") }
+                KeyCap("PGDN", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_DOWN) }
                 KeyCap("←", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.LEFT) }
                 KeyCap("↓", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DOWN) }
                 KeyCap("→", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.RIGHT) }
-                KeyCap("END", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.END) }
-                KeyCap("DEL", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DELETE) }
-                KeyCap("-", Modifier.weight(1f)) { viewModel.typeText("-") }
+                KeyCap("SYM", Modifier.weight(1f), active = true, activeColor = OmniColors.purple) { showSymbols = true }
                 KeyCap("↵", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ENTER) }
+                KeyCap("DEL", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DELETE) }
             }
         } else {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
@@ -2471,8 +2476,8 @@ private fun TerminalKeyBar(viewModel: AppViewModel, compact: Boolean = false) {
                 KeyCap("F4", Modifier.weight(1f)) { viewModel.sendKey(TermKey.F4) }
                 KeyCap("F5", Modifier.weight(1f)) { viewModel.sendKey(TermKey.F5) }
                 KeyCap("F6", Modifier.weight(1f)) { viewModel.sendKey(TermKey.F6) }
+                KeyCap("PGUP", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_UP) }
                 KeyCap("ESC", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ESC) }
-                KeyCap("NAV", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) { viewModel.isFunctionSetVisible = false }
             }
             Spacer(Modifier.height(4.dp))
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
@@ -2482,8 +2487,8 @@ private fun TerminalKeyBar(viewModel: AppViewModel, compact: Boolean = false) {
                 KeyCap("F10", Modifier.weight(1f)) { viewModel.sendKey(TermKey.F10) }
                 KeyCap("F11", Modifier.weight(1f)) { viewModel.sendKey(TermKey.F11) }
                 KeyCap("F12", Modifier.weight(1f)) { viewModel.sendKey(TermKey.F12) }
-                KeyCap("PGUP", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_UP) }
                 KeyCap("PGDN", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_DOWN) }
+                KeyCap("NAV", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) { viewModel.isFunctionSetVisible = false }
             }
         }
     }

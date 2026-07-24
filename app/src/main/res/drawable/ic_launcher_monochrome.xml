@@ -1,23 +1,36 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Alpha-only adaptive-icon mask used by Android's themed launcher and biometric prompt.
-     Black is used for better contrast when drawn without tint. -->
+<!-- Alpha-only adaptive-icon mask used by Android's themed launcher. Same geometry as the
+     bitmap mark: open orbital ring with a node dot at the gap, terminal chevron + cursor.
+     Strokes only, inside the 66dp safe zone, so themed icons tint cleanly. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+    <!-- Orbital ring: 296° arc, gap at the top-right -->
     <path
         android:fillColor="@android:color/transparent"
-        android:strokeColor="#FF000000"
-        android:strokeWidth="8"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="6"
         android:strokeLineCap="round"
-        android:strokeLineJoin="round"
-        android:pathData="M18,54 C18,31 40,30 54,54 C68,78 90,77 90,54 C90,31 68,30 54,54 C40,78 18,77 18,54" />
+        android:pathData="M80.31,47.93 A27,27 0 1 1 60.07,27.69" />
+    <!-- Node dot in the ring gap -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M73.09,34.91 m-4.5,0 a4.5,4.5 0 1 1 9,0 a4.5,4.5 0 1 1 -9,0" />
+    <!-- Terminal chevron -->
     <path
         android:fillColor="@android:color/transparent"
-        android:strokeColor="#FF000000"
-        android:strokeWidth="5"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="6"
         android:strokeLineCap="round"
         android:strokeLineJoin="round"
-        android:pathData="M38,45 L48,54 L38,63 M58,63 L71,63" />
+        android:pathData="M44.5,45.5 L53,54 L44.5,62.5" />
+    <!-- Cursor -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="6"
+        android:strokeLineCap="round"
+        android:pathData="M59,62.5 L68,62.5" />
 </vector>

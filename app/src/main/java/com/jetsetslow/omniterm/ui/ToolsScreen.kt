@@ -53,6 +53,12 @@ import com.jetsetslow.omniterm.data.BiometricCryptoGate
 import java.io.InputStream
 import java.text.DateFormat
 import java.util.Date
+import androidx.compose.ui.res.stringResource
+import com.jetsetslow.omniterm.R
+
+/** Display unit for an alert metric: thresholds are percentages except latency, which is in ms. */
+private fun alertMetricUnit(metricName: String): String =
+    if (metricName == "Latency") "ms" else "%"
 
 private fun copySensitiveClipboard(
     context: android.content.Context,
@@ -134,9 +140,10 @@ fun ToolScaffold(
     title: String,
     onAdd: (() -> Unit)? = null,
     addEnabled: Boolean = true,
+    modifier: Modifier = Modifier,
     content: @Composable () -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxSize()) {
+    Column(modifier = modifier.fillMaxSize()) {
         // Slim inline header (no card) so tool screens don't waste vertical real estate.
         Row(
             modifier = Modifier.fillMaxWidth().padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
@@ -213,7 +220,7 @@ fun AlertsPopup(
                         modifier = Modifier.fillMaxWidth().heightIn(min = 140.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Text("No active alert incidents.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.no_active_alert_incidents), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
                     AlertPopupIncidentList(
@@ -229,8 +236,7 @@ fun AlertsPopup(
                 }
 
                 HorizontalDivider(Modifier.padding(top = 12.dp))
-                Text(
-                    "Rules and incident history are available in Tools → Alerts & Rules.",
+                Text(stringResource(R.string.rules_and_incident_history_are_available),
                     modifier = Modifier.padding(top = 10.dp),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = OmniTextSize.Meta,
@@ -259,7 +265,7 @@ fun AlertPopupHeader(
         )
         Spacer(Modifier.width(8.dp))
         Column(Modifier.weight(1f)) {
-            Text("Active alerts", style = MaterialTheme.typography.titleMedium)
+            Text(stringResource(R.string.active_alerts), style = MaterialTheme.typography.titleMedium)
             Text(
                 "$activeCount firing · $mutedCount muted",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -274,7 +280,7 @@ fun AlertPopupHeader(
     if (activeCount > 0) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             TextButton(onClick = onAcknowledgeAll) {
-                Text("ACKNOWLEDGE ALL", fontSize = OmniTextSize.Meta)
+                Text(stringResource(R.string.acknowledge_all), fontSize = OmniTextSize.Meta)
             }
         }
     }
@@ -307,8 +313,7 @@ fun AlertPopupIncidentList(
         }
         if (muted.isNotEmpty()) {
             item(key = "muted-heading") {
-                Text(
-                    "Muted incidents",
+                Text(stringResource(R.string.muted_incidents),
                     fontWeight = FontWeight.Bold,
                     fontSize = OmniTextSize.Dense,
                     color = OmniColors.purple,
@@ -337,13 +342,14 @@ fun AlertPopupIncidentCard(
     onAcknowledge: (() -> Unit)?,
     onMuteToggle: () -> Unit,
     onRefresh: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val accent = when {
         muted -> OmniColors.purple
         alert.severity == "CRITICAL" -> OmniColors.red
         else -> OmniColors.amber
     }
-    OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = accent) {
+    OmniCard(modifier = modifier.fillMaxWidth(), leftAccent = accent) {
         Column(Modifier.fillMaxWidth().padding(10.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(alert.metricName, fontWeight = FontWeight.Bold, fontSize = OmniTextSize.Dense)
@@ -355,7 +361,7 @@ fun AlertPopupIncidentCard(
                 )
             }
             Text(
-                "${server?.name ?: "Server"} · current ${alert.currentValue} · threshold ${alert.thresholdValue}",
+                "${server?.name ?: "Server"} · current ${alert.currentValue}${alertMetricUnit(alert.metricName)} · threshold ${alert.thresholdValue}${alertMetricUnit(alert.metricName)}",
                 fontSize = OmniTextSize.Meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -371,11 +377,11 @@ fun AlertPopupIncidentCard(
                 horizontalArrangement = Arrangement.End,
             ) {
                 TextButton(onClick = onRefresh, enabled = alert.serverId > 0) {
-                    Text("REFRESH", fontSize = OmniTextSize.Meta)
+                    Text(stringResource(R.string.refresh), fontSize = OmniTextSize.Meta)
                 }
                 if (onAcknowledge != null) {
                     TextButton(onClick = onAcknowledge) {
-                        Text("ACKNOWLEDGE", fontSize = OmniTextSize.Meta)
+                        Text(stringResource(R.string.acknowledge), fontSize = OmniTextSize.Meta)
                     }
                 }
                 TextButton(onClick = onMuteToggle) {
@@ -425,7 +431,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
-                            Text("In-app monitoring", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                            Text(stringResource(R.string.in_app_monitoring), fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             Text(
                                 if (viewModel.alertsEnabled) "Global alerts are on." else "Global alerts are off.",
                                 fontSize = 11.sp,
@@ -451,8 +457,8 @@ fun AlertsToolView(viewModel: AppViewModel) {
 
             PrimaryTabRow(selectedTabIndex = activeTab) {
                 Tab(selected = activeTab == 0, onClick = { viewModel.activeAlertsTab = 0 }) { Text("Active (${visibleAlerts.size})", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
-                Tab(selected = activeTab == 1, onClick = { viewModel.activeAlertsTab = 1 }) { Text("Rules", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
-                Tab(selected = activeTab == 2, onClick = { viewModel.activeAlertsTab = 2 }) { Text("History", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+                Tab(selected = activeTab == 1, onClick = { viewModel.activeAlertsTab = 1 }) { Text(stringResource(R.string.rules), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+                Tab(selected = activeTab == 2, onClick = { viewModel.activeAlertsTab = 2 }) { Text(stringResource(R.string.history), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -460,14 +466,14 @@ fun AlertsToolView(viewModel: AppViewModel) {
             if (activeTab == 0) {
                 if (visibleAlerts.isEmpty() && mutedAlerts.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No active alert incidents.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.no_active_alert_incidents), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
                         if (visibleAlerts.isNotEmpty()) {
                             item {
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                                    TextButton(onClick = { viewModel.acknowledgeAllAlerts() }) { Text("Ack All") }
+                                    TextButton(onClick = { viewModel.acknowledgeAllAlerts() }) { Text(stringResource(R.string.ack_all)) }
                                 }
                             }
                         }
@@ -486,22 +492,21 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                             color = if (alert.acknowledged) Color.Gray else if (alert.severity == "CRITICAL") Color.Red else Color(0xFFF59E0B),
                                             fontWeight = FontWeight.ExtraBold, fontSize = 11.sp)
                                     }
-                                    Text("Threshold: ${alert.thresholdValue}% · Current: ${alert.currentValue}%", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("Threshold: ${alert.thresholdValue}${alertMetricUnit(alert.metricName)} · Current: ${alert.currentValue}${alertMetricUnit(alert.metricName)}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Text("Server: ${srv?.name ?: "server"}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
                                         if (!alert.acknowledged) {
-                                            TextButton(onClick = { viewModel.acknowledgeAlert(alert.id) }) { Text("ACKNOWLEDGE") }
+                                            TextButton(onClick = { viewModel.acknowledgeAlert(alert.id) }) { Text(stringResource(R.string.acknowledge)) }
                                         }
-                                        TextButton(onClick = { viewModel.muteAlertForOneHour(alert.id) }) { Text("MUTE 1H") }
+                                        TextButton(onClick = { viewModel.muteAlertForOneHour(alert.id) }) { Text(stringResource(R.string.mute_1h)) }
                                     }
                                 }
                             }
                         }
                         if (mutedAlerts.isNotEmpty()) {
                             item {
-                                Text(
-                                    "Muted incidents",
+                                Text(stringResource(R.string.muted_incidents),
                                     fontWeight = FontWeight.Bold,
                                     color = OmniColors.purple,
                                     modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
@@ -513,12 +518,12 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                     Column(modifier = Modifier.padding(12.dp)) {
                                         Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
                                             Text(alert.metricName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                            Text("MUTED", color = OmniColors.purple, fontWeight = FontWeight.ExtraBold, fontSize = 11.sp)
+                                            Text(stringResource(R.string.muted), color = OmniColors.purple, fontWeight = FontWeight.ExtraBold, fontSize = 11.sp)
                                         }
                                         Text("Server: ${srv?.name ?: "server"}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         Text("Until ${formatShortDateTime(alert.mutedUntil)}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                         Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
-                                            TextButton(onClick = { viewModel.unmuteAlert(alert.id) }) { Text("UNMUTE") }
+                                            TextButton(onClick = { viewModel.unmuteAlert(alert.id) }) { Text(stringResource(R.string.unmute)) }
                                         }
                                     }
                                 }
@@ -546,7 +551,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
                                 Column(modifier = Modifier.weight(1f)) {
-                                    Text("Default alert rules", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                    Text(stringResource(R.string.default_alert_rules), fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                     Text(
                                         "CPU/memory/disk 90%, latency 250ms. Created as editable All Hosts rules.",
                                         fontSize = 11.sp,
@@ -590,7 +595,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(r.metricName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                     val targetName = if (r.serverId == 0) "All Hosts" else srv?.name ?: "host"
-                                    Text("$targetName · Threshold > ${r.thresholdValue}% for ${r.triggerWindow}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text("$targetName · Threshold > ${r.thresholdValue}${alertMetricUnit(r.metricName)} for ${r.triggerWindow}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     if (r.notes.isNotBlank()) {
                                         Text(r.notes, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
                                     }
@@ -614,7 +619,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
             } else {
                 if (alertHistory.isEmpty()) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text("No alert history yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.no_alert_history_yet), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
                     LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
@@ -624,7 +629,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                     confirm.ask("Clear history?", "Delete all alert history?", confirmLabel = "Clear") {
                                         viewModel.clearAlertHistory()
                                     }
-                                }) { Text("Clear History") }
+                                }) { Text(stringResource(R.string.clear_history)) }
                             }
                         }
                         items(alertHistory) { item ->
@@ -644,7 +649,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                         Text(item.status.uppercase(), color = accent, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                     }
                                     Text(
-                                        "Current ${item.currentValue.toInt()} · threshold ${item.thresholdValue.toInt()} · ${item.severity}",
+                                        "Current ${item.currentValue.toInt()}${alertMetricUnit(item.metricName)} · threshold ${item.thresholdValue.toInt()}${alertMetricUnit(item.metricName)} · ${item.severity}",
                                         fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -695,7 +700,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                             }
                         },
                     )
-                    Text("Select Metric Key:")
+                    Text(stringResource(R.string.select_metric_key))
                     val metricsOptions = listOf("CPU Usage", "Memory Usage", "Disk Usage", "Latency")
                     @OptIn(ExperimentalLayoutApi::class)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -703,12 +708,12 @@ fun AlertsToolView(viewModel: AppViewModel) {
                             FilterChip(selected = metricSelect == opt, onClick = { metricSelect = opt }, label = { Text(opt) })
                         }
                     }
-                    OutlinedTextField(value = threshInput, onValueChange = { threshInput = it }, label = { Text("Threshold value (%)") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = threshInput, onValueChange = { threshInput = it }, label = { Text("Threshold value (${alertMetricUnit(metricSelect)})") }, modifier = Modifier.fillMaxWidth())
                     OutlinedTextField(
                         value = notesInput,
                         onValueChange = { notesInput = it },
-                        label = { Text("Notes (optional)") },
-                        placeholder = { Text("Why this rule exists / what it watches for") },
+                        label = { Text(stringResource(R.string.notes_optional)) },
+                        placeholder = { Text(stringResource(R.string.why_this_rule_exists_what_it)) },
                         modifier = Modifier.fillMaxWidth(),
                         minLines = 2,
                     )
@@ -732,11 +737,11 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         editRule = null
                     }
                 ) {
-                    Text("Confirm")
+                    Text(stringResource(R.string.confirm))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showCreateRuleDialog = false; editRule = null }) { Text("Cancel") }
+                TextButton(onClick = { showCreateRuleDialog = false; editRule = null }) { Text(stringResource(R.string.cancel)) }
             }
         )
     }
@@ -780,11 +785,11 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
                     Tab(
                         selected = activeScriptTab == 0,
                         onClick = { viewModel.activeScriptsTab = 0 }
-                    ) { Text("Quick scripts", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+                    ) { Text(stringResource(R.string.quick_scripts), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
                     Tab(
                         selected = activeScriptTab == 1,
                         onClick = { viewModel.activeScriptsTab = 1 }
-                    ) { Text("Fleet commands", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+                    ) { Text(stringResource(R.string.fleet_commands), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
                 }
                 Spacer(Modifier.height(8.dp))
                 Text(
@@ -807,9 +812,8 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Homelab preset scripts", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                Text(
-                                    "Proxmox, CasaOS, Home Assistant, Linux, and general ops snippets. Each script remains editable.",
+                                Text(stringResource(R.string.homelab_preset_scripts), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text(stringResource(R.string.proxmox_casaos_home_assistant_linux_and),
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -847,9 +851,8 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Fleet default commands", fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                Text(
-                                    "CPU/RAM, disk, services, logs, containers, ports, and kernel presets for broadcast use.",
+                                Text(stringResource(R.string.fleet_default_commands), fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text(stringResource(R.string.cpu_ram_disk_services_logs_containers),
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -1043,17 +1046,17 @@ private fun QuickScriptEditorDialog(
         title = { Text(if (existing != null) "Edit script" else "Add script") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(value = emojiInput, onValueChange = { emojiInput = it.take(6).uppercase() }, label = { Text("Shortcut label") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = nameInput, onValueChange = { nameInput = it }, label = { Text("Script name") }, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = cmdInput, onValueChange = { cmdInput = it }, label = { Text("Command") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+                OutlinedTextField(value = emojiInput, onValueChange = { emojiInput = it.take(6).uppercase() }, label = { Text(stringResource(R.string.shortcut_label)) }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = nameInput, onValueChange = { nameInput = it }, label = { Text(stringResource(R.string.script_name)) }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = cmdInput, onValueChange = { cmdInput = it }, label = { Text(stringResource(R.string.command)) }, modifier = Modifier.fillMaxWidth(), minLines = 2)
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = availableForQuick, onCheckedChange = { availableForQuick = it })
-                        Text("Quick")
+                        Text(stringResource(R.string.quick))
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = availableForFleet, onCheckedChange = { availableForFleet = it })
-                        Text("Fleet")
+                        Text(stringResource(R.string.fleet))
                     }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1061,7 +1064,7 @@ private fun QuickScriptEditorDialog(
                         OutlinedTextField(
                             value = targetOs,
                             onValueChange = { targetOs = it },
-                            label = { Text("Quick OS") },
+                            label = { Text(stringResource(R.string.quick_os)) },
                             enabled = availableForQuick,
                             modifier = Modifier.fillMaxWidth(),
                             trailingIcon = {
@@ -1080,7 +1083,7 @@ private fun QuickScriptEditorDialog(
                         OutlinedTextField(
                             value = targetSystem,
                             onValueChange = { targetSystem = it },
-                            label = { Text("Quick system") },
+                            label = { Text(stringResource(R.string.quick_system)) },
                             enabled = availableForQuick,
                             modifier = Modifier.fillMaxWidth(),
                             trailingIcon = {
@@ -1101,7 +1104,7 @@ private fun QuickScriptEditorDialog(
                     OutlinedTextField(
                         value = categoryInput,
                         onValueChange = { categoryInput = it },
-                        label = { Text("Category / Group") },
+                        label = { Text(stringResource(R.string.category_group_2)) },
                         modifier = Modifier.fillMaxWidth(),
                         trailingIcon = {
                             IconButton(onClick = { categoryMenuExpanded = true }) {
@@ -1126,7 +1129,7 @@ private fun QuickScriptEditorDialog(
             }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         }
     )
 }
@@ -1178,8 +1181,7 @@ private fun HostScanTab(viewModel: AppViewModel, onUseHost: (String) -> Unit) {
     val scope = rememberCoroutineScope()
 
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(
-            "Sweep your local network and gather as much detail as possible per host: hostname, MAC + vendor, and which common ports answer. Tap a host to scan its ports.",
+        Text(stringResource(R.string.sweep_your_local_network_and_gather),
             fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Button(
@@ -1190,7 +1192,7 @@ private fun HostScanTab(viewModel: AppViewModel, onUseHost: (String) -> Unit) {
             if (scanning) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Scanning network…")
+                Text(stringResource(R.string.scanning_network))
             } else {
                 Icon(Icons.Filled.Lan, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(8.dp))
@@ -1198,7 +1200,7 @@ private fun HostScanTab(viewModel: AppViewModel, onUseHost: (String) -> Unit) {
             }
         }
         if (!scanning && hosts.isEmpty()) {
-            Text("No hosts yet — run a scan.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.no_hosts_yet_run_a_scan), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
             items(hosts) { host ->
@@ -1225,9 +1227,10 @@ private fun ScannedHostCard(
     trailingIcon: androidx.compose.ui.graphics.vector.ImageVector? = null,
     trailingDesc: String? = null,
     trailingTint: Color = OmniColors.cyan,
+    modifier: Modifier = Modifier,
 ) {
     OmniCard(
-        modifier = Modifier.fillMaxWidth().clickable { onClick() },
+        modifier = modifier.fillMaxWidth().clickable { onClick() },
         leftAccent = accent,
     ) {
         // SelectionContainer so a long-press can copy an IP/hostname/MAC straight off the card;
@@ -1271,7 +1274,7 @@ private fun ScannedHostCard(
 // it's still fresh (no redundant sweep) and only re-scans when stale or forced. Picking a host sets
 // portScannerTarget — the field all three tabs read — and closes the popup.
 @Composable
-private fun LanHostPicker(viewModel: AppViewModel) {
+private fun LanHostPicker(viewModel: AppViewModel, modifier: Modifier = Modifier) {
     val coroutineScope = rememberCoroutineScope()
     var showPicker by remember { mutableStateOf(false) }
 
@@ -1281,11 +1284,11 @@ private fun LanHostPicker(viewModel: AppViewModel) {
             // Reuse a fresh cache; otherwise this kicks off a sweep the popup will show progress for.
             coroutineScope.launch { viewModel.refreshLanScan(force = false) }
         },
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
     ) {
         Icon(Icons.Filled.Lan, contentDescription = null, modifier = Modifier.size(18.dp))
         Spacer(modifier = Modifier.width(8.dp))
-        Text("Pick LAN host", fontSize = 12.sp)
+        Text(stringResource(R.string.pick_lan_host), fontSize = 12.sp)
     }
 
     if (showPicker) {
@@ -1312,7 +1315,7 @@ private fun LanHostPickerDialog(
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Pick a LAN host") },
+        title = { Text(stringResource(R.string.pick_a_lan_host)) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(
@@ -1323,13 +1326,13 @@ private fun LanHostPickerDialog(
                     if (isScanning) {
                         CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Scanning network…")
+                        Text(stringResource(R.string.scanning_network))
                     } else {
                         Text(if (hosts.isEmpty()) "Scan LAN" else "Rescan LAN", fontSize = 12.sp)
                     }
                 }
                 if (!isScanning && hosts.isEmpty()) {
-                    Text("No hosts yet — run a scan.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.no_hosts_yet_run_a_scan), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 LazyColumn(
                     modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
@@ -1346,7 +1349,7 @@ private fun LanHostPickerDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onDismiss) { Text("Close") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
         },
     )
 }
@@ -1361,7 +1364,7 @@ private fun PingTab(viewModel: AppViewModel) {
         OutlinedTextField(
             value = viewModel.portScannerTarget,
             onValueChange = { viewModel.portScannerTarget = it },
-            label = { Text("Hostname or IP address") },
+            label = { Text(stringResource(R.string.hostname_or_ip_address)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
@@ -1369,7 +1372,7 @@ private fun PingTab(viewModel: AppViewModel) {
         OutlinedTextField(
             value = pingTries,
             onValueChange = { pingTries = it.filter { c -> c.isDigit() }.take(4) },
-            label = { Text("Tries (0 = keep pinging until stopped)") },
+            label = { Text(stringResource(R.string.tries_0_keep_pinging_until_stopped)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -1385,13 +1388,12 @@ private fun PingTab(viewModel: AppViewModel) {
             if (viewModel.pingRunning) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Stop")
+                Text(stringResource(R.string.stop))
             } else {
-                Text("Start Ping")
+                Text(stringResource(R.string.start_ping))
             }
         }
-        Text(
-            "Pings are sent from this device, so they tell you whether the HOST is reachable on your current network — independent of SSH.",
+        Text(stringResource(R.string.pings_are_sent_from_this_device),
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1431,7 +1433,7 @@ private fun TracerouteTab(viewModel: AppViewModel) {
         OutlinedTextField(
             value = viewModel.portScannerTarget,
             onValueChange = { viewModel.portScannerTarget = it },
-            label = { Text("Hostname or IP address") },
+            label = { Text(stringResource(R.string.hostname_or_ip_address)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
@@ -1447,13 +1449,12 @@ private fun TracerouteTab(viewModel: AppViewModel) {
             if (viewModel.tracerouteRunning) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Stop")
+                Text(stringResource(R.string.stop))
             } else {
-                Text("Start Traceroute")
+                Text(stringResource(R.string.start_traceroute))
             }
         }
-        Text(
-            "Traces each network hop from this device to the host. Uses the platform traceroute; if it isn't available, a clear message is shown.",
+        Text(stringResource(R.string.traces_each_network_hop_from_this),
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -1494,7 +1495,7 @@ private fun PortScanTab(viewModel: AppViewModel) {
         OutlinedTextField(
             value = viewModel.portScannerTarget,
             onValueChange = { viewModel.portScannerTarget = it },
-            label = { Text("Target Host IP (Scan pointer)") },
+            label = { Text(stringResource(R.string.target_host_ip_scan_pointer)) },
             modifier = Modifier.fillMaxWidth(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
         )
@@ -1502,7 +1503,7 @@ private fun PortScanTab(viewModel: AppViewModel) {
         OutlinedTextField(
             value = viewModel.portScannerRange,
             onValueChange = { viewModel.portScannerRange = it },
-            label = { Text("Ports list range (comma-split)") },
+            label = { Text(stringResource(R.string.ports_list_range_comma_split)) },
             modifier = Modifier.fillMaxWidth(),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone)
         )
@@ -1515,7 +1516,7 @@ private fun PortScanTab(viewModel: AppViewModel) {
             if (viewModel.isPortScannerScanning) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
             } else {
-                Text("Initiate Range Scan")
+                Text(stringResource(R.string.initiate_range_scan))
             }
         }
 
@@ -1565,11 +1566,11 @@ private fun WolTab(viewModel: AppViewModel) {
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text("Saved targets", fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.saved_targets), fontWeight = FontWeight.Bold, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Button(onClick = { prefill = null; showAddWol = true }, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 0.dp), modifier = Modifier.height(36.dp)) {
                 Icon(Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(16.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("Add target", fontSize = 12.sp)
+                Text(stringResource(R.string.add_target), fontSize = 12.sp)
             }
         }
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp).padding(bottom = 12.dp)) {
@@ -1586,8 +1587,8 @@ private fun WolTab(viewModel: AppViewModel) {
                                 Text(target.name, fontWeight = FontWeight.Bold)
                                 Text(
                                     buildString {
-                                        append("MAC: ${target.macAddress} · Port ${target.port}")
-                                        if (target.ipAddress.isNotBlank()) append(" · ${target.ipAddress}")
+                                        append("MAC: ${HostDisplay.sensitive(target.macAddress)} · Port ${target.port}")
+                                        if (target.ipAddress.isNotBlank() && !HostDisplay.hideSensitiveInfo) append(" · ${target.ipAddress}")
                                     },
                                     fontSize = 12.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1628,7 +1629,7 @@ private fun WolTab(viewModel: AppViewModel) {
                             ) {
                                 Icon(Icons.Filled.Power, contentDescription = null, modifier = Modifier.size(15.dp))
                                 Spacer(Modifier.width(4.dp))
-                                Text("Wake", fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
+                                Text(stringResource(R.string.wake), fontSize = 11.sp, fontWeight = FontWeight.Bold, maxLines = 1)
                             }
                             IconButton(onClick = { editingTarget = target }) {
                                 Icon(Icons.Filled.Edit, contentDescription = "Edit WOL target", tint = OmniColors.cyan)
@@ -1675,12 +1676,12 @@ private fun WolTab(viewModel: AppViewModel) {
             title = { Text(if (target == null) "Configure WOL Pointer" else "Edit WOL Pointer") },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Machine Name") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = mac, onValueChange = { mac = it }, label = { Text("MAC Address target") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = broadcastIp, onValueChange = { broadcastIp = it }, label = { Text("Broadcast IP network segment") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
-                    OutlinedTextField(value = ipAddress, onValueChange = { ipAddress = it }, label = { Text("Host IP address (for online status)") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), singleLine = true)
-                    OutlinedTextField(value = port, onValueChange = { port = it.filter { c -> c.isDigit() } }, label = { Text("UDP port") }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
-                    OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text("Notes") }, modifier = Modifier.fillMaxWidth(), minLines = 2)
+                    OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text(stringResource(R.string.machine_name)) }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = mac, onValueChange = { mac = it }, label = { Text(stringResource(R.string.mac_address_target)) }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = broadcastIp, onValueChange = { broadcastIp = it }, label = { Text(stringResource(R.string.broadcast_ip_network_segment)) }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
+                    OutlinedTextField(value = ipAddress, onValueChange = { ipAddress = it }, label = { Text(stringResource(R.string.host_ip_address_for_online_status)) }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), singleLine = true)
+                    OutlinedTextField(value = port, onValueChange = { port = it.filter { c -> c.isDigit() } }, label = { Text(stringResource(R.string.udp_port)) }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+                    OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text(stringResource(R.string.notes)) }, modifier = Modifier.fillMaxWidth(), minLines = 2)
                 }
             },
             confirmButton = {
@@ -1699,7 +1700,7 @@ private fun WolTab(viewModel: AppViewModel) {
                 }
             },
             dismissButton = {
-                TextButton(onClick = { dismissEditor() }) { Text("Cancel") }
+                TextButton(onClick = { dismissEditor() }) { Text(stringResource(R.string.cancel)) }
             }
         )
     }
@@ -1747,7 +1748,7 @@ private fun WolLanScanner(viewModel: AppViewModel, onPick: (AppViewModel.Scanned
     ) {
         Icon(Icons.Filled.Lan, contentDescription = null, modifier = Modifier.size(18.dp))
         Spacer(modifier = Modifier.width(8.dp))
-        Text("Scan LAN to add a target", fontSize = 12.sp)
+        Text(stringResource(R.string.scan_lan_to_add_a_target), fontSize = 12.sp)
     }
 
     if (showPicker) {
@@ -1828,7 +1829,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         )
                     }
                 }
-                item { Text("Credential Profiles (Username/Password)", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
+                item { Text(stringResource(R.string.credential_profiles_username_password), fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp)) }
                 items(profilesList) { profile ->
                     OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.cyan) {
                         Row(
@@ -1856,7 +1857,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                     }
                 }
 
-                item { Text("SSH Keys", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp)) }
+                item { Text(stringResource(R.string.ssh_keys), fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp)) }
                 items(keysList) { key ->
                     OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.purple) {
                         Row(
@@ -1889,7 +1890,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                     Column {
                         SectionHeader("Trusted Host Keys", modifier = Modifier.padding(top = 16.dp, bottom = 4.dp))
                         if (hosts.isEmpty()) {
-                            Text("No trusted host keys yet.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
+                            Text(stringResource(R.string.no_trusted_host_keys_yet), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
                         } else {
                             hosts.forEach { kh ->
                                 OmniCard(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), leftAccent = OmniColors.amber) {
@@ -1918,24 +1919,24 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
     if (showAuthOption) {
         AlertDialog(
             onDismissRequest = { showAuthOption = false },
-            title = { Text("Add Authentication Source") },
+            title = { Text(stringResource(R.string.add_authentication_source)) },
             text = {
                 Column {
                     ListItem(
-                        headlineContent = { Text("Profile (User/Pass)") },
+                        headlineContent = { Text(stringResource(R.string.profile_user_pass)) },
                         modifier = Modifier.clickable { showAuthOption = false; showCreateProfile = true }
                     )
                     ListItem(
-                        headlineContent = { Text("Generate SSH Key") },
+                        headlineContent = { Text(stringResource(R.string.generate_ssh_key)) },
                         modifier = Modifier.clickable { showAuthOption = false; showCreateKey = true }
                     )
                     ListItem(
-                        headlineContent = { Text("Import SSH Key") },
+                        headlineContent = { Text(stringResource(R.string.import_ssh_key)) },
                         modifier = Modifier.clickable { showAuthOption = false; showImportKeyDialog = true }
                     )
                 }
             },
-            confirmButton = { TextButton(onClick = { showAuthOption = false }) { Text("Cancel") } }
+            confirmButton = { TextButton(onClick = { showAuthOption = false }) { Text(stringResource(R.string.cancel)) } }
         )
     }
 
@@ -1945,11 +1946,11 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
         var pPass by remember { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { showCreateProfile = false },
-            title = { Text("Create Credential Profile") },
+            title = { Text(stringResource(R.string.create_credential_profile)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(value = pName, onValueChange = { pName = it }, label = { Text("Profile Name") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = pUser, onValueChange = { pUser = it }, label = { Text("Username") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = pName, onValueChange = { pName = it }, label = { Text(stringResource(R.string.profile_name)) }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = pUser, onValueChange = { pUser = it }, label = { Text(stringResource(R.string.username)) }, modifier = Modifier.fillMaxWidth())
                     OmniPasswordField(value = pPass, onValueChange = { pPass = it }, label = "Password", modifier = Modifier.fillMaxWidth())
                 }
             },
@@ -1962,9 +1963,9 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         authFeedback = msg
                         if (ok) showCreateProfile = false
                     }
-                }) { Text("Save Profile") }
+                }) { Text(stringResource(R.string.save_profile)) }
             },
-            dismissButton = { TextButton(onClick = { showCreateProfile = false }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { showCreateProfile = false }) { Text(stringResource(R.string.cancel)) } }
         )
     }
 
@@ -1974,11 +1975,11 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
 
         AlertDialog(
             onDismissRequest = { showCreateKey = false },
-            title = { Text("Generate Cryptographic Keypair") },
+            title = { Text(stringResource(R.string.generate_cryptographic_keypair)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(value = alias, onValueChange = { alias = it }, label = { Text("Key Alias Name") }, modifier = Modifier.fillMaxWidth())
-                    Text("OmniTerm will generate a real RSA 4096-bit SSH keypair and store the private key in the local key vault.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    OutlinedTextField(value = alias, onValueChange = { alias = it }, label = { Text(stringResource(R.string.key_alias_name)) }, modifier = Modifier.fillMaxWidth())
+                    Text(stringResource(R.string.omniterm_will_generate_a_real_rsa), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             },
             confirmButton = {
@@ -1995,11 +1996,11 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         showCreateKey = false
                     }
                 ) {
-                    Text("Generate Keys")
+                    Text(stringResource(R.string.generate_keys))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showCreateKey = false }) { Text("Cancel") }
+                TextButton(onClick = { showCreateKey = false }) { Text(stringResource(R.string.cancel)) }
             }
         )
     }
@@ -2028,7 +2029,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
 
         AlertDialog(
             onDismissRequest = { showImportKeyDialog = false },
-            title = { Text("Import existing SSH Key") },
+            title = { Text(stringResource(R.string.import_existing_ssh_key)) },
             text = {
                 Column(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -2041,13 +2042,13 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    OutlinedTextField(value = importAlias, onValueChange = { importAlias = it }, label = { Text("Key Custom Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = importAlias, onValueChange = { importAlias = it }, label = { Text(stringResource(R.string.key_custom_name)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
 
-                    Text("Private key (required)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(stringResource(R.string.private_key_required), fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     OutlinedTextField(
                         value = importedPrivateKey,
                         onValueChange = { importedPrivateKey = it },
-                        label = { Text("-----BEGIN ... PRIVATE KEY-----") },
+                        label = { Text(stringResource(R.string.begin_private_key)) },
                         modifier = Modifier.fillMaxWidth().height(130.dp),
                         maxLines = 6,
                     )
@@ -2057,14 +2058,14 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                     ) {
                         Icon(Icons.Filled.Folder, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Load private key from file")
+                        Text(stringResource(R.string.load_private_key_from_file))
                     }
 
-                    Text("Public key (optional)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(stringResource(R.string.public_key_optional), fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     OutlinedTextField(
                         value = importedPublicKey,
                         onValueChange = { importedPublicKey = it },
-                        label = { Text("ssh-rsa AAAA… (leave blank to auto-derive)") },
+                        label = { Text(stringResource(R.string.ssh_rsa_aaaa_leave_blank_to)) },
                         modifier = Modifier.fillMaxWidth().height(90.dp),
                         maxLines = 3,
                     )
@@ -2074,7 +2075,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                     ) {
                         Icon(Icons.Filled.Folder, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Load public key (.pub) from file")
+                        Text(stringResource(R.string.load_public_key_pub_from_file))
                     }
                 }
             },
@@ -2089,11 +2090,11 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         }
                     }
                 ) {
-                    Text("Save Key")
+                    Text(stringResource(R.string.save_key))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showImportKeyDialog = false }) { Text("Cancel") }
+                TextButton(onClick = { showImportKeyDialog = false }) { Text(stringResource(R.string.cancel)) }
             }
         )
     }
@@ -2105,11 +2106,11 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
         var pPass by remember(profile.id) { mutableStateOf("") }
         AlertDialog(
             onDismissRequest = { editProfile = null },
-            title = { Text("Edit Credential Profile") },
+            title = { Text(stringResource(R.string.edit_credential_profile)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(value = pName, onValueChange = { pName = it }, label = { Text("Profile Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = pUser, onValueChange = { pUser = it }, label = { Text("Username") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = pName, onValueChange = { pName = it }, label = { Text(stringResource(R.string.profile_name)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = pUser, onValueChange = { pUser = it }, label = { Text(stringResource(R.string.username)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     if (profile.authType == "password") {
                         OmniPasswordField(
                             value = pPass,
@@ -2131,9 +2132,9 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         authFeedback = msg
                         if (ok) editProfile = null
                     }
-                }) { Text("Save Changes") }
+                }) { Text(stringResource(R.string.save_changes)) }
             },
-            dismissButton = { TextButton(onClick = { editProfile = null }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { editProfile = null }) { Text(stringResource(R.string.cancel)) } }
         )
     }
 
@@ -2161,24 +2162,24 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
         }
         AlertDialog(
             onDismissRequest = { editKey = null },
-            title = { Text("Edit SSH Key") },
+            title = { Text(stringResource(R.string.edit_ssh_key)) },
             text = {
                 Column(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.verticalScroll(rememberScrollState()),
                 ) {
-                    OutlinedTextField(value = alias, onValueChange = { alias = it }, label = { Text("Key Alias Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = alias, onValueChange = { alias = it }, label = { Text(stringResource(R.string.key_alias_name)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Text(
                         "Renaming updates every host and profile that uses this key. Leave the key " +
                             "fields blank to keep the current key pair; paste a new private key to replace it.",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Text("Replacement private key (optional)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(stringResource(R.string.replacement_private_key_optional), fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     OutlinedTextField(
                         value = newPrivate,
                         onValueChange = { newPrivate = it },
-                        label = { Text("-----BEGIN ... PRIVATE KEY-----") },
+                        label = { Text(stringResource(R.string.begin_private_key)) },
                         modifier = Modifier.fillMaxWidth().height(120.dp),
                         maxLines = 6,
                     )
@@ -2188,13 +2189,13 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                     ) {
                         Icon(Icons.Filled.Folder, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Load private key from file")
+                        Text(stringResource(R.string.load_private_key_from_file))
                     }
-                    Text("Replacement public key (optional)", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Text(stringResource(R.string.replacement_public_key_optional), fontWeight = FontWeight.Bold, fontSize = 14.sp)
                     OutlinedTextField(
                         value = newPublic,
                         onValueChange = { newPublic = it },
-                        label = { Text("ssh-… (leave blank to auto-derive)") },
+                        label = { Text(stringResource(R.string.ssh_leave_blank_to_auto_derive)) },
                         modifier = Modifier.fillMaxWidth().height(80.dp),
                         maxLines = 3,
                     )
@@ -2210,9 +2211,9 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                             if (ok) editKey = null
                         }
                     }
-                ) { Text("Save Changes") }
+                ) { Text(stringResource(R.string.save_changes)) }
             },
-            dismissButton = { TextButton(onClick = { editKey = null }) { Text("Cancel") } }
+            dismissButton = { TextButton(onClick = { editKey = null }) { Text(stringResource(R.string.cancel)) } }
         )
     }
 
@@ -2223,16 +2224,16 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
             title = { Text("Generated Key: $alias") },
             text = {
                 Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Warning: Private key is shown only once. Please copy it now if you need it.", color = Color.Red, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                    Text("Private Key", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.warning_private_key_is_shown_only), color = Color.Red, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.private_key), fontWeight = FontWeight.Bold)
                     OutlinedTextField(value = priv, onValueChange = {}, readOnly = true, modifier = Modifier.fillMaxWidth().height(150.dp), textStyle = androidx.compose.ui.text.TextStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 10.sp))
-                    Button(onClick = { copySensitiveClipboard(context, clipboardScope, "OmniTerm private key", priv) }) { Text("Copy Private Key") }
+                    Button(onClick = { copySensitiveClipboard(context, clipboardScope, "OmniTerm private key", priv) }) { Text(stringResource(R.string.copy_private_key)) }
 
-                    Text("Public Key", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.public_key), fontWeight = FontWeight.Bold)
                     OutlinedTextField(value = pub, onValueChange = {}, readOnly = true, modifier = Modifier.fillMaxWidth().height(100.dp), textStyle = androidx.compose.ui.text.TextStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 10.sp))
-                    Button(onClick = { copyToClipboard(pub) }) { Text("Copy Public Key") }
+                    Button(onClick = { copyToClipboard(pub) }) { Text(stringResource(R.string.copy_public_key)) }
 
-                    Text("Install on your server", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.install_on_your_server), fontWeight = FontWeight.Bold)
                     Text(
                         "The server only accepts this key after the PUBLIC key is added to " +
                             "~/.ssh/authorized_keys for the user you log in as. While password login " +
@@ -2249,16 +2250,15 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                         modifier = Modifier.fillMaxWidth().height(100.dp),
                         textStyle = androidx.compose.ui.text.TextStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 10.sp),
                     )
-                    Button(onClick = { copyToClipboard(installCmd) }) { Text("Copy Install Command") }
-                    Text(
-                        "From a computer with ssh installed you can instead run: ssh-copy-id user@host",
+                    Button(onClick = { copyToClipboard(installCmd) }) { Text(stringResource(R.string.copy_install_command)) }
+                    Text(stringResource(R.string.from_a_computer_with_ssh_installed),
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             },
             confirmButton = {
-                Button(onClick = { generatedKeyResult = null }) { Text("Done") }
+                Button(onClick = { generatedKeyResult = null }) { Text(stringResource(R.string.done)) }
             }
         )
     }
@@ -2277,7 +2277,7 @@ fun CronJobsToolView(viewModel: AppViewModel) {
             ServerSelectorBar(viewModel, onServerChange = { viewModel.loadCron() })
             when {
                 srv == null ->
-                    Text("Select a server first.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.select_a_server_first), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 viewModel.cronLoading && viewModel.cronText.isEmpty() ->
                     CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
                 else -> {
@@ -2290,7 +2290,7 @@ fun CronJobsToolView(viewModel: AppViewModel) {
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(srv.name, fontWeight = FontWeight.Bold)
-                                Text("Reload", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, modifier = Modifier.clickable { viewModel.loadCron() })
+                                Text(stringResource(R.string.reload), color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, modifier = Modifier.clickable { viewModel.loadCron() })
                             }
                             Spacer(modifier = Modifier.height(6.dp))
                             if (lines.isEmpty()) {
@@ -2347,7 +2347,7 @@ fun BackupToolView(viewModel: AppViewModel) {
         ) {
             OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.cyan) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("OmniTerm app backup", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.omniterm_app_backup), fontWeight = FontWeight.Bold)
                     Text(
                         "Exports OmniTerm's own configuration — saved hosts, keys, scripts and settings. " +
                             "It does NOT back up any files or data on your servers.",
@@ -2413,8 +2413,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                         }
                     }
 
-                    Text(
-                        "Tap Backup to choose export sections. Restore shows available sections after the selected file is read.",
+                    Text(stringResource(R.string.tap_backup_to_choose_export_sections),
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -2430,7 +2429,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                         ) {
                             Icon(Icons.Filled.CloudUpload, contentDescription = "Backup")
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Backup", fontSize = 12.sp)
+                            Text(stringResource(R.string.backup), fontSize = 12.sp)
                         }
 
                         Button(
@@ -2442,7 +2441,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                         ) {
                             Icon(Icons.Filled.CloudDownload, contentDescription = "Restore Backup")
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text("Restore", fontSize = 12.sp)
+                            Text(stringResource(R.string.restore), fontSize = 12.sp)
                         }
                     }
 
@@ -2453,7 +2452,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                     if (showExportSelectionDialog) {
                         AlertDialog(
                             onDismissRequest = { showExportSelectionDialog = false },
-                            title = { Text("Backup sections") },
+                            title = { Text(stringResource(R.string.backup_sections)) },
                             text = {
                                 Column(
                                     modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
@@ -2486,10 +2485,10 @@ fun BackupToolView(viewModel: AppViewModel) {
                                             launcher.launch("omniterm_backup_${System.currentTimeMillis() / 1000}.json")
                                         }
                                     }
-                                ) { Text("Continue") }
+                                ) { Text(stringResource(R.string.continue_label)) }
                             },
                             dismissButton = {
-                                TextButton(onClick = { showExportSelectionDialog = false }) { Text("Cancel") }
+                                TextButton(onClick = { showExportSelectionDialog = false }) { Text(stringResource(R.string.cancel)) }
                             },
                         )
                     }
@@ -2497,10 +2496,10 @@ fun BackupToolView(viewModel: AppViewModel) {
                     if (showExportPasswordDialog) {
                         AlertDialog(
                             onDismissRequest = { showExportPasswordDialog = false; exportPassword = "" },
-                            title = { Text("Encrypt Backup") },
+                            title = { Text(stringResource(R.string.encrypt_backup)) },
                             text = {
                                 Column {
-                                    Text("Sensitive backup sections require encryption. Choose a passphrase you'll need for restore.", fontSize = 12.sp)
+                                    Text(stringResource(R.string.sensitive_backup_sections_require_encryption_cho), fontSize = 12.sp)
                                     Spacer(modifier = Modifier.height(8.dp))
                                     OmniPasswordField(
                                         value = exportPassword,
@@ -2518,10 +2517,10 @@ fun BackupToolView(viewModel: AppViewModel) {
                                         showExportPasswordDialog = false
                                         launcher.launch("omniterm_backup_${System.currentTimeMillis() / 1000}.json")
                                     }
-                                ) { Text("Choose location") }
+                                ) { Text(stringResource(R.string.choose_location)) }
                             },
                             dismissButton = {
-                                TextButton(onClick = { showExportPasswordDialog = false; exportPassword = "" }) { Text("Cancel") }
+                                TextButton(onClick = { showExportPasswordDialog = false; exportPassword = "" }) { Text(stringResource(R.string.cancel)) }
                             }
                         )
                     }
@@ -2531,10 +2530,10 @@ fun BackupToolView(viewModel: AppViewModel) {
             if (showImportPasswordDialog) {
                 AlertDialog(
                     onDismissRequest = { showImportPasswordDialog = false; pendingImportContent = ""; importPassword = ""; pendingRestorePassword = "" },
-                    title = { Text("Encrypted Backup") },
+                    title = { Text(stringResource(R.string.encrypted_backup)) },
                     text = {
                         Column {
-                            Text("Enter the password to decrypt the backup.")
+                            Text(stringResource(R.string.enter_the_password_to_decrypt_the))
                             Spacer(modifier = Modifier.height(8.dp))
                             OmniPasswordField(
                                 value = importPassword,
@@ -2576,12 +2575,12 @@ fun BackupToolView(viewModel: AppViewModel) {
                                 }
                             }
                         ) {
-                            Text("Restore")
+                            Text(stringResource(R.string.restore))
                         }
                     },
                     dismissButton = {
                         TextButton(onClick = { showImportPasswordDialog = false; pendingImportContent = ""; importPassword = ""; pendingRestorePassword = "" }) {
-                            Text("Cancel")
+                            Text(stringResource(R.string.cancel))
                         }
                     }
                 )
@@ -2597,13 +2596,13 @@ fun BackupToolView(viewModel: AppViewModel) {
                         restoreHosts = emptyList()
                         selectedRestoreHostIds = emptySet()
                     },
-                    title = { Text("Restore backup") },
+                    title = { Text(stringResource(R.string.restore_backup)) },
                     text = {
                         Column(
                             modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Text("Choose what to restore from this backup.", fontSize = 12.sp)
+                            Text(stringResource(R.string.choose_what_to_restore_from_this), fontSize = 12.sp)
                             if (contents != null) {
                                 BackupSelectionList(
                                     title = "Available sections",
@@ -2647,7 +2646,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                                     }
                                 }
                             }
-                        ) { Text("Restore") }
+                        ) { Text(stringResource(R.string.restore)) }
                     },
                     dismissButton = {
                         TextButton(
@@ -2659,7 +2658,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                                 restoreHosts = emptyList()
                                 selectedRestoreHostIds = emptySet()
                             }
-                        ) { Text("Cancel") }
+                        ) { Text(stringResource(R.string.cancel)) }
                     }
                 )
             }
@@ -2691,8 +2690,9 @@ private fun BackupSelectionList(
     selection: BackupSelection,
     contents: BackupContents?,
     onChange: (BackupSelection) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+    Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
         Text(title, fontWeight = FontWeight.Bold, fontSize = 12.sp)
         // A trailing "*" marks a section as sensitive: selecting it forces the backup to be encrypted
         // (see hasSensitiveData). Every section except Active alerts can carry secrets — hostnames,
@@ -2710,14 +2710,12 @@ private fun BackupSelectionList(
         BackupSelectionRow("SSH tunnels *", contents?.portForwards, selection.portForwards, { onChange(selection.withPortForwardsSelected(it)) }, contents == null || (contents.portForwards > 0 && contents.servers > 0))
         BackupSelectionRow("Settings & customizations *", contents?.settings, selection.settings, { onChange(selection.copy(settings = it)) }, contents == null || contents.settings > 0)
         BackupSelectionRow("Crash logs *", contents?.crashLogs, selection.crashLogs, { onChange(selection.copy(crashLogs = it)) }, contents == null || contents.crashLogs > 0)
-        Text(
-            "* Sensitive — selecting forces an encrypted backup.",
+        Text(stringResource(R.string.sensitive_selecting_forces_an_encrypted_backup),
             fontSize = 10.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 4.dp),
         )
-        Text(
-            "Alert rules and history include Servers. Active alerts also include Alert rules. SSH tunnels include Servers.",
+        Text(stringResource(R.string.alert_rules_and_history_include_servers),
             fontSize = 10.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -2731,8 +2729,9 @@ private fun BackupSelectionRow(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     enabled: Boolean,
+    modifier: Modifier = Modifier,
 ) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+    Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier.fillMaxWidth()) {
         Checkbox(checked = checked && enabled, onCheckedChange = onCheckedChange, enabled = enabled)
         Text(
             if (count == null) label else "$label ($count)",
@@ -2751,7 +2750,7 @@ private fun BackupHostSelectionList(
 ) {
     val effectiveMax = maxSelected.coerceAtLeast(1)
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text("Hosts to restore", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+        Text(stringResource(R.string.hosts_to_restore), fontWeight = FontWeight.Bold, fontSize = 12.sp)
         if (maxSelected != Int.MAX_VALUE) {
             Text(
                 "Free Play Store restore is limited to $effectiveMax host${if (effectiveMax == 1) "" else "s"}.",
@@ -2820,6 +2819,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
     var draftAppLockGrace by rememberSaveable { mutableStateOf(viewModel.appLockGraceMs) }
     var draftBiometrics by rememberSaveable { mutableStateOf(viewModel.useBiometrics) }
     var draftBlockScreenshots by rememberSaveable { mutableStateOf(viewModel.isFlagSecureEnabled) }
+    var draftHideSensitive by rememberSaveable { mutableStateOf(viewModel.hideSensitiveInfo) }
     var draftSftpWarnFileCount by rememberSaveable { mutableStateOf(viewModel.sftpLargeBatchFileThreshold.toString()) }
     var draftSftpWarnGb by rememberSaveable { mutableStateOf((viewModel.sftpLargeBatchBytesThreshold / 1_000_000_000L).coerceAtLeast(1L).toString()) }
     val draftSftpWarnFileCountValue = draftSftpWarnFileCount.toIntOrNull()?.coerceIn(1, 10_000)
@@ -2849,6 +2849,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
         draftAppLockGrace != viewModel.appLockGraceMs ||
         draftBiometrics != viewModel.useBiometrics ||
         draftBlockScreenshots != viewModel.isFlagSecureEnabled ||
+        draftHideSensitive != viewModel.hideSensitiveInfo ||
         draftSftpWarnFileCountValue == null ||
         draftSftpWarnFileCountValue != viewModel.sftpLargeBatchFileThreshold ||
         draftSftpWarnGbValue == null ||
@@ -2881,6 +2882,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
         draftAppLockGrace = viewModel.appLockGraceMs
         draftBiometrics = viewModel.useBiometrics
         draftBlockScreenshots = viewModel.isFlagSecureEnabled
+        draftHideSensitive = viewModel.hideSensitiveInfo
         draftSftpWarnFileCount = viewModel.sftpLargeBatchFileThreshold.toString()
         draftSftpWarnGb = (viewModel.sftpLargeBatchBytesThreshold / 1_000_000_000L).coerceAtLeast(1L).toString()
     }
@@ -2920,6 +2922,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
         if (draftAppLock && draftBiometrics != viewModel.useBiometrics) viewModel.saveBiometricsToggle(draftBiometrics)
         if (draftAppLockGrace != viewModel.appLockGraceMs) viewModel.saveAppLockGrace(draftAppLockGrace)
         if (draftBlockScreenshots != viewModel.isFlagSecureEnabled) viewModel.saveFlagSecureToggle(draftBlockScreenshots)
+        if (draftHideSensitive != viewModel.hideSensitiveInfo) viewModel.saveHideSensitiveInfo(draftHideSensitive)
     }
 
     ToolScaffold(viewModel, "App settings") {
@@ -2938,7 +2941,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Require PIN to unlock")
+                            Text(stringResource(R.string.require_pin_to_unlock))
                             Switch(
                                 checked = draftAppLock,
                                 onCheckedChange = { on ->
@@ -2959,7 +2962,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text("Unlock with biometrics")
+                                Text(stringResource(R.string.unlock_with_biometrics))
                                 val activity = LocalContext.current.getActivity()
                                 Switch(
                                     checked = draftBiometrics,
@@ -2977,10 +2980,10 @@ fun SettingsToolView(viewModel: AppViewModel) {
                                     }
                                 )
                             }
-                            TextButton(onClick = { showPinDialog = true }) { Text("Change PIN") }
+                            TextButton(onClick = { showPinDialog = true }) { Text(stringResource(R.string.change_pin)) }
 
                             Spacer(Modifier.height(8.dp))
-                            Text("Re-lock after leaving the app", fontSize = 13.sp)
+                            Text(stringResource(R.string.re_lock_after_leaving_the_app), fontSize = 13.sp)
                             Text(
                                 "Quick app switches within this window won't ask for the PIN again. " +
                                     "A full restart of the app always locks.",
@@ -3011,9 +3014,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(Modifier.weight(1f)) {
-                                Text("Block screenshots")
-                                Text(
-                                    "Hides terminals and credentials from screenshots and the app switcher.",
+                                Text(stringResource(R.string.block_screenshots))
+                                Text(stringResource(R.string.hides_terminals_and_credentials_from_screenshots),
                                     fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -3021,6 +3023,26 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             Switch(
                                 checked = draftBlockScreenshots,
                                 onCheckedChange = { draftBlockScreenshots = it }
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(12.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Hide sensitive info")
+                                Text(
+                                    "Replaces IPs/hostnames with host names across the app — safe for screenshots and screen shares.",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Switch(
+                                checked = draftHideSensitive,
+                                onCheckedChange = { draftHideSensitive = it }
                             )
                         }
                     }
@@ -3035,7 +3057,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Keep device screen always on")
+                            Text(stringResource(R.string.keep_device_screen_always_on))
                             Switch(checked = draftKeepOn, onCheckedChange = { draftKeepOn = it })
                         }
 
@@ -3046,7 +3068,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Low-battery saver")
+                                Text(stringResource(R.string.low_battery_saver))
                                 Text(
                                     "Below the threshold (unplugged): turn off keep-screen-on, pause " +
                                         "auto-refresh, and park tmux terminals resumably. Resumes on " +
@@ -3080,8 +3102,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column {
-                                Text("Auto-refresh interval")
-                                Text("How often host metrics refresh", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(stringResource(R.string.auto_refresh_interval))
+                                Text(stringResource(R.string.how_often_host_metrics_refresh), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             var intervalExpanded by remember { mutableStateOf(false) }
                             Box {
@@ -3105,8 +3127,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column {
-                                Text("Theme App Appearance")
-                                Text("Use system or override", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(stringResource(R.string.theme_app_appearance))
+                                Text(stringResource(R.string.use_system_or_override), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
 
                             var expanded by remember { mutableStateOf(false) }
@@ -3115,9 +3137,9 @@ fun SettingsToolView(viewModel: AppViewModel) {
                                     Text(when (draftDark) { true -> "Dark"; false -> "Light"; null -> "System" })
                                 }
                                 DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                                    DropdownMenuItem(text = { Text("System Default") }, onClick = { draftDark = null; expanded = false })
-                                    DropdownMenuItem(text = { Text("Dark Theme") }, onClick = { draftDark = true; expanded = false })
-                                    DropdownMenuItem(text = { Text("Light Theme") }, onClick = { draftDark = false; expanded = false })
+                                    DropdownMenuItem(text = { Text(stringResource(R.string.system_default)) }, onClick = { draftDark = null; expanded = false })
+                                    DropdownMenuItem(text = { Text(stringResource(R.string.dark_theme)) }, onClick = { draftDark = true; expanded = false })
+                                    DropdownMenuItem(text = { Text(stringResource(R.string.light_theme)) }, onClick = { draftDark = false; expanded = false })
                                 }
                             }
                         }
@@ -3129,9 +3151,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("AMOLED black")
-                                Text(
-                                    "Pure-black surfaces in dark mode to save power on OLED screens. No effect in Light or High-contrast mode.",
+                                Text(stringResource(R.string.amoled_black))
+                                Text(stringResource(R.string.pure_black_surfaces_in_dark_mode),
                                     fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
@@ -3144,7 +3165,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
-                        Text("Editor syntax highlighting", fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.editor_syntax_highlighting), fontWeight = FontWeight.Bold)
                         Text(
                             "Max file size to colourise in the code editor (SFTP files, Compose YAML). " +
                                 "Lower it if editing large files feels slow; \"Off\" disables highlighting.",
@@ -3169,9 +3190,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("High-contrast mode")
-                                Text(
-                                    "Stronger colors and borders for better readability. Applies on top of your Dark/Light theme.",
+                                Text(stringResource(R.string.high_contrast_mode))
+                                Text(stringResource(R.string.stronger_colors_and_borders_for_better),
                                     fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
@@ -3179,8 +3199,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
                         }
 
                         Spacer(modifier = Modifier.height(10.dp))
-                        Text("Text size", fontWeight = FontWeight.Bold)
-                        Text("Scales text across all screens.", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.text_size), fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.scales_text_across_all_screens), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Spacer(modifier = Modifier.height(6.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             listOf("small" to "Small", "normal" to "Default", "large" to "Large").forEach { (key, label) ->
@@ -3199,8 +3219,8 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Keep sessions alive in background")
-                                Text("Maintain active SSH/SFTP sessions when app is minimized", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(stringResource(R.string.keep_sessions_alive_in_background))
+                                Text(stringResource(R.string.maintain_active_ssh_sftp_sessions_when), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Switch(checked = draftBgKeepAlive, onCheckedChange = { draftBgKeepAlive = it })
                         }
@@ -3230,7 +3250,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             valueRange = 8f..28f,
                             steps = 19,
                         )
-                        Text("Theme", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.theme), fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         @OptIn(ExperimentalLayoutApi::class)
                         FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                             listOf(
@@ -3254,8 +3274,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             valueRange = 1_000f..50_000f,
                             steps = 48,
                         )
-                        Text(
-                            "Applies to new terminal sessions. Existing sessions keep their current buffer.",
+                        Text(stringResource(R.string.applies_to_new_terminal_sessions_existing),
                             fontSize = 10.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -3266,7 +3285,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                                Text("Smart swipe input")
+                                Text(stringResource(R.string.smart_swipe_input))
                                 Text(
                                     "Lets gesture keyboards correct each swiped word before it's sent. " +
                                         "Turn off to disable swipe-typing and accept strict, literal " +
@@ -3283,7 +3302,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                                Text("tmux control mode (experimental)")
+                                Text(stringResource(R.string.tmux_control_mode_experimental))
                                 Text(
                                     "Persistent sessions attach with tmux's control protocol " +
                                         "(what iTerm2 uses): every output byte is streamed, so " +
@@ -3302,7 +3321,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                                Text("Tap-to-open links")
+                                Text(stringResource(R.string.tap_to_open_links))
                                 Text(
                                     "Detect URLs in terminal output (including lines wrapped across " +
                                         "rows) and open them on tap. Best-effort pattern matching — " +
@@ -3319,7 +3338,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Column(Modifier.weight(1f).padding(end = 12.dp)) {
-                                Text("Open links in-app")
+                                Text(stringResource(R.string.open_links_in_app))
                                 Text(
                                     "Tapped links open in an in-app browser tab (back returns " +
                                         "straight to the terminal). Turn off to hand links to your " +
@@ -3356,7 +3375,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                         OutlinedTextField(
                             value = draftSftpWarnFileCount,
                             onValueChange = { draftSftpWarnFileCount = it.filter(Char::isDigit).take(5) },
-                            label = { Text("Warn at file count") },
+                            label = { Text(stringResource(R.string.warn_at_file_count)) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
@@ -3364,7 +3383,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                         OutlinedTextField(
                             value = draftSftpWarnGb,
                             onValueChange = { draftSftpWarnGb = it.filter(Char::isDigit).take(4) },
-                            label = { Text("Warn at total download size (GB)") },
+                            label = { Text(stringResource(R.string.warn_at_total_download_size_gb)) },
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
@@ -3383,12 +3402,12 @@ fun SettingsToolView(viewModel: AppViewModel) {
                     onClick = { resetDrafts() },
                     enabled = dirty,
                     modifier = Modifier.weight(1f),
-                ) { Text("Cancel") }
+                ) { Text(stringResource(R.string.cancel)) }
                 Button(
                     onClick = { if (viewModel.savedPin == null) applyDrafts() else showSaveAuth = true },
                     enabled = dirty,
                     modifier = Modifier.weight(1f),
-                ) { Text("Save changes") }
+                ) { Text(stringResource(R.string.save_changes_2)) }
             }
         }
     }
@@ -3396,12 +3415,12 @@ fun SettingsToolView(viewModel: AppViewModel) {
     if (showPinDialog) {
         AlertDialog(
             onDismissRequest = { showPinDialog = false },
-            title = { Text("Configure Security PIN") },
+            title = { Text(stringResource(R.string.configure_security_pin)) },
             text = {
                 OutlinedTextField(
                     value = pinSetupInput,
                     onValueChange = { pinSetupInput = it },
-                    label = { Text("PIN (4-8 digits)") },
+                    label = { Text(stringResource(R.string.pin_4_8_digits)) },
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -3418,11 +3437,11 @@ fun SettingsToolView(viewModel: AppViewModel) {
                         }
                     }
                 ) {
-                    Text("Save PIN")
+                    Text(stringResource(R.string.save_pin))
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showPinDialog = false }) { Text("Cancel") }
+                TextButton(onClick = { showPinDialog = false }) { Text(stringResource(R.string.cancel)) }
             }
         )
     }
@@ -3439,15 +3458,15 @@ fun SettingsToolView(viewModel: AppViewModel) {
     if (viewModel.showSettingsDiscardDialog) {
         AlertDialog(
             onDismissRequest = { viewModel.cancelSettingsDiscard() },
-            title = { Text("Discard changes?") },
-            text = { Text("You have unsaved settings changes. Leave without saving them?") },
+            title = { Text(stringResource(R.string.discard_changes)) },
+            text = { Text(stringResource(R.string.you_have_unsaved_settings_changes_leave)) },
             confirmButton = {
                 TextButton(onClick = { resetDrafts(); viewModel.discardSettingsAndLeave() }) {
-                    Text("Discard", color = OmniColors.red)
+                    Text(stringResource(R.string.discard), color = OmniColors.red)
                 }
             },
             dismissButton = {
-                TextButton(onClick = { viewModel.cancelSettingsDiscard() }) { Text("Keep editing") }
+                TextButton(onClick = { viewModel.cancelSettingsDiscard() }) { Text(stringResource(R.string.keep_editing)) }
             },
         )
     }
@@ -3497,15 +3516,15 @@ private fun SettingsSaveAuthDialog(
 
     AlertDialog(
         onDismissRequest = onCancel,
-        title = { Text("Authenticate to save") },
+        title = { Text(stringResource(R.string.authenticate_to_save)) },
         text = {
             Column {
-                Text("Enter your app PIN to apply these changes.", fontSize = 14.sp)
+                Text(stringResource(R.string.enter_your_app_pin_to_apply), fontSize = 14.sp)
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = pin,
                     onValueChange = { pin = it; error = null },
-                    label = { Text("PIN") },
+                    label = { Text(stringResource(R.string.pin)) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
@@ -3518,9 +3537,9 @@ private fun SettingsSaveAuthDialog(
             TextButton(onClick = {
                 val err = viewModel.verifyPinForSensitiveAction(pin)
                 if (err == null) onAuthenticated() else error = err
-            }) { Text("Confirm") }
+            }) { Text(stringResource(R.string.confirm)) }
         },
-        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -3545,7 +3564,7 @@ fun AboutToolView(viewModel: AppViewModel) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Icon(Icons.Filled.Hub, null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
-            Text("OmniTerm Terminal Console", fontWeight = FontWeight.Bold, fontSize = 20.sp, textAlign = TextAlign.Center)
+            Text(stringResource(R.string.omniterm_terminal_console), fontWeight = FontWeight.Bold, fontSize = 20.sp, textAlign = TextAlign.Center)
             // Real version from the build — use this to confirm which APK is actually installed.
             Text(
                 "Version ${com.jetsetslow.omniterm.BuildConfig.VERSION_NAME}",
@@ -3573,9 +3592,8 @@ fun AboutToolView(viewModel: AppViewModel) {
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("Source code & contributions", fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
-                    Text(
-                        "Build from source for noncommercial use, file issues, or contribute on GitHub.",
+                    Text(stringResource(R.string.source_code_contributions), fontWeight = FontWeight.Bold, textAlign = TextAlign.Center)
+                    Text(stringResource(R.string.build_from_source_for_noncommercial_use),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
@@ -3591,7 +3609,7 @@ fun AboutToolView(viewModel: AppViewModel) {
                     ) {
                         Icon(Icons.Filled.Code, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("View on GitHub")
+                        Text(stringResource(R.string.view_on_github))
                     }
                     OutlinedButton(
                         onClick = {
@@ -3603,7 +3621,7 @@ fun AboutToolView(viewModel: AppViewModel) {
                     ) {
                         Icon(Icons.Filled.PrivacyTip, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Privacy Policy")
+                        Text(stringResource(R.string.privacy_policy))
                     }
                     Text(GITHUB_URL, fontSize = 11.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center)
                     if (linkFeedback.isNotEmpty()) {
@@ -3638,7 +3656,7 @@ fun AboutToolView(viewModel: AppViewModel) {
                     ) {
                         Icon(Icons.Filled.ContentCopy, contentDescription = null)
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Copy diagnostics")
+                        Text(stringResource(R.string.copy_diagnostics))
                     }
                     if (diagFeedback.isNotEmpty()) {
                         Text(diagFeedback, color = OmniColors.green, fontSize = 12.sp)
@@ -3674,8 +3692,7 @@ private fun CrashHistoryCard() {
             HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
 
             if (entries.isEmpty()) {
-                Text(
-                    "No crashes recorded. Reports appear here automatically if the app crashes.",
+                Text(stringResource(R.string.no_crashes_recorded_reports_appear_here),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -3744,7 +3761,7 @@ private fun CrashHistoryCard() {
                                 ) {
                                     Icon(Icons.Filled.Code, null, modifier = Modifier.size(16.dp))
                                     Spacer(Modifier.width(4.dp))
-                                    Text("Report", fontSize = 12.sp)
+                                    Text(stringResource(R.string.report), fontSize = 12.sp)
                                 }
                                 OutlinedButton(
                                     onClick = {
@@ -3756,7 +3773,7 @@ private fun CrashHistoryCard() {
                                 ) {
                                     Icon(Icons.Filled.Share, null, modifier = Modifier.size(16.dp))
                                     Spacer(Modifier.width(4.dp))
-                                    Text("Share", fontSize = 12.sp)
+                                    Text(stringResource(R.string.share), fontSize = 12.sp)
                                 }
                                 OutlinedButton(
                                     onClick = {
@@ -3768,7 +3785,7 @@ private fun CrashHistoryCard() {
                                 ) {
                                     Icon(Icons.Filled.ContentCopy, null, modifier = Modifier.size(16.dp))
                                     Spacer(Modifier.width(4.dp))
-                                    Text("Copy", fontSize = 12.sp)
+                                    Text(stringResource(R.string.copy), fontSize = 12.sp)
                                 }
                             }
                         }
@@ -3785,7 +3802,7 @@ private fun CrashHistoryCard() {
                 ) {
                     Icon(Icons.Filled.Delete, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("Clear history")
+                    Text(stringResource(R.string.clear_history_2))
                 }
             }
             if (feedback.isNotEmpty()) {
@@ -3802,8 +3819,8 @@ private fun CrashHistoryCard() {
  * Behavior") clearly distinct from their sub-settings, which previously shared the same bold style.
  */
 @Composable
-private fun SettingsCardHeader(title: String, subtitle: String, accent: Color) {
-    Column {
+private fun SettingsCardHeader(title: String, subtitle: String, accent: Color, modifier: Modifier = Modifier) {
+    Column(modifier) {
         Text(
             title.uppercase(java.util.Locale.US),
             color = accent,
@@ -3820,8 +3837,8 @@ private fun SettingsCardHeader(title: String, subtitle: String, accent: Color) {
 
 /** A label/value row for the device diagnostics card; value is monospace for easy scanning. */
 @Composable
-private fun DiagnosticRow(label: String, value: String) {
-    Row(modifier = Modifier.fillMaxWidth()) {
+private fun DiagnosticRow(label: String, value: String, modifier: Modifier = Modifier) {
+    Row(modifier = modifier.fillMaxWidth()) {
         Text(label, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(96.dp))
         // weight + softWrap lets long values (e.g. the advertising ID) wrap instead of clipping.
         Text(value, fontSize = 13.sp, fontFamily = OmniFonts.mono, softWrap = true, modifier = Modifier.weight(1f))
@@ -3860,14 +3877,14 @@ private class TierFields(t: MetricTiers) {
 }
 
 @Composable
-private fun ScoreField(label: String, value: String, onValue: (String) -> Unit) {
+private fun ScoreField(label: String, value: String, modifier: Modifier = Modifier, onValue: (String) -> Unit) {
     OutlinedTextField(
         value = value,
         onValueChange = { onValue(it.filter { ch -> ch.isDigit() || ch == '.' }) },
         label = { Text(label, fontSize = 10.sp) },
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        modifier = Modifier.width(82.dp),
+        modifier = modifier.width(82.dp),
     )
 }
 
@@ -3899,7 +3916,7 @@ private fun HealthScoringCard(viewModel: AppViewModel) {
 
     OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.amber) {
         Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Health scoring", fontWeight = FontWeight.Bold)
+            Text(stringResource(R.string.health_scoring), fontWeight = FontWeight.Bold)
             Text(
                 "Score starts at 100; each metric subtracts points when it reaches a tier " +
                     "(warn / high / critical). Edit the thresholds and the points each deducts.",
@@ -3943,14 +3960,14 @@ private fun HealthScoringCard(viewModel: AppViewModel) {
                             )
                         )
                     }
-                }) { Text("Save scoring") }
+                }) { Text(stringResource(R.string.save_scoring)) }
                 OutlinedButton(onClick = {
                     confirm.ask(
                         "Reset to defaults?",
                         "Discard your custom health-scoring thresholds and penalties and restore the built-in defaults? This cannot be undone.",
                         confirmLabel = "Reset",
                     ) { viewModel.resetHealthConfig(); resetKey++ }
-                }) { Text("Reset defaults") }
+                }) { Text(stringResource(R.string.reset_defaults)) }
             }
         }
     }
@@ -3965,7 +3982,7 @@ private fun DnsLookupTab(viewModel: AppViewModel) {
         OutlinedTextField(
             value = viewModel.dnsLookupTarget,
             onValueChange = { viewModel.dnsLookupTarget = it },
-            label = { Text("Domain Name / Hostname") },
+            label = { Text(stringResource(R.string.domain_name_hostname)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
@@ -3976,7 +3993,7 @@ private fun DnsLookupTab(viewModel: AppViewModel) {
                 value = viewModel.dnsLookupType,
                 onValueChange = { },
                 readOnly = true,
-                label = { Text("Query Type") },
+                label = { Text(stringResource(R.string.query_type)) },
                 modifier = Modifier.fillMaxWidth(),
                 trailingIcon = {
                     IconButton(onClick = { dropdownExpanded = true }) {
@@ -4005,9 +4022,9 @@ private fun DnsLookupTab(viewModel: AppViewModel) {
             if (viewModel.isDnsLookupRunning) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Querying...")
+                Text(stringResource(R.string.querying))
             } else {
-                Text("Run DNS Query")
+                Text(stringResource(R.string.run_dns_query))
             }
         }
 
@@ -4047,7 +4064,7 @@ private fun WhoisTab(viewModel: AppViewModel) {
         OutlinedTextField(
             value = viewModel.whoisTarget,
             onValueChange = { viewModel.whoisTarget = it },
-            label = { Text("Domain Name or IP Address") },
+            label = { Text(stringResource(R.string.domain_name_or_ip_address)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
@@ -4061,9 +4078,9 @@ private fun WhoisTab(viewModel: AppViewModel) {
             if (viewModel.isWhoisRunning) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Querying...")
+                Text(stringResource(R.string.querying))
             } else {
-                Text("Run WHOIS Query")
+                Text(stringResource(R.string.run_whois_query))
             }
         }
 
@@ -4103,8 +4120,7 @@ private fun WhoisTab(viewModel: AppViewModel) {
 @Composable
 private fun SpeedTestTab(viewModel: AppViewModel) {
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text(
-            "Measures this device's download throughput from a URL. Pick a test server near you (or one deliberately far away), or point the URL at your own server to test a specific link.",
+        Text(stringResource(R.string.measures_this_device_s_download_throughput),
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -4115,7 +4131,7 @@ private fun SpeedTestTab(viewModel: AppViewModel) {
                 value = selectedServer?.first ?: "Custom URL",
                 onValueChange = { },
                 readOnly = true,
-                label = { Text("Test Server") },
+                label = { Text(stringResource(R.string.test_server)) },
                 modifier = Modifier.fillMaxWidth(),
                 trailingIcon = {
                     IconButton(onClick = { serverMenuOpen = true }) {
@@ -4138,7 +4154,7 @@ private fun SpeedTestTab(viewModel: AppViewModel) {
         OutlinedTextField(
             value = viewModel.speedTestUrl,
             onValueChange = { viewModel.speedTestUrl = it },
-            label = { Text("Download URL") },
+            label = { Text(stringResource(R.string.download_url)) },
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
@@ -4155,17 +4171,17 @@ private fun SpeedTestTab(viewModel: AppViewModel) {
                     fontFamily = OmniFonts.mono,
                     color = if (viewModel.isSpeedTestRunning) OmniColors.cyan else OmniColors.green,
                 )
-                Text("Mbps", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.mbps), fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(Modifier.height(8.dp))
                 Row(horizontalArrangement = Arrangement.spacedBy(20.dp)) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(formatBytes(viewModel.speedTestBytes), fontSize = 14.sp, fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold)
-                        Text("downloaded", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(stringResource(R.string.downloaded), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     viewModel.speedTestLatencyMs?.let { lat ->
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("$lat ms", fontSize = 14.sp, fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold)
-                            Text("time to first byte", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(stringResource(R.string.time_to_first_byte), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 }
@@ -4181,9 +4197,9 @@ private fun SpeedTestTab(viewModel: AppViewModel) {
             if (viewModel.isSpeedTestRunning) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("Stop")
+                Text(stringResource(R.string.stop))
             } else {
-                Text("Start Speed Test")
+                Text(stringResource(R.string.start_speed_test))
             }
         }
 
@@ -4209,29 +4225,28 @@ private fun TunnelsTab(viewModel: AppViewModel) {
 
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Text("SSH Tunnels", fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
+            Text(stringResource(R.string.ssh_tunnels), fontWeight = FontWeight.Bold, fontSize = 16.sp, modifier = Modifier.weight(1f))
             Button(
                 onClick = { editing = null; showEditor = true },
                 enabled = servers.isNotEmpty(),
             ) {
                 Icon(Icons.Filled.Add, null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
-                Text("Add")
+                Text(stringResource(R.string.add))
             }
         }
-        Text(
-            "Local (-L), remote (-R) and dynamic SOCKS (-D) forwards over a saved SSH host. Tunnels stay up until you stop them or leave the app.",
+        Text(stringResource(R.string.local_l_remote_r_and_dynamic),
             fontSize = 12.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
 
         if (servers.isEmpty()) {
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                Text("Add an SSH host first.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.add_an_ssh_host_first), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else if (tunnels.isEmpty()) {
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                Text("No tunnels yet. Tap Add to create one.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.no_tunnels_yet_tap_add_to), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
@@ -4262,12 +4277,12 @@ private fun TunnelsTab(viewModel: AppViewModel) {
                                 Text(err, color = OmniColors.red, fontSize = 11.sp, fontFamily = OmniFonts.mono, modifier = Modifier.padding(top = 4.dp))
                             }
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End), modifier = Modifier.fillMaxWidth()) {
-                                TextButton(onClick = { editing = pf; showEditor = true }, enabled = !active) { Text("Edit") }
+                                TextButton(onClick = { editing = pf; showEditor = true }, enabled = !active) { Text(stringResource(R.string.edit)) }
                                 TextButton(onClick = {
                                     confirm.ask("Delete \"${pf.name}\"?", "Remove this saved tunnel? If it's running it will be stopped.", confirmLabel = "Delete") {
                                         viewModel.deletePortForward(pf)
                                     }
-                                }) { Text("Delete", color = OmniColors.red) }
+                                }) { Text(stringResource(R.string.delete), color = OmniColors.red) }
                             }
                         }
                     }
@@ -4287,9 +4302,9 @@ private fun TunnelsTab(viewModel: AppViewModel) {
 }
 
 private fun tunnelSummary(pf: PortForwardEntity): String = when (pf.kind) {
-    "remote" -> "-R ${pf.bindHost}:${pf.bindPort} → ${pf.destHost}:${pf.destPort}"
+    "remote" -> "-R ${pf.bindHost}:${pf.bindPort} → ${HostDisplay.sensitive(pf.destHost)}:${pf.destPort}"
     "dynamic" -> "-D ${pf.bindHost}:${pf.bindPort} (SOCKS5)"
-    else -> "-L ${pf.bindHost}:${pf.bindPort} → ${pf.destHost}:${pf.destPort}"
+    else -> "-L ${pf.bindHost}:${pf.bindPort} → ${HostDisplay.sensitive(pf.destHost)}:${pf.destPort}"
 }
 
 @Composable
@@ -4319,13 +4334,13 @@ private fun TunnelEditorDialog(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("Name") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text(stringResource(R.string.name)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
 
                 // Kind picker.
                 Box {
                     OutlinedTextField(
                         value = when (kind) { "remote" -> "Remote (-R)"; "dynamic" -> "Dynamic SOCKS (-D)"; else -> "Local (-L)" },
-                        onValueChange = {}, readOnly = true, label = { Text("Type") },
+                        onValueChange = {}, readOnly = true, label = { Text(stringResource(R.string.type)) },
                         trailingIcon = { IconButton(onClick = { kindMenu = true }) { Icon(Icons.Filled.ArrowDropDown, null) } },
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -4340,7 +4355,7 @@ private fun TunnelEditorDialog(
                 Box {
                     OutlinedTextField(
                         value = servers.find { it.id == serverId }?.name ?: "Select host",
-                        onValueChange = {}, readOnly = true, label = { Text("SSH host") },
+                        onValueChange = {}, readOnly = true, label = { Text(stringResource(R.string.ssh_host)) },
                         trailingIcon = { IconButton(onClick = { serverMenu = true }) { Icon(Icons.Filled.ArrowDropDown, null) } },
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -4353,12 +4368,12 @@ private fun TunnelEditorDialog(
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(value = bindHost, onValueChange = { bindHost = it }, label = { Text(if (kind == "remote") "Remote bind host" else "Bind host") }, singleLine = true, modifier = Modifier.weight(1.4f))
-                    OutlinedTextField(value = bindPort, onValueChange = { bindPort = it.filter(Char::isDigit).take(5) }, label = { Text("Port") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                    OutlinedTextField(value = bindPort, onValueChange = { bindPort = it.filter(Char::isDigit).take(5) }, label = { Text(stringResource(R.string.port)) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
                 }
                 if (kind != "dynamic") {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(value = destHost, onValueChange = { destHost = it }, label = { Text("Dest host") }, singleLine = true, modifier = Modifier.weight(1.4f))
-                        OutlinedTextField(value = destPort, onValueChange = { destPort = it.filter(Char::isDigit).take(5) }, label = { Text("Port") }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                        OutlinedTextField(value = destHost, onValueChange = { destHost = it }, label = { Text(stringResource(R.string.dest_host)) }, singleLine = true, modifier = Modifier.weight(1.4f))
+                        OutlinedTextField(value = destPort, onValueChange = { destPort = it.filter(Char::isDigit).take(5) }, label = { Text(stringResource(R.string.port)) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
                     }
                 }
                 Text(
@@ -4373,9 +4388,8 @@ private fun TunnelEditorDialog(
                     Switch(checked = autoStart, onCheckedChange = { autoStart = it })
                     Spacer(Modifier.width(8.dp))
                     Column {
-                        Text("Start when OmniTerm opens", fontSize = 13.sp)
-                        Text(
-                            "The tunnel remains scoped to the app and stops when OmniTerm closes.",
+                        Text(stringResource(R.string.start_when_omniterm_opens), fontSize = 13.sp)
+                        Text(stringResource(R.string.the_tunnel_remains_scoped_to_the),
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -4400,8 +4414,8 @@ private fun TunnelEditorDialog(
                 viewModel.savePortForward(pf) { err ->
                     if (err == null) onDismiss() else error = err
                 }
-            }) { Text("Save") }
+            }) { Text(stringResource(R.string.save)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }

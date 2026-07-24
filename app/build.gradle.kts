@@ -123,8 +123,8 @@ android {
     }
   }
   compileOptions {
-    sourceCompatibility = JavaVersion.VERSION_11
-    targetCompatibility = JavaVersion.VERSION_11
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
   }
   buildFeatures {
     compose = true
@@ -161,6 +161,11 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
 }
 
 dependencies {
+    implementation("androidx.glance:glance-appwidget:1.1.0")
+    // Material3 for Glance
+    implementation("androidx.glance:glance-material3:1.1.0")
+    // Profile Installer for Baseline Profiles
+    implementation("androidx.profileinstaller:profileinstaller:1.3.1")
   constraints {
     implementation(libs.guava.android) {
       because("Play Ads transitively requests a Guava release with published security advisories")

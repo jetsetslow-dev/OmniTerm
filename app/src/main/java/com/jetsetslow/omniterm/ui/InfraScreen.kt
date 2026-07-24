@@ -29,6 +29,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.sp
 import com.jetsetslow.omniterm.data.*
 import kotlinx.coroutines.launch
+import androidx.compose.ui.res.stringResource
+import com.jetsetslow.omniterm.R
 
 @Composable
 fun InfraScreen(viewModel: AppViewModel) {
@@ -49,7 +51,7 @@ fun InfraScreen(viewModel: AppViewModel) {
         ServerSelectorBar(viewModel, onlineOnly = true, onServerChange = { viewModel.loadDocker() })
         if (srv == null) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No online hosts available. Container data appears when a host comes back online.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.no_online_hosts_available_container_data), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             return@Column
         }
@@ -69,11 +71,11 @@ fun InfraScreen(viewModel: AppViewModel) {
             edgePadding = 0.dp,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Tab(selected = viewModel.activeInfraTab == 0, onClick = { viewModel.activeInfraTab = 0 }) { Text("Stacks", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), maxLines = 1) }
-            Tab(selected = viewModel.activeInfraTab == 1, onClick = { viewModel.activeInfraTab = 1 }) { Text("Builder", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), maxLines = 1) }
-            Tab(selected = viewModel.activeInfraTab == 2, onClick = { viewModel.activeInfraTab = 2 }) { Text("Images", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), maxLines = 1) }
-            Tab(selected = viewModel.activeInfraTab == 3, onClick = { viewModel.activeInfraTab = 3 }) { Text("Volumes", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), maxLines = 1) }
-            Tab(selected = viewModel.activeInfraTab == 4, onClick = { viewModel.activeInfraTab = 4 }) { Text("Networks", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), maxLines = 1) }
+            Tab(selected = viewModel.activeInfraTab == 0, onClick = { viewModel.activeInfraTab = 0 }) { Text(stringResource(R.string.stacks), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), maxLines = 1) }
+            Tab(selected = viewModel.activeInfraTab == 1, onClick = { viewModel.activeInfraTab = 1 }) { Text(stringResource(R.string.builder), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), maxLines = 1) }
+            Tab(selected = viewModel.activeInfraTab == 2, onClick = { viewModel.activeInfraTab = 2 }) { Text(stringResource(R.string.images), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), maxLines = 1) }
+            Tab(selected = viewModel.activeInfraTab == 3, onClick = { viewModel.activeInfraTab = 3 }) { Text(stringResource(R.string.volumes), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), maxLines = 1) }
+            Tab(selected = viewModel.activeInfraTab == 4, onClick = { viewModel.activeInfraTab = 4 }) { Text(stringResource(R.string.networks), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp), maxLines = 1) }
         }
 
         Box(modifier = Modifier.fillMaxWidth().weight(1f).padding(12.dp)) {
@@ -107,7 +109,7 @@ private fun ContainerRuntimeError(error: String) {
     ) {
         Icon(Icons.Filled.ErrorOutline, contentDescription = null, tint = Color.Red, modifier = Modifier.size(40.dp))
         Spacer(Modifier.height(8.dp))
-        Text("Could not query containers", fontWeight = FontWeight.Bold)
+        Text(stringResource(R.string.could_not_query_containers), fontWeight = FontWeight.Bold)
         Box(
             modifier = Modifier.fillMaxWidth()
                 .heightIn(min = 96.dp, max = 220.dp)
@@ -132,10 +134,9 @@ private fun ContainerRuntimeError(error: String) {
         ) {
             Icon(Icons.Filled.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
-            Text("Copy error")
+            Text(stringResource(R.string.copy_error))
         }
-        Text(
-            "Is Docker or Podman installed, and can this user access it?",
+        Text(stringResource(R.string.is_docker_or_podman_installed_and),
             fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp),
         )
     }
@@ -147,7 +148,7 @@ private fun ContainerList(viewModel: AppViewModel, containers: List<SimContainer
     ConfirmHost(confirm)
     if (containers.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text("No containers found on this host.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.no_containers_found_on_this_host), color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         return
     }
@@ -174,7 +175,7 @@ private fun ContainerList(viewModel: AppViewModel, containers: List<SimContainer
                             }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = OmniColors.red)
-                    ) { Text("Delete Selected") }
+                    ) { Text(stringResource(R.string.delete_selected)) }
                 }
             }
         }
@@ -372,7 +373,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
     // covers the window between a stack action and the next refresh landing.
     val downedStacks = viewModel.downedStacks.filter { d -> stacks.none { it.runtime == d.runtime && it.name == d.project } }
     if (stacks.isEmpty() && downedStacks.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No compose stacks found.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text(stringResource(R.string.no_compose_stacks_found), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         return
     }
     // Resolve the ABSOLUTE path of the exact compose file the stack's labels reported and load it
@@ -454,7 +455,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                         }
                         Column(horizontalAlignment = Alignment.End) {
                             Text("${stack.running}/${stack.total}", fontWeight = FontWeight.Bold, color = if (stack.running == stack.total) OmniColors.green else OmniColors.red)
-                            Text("Running", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(stringResource(R.string.running), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp), horizontalAlignment = Alignment.End, modifier = Modifier.fillMaxWidth()) {
@@ -623,12 +624,11 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                             }
                         }
                         Column(horizontalAlignment = Alignment.End) {
-                            Text("DOWN", fontWeight = FontWeight.Bold, color = OmniColors.red)
-                            Text("0 containers", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(stringResource(R.string.down), fontWeight = FontWeight.Bold, color = OmniColors.red)
+                            Text(stringResource(R.string.str_0_containers), fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
-                    Text(
-                        "Taken down — its containers and networks no longer exist. OmniTerm recorded this stack while it was up; the compose file stays on the host.",
+                    Text(stringResource(R.string.taken_down_its_containers_and_networks),
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -662,7 +662,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
     pendingDown?.let { stack ->
         AlertDialog(
             onDismissRequest = { pendingDown = null },
-            title = { Text("Run compose down?") },
+            title = { Text(stringResource(R.string.run_compose_down)) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text(
@@ -676,9 +676,8 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                         Checkbox(checked = pendingDownRemoveOrphans, onCheckedChange = { pendingDownRemoveOrphans = it })
                         Spacer(Modifier.width(4.dp))
                         Column {
-                            Text("--remove-orphans", fontFamily = OmniFonts.mono, fontSize = 13.sp, fontWeight = FontWeight.Bold)
-                            Text(
-                                "Also removes containers for services no longer defined in the compose file. Use with care.",
+                            Text(stringResource(R.string.remove_orphans), fontFamily = OmniFonts.mono, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                            Text(stringResource(R.string.also_removes_containers_for_services_no),
                                 fontSize = 11.sp,
                                 color = OmniColors.amber,
                             )
@@ -692,9 +691,9 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                         viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, "down", removeOrphans = pendingDownRemoveOrphans, runtime = stack.runtime)
                         pendingDown = null
                     }
-                ) { Text("DOWN", color = OmniColors.red) }
+                ) { Text(stringResource(R.string.down), color = OmniColors.red) }
             },
-            dismissButton = { TextButton(onClick = { pendingDown = null }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { pendingDown = null }) { Text(stringResource(R.string.cancel)) } },
         )
     }
     scaleTarget?.let { target ->
@@ -706,7 +705,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                 OutlinedTextField(
                     value = replicas,
                     onValueChange = { replicas = it.filter(Char::isDigit).take(3) },
-                    label = { Text("Replicas") },
+                    label = { Text(stringResource(R.string.replicas)) },
                     singleLine = true,
                     colors = omniTextFieldColors(),
                     modifier = Modifier.fillMaxWidth(),
@@ -726,9 +725,9 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                         )
                         scaleTarget = null
                     }
-                ) { Text("Scale") }
+                ) { Text(stringResource(R.string.scale)) }
             },
-            dismissButton = { TextButton(onClick = { scaleTarget = null }) { Text("Cancel") } },
+            dismissButton = { TextButton(onClick = { scaleTarget = null }) { Text(stringResource(R.string.cancel)) } },
         )
     }
     portsTarget?.let { stack ->
@@ -737,7 +736,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
             title = { Text("${stack.name} ports") },
             text = {
                 if (stack.portDetails.isEmpty()) {
-                    Text("No published ports were reported for this stack.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.no_published_ports_were_reported_for), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         stack.portDetails.forEach { detail ->
@@ -749,7 +748,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { portsTarget = null }) { Text("Close") } },
+            confirmButton = { TextButton(onClick = { portsTarget = null }) { Text(stringResource(R.string.close)) } },
         )
     }
 }
@@ -760,9 +759,10 @@ private fun StackActionRow(
     stack: StackSummary,
     actions: List<Pair<String, String>>,
     onAction: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     FlowRow(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -797,7 +797,7 @@ private fun StackHealthSummary(stack: StackSummary, onPortsClick: () -> Unit) {
                 fontSize = 12.sp,
                 maxLines = 1,
             )
-            Text("CREATED", color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 1.1.sp)
+            Text(stringResource(R.string.created), color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.Bold, fontSize = 10.sp, letterSpacing = 1.1.sp)
         }
     }
 }
@@ -900,7 +900,7 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = OmniColors.red)
-                        ) { Text("Delete Selected") }
+                        ) { Text(stringResource(R.string.delete_selected)) }
                     }
                     Button(
                         onClick = {
@@ -911,14 +911,14 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
                             ) { viewModel.dockerPruneImages() }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = OmniColors.amber),
-                    ) { Text("Prune Unused") }
+                    ) { Text(stringResource(R.string.prune_unused)) }
                 }
             }
         }
         if (images.isEmpty()) {
             item {
                 Box(Modifier.fillMaxWidth().padding(top = 48.dp), contentAlignment = Alignment.Center) {
-                    Text("No images found on this host.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.no_images_found_on_this_host), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -998,7 +998,7 @@ private fun VolumeList(viewModel: AppViewModel, volumes: List<SimDockerVolume>) 
                                 }
                             },
                             colors = ButtonDefaults.buttonColors(containerColor = OmniColors.red)
-                        ) { Text("Delete Selected") }
+                        ) { Text(stringResource(R.string.delete_selected)) }
                     }
                     Button(
                         onClick = {
@@ -1009,14 +1009,14 @@ private fun VolumeList(viewModel: AppViewModel, volumes: List<SimDockerVolume>) 
                             ) { viewModel.dockerPruneVolumes() }
                         },
                         colors = ButtonDefaults.buttonColors(containerColor = OmniColors.amber),
-                    ) { Text("Prune Unused") }
+                    ) { Text(stringResource(R.string.prune_unused)) }
                 }
             }
         }
         if (volumes.isEmpty()) {
             item {
                 Box(Modifier.fillMaxWidth().padding(top = 48.dp), contentAlignment = Alignment.Center) {
-                    Text("No volumes found on this host.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.no_volumes_found_on_this_host), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -1087,13 +1087,13 @@ private fun NetworkList(viewModel: AppViewModel, networks: List<SimDockerNetwork
                         ) { viewModel.dockerPruneNetworks() }
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = OmniColors.amber),
-                ) { Text("Prune Unused") }
+                ) { Text(stringResource(R.string.prune_unused)) }
             }
         }
         if (networks.isEmpty()) {
             item {
                 Box(Modifier.fillMaxWidth().padding(top = 48.dp), contentAlignment = Alignment.Center) {
-                    Text("No networks found on this host.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.no_networks_found_on_this_host), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }

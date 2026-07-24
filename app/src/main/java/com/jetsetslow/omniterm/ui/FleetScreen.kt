@@ -39,6 +39,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jetsetslow.omniterm.data.*
+import androidx.compose.ui.res.stringResource
+import com.jetsetslow.omniterm.R
 
 @Composable
 fun FleetScreen(viewModel: AppViewModel) {
@@ -59,15 +61,15 @@ fun FleetScreen(viewModel: AppViewModel) {
             Tab(
                 selected = viewModel.fleetTabIndex == 0,
                 onClick = { viewModel.fleetTabIndex = 0 }
-            ) { Text("Dashboard", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+            ) { Text(stringResource(R.string.dashboard), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
             Tab(
                 selected = viewModel.fleetTabIndex == 1,
                 onClick = { viewModel.fleetTabIndex = 1 }
-            ) { Text("Broadcast", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+            ) { Text(stringResource(R.string.broadcast), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
             Tab(
                 selected = viewModel.fleetTabIndex == 2,
                 onClick = { viewModel.fleetTabIndex = 2 }
-            ) { Text("Logs", fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
+            ) { Text(stringResource(R.string.logs), fontSize = OmniTextSize.Dense, modifier = Modifier.padding(vertical = 8.dp)) }
         }
 
         Box(
@@ -103,7 +105,7 @@ fun FleetSummaryBar(viewModel: AppViewModel, srvList: List<ServerEntity>) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                Text("FLEET", fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, fontSize = 16.sp, letterSpacing = 1.sp)
+                Text(stringResource(R.string.fleet_2), fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, fontSize = 16.sp, letterSpacing = 1.sp)
                 Text("Avg Score: $avgScore", fontSize = 12.sp, color = OmniColors.cyan, fontWeight = FontWeight.Bold)
                 Text("$online / $total Online", fontSize = 12.sp, color = if (critical > 0) OmniColors.red else OmniColors.green)
             }
@@ -140,7 +142,7 @@ fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
         if (srvList.isEmpty()) {
             item {
                 Box(Modifier.fillParentMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("No online hosts available. Fleet details appear when hosts come back online.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(stringResource(R.string.no_online_hosts_available_fleet_details), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
@@ -159,7 +161,7 @@ fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(s.name, fontWeight = FontWeight.Bold, fontSize = 16.sp, fontFamily = OmniFonts.mono)
                             }
-                            Text(text = "${s.username}@${s.host}:${s.port}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(text = "${HostDisplay.userAtHost(s)}:${s.port}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
 
                         Box(modifier = Modifier.clickable { scoreDialogServer = s }) {
@@ -299,7 +301,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
             message = buildString {
                 appendLine("$ $cmd")
                 appendLine()
-                targets.forEach { appendLine("• ${it.name} (${it.username}@${it.host})") }
+                targets.forEach { appendLine("• ${HostDisplay.name(it)} (${HostDisplay.userAtHost(it)})") }
                 if (danger != null) {
                     appendLine()
                     append("⚠ $danger")
@@ -319,7 +321,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(Modifier.weight(1f)) {
-                Text("Broadcast controls", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.broadcast_controls), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(
                     "$selectedTargetCount target(s) · ${if (viewModel.broadcastCommandText.isBlank()) "no command" else viewModel.broadcastCommandText}",
                     fontSize = 11.sp,
@@ -355,7 +357,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                 ) {
                     Icon(Icons.Filled.Search, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Presets")
+                    Text(stringResource(R.string.presets))
                 }
                 OutlinedButton(
                     enabled = viewModel.broadcastCommandText.isNotBlank(),
@@ -364,7 +366,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                 ) {
                     Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text("Save")
+                    Text(stringResource(R.string.save))
                 }
             }
 
@@ -374,7 +376,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
             OutlinedTextField(
                 value = viewModel.broadcastCommandText,
                 onValueChange = { viewModel.broadcastCommandText = it },
-                placeholder = { Text("Enter bash command script here...") },
+                placeholder = { Text(stringResource(R.string.enter_bash_command_script_here)) },
                 prefix = { Text("$ ", fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold) },
                 textStyle = LocalTextStyle.current.copy(fontFamily = OmniFonts.mono, fontSize = 14.sp),
                 modifier = Modifier.fillMaxWidth(),
@@ -406,10 +408,9 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
 
         // Terminal text nodes feed displaying returned parallel response packages
         Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-            Text("Execution outputs", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.execution_outputs), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (viewModel.broadcastResults.isNotEmpty() && !viewModel.isBroadcastExecuting) {
-                Text(
-                    "Clear Outputs",
+                Text(stringResource(R.string.clear_outputs),
                     fontSize = 11.sp,
                     color = Color.Red,
                     modifier = Modifier.clickable { confirmClearOutputs = true }
@@ -498,14 +499,14 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
         AlertDialog(
             onDismissRequest = { showPresetPicker = false },
             title = {
-                Text("Choose fleet script")
+                Text(stringResource(R.string.choose_fleet_script))
             },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(
                         value = presetSearch,
                         onValueChange = { presetSearch = it },
-                        label = { Text("Search presets") },
+                        label = { Text(stringResource(R.string.search_presets)) },
                         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
@@ -548,7 +549,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showPresetPicker = false }) { Text("Close") }
+                TextButton(onClick = { showPresetPicker = false }) { Text(stringResource(R.string.close)) }
             },
         )
     }
@@ -584,18 +585,18 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
     if (confirmClearOutputs) {
         AlertDialog(
             onDismissRequest = { confirmClearOutputs = false },
-            title = { Text("Clear broadcast output?") },
-            text = { Text("This clears the visible Fleet broadcast output history.") },
+            title = { Text(stringResource(R.string.clear_broadcast_output)) },
+            text = { Text(stringResource(R.string.this_clears_the_visible_fleet_broadcast)) },
             confirmButton = {
                 TextButton(
                     onClick = {
                         viewModel.broadcastResults.clear()
                         confirmClearOutputs = false
                     }
-                ) { Text("Clear", color = Color.Red) }
+                ) { Text(stringResource(R.string.clear), color = Color.Red) }
             },
             dismissButton = {
-                TextButton(onClick = { confirmClearOutputs = false }) { Text("Cancel") }
+                TextButton(onClick = { confirmClearOutputs = false }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
@@ -614,17 +615,17 @@ private fun BroadcastTargetPicker(viewModel: AppViewModel, srvList: List<ServerE
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("Broadcast Targets", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(stringResource(R.string.broadcast_targets), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 FilterChip(
                     selected = viewModel.broadcastTargetMode == FleetTargetMode.Servers,
                     onClick = { viewModel.broadcastTargetMode = FleetTargetMode.Servers },
-                    label = { Text("Servers", fontSize = 11.sp) },
+                    label = { Text(stringResource(R.string.servers), fontSize = 11.sp) },
                 )
                 FilterChip(
                     selected = viewModel.broadcastTargetMode == FleetTargetMode.Groups,
                     onClick = { viewModel.broadcastTargetMode = FleetTargetMode.Groups },
-                    label = { Text("Groups", fontSize = 11.sp) },
+                    label = { Text(stringResource(R.string.groups), fontSize = 11.sp) },
                 )
             }
         }
@@ -649,8 +650,7 @@ private fun BroadcastTargetPicker(viewModel: AppViewModel, srvList: List<ServerE
                 }
             )
             Spacer(Modifier.width(12.dp))
-            Text(
-                "Clear",
+            Text(stringResource(R.string.clear),
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.Red,
@@ -763,8 +763,8 @@ fun MetricLineChart(
             Modifier.fillMaxWidth().padding(start = 28.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text("oldest", fontSize = 10.sp, color = axisColor, fontFamily = OmniFonts.mono)
-            Text("now", fontSize = 10.sp, color = axisColor, fontFamily = OmniFonts.mono)
+            Text(stringResource(R.string.oldest), fontSize = 10.sp, color = axisColor, fontFamily = OmniFonts.mono)
+            Text(stringResource(R.string.now), fontSize = 10.sp, color = axisColor, fontFamily = OmniFonts.mono)
         }
     }
 }
@@ -772,7 +772,7 @@ fun MetricLineChart(
 @Composable
 fun FleetLogsView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
     Column(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Select hosts then tap Fetch Logs:", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(stringResource(R.string.select_hosts_then_tap_fetch_logs), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         HostPickerField(
             label = "Log hosts",
             servers = srvList,
@@ -797,7 +797,7 @@ fun FleetLogsView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
         val logs = viewModel.fleetLogs
         if (logs.isEmpty() && !viewModel.isFleetLogsLoading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text("No logs. Select hosts and tap Fetch Logs.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.no_logs_select_hosts_and_tap), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {

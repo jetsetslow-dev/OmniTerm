@@ -61,6 +61,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jetsetslow.omniterm.ui.theme.OmniColors
 import com.jetsetslow.omniterm.ui.theme.OmniFonts
+import androidx.compose.ui.res.stringResource
+import com.jetsetslow.omniterm.R
 
 /**
  * Reusable monospace code editor with a line-number gutter and a collapsible find / find-and-replace
@@ -171,8 +173,7 @@ fun CodeEditor(
             )
         }
         if (field.text.length > NATIVE_LARGE_EDITOR_THRESHOLD) {
-            Text(
-                "Large file mode · syntax colors and line gutter are disabled for responsiveness",
+            Text(stringResource(R.string.large_file_mode_syntax_colors_and),
                 fontSize = 10.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 3.dp),
@@ -248,7 +249,7 @@ private fun NativeLargeEditorBody(
             TextButton(
                 enabled = windowStart > 0,
                 onClick = { requestedWindowStart = (windowStart - LARGE_EDITOR_WINDOW_CHARS).coerceAtLeast(0) },
-            ) { Text("Previous") }
+            ) { Text(stringResource(R.string.previous)) }
             Text(
                 "Chars ${windowStart + 1}–$windowEnd of ${field.text.length}",
                 fontSize = 10.sp,
@@ -259,7 +260,7 @@ private fun NativeLargeEditorBody(
             TextButton(
                 enabled = windowEnd < field.text.length,
                 onClick = { requestedWindowStart = windowEnd },
-            ) { Text("Next") }
+            ) { Text(stringResource(R.string.next)) }
         }
         AndroidView(
         modifier = Modifier.fillMaxWidth().weight(1f),
@@ -462,7 +463,7 @@ fun FullScreenCodeEditor(
                         horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        TextButton(onClick = onClose, enabled = !saving) { Text("Discard") }
+                        TextButton(onClick = onClose, enabled = !saving) { Text(stringResource(R.string.discard)) }
                         Spacer(modifier = Modifier.width(8.dp))
                         androidx.compose.material3.Button(onClick = onSave, enabled = !saving && canSave) {
                             if (saving) {
@@ -472,7 +473,7 @@ fun FullScreenCodeEditor(
                                     color = MaterialTheme.colorScheme.onPrimary,
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("Saving…")
+                                Text(stringResource(R.string.saving))
                             } else {
                                 Icon(Icons.Filled.Save, null)
                                 Spacer(modifier = Modifier.width(8.dp))
@@ -530,7 +531,7 @@ private fun EditorToolbar(
             )
         }
         Spacer(Modifier.width(4.dp))
-        Text("Line", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text(stringResource(R.string.line), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Spacer(Modifier.width(4.dp))
         BasicTextField(
             value = gotoText,
@@ -546,7 +547,7 @@ private fun EditorToolbar(
                 .padding(horizontal = 6.dp, vertical = 4.dp),
         )
         TextButton(onClick = { gotoText.toIntOrNull()?.let(onGoToLine) }, enabled = enabled && gotoText.isNotEmpty()) {
-            Text("Go", fontSize = 12.sp)
+            Text(stringResource(R.string.go), fontSize = 12.sp)
         }
     }
 }
@@ -591,11 +592,11 @@ private fun FindReplaceBar(
         Row(verticalAlignment = Alignment.CenterVertically) {
             EditorInput(replacement, onReplacement, "Replace with", Modifier.weight(1f))
             Spacer(Modifier.width(6.dp))
-            TextButton(onClick = onReplace, enabled = matchCount > 0) { Text("Replace", fontSize = 12.sp) }
-            TextButton(onClick = onReplaceAll, enabled = matchCount > 0) { Text("All", fontSize = 12.sp) }
+            TextButton(onClick = onReplace, enabled = matchCount > 0) { Text(stringResource(R.string.replace), fontSize = 12.sp) }
+            TextButton(onClick = onReplaceAll, enabled = matchCount > 0) { Text(stringResource(R.string.all), fontSize = 12.sp) }
         }
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            FilterChip(selected = caseSensitive, onClick = { onCase(!caseSensitive) }, label = { Text("Aa", fontSize = 11.sp) })
+            FilterChip(selected = caseSensitive, onClick = { onCase(!caseSensitive) }, label = { Text(stringResource(R.string.aa), fontSize = 11.sp) })
             FilterChip(selected = useRegex, onClick = { onRegex(!useRegex) }, label = { Text(".*", fontSize = 11.sp) })
             if (error != null) Text(error, color = OmniColors.red, fontSize = 11.sp)
         }

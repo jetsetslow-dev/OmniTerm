@@ -53,6 +53,9 @@ interface MetricHistoryDao {
     @Query("SELECT * FROM metric_history WHERE serverId = :serverId AND timestamp >= :since ORDER BY timestamp ASC")
     suspend fun getMetricsSince(serverId: Int, since: Long): List<MetricHistoryEntity>
 
+    @Query("SELECT * FROM metric_history WHERE serverId = :serverId ORDER BY timestamp DESC LIMIT 1")
+    suspend fun getLatestMetricForServer(serverId: Int): MetricHistoryEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMetric(metric: MetricHistoryEntity)
 
