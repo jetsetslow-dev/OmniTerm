@@ -183,12 +183,17 @@ class E2eAppLockBiometricCancelPinTest {
                 composeRule.onAllLockPrompts().fetchSemanticsNodes().isEmpty()
             }
 
-            // Zero-grace background/foreground relocks; cancel again; Unlock button path this time.
+            // A warm background/foreground cycle must NOT re-lock: cold start is the only trigger.
             scenario.moveToState(Lifecycle.State.CREATED)
             scenario.moveToState(Lifecycle.State.RESUMED)
-            await("zero-grace relock", 10_000) { vm2.isAppLocked }
             awaitWindowFocus(activity2!!)
-            ensureBiometricSessionActive(context.packageName, "zero-grace relock")
+            assertFalse("a warm reopen must not re-lock", vm2.isAppLocked)
+
+            // Re-engage the lock directly to exercise cancel-then-Unlock-button once more.
+            composeRule.runOnUiThread { vm2.isAppLocked = true }
+            await("relock engaged", 10_000) { vm2.isAppLocked }
+            awaitWindowFocus(activity2!!)
+            ensureBiometricSessionActive(context.packageName, "direct relock")
             cancelPromptAndAwaitIdle()
             assertTrue(vm2.isAppLocked)
             awaitWindowFocus(activity2!!)
