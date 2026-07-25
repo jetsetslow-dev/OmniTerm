@@ -5,6 +5,7 @@ import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
@@ -40,6 +41,10 @@ class E2eSettingsStateStressTest {
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
         val original = repository.getSetting("text_scale")
         try {
+            // A sibling suite (E2eAppLockBiometricCancelPinTest) may have left an app lock enabled.
+            // Since the lock now engages on every cold start, the gateway would replace the whole
+            // UI and no Settings node would ever compose. Drop it before driving the screen.
+            composeRule.runOnUiThread { vm.isAppLocked = false }
             composeRule.runOnUiThread {
                 vm.settingsDirty = false
                 vm.navigateTo(Screen.Servers)
@@ -49,6 +54,11 @@ class E2eSettingsStateStressTest {
                 vm.textScale == "normal" && repository.getSetting("text_scale") == "normal"
             }
             composeRule.runOnUiThread { vm.navigateTo(Screen.Settings) }
+            // navigateTo only flips VM state; the Settings tree still has to compose. Without this
+            // the text-size chips are queried before they exist and performScrollTo() throws.
+            composeRule.waitUntil(10_000) {
+                composeRule.onAllNodesWithText("Small").fetchSemanticsNodes().isNotEmpty()
+            }
             composeRule.onNodeWithText("Small")
                 .performScrollTo()
                 .assertIsNotSelected()
