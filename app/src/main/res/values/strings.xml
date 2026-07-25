@@ -392,7 +392,6 @@
     <string name="require_pin_to_unlock">"Require PIN to unlock"</string>
     <string name="unlock_with_biometrics">"Unlock with biometrics"</string>
     <string name="change_pin">"Change PIN"</string>
-    <string name="re_lock_after_leaving_the_app">"Re-lock after leaving the app"</string>
     <string name="block_screenshots">"Block screenshots"</string>
     <string name="hides_terminals_and_credentials_from_screenshots">"Hides terminals and credentials from screenshots and the app switcher."</string>
     <string name="keep_device_screen_always_on">"Keep device screen always on"</string>

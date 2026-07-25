@@ -49,7 +49,7 @@ class E2eAppLockBiometricCancelPinTest {
     @get:Rule val composeRule = createEmptyComposeRule()
 
     private val touchedKeys = listOf(
-        "app_pin", "app_lock_enabled", "biometrics_enabled", "app_lock_grace_ms",
+        "app_pin", "app_lock_enabled", "biometrics_enabled",
         "pin_failed_attempts", "pin_locked_until", "first_run_complete",
     )
 
@@ -68,7 +68,6 @@ class E2eAppLockBiometricCancelPinTest {
             repository.insertSetting("app_pin", hashPinForStorage(pin))
             repository.insertSetting("app_lock_enabled", "true")
             repository.insertSetting("biometrics_enabled", "true")
-            repository.insertSetting("app_lock_grace_ms", "0")
             repository.insertSetting("pin_failed_attempts", "0")
             repository.insertSetting("pin_locked_until", "0")
             repository.insertSetting("first_run_complete", "true")

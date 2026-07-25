@@ -190,9 +190,6 @@ private const val SFTP_SEARCH_MAX_HITS = 200
 /** How often saved network-share availability is refreshed while the app is alive. */
 private const val NETWORK_SHARE_PROBE_INTERVAL_MS = 60_000L
 
-/** Default background time before the app lock re-engages on a warm reopen (user-configurable). */
-private const val APP_RELOCK_GRACE_MS = 30_000L
-
 // Auto-reconnect backoff for dropped interactive sessions: 1s, 2s, 4s… capped at 30s, up to N tries.
 // Slow Wi-Fi -> mobile handoffs can take well over a minute before the OS has a usable route again.
 private const val RECONNECT_BASE_DELAY_MS = 1_000L
@@ -729,40 +726,13 @@ class AppViewModel @JvmOverloads constructor(
     var hideSensitiveInfo by mutableStateOf(false)
         private set
 
-    // App lock always engages on cold start: every process relaunch demands the PIN/biometric when
-    // lock is enabled (shouldLockOnColdStart below). On top of that, warm reopens re-lock once the
-    // app has sat in background past the user's grace window. The timer is in-memory only — unlike
-    // the pre-64cf6ff SharedPreferences mirror, process death can never carry a stale "recently
-    // backgrounded" stamp into a fresh launch and bypass the lock.
-    var appLockGraceMs by mutableStateOf(APP_RELOCK_GRACE_MS)
-        private set
-    private var backgroundedAtMs = 0L
-
-    fun saveAppLockGrace(graceMs: Long) {
-        appLockGraceMs = graceMs.coerceAtLeast(0L)
-        viewModelScope.launch { repository.insertSetting("app_lock_grace_ms", appLockGraceMs.toString()) }
-    }
-
-    /** Called from MainActivity.onStop — remember when the app left the foreground. */
-    fun noteAppBackgrounded() {
-        backgroundedAtMs = System.currentTimeMillis()
-    }
-
-    /** Called from MainActivity.onStart — re-engage the lock if backgrounded past the grace. */
-    fun relockIfNeeded() {
-        val since = backgroundedAtMs
-        backgroundedAtMs = 0L
-        // since == 0L means this onStart isn't paired with an in-process onStop: either the very
-        // first launch (the cold-start path already decided the lock) or a config change. No-op.
-        if (since == 0L) return
-        if (!isAppLockEnabled || savedPin.isNullOrBlank()) return
-        if (System.currentTimeMillis() - since >= appLockGraceMs) {
-            currentPinInput = ""
-            lockScreenError = null
-            isAppLocked = true
-        }
-    }
-
+    // App lock engages on cold start only: every process relaunch demands the PIN/biometric when
+    // lock is enabled. Warm reopens (process still in memory) are not re-locked.
+    //
+    // There is deliberately no background grace timer. The configurable one it replaced was read as
+    // "lock after N minutes" but actually meant "skip the lock for N minutes after leaving", so
+    // reopening inside the window silently bypassed auth — reported as biometrics no longer
+    // prompting. One rule, no timestamps to reason about across process death.
     private fun shouldLockOnColdStart(): Boolean =
         !savedPin.isNullOrBlank() && isAppLockEnabled
 
@@ -2002,8 +1972,6 @@ class AppViewModel @JvmOverloads constructor(
                 val hasPinLock = !pinVal.isNullOrBlank() && lockEnabled
                 savedPin = pinVal
                 isAppLockEnabled = hasPinLock
-                appLockGraceMs = list.find { it.key == "app_lock_grace_ms" }?.value
-                    ?.toLongOrNull()?.coerceAtLeast(0L) ?: APP_RELOCK_GRACE_MS
                 useBiometrics = hasPinLock && bioEnabled
                 // Screenshot blocking defaults on until explicitly set; terminal and credential
                 // screens are sensitive even when the user has not configured an app lock.
@@ -10330,9 +10298,6 @@ class AppViewModel @JvmOverloads constructor(
         put("background_keep_alive", isBackgroundKeepAlive.toString())
         put("battery_saver_enabled", batterySaverEnabled.toString())
         put("battery_saver_threshold", batterySaverThresholdPct.toString())
-        // The lock grace is a preference, not a secret: it travels, but the PIN/lock/biometric
-        // keys stay device-local, so a restored grace sits unread until a lock is set up here.
-        put("app_lock_grace_ms", appLockGraceMs.toString())
         put("sftp_large_batch_file_threshold", sftpLargeBatchFileThreshold.toString())
         put("sftp_large_batch_bytes_threshold", sftpLargeBatchBytesThreshold.toString())
         put("backup_last_export_time", lastBackupExportTime.toString())

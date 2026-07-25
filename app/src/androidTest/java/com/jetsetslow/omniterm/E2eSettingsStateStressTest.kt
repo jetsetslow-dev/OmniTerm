@@ -82,7 +82,7 @@ class E2eSettingsStateStressTest {
             "dark_mode", "amoled", "editor_highlight_limit", "telemetry_interval", "metrics_retention",
             "sftp_large_batch_file_threshold", "sftp_large_batch_bytes_threshold", "keep_screen_on",
             "battery_saver_enabled", "battery_saver_threshold", "app_pin", "app_lock_enabled",
-            "biometrics_enabled", "app_lock_grace_ms", "pin_failed_attempts", "pin_locked_until",
+            "biometrics_enabled", "pin_failed_attempts", "pin_locked_until",
         )
         val before = repository.getAllSettings().filter { it.key in touched }.associateBy { it.key }
 
@@ -159,8 +159,9 @@ class E2eSettingsStateStressTest {
             vm.savePinConfiguration("4826"); await("test PIN saved", 5_000) { vm.verifyPin("4826") }
             assertFalse(vm.verifyPin("0000"))
             assertNotNull(vm.verifyPinForSensitiveAction("0000"))
-            vm.saveAppLockGrace(0); vm.isAppLocked = false; vm.noteAppBackgrounded(); vm.relockIfNeeded()
-            assertTrue(vm.isAppLocked)
+            // Warm reopens no longer re-lock (cold start is the only trigger), so drive the lock
+            // directly to exercise the PIN-entry path below.
+            vm.isAppLocked = true
             "4826".forEach { vm.handlePinTyping(it.toString()) }
             await("PIN unlock", 5_000) { !vm.isAppLocked }
             vm.saveBiometricsToggle(true); await("biometric setting", 5_000) { vm.useBiometrics }
