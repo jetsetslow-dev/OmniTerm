@@ -2600,7 +2600,13 @@ fun AddServerSheet(
             onDismissRequest = { confirmDuplicateHost = null },
             title = { Text(stringResource(R.string.duplicate_ip_address)) },
             text = {
-                Text("Host ${duplicate.name} already uses ${duplicate.host}. You can still save this server if it intentionally uses a different credential profile.")
+                Text(
+                    stringResource(
+                        R.string.duplicate_host_body,
+                        HostDisplay.name(duplicate),
+                        HostDisplay.host(duplicate),
+                    )
+                )
             },
             confirmButton = {
                 Button(onClick = {

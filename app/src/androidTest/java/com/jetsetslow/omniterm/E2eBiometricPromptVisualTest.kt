@@ -14,7 +14,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertTrue
-import org.junit.Assert.assertEquals
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
@@ -23,72 +22,61 @@ import org.junit.Test
 class E2eBiometricPromptVisualTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
 
+    /**
+     * Android 15+ BiometricPrompt derives its branding thumbnail from the adaptive launcher icon and
+     * composites background + foreground. It does NOT read `android:logo`; androidx.biometric only
+     * forwards a logo when the app calls `PromptInfo.Builder.setLogoRes/setLogoBitmap`, which need
+     * SET_BIOMETRIC_DIALOG_ADVANCED (internal|role) and are therefore unavailable to us.
+     *
+     * So the only lever we have is the foreground layer's own alpha: with the mark's baked tile
+     * stripped, there is nothing left for the prompt to flatten into an opaque block.
+     */
     @Test
-    fun monochromeAdaptiveIconContainsOriginalHighContrastGeometry() {
+    fun adaptiveForegroundIsTransparentSoTheBiometricPromptCannotFlattenIt() {
         val drawable = composeRule.activity.getDrawable(R.mipmap.ic_launcher)
         assertTrue("Launcher icon is not adaptive", drawable is AdaptiveIconDrawable)
-        val monochrome = requireNotNull((drawable as AdaptiveIconDrawable).monochrome)
-        val bitmap = Bitmap.createBitmap(216, 216, Bitmap.Config.ARGB_8888)
-        monochrome.setBounds(0, 0, bitmap.width, bitmap.height)
-        monochrome.draw(Canvas(bitmap))
-        val pixels = IntArray(bitmap.width * bitmap.height)
-        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
-        val visibleFraction = pixels.count { (it ushr 24) != 0 }.toDouble() / pixels.size
-        assertTrue("Monochrome icon is effectively empty: $visibleFraction", visibleFraction > 0.05)
-        assertTrue("Monochrome icon is an opaque tile: $visibleFraction", visibleFraction < 0.55)
-        val brightVisibleFraction = pixels.count {
-            val alpha = it ushr 24
-            val red = it ushr 16 and 0xff
-            val green = it ushr 8 and 0xff
-            val blue = it and 0xff
-            alpha != 0 && red + green + blue > 3 * 192
-        }.toDouble() / pixels.size
+        val foreground = (drawable as AdaptiveIconDrawable).foreground
+        assertTrue("Foreground is no longer the safe-zone inset", foreground is InsetDrawable)
         assertTrue(
-            "Original high-contrast monochrome mark is missing",
-            brightVisibleFraction > 0.05,
-        )
-    }
-
-    @Test
-    fun manifestSystemLogoUsesOriginalBitmapOutsideAdaptiveIconWrapper() {
-        val appInfo = composeRule.activity.applicationInfo
-        val packageManager = composeRule.activity.packageManager
-        val activityInfo = packageManager.getActivityInfo(
-            composeRule.activity.componentName,
-            0,
-        )
-        assertEquals(R.mipmap.ic_launcher_fg, appInfo.logo)
-        assertEquals(R.mipmap.ic_launcher_fg, activityInfo.logo)
-
-        val launcher = composeRule.activity.getDrawable(R.mipmap.ic_launcher)
-        assertTrue("Launcher icon is not adaptive", launcher is AdaptiveIconDrawable)
-        val foreground = (launcher as AdaptiveIconDrawable).foreground
-        assertTrue("Original inset foreground was replaced", foreground is InsetDrawable)
-        assertTrue(
-            "Original bitmap logo artwork was replaced",
+            "Foreground no longer wraps the bitmap mark",
             (foreground as InsetDrawable).drawable is BitmapDrawable,
         )
 
-        val systemLogo = requireNotNull(activityInfo.loadLogo(packageManager))
+        val pixels = renderToPixels(foreground)
+        val transparentFraction = pixels.count { (it ushr 24) == 0 }.toDouble() / pixels.size
         assertTrue(
-            "System logo must bypass Android 16 adaptive-icon flattening",
-            systemLogo is BitmapDrawable,
+            "Foreground has a baked opaque tile again; the prompt will flatten it: $transparentFraction",
+            transparentFraction > 0.20,
         )
-        val bitmap = Bitmap.createBitmap(216, 216, Bitmap.Config.ARGB_8888)
-        systemLogo.setBounds(0, 0, bitmap.width, bitmap.height)
-        systemLogo.draw(Canvas(bitmap))
-        val pixels = IntArray(bitmap.width * bitmap.height)
-        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+
+        val markFraction = pixels.count { (it ushr 24) > 0x80 }.toDouble() / pixels.size
+        assertTrue("Foreground mark is effectively empty: $markFraction", markFraction > 0.05)
+    }
+
+    /** The mark must still read as artwork (many distinct colours), not collapse to a flat shape. */
+    @Test
+    fun adaptiveForegroundKeepsTheNeonMarkLegible() {
+        val drawable = composeRule.activity.getDrawable(R.mipmap.ic_launcher) as AdaptiveIconDrawable
+        val pixels = renderToPixels(drawable.foreground)
         val visibleColors = pixels.asSequence()
-            .filter { (it ushr 24) != 0 }
+            .filter { (it ushr 24) > 0x40 }
             .map { it and 0x00ffffff }
             .distinct()
             .take(64)
             .count()
         assertTrue(
-            "System logo collapsed to a blank tile: $visibleColors visible colors",
+            "Foreground collapsed to a blank tile: $visibleColors visible colors",
             visibleColors >= 64,
         )
+    }
+
+    private fun renderToPixels(drawable: android.graphics.drawable.Drawable): IntArray {
+        val bitmap = Bitmap.createBitmap(216, 216, Bitmap.Config.ARGB_8888)
+        drawable.setBounds(0, 0, bitmap.width, bitmap.height)
+        drawable.draw(Canvas(bitmap))
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        return pixels
     }
 
     @Test

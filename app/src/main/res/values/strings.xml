@@ -229,6 +229,7 @@
     <string name="jump_host_key_optional">"Jump host key (optional):"</string>
     <string name="next">"Next"</string>
     <string name="duplicate_ip_address">"Duplicate IP address"</string>
+    <string name="duplicate_host_body">"Host %1$s already uses %2$s. You can still save this server if it intentionally uses a different credential profile."</string>
     <string name="save_anyway">"Save anyway"</string>
     <string name="review">"Review"</string>
     <string name="omniterm_2">"OMNITERM"</string>
@@ -344,6 +345,11 @@
     <string name="key_alias_name">"Key Alias Name"</string>
     <string name="omniterm_will_generate_a_real_rsa">"OmniTerm will generate a real RSA 4096-bit SSH keypair and store the private key in the local key vault."</string>
     <string name="generate_keys">"Generate Keys"</string>
+    <string name="generating">"Generating…"</string>
+    <string name="no_readable_log_source">"This host exposes no readable log source (no journalctl, logread, or syslog file)."</string>
+    <string name="exporting">"Exporting…"</string>
+    <string name="restoring">"Restoring…"</string>
+    <string name="sending">"Sending…"</string>
     <string name="import_existing_ssh_key">"Import existing SSH Key"</string>
     <string name="key_custom_name">"Key Custom Name"</string>
     <string name="private_key_required">"Private key (required)"</string>

@@ -1065,6 +1065,21 @@ fun LogsTab(viewModel: AppViewModel) {
             }
         }
 
+        // A host with no journalctl/logread/syslog (BSD, some minimal images) would otherwise show
+        // an indistinguishable empty pane — say why instead.
+        if (viewModel.logsUnsupported && loadedLogs.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxWidth().weight(1f).background(Color.Black),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    stringResource(R.string.no_readable_log_source),
+                    color = Color(0xFF9CA3AF),
+                    fontSize = 12.sp,
+                    modifier = Modifier.padding(24.dp),
+                )
+            }
+        } else
         SelectionContainer(modifier = Modifier.fillMaxWidth().weight(1f)) {
             LazyColumn(
                 modifier = Modifier

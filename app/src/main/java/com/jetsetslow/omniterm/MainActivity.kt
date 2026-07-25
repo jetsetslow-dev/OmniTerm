@@ -220,8 +220,12 @@ class MainActivity : AppCompatActivity() {
           viewModel.connectTerminalByServerId(it)
           pendingShortcutServerId = null
         }
-        if (pendingSplitServerId1 != null && pendingSplitServerId2 != null) {
-          viewModel.openMultiSshByServerIds(pendingSplitServerId1!!, pendingSplitServerId2!!)
+        // Read both ids into locals before use: onNewIntent runs on the main thread and can null
+        // these out between the check and the dereference, which would crash on `!!`.
+        val splitId1 = pendingSplitServerId1
+        val splitId2 = pendingSplitServerId2
+        if (splitId1 != null && splitId2 != null) {
+          viewModel.openMultiSshByServerIds(splitId1, splitId2)
           pendingSplitServerId1 = null
           pendingSplitServerId2 = null
         }

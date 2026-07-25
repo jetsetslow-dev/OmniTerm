@@ -376,7 +376,14 @@ fun AlertPopupIncidentCard(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
             ) {
-                TextButton(onClick = onRefresh, enabled = alert.serverId > 0) {
+                // refreshServer() writes "connecting" for the host before probing, so the popup can
+                // show the probe is in flight instead of the button appearing to do nothing.
+                val refreshing = server?.status == "connecting"
+                TextButton(onClick = onRefresh, enabled = alert.serverId > 0 && !refreshing) {
+                    if (refreshing) {
+                        CircularProgressIndicator(modifier = Modifier.size(12.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(6.dp))
+                    }
                     Text(stringResource(R.string.refresh), fontSize = OmniTextSize.Meta)
                 }
                 if (onAcknowledge != null) {
@@ -1246,6 +1253,8 @@ private fun ScannedHostCard(
                     }
                 }
                 if (host.hostname.isNotBlank()) {
+                    // Deliberately NOT routed through HostDisplay: a live LAN scan result the user
+                    // just requested, not a saved endpoint — the address IS the result.
                     Text(host.hostname, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 Text(
@@ -1607,6 +1616,9 @@ private fun WolTab(viewModel: AppViewModel) {
                         }
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Button(
+                                // A magic packet is a single UDP send, so a spinner would only
+                                // flash; disabling while in flight is enough to stop double-taps.
+                                enabled = !viewModel.wolSendRunning,
                                 onClick = {
                                     confirm.ask(
                                         "Send wake packet?",
@@ -1896,11 +1908,13 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                                 OmniCard(modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp), leftAccent = OmniColors.amber) {
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                         Column(Modifier.weight(1f)) {
-                                            Text(kh.host, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                            // KnownHost carries no user-given name, so there is nothing to
+                                            // substitute — mask the address outright when hiding sensitive info.
+                                            Text(HostDisplay.sensitive(kh.host), fontWeight = FontWeight.Bold, fontSize = 13.sp)
                                             Text("${kh.keyType} · ${kh.fingerprint}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
                                         }
                                         IconButton(onClick = {
-                                            confirm.ask("Remove trusted key?", "Remove the trusted SSH host key for ${kh.host}? The next connection will prompt you to verify and pin the key again.", confirmLabel = "Remove") {
+                                            confirm.ask("Remove trusted key?", "Remove the trusted SSH host key for ${HostDisplay.sensitive(kh.host)}? The next connection will prompt you to verify and pin the key again.", confirmLabel = "Remove") {
                                                 viewModel.removeKnownHost(kh.host)
                                             }
                                         }) {
@@ -1983,8 +1997,10 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                 }
             },
             confirmButton = {
+                // Keygen (especially RSA) runs for seconds. Keep the dialog open with a spinner in
+                // the button rather than dismissing immediately, which looked like nothing happened.
                 Button(
-                    enabled = alias.isNotBlank(),
+                    enabled = alias.isNotBlank() && !viewModel.sshKeygenRunning,
                     onClick = {
                         viewModel.generateSshKey(alias, keyType) { ok, msg, priv, pub ->
                             authFeedbackOk = ok
@@ -1992,15 +2008,28 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                             if (ok && priv != null && pub != null) {
                                 generatedKeyResult = Triple(alias, priv, pub)
                             }
+                            showCreateKey = false
                         }
-                        showCreateKey = false
                     }
                 ) {
-                    Text(stringResource(R.string.generate_keys))
+                    if (viewModel.sshKeygenRunning) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.generating))
+                    } else {
+                        Text(stringResource(R.string.generate_keys))
+                    }
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showCreateKey = false }) { Text(stringResource(R.string.cancel)) }
+                TextButton(
+                    enabled = !viewModel.sshKeygenRunning,
+                    onClick = { showCreateKey = false },
+                ) { Text(stringResource(R.string.cancel)) }
             }
         )
     }
@@ -2445,6 +2474,24 @@ fun BackupToolView(viewModel: AppViewModel) {
                         }
                     }
 
+                    // Export and restore both run for seconds on a large backup, and their trigger
+                    // is a file picker that has already closed by then — so surface the in-flight
+                    // state here, where the result message also lands.
+                    if (viewModel.backupExportRunning || viewModel.backupRestoreRunning) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(top = 8.dp),
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                stringResource(if (viewModel.backupExportRunning) R.string.exporting else R.string.restoring),
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+
                     if (exportFeedback.isNotEmpty()) {
                         Text(exportFeedback, color = if (exportFeedbackOk) Color(0xFF10B981) else Color.Red, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
                     }
@@ -2780,7 +2827,9 @@ private fun BackupHostSelectionList(
                 )
                 Column(Modifier.weight(1f)) {
                     Text(host.name, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("${host.host}:${host.port}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    // The name is already on the line above, so mask the address outright rather
+                    // than substituting the name into it and printing the same string twice.
+                    Text("${HostDisplay.sensitive(host.host)}:${host.port}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -3404,7 +3453,22 @@ fun SettingsToolView(viewModel: AppViewModel) {
                     modifier = Modifier.weight(1f),
                 ) { Text(stringResource(R.string.cancel)) }
                 Button(
-                    onClick = { if (viewModel.savedPin == null) applyDrafts() else showSaveAuth = true },
+                    onClick = {
+                        // Turning App Lock off deletes the stored PIN outright. Re-auth already
+                        // guards the save, but say plainly what is about to be destroyed.
+                        val disablingAppLock = !draftAppLock && viewModel.isAppLockEnabled
+                        val save = { if (viewModel.savedPin == null) applyDrafts() else showSaveAuth = true }
+                        if (disablingAppLock) {
+                            confirm.ask(
+                                "Turn off App Lock?",
+                                "This deletes your saved PIN and disables biometric unlock. " +
+                                    "You'll need to set a new PIN to turn App Lock back on.",
+                                confirmLabel = "Turn off",
+                            ) { save() }
+                        } else {
+                            save()
+                        }
+                    },
                     enabled = dirty,
                     modifier = Modifier.weight(1f),
                 ) { Text(stringResource(R.string.save_changes_2)) }
