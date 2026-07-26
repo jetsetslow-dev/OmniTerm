@@ -190,9 +190,6 @@ private const val SFTP_SEARCH_MAX_HITS = 200
 /** How often saved network-share availability is refreshed while the app is alive. */
 private const val NETWORK_SHARE_PROBE_INTERVAL_MS = 60_000L
 
-/** Default background time before the app lock re-engages on a warm reopen (user-configurable). */
-private const val APP_RELOCK_GRACE_MS = 30_000L
-
 // Auto-reconnect backoff for dropped interactive sessions: 1s, 2s, 4s… capped at 30s, up to N tries.
 // Slow Wi-Fi -> mobile handoffs can take well over a minute before the OS has a usable route again.
 private const val RECONNECT_BASE_DELAY_MS = 1_000L
@@ -729,40 +726,13 @@ class AppViewModel @JvmOverloads constructor(
     var hideSensitiveInfo by mutableStateOf(false)
         private set
 
-    // App lock always engages on cold start: every process relaunch demands the PIN/biometric when
-    // lock is enabled (shouldLockOnColdStart below). On top of that, warm reopens re-lock once the
-    // app has sat in background past the user's grace window. The timer is in-memory only — unlike
-    // the pre-64cf6ff SharedPreferences mirror, process death can never carry a stale "recently
-    // backgrounded" stamp into a fresh launch and bypass the lock.
-    var appLockGraceMs by mutableStateOf(APP_RELOCK_GRACE_MS)
-        private set
-    private var backgroundedAtMs = 0L
-
-    fun saveAppLockGrace(graceMs: Long) {
-        appLockGraceMs = graceMs.coerceAtLeast(0L)
-        viewModelScope.launch { repository.insertSetting("app_lock_grace_ms", appLockGraceMs.toString()) }
-    }
-
-    /** Called from MainActivity.onStop — remember when the app left the foreground. */
-    fun noteAppBackgrounded() {
-        backgroundedAtMs = System.currentTimeMillis()
-    }
-
-    /** Called from MainActivity.onStart — re-engage the lock if backgrounded past the grace. */
-    fun relockIfNeeded() {
-        val since = backgroundedAtMs
-        backgroundedAtMs = 0L
-        // since == 0L means this onStart isn't paired with an in-process onStop: either the very
-        // first launch (the cold-start path already decided the lock) or a config change. No-op.
-        if (since == 0L) return
-        if (!isAppLockEnabled || savedPin.isNullOrBlank()) return
-        if (System.currentTimeMillis() - since >= appLockGraceMs) {
-            currentPinInput = ""
-            lockScreenError = null
-            isAppLocked = true
-        }
-    }
-
+    // App lock engages on cold start only: every process relaunch demands the PIN/biometric when
+    // lock is enabled. Warm reopens (process still in memory) are not re-locked.
+    //
+    // There is deliberately no background grace timer. The configurable one it replaced was read as
+    // "lock after N minutes" but actually meant "skip the lock for N minutes after leaving", so
+    // reopening inside the window silently bypassed auth — reported as biometrics no longer
+    // prompting. One rule, no timestamps to reason about across process death.
     private fun shouldLockOnColdStart(): Boolean =
         !savedPin.isNullOrBlank() && isAppLockEnabled
 
@@ -979,17 +949,19 @@ class AppViewModel @JvmOverloads constructor(
                     fleetLogSemaphore.withPermit {
                         val srv = repository.getServerById(srvId) ?: return@launch
                         if (srv.status != "online") return@launch
-                        val out = executeSshCommand(srv, RemoteCommands.journal(200))
+                        val out = executeSshCommand(srv, RemoteCommands.journal(200, osByServer[srv.id].orEmpty()))
                         val entries = RemoteParsers.parseFleetJournal(out, srv.name, srv.id)
                         allEntries.addAll(entries)
                     }
                 }
             }
-            jobs.forEach { it.join() }
-            val sorted = allEntries.sortedBy { it.timestamp }
-            withContext(Dispatchers.Main) {
-                fleetLogs = sorted
-                isFleetLogsLoading = false
+            try {
+                jobs.forEach { it.join() }
+                val sorted = allEntries.sortedBy { it.timestamp }
+                withContext(Dispatchers.Main) { fleetLogs = sorted }
+            } finally {
+                // Cancellation (leaving the screen) must not strand the spinner.
+                withContext(NonCancellable + Dispatchers.Main) { isFleetLogsLoading = false }
             }
         }
     }
@@ -1220,6 +1192,8 @@ class AppViewModel @JvmOverloads constructor(
 
     var logs by mutableStateOf<List<SimLog>>(emptyList()); private set
     var logsLoading by mutableStateOf(false); private set
+    /** Host exposes no readable log source (no journalctl/logread/syslog), so the tab explains instead of showing empty. */
+    var logsUnsupported by mutableStateOf(false); private set
 
     var hostMetrics by mutableStateOf(HostMetrics.EMPTY); private set
     var metricsLoading by mutableStateOf(false); private set
@@ -1284,6 +1258,16 @@ class AppViewModel @JvmOverloads constructor(
     private var sftpClipboardServerId: Int? = null
     /** True while a paste (server-side cp/mv) is running, to gate the paste button. */
     var sftpPasteRunning by mutableStateOf(false); private set
+
+    /** Name clashes awaiting a per-item decision; non-empty drives the conflict dialog. */
+    var pasteConflicts by mutableStateOf<List<TransferConflict>>(emptyList()); private set
+    /** True while the byte-level comparison for those clashes is still running. */
+    var pasteConflictScanRunning by mutableStateOf(false); private set
+    /**
+     * Set when the host had no usable digest tool, so verdicts could not be verified by content.
+     * The dialog must say so rather than implying the comparison was authoritative.
+     */
+    var pasteConflictUnverified by mutableStateOf(false); private set
 
     /**
      * When true, SFTP mutations (save/copy/move/delete/mkdir/rename) and reading a file for editing
@@ -1794,6 +1778,14 @@ class AppViewModel @JvmOverloads constructor(
     var cronStatus by mutableStateOf(""); private set
     var cronLoading by mutableStateOf(false); private set
 
+    // In-flight flags for long operations that report only through a completion callback, so the
+    // UI can disable its trigger and show a spinner instead of looking frozen. RSA keygen and
+    // backup export/restore all run for seconds; without these the user gets no feedback at all.
+    var sshKeygenRunning by mutableStateOf(false); private set
+    var backupExportRunning by mutableStateOf(false); private set
+    var backupRestoreRunning by mutableStateOf(false); private set
+    var wolSendRunning by mutableStateOf(false); private set
+
     // Per-loader jobs so switching hosts cancels the previous (now-stale) fetch before starting a
     // new one — otherwise a slow old-host response can land last and overwrite the new host's data.
     private var dockerJob: Job? = null
@@ -1980,8 +1972,6 @@ class AppViewModel @JvmOverloads constructor(
                 val hasPinLock = !pinVal.isNullOrBlank() && lockEnabled
                 savedPin = pinVal
                 isAppLockEnabled = hasPinLock
-                appLockGraceMs = list.find { it.key == "app_lock_grace_ms" }?.value
-                    ?.toLongOrNull()?.coerceAtLeast(0L) ?: APP_RELOCK_GRACE_MS
                 useBiometrics = hasPinLock && bioEnabled
                 // Screenshot blocking defaults on until explicitly set; terminal and credential
                 // screens are sensitive even when the user has not configured an app lock.
@@ -2397,12 +2387,35 @@ class AppViewModel @JvmOverloads constructor(
             .setContentTitle("${rule.severity}: ${srv.name}")
             .setContentText("${rule.metricName}$mountSuffix at ${"%.0f".format(value)}$unit (threshold ${"%.0f".format(rule.thresholdValue)}$unit)")
             .setSmallIcon(R.drawable.ic_stat_omniterm)
+            .setLargeIcon(launcherNotificationBitmap())
             .setContentIntent(contentIntent)
             .setCategory(NotificationCompat.CATEGORY_ALARM)
             .setAutoCancel(true)
             .build()
         nm.notify(alertNotificationId(rule.id, srv.id), n)
     }
+
+    /**
+     * The full-colour app mark for a notification's large-icon slot.
+     *
+     * `setSmallIcon` is rendered alpha-only — the system paints every opaque pixel flat white — so on
+     * its own an alert shows a white silhouette and none of the brand. The large icon is the only
+     * notification slot that keeps colour, so the launcher icon is rasterised here.
+     *
+     * Returns null (large icon simply omitted) if the drawable can't be loaded, so a branding problem
+     * can never take down an alert.
+     */
+    private fun launcherNotificationBitmap(): android.graphics.Bitmap? = runCatching {
+        val app = getApplication<Application>()
+        val drawable = ContextCompat.getDrawable(app, R.mipmap.ic_launcher) ?: return null
+        // Notification large icons are shown at ~64dp; rasterise at that density, not the
+        // drawable's intrinsic size, which for an adaptive icon is a much larger canvas.
+        val px = (64 * app.resources.displayMetrics.density).toInt().coerceAtLeast(1)
+        val bitmap = android.graphics.Bitmap.createBitmap(px, px, android.graphics.Bitmap.Config.ARGB_8888)
+        drawable.setBounds(0, 0, px, px)
+        drawable.draw(android.graphics.Canvas(bitmap))
+        bitmap
+    }.getOrNull()
 
     private fun clearAlertNotification(ruleId: Int, serverId: Int) {
         val app = getApplication<Application>()
@@ -3026,51 +3039,58 @@ class AppViewModel @JvmOverloads constructor(
 
     // CRUDS FOR TOOLS SETUP
     fun generateSshKey(alias: String, type: String, onResult: (Boolean, String, String?, String?) -> Unit = { _, _, _, _ -> }) {
+        if (sshKeygenRunning) return
+        sshKeygenRunning = true
         viewModelScope.launch {
-            var privKey: String? = null
-            var pubKey: String? = null
-            val result = withContext(Dispatchers.IO) {
-                try {
-                    if (alias.isBlank()) return@withContext Pair(false, "Key alias is required.")
-                    if (repository.getAllKeys().any { it.alias == alias }) {
-                        return@withContext Pair(false, "Key alias already exists.")
-                    }
-                    if (repository.getAllProfiles().size + repository.getAllKeys().size >= credentialProfileLimit) {
-                        return@withContext Pair(false, credentialProfileLimitMessage())
-                    }
-                    val keyType = when (type.uppercase(Locale.US)) {
-                        "RSA" -> KeyPair.RSA
-                        else -> return@withContext Pair(false, "$type key generation is not supported by the bundled SSH library. Import an existing key instead.")
-                    }
-                    val keyPair = KeyPair.genKeyPair(JSch(), keyType, 4096)
-                    val privateOut = ByteArrayOutputStream()
-                    val publicOut = ByteArrayOutputStream()
+            try {
+                var privKey: String? = null
+                var pubKey: String? = null
+                val result = withContext(Dispatchers.IO) {
                     try {
-                        keyPair.writePrivateKey(privateOut)
-                        keyPair.writePublicKey(publicOut, alias)
-                    } finally {
-                        keyPair.dispose()
-                    }
-                    val publicKey = publicOut.toString(Charsets.UTF_8.name()).trim()
-                    val privateKey = privateOut.toString(Charsets.UTF_8.name())
-                    val fingerprint = sshPublicKeyFingerprint(publicKey)
-                    repository.insertKey(
-                        SshKeyEntity(
-                            alias = alias,
-                            keyType = type,
-                            privateKey = privateKey,
-                            publicKey = publicKey,
-                            fingerprint = fingerprint,
+                        if (alias.isBlank()) return@withContext Pair(false, "Key alias is required.")
+                        if (repository.getAllKeys().any { it.alias == alias }) {
+                            return@withContext Pair(false, "Key alias already exists.")
+                        }
+                        if (repository.getAllProfiles().size + repository.getAllKeys().size >= credentialProfileLimit) {
+                            return@withContext Pair(false, credentialProfileLimitMessage())
+                        }
+                        val keyType = when (type.uppercase(Locale.US)) {
+                            "RSA" -> KeyPair.RSA
+                            else -> return@withContext Pair(false, "$type key generation is not supported by the bundled SSH library. Import an existing key instead.")
+                        }
+                        val keyPair = KeyPair.genKeyPair(JSch(), keyType, 4096)
+                        val privateOut = ByteArrayOutputStream()
+                        val publicOut = ByteArrayOutputStream()
+                        try {
+                            keyPair.writePrivateKey(privateOut)
+                            keyPair.writePublicKey(publicOut, alias)
+                        } finally {
+                            keyPair.dispose()
+                        }
+                        val publicKey = publicOut.toString(Charsets.UTF_8.name()).trim()
+                        val privateKey = privateOut.toString(Charsets.UTF_8.name())
+                        val fingerprint = sshPublicKeyFingerprint(publicKey)
+                        repository.insertKey(
+                            SshKeyEntity(
+                                alias = alias,
+                                keyType = type,
+                                privateKey = privateKey,
+                                publicKey = publicKey,
+                                fingerprint = fingerprint,
+                            )
                         )
-                    )
-                    privKey = privateKey
-                    pubKey = publicKey
-                    Pair(true, "Generated $type key '$alias'.")
-                } catch (e: Exception) {
-                    Pair(false, "Key generation failed: ${e.message ?: "unknown error"}")
+                        privKey = privateKey
+                        pubKey = publicKey
+                        Pair(true, "Generated $type key '$alias'.")
+                    } catch (e: Exception) {
+                        Pair(false, "Key generation failed: ${e.message ?: "unknown error"}")
+                    }
                 }
+                onResult(result.first, result.second, privKey, pubKey)
+            } finally {
+                // Must clear on cancellation too, or the button stays disabled for the session.
+                sshKeygenRunning = false
             }
-            onResult(result.first, result.second, privKey, pubKey)
         }
     }
 
@@ -3726,33 +3746,40 @@ class AppViewModel @JvmOverloads constructor(
     // caller can show honest user feedback (a Toast) — never claim "sent" when validation or the socket
     // send failed.
     fun triggerWol(target: WolTargetEntity, onResult: ((Boolean) -> Unit)? = null) {
+        if (wolSendRunning) return
+        wolSendRunning = true
         viewModelScope.launch {
-            if (!isValidMac(target.macAddress) || target.port !in 1..65535 || target.broadcastIp.isBlank()) {
-                onResult?.invoke(false)
-                return@launch
-            }
-            val ok = try {
-                kotlinx.coroutines.withContext(Dispatchers.IO) {
-                    val macBytes = getMacBytes(target.macAddress)
-                    val bytes = ByteArray(6 + 16 * macBytes.size)
-                    for (i in 0..5) bytes[i] = 0xff.toByte()
-                    for (i in 6 until bytes.size step macBytes.size) {
-                        System.arraycopy(macBytes, 0, bytes, i, macBytes.size)
-                    }
-                    val address = java.net.InetAddress.getByName(target.broadcastIp)
-                    val packet = java.net.DatagramPacket(bytes, bytes.size, address, target.port)
-                    val socket = java.net.DatagramSocket()
-                    socket.broadcast = true
-                    socket.send(packet)
-                    socket.close()
+            try {
+                if (!isValidMac(target.macAddress) || target.port !in 1..65535 || target.broadcastIp.isBlank()) {
+                    onResult?.invoke(false)
+                    return@launch
                 }
-                repository.updateLastWoken(target.id, System.currentTimeMillis())
-                true
-            } catch (e: Exception) {
-                // Invalid network/broadcast state should not crash or fake a successful wake.
-                false
+                val ok = try {
+                    kotlinx.coroutines.withContext(Dispatchers.IO) {
+                        val macBytes = getMacBytes(target.macAddress)
+                        val bytes = ByteArray(6 + 16 * macBytes.size)
+                        for (i in 0..5) bytes[i] = 0xff.toByte()
+                        for (i in 6 until bytes.size step macBytes.size) {
+                            System.arraycopy(macBytes, 0, bytes, i, macBytes.size)
+                        }
+                        val address = java.net.InetAddress.getByName(target.broadcastIp)
+                        val packet = java.net.DatagramPacket(bytes, bytes.size, address, target.port)
+                        // `use` so a throwing send() cannot leak the socket.
+                        java.net.DatagramSocket().use { socket ->
+                            socket.broadcast = true
+                            socket.send(packet)
+                        }
+                    }
+                    repository.updateLastWoken(target.id, System.currentTimeMillis())
+                    true
+                } catch (e: Exception) {
+                    // Invalid network/broadcast state should not crash or fake a successful wake.
+                    false
+                }
+                onResult?.invoke(ok)
+            } finally {
+                wolSendRunning = false
             }
-            onResult?.invoke(ok)
         }
     }
 
@@ -6167,10 +6194,18 @@ class AppViewModel @JvmOverloads constructor(
         logsJob?.cancel()
         logsJob = viewModelScope.launch {
             logsLoading = true
-            val all = RemoteParsers.parseJournal(executeSshCommand(srv, RemoteCommands.journal()))
-            if (srv.id != selectedServerId) return@launch
-            logs = if (level == "ALL") all else all.filter { it.level == level }
-            logsLoading = false
+            try {
+                // journalctl only exists on systemd hosts; pass the probed OS so BSD/macOS/Windows
+                // and non-systemd Linux get their own log source instead of silent empty output.
+                val raw = executeSshCommand(srv, RemoteCommands.journal(os = osByServer[srv.id].orEmpty()))
+                val all = RemoteParsers.parseJournal(raw)
+                if (srv.id != selectedServerId) return@launch
+                logsUnsupported = RemoteParsers.journalUnsupported(raw)
+                logs = if (level == "ALL") all else all.filter { it.level == level }
+            } finally {
+                // Cancellation (host switch) took the early return path and left the spinner on.
+                logsLoading = false
+            }
         }
     }
 
@@ -6180,20 +6215,24 @@ class AppViewModel @JvmOverloads constructor(
         hostMetricsJob?.cancel()
         hostMetricsJob = viewModelScope.launch {
             metricsLoading = true
-            val parsed = RemoteParsers.parseMetrics(executeSshCommand(srv, RemoteCommands.metricsFor(osByServer[srv.id].orEmpty())), srv.name)
-            if (srv.id != selectedServerId) return@launch
-            // This one-shot fetch can't compute per-core/network rates (those need two samples from
-            // the poller), so preserve whatever the poller already derived for this host.
-            val prev = hostMetricsById[srv.id]
-            val m = parsed.copy(
-                perCoreCpu = parsed.perCoreCpu.ifEmpty { prev?.perCoreCpu ?: emptyList() },
-                netInterfaces = parsed.netInterfaces.ifEmpty { prev?.netInterfaces ?: emptyList() },
-            )
-            hostMetrics = m
-            // Keep the shared map in sync so the Servers tab and Fleet always reflect the
-            // most-recent values fetched by the Monitor tab as well.
-            hostMetricsById[srv.id] = m
-            metricsLoading = false
+            try {
+                val parsed = RemoteParsers.parseMetrics(executeSshCommand(srv, RemoteCommands.metricsFor(osByServer[srv.id].orEmpty())), srv.name)
+                if (srv.id != selectedServerId) return@launch
+                // This one-shot fetch can't compute per-core/network rates (those need two samples
+                // from the poller), so preserve whatever the poller already derived for this host.
+                val prev = hostMetricsById[srv.id]
+                val m = parsed.copy(
+                    perCoreCpu = parsed.perCoreCpu.ifEmpty { prev?.perCoreCpu ?: emptyList() },
+                    netInterfaces = parsed.netInterfaces.ifEmpty { prev?.netInterfaces ?: emptyList() },
+                )
+                hostMetrics = m
+                // Keep the shared map in sync so the Servers tab and Fleet always reflect the
+                // most-recent values fetched by the Monitor tab as well.
+                hostMetricsById[srv.id] = m
+            } finally {
+                // Switching hosts takes the early return above; without this the spinner sticks.
+                metricsLoading = false
+            }
         }
     }
 
@@ -6203,11 +6242,14 @@ class AppViewModel @JvmOverloads constructor(
         processesJob?.cancel()
         processesJob = viewModelScope.launch {
             processesLoading = true
-            val list = RemoteParsers.parseProcesses(executeSshCommand(srv, RemoteCommands.processesFor(osByServer[srv.id].orEmpty())))
-            if (srv.id != selectedServerId) return@launch
-            processes = if (processSortByCpu) list.sortedByDescending { it.cpu }
-                        else list.sortedByDescending { it.mem }
-            processesLoading = false
+            try {
+                val list = RemoteParsers.parseProcesses(executeSshCommand(srv, RemoteCommands.processesFor(osByServer[srv.id].orEmpty())))
+                if (srv.id != selectedServerId) return@launch
+                processes = if (processSortByCpu) list.sortedByDescending { it.cpu }
+                            else list.sortedByDescending { it.mem }
+            } finally {
+                processesLoading = false
+            }
         }
     }
 
@@ -6222,12 +6264,15 @@ class AppViewModel @JvmOverloads constructor(
         cronJob?.cancel()
         cronJob = viewModelScope.launch {
             cronLoading = true
-            cronStatus = ""
-            val cmd = "crontab -l 2>/dev/null || true"
-            val out = executeSshCommand(srv, cmd).trim()
-            if (srv.id != selectedServerId) return@launch
-            cronText = out
-            cronLoading = false
+            try {
+                cronStatus = ""
+                val cmd = "crontab -l 2>/dev/null || true"
+                val out = executeSshCommand(srv, cmd).trim()
+                if (srv.id != selectedServerId) return@launch
+                cronText = out
+            } finally {
+                cronLoading = false
+            }
         }
     }
 
@@ -8460,6 +8505,18 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /**
+     * The file name [sftpArchiveSelection] would write for this selection, so the UI can warn before
+     * silently replacing an existing archive. Null when the name is timestamped (multi-item
+     * selections), which can never collide.
+     */
+    fun plannedArchiveName(format: String, only: SftpFile? = null): String? {
+        val names = if (only != null) listOf(only.name) else sftpSelected.toList()
+        if (names.size != 1) return null
+        val ext = when (format) { "zip" -> "zip"; "tar" -> "tar"; "7z" -> "7z"; else -> "tar.gz" }
+        return "${names.first().substringBeforeLast('.', names.first())}.$ext"
+    }
+
+    /**
      * Create an archive from the current selection (or a single [only] entry) in the current folder,
      * server-side via the host's zip/tar/7z. [format] is "zip" | "tar.gz" | "tar" | "7z". Refreshes on success.
      */
@@ -8617,11 +8674,64 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /**
+     * Compare clipboard items against the destination by CONTENT before pasting.
+     *
+     * Name, size and mtime are not proof — a copy tool reproduces mtime exactly and different files
+     * routinely share a size — so this hashes both sides when the sizes match. Populates
+     * [pasteConflicts] for the dialog; pastes straight away when nothing clashes. If the host has no
+     * digest tool, [pasteConflictUnverified] is set so the UI can say the comparison is unverified
+     * instead of implying certainty.
+     */
+    fun sftpBeginPaste() {
+        if (sftpClipboard.isEmpty() || sftpPasteRunning || pasteConflictScanRunning) return
+        val srv = selectedServer ?: return
+        val sources = sftpClipboard
+        val destDir = sftpPath.ifBlank { "/" }
+        viewModelScope.launch {
+            pasteConflictScanRunning = true
+            try {
+                val out = executeSshCommand(srv, RemoteCommands.compareForConflicts(destDir, sources))
+                val found = RemoteParsers.parseTransferConflicts(out)
+                pasteConflictUnverified = found.any { it.verdict == ConflictVerdict.UNKNOWN }
+                if (found.isEmpty()) sftpPaste() else pasteConflicts = found
+            } finally {
+                pasteConflictScanRunning = false
+            }
+        }
+    }
+
+    fun setPasteConflictAction(name: String, action: ConflictAction) {
+        pasteConflicts = pasteConflicts.map { if (it.name == name) it.copy(action = action) else it }
+    }
+
+    fun setAllPasteConflictActions(action: ConflictAction) {
+        pasteConflicts = pasteConflicts.map { it.copy(action = action) }
+    }
+
+    fun cancelPasteConflicts() {
+        pasteConflicts = emptyList()
+        pasteConflictUnverified = false
+    }
+
+    /** Apply the user's per-item choices, then run the paste with those resolutions. */
+    fun confirmPasteConflicts() {
+        val decided = pasteConflicts
+        pasteConflicts = emptyList()
+        sftpPaste(
+            skip = decided.filter { it.action == ConflictAction.SKIP }.mapTo(mutableSetOf()) { it.name },
+            keepBoth = decided.filter { it.action == ConflictAction.KEEP_BOTH }.mapTo(mutableSetOf()) { it.name },
+        )
+    }
+
+    /**
      * Paste the clipboard into the current directory. Done server-side via `cp -a` / `mv` over an
      * exec channel: directories are handled recursively and no bytes ever leave the host (far faster
      * than streaming a download+upload through the device, especially on high-latency links).
+     *
+     * [skip] names are never issued; [keepBoth] names land on a free "name (n).ext" so nothing is
+     * destroyed; everything else overwrites.
      */
-    fun sftpPaste() {
+    fun sftpPaste(skip: Set<String> = emptySet(), keepBoth: Set<String> = emptySet()) {
         if (sftpClipboard.isEmpty() || sftpPasteRunning) return
         val srv = selectedServer ?: return
         val sources = sftpClipboard
@@ -8632,14 +8742,9 @@ class AppViewModel @JvmOverloads constructor(
             sftpPasteRunning = true
             sftpError = null
             try {
-                val script = buildString {
-                    val op = if (isMove) "mv -f --" else "cp -a --"
-                    append("set -e; ")
-                    sources.forEachIndexed { i, src ->
-                        if (i > 0) append(" && ")
-                        append("$op ${shellQuote(src)} ${shellQuote(destDir)}/")
-                    }
-                }
+                // Honour the per-item decisions: skipped names are never issued, keep-both names
+                // land on a free "name (n).ext" so nothing is destroyed, the rest overwrite.
+                val script = RemoteCommands.pasteResolved(destDir, sources, isMove, skip, keepBoth)
                 // Same server-side cp/mv, optionally elevated so protected destinations work.
                 val out = if (sudo)
                     executeSshCommand(srv, RemoteCommands.sudoShWrap(script, srv.sudoPassword), stdin = RemoteCommands.sudoStdin(srv.sudoPassword)).trim()
@@ -10193,9 +10298,6 @@ class AppViewModel @JvmOverloads constructor(
         put("background_keep_alive", isBackgroundKeepAlive.toString())
         put("battery_saver_enabled", batterySaverEnabled.toString())
         put("battery_saver_threshold", batterySaverThresholdPct.toString())
-        // The lock grace is a preference, not a secret: it travels, but the PIN/lock/biometric
-        // keys stay device-local, so a restored grace sits unread until a lock is set up here.
-        put("app_lock_grace_ms", appLockGraceMs.toString())
         put("sftp_large_batch_file_threshold", sftpLargeBatchFileThreshold.toString())
         put("sftp_large_batch_bytes_threshold", sftpLargeBatchBytesThreshold.toString())
         put("backup_last_export_time", lastBackupExportTime.toString())
@@ -10376,60 +10478,66 @@ class AppViewModel @JvmOverloads constructor(
     fun exportBackup(uri: android.net.Uri, passphrase: String, context: android.content.Context, selection: BackupSelection, onResult: (Boolean, String) -> Unit) {
         val closedSelection = selection.withReferentialClosure()
         if (closedSelection.hasSensitiveData() && passphrase.length < 12) { onResult(false, "Passphrase must be at least 12 characters for backups."); return }
+        if (backupExportRunning) return
+        backupExportRunning = true
         viewModelScope.launch {
-            val srvs = repository.getAllServers()
-            val keys = repository.getAllKeys()
-            val profiles = repository.getAllProfiles()
-            val scripts = repository.getAllScripts()
-            val rules = repository.getAllRules()
-            val alertHistories = repository.getAlertHistory()
-            val wolTargets = repository.getAllWolTargets()
-            val networkShares = repository.getAllNetworkShares()
-            val portForwards = repository.getAllPortForwards()
-            val activeAlerts = repository.getActiveAlerts()
-            val settings = backupSettingsSnapshot(repository.getAllSettings())
-            // Counts shown in the result toast must match what buildBackupJson actually writes.
-            // Pristine default rules are filtered unless a selected active alert references them.
-            val scriptsForCount = customScriptsOnly(scripts)
-            val customRules = customRulesOnly(rules)
-            val serverIdsForCount = srvs.mapTo(mutableSetOf()) { it.id }
-            val ruleIdsForCount = backupRuleIdsForSelection(
-                customRuleIds = customRules.mapTo(mutableSetOf()) { it.id },
-                activeAlertRuleIds = activeAlerts
-                    .filter { it.serverId == 0 || it.serverId in serverIdsForCount }
-                    .mapTo(mutableSetOf()) { it.ruleId },
-                selection = closedSelection,
-            )
-            val rulesForCount = rules.count {
-                it.id in ruleIdsForCount && (it.serverId == 0 || it.serverId in serverIdsForCount)
-            }
-            val historyForCount = alertHistories.count {
-                it.serverId == 0 || it.serverId in serverIdsForCount
-            }
-            val portForwardsForCount = portForwards.count { it.serverId in serverIdsForCount }
-            val encrypted = closedSelection.hasSensitiveData()
-            val ok = withContext(Dispatchers.IO) {
-                try {
-                    val json = buildBackupJson(
-                        srvs, keys, profiles, scripts, rules, alertHistories, wolTargets,
-                        networkShares, portForwards, activeAlerts, settings, closedSelection
-                    )
-                    val payload = if (encrypted) encryptBackupJson(json, passphrase) else json
-                    context.contentResolver.openOutputStream(uri)?.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
-                        ?: return@withContext false
-                    true
-                } catch (e: Exception) {
-                    android.util.Log.w("AppViewModel", "Backup export failed", e)
-                    false
+            try {
+                val srvs = repository.getAllServers()
+                val keys = repository.getAllKeys()
+                val profiles = repository.getAllProfiles()
+                val scripts = repository.getAllScripts()
+                val rules = repository.getAllRules()
+                val alertHistories = repository.getAlertHistory()
+                val wolTargets = repository.getAllWolTargets()
+                val networkShares = repository.getAllNetworkShares()
+                val portForwards = repository.getAllPortForwards()
+                val activeAlerts = repository.getActiveAlerts()
+                val settings = backupSettingsSnapshot(repository.getAllSettings())
+                // Counts shown in the result toast must match what buildBackupJson actually writes.
+                // Pristine default rules are filtered unless a selected active alert references them.
+                val scriptsForCount = customScriptsOnly(scripts)
+                val customRules = customRulesOnly(rules)
+                val serverIdsForCount = srvs.mapTo(mutableSetOf()) { it.id }
+                val ruleIdsForCount = backupRuleIdsForSelection(
+                    customRuleIds = customRules.mapTo(mutableSetOf()) { it.id },
+                    activeAlertRuleIds = activeAlerts
+                        .filter { it.serverId == 0 || it.serverId in serverIdsForCount }
+                        .mapTo(mutableSetOf()) { it.ruleId },
+                    selection = closedSelection,
+                )
+                val rulesForCount = rules.count {
+                    it.id in ruleIdsForCount && (it.serverId == 0 || it.serverId in serverIdsForCount)
                 }
+                val historyForCount = alertHistories.count {
+                    it.serverId == 0 || it.serverId in serverIdsForCount
+                }
+                val portForwardsForCount = portForwards.count { it.serverId in serverIdsForCount }
+                val encrypted = closedSelection.hasSensitiveData()
+                val ok = withContext(Dispatchers.IO) {
+                    try {
+                        val json = buildBackupJson(
+                            srvs, keys, profiles, scripts, rules, alertHistories, wolTargets,
+                            networkShares, portForwards, activeAlerts, settings, closedSelection
+                        )
+                        val payload = if (encrypted) encryptBackupJson(json, passphrase) else json
+                        context.contentResolver.openOutputStream(uri)?.use { it.write(payload.toByteArray(Charsets.UTF_8)) }
+                            ?: return@withContext false
+                        true
+                    } catch (e: Exception) {
+                        android.util.Log.w("AppViewModel", "Backup export failed", e)
+                        false
+                    }
+                }
+                val mode = if (encrypted) "Encrypted" else "Plain"
+                if (ok) {
+                    val now = System.currentTimeMillis()
+                    lastBackupExportTime = now
+                    repository.insertSetting("backup_last_export_time", now.toString())
+                }
+                onResult(ok, if (ok) "$mode backup written: ${if (closedSelection.servers) srvs.size else 0} servers, ${if (closedSelection.sshKeys) keys.size else 0} keys, ${if (closedSelection.credentialProfiles) profiles.size else 0} profiles, ${if (closedSelection.scripts) scriptsForCount.size else 0} scripts, ${if (closedSelection.alertRules) rulesForCount else 0} rules, ${if (closedSelection.alertHistory) historyForCount else 0} alert history, ${if (closedSelection.wolTargets) wolTargets.size else 0} WoL, ${if (closedSelection.networkShares) networkShares.size else 0} shares, ${if (closedSelection.portForwards) portForwardsForCount else 0} tunnels, ${if (closedSelection.settings) settings.size else 0} settings." else "Export failed.")
+            } finally {
+                backupExportRunning = false
             }
-            val mode = if (encrypted) "Encrypted" else "Plain"
-            if (ok) {
-                val now = System.currentTimeMillis()
-                lastBackupExportTime = now
-                repository.insertSetting("backup_last_export_time", now.toString())
-            }
-            onResult(ok, if (ok) "$mode backup written: ${if (closedSelection.servers) srvs.size else 0} servers, ${if (closedSelection.sshKeys) keys.size else 0} keys, ${if (closedSelection.credentialProfiles) profiles.size else 0} profiles, ${if (closedSelection.scripts) scriptsForCount.size else 0} scripts, ${if (closedSelection.alertRules) rulesForCount else 0} rules, ${if (closedSelection.alertHistory) historyForCount else 0} alert history, ${if (closedSelection.wolTargets) wolTargets.size else 0} WoL, ${if (closedSelection.networkShares) networkShares.size else 0} shares, ${if (closedSelection.portForwards) portForwardsForCount else 0} tunnels, ${if (closedSelection.settings) settings.size else 0} settings." else "Export failed.")
         }
     }
 
@@ -10447,574 +10555,580 @@ class AppViewModel @JvmOverloads constructor(
         onResult: (Boolean, String) -> Unit,
     ) {
         val closedSelection = selection.withReferentialClosure()
+        if (backupRestoreRunning) return
+        backupRestoreRunning = true
         viewModelScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                backupRestoreMutex.withLock {
-                try {
-                    val plain = decryptBackupToJson(envelopeText, passphrase)
-                    val root = org.json.JSONObject(plain)
-                    validateBackupRoot(root)
-                    val knownHostsBefore = SshHostKeyTrust.exportEntries()
-                    val crashLogsBefore = CrashLog.all(getApplication())
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    backupRestoreMutex.withLock {
                     try {
-                    repository.inTransaction {
-                    fun serverSelected(o: org.json.JSONObject, index: Int): Boolean {
-                        if (selectedBackupServerIds == null) return true
-                        val oldId = o.optInt("id", 0).takeIf { it != 0 } ?: (index + 1)
-                        return oldId in selectedBackupServerIds
-                    }
-                    fun sameServerEndpoint(existing: ServerEntity, backup: org.json.JSONObject): Boolean =
-                        existing.host.equals(backup.optString("host"), ignoreCase = true) &&
-                            existing.port == backup.optInt("port", 22) &&
-                            existing.username == backup.optString("username")
+                        val plain = decryptBackupToJson(envelopeText, passphrase)
+                        val root = org.json.JSONObject(plain)
+                        validateBackupRoot(root)
+                        val knownHostsBefore = SshHostKeyTrust.exportEntries()
+                        val crashLogsBefore = CrashLog.all(getApplication())
+                        try {
+                        repository.inTransaction {
+                        fun serverSelected(o: org.json.JSONObject, index: Int): Boolean {
+                            if (selectedBackupServerIds == null) return true
+                            val oldId = o.optInt("id", 0).takeIf { it != 0 } ?: (index + 1)
+                            return oldId in selectedBackupServerIds
+                        }
+                        fun sameServerEndpoint(existing: ServerEntity, backup: org.json.JSONObject): Boolean =
+                            existing.host.equals(backup.optString("host"), ignoreCase = true) &&
+                                existing.port == backup.optInt("port", 22) &&
+                                existing.username == backup.optString("username")
 
-                    val allowedKeyAliases = mutableSetOf<String>()
-                    val allowedProfileOldIds = mutableSetOf<Int>()
-                    if (closedSelection.servers) {
+                        val allowedKeyAliases = mutableSetOf<String>()
+                        val allowedProfileOldIds = mutableSetOf<Int>()
+                        if (closedSelection.servers) {
+                            val arr = root.optJSONArray("servers") ?: org.json.JSONArray()
+                            var availableHostSlots = (hostLimit - repository.getAllServers().size).coerceAtLeast(0)
+                            for (i in 0 until arr.length()) {
+                                val o = arr.getJSONObject(i)
+                                if (!serverSelected(o, i)) continue
+                                val nm = o.getString("name")
+                                val existingNamedServer = repository.getServerByName(nm)
+                                if (existingNamedServer != null) {
+                                    require(sameServerEndpoint(existingNamedServer, o)) {
+                                        "Host name '$nm' already belongs to a different endpoint; rename one host before restoring."
+                                    }
+                                    allowedKeyAliases.add(o.optString("authKeyAlias"))
+                                    allowedKeyAliases.add(o.optString("proxyKeyAlias"))
+                                    allowedProfileOldIds.add(o.optInt("authProfileId", 0))
+                                    continue
+                                }
+                                if (availableHostSlots > 0) {
+                                    availableHostSlots--
+                                    allowedKeyAliases.add(o.optString("authKeyAlias"))
+                                    allowedKeyAliases.add(o.optString("proxyKeyAlias"))
+                                    allowedProfileOldIds.add(o.optInt("authProfileId", 0))
+                                }
+                            }
+                        }
+                        if (closedSelection.networkShares) {
+                            val shareArr = root.optJSONArray("networkShares") ?: org.json.JSONArray()
+                            for (i in 0 until shareArr.length()) {
+                                val profileId = shareArr.getJSONObject(i).optInt("authProfileId", 0)
+                                if (profileId != 0) allowedProfileOldIds.add(profileId)
+                            }
+                        }
+                        val profileArr = root.optJSONArray("credentialProfiles") ?: org.json.JSONArray()
+                        for (i in 0 until profileArr.length()) {
+                            val profile = profileArr.getJSONObject(i)
+                            val oldId = profile.optInt("id", 0)
+                            if ((closedSelection.servers || closedSelection.networkShares) && oldId !in allowedProfileOldIds) continue
+                            allowedKeyAliases.add(profile.optString("keyAlias"))
+                        }
+                        allowedKeyAliases.remove("")
+
+                        val existingKeys = repository.getAllKeys().map { it.alias }.toMutableSet()
+                        val existingProfiles = repository.getAllProfiles().associateBy { it.profileName }.toMutableMap()
+                        var availableCredSlots = (credentialProfileLimit - existingProfiles.size - existingKeys.size).coerceAtLeast(0)
+
+                        val keyArr = root.optJSONArray("sshKeys") ?: org.json.JSONArray()
+                        var importedKeys = 0
+                        var skippedKeysByLimit = 0
+                        for (i in 0 until if (closedSelection.sshKeys) keyArr.length() else 0) {
+                            val o = keyArr.getJSONObject(i)
+                            val alias = o.getString("alias")
+                            if ((closedSelection.servers || closedSelection.networkShares) && alias !in allowedKeyAliases) continue
+                            if (alias in existingKeys) continue
+                            if (availableCredSlots <= 0) {
+                                skippedKeysByLimit++
+                                continue
+                            }
+                            repository.insertKey(
+                                SshKeyEntity(
+                                    alias = alias,
+                                    keyType = o.optString("keyType", "RSA"),
+                                    privateKey = o.optString("privateKey"),
+                                    publicKey = o.optString("publicKey"),
+                                    fingerprint = o.optString("fingerprint").ifBlank {
+                                        o.optString("publicKey").takeIf { it.startsWith("ssh-") }?.let { sshPublicKeyFingerprint(it) }
+                                            ?: keyMaterialFingerprint(o.optString("privateKey"))
+                                    },
+                                )
+                            )
+                            existingKeys.add(alias)
+                            importedKeys++
+                            availableCredSlots--
+                        }
+
+                        val profileIdMap = mutableMapOf<Int, Int>()
+                        var importedProfiles = 0
+                        var skippedProfilesByLimit = 0
+                        for (i in 0 until if (closedSelection.credentialProfiles) profileArr.length() else 0) {
+                            val o = profileArr.getJSONObject(i)
+                            val name = o.getString("profileName")
+                            val oldId = o.optInt("id", 0)
+                            if ((closedSelection.servers || closedSelection.networkShares) && oldId != 0 && !allowedProfileOldIds.contains(oldId)) continue
+                            val existing = existingProfiles[name]
+                            if (existing != null) {
+                                require(
+                                    existing.username == o.optString("username") &&
+                                        existing.authType == o.optString("authType", "password") &&
+                                        existing.keyAlias == jsonNullableString(o, "keyAlias") &&
+                                        existing.password == jsonNullableString(o, "password")
+                                ) {
+                                    "Credential profile '$name' already exists with different credentials."
+                                }
+                                if (oldId != 0) profileIdMap[oldId] = existing.id
+                                continue
+                            }
+                            if (availableCredSlots <= 0) {
+                                skippedProfilesByLimit++
+                                continue
+                            }
+                            val profile = CredentialProfileEntity(
+                                profileName = name,
+                                username = o.optString("username"),
+                                authType = o.optString("authType", "password"),
+                                password = jsonNullableString(o, "password"),
+                                keyAlias = jsonNullableString(o, "keyAlias"),
+                                groupName = o.optString("groupName", "General").ifBlank { "General" },
+                            )
+                            val newId = repository.insertProfile(
+                                profile
+                            ).toInt()
+                            if (oldId != 0) profileIdMap[oldId] = newId
+                            existingProfiles[name] = profile.copy(id = newId)
+                            importedProfiles++
+                            availableCredSlots--
+                        }
+
                         val arr = root.optJSONArray("servers") ?: org.json.JSONArray()
+                        // Maps backup server ids to restored ids so server-scoped records (alert rules,
+                        // backup jobs) can be re-pointed even when the local ids differ.
+                        val serverIdMap = mutableMapOf<Int, Int>()
+                        // Hosts whose servers were actually restored or already present locally — their
+                        // pinned trust keys may be imported. Hosts skipped by the limit are excluded so
+                        // restore never leaves orphaned trust entries for servers that don't exist.
+                        val restoredHosts = mutableSetOf<Pair<String, Int>>()
+                        var imported = 0
+                        var skippedServersByLimit = 0
                         var availableHostSlots = (hostLimit - repository.getAllServers().size).coerceAtLeast(0)
                         for (i in 0 until arr.length()) {
                             val o = arr.getJSONObject(i)
                             if (!serverSelected(o, i)) continue
                             val nm = o.getString("name")
-                            val existingNamedServer = repository.getServerByName(nm)
-                            if (existingNamedServer != null) {
-                                require(sameServerEndpoint(existingNamedServer, o)) {
+                            val oldId = o.optInt("id", 0)
+                            val existing = repository.getServerByName(nm)
+                            if (existing != null) {
+                                require(sameServerEndpoint(existing, o)) {
                                     "Host name '$nm' already belongs to a different endpoint; rename one host before restoring."
                                 }
-                                allowedKeyAliases.add(o.optString("authKeyAlias"))
-                                allowedKeyAliases.add(o.optString("proxyKeyAlias"))
-                                allowedProfileOldIds.add(o.optInt("authProfileId", 0))
+                                if (oldId != 0) serverIdMap[oldId] = existing.id
+                                restoredHosts.add(existing.host to existing.port)
                                 continue
                             }
-                            if (availableHostSlots > 0) {
-                                availableHostSlots--
-                                allowedKeyAliases.add(o.optString("authKeyAlias"))
-                                allowedKeyAliases.add(o.optString("proxyKeyAlias"))
-                                allowedProfileOldIds.add(o.optInt("authProfileId", 0))
+                            if (!closedSelection.servers) continue
+                            if (availableHostSlots <= 0) {
+                                skippedServersByLimit++
+                                continue
+                            }
+                            val oldProfileId = if (o.has("authProfileId") && !o.isNull("authProfileId")) o.optInt("authProfileId") else 0
+                            val newId = repository.insertServer(
+                                ServerEntity(
+                                    name = nm, host = o.getString("host"), port = o.optInt("port", 22),
+                                    username = o.optString("username"), groupName = o.optString("groupName", "Default"),
+                                    serverColor = o.optString("serverColor", "Default"), authType = o.optString("authType", "password"),
+                                    authKeyAlias = jsonNullableString(o, "authKeyAlias"),
+                                    authPassword = jsonNullableString(o, "authPassword"),
+                                    sudoPassword = o.optString("sudoPassword", ""),
+                                    authProfileId = profileIdMap[oldProfileId],
+                                    notes = o.optString("notes", ""), keepAlive = o.optInt("keepAlive", 30),
+                                    sshCompression = o.optBoolean("sshCompression", false),
+                                    persistentSession = o.optBoolean("persistentSession", false),
+                                    agentForwarding = o.optBoolean("agentForwarding", false),
+                                    proxyCommand = o.optString("proxyCommand", ""),
+                                    proxyType = o.optString("proxyType", "none"),
+                                    proxyHost = o.optString("proxyHost", ""),
+                                    proxyPort = o.optInt("proxyPort", 0),
+                                    proxyUser = o.optString("proxyUser", ""),
+                                    proxyPassword = o.optString("proxyPassword", ""),
+                                    proxyKeyAlias = o.optString("proxyKeyAlias", "").takeIf { it.isNotBlank() },
+                                    status = "offline",
+                                )
+                            ).toInt()
+                            if (oldId != 0) serverIdMap[oldId] = newId
+                            restoredHosts.add(o.getString("host") to o.optInt("port", 22))
+                            imported++
+                            availableHostSlots--
+                        }
+
+                        // Pinned host keys travel with the servers (schema 3+). Only import keys for
+                        // hosts actually restored (or already present) so a limited restore doesn't
+                        // leave orphaned trust entries for skipped hosts. Existing pins still win, so a
+                        // backup can never overwrite a key this device already verified.
+                        var skippedHostKeysByLimit = 0
+                        if (closedSelection.servers) {
+                            root.optJSONObject("knownHosts")?.let { kh ->
+                                val entries = mutableMapOf<String, String>()
+                                kh.keys().forEach { k -> entries[k] = kh.optString(k) }
+                                val kept = SshHostKeyTrust.filterEntriesForHosts(entries, restoredHosts)
+                                skippedHostKeysByLimit = entries.size - kept.size
+                                SshHostKeyTrust.importEntries(kept)
                             }
                         }
-                    }
-                    if (closedSelection.networkShares) {
+
+                        // Quick scripts (dedup by category + name).
+                        val existingScripts = repository.getAllScripts()
+                            .map { it.category to it.name }
+                            .toMutableSet()
+                        val scriptArr = root.optJSONArray("quickScripts") ?: org.json.JSONArray()
+                        var importedScripts = 0
+                        for (i in 0 until if (closedSelection.scripts) scriptArr.length() else 0) {
+                            val o = scriptArr.getJSONObject(i)
+                            val name = o.optString("name")
+                            val category = o.optString("category", "General").ifBlank { "General" }
+                            val scriptKey = category to name
+                            if (name.isBlank() || scriptKey in existingScripts) continue
+                            repository.insertScript(
+                                QuickScriptEntity(
+                                    emoji = o.optString("emoji", "LIN"), name = name, command = o.optString("command"),
+                                    color = o.optString("color", "cyan"), longRunning = o.optBoolean("longRunning", false),
+                                    category = category, sortOrder = o.optInt("sortOrder", 0),
+                                    availableForQuick = o.optBoolean("availableForQuick", category != "Fleet"),
+                                    availableForFleet = o.optBoolean("availableForFleet", category == "Fleet"),
+                                    targetOs = o.optString("targetOs", "Any").ifBlank { "Any" },
+                                    targetSystem = o.optString("targetSystem", "Any").ifBlank { "Any" },
+                                    notes = o.optString("notes", ""),
+                                )
+                            )
+                            existingScripts.add(scriptKey)
+                            importedScripts++
+                        }
+
+                        // Alert rules (re-point serverId; dedup by server+metric+threshold+window).
+                        val existingRuleKeys = repository.getAllRules()
+                            .map { "${it.serverId}|${it.metricName}|${it.thresholdValue}|${it.triggerWindow}" }.toMutableSet()
+                        val ruleArr = root.optJSONArray("alertRules") ?: org.json.JSONArray()
+                        val ruleIdMap = mutableMapOf<Int, Int>()
+                        var importedRules = 0
+                        for (i in 0 until if (closedSelection.alertRules) ruleArr.length() else 0) {
+                            val o = ruleArr.getJSONObject(i)
+                            val oldRuleId = o.optInt("id", 0)
+                            val oldServerId = o.optInt("serverId", 0)
+                            val mappedServerId = remapBackupServerId(oldServerId, serverIdMap) ?: continue
+                            val threshold = o.optDouble("thresholdValue", 0.0).toFloat()
+                            val window = o.optString("triggerWindow", "5m")
+                            val metric = o.optString("metricName")
+                            val key = "$mappedServerId|$metric|$threshold|$window"
+                            if (key in existingRuleKeys) {
+                                if (oldRuleId != 0) {
+                                    repository.getAllRules().find {
+                                        it.serverId == mappedServerId && it.metricName == metric && it.thresholdValue == threshold && it.triggerWindow == window
+                                    }?.let { ruleIdMap[oldRuleId] = it.id }
+                                }
+                                continue
+                            }
+                            repository.insertRule(
+                                AlertRuleEntity(
+                                    serverId = mappedServerId, metricName = metric,
+                                    mountPoint = o.optString("mountPoint", "/"), thresholdValue = threshold,
+                                    severity = o.optString("severity", "WARNING"), triggerWindow = window,
+                                    enabled = o.optBoolean("enabled", true),
+                                    notes = o.optString("notes", ""),
+                                )
+                            )
+                            repository.getAllRules().find {
+                                it.serverId == mappedServerId && it.metricName == metric && it.thresholdValue == threshold && it.triggerWindow == window
+                            }?.let { restoredRule ->
+                                if (oldRuleId != 0) ruleIdMap[oldRuleId] = restoredRule.id
+                            }
+                            existingRuleKeys.add(key)
+                            importedRules++
+                        }
+
+                        val existingActiveAlertsByKey = repository.getActiveAlerts()
+                            .associateBy { "${it.ruleId}|${it.serverId}|${it.metricName}" }.toMutableMap()
+                        val activeAlertIdMap = mutableMapOf<Int, Int>()
+                        val activeAlertArr = root.optJSONArray("activeAlerts") ?: org.json.JSONArray()
+                        var importedActiveAlerts = 0
+                        for (i in 0 until if (closedSelection.activeAlerts) activeAlertArr.length() else 0) {
+                            val o = activeAlertArr.getJSONObject(i)
+                            val oldActiveAlertId = o.optInt("id", 0)
+                            val oldServerId = o.optInt("serverId", 0)
+                            val mappedServerId = remapBackupServerId(oldServerId, serverIdMap) ?: continue
+                            val mappedRuleId = ruleIdMap[o.optInt("ruleId", 0)] ?: continue
+                            val metric = o.optString("metricName")
+                            val key = "$mappedRuleId|$mappedServerId|$metric"
+                            val existingAlert = existingActiveAlertsByKey[key]
+                            if (existingAlert != null) {
+                                if (oldActiveAlertId > 0) activeAlertIdMap[oldActiveAlertId] = existingAlert.id
+                                continue
+                            }
+                            val restoredAlert = ActiveAlertEntity(
+                                    ruleId = mappedRuleId, serverId = mappedServerId, metricName = metric,
+                                    currentValue = o.optDouble("currentValue", 0.0).toFloat(),
+                                    thresholdValue = o.optDouble("thresholdValue", 0.0).toFloat(),
+                                    severity = o.optString("severity", "WARNING"),
+                                    triggeredTime = o.optLong("triggeredTime", System.currentTimeMillis()),
+                                    acknowledged = o.optBoolean("acknowledged", false),
+                                    mutedUntil = o.optLong("mutedUntil", 0L),
+                                )
+                            val newAlertId = repository.insertAlert(restoredAlert).toInt()
+                            if (oldActiveAlertId > 0) activeAlertIdMap[oldActiveAlertId] = newAlertId
+                            existingActiveAlertsByKey[key] = restoredAlert.copy(id = newAlertId)
+                            importedActiveAlerts++
+                        }
+
+                        // Alert history (re-point serverId; keep newest N after import).
+                        val historyArr = root.optJSONArray("alertHistory") ?: org.json.JSONArray()
+                        val existingHistory = repository.getAlertHistory()
+                        val usedHistoryActiveIds = existingHistory.mapTo(mutableSetOf()) { it.activeAlertId }
+                        val existingHistoryKeys = existingHistory.mapTo(mutableSetOf()) {
+                            "${it.serverId}|${it.metricName}|${it.triggeredTime}|${it.historyTime}|${it.status}"
+                        }
+                        var nextSyntheticActiveId = -1
+                        fun allocateHistoryActiveId(preferred: Int?): Int {
+                            if (preferred != null && preferred !in usedHistoryActiveIds) {
+                                usedHistoryActiveIds.add(preferred)
+                                return preferred
+                            }
+                            while (nextSyntheticActiveId in usedHistoryActiveIds) nextSyntheticActiveId--
+                            return nextSyntheticActiveId.also { usedHistoryActiveIds.add(it); nextSyntheticActiveId-- }
+                        }
+                        var importedHistory = 0
+                        for (i in 0 until if (closedSelection.alertHistory) historyArr.length() else 0) {
+                            val o = historyArr.getJSONObject(i)
+                            val mappedServerId = remapBackupServerId(o.optInt("serverId", 0), serverIdMap) ?: continue
+                            val historyTime = o.optLong("historyTime", System.currentTimeMillis())
+                            val triggeredTime = o.optLong("triggeredTime", historyTime)
+                            val metricName = o.optString("metricName")
+                            val status = o.optString("status", "acknowledged")
+                            val historyKey = "$mappedServerId|$metricName|$triggeredTime|$historyTime|$status"
+                            if (historyKey in existingHistoryKeys) continue
+                            val sourceActiveId = o.optInt("activeAlertId", 0)
+                            repository.insertAlertHistory(
+                                AlertHistoryEntity(
+                                    activeAlertId = allocateHistoryActiveId(activeAlertIdMap[sourceActiveId]),
+                                    serverId = mappedServerId,
+                                    serverName = repository.getServerById(mappedServerId)?.name ?: o.optString("serverName", "server"),
+                                    metricName = metricName,
+                                    currentValue = o.optDouble("currentValue", 0.0).toFloat(),
+                                    thresholdValue = o.optDouble("thresholdValue", 0.0).toFloat(),
+                                    severity = o.optString("severity", "WARNING"),
+                                    triggeredTime = triggeredTime,
+                                    historyTime = historyTime,
+                                    status = status,
+                                )
+                            )
+                            existingHistoryKeys.add(historyKey)
+                            importedHistory++
+                        }
+                        if (closedSelection.alertHistory) repository.pruneAlertHistoryPerServer(alertHistoryLimit)
+
+                        // Wake-on-LAN targets (dedup by MAC).
+                        val existingWol = repository.getAllWolTargets().map { it.macAddress.lowercase() }.toMutableSet()
+                        val wolArr = root.optJSONArray("wolTargets") ?: org.json.JSONArray()
+                        var importedWol = 0
+                        for (i in 0 until if (closedSelection.wolTargets) wolArr.length() else 0) {
+                            val o = wolArr.getJSONObject(i)
+                            val mac = o.optString("macAddress")
+                            if (mac.isBlank() || mac.lowercase() in existingWol) continue
+                            repository.insertWolTarget(
+                                WolTargetEntity(
+                                    name = o.optString("name", "Target"), macAddress = mac,
+                                    broadcastIp = o.optString("broadcastIp", "192.168.1.255"),
+                                    ipAddress = o.optString("ipAddress", ""),
+                                    port = o.optInt("port", 9), notes = o.optString("notes", ""),
+                                    lastWokenTime = o.optLong("lastWokenTime", 0L),
+                                )
+                            )
+                            existingWol.add(mac.lowercase())
+                            importedWol++
+                        }
+
+                        // Network shares (dedup by endpoint + path; auth profile ids are re-pointed).
+                        // shareIdMap tracks old id → restored/existing id so per-share settings
+                        // (share_bookmarks_{id}) can follow their share, mirroring serverIdMap.
+                        val existingSharesByKey = repository.getAllNetworkShares()
+                            .associateBy { "${it.protocol.uppercase(Locale.ROOT)}|${it.address.lowercase(Locale.ROOT)}|${it.port}|${it.sharePath.trim('/')}" }
+                            .toMutableMap()
+                        val existingShareKeys = existingSharesByKey.keys.toMutableSet()
+                        val shareIdMap = mutableMapOf<Int, Int>()
                         val shareArr = root.optJSONArray("networkShares") ?: org.json.JSONArray()
-                        for (i in 0 until shareArr.length()) {
-                            val profileId = shareArr.getJSONObject(i).optInt("authProfileId", 0)
-                            if (profileId != 0) allowedProfileOldIds.add(profileId)
-                        }
-                    }
-                    val profileArr = root.optJSONArray("credentialProfiles") ?: org.json.JSONArray()
-                    for (i in 0 until profileArr.length()) {
-                        val profile = profileArr.getJSONObject(i)
-                        val oldId = profile.optInt("id", 0)
-                        if ((closedSelection.servers || closedSelection.networkShares) && oldId !in allowedProfileOldIds) continue
-                        allowedKeyAliases.add(profile.optString("keyAlias"))
-                    }
-                    allowedKeyAliases.remove("")
-
-                    val existingKeys = repository.getAllKeys().map { it.alias }.toMutableSet()
-                    val existingProfiles = repository.getAllProfiles().associateBy { it.profileName }.toMutableMap()
-                    var availableCredSlots = (credentialProfileLimit - existingProfiles.size - existingKeys.size).coerceAtLeast(0)
-
-                    val keyArr = root.optJSONArray("sshKeys") ?: org.json.JSONArray()
-                    var importedKeys = 0
-                    var skippedKeysByLimit = 0
-                    for (i in 0 until if (closedSelection.sshKeys) keyArr.length() else 0) {
-                        val o = keyArr.getJSONObject(i)
-                        val alias = o.getString("alias")
-                        if ((closedSelection.servers || closedSelection.networkShares) && alias !in allowedKeyAliases) continue
-                        if (alias in existingKeys) continue
-                        if (availableCredSlots <= 0) {
-                            skippedKeysByLimit++
-                            continue
-                        }
-                        repository.insertKey(
-                            SshKeyEntity(
-                                alias = alias,
-                                keyType = o.optString("keyType", "RSA"),
-                                privateKey = o.optString("privateKey"),
-                                publicKey = o.optString("publicKey"),
-                                fingerprint = o.optString("fingerprint").ifBlank {
-                                    o.optString("publicKey").takeIf { it.startsWith("ssh-") }?.let { sshPublicKeyFingerprint(it) }
-                                        ?: keyMaterialFingerprint(o.optString("privateKey"))
-                                },
-                            )
-                        )
-                        existingKeys.add(alias)
-                        importedKeys++
-                        availableCredSlots--
-                    }
-
-                    val profileIdMap = mutableMapOf<Int, Int>()
-                    var importedProfiles = 0
-                    var skippedProfilesByLimit = 0
-                    for (i in 0 until if (closedSelection.credentialProfiles) profileArr.length() else 0) {
-                        val o = profileArr.getJSONObject(i)
-                        val name = o.getString("profileName")
-                        val oldId = o.optInt("id", 0)
-                        if ((closedSelection.servers || closedSelection.networkShares) && oldId != 0 && !allowedProfileOldIds.contains(oldId)) continue
-                        val existing = existingProfiles[name]
-                        if (existing != null) {
-                            require(
-                                existing.username == o.optString("username") &&
-                                    existing.authType == o.optString("authType", "password") &&
-                                    existing.keyAlias == jsonNullableString(o, "keyAlias") &&
-                                    existing.password == jsonNullableString(o, "password")
-                            ) {
-                                "Credential profile '$name' already exists with different credentials."
+                        var importedNetworkShares = 0
+                        for (i in 0 until if (closedSelection.networkShares) shareArr.length() else 0) {
+                            val o = shareArr.getJSONObject(i)
+                            val protocol = o.optString("protocol", "SMB").uppercase(Locale.ROOT)
+                            val address = o.optString("address")
+                            val port = o.optInt("port", defaultNetworkSharePort(protocol))
+                            val sharePath = o.optString("sharePath", "").trim('/')
+                            if (address.isBlank()) continue
+                            val oldShareId = o.optInt("id", 0)
+                            val key = "$protocol|${address.lowercase(Locale.ROOT)}|$port|$sharePath"
+                            if (key in existingShareKeys) {
+                                // Duplicate of a share we already have — its bookmarks re-point there.
+                                existingSharesByKey[key]?.let { if (oldShareId != 0) shareIdMap[oldShareId] = it.id }
+                                continue
                             }
-                            if (oldId != 0) profileIdMap[oldId] = existing.id
-                            continue
+                            val oldProfileId = o.optInt("authProfileId", 0)
+                            val newShareId = repository.insertNetworkShare(
+                                NetworkShareEntity(
+                                    name = o.optString("name", "$protocol $address"),
+                                    protocol = protocol,
+                                    address = address,
+                                    port = port,
+                                    sharePath = sharePath,
+                                    workgroup = o.optString("workgroup", ""),
+                                    username = o.optString("username", ""),
+                                    password = o.optString("password", ""),
+                                    authProfileId = profileIdMap[oldProfileId],
+                                    anonymous = o.optBoolean("anonymous", true),
+                                    // Old backups predate the flag; default from the same port
+                                    // heuristic the DB migration uses so behavior doesn't change.
+                                    useHttps = o.optBoolean("useHttps", protocol == "WEBDAV" && (port == 443 || port == 8443)),
+                                    notes = o.optString("notes", ""),
+                                    lastChecked = o.optLong("lastChecked", 0L),
+                                    lastStatus = o.optString("lastStatus", "unknown"),
+                                )
+                            )
+                            if (oldShareId != 0) shareIdMap[oldShareId] = newShareId.toInt()
+                            existingShareKeys.add(key)
+                            importedNetworkShares++
                         }
-                        if (availableCredSlots <= 0) {
-                            skippedProfilesByLimit++
-                            continue
-                        }
-                        val profile = CredentialProfileEntity(
-                            profileName = name,
-                            username = o.optString("username"),
-                            authType = o.optString("authType", "password"),
-                            password = jsonNullableString(o, "password"),
-                            keyAlias = jsonNullableString(o, "keyAlias"),
-                            groupName = o.optString("groupName", "General").ifBlank { "General" },
-                        )
-                        val newId = repository.insertProfile(
-                            profile
-                        ).toInt()
-                        if (oldId != 0) profileIdMap[oldId] = newId
-                        existingProfiles[name] = profile.copy(id = newId)
-                        importedProfiles++
-                        availableCredSlots--
-                    }
 
-                    val arr = root.optJSONArray("servers") ?: org.json.JSONArray()
-                    // Maps backup server ids to restored ids so server-scoped records (alert rules,
-                    // backup jobs) can be re-pointed even when the local ids differ.
-                    val serverIdMap = mutableMapOf<Int, Int>()
-                    // Hosts whose servers were actually restored or already present locally — their
-                    // pinned trust keys may be imported. Hosts skipped by the limit are excluded so
-                    // restore never leaves orphaned trust entries for servers that don't exist.
-                    val restoredHosts = mutableSetOf<Pair<String, Int>>()
-                    var imported = 0
-                    var skippedServersByLimit = 0
-                    var availableHostSlots = (hostLimit - repository.getAllServers().size).coerceAtLeast(0)
-                    for (i in 0 until arr.length()) {
-                        val o = arr.getJSONObject(i)
-                        if (!serverSelected(o, i)) continue
-                        val nm = o.getString("name")
-                        val oldId = o.optInt("id", 0)
-                        val existing = repository.getServerByName(nm)
-                        if (existing != null) {
-                            require(sameServerEndpoint(existing, o)) {
-                                "Host name '$nm' already belongs to a different endpoint; rename one host before restoring."
+                        // Port-forward definitions follow their restored SSH host. They are never
+                        // auto-started as part of restore: importing data must not open listeners or
+                        // create remote forwards without a fresh user action on this device.
+                        val existingTunnelKeys = repository.getAllPortForwards().mapTo(mutableSetOf()) {
+                            "${it.serverId}|${it.kind}|${it.bindHost}|${it.bindPort}|${it.destHost}|${it.destPort}"
+                        }
+                        val portForwardArr = root.optJSONArray("portForwards") ?: org.json.JSONArray()
+                        var importedPortForwards = 0
+                        for (i in 0 until if (closedSelection.portForwards) portForwardArr.length() else 0) {
+                            val o = portForwardArr.getJSONObject(i)
+                            val serverId = serverIdMap[o.optInt("serverId", 0)] ?: continue
+                            val kind = o.optString("kind", "local")
+                            if (kind !in setOf("local", "remote", "dynamic")) continue
+                            val bindHost = o.optString("bindHost", "127.0.0.1").ifBlank { "127.0.0.1" }
+                            val bindPort = o.optInt("bindPort", 0)
+                            val destHost = o.optString("destHost", "")
+                            val destPort = o.optInt("destPort", 0)
+                            if (bindPort !in 1..65_535) continue
+                            if (kind != "dynamic" && (destHost.isBlank() || destPort !in 1..65_535)) continue
+                            val normalizedDestHost = if (kind == "dynamic") "" else destHost
+                            val normalizedDestPort = if (kind == "dynamic") 0 else destPort
+                            val key = "$serverId|$kind|$bindHost|$bindPort|$normalizedDestHost|$normalizedDestPort"
+                            if (key in existingTunnelKeys) continue
+                            repository.insertPortForward(
+                                PortForwardEntity(
+                                    serverId = serverId,
+                                    name = o.optString("name", "Restored tunnel").take(120),
+                                    kind = kind,
+                                    bindHost = bindHost.take(255),
+                                    bindPort = bindPort,
+                                    destHost = normalizedDestHost.take(255),
+                                    destPort = normalizedDestPort,
+                                    autoStart = false,
+                                )
+                            )
+                            existingTunnelKeys.add(key)
+                            importedPortForwards++
+                        }
+
+                        // App settings / config (overwrite by key — full restore of preferences).
+                        val settingsObj = root.optJSONObject("settings")
+                        var importedSettings = 0
+                        if (settingsObj != null && closedSelection.settings) {
+                            // Defensive: never restore device-local security keys even if an old backup carried them.
+                            val securityKeys = setOf(
+                                "app_pin", "app_lock_enabled", "biometrics_enabled",
+                                "pin_failed_attempts", "pin_locked_until",
+                            )
+                            val it = settingsObj.keys()
+                            // Per-endpoint settings are keyed by the OLD server/share id; re-point them
+                            // to the restored id. If the owning endpoint wasn't restored, skip the
+                            // setting entirely so we don't leave orphaned rows pointing at nothing.
+                            val perServerPrefixes = listOf("sftp_bookmarks_")
+                            val perSharePrefixes = listOf("share_bookmarks_")
+                            while (it.hasNext()) {
+                                val originalKey = it.next()
+                                if (originalKey in securityKeys) continue
+                                var newKey = originalKey
+                                val prefix = perServerPrefixes.firstOrNull { p -> originalKey.startsWith(p) }
+                                if (prefix != null) {
+                                    val oldSrvId = originalKey.removePrefix(prefix).toIntOrNull() ?: 0
+                                    val mapped = serverIdMap[oldSrvId]
+                                    if (oldSrvId != 0 && mapped == null) continue // owning server not restored
+                                    if (mapped != null) newKey = "$prefix$mapped"
+                                }
+                                val sharePrefix = perSharePrefixes.firstOrNull { p -> originalKey.startsWith(p) }
+                                if (sharePrefix != null) {
+                                    val oldShareId = originalKey.removePrefix(sharePrefix).toIntOrNull() ?: 0
+                                    val mapped = shareIdMap[oldShareId]
+                                    if (mapped == null) continue // owning share not restored (or pre-id backup)
+                                    newKey = "$sharePrefix$mapped"
+                                }
+                                repository.insertSetting(newKey, settingsObj.getString(originalKey))
+                                importedSettings++
                             }
-                            if (oldId != 0) serverIdMap[oldId] = existing.id
-                            restoredHosts.add(existing.host to existing.port)
-                            continue
                         }
-                        if (!closedSelection.servers) continue
-                        if (availableHostSlots <= 0) {
-                            skippedServersByLimit++
-                            continue
+
+                        // Backups strip pristine default alert rules, so a restored alert_presets=true
+                        // needs its preset rows recreated or the toggle shows ON with no rules behind it.
+                        if (repository.getSetting("alert_presets") == "true") {
+                            seedMissingDefaultAlertRules()
                         }
-                        val oldProfileId = if (o.has("authProfileId") && !o.isNull("authProfileId")) o.optInt("authProfileId") else 0
-                        val newId = repository.insertServer(
-                            ServerEntity(
-                                name = nm, host = o.getString("host"), port = o.optInt("port", 22),
-                                username = o.optString("username"), groupName = o.optString("groupName", "Default"),
-                                serverColor = o.optString("serverColor", "Default"), authType = o.optString("authType", "password"),
-                                authKeyAlias = jsonNullableString(o, "authKeyAlias"),
-                                authPassword = jsonNullableString(o, "authPassword"),
-                                sudoPassword = o.optString("sudoPassword", ""),
-                                authProfileId = profileIdMap[oldProfileId],
-                                notes = o.optString("notes", ""), keepAlive = o.optInt("keepAlive", 30),
-                                sshCompression = o.optBoolean("sshCompression", false),
-                                persistentSession = o.optBoolean("persistentSession", false),
-                                agentForwarding = o.optBoolean("agentForwarding", false),
-                                proxyCommand = o.optString("proxyCommand", ""),
-                                proxyType = o.optString("proxyType", "none"),
-                                proxyHost = o.optString("proxyHost", ""),
-                                proxyPort = o.optInt("proxyPort", 0),
-                                proxyUser = o.optString("proxyUser", ""),
-                                proxyPassword = o.optString("proxyPassword", ""),
-                                proxyKeyAlias = o.optString("proxyKeyAlias", "").takeIf { it.isNotBlank() },
-                                status = "offline",
-                            )
-                        ).toInt()
-                        if (oldId != 0) serverIdMap[oldId] = newId
-                        restoredHosts.add(o.getString("host") to o.optInt("port", 22))
-                        imported++
-                        availableHostSlots--
-                    }
 
-                    // Pinned host keys travel with the servers (schema 3+). Only import keys for
-                    // hosts actually restored (or already present) so a limited restore doesn't
-                    // leave orphaned trust entries for skipped hosts. Existing pins still win, so a
-                    // backup can never overwrite a key this device already verified.
-                    var skippedHostKeysByLimit = 0
-                    if (closedSelection.servers) {
-                        root.optJSONObject("knownHosts")?.let { kh ->
-                            val entries = mutableMapOf<String, String>()
-                            kh.keys().forEach { k -> entries[k] = kh.optString(k) }
-                            val kept = SshHostKeyTrust.filterEntriesForHosts(entries, restoredHosts)
-                            skippedHostKeysByLimit = entries.size - kept.size
-                            SshHostKeyTrust.importEntries(kept)
-                        }
-                    }
-
-                    // Quick scripts (dedup by category + name).
-                    val existingScripts = repository.getAllScripts()
-                        .map { it.category to it.name }
-                        .toMutableSet()
-                    val scriptArr = root.optJSONArray("quickScripts") ?: org.json.JSONArray()
-                    var importedScripts = 0
-                    for (i in 0 until if (closedSelection.scripts) scriptArr.length() else 0) {
-                        val o = scriptArr.getJSONObject(i)
-                        val name = o.optString("name")
-                        val category = o.optString("category", "General").ifBlank { "General" }
-                        val scriptKey = category to name
-                        if (name.isBlank() || scriptKey in existingScripts) continue
-                        repository.insertScript(
-                            QuickScriptEntity(
-                                emoji = o.optString("emoji", "LIN"), name = name, command = o.optString("command"),
-                                color = o.optString("color", "cyan"), longRunning = o.optBoolean("longRunning", false),
-                                category = category, sortOrder = o.optInt("sortOrder", 0),
-                                availableForQuick = o.optBoolean("availableForQuick", category != "Fleet"),
-                                availableForFleet = o.optBoolean("availableForFleet", category == "Fleet"),
-                                targetOs = o.optString("targetOs", "Any").ifBlank { "Any" },
-                                targetSystem = o.optString("targetSystem", "Any").ifBlank { "Any" },
-                                notes = o.optString("notes", ""),
-                            )
-                        )
-                        existingScripts.add(scriptKey)
-                        importedScripts++
-                    }
-
-                    // Alert rules (re-point serverId; dedup by server+metric+threshold+window).
-                    val existingRuleKeys = repository.getAllRules()
-                        .map { "${it.serverId}|${it.metricName}|${it.thresholdValue}|${it.triggerWindow}" }.toMutableSet()
-                    val ruleArr = root.optJSONArray("alertRules") ?: org.json.JSONArray()
-                    val ruleIdMap = mutableMapOf<Int, Int>()
-                    var importedRules = 0
-                    for (i in 0 until if (closedSelection.alertRules) ruleArr.length() else 0) {
-                        val o = ruleArr.getJSONObject(i)
-                        val oldRuleId = o.optInt("id", 0)
-                        val oldServerId = o.optInt("serverId", 0)
-                        val mappedServerId = remapBackupServerId(oldServerId, serverIdMap) ?: continue
-                        val threshold = o.optDouble("thresholdValue", 0.0).toFloat()
-                        val window = o.optString("triggerWindow", "5m")
-                        val metric = o.optString("metricName")
-                        val key = "$mappedServerId|$metric|$threshold|$window"
-                        if (key in existingRuleKeys) {
-                            if (oldRuleId != 0) {
-                                repository.getAllRules().find {
-                                    it.serverId == mappedServerId && it.metricName == metric && it.thresholdValue == threshold && it.triggerWindow == window
-                                }?.let { ruleIdMap[oldRuleId] = it.id }
+                        // Crash logs (opt-in). Merge into the on-device history newest-first; deduped by
+                        // timestamp so re-importing the same backup doesn't pile up duplicates.
+                        val crashArr = root.optJSONArray("crashLogs") ?: org.json.JSONArray()
+                        var importedCrashLogs = 0
+                        if (closedSelection.crashLogs) {
+                            val restored = (0 until crashArr.length()).mapNotNull { i ->
+                                val o = crashArr.optJSONObject(i) ?: return@mapNotNull null
+                                CrashLog.Entry(o.optLong("t"), o.optString("r"))
                             }
-                            continue
+                            importedCrashLogs = CrashLog.merge(getApplication(), restored)
                         }
-                        repository.insertRule(
-                            AlertRuleEntity(
-                                serverId = mappedServerId, metricName = metric,
-                                mountPoint = o.optString("mountPoint", "/"), thresholdValue = threshold,
-                                severity = o.optString("severity", "WARNING"), triggerWindow = window,
-                                enabled = o.optBoolean("enabled", true),
-                                notes = o.optString("notes", ""),
-                            )
+
+                        // Report any partial restore explicitly with its reason, so a backup that
+                        // exceeds the free Play Store limit never silently drops servers, credentials,
+                        // or pinned host keys without telling the user why.
+                        val skippedParts = buildList {
+                            if (skippedServersByLimit > 0) add("$skippedServersByLimit server(s)")
+                            if (skippedKeysByLimit > 0) add("$skippedKeysByLimit key(s)")
+                            if (skippedProfilesByLimit > 0) add("$skippedProfilesByLimit profile(s)")
+                            if (skippedHostKeysByLimit > 0) add("$skippedHostKeysByLimit pinned host key(s)")
+                        }
+                        val skippedSuffix = if (skippedParts.isNotEmpty()) {
+                            " Skipped ${skippedParts.joinToString(", ")} because the free Play Store build is " +
+                                "limited to $freePlayStoreLimit item(s). Unlock OmniTerm to restore everything."
+                        } else {
+                            ""
+                        }
+                        Pair(
+                            true,
+                            "Restored $imported server(s), $importedKeys key(s), $importedProfiles profile(s), " +
+                                "$importedScripts script(s), $importedRules rule(s), $importedActiveAlerts active alert(s), $importedHistory alert history, $importedWol WoL, " +
+                                "$importedNetworkShares share(s), $importedPortForwards tunnel(s), $importedSettings setting(s), $importedCrashLogs crash log(s)." + skippedSuffix,
                         )
-                        repository.getAllRules().find {
-                            it.serverId == mappedServerId && it.metricName == metric && it.thresholdValue == threshold && it.triggerWindow == window
-                        }?.let { restoredRule ->
-                            if (oldRuleId != 0) ruleIdMap[oldRuleId] = restoredRule.id
                         }
-                        existingRuleKeys.add(key)
-                        importedRules++
-                    }
-
-                    val existingActiveAlertsByKey = repository.getActiveAlerts()
-                        .associateBy { "${it.ruleId}|${it.serverId}|${it.metricName}" }.toMutableMap()
-                    val activeAlertIdMap = mutableMapOf<Int, Int>()
-                    val activeAlertArr = root.optJSONArray("activeAlerts") ?: org.json.JSONArray()
-                    var importedActiveAlerts = 0
-                    for (i in 0 until if (closedSelection.activeAlerts) activeAlertArr.length() else 0) {
-                        val o = activeAlertArr.getJSONObject(i)
-                        val oldActiveAlertId = o.optInt("id", 0)
-                        val oldServerId = o.optInt("serverId", 0)
-                        val mappedServerId = remapBackupServerId(oldServerId, serverIdMap) ?: continue
-                        val mappedRuleId = ruleIdMap[o.optInt("ruleId", 0)] ?: continue
-                        val metric = o.optString("metricName")
-                        val key = "$mappedRuleId|$mappedServerId|$metric"
-                        val existingAlert = existingActiveAlertsByKey[key]
-                        if (existingAlert != null) {
-                            if (oldActiveAlertId > 0) activeAlertIdMap[oldActiveAlertId] = existingAlert.id
-                            continue
+                        } catch (e: Throwable) {
+                            // Room rolls its database transaction back. Compensate the two external
+                            // stores touched by restore so a reported failure never leaves partial data.
+                            SshHostKeyTrust.replaceEntries(knownHostsBefore)
+                            CrashLog.replace(getApplication(), crashLogsBefore)
+                            throw e
                         }
-                        val restoredAlert = ActiveAlertEntity(
-                                ruleId = mappedRuleId, serverId = mappedServerId, metricName = metric,
-                                currentValue = o.optDouble("currentValue", 0.0).toFloat(),
-                                thresholdValue = o.optDouble("thresholdValue", 0.0).toFloat(),
-                                severity = o.optString("severity", "WARNING"),
-                                triggeredTime = o.optLong("triggeredTime", System.currentTimeMillis()),
-                                acknowledged = o.optBoolean("acknowledged", false),
-                                mutedUntil = o.optLong("mutedUntil", 0L),
-                            )
-                        val newAlertId = repository.insertAlert(restoredAlert).toInt()
-                        if (oldActiveAlertId > 0) activeAlertIdMap[oldActiveAlertId] = newAlertId
-                        existingActiveAlertsByKey[key] = restoredAlert.copy(id = newAlertId)
-                        importedActiveAlerts++
+                    } catch (e: javax.crypto.AEADBadTagException) {
+                        Pair(false, "Wrong passphrase or corrupted backup.")
+                    } catch (e: org.json.JSONException) {
+                        Pair(false, "Not a valid OmniTerm backup file.")
+                    } catch (e: Exception) {
+                        Pair(false, e.message ?: "Restore failed.")
                     }
-
-                    // Alert history (re-point serverId; keep newest N after import).
-                    val historyArr = root.optJSONArray("alertHistory") ?: org.json.JSONArray()
-                    val existingHistory = repository.getAlertHistory()
-                    val usedHistoryActiveIds = existingHistory.mapTo(mutableSetOf()) { it.activeAlertId }
-                    val existingHistoryKeys = existingHistory.mapTo(mutableSetOf()) {
-                        "${it.serverId}|${it.metricName}|${it.triggeredTime}|${it.historyTime}|${it.status}"
                     }
-                    var nextSyntheticActiveId = -1
-                    fun allocateHistoryActiveId(preferred: Int?): Int {
-                        if (preferred != null && preferred !in usedHistoryActiveIds) {
-                            usedHistoryActiveIds.add(preferred)
-                            return preferred
-                        }
-                        while (nextSyntheticActiveId in usedHistoryActiveIds) nextSyntheticActiveId--
-                        return nextSyntheticActiveId.also { usedHistoryActiveIds.add(it); nextSyntheticActiveId-- }
-                    }
-                    var importedHistory = 0
-                    for (i in 0 until if (closedSelection.alertHistory) historyArr.length() else 0) {
-                        val o = historyArr.getJSONObject(i)
-                        val mappedServerId = remapBackupServerId(o.optInt("serverId", 0), serverIdMap) ?: continue
-                        val historyTime = o.optLong("historyTime", System.currentTimeMillis())
-                        val triggeredTime = o.optLong("triggeredTime", historyTime)
-                        val metricName = o.optString("metricName")
-                        val status = o.optString("status", "acknowledged")
-                        val historyKey = "$mappedServerId|$metricName|$triggeredTime|$historyTime|$status"
-                        if (historyKey in existingHistoryKeys) continue
-                        val sourceActiveId = o.optInt("activeAlertId", 0)
-                        repository.insertAlertHistory(
-                            AlertHistoryEntity(
-                                activeAlertId = allocateHistoryActiveId(activeAlertIdMap[sourceActiveId]),
-                                serverId = mappedServerId,
-                                serverName = repository.getServerById(mappedServerId)?.name ?: o.optString("serverName", "server"),
-                                metricName = metricName,
-                                currentValue = o.optDouble("currentValue", 0.0).toFloat(),
-                                thresholdValue = o.optDouble("thresholdValue", 0.0).toFloat(),
-                                severity = o.optString("severity", "WARNING"),
-                                triggeredTime = triggeredTime,
-                                historyTime = historyTime,
-                                status = status,
-                            )
-                        )
-                        existingHistoryKeys.add(historyKey)
-                        importedHistory++
-                    }
-                    if (closedSelection.alertHistory) repository.pruneAlertHistoryPerServer(alertHistoryLimit)
-
-                    // Wake-on-LAN targets (dedup by MAC).
-                    val existingWol = repository.getAllWolTargets().map { it.macAddress.lowercase() }.toMutableSet()
-                    val wolArr = root.optJSONArray("wolTargets") ?: org.json.JSONArray()
-                    var importedWol = 0
-                    for (i in 0 until if (closedSelection.wolTargets) wolArr.length() else 0) {
-                        val o = wolArr.getJSONObject(i)
-                        val mac = o.optString("macAddress")
-                        if (mac.isBlank() || mac.lowercase() in existingWol) continue
-                        repository.insertWolTarget(
-                            WolTargetEntity(
-                                name = o.optString("name", "Target"), macAddress = mac,
-                                broadcastIp = o.optString("broadcastIp", "192.168.1.255"),
-                                ipAddress = o.optString("ipAddress", ""),
-                                port = o.optInt("port", 9), notes = o.optString("notes", ""),
-                                lastWokenTime = o.optLong("lastWokenTime", 0L),
-                            )
-                        )
-                        existingWol.add(mac.lowercase())
-                        importedWol++
-                    }
-
-                    // Network shares (dedup by endpoint + path; auth profile ids are re-pointed).
-                    // shareIdMap tracks old id → restored/existing id so per-share settings
-                    // (share_bookmarks_{id}) can follow their share, mirroring serverIdMap.
-                    val existingSharesByKey = repository.getAllNetworkShares()
-                        .associateBy { "${it.protocol.uppercase(Locale.ROOT)}|${it.address.lowercase(Locale.ROOT)}|${it.port}|${it.sharePath.trim('/')}" }
-                        .toMutableMap()
-                    val existingShareKeys = existingSharesByKey.keys.toMutableSet()
-                    val shareIdMap = mutableMapOf<Int, Int>()
-                    val shareArr = root.optJSONArray("networkShares") ?: org.json.JSONArray()
-                    var importedNetworkShares = 0
-                    for (i in 0 until if (closedSelection.networkShares) shareArr.length() else 0) {
-                        val o = shareArr.getJSONObject(i)
-                        val protocol = o.optString("protocol", "SMB").uppercase(Locale.ROOT)
-                        val address = o.optString("address")
-                        val port = o.optInt("port", defaultNetworkSharePort(protocol))
-                        val sharePath = o.optString("sharePath", "").trim('/')
-                        if (address.isBlank()) continue
-                        val oldShareId = o.optInt("id", 0)
-                        val key = "$protocol|${address.lowercase(Locale.ROOT)}|$port|$sharePath"
-                        if (key in existingShareKeys) {
-                            // Duplicate of a share we already have — its bookmarks re-point there.
-                            existingSharesByKey[key]?.let { if (oldShareId != 0) shareIdMap[oldShareId] = it.id }
-                            continue
-                        }
-                        val oldProfileId = o.optInt("authProfileId", 0)
-                        val newShareId = repository.insertNetworkShare(
-                            NetworkShareEntity(
-                                name = o.optString("name", "$protocol $address"),
-                                protocol = protocol,
-                                address = address,
-                                port = port,
-                                sharePath = sharePath,
-                                workgroup = o.optString("workgroup", ""),
-                                username = o.optString("username", ""),
-                                password = o.optString("password", ""),
-                                authProfileId = profileIdMap[oldProfileId],
-                                anonymous = o.optBoolean("anonymous", true),
-                                // Old backups predate the flag; default from the same port
-                                // heuristic the DB migration uses so behavior doesn't change.
-                                useHttps = o.optBoolean("useHttps", protocol == "WEBDAV" && (port == 443 || port == 8443)),
-                                notes = o.optString("notes", ""),
-                                lastChecked = o.optLong("lastChecked", 0L),
-                                lastStatus = o.optString("lastStatus", "unknown"),
-                            )
-                        )
-                        if (oldShareId != 0) shareIdMap[oldShareId] = newShareId.toInt()
-                        existingShareKeys.add(key)
-                        importedNetworkShares++
-                    }
-
-                    // Port-forward definitions follow their restored SSH host. They are never
-                    // auto-started as part of restore: importing data must not open listeners or
-                    // create remote forwards without a fresh user action on this device.
-                    val existingTunnelKeys = repository.getAllPortForwards().mapTo(mutableSetOf()) {
-                        "${it.serverId}|${it.kind}|${it.bindHost}|${it.bindPort}|${it.destHost}|${it.destPort}"
-                    }
-                    val portForwardArr = root.optJSONArray("portForwards") ?: org.json.JSONArray()
-                    var importedPortForwards = 0
-                    for (i in 0 until if (closedSelection.portForwards) portForwardArr.length() else 0) {
-                        val o = portForwardArr.getJSONObject(i)
-                        val serverId = serverIdMap[o.optInt("serverId", 0)] ?: continue
-                        val kind = o.optString("kind", "local")
-                        if (kind !in setOf("local", "remote", "dynamic")) continue
-                        val bindHost = o.optString("bindHost", "127.0.0.1").ifBlank { "127.0.0.1" }
-                        val bindPort = o.optInt("bindPort", 0)
-                        val destHost = o.optString("destHost", "")
-                        val destPort = o.optInt("destPort", 0)
-                        if (bindPort !in 1..65_535) continue
-                        if (kind != "dynamic" && (destHost.isBlank() || destPort !in 1..65_535)) continue
-                        val normalizedDestHost = if (kind == "dynamic") "" else destHost
-                        val normalizedDestPort = if (kind == "dynamic") 0 else destPort
-                        val key = "$serverId|$kind|$bindHost|$bindPort|$normalizedDestHost|$normalizedDestPort"
-                        if (key in existingTunnelKeys) continue
-                        repository.insertPortForward(
-                            PortForwardEntity(
-                                serverId = serverId,
-                                name = o.optString("name", "Restored tunnel").take(120),
-                                kind = kind,
-                                bindHost = bindHost.take(255),
-                                bindPort = bindPort,
-                                destHost = normalizedDestHost.take(255),
-                                destPort = normalizedDestPort,
-                                autoStart = false,
-                            )
-                        )
-                        existingTunnelKeys.add(key)
-                        importedPortForwards++
-                    }
-
-                    // App settings / config (overwrite by key — full restore of preferences).
-                    val settingsObj = root.optJSONObject("settings")
-                    var importedSettings = 0
-                    if (settingsObj != null && closedSelection.settings) {
-                        // Defensive: never restore device-local security keys even if an old backup carried them.
-                        val securityKeys = setOf(
-                            "app_pin", "app_lock_enabled", "biometrics_enabled",
-                            "pin_failed_attempts", "pin_locked_until",
-                        )
-                        val it = settingsObj.keys()
-                        // Per-endpoint settings are keyed by the OLD server/share id; re-point them
-                        // to the restored id. If the owning endpoint wasn't restored, skip the
-                        // setting entirely so we don't leave orphaned rows pointing at nothing.
-                        val perServerPrefixes = listOf("sftp_bookmarks_")
-                        val perSharePrefixes = listOf("share_bookmarks_")
-                        while (it.hasNext()) {
-                            val originalKey = it.next()
-                            if (originalKey in securityKeys) continue
-                            var newKey = originalKey
-                            val prefix = perServerPrefixes.firstOrNull { p -> originalKey.startsWith(p) }
-                            if (prefix != null) {
-                                val oldSrvId = originalKey.removePrefix(prefix).toIntOrNull() ?: 0
-                                val mapped = serverIdMap[oldSrvId]
-                                if (oldSrvId != 0 && mapped == null) continue // owning server not restored
-                                if (mapped != null) newKey = "$prefix$mapped"
-                            }
-                            val sharePrefix = perSharePrefixes.firstOrNull { p -> originalKey.startsWith(p) }
-                            if (sharePrefix != null) {
-                                val oldShareId = originalKey.removePrefix(sharePrefix).toIntOrNull() ?: 0
-                                val mapped = shareIdMap[oldShareId]
-                                if (mapped == null) continue // owning share not restored (or pre-id backup)
-                                newKey = "$sharePrefix$mapped"
-                            }
-                            repository.insertSetting(newKey, settingsObj.getString(originalKey))
-                            importedSettings++
-                        }
-                    }
-
-                    // Backups strip pristine default alert rules, so a restored alert_presets=true
-                    // needs its preset rows recreated or the toggle shows ON with no rules behind it.
-                    if (repository.getSetting("alert_presets") == "true") {
-                        seedMissingDefaultAlertRules()
-                    }
-
-                    // Crash logs (opt-in). Merge into the on-device history newest-first; deduped by
-                    // timestamp so re-importing the same backup doesn't pile up duplicates.
-                    val crashArr = root.optJSONArray("crashLogs") ?: org.json.JSONArray()
-                    var importedCrashLogs = 0
-                    if (closedSelection.crashLogs) {
-                        val restored = (0 until crashArr.length()).mapNotNull { i ->
-                            val o = crashArr.optJSONObject(i) ?: return@mapNotNull null
-                            CrashLog.Entry(o.optLong("t"), o.optString("r"))
-                        }
-                        importedCrashLogs = CrashLog.merge(getApplication(), restored)
-                    }
-
-                    // Report any partial restore explicitly with its reason, so a backup that
-                    // exceeds the free Play Store limit never silently drops servers, credentials,
-                    // or pinned host keys without telling the user why.
-                    val skippedParts = buildList {
-                        if (skippedServersByLimit > 0) add("$skippedServersByLimit server(s)")
-                        if (skippedKeysByLimit > 0) add("$skippedKeysByLimit key(s)")
-                        if (skippedProfilesByLimit > 0) add("$skippedProfilesByLimit profile(s)")
-                        if (skippedHostKeysByLimit > 0) add("$skippedHostKeysByLimit pinned host key(s)")
-                    }
-                    val skippedSuffix = if (skippedParts.isNotEmpty()) {
-                        " Skipped ${skippedParts.joinToString(", ")} because the free Play Store build is " +
-                            "limited to $freePlayStoreLimit item(s). Unlock OmniTerm to restore everything."
-                    } else {
-                        ""
-                    }
-                    Pair(
-                        true,
-                        "Restored $imported server(s), $importedKeys key(s), $importedProfiles profile(s), " +
-                            "$importedScripts script(s), $importedRules rule(s), $importedActiveAlerts active alert(s), $importedHistory alert history, $importedWol WoL, " +
-                            "$importedNetworkShares share(s), $importedPortForwards tunnel(s), $importedSettings setting(s), $importedCrashLogs crash log(s)." + skippedSuffix,
-                    )
-                    }
-                    } catch (e: Throwable) {
-                        // Room rolls its database transaction back. Compensate the two external
-                        // stores touched by restore so a reported failure never leaves partial data.
-                        SshHostKeyTrust.replaceEntries(knownHostsBefore)
-                        CrashLog.replace(getApplication(), crashLogsBefore)
-                        throw e
-                    }
-                } catch (e: javax.crypto.AEADBadTagException) {
-                    Pair(false, "Wrong passphrase or corrupted backup.")
-                } catch (e: org.json.JSONException) {
-                    Pair(false, "Not a valid OmniTerm backup file.")
-                } catch (e: Exception) {
-                    Pair(false, e.message ?: "Restore failed.")
                 }
-                }
+                reconcileHostLimit("Restored data exceeds the free Play Store host limit. Choose the one host to keep.")
+                onResult(result.first, result.second)
+            } finally {
+                backupRestoreRunning = false
             }
-            reconcileHostLimit("Restored data exceeds the free Play Store host limit. Choose the one host to keep.")
-            onResult(result.first, result.second)
         }
     }
 

@@ -623,6 +623,9 @@ fun HostKeyApprovalDialog(viewModel: AppViewModel) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.a_new_ssh_host_key_was))
+                // Deliberately NOT routed through HostDisplay: the user is authenticating this
+                // specific host against its fingerprint, so masking the identity would defeat the
+                // security decision being asked of them.
                 Text(req.host, fontWeight = androidx.compose.ui.text.font.FontWeight.Bold)
                 Spacer(Modifier.height(4.dp))
                 Text("Key type: ${req.keyType}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -2368,14 +2371,20 @@ private fun TerminalKeyBar(viewModel: AppViewModel, compact: Boolean = false) {
                 .background(chrome.keyBackground)
                 .padding(horizontal = 4.dp, vertical = 4.dp),
         ) {
+            // Like the two-row bar, every compact layer fills the same number of weighted cells so
+            // SYM and FN keep a fixed screen position: they are always the last two caps in the row.
             when {
                 showSymbols -> {
-                    listOf("~", "_", ".", ":", ";", "'", "\"", "`", "\$", "&", "*", "(", ")", "[", "]").forEach { symbol ->
+                    listOf("~", "_", ".", ":", ";", "'", "\"", "`", "\$", "&", "*", "(", ")", "[", "]", "{", "}", "|").forEach { symbol ->
                         KeyCap(symbol, Modifier.weight(1f)) { viewModel.typeText(symbol) }
                     }
                     KeyCap("SYM", Modifier.weight(1f), active = true, activeColor = OmniColors.purple) {
                         showSymbols = false
                         viewModel.isFunctionSetVisible = false
+                    }
+                    KeyCap("FN", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) {
+                        showSymbols = false
+                        viewModel.isFunctionSetVisible = true
                     }
                 }
                 viewModel.isFunctionSetVisible -> {
@@ -2389,30 +2398,46 @@ private fun TerminalKeyBar(viewModel: AppViewModel, compact: Boolean = false) {
                     }
                     KeyCap("PGUP", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_UP) }
                     KeyCap("PGDN", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_DOWN) }
+                    KeyCap("HOME", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.HOME) }
+                    KeyCap("END", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.END) }
                     KeyCap("ESC", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ESC) }
+                    KeyCap("⌫", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.BACKSPACE) }
+                    KeyCap("SYM", Modifier.weight(1f), active = true, activeColor = OmniColors.purple) {
+                        viewModel.isFunctionSetVisible = false
+                        showSymbols = true
+                    }
                     KeyCap("NAV", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) { viewModel.isFunctionSetVisible = false }
                 }
                 else -> {
-                    // Same logical order as the two-row bar: modifiers, typing, nav cluster
-                    // (HOME ← ↑ ↓ → END), editing keys, then layer toggles and ENTER last.
+                    // Same left-to-right zone order as the two-row bar, flattened onto one line. An
+                    // inverted T isn't possible in a single row, so the arrows stay one contiguous
+                    // ← ↑ ↓ → run — centred at exactly 50% on the 20-column grid (cols 9-12) — with
+                    // HOME/END bracketing the cluster rather than splitting it:
+                    //
+                    //   ESC TAB CTRL ALT SHFT │ - / │ HOME ← ↑ ↓ → END │ PGUP PGDN ⌫ DEL ↵ │ SYM FN
+                    //
+                    // SHIFT stays here: it is a sticky modifier with no other route to it, unlike
+                    // | and ~ which the SYM layer already covers.
                     KeyCap("ESC", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ESC) }
                     KeyCap("TAB", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.TAB) }
                     KeyCap("CTRL", Modifier.weight(1f), active = viewModel.isCtrlPressed) { viewModel.isCtrlPressed = !viewModel.isCtrlPressed }
                     KeyCap("ALT", Modifier.weight(1f), active = viewModel.isAltPressed) { viewModel.isAltPressed = !viewModel.isAltPressed }
                     KeyCap("SHFT", Modifier.weight(1f), active = viewModel.isShiftPressed) { viewModel.isShiftPressed = !viewModel.isShiftPressed }
-                    KeyCap("/", Modifier.weight(1f)) { viewModel.typeText("/") }
                     KeyCap("-", Modifier.weight(1f)) { viewModel.typeText("-") }
+                    KeyCap("/", Modifier.weight(1f)) { viewModel.typeText("/") }
                     KeyCap("HOME", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.HOME) }
                     KeyCap("←", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.LEFT) }
                     KeyCap("↑", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.UP) }
                     KeyCap("↓", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DOWN) }
                     KeyCap("→", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.RIGHT) }
                     KeyCap("END", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.END) }
-                    KeyCap("DEL", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DELETE) }
+                    KeyCap("PGUP", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_UP) }
+                    KeyCap("PGDN", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_DOWN) }
                     KeyCap("⌫", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.BACKSPACE) }
+                    KeyCap("DEL", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DELETE) }
+                    KeyCap("↵", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ENTER) }
                     KeyCap("SYM", Modifier.weight(1f), active = true, activeColor = OmniColors.purple) { showSymbols = true }
                     KeyCap("FN", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) { viewModel.isFunctionSetVisible = true }
-                    KeyCap("↵", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ENTER) }
                 }
             }
         }
@@ -2424,15 +2449,23 @@ private fun TerminalKeyBar(viewModel: AppViewModel, compact: Boolean = false) {
             .background(chrome.keyBackground)
             .padding(vertical = 4.dp),
     ) {
+        // Every layer fills the same 11 weighted columns per row, so the toggle caps keep a fixed
+        // screen position and size: FN/NAV always occupies the last column of row 1, SYM the last
+        // column of row 2. Pressing one therefore swaps the layer in under the finger rather than
+        // moving the control — an uneven column count would restretch `weight(1f)` and shift them.
         if (showSymbols) {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-                listOf("~", "_", ".", ":", ";", "'", "\"", "`").forEach { symbol ->
+                listOf("~", "_", ".", ":", ";", "'", "\"", "`", "|", "\\").forEach { symbol ->
                     KeyCap(symbol, Modifier.weight(1f)) { viewModel.typeText(symbol) }
+                }
+                KeyCap("FN", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) {
+                    showSymbols = false
+                    viewModel.isFunctionSetVisible = true
                 }
             }
             Spacer(Modifier.height(4.dp))
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-                listOf("\$", "&", "*", "(", ")", "[", "]").forEach { symbol ->
+                listOf("\$", "&", "*", "(", ")", "[", "]", "{", "}", "!").forEach { symbol ->
                     KeyCap(symbol, Modifier.weight(1f)) { viewModel.typeText(symbol) }
                 }
                 KeyCap("SYM", Modifier.weight(1f), active = true, activeColor = OmniColors.purple) {
@@ -2441,32 +2474,47 @@ private fun TerminalKeyBar(viewModel: AppViewModel, compact: Boolean = false) {
                 }
             }
         } else if (!viewModel.isFunctionSetVisible) {
-            // Keys are arranged as vertical pairs so related actions share a column:
-            // PGUP/PGDN, HOME/←, ↑/↓, END/→, FN/SYM, -/↵, ⌫/DEL. Arrows sit centred.
+            // ELEVEN columns, deliberately odd: with an even count the screen's centre line falls
+            // *between* two keys, so no arrow can sit on it. At 11, column 6 spans 45.5%-54.5% —
+            // dead centre — so ↑/↓ land on the screen's midline with ← and → flanking them.
+            //
+            //   ESC  CTRL  -  |  │ HOME  ↑   END │ PGUP  ⌫   DEL   FN
+            //   TAB  ALT   /  ~  │  ←    ↓    →  │ PGDN  ↵   SHFT  SYM
+            //                            centre ^
+            //
+            // Every COLUMN is a functional pair, so the eye learns one map instead of two rows:
+            //   1 ESC/TAB escapes · 2 CTRL/ALT the two modifiers you actually chord with
+            //   3 -/ and 4 |~ the characters typed in almost every command (`ls -la`, `/usr/bin`,
+            //     a pipe, a home path) — otherwise all four cost a trip through the SYM layer
+            //   5-7 cursor: HOME/END bracket the arrows they belong with, ← ↓ → under ↑
+            //   8 PGUP/PGDN paging · 9 ⌫/↵ the two highest-frequency keys, at the thumb edge
+            //   10 DEL/SHFT the rarer pair · 11 layer toggle, pinned
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
                 KeyCap("ESC", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ESC) }
-                KeyCap("TAB", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.TAB) }
-                KeyCap("ALT", Modifier.weight(1f), active = viewModel.isAltPressed) { viewModel.isAltPressed = !viewModel.isAltPressed }
-                KeyCap("PGUP", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_UP) }
+                KeyCap("CTRL", Modifier.weight(1f), active = viewModel.isCtrlPressed) { viewModel.isCtrlPressed = !viewModel.isCtrlPressed }
+                KeyCap("-", Modifier.weight(1f)) { viewModel.typeText("-") }
+                KeyCap("|", Modifier.weight(1f)) { viewModel.typeText("|") }
                 KeyCap("HOME", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.HOME) }
                 KeyCap("↑", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.UP) }
                 KeyCap("END", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.END) }
-                KeyCap("FN", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) { viewModel.isFunctionSetVisible = true }
-                KeyCap("-", Modifier.weight(1f)) { viewModel.typeText("-") }
+                KeyCap("PGUP", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_UP) }
                 KeyCap("⌫", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.BACKSPACE) }
+                KeyCap("DEL", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DELETE) }
+                KeyCap("FN", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) { viewModel.isFunctionSetVisible = true }
             }
             Spacer(Modifier.height(4.dp))
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
-                KeyCap("CTRL", Modifier.weight(1f), active = viewModel.isCtrlPressed) { viewModel.isCtrlPressed = !viewModel.isCtrlPressed }
-                KeyCap("SHFT", Modifier.weight(1f), active = viewModel.isShiftPressed) { viewModel.isShiftPressed = !viewModel.isShiftPressed }
+                KeyCap("TAB", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.TAB) }
+                KeyCap("ALT", Modifier.weight(1f), active = viewModel.isAltPressed) { viewModel.isAltPressed = !viewModel.isAltPressed }
                 KeyCap("/", Modifier.weight(1f)) { viewModel.typeText("/") }
-                KeyCap("PGDN", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_DOWN) }
+                KeyCap("~", Modifier.weight(1f)) { viewModel.typeText("~") }
                 KeyCap("←", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.LEFT) }
                 KeyCap("↓", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DOWN) }
                 KeyCap("→", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.RIGHT) }
-                KeyCap("SYM", Modifier.weight(1f), active = true, activeColor = OmniColors.purple) { showSymbols = true }
+                KeyCap("PGDN", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_DOWN) }
                 KeyCap("↵", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ENTER) }
-                KeyCap("DEL", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DELETE) }
+                KeyCap("SHFT", Modifier.weight(1f), active = viewModel.isShiftPressed) { viewModel.isShiftPressed = !viewModel.isShiftPressed }
+                KeyCap("SYM", Modifier.weight(1f), active = true, activeColor = OmniColors.purple) { showSymbols = true }
             }
         } else {
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
@@ -2477,7 +2525,10 @@ private fun TerminalKeyBar(viewModel: AppViewModel, compact: Boolean = false) {
                 KeyCap("F5", Modifier.weight(1f)) { viewModel.sendKey(TermKey.F5) }
                 KeyCap("F6", Modifier.weight(1f)) { viewModel.sendKey(TermKey.F6) }
                 KeyCap("PGUP", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_UP) }
+                KeyCap("HOME", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.HOME) }
+                KeyCap("↑", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.UP) }
                 KeyCap("ESC", Modifier.weight(1f)) { viewModel.sendKey(TermKey.ESC) }
+                KeyCap("NAV", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) { viewModel.isFunctionSetVisible = false }
             }
             Spacer(Modifier.height(4.dp))
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp)) {
@@ -2488,7 +2539,13 @@ private fun TerminalKeyBar(viewModel: AppViewModel, compact: Boolean = false) {
                 KeyCap("F11", Modifier.weight(1f)) { viewModel.sendKey(TermKey.F11) }
                 KeyCap("F12", Modifier.weight(1f)) { viewModel.sendKey(TermKey.F12) }
                 KeyCap("PGDN", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_DOWN) }
-                KeyCap("NAV", Modifier.weight(1f), active = true, activeColor = OmniColors.amber) { viewModel.isFunctionSetVisible = false }
+                KeyCap("END", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.END) }
+                KeyCap("↓", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.DOWN) }
+                KeyCap("⌫", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.BACKSPACE) }
+                KeyCap("SYM", Modifier.weight(1f), active = true, activeColor = OmniColors.purple) {
+                    viewModel.isFunctionSetVisible = false
+                    showSymbols = true
+                }
             }
         }
     }

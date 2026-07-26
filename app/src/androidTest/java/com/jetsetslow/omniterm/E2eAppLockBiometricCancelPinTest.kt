@@ -49,7 +49,7 @@ class E2eAppLockBiometricCancelPinTest {
     @get:Rule val composeRule = createEmptyComposeRule()
 
     private val touchedKeys = listOf(
-        "app_pin", "app_lock_enabled", "biometrics_enabled", "app_lock_grace_ms",
+        "app_pin", "app_lock_enabled", "biometrics_enabled",
         "pin_failed_attempts", "pin_locked_until", "first_run_complete",
     )
 
@@ -68,7 +68,6 @@ class E2eAppLockBiometricCancelPinTest {
             repository.insertSetting("app_pin", hashPinForStorage(pin))
             repository.insertSetting("app_lock_enabled", "true")
             repository.insertSetting("biometrics_enabled", "true")
-            repository.insertSetting("app_lock_grace_ms", "0")
             repository.insertSetting("pin_failed_attempts", "0")
             repository.insertSetting("pin_locked_until", "0")
             repository.insertSetting("first_run_complete", "true")
@@ -184,12 +183,17 @@ class E2eAppLockBiometricCancelPinTest {
                 composeRule.onAllLockPrompts().fetchSemanticsNodes().isEmpty()
             }
 
-            // Zero-grace background/foreground relocks; cancel again; Unlock button path this time.
+            // A warm background/foreground cycle must NOT re-lock: cold start is the only trigger.
             scenario.moveToState(Lifecycle.State.CREATED)
             scenario.moveToState(Lifecycle.State.RESUMED)
-            await("zero-grace relock", 10_000) { vm2.isAppLocked }
             awaitWindowFocus(activity2!!)
-            ensureBiometricSessionActive(context.packageName, "zero-grace relock")
+            assertFalse("a warm reopen must not re-lock", vm2.isAppLocked)
+
+            // Re-engage the lock directly to exercise cancel-then-Unlock-button once more.
+            composeRule.runOnUiThread { vm2.isAppLocked = true }
+            await("relock engaged", 10_000) { vm2.isAppLocked }
+            awaitWindowFocus(activity2!!)
+            ensureBiometricSessionActive(context.packageName, "direct relock")
             cancelPromptAndAwaitIdle()
             assertTrue(vm2.isAppLocked)
             awaitWindowFocus(activity2!!)

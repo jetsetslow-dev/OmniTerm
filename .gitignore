@@ -30,6 +30,9 @@ debug.keystore
 hs_err_pid*.log
 replay_pid*.log
 
+# Captured Gradle output from local gate runs
+build_output.log
+
 # Local design prototype (not part of the app build)
 nexuscomplete.jsx
 

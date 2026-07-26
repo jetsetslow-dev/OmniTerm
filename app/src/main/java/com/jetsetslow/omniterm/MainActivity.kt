@@ -101,14 +101,8 @@ class MainActivity : AppCompatActivity() {
     handleIntent(intent)
   }
 
-  override fun onStart() {
-    super.onStart()
-    appViewModel?.relockIfNeeded()
-  }
-
   override fun onStop() {
     super.onStop()
-    appViewModel?.noteAppBackgrounded()
     // Clear focus from whatever text field is active before the activity stops. Backgrounding (e.g.
     // tapping a notification) tears down the IME text-input session; if a Compose text field is still
     // focused on resume it re-reports its position through the legacy cursor-anchor path against the
@@ -220,8 +214,12 @@ class MainActivity : AppCompatActivity() {
           viewModel.connectTerminalByServerId(it)
           pendingShortcutServerId = null
         }
-        if (pendingSplitServerId1 != null && pendingSplitServerId2 != null) {
-          viewModel.openMultiSshByServerIds(pendingSplitServerId1!!, pendingSplitServerId2!!)
+        // Read both ids into locals before use: onNewIntent runs on the main thread and can null
+        // these out between the check and the dereference, which would crash on `!!`.
+        val splitId1 = pendingSplitServerId1
+        val splitId2 = pendingSplitServerId2
+        if (splitId1 != null && splitId2 != null) {
+          viewModel.openMultiSshByServerIds(splitId1, splitId2)
           pendingSplitServerId1 = null
           pendingSplitServerId2 = null
         }

@@ -337,6 +337,24 @@ class RemoteParsersTest {
         )
     }
 
+    /**
+     * The regular-attach pre-paint must not capture a full-screen TUI's frame. Painting Claude
+     * Code's alt-screen frame into our normal screen stranded it under the shell after exit —
+     * tmux's per-row ESC[K only erases from the cursor column rightward, so longer stale rows kept
+     * a visible tail ("screen doesn't clear after exiting Claude").
+     */
+    @Test
+    fun tmuxCaptureScreenIfNoTuiCommandGuardsOnAlternateScreen() {
+        val cmd = com.jetsetslow.omniterm.data.RemoteCommands.tmuxCaptureScreenIfNoTuiCommand("bad; rm -rf /")
+        assertTrue(
+            "expected inner-TUI guard so the pre-paint emits nothing while a TUI owns the pane",
+            cmd.contains("#{alternate_on}"),
+        )
+        assertTrue("expected the visible-screen capture", cmd.contains("capture-pane -p -e"))
+        assertTrue("visible screen only — history would duplicate rows", !cmd.contains("-S -"))
+        assertTrue("no raw semicolon from the name", !cmd.contains("bad; rm"))
+    }
+
     @Test
     fun tmuxClearHistoryCommandTargetsSanitisedSession() {
         val cmd = com.jetsetslow.omniterm.data.RemoteCommands.tmuxClearHistoryCommand("bad; rm -rf /")

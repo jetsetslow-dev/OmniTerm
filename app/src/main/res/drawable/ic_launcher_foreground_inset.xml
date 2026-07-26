@@ -1,6 +1,13 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Keep the 108dp adaptive foreground inside Android's 72dp safe zone so circle/squircle masks
-     never crop the terminal mark. Density-specific source artwork remains unchanged. -->
+     never crop the neon mark. Density-specific source artwork remains unchanged.
+
+     The wrapped `ic_launcher_fg` bitmaps carry the mark on FULL ALPHA (the baked dark tile that the
+     original artwork had was stripped). That transparency is what fixes Android 15+ BiometricPrompt:
+     the prompt derives its thumbnail from this adaptive icon and composites background + foreground,
+     so a baked opaque tile is what it was flattening into a block. It never reads `android:logo` —
+     that is an ActionBar-era attribute, and androidx.biometric contains no loadLogo()/applicationInfo
+     call at all, which is why retargeting it in earlier attempts changed nothing on the prompt. -->
 <inset xmlns:android="http://schemas.android.com/apk/res/android"
     android:drawable="@mipmap/ic_launcher_fg"
     android:insetLeft="18dp"

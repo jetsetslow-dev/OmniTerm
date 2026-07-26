@@ -382,6 +382,8 @@ private fun NetworkShareScanHitRow(
             Spacer(Modifier.width(8.dp))
             Column {
                 Text(title, fontFamily = OmniFonts.mono, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                // Deliberately NOT routed through HostDisplay: this is a live discovery hit from a
+                // scan the user just ran, not a saved endpoint — the address IS the result.
                 Text("${hit.address}:${hit.port}", fontFamily = OmniFonts.mono, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
@@ -844,8 +846,14 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
             val bookmarked = currentDir in viewModel.shareBookmarks
             IconButton(onClick = {
                 if (bookmarked) {
-                    viewModel.removeShareBookmark(currentDir)
-                    viewModel.shareStatus = "Bookmark removed"
+                    confirm.ask(
+                        "Remove bookmark?",
+                        "Remove the bookmark for \"$currentDir\"?",
+                        confirmLabel = "Remove",
+                    ) {
+                        viewModel.removeShareBookmark(currentDir)
+                        viewModel.shareStatus = "Bookmark removed"
+                    }
                 } else {
                     viewModel.addShareBookmark(currentDir)
                 }
@@ -1610,6 +1618,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
     var pendingLargeUploadUris by remember { mutableStateOf<List<android.net.Uri>>(emptyList()) }
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
+    PasteConflictDialog(viewModel)
     val coroutineScope = rememberCoroutineScope()
     val context = androidx.compose.ui.platform.LocalContext.current
 
@@ -1755,7 +1764,23 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                 ).forEach { (fmt, label) ->
                                     DropdownMenuItem(
                                         text = { Text(label, fontSize = 13.sp) },
-                                        onClick = { archiveMenu = false; viewModel.sftpArchiveSelection(fmt) },
+                                        onClick = {
+                                            archiveMenu = false
+                                            // The archive name is derived, not picked, so an earlier
+                                            // archive of the same selection is silently replaced.
+                                            // Null = timestamped multi-item name, which can't collide.
+                                            val target = viewModel.plannedArchiveName(fmt)
+                                            if (target == null || viewModel.sftpEntries.none { it.name == target }) {
+                                                viewModel.sftpArchiveSelection(fmt)
+                                            } else {
+                                                confirm.ask(
+                                                    "Replace \"$target\"?",
+                                                    "A file named \"$target\" already exists in this folder and " +
+                                                        "will be overwritten. This cannot be undone.",
+                                                    confirmLabel = "Replace",
+                                                ) { viewModel.sftpArchiveSelection(fmt) }
+                                            }
+                                        },
                                     )
                                 }
                             }
@@ -1954,8 +1979,15 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                 enabled = viewModel.sftpPath.isNotBlank(),
                                 onClick = {
                                     if (bookmarked) {
-                                        viewModel.removeSftpBookmark(viewModel.sftpPath)
-                                        viewModel.sftpStatus = "Bookmark removed"
+                                        val path = viewModel.sftpPath
+                                        confirm.ask(
+                                            "Remove bookmark?",
+                                            "Remove the bookmark for \"$path\"?",
+                                            confirmLabel = "Remove",
+                                        ) {
+                                            viewModel.removeSftpBookmark(path)
+                                            viewModel.sftpStatus = "Bookmark removed"
+                                        }
                                     } else {
                                         viewModel.addSftpBookmark(viewModel.sftpPath)
                                         viewModel.sftpStatus = "Bookmarked ${viewModel.sftpPath}"
@@ -2136,24 +2168,12 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                     } else {
                         Row {
                             TextButton(onClick = { viewModel.sftpClearClipboard() }) { Text(stringResource(R.string.clear)) }
-                            Button(onClick = {
-                                // Paste runs `cp -a` / `mv -f` server-side, which silently replaces
-                                // (or merges into) same-named entries in this folder — warn first.
-                                val existing = viewModel.sftpEntries.mapTo(mutableSetOf()) { it.name }
-                                val conflicts = viewModel.sftpClipboard
-                                    .map { it.substringAfterLast('/') }
-                                    .filter { it in existing }
-                                    .distinct()
-                                if (conflicts.isEmpty()) viewModel.sftpPaste()
-                                else confirm.ask(
-                                    "Overwrite existing item(s)?",
-                                    "Already in this folder and will be replaced (folders are merged): " +
-                                        conflicts.take(5).joinToString(", ") +
-                                        (if (conflicts.size > 5) " and ${conflicts.size - 5} more" else "") +
-                                        ". This cannot be undone.",
-                                    confirmLabel = "Overwrite",
-                                ) { viewModel.sftpPaste() }
-                            }) {
+                            Button(
+                                // Compares by content (size, then checksum) and opens the
+                                // per-item resolution dialog only when something really clashes.
+                                enabled = !viewModel.pasteConflictScanRunning,
+                                onClick = { viewModel.sftpBeginPaste() },
+                            ) {
                                 Icon(Icons.Filled.ContentPaste, null)
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(stringResource(R.string.paste_here))
@@ -2457,7 +2477,16 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                 TextButton(
                                     onClick = {
                                         selectedFileForOption = null
-                                        viewModel.sftpExtractArchive(file)
+                                        // Extraction unpacks into the current folder and silently
+                                        // replaces same-named files. The archive's contents aren't
+                                        // known without listing it, so warn about the risk itself.
+                                        confirm.ask(
+                                            "Extract here?",
+                                            "Unpacks \"${file.name}\" into this folder. Existing files with " +
+                                                "the same names as entries in the archive will be overwritten. " +
+                                                "This cannot be undone.",
+                                            confirmLabel = "Extract",
+                                        ) { viewModel.sftpExtractArchive(file) }
                                     }
                                 ) {
                                     Icon(Icons.Filled.Unarchive, null)
@@ -2493,7 +2522,19 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                         TextButton(
                             onClick = {
                                 selectedFileForOption = null
-                                viewModel.sftpArchiveSelection("tar.gz", only = file)
+                                // Single-file archives get a derived name (foo -> foo.tar.gz), so
+                                // compressing twice would silently replace the earlier archive.
+                                val target = viewModel.plannedArchiveName("tar.gz", only = file)
+                                if (target == null || viewModel.sftpEntries.none { it.name == target }) {
+                                    viewModel.sftpArchiveSelection("tar.gz", only = file)
+                                } else {
+                                    confirm.ask(
+                                        "Replace \"$target\"?",
+                                        "A file named \"$target\" already exists in this folder and will " +
+                                            "be overwritten. This cannot be undone.",
+                                        confirmLabel = "Replace",
+                                    ) { viewModel.sftpArchiveSelection("tar.gz", only = file) }
+                                }
                             }
                         ) {
                             Icon(Icons.Filled.Archive, null)
@@ -3332,3 +3373,99 @@ private fun contentDisplayName(context: android.content.Context, uri: android.ne
             if (idx >= 0 && c.moveToFirst()) c.getString(idx) else null
         }
     }.getOrNull()
+
+/**
+ * Per-item resolution for paste/upload name clashes.
+ *
+ * The verdict shown for each row comes from comparing CONTENT (size, then a digest when sizes
+ * match) — not from the name, size and timestamp, which a copy tool reproduces exactly. When the
+ * host had no digest tool the dialog says so plainly instead of presenting an unverified guess as
+ * though it were a real comparison.
+ */
+@Composable
+fun PasteConflictDialog(viewModel: AppViewModel) {
+    val conflicts = viewModel.pasteConflicts
+    if (conflicts.isEmpty()) return
+
+    AlertDialog(
+        onDismissRequest = { viewModel.cancelPasteConflicts() },
+        title = { Text("${conflicts.size} item(s) already exist") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (viewModel.pasteConflictUnverified) {
+                    // Never imply a comparison happened when it could not.
+                    Text(
+                        "This host has no checksum tool (sha256sum/shasum/md5sum/cksum), so items " +
+                            "marked \"Not verified\" could NOT be compared by content. They may or " +
+                            "may not differ — matching sizes and dates do not prove files are the same.",
+                        fontSize = 11.sp,
+                        color = OmniColors.amber,
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Apply to all:", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ConflictAction.entries.forEach { act ->
+                        TextButton(
+                            onClick = { viewModel.setAllPasteConflictActions(act) },
+                            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp),
+                        ) { Text(conflictActionLabel(act), fontSize = 11.sp) }
+                    }
+                }
+                HorizontalDivider()
+                LazyColumn(
+                    modifier = Modifier.heightIn(max = 320.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(conflicts, key = { it.name }) { c ->
+                        Column {
+                            Text(c.name, fontSize = 12.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                conflictDetail(c),
+                                fontSize = 10.sp,
+                                color = when (c.verdict) {
+                                    ConflictVerdict.IDENTICAL -> OmniColors.green
+                                    ConflictVerdict.DIFFERENT -> OmniColors.red
+                                    ConflictVerdict.DIRECTORY -> OmniColors.cyan
+                                    ConflictVerdict.UNKNOWN -> OmniColors.amber
+                                },
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                                ConflictAction.entries.forEach { act ->
+                                    FilterChip(
+                                        selected = c.action == act,
+                                        onClick = { viewModel.setPasteConflictAction(c.name, act) },
+                                        label = { Text(conflictActionLabel(act), fontSize = 10.sp) },
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { viewModel.confirmPasteConflicts() }) { Text(stringResource(R.string.continue_label)) }
+        },
+        dismissButton = {
+            TextButton(onClick = { viewModel.cancelPasteConflicts() }) { Text(stringResource(R.string.cancel)) }
+        },
+    )
+}
+
+private fun conflictActionLabel(action: ConflictAction): String = when (action) {
+    ConflictAction.OVERWRITE -> "Overwrite"
+    ConflictAction.SKIP -> "Skip"
+    ConflictAction.KEEP_BOTH -> "Keep both"
+}
+
+private fun conflictDetail(c: TransferConflict): String = when (c.verdict) {
+    ConflictVerdict.DIRECTORY ->
+        "Folder — contents merge into the existing folder rather than replacing it"
+    ConflictVerdict.IDENTICAL ->
+        "Identical content (checksums match) — overwriting changes nothing"
+    ConflictVerdict.DIFFERENT ->
+        "Different content — ${formatBytes(c.sourceSize)} vs ${formatBytes(c.destSize)} at destination"
+    ConflictVerdict.UNKNOWN ->
+        "Not verified — no checksum tool on this host; " +
+            "${formatBytes(c.sourceSize)} vs ${formatBytes(c.destSize)} at destination"
+}

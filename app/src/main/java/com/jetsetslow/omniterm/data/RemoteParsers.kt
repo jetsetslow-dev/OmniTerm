@@ -224,6 +224,24 @@ object RemoteCommands {
     fun tmuxCaptureScreenCommand(name: String): String =
         "tmux capture-pane -p -e -t ${tmuxSafeName(name)} 2>/dev/null || true"
 
+    /**
+     * [tmuxCaptureScreenCommand] guarded on `#{alternate_on}`, for the REGULAR-attach pre-paint.
+     *
+     * While a full-screen TUI (Claude Code, vim, htop) owns the pane's alternate screen,
+     * capture-pane returns that TUI's frame. Painting it into our NORMAL screen leaves the frame
+     * sitting underneath once the TUI exits: tmux restores the shell screen with per-row `ESC[K`,
+     * which erases only from the cursor column rightward, so every row longer than the new content
+     * keeps a tail of TUI text. That is the "screen doesn't clear after exiting Claude" artifact.
+     *
+     * Empty output means "don't paint" — a regular attach makes tmux repaint the pane anyway, so
+     * skipping costs nothing while the TUI is up. Same guard as [tmuxCaptureHistoryCommand].
+     */
+    fun tmuxCaptureScreenIfNoTuiCommand(name: String): String {
+        val safe = tmuxSafeName(name)
+        return "if [ \"\$(tmux display-message -p -t $safe '#{alternate_on}' 2>/dev/null)\" = 1 ]; " +
+            "then :; else tmux capture-pane -p -e -t $safe 2>/dev/null; fi || true"
+    }
+
     /** Visible screen for an exact pane id (control-mode atomic repaint). */
     fun tmuxCapturePaneScreenCommand(paneId: String): String {
         val safe = paneId.takeIf { it.matches(Regex("%\\d+")) } ?: "%0"
@@ -351,7 +369,28 @@ object RemoteCommands {
         "elif command -v rc-status >/dev/null 2>&1; then echo '---OPENRC---'; rc-status -a 2>/dev/null; " +
         "else echo '---NOSYSTEMD---'; fi"
 
-    fun journal(lines: Int = 300) = "journalctl -n $lines --no-pager -o short-iso 2>/dev/null"
+    /**
+     * Host logs. `journalctl` only exists on systemd hosts, so fall through the same way [SERVICES]
+     * does rather than returning silently-empty output on Alpine/OpenWrt/BSD/macOS: syslog-style
+     * files, then OpenWrt's `logread`, then a marker the UI turns into an explanation.
+     */
+    fun journal(lines: Int = 300, os: String = "") = when (normaliseOs(os)) {
+        "Windows" -> journalWindows(lines)
+        "Darwin" ->
+            "log show --last 1h --style syslog 2>/dev/null | tail -n $lines || " +
+                "echo '---NOLOGS---'"
+        else ->
+            "if command -v journalctl >/dev/null 2>&1; then journalctl -n $lines --no-pager -o short-iso 2>/dev/null; " +
+                "elif command -v logread >/dev/null 2>&1; then logread 2>/dev/null | tail -n $lines; " +
+                "elif [ -r /var/log/messages ]; then tail -n $lines /var/log/messages 2>/dev/null; " +
+                "elif [ -r /var/log/syslog ]; then tail -n $lines /var/log/syslog 2>/dev/null; " +
+                "else echo '---NOLOGS---'; fi"
+    }
+
+    private fun journalWindows(lines: Int) =
+        "powershell -NoProfile -Command \"Get-WinEvent -LogName System -MaxEvents $lines | " +
+            "ForEach-Object { \$_.TimeCreated.ToString('yyyy-MM-ddTHH:mm:ssK') + ' ' + " +
+            "\$_.ProviderName + ': ' + \$_.Message }\""
 
     /**
      * Wrap a command so it runs under sudo. When [sudoPassword] is non-blank we use `sudo -S`,
@@ -807,6 +846,83 @@ object RemoteCommands {
 
     /** Quote a string for safe single-quoted shell use. */
     fun shellQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
+
+    /**
+     * Compare each clipboard source against the same-named entry in [destDir], one round trip.
+     *
+     * Emits `name<TAB>verdict<TAB>srcSize<TAB>dstSize<TAB>srcMtime<TAB>dstMtime` per conflict, where
+     * verdict is IDENTICAL / DIFFERENT / DIR / UNKNOWN.
+     *
+     * Name+size+mtime alone is only a heuristic — an rsync-style copy reproduces mtime exactly, and
+     * two different files can share a size. So when sizes match we hash both sides and compare the
+     * digests; only then can "identical" be asserted. Sizes that differ are decisive on their own,
+     * so the (potentially expensive) hash is skipped. Directories are reported as DIR because they
+     * merge rather than replace. UNKNOWN means no hash tool was available — the UI must then treat
+     * the pair as possibly-different rather than claiming a match.
+     */
+    fun compareForConflicts(destDir: String, sources: List<String>): String {
+        if (sources.isEmpty()) return ""
+        val quotedDest = shellQuote(destDir)
+        val list = sources.joinToString(" ") { shellQuote(it) }
+        return buildString {
+            // Pick a digest tool once; empty OT_H means "cannot hash" -> UNKNOWN, never a false match.
+            append("OT_H=; for c in sha256sum shasum md5sum cksum; do ")
+            append("command -v \"\$c\" >/dev/null 2>&1 && { OT_H=\"\$c\"; break; }; done; ")
+            append("OT_STAT() { stat -c '%s %Y' \"\$1\" 2>/dev/null || stat -f '%z %m' \"\$1\" 2>/dev/null; }; ")
+            append("for OT_S in $list; do ")
+            append("OT_N=\$(basename \"\$OT_S\"); OT_D=$quotedDest/\"\$OT_N\"; ")
+            append("[ -e \"\$OT_D\" ] || continue; ")
+            append("if [ -d \"\$OT_S\" ] || [ -d \"\$OT_D\" ]; then ")
+            append("printf '%s\\tDIR\\t0\\t0\\t0\\t0\\n' \"\$OT_N\"; continue; fi; ")
+            append("set -- \$(OT_STAT \"\$OT_S\"); OT_SS=\${1:-0}; OT_SM=\${2:-0}; ")
+            append("set -- \$(OT_STAT \"\$OT_D\"); OT_DS=\${1:-0}; OT_DM=\${2:-0}; ")
+            append("if [ \"\$OT_SS\" != \"\$OT_DS\" ]; then OT_V=DIFFERENT; ")
+            append("elif [ -z \"\$OT_H\" ]; then OT_V=UNKNOWN; ")
+            append("else OT_A=\$(\"\$OT_H\" \"\$OT_S\" 2>/dev/null | awk '{print \$1}'); ")
+            append("OT_B=\$(\"\$OT_H\" \"\$OT_D\" 2>/dev/null | awk '{print \$1}'); ")
+            append("if [ -z \"\$OT_A\" ] || [ -z \"\$OT_B\" ]; then OT_V=UNKNOWN; ")
+            append("elif [ \"\$OT_A\" = \"\$OT_B\" ]; then OT_V=IDENTICAL; else OT_V=DIFFERENT; fi; fi; ")
+            append("printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' \"\$OT_N\" \"\$OT_V\" \"\$OT_SS\" \"\$OT_DS\" \"\$OT_SM\" \"\$OT_DM\"; ")
+            append("done")
+        }
+    }
+
+    /**
+     * Copy/move [sources] into [destDir] honouring a per-name resolution.
+     *
+     * [skip] names are left untouched (`cp`/`mv` is simply not issued for them); [keepBoth] names are
+     * written under a free `name (n).ext` variant found server-side, so nothing is destroyed; every
+     * other source overwrites. Runs under `set -e` semantics per item but continues across items so
+     * one failure doesn't abandon the rest.
+     */
+    fun pasteResolved(
+        destDir: String,
+        sources: List<String>,
+        isMove: Boolean,
+        skip: Set<String>,
+        keepBoth: Set<String>,
+    ): String {
+        val op = if (isMove) "mv -f --" else "cp -a --"
+        val dest = shellQuote(destDir)
+        val body = sources.mapNotNull { src ->
+            val name = src.substringAfterLast('/')
+            when {
+                name in skip -> null
+                name in keepBoth -> {
+                    // Find "name (n).ext" that does not exist yet, then copy/move onto that path.
+                    "OT_B=${shellQuote(name.substringBeforeLast('.', name))}; " +
+                        "OT_E=${shellQuote(name.substringAfterLast('.', ""))}; " +
+                        "OT_I=1; while :; do " +
+                        "if [ -n \"\$OT_E\" ]; then OT_T=\"\$OT_B (\$OT_I).\$OT_E\"; else OT_T=\"\$OT_B (\$OT_I)\"; fi; " +
+                        "[ -e $dest/\"\$OT_T\" ] || break; OT_I=\$((OT_I+1)); done; " +
+                        "$op ${shellQuote(src)} $dest/\"\$OT_T\""
+                }
+                else -> "$op ${shellQuote(src)} $dest/"
+            }
+        }
+        if (body.isEmpty()) return "true"
+        return body.joinToString("; ")
+    }
 }
 
 /** Pure parsers — deterministic, no I/O — so they can be unit-tested with captured output. */
@@ -939,10 +1055,50 @@ object RemoteParsers {
 
     private val JOURNAL_RE = Regex("""^(\S+)\s+(\S+)\s+([^:]+?):\s?(.*)$""")
 
+    /** True when the host exposes no readable log source, so the UI can explain rather than show empty. */
+    fun journalUnsupported(output: String): Boolean = output.contains("---NOLOGS---")
+
+    /**
+     * Parse [RemoteCommands.compareForConflicts] output.
+     *
+     * Anything unrecognised maps to [ConflictVerdict.UNKNOWN] rather than being dropped or assumed
+     * benign: a clash we failed to classify must still be shown to the user as unverified, never
+     * silently treated as identical.
+     */
+    fun parseTransferConflicts(output: String): List<TransferConflict> =
+        output.lineSequence()
+            .map { it.trim() }
+            .filter { it.isNotEmpty() && it.contains('\t') }
+            .mapNotNull { line ->
+                val f = line.split('\t')
+                if (f.size < 6) return@mapNotNull null
+                val name = f[0].ifBlank { return@mapNotNull null }
+                val verdict = when (f[1].uppercase()) {
+                    "IDENTICAL" -> ConflictVerdict.IDENTICAL
+                    "DIFFERENT" -> ConflictVerdict.DIFFERENT
+                    "DIR" -> ConflictVerdict.DIRECTORY
+                    else -> ConflictVerdict.UNKNOWN
+                }
+                TransferConflict(
+                    name = name,
+                    verdict = verdict,
+                    sourceSize = f[2].toLongOrNull() ?: 0L,
+                    destSize = f[3].toLongOrNull() ?: 0L,
+                    sourceMtimeSeconds = f[4].toLongOrNull() ?: 0L,
+                    destMtimeSeconds = f[5].toLongOrNull() ?: 0L,
+                    // Default the safe way round: only a proven-identical pair is pre-set to
+                    // overwrite (it destroys nothing). Everything else defaults to Keep both.
+                    action = if (verdict == ConflictVerdict.IDENTICAL) ConflictAction.OVERWRITE
+                    else ConflictAction.KEEP_BOTH,
+                )
+            }
+            .toList()
+
     fun parseJournal(output: String): List<SimLog> =
         output.lineSequence()
             .map { it.trim() }
-            .filter { it.isNotEmpty() && !it.startsWith("--") } // skip "-- Logs begin --" banners
+            // skip "-- Logs begin --" banners and the no-log-source marker
+            .filter { it.isNotEmpty() && !it.startsWith("--") && it != "---NOLOGS---" }
             .mapNotNull { line ->
                 val m = JOURNAL_RE.find(line)
                 val (timeRaw, ident, msg) = if (m != null) {

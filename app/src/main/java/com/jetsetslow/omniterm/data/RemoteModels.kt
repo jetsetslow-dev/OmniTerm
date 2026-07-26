@@ -98,6 +98,37 @@ data class SftpFile(
     var content: String = "",
 )
 
+/** How a paste/upload name-clash was resolved by the user. */
+enum class ConflictAction { OVERWRITE, SKIP, KEEP_BOTH }
+
+/** Whether a clashing pair is provably the same bytes, provably different, or unverifiable. */
+enum class ConflictVerdict {
+    /** Digests matched — the same bytes, so overwriting changes nothing. */
+    IDENTICAL,
+    /** Sizes or digests differ — overwriting destroys distinct content. */
+    DIFFERENT,
+    /** Directory clash: contents merge rather than replace. */
+    DIRECTORY,
+    /** No hash tool on the host (or it failed). Must be treated as possibly-different. */
+    UNKNOWN,
+}
+
+/**
+ * One name clash between a pasted/uploaded item and an existing entry in the destination.
+ *
+ * [verdict] is decided by comparing bytes (size first, then a digest when sizes match) — never by
+ * name, size, and mtime alone, which an rsync-style copy can reproduce exactly on different content.
+ */
+data class TransferConflict(
+    val name: String,
+    val verdict: ConflictVerdict,
+    val sourceSize: Long,
+    val destSize: Long,
+    val sourceMtimeSeconds: Long,
+    val destMtimeSeconds: Long,
+    val action: ConflictAction = ConflictAction.OVERWRITE,
+)
+
 /** One hit from a recursive SFTP search — [path] is the full remote path. */
 data class SftpSearchHit(
     val path: String,

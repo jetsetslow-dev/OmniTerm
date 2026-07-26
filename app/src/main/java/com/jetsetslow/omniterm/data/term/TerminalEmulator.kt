@@ -561,32 +561,65 @@ class TerminalEmulator(
                 25 -> cursorVisible = enable
                 1 -> applicationCursorKeys = enable
                 2004 -> bracketedPasteMode = enable
-                47, 1047 -> switchAltScreen(enable)
-                // switchAltScreen owns a dedicated entry cursor save. DECSC/CSI-s inside the TUI
+                // 47/1047 switch buffers only — they must NOT restore the cursor (that is 1048's
+                // job, and 1049's as a combined op). xterm also requires clearing the alternate
+                // buffer before 1047 switches back, so its content can't leak into a later entry.
+                47, 1047 -> {
+                    if (!enable && altActive) screen = Array(rows) { blankRow() }
+                    switchAltScreen(enable, restoreCursor = false)
+                }
+                // 1048 = save/restore cursor only, no buffer switch. Without it a TUI that uses the
+                // 1048/47 pair (rather than 1049) leaves the cursor wherever the TUI left it, so the
+                // shell's next prompt paints over the restored screen from the top.
+                1048 -> if (enable) {
+                    altSavedCursorRow = curRow; altSavedCursorCol = curCol; altSavedWrapPending = wrapPending
+                } else {
+                    curRow = altSavedCursorRow.coerceIn(0, rows - 1)
+                    curCol = altSavedCursorCol.coerceIn(0, cols - 1)
+                    wrapPending = altSavedWrapPending && curCol == cols - 1
+                }
+                // 1049 = save cursor + switch + clear on entry; restore both on exit.
+                // switchAltScreen owns that entry cursor save. DECSC/CSI-s inside the TUI
                 // must not overwrite the cursor that 1049 restores on exit.
-                1049 -> switchAltScreen(enable)
+                1049 -> switchAltScreen(enable, restoreCursor = true)
                 else -> {}
             }
         }
     }
 
-    private fun switchAltScreen(toAlt: Boolean) {
+    /**
+     * Enter or leave the alternate screen.
+     *
+     * [restoreCursor] distinguishes 1049 (save cursor on entry, restore it on exit) from the bare
+     * 47/1047 buffer switch, which must leave the cursor untouched. Restoring it for 47/1047 would
+     * move the cursor somewhere the application never asked for.
+     */
+    private fun switchAltScreen(toAlt: Boolean, restoreCursor: Boolean) {
         if (toAlt == altActive) return
         if (toAlt) {
             savedScreen = screen
-            altSavedCursorRow = curRow
-            altSavedCursorCol = curCol
-            altSavedWrapPending = wrapPending
+            if (restoreCursor) {
+                altSavedCursorRow = curRow
+                altSavedCursorCol = curCol
+                altSavedWrapPending = wrapPending
+            }
             screen = Array(rows) { blankRow() }
             altActive = true
             curRow = 0; curCol = 0; wrapPending = false
         } else {
+            // Falling back to a blank grid would wipe the shell's scrollback-visible screen; only
+            // happens if the app leaves the alt screen without ever having entered it.
             screen = savedScreen ?: Array(rows) { blankRow() }
             savedScreen = null
             altActive = false
-            curRow = altSavedCursorRow.coerceIn(0, rows - 1)
-            curCol = altSavedCursorCol.coerceIn(0, cols - 1)
-            wrapPending = altSavedWrapPending && curCol == cols - 1
+            if (restoreCursor) {
+                curRow = altSavedCursorRow.coerceIn(0, rows - 1)
+                curCol = altSavedCursorCol.coerceIn(0, cols - 1)
+                wrapPending = altSavedWrapPending && curCol == cols - 1
+            } else {
+                curRow = curRow.coerceIn(0, rows - 1)
+                curCol = curCol.coerceIn(0, cols - 1)
+            }
         }
     }
 
