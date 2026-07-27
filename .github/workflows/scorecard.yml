@@ -33,8 +33,14 @@ jobs:
         with:
           persist-credentials: false
 
+      # HELD at v2.4.3: v2.4.4 makes this workflow fail to START (startup_failure) on
+      # pull_request runs, so the required "Supply-chain security analysis" check is never
+      # reported and the PR can never merge. Bisected against main with four throwaway PRs —
+      # this SHA bump alone reproduces it; editing scorecard.yml or dropping id-token: write
+      # does not. v2.4.4 moves the Docker image to ghcr.io/ossf/scorecard-action:v2.4.4 (the
+      # manifest pulls fine, so the container itself fails to start). Revisit on v2.4.5.
       - name: Run Scorecard
-        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
         with:
           results_file: results.sarif
           results_format: sarif
