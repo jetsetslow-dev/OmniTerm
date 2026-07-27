@@ -161,11 +161,11 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
 }
 
 dependencies {
-    implementation("androidx.glance:glance-appwidget:1.1.0")
+    implementation("androidx.glance:glance-appwidget:1.1.1")
     // Material3 for Glance
-    implementation("androidx.glance:glance-material3:1.1.0")
+    implementation("androidx.glance:glance-material3:1.1.1")
     // Profile Installer for Baseline Profiles
-    implementation("androidx.profileinstaller:profileinstaller:1.3.1")
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
   constraints {
     implementation(libs.guava.android) {
       because("Play Ads transitively requests a Guava release with published security advisories")
