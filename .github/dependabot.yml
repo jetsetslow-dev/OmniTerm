@@ -62,3 +62,11 @@ updates:
       github-actions:
         patterns: ["*"]
         update-types: ["major", "minor", "patch"]
+    # v2.4.4 makes the Scorecard workflow fail to START on pull_request runs
+    # (startup_failure), so the required "Supply-chain security analysis" check is never
+    # reported and no PR carrying the bump can merge. Bisected with throwaway PRs: this bump
+    # alone reproduces it. Without this hold Dependabot re-proposes it every week and every
+    # such PR is unmergeable. Drop the hold once v2.4.5 ships and starts cleanly.
+    ignore:
+      - dependency-name: ossf/scorecard-action
+        versions: ["2.4.4"]
