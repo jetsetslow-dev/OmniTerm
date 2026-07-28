@@ -548,8 +548,16 @@ class TerminalEmulator(
             }
             'h' -> setMode(priv, params, true)
             'l' -> setMode(priv, params, false)
-            's' -> { savedRow = curRow; savedCol = curCol }
-            'u' -> { curRow = savedRow.coerceIn(0, rows - 1); curCol = savedCol.coerceIn(0, cols - 1) }
+            // ANSI SCOSC/SCORC are the bare CSI s/u forms. Modern interactive clients such as
+            // Claude and Codex also use Kitty's keyboard protocol, whose push/pop/query controls
+            // end in `u` but carry `<`, `>`, `?`, or `=` parameters. Treating those as SCORC jumps
+            // the cursor to our old save slot just before 1049 saves the primary-screen cursor;
+            // when the TUI exits, the shell then resumes at the top and paints over stale rows.
+            's' -> if (raw.isEmpty()) { savedRow = curRow; savedCol = curCol }
+            'u' -> if (raw.isEmpty()) {
+                curRow = savedRow.coerceIn(0, rows - 1)
+                curCol = savedCol.coerceIn(0, cols - 1)
+            }
             else -> {} // unsupported — ignore
         }
     }

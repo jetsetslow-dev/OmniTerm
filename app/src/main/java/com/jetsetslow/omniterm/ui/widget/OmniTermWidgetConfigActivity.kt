@@ -16,7 +16,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.glance.appwidget.GlanceAppWidgetManager
-import androidx.glance.appwidget.state.updateAppWidgetState
 import androidx.lifecycle.lifecycleScope
 import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.ServerEntity
@@ -50,19 +49,20 @@ class OmniTermWidgetConfigActivity : ComponentActivity() {
         setContent {
             var servers by remember { mutableStateOf<List<ServerEntity>>(emptyList()) }
             val selectedIds = remember { mutableStateListOf<Int>() }
+            var loading by remember { mutableStateOf(true) }
+            var saving by remember { mutableStateOf(false) }
 
             LaunchedEffect(Unit) {
                 servers = withContext(Dispatchers.IO) {
                     AppDatabase.getDatabase(this@OmniTermWidgetConfigActivity).serverDao().getAllServers()
                 }
                 // Reconfiguration re-opens this screen: start from the widget's saved selection.
-                getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
+                val saved = getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
                     .getStringSet("widget_$appWidgetId", null)
                     ?.mapNotNull { it.toIntOrNull() }
-                    ?.let { saved ->
-                        selectedIds.clear()
-                        selectedIds.addAll(saved)
-                    }
+                selectedIds.clear()
+                selectedIds.addAll(saved ?: servers.map { it.id })
+                loading = false
             }
 
             MaterialTheme {
@@ -72,9 +72,12 @@ class OmniTermWidgetConfigActivity : ComponentActivity() {
                             title = { Text("Select Servers for Widget") },
                             actions = {
                                 TextButton(onClick = {
-                                    saveConfigAndFinish(selectedIds)
-                                }) {
-                                    Text("Save")
+                                    if (!saving) {
+                                        saving = true
+                                        saveConfigAndFinish(selectedIds.toList()) { saving = false }
+                                    }
+                                }, enabled = !loading && !saving && (servers.isEmpty() || selectedIds.isNotEmpty())) {
+                                    Text(if (saving) "Saving…" else "Save")
                                 }
                             }
                         )
@@ -109,22 +112,40 @@ class OmniTermWidgetConfigActivity : ComponentActivity() {
         }
     }
 
-    private fun saveConfigAndFinish(selectedIds: List<Int>) {
-        val prefs = getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
-        prefs.edit().putStringSet("widget_$appWidgetId", selectedIds.map { it.toString() }.toSet()).apply()
+    private fun saveConfigAndFinish(selectedIds: List<Int>, onFailure: () -> Unit) {
+        lifecycleScope.launch {
+            val glanceId = withContext(Dispatchers.IO) {
+                runCatching {
+                    GlanceAppWidgetManager(this@OmniTermWidgetConfigActivity)
+                        .getGlanceIdBy(appWidgetId)
+                }
+            }.getOrElse {
+                android.widget.Toast.makeText(
+                    this@OmniTermWidgetConfigActivity,
+                    "This widget is no longer available.",
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
+                onFailure()
+                return@launch
+            }
 
-        lifecycleScope.launch(Dispatchers.IO) {
-            val manager = GlanceAppWidgetManager(this@OmniTermWidgetConfigActivity)
-            val glanceId = manager.getGlanceIdBy(appWidgetId)
-            OmniTermWidget().update(this@OmniTermWidgetConfigActivity, glanceId)
+            withContext(Dispatchers.IO) {
+                getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
+                    .edit()
+                    .putStringSet("widget_$appWidgetId", selectedIds.map { it.toString() }.toSet())
+                    .commit()
+                // A render failure should not strand a valid widget in a permanently-cancelled
+                // configuration flow; the platform or the next telemetry write can retry it.
+                runCatching {
+                    OmniTermWidget().update(this@OmniTermWidgetConfigActivity, glanceId)
+                }
+            }
 
             val resultValue = Intent().apply {
                 putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
             }
-            withContext(Dispatchers.Main) {
-                setResult(RESULT_OK, resultValue)
-                finish()
-            }
+            setResult(RESULT_OK, resultValue)
+            finish()
         }
     }
 }

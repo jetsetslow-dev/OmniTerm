@@ -33,21 +33,22 @@
         </intent>
     </queries>
 
-    <!-- NOTE: `android:logo` below does NOT drive the biometric prompt. androidx.biometric contains
-         no loadLogo()/applicationInfo call; the prompt composites the adaptive launcher icon, and a
-         logo is only forwarded if the app calls PromptInfo.Builder.setLogoRes/setLogoBitmap (gated
-         behind SET_BIOMETRIC_DIALOG_ADVANCED, internal|role — unavailable to us). Kept only as
-         harmless legacy branding; removing it once caused a regression. The actual biometric fix
-         lives in the transparency of @mipmap/ic_launcher_fg. -->
+    <!-- Android 15+ SystemUI obtains BiometricPrompt branding with
+         PackageManager.getApplicationIcon(ApplicationInfo), not android:logo. Keep that application
+         icon and roundIcon on the exact legacy bitmap artwork: PackageManager substitutes roundIcon
+         for ApplicationInfo.icon on round-icon devices, and SystemUI's 32dp ImageView can render
+         either directly without flattening an AdaptiveIconDrawable. MainActivity overrides
+         android:icon with the normal adaptive launcher icon, so this does not change the home-screen
+         logo. Third-party apps cannot call PromptInfo.Builder.setLogoRes/setLogoBitmap because those
+         APIs require the privileged SET_BIOMETRIC_DIALOG_ADVANCED permission. -->
     <application
         android:allowBackup="false"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
-        android:icon="@mipmap/ic_launcher"
+        android:icon="@mipmap/ic_system_brand"
         android:label="@string/app_name"
-        android:logo="@mipmap/ic_launcher_fg"
         android:networkSecurityConfig="@xml/network_security_config"
-        android:roundIcon="@mipmap/ic_launcher_round"
+        android:roundIcon="@mipmap/ic_system_brand"
         android:supportsRtl="true"
         android:theme="@style/Theme.MyApplication"
         android:usesCleartextTraffic="false">
@@ -56,7 +57,6 @@
             android:exported="true"
             android:icon="@mipmap/ic_launcher"
             android:launchMode="singleTop"
-            android:logo="@mipmap/ic_launcher_fg"
             android:windowSoftInputMode="adjustResize"
             android:theme="@style/Theme.MyApplication">
             <intent-filter>

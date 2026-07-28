@@ -143,7 +143,9 @@ Open **Tools → Backups Hub** to export or restore a selective backup of OmniTe
 - **On-device encryption** — credentials, private keys, sudo passwords, and proxy passwords use AES-GCM with an Android Keystore-managed key (hardware-backed where the device supports it).
 - **SSH host-key pinning** — the host key is pinned on first connect; a changed key later (possible MITM) is actively rejected until you review it.
 - **SSH agent forwarding** — optional per host, so onward hops can authenticate with your key without copying it to the server. Off by default; enable only for hosts you trust.
-- **Biometric app lock** — lock the whole app behind biometrics or a PIN.
+- **Biometric app lock** — lock the whole app behind biometrics or a PIN. Cold starts always lock;
+  warm returns can lock immediately, after 30 seconds, 1 minute, 5 minutes, or a custom duration
+  up to 24 hours. Rotation does not start the background timer.
 - **Authenticated sudo** — enabling sudo-assisted SFTP writes requires device authentication first.
 - **Encrypted backups** — sensitive backup sections are AES-256-GCM encrypted with a passphrase the app never stores.
 - **Ads data (Play Store only)** — the free tier shows one AdMob banner, which may access your advertising ID. The source-available build has no ads SDK and accesses no advertising ID.
@@ -167,6 +169,18 @@ Build the source-available variant and run its unit tests:
 ```bash
 ./gradlew assembleOpenSourceDebug testOpenSourceDebugUnitTest --no-daemon
 ```
+
+Before pushing a code change, run the repository preflight:
+
+```bash
+./scripts/local-pr-check.sh --full
+```
+
+It runs the release/CI contract tests, both flavor unit suites and lint gates, and both release
+SBOM dependency graphs. If an Android device or emulator is connected, it also runs the Room
+migration matrix. Robolectric's Android 15 native runtime is unavailable on Linux ARM64, so those
+specific classes are deferred to the required x86_64 PR check there; platform-neutral logic remains
+covered locally by ordinary JVM tests.
 
 Contributors should also read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [AI-first development policy](AI_FIRST_DEVELOPMENT.md); maintainers should use

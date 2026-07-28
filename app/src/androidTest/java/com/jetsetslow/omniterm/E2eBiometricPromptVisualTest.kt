@@ -13,6 +13,7 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
@@ -22,17 +23,9 @@ import org.junit.Test
 class E2eBiometricPromptVisualTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
 
-    /**
-     * Android 15+ BiometricPrompt derives its branding thumbnail from the adaptive launcher icon and
-     * composites background + foreground. It does NOT read `android:logo`; androidx.biometric only
-     * forwards a logo when the app calls `PromptInfo.Builder.setLogoRes/setLogoBitmap`, which need
-     * SET_BIOMETRIC_DIALOG_ADVANCED (internal|role) and are therefore unavailable to us.
-     *
-     * So the only lever we have is the foreground layer's own alpha: with the mark's baked tile
-     * stripped, there is nothing left for the prompt to flatten into an opaque block.
-     */
+    /** The home-screen icon must remain the existing adaptive infinity artwork. */
     @Test
-    fun adaptiveForegroundIsTransparentSoTheBiometricPromptCannotFlattenIt() {
+    fun launcherIconRemainsTheExistingAdaptiveArtwork() {
         val drawable = composeRule.activity.getDrawable(R.mipmap.ic_launcher)
         assertTrue("Launcher icon is not adaptive", drawable is AdaptiveIconDrawable)
         val foreground = (drawable as AdaptiveIconDrawable).foreground
@@ -45,7 +38,7 @@ class E2eBiometricPromptVisualTest {
         val pixels = renderToPixels(foreground)
         val transparentFraction = pixels.count { (it ushr 24) == 0 }.toDouble() / pixels.size
         assertTrue(
-            "Foreground has a baked opaque tile again; the prompt will flatten it: $transparentFraction",
+            "Adaptive foreground has a baked opaque tile again: $transparentFraction",
             transparentFraction > 0.20,
         )
 
@@ -53,7 +46,46 @@ class E2eBiometricPromptVisualTest {
         assertTrue("Foreground mark is effectively empty: $markFraction", markFraction > 0.05)
     }
 
-    /** The mark must still read as artwork (many distinct colours), not collapse to a flat shape. */
+    /**
+     * Android 15+ SystemUI resolves BiometricPrompt branding through
+     * PackageManager.getApplicationIcon(ApplicationInfo). It does not read android:logo. Keep this
+     * regression on that exact platform path and require a plain bitmap, while MainActivity keeps
+     * the adaptive launcher icon above.
+     */
+    @Test
+    fun biometricSystemPathResolvesTheOriginalBitmapArtwork() {
+        val activity = composeRule.activity
+        val packageManager = activity.packageManager
+        val appInfo = activity.applicationInfo
+        val activityInfo = packageManager.getActivityInfo(activity.componentName, 0)
+
+        assertEquals(R.mipmap.ic_system_brand, appInfo.icon)
+        assertEquals(R.mipmap.ic_launcher, activityInfo.icon)
+
+        val systemIcon = packageManager.getApplicationIcon(appInfo)
+        assertTrue(
+            "Biometric system icon must bypass the adaptive wrapper",
+            systemIcon is BitmapDrawable,
+        )
+
+        // Android 16's biometric prompt renders the app logo in a 32dp ImageView with fitXY.
+        val promptPixels = renderToPixels(systemIcon, (32 * activity.resources.displayMetrics.density).toInt())
+        val visibleFraction = promptPixels.count { (it ushr 24) > 0x80 }.toDouble() / promptPixels.size
+        assertTrue("Biometric system icon is effectively transparent: $visibleFraction", visibleFraction > 0.55)
+
+        val visibleColors = promptPixels.asSequence()
+            .filter { (it ushr 24) > 0x80 }
+            .map { it and 0x00ffffff }
+            .distinct()
+            .take(64)
+            .count()
+        assertTrue(
+            "Biometric system icon collapsed to a blank/flat tile: $visibleColors visible colors",
+            visibleColors >= 64,
+        )
+    }
+
+    /** The adaptive foreground must still read as rich artwork, not collapse to a flat shape. */
     @Test
     fun adaptiveForegroundKeepsTheNeonMarkLegible() {
         val drawable = composeRule.activity.getDrawable(R.mipmap.ic_launcher) as AdaptiveIconDrawable
@@ -70,8 +102,11 @@ class E2eBiometricPromptVisualTest {
         )
     }
 
-    private fun renderToPixels(drawable: android.graphics.drawable.Drawable): IntArray {
-        val bitmap = Bitmap.createBitmap(216, 216, Bitmap.Config.ARGB_8888)
+    private fun renderToPixels(
+        drawable: android.graphics.drawable.Drawable,
+        size: Int = 216,
+    ): IntArray {
+        val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
         drawable.setBounds(0, 0, bitmap.width, bitmap.height)
         drawable.draw(Canvas(bitmap))
         val pixels = IntArray(bitmap.width * bitmap.height)
@@ -82,7 +117,10 @@ class E2eBiometricPromptVisualTest {
     @Test
     fun showsBrandedSystemPromptLongEnoughForVisualInspection() = runBlocking {
         assumeTrue(InstrumentationRegistry.getArguments().getString("omniterm_e2e_biometric_visual") == "yes")
-        assumeTrue("Device has no enrolled strong biometric", BiometricCryptoGate.canAuthenticate(composeRule.activity))
+        assertTrue(
+            "Opt-in visual fixture requires an enrolled strong biometric",
+            BiometricCryptoGate.canAuthenticate(composeRule.activity),
+        )
         val dismissed = CompletableDeferred<Unit>()
         composeRule.runOnUiThread {
             BiometricCryptoGate.authenticate(

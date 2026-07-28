@@ -763,7 +763,9 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
         applyScalar("container_name", svc.containerName, src.containerName)
         applyScalar("restart", svc.restart, src.restart)
         applyScalar("command", svc.command, src.command)
-        applyScalar("userns_mode", svc.usernsMode, src.usernsMode)
+        val renderedUsernsMode =
+            if (draft.runtime == "podman" || svc.usernsMode != "keep-id") svc.usernsMode else ""
+        applyScalar("userns_mode", renderedUsernsMode, src.usernsMode)
 
         fun applyArray(key: String, items: List<String>, old: List<String>, quote: Boolean) {
             val cleaned = items.filter { it.isNotBlank() }

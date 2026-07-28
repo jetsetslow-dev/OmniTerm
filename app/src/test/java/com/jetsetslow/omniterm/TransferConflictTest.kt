@@ -79,13 +79,20 @@ class TransferConflictTest {
     /** The probe must fall back across hash tools and never claim a match when none is available. */
     @Test
     fun compareCommandTriesSeveralDigestToolsAndHandlesTheirAbsence() {
-        val cmd = RemoteCommands.compareForConflicts("/tmp/dest", listOf("/src/a.txt"))
+        val cmd = RemoteCommands.compareForConflicts(
+            "/tmp/dest",
+            listOf("/src/a.txt", "/src/name\twith\nseparators.txt"),
+        )
         listOf("sha256sum", "shasum", "md5sum", "cksum").forEach {
             assertTrue("missing digest fallback $it", cmd.contains(it))
         }
         assertTrue("must emit UNKNOWN when no hash tool exists", cmd.contains("UNKNOWN"))
         // Size is compared first so a cheap decisive answer skips hashing entirely.
         assertTrue(cmd.contains("DIFFERENT"))
+        assertTrue("scan must prove it reached the end", cmd.contains(RemoteCommands.CONFLICT_SCAN_OK))
+        assertTrue("first record must use a safe source index", cmd.contains("0\\t"))
+        assertTrue("second record must use a safe source index", cmd.contains("1\\t"))
+        assertFalse("raw tabbed basename must never be emitted", cmd.contains("\$OT_N\" \"\$OT_V"))
     }
 
     @Test
@@ -119,7 +126,21 @@ class TransferConflictTest {
     fun moveUsesMvAndCopyUsesCp() {
         val mv = RemoteCommands.pasteResolved("/d", listOf("/s/f"), true, emptySet(), emptySet())
         val cp = RemoteCommands.pasteResolved("/d", listOf("/s/f"), false, emptySet(), emptySet())
-        assertTrue(mv.startsWith("mv -f --"))
-        assertTrue(cp.startsWith("cp -a --"))
+        assertTrue(mv.contains("mv -f --"))
+        assertTrue(cp.contains("cp -a --"))
+    }
+
+    @Test
+    fun pastePreservesAnEarlierFailureInsteadOfHidingItBehindALaterSuccess() {
+        val script = RemoteCommands.pasteResolved(
+            "/d",
+            listOf("/s/first", "/s/second"),
+            false,
+            emptySet(),
+            emptySet(),
+        )
+        assertTrue(script.contains("OT_FAIL=0"))
+        assertEquals(2, "OT_FAIL=1".toRegex().findAll(script).count())
+        assertTrue(script.contains("OMNITERM_PASTE_FAILED"))
     }
 }

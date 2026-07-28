@@ -51,6 +51,13 @@ class AlertBreachTracker {
         states.remove(key)
     }
 
+    /** Drop every host window for a rule after that rule is deleted or materially edited. */
+    fun forgetRule(ruleId: Int) {
+        states.keys
+            .filter { it.first == ruleId }
+            .forEach(states::remove)
+    }
+
     companion object {
         const val RESET_AFTER_UNDER_SAMPLES = 2
     }

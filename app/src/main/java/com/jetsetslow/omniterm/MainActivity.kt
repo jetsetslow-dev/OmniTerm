@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import com.jetsetslow.omniterm.ui.AppViewModel
+import com.jetsetslow.omniterm.ui.ExternalLaunchRequest
 import com.jetsetslow.omniterm.ui.MainAppScreen
 import com.jetsetslow.omniterm.ui.flavorRequestInAppReview
 import com.jetsetslow.omniterm.ui.theme.MyApplicationTheme
@@ -98,11 +99,24 @@ class MainActivity : AppCompatActivity() {
   override fun onNewIntent(intent: android.content.Intent) {
     super.onNewIntent(intent)
     setIntent(intent) // Keep getIntent() in sync for composables that observe it
+    // onStart normally evaluates the background timeout first. Keep the same security ordering for
+    // launch modes where Android can deliver an intent to an already-created Activity directly.
+    appViewModel?.relockIfNeeded()
     handleIntent(intent)
+  }
+
+  override fun onStart() {
+    super.onStart()
+    appViewModel?.relockIfNeeded()
   }
 
   override fun onStop() {
     super.onStop()
+    // Rotation/theme recreation must not count as leaving the app. A process restart still follows
+    // the independent cold-start lock path.
+    if (com.jetsetslow.omniterm.ui.shouldRecordAppBackground(isChangingConfigurations)) {
+      appViewModel?.noteAppBackgrounded()
+    }
     // Clear focus from whatever text field is active before the activity stops. Backgrounding (e.g.
     // tapping a notification) tears down the IME text-input session; if a Compose text field is still
     // focused on resume it re-reports its position through the legacy cursor-anchor path against the
@@ -127,73 +141,53 @@ class MainActivity : AppCompatActivity() {
     }
   }
 
-  private var pendingSessionId: String? = null
-
-  private var pendingShortcutServerId: Int? = null
-  private var pendingSplitServerId1: Int? = null
-  private var pendingSplitServerId2: Int? = null
-  private var pendingShareId: Int? = null
-  private var pendingStaticShortcutAction: String? = null
-
-  /** Static launcher shortcuts carry no extras, so they route by custom action string. */
-  private fun dispatchStaticShortcut(vm: com.jetsetslow.omniterm.ui.AppViewModel, action: String) {
-    when (action) {
-      "com.jetsetslow.omniterm.action.NEW_HOST" -> vm.requestAddServerFromShortcut()
-      "com.jetsetslow.omniterm.action.SFTP" -> vm.navigateTo(com.jetsetslow.omniterm.ui.Screen.SFTP)
-      "com.jetsetslow.omniterm.action.NETWORK_TOOLS" -> vm.navigateTo(com.jetsetslow.omniterm.ui.Screen.Network)
-    }
-  }
-
   private fun handleIntent(intent: android.content.Intent?) {
-    val sessionId = intent?.getStringExtra(SessionService.EXTRA_SESSION_ID)
-    val staticAction = intent?.action?.takeIf { it.startsWith("com.jetsetslow.omniterm.action.") }
-    if (staticAction != null) {
-      val vm = appViewModel
-      if (vm != null) dispatchStaticShortcut(vm, staticAction) else pendingStaticShortcutAction = staticAction
+    intent ?: return
+    val requests = buildList {
+      intent.getStringExtra(SessionService.EXTRA_SESSION_ID)
+        ?.let { add(ExternalLaunchRequest.ResumeSession(it)) }
+
+      when (intent.action) {
+        "com.jetsetslow.omniterm.action.NEW_HOST" -> add(ExternalLaunchRequest.AddServer)
+        "com.jetsetslow.omniterm.action.SFTP" -> add(ExternalLaunchRequest.OpenSftp)
+        "com.jetsetslow.omniterm.action.NETWORK_TOOLS" -> add(ExternalLaunchRequest.OpenNetworkTools)
+      }
+
+      intent.getIntExtra("shortcut_server_id", 0)
+        .takeIf { intent.hasExtra("shortcut_server_id") && it > 0 }
+        ?.let { add(ExternalLaunchRequest.ConnectServer(it)) }
+
+      val splitId1 = intent.getIntExtra("shortcut_split_server1_id", 0)
+      val splitId2 = intent.getIntExtra("shortcut_split_server2_id", 0)
+      if (
+        intent.hasExtra("shortcut_split_server1_id") &&
+        intent.hasExtra("shortcut_split_server2_id") &&
+        splitId1 > 0 &&
+        splitId2 > 0
+      ) {
+        add(ExternalLaunchRequest.OpenSplit(splitId1, splitId2))
+      }
+
+      intent.getIntExtra("shortcut_share_id", 0)
+        .takeIf { intent.hasExtra("shortcut_share_id") && it > 0 }
+        ?.let { add(ExternalLaunchRequest.OpenShare(it)) }
     }
-    val shortcutId = if (intent?.hasExtra("shortcut_server_id") == true) intent.getIntExtra("shortcut_server_id", 0) else null
-    val splitId1 = if (intent?.hasExtra("shortcut_split_server1_id") == true) intent.getIntExtra("shortcut_split_server1_id", 0) else null
-    val splitId2 = if (intent?.hasExtra("shortcut_split_server2_id") == true) intent.getIntExtra("shortcut_split_server2_id", 0) else null
-    val shareId = if (intent?.hasExtra("shortcut_share_id") == true) intent.getIntExtra("shortcut_share_id", 0) else null
 
     // Notification disconnect actions are handled by the non-exported SessionService. The exported
-    // launcher Activity only honors resume/navigation intents.
-    if (sessionId != null) {
-      val vm = appViewModel
-      if (vm != null) {
-        vm.attachSession(sessionId)
-      } else {
-        pendingSessionId = sessionId
-      }
-    }
-    
-    if (shortcutId != null && shortcutId != 0) {
-      val vm = appViewModel
-      if (vm != null) {
-        vm.connectTerminalByServerId(shortcutId)
-      } else {
-        pendingShortcutServerId = shortcutId
-      }
+    // launcher Activity only honors resume/navigation intents. Consume every launch value before
+    // dispatch: the Activity's Intent survives configuration changes, and leaving these extras in
+    // place reconnects or reopens the target on every rotation.
+    intent.removeExtra(SessionService.EXTRA_SESSION_ID)
+    intent.removeExtra("shortcut_server_id")
+    intent.removeExtra("shortcut_split_server1_id")
+    intent.removeExtra("shortcut_split_server2_id")
+    intent.removeExtra("shortcut_share_id")
+    if (intent.action?.startsWith("com.jetsetslow.omniterm.action.") == true) {
+      intent.action = Intent.ACTION_MAIN
     }
 
-    if (splitId1 != null && splitId2 != null && splitId1 != 0 && splitId2 != 0) {
-      val vm = appViewModel
-      if (vm != null) {
-        vm.openMultiSshByServerIds(splitId1, splitId2)
-      } else {
-        pendingSplitServerId1 = splitId1
-        pendingSplitServerId2 = splitId2
-      }
-    }
-
-    if (shareId != null && shareId != 0) {
-      val vm = appViewModel
-      if (vm != null) {
-        vm.openShareBrowserById(shareId)
-      } else {
-        pendingShareId = shareId
-      }
-    }
+    val vm = appViewModel ?: return
+    requests.forEach(vm::handleExternalLaunch)
   }
 
   private fun showAppContent() {
@@ -203,35 +197,6 @@ class MainActivity : AppCompatActivity() {
       )
       appViewModel = viewModel
 
-      // Intent is handled in onCreate (cold start) and onNewIntent (warm start).
-      // Process any pendingSessionId that was set before the ViewModel was ready.
-      androidx.compose.runtime.LaunchedEffect(Unit) {
-        pendingSessionId?.let {
-          viewModel.attachSession(it)
-          pendingSessionId = null
-        }
-        pendingShortcutServerId?.let {
-          viewModel.connectTerminalByServerId(it)
-          pendingShortcutServerId = null
-        }
-        // Read both ids into locals before use: onNewIntent runs on the main thread and can null
-        // these out between the check and the dereference, which would crash on `!!`.
-        val splitId1 = pendingSplitServerId1
-        val splitId2 = pendingSplitServerId2
-        if (splitId1 != null && splitId2 != null) {
-          viewModel.openMultiSshByServerIds(splitId1, splitId2)
-          pendingSplitServerId1 = null
-          pendingSplitServerId2 = null
-        }
-        pendingShareId?.let {
-          viewModel.openShareBrowserById(it)
-          pendingShareId = null
-        }
-        pendingStaticShortcutAction?.let {
-          dispatchStaticShortcut(viewModel, it)
-          pendingStaticShortcutAction = null
-        }
-      }
       val keepOn = viewModel.isKeepScreenOnEnabled
       val window = this.window
       androidx.compose.runtime.LaunchedEffect(keepOn) {

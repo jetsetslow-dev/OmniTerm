@@ -2,6 +2,9 @@ package com.jetsetslow.omniterm.data
 
 /** The exact remote commands we run, kept next to the parsers that consume their output. */
 object RemoteCommands {
+    /** Emitted only after a conflict scan script reaches its end successfully. */
+    const val CONFLICT_SCAN_OK = "@OMNITERM_CONFLICT_SCAN_OK"
+
     // Container runtime resolved at run time: prefer a usable Docker, then a usable Podman. If
     // neither can run `ps` (for example Docker exists but the user lacks socket access), fall back
     // to a present binary so the command still returns the runtime's real permission/install error.
@@ -850,8 +853,10 @@ object RemoteCommands {
     /**
      * Compare each clipboard source against the same-named entry in [destDir], one round trip.
      *
-     * Emits `name<TAB>verdict<TAB>srcSize<TAB>dstSize<TAB>srcMtime<TAB>dstMtime` per conflict, where
-     * verdict is IDENTICAL / DIFFERENT / DIR / UNKNOWN.
+     * Emits `sourceIndex<TAB>verdict<TAB>srcSize<TAB>dstSize<TAB>srcMtime<TAB>dstMtime` per
+     * conflict, where verdict is IDENTICAL / DIFFERENT / DIR / UNKNOWN. The index is deliberately
+     * used instead of the basename: tabs and newlines are legal filename characters and must not
+     * corrupt this line protocol.
      *
      * Name+size+mtime alone is only a heuristic — an rsync-style copy reproduces mtime exactly, and
      * two different files can share a size. So when sizes match we hash both sides and compare the
@@ -863,27 +868,29 @@ object RemoteCommands {
     fun compareForConflicts(destDir: String, sources: List<String>): String {
         if (sources.isEmpty()) return ""
         val quotedDest = shellQuote(destDir)
-        val list = sources.joinToString(" ") { shellQuote(it) }
         return buildString {
             // Pick a digest tool once; empty OT_H means "cannot hash" -> UNKNOWN, never a false match.
             append("OT_H=; for c in sha256sum shasum md5sum cksum; do ")
             append("command -v \"\$c\" >/dev/null 2>&1 && { OT_H=\"\$c\"; break; }; done; ")
             append("OT_STAT() { stat -c '%s %Y' \"\$1\" 2>/dev/null || stat -f '%z %m' \"\$1\" 2>/dev/null; }; ")
-            append("for OT_S in $list; do ")
-            append("OT_N=\$(basename \"\$OT_S\"); OT_D=$quotedDest/\"\$OT_N\"; ")
-            append("[ -e \"\$OT_D\" ] || continue; ")
-            append("if [ -d \"\$OT_S\" ] || [ -d \"\$OT_D\" ]; then ")
-            append("printf '%s\\tDIR\\t0\\t0\\t0\\t0\\n' \"\$OT_N\"; continue; fi; ")
-            append("set -- \$(OT_STAT \"\$OT_S\"); OT_SS=\${1:-0}; OT_SM=\${2:-0}; ")
-            append("set -- \$(OT_STAT \"\$OT_D\"); OT_DS=\${1:-0}; OT_DM=\${2:-0}; ")
-            append("if [ \"\$OT_SS\" != \"\$OT_DS\" ]; then OT_V=DIFFERENT; ")
-            append("elif [ -z \"\$OT_H\" ]; then OT_V=UNKNOWN; ")
-            append("else OT_A=\$(\"\$OT_H\" \"\$OT_S\" 2>/dev/null | awk '{print \$1}'); ")
-            append("OT_B=\$(\"\$OT_H\" \"\$OT_D\" 2>/dev/null | awk '{print \$1}'); ")
-            append("if [ -z \"\$OT_A\" ] || [ -z \"\$OT_B\" ]; then OT_V=UNKNOWN; ")
-            append("elif [ \"\$OT_A\" = \"\$OT_B\" ]; then OT_V=IDENTICAL; else OT_V=DIFFERENT; fi; fi; ")
-            append("printf '%s\\t%s\\t%s\\t%s\\t%s\\t%s\\n' \"\$OT_N\" \"\$OT_V\" \"\$OT_SS\" \"\$OT_DS\" \"\$OT_SM\" \"\$OT_DM\"; ")
-            append("done")
+            sources.forEachIndexed { index, source ->
+                append("OT_S=${shellQuote(source)}; ")
+                append("OT_N=\$(basename \"\$OT_S\"); OT_D=$quotedDest/\"\$OT_N\"; ")
+                append("if [ -e \"\$OT_D\" ]; then ")
+                append("if [ -d \"\$OT_S\" ] || [ -d \"\$OT_D\" ]; then ")
+                append("printf '$index\\tDIR\\t0\\t0\\t0\\t0\\n'; else ")
+                append("set -- \$(OT_STAT \"\$OT_S\"); OT_SS=\${1:-0}; OT_SM=\${2:-0}; ")
+                append("set -- \$(OT_STAT \"\$OT_D\"); OT_DS=\${1:-0}; OT_DM=\${2:-0}; ")
+                append("if [ \"\$OT_SS\" != \"\$OT_DS\" ]; then OT_V=DIFFERENT; ")
+                append("elif [ -z \"\$OT_H\" ]; then OT_V=UNKNOWN; ")
+                append("else OT_A=\$(\"\$OT_H\" \"\$OT_S\" 2>/dev/null | awk '{print \$1}'); ")
+                append("OT_B=\$(\"\$OT_H\" \"\$OT_D\" 2>/dev/null | awk '{print \$1}'); ")
+                append("if [ -z \"\$OT_A\" ] || [ -z \"\$OT_B\" ]; then OT_V=UNKNOWN; ")
+                append("elif [ \"\$OT_A\" = \"\$OT_B\" ]; then OT_V=IDENTICAL; else OT_V=DIFFERENT; fi; fi; ")
+                append("printf '$index\\t%s\\t%s\\t%s\\t%s\\t%s\\n' \"\$OT_V\" \"\$OT_SS\" \"\$OT_DS\" \"\$OT_SM\" \"\$OT_DM\"; ")
+                append("fi; fi; ")
+            }
+            append("printf '%s\\n' '$CONFLICT_SCAN_OK'")
         }
     }
 
@@ -921,7 +928,11 @@ object RemoteCommands {
             }
         }
         if (body.isEmpty()) return "true"
-        return body.joinToString("; ")
+        // Keep attempting independent items, but preserve an aggregate failure exit/output instead
+        // of letting a later successful command hide an earlier cp/mv failure.
+        return "OT_FAIL=0; " +
+            body.joinToString("; ") { "$it || OT_FAIL=1" } +
+            "; [ \"\$OT_FAIL\" -eq 0 ] || { echo 'OMNITERM_PASTE_FAILED'; exit 1; }"
     }
 }
 

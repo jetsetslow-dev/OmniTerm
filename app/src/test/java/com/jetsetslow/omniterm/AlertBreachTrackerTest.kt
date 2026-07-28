@@ -108,4 +108,18 @@ class AlertBreachTrackerTest {
         assertTrue(t.clearedFor(key))
         assertFalse(t.onSample(key, over = true, now = window + 1, windowMs = window, staleGapMs = gap))
     }
+
+    @Test
+    fun editingRuleDropsUnfiredWindowsForEveryHost() {
+        val t = tracker()
+        val otherHost = key.first to 99
+        t.onSample(key, over = true, now = 0L, windowMs = window, staleGapMs = gap)
+        t.onSample(otherHost, over = true, now = 0L, windowMs = window, staleGapMs = gap)
+
+        t.forgetRule(key.first)
+
+        assertTrue(t.clearedFor(key))
+        assertTrue(t.clearedFor(otherHost))
+        assertFalse(t.onSample(key, over = true, now = window + 1, windowMs = window, staleGapMs = gap))
+    }
 }

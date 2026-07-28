@@ -145,11 +145,20 @@ ksp {
 val lowResourceBuild = providers.gradleProperty("omniterm.lowResourceBuild")
   .map { it.toBoolean() }
   .getOrElse(false)
+val linuxArm64Host =
+  System.getProperty("os.name").equals("Linux", ignoreCase = true) &&
+    System.getProperty("os.arch").lowercase() in setOf("aarch64", "arm64")
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
-  if (lowResourceBuild) {
+  if (lowResourceBuild || linuxArm64Host) {
     maxParallelForks = 1
     maxHeapSize = "768m"
+  }
+  if (lowResourceBuild || linuxArm64Host) {
+    // Robolectric 4.16's Android 15 native runtime has no Linux ARM64 binary and fails before a
+    // JUnit @Before/assumption can skip the test. Exclude those classes at Gradle discovery time
+    // on that host. Critical platform-neutral logic belongs in ordinary JVM tests (for example,
+    // TerminalResizeDispatcherTest) so ARM development still exercises it.
     exclude(
       "**/AppResourcesTest.class",
       "**/GreetingScreenshotTest.class",
