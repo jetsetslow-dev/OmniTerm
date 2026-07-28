@@ -466,6 +466,15 @@ fun SudoAuthDialog(viewModel: AppViewModel) {
 @Composable
 fun MainAppScreen(viewModel: AppViewModel) {
     val context = LocalContext.current
+    if (!viewModel.securitySettingsLoaded) {
+        Box(
+            modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
+            contentAlignment = Alignment.Center,
+        ) {
+            CircularProgressIndicator()
+        }
+        return
+    }
     var backPressDisabledTime by remember { mutableStateOf(0L) }
     var showExitDialog by remember { mutableStateOf(false) }
     val fullScreenEditorHost = remember { FullScreenEditorHost() }

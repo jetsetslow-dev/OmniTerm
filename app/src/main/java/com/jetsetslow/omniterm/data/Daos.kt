@@ -56,6 +56,25 @@ interface MetricHistoryDao {
     @Query("SELECT * FROM metric_history WHERE serverId = :serverId ORDER BY timestamp DESC LIMIT 1")
     suspend fun getLatestMetricForServer(serverId: Int): MetricHistoryEntity?
 
+    @Query(
+        """
+        SELECT metric.* FROM metric_history AS metric
+        INNER JOIN (
+            SELECT serverId, MAX(timestamp) AS latestTimestamp
+            FROM metric_history
+            GROUP BY serverId
+        ) AS latest
+            ON metric.serverId = latest.serverId
+            AND metric.timestamp = latest.latestTimestamp
+        WHERE metric.id = (
+            SELECT MAX(tie.id) FROM metric_history AS tie
+            WHERE tie.serverId = metric.serverId
+                AND tie.timestamp = metric.timestamp
+        )
+        """
+    )
+    suspend fun getLatestMetricsForAllServers(): List<MetricHistoryEntity>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertMetric(metric: MetricHistoryEntity)
 

@@ -12,6 +12,9 @@ import com.jetsetslow.omniterm.data.ServerEntity
 
 object ShortcutHelper {
 
+    private val shortcutFlags =
+        Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+
     fun serverShortcutId(serverId: Int) = "server_$serverId"
     fun shareShortcutId(shareId: Int) = "share_$shareId"
 
@@ -19,7 +22,7 @@ object ShortcutHelper {
         Intent(context, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
             putExtra("shortcut_server_id", serverId)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            flags = shortcutFlags
         }
 
     private fun buildServerShortcut(context: Context, server: ServerEntity): ShortcutInfoCompat {
@@ -48,7 +51,7 @@ object ShortcutHelper {
             action = Intent.ACTION_VIEW
             putExtra("shortcut_split_server1_id", server1.id)
             putExtra("shortcut_split_server2_id", server2.id)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            flags = shortcutFlags
         }
 
         val name1 = server1.name.takeIf { it.isNotBlank() } ?: server1.host
@@ -67,7 +70,7 @@ object ShortcutHelper {
         val intent = Intent(context, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
             putExtra("shortcut_share_id", share.id)
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            flags = shortcutFlags
         }
 
         val name = share.name.takeIf { it.isNotBlank() } ?: share.address

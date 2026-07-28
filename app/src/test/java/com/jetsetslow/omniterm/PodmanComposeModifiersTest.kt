@@ -79,6 +79,28 @@ class PodmanComposeModifiersTest {
     }
 
     @Test
+    fun switchingAnExistingPodmanStackToDockerRemovesKeepIdSurgically() {
+        val original = """
+            x-podman:
+              in_pod: true
+            services:
+              web:
+                image: nginx
+                userns_mode: keep-id
+                labels:
+                  - "custom=preserved"
+        """.trimIndent()
+        val baseline = parseDockerComposeYaml(original, "site", runtime = "podman")
+
+        val rendered = renderComposeYaml(baseline.copy(runtime = "docker"), baseline)
+
+        assertThat(rendered).doesNotContain("userns_mode: keep-id")
+        assertThat(rendered).contains("- \"custom=preserved\"")
+        // Keep the draft value so returning to Podman restores the user's modifier.
+        assertThat(baseline.services.single().usernsMode).isEqualTo("keep-id")
+    }
+
+    @Test
     fun invalidCustomPodNameIsBlockedBeforeDeployment() {
         val draft = ComposeStackDraft(
             runtime = "podman",

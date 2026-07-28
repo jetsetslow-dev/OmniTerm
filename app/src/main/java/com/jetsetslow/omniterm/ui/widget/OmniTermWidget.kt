@@ -76,7 +76,10 @@ class OmniTermWidget : GlanceAppWidget() {
         } else {
             allServers.filter { it.id in selectedIds }
         }
-        val rows = servers.map { WidgetServerRow(it, db.metricHistoryDao().getLatestMetricForServer(it.id)) }
+        // One snapshot query avoids an N+1 database walk every time the launcher refreshes a fleet
+        // widget. This matters for larger fleets and for the platform's constrained widget worker.
+        val latestByServer = db.metricHistoryDao().getLatestMetricsForAllServers().associateBy { it.serverId }
+        val rows = servers.map { WidgetServerRow(it, latestByServer[it.id]) }
 
         provideContent {
             GlanceTheme {
@@ -213,4 +216,11 @@ class RefreshWidgetAction : ActionCallback {
 
 class OmniTermWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = OmniTermWidget()
+
+    override fun onDeleted(context: Context, appWidgetIds: IntArray) {
+        super.onDeleted(context, appWidgetIds)
+        val editor = context.getSharedPreferences("widget_prefs", Context.MODE_PRIVATE).edit()
+        appWidgetIds.forEach { editor.remove("widget_$it") }
+        editor.apply()
+    }
 }

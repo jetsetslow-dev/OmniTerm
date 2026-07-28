@@ -278,6 +278,17 @@ enum class Screen {
     About
 }
 
+/** A one-shot action received from a notification, launcher shortcut, or home-screen widget. */
+sealed interface ExternalLaunchRequest {
+    data class ResumeSession(val sessionId: String) : ExternalLaunchRequest
+    data class ConnectServer(val serverId: Int) : ExternalLaunchRequest
+    data class OpenSplit(val firstServerId: Int, val secondServerId: Int) : ExternalLaunchRequest
+    data class OpenShare(val shareId: Int) : ExternalLaunchRequest
+    data object AddServer : ExternalLaunchRequest
+    data object OpenSftp : ExternalLaunchRequest
+    data object OpenNetworkTools : ExternalLaunchRequest
+}
+
 sealed interface SshConnectionPhase {
     val label: String
 
@@ -717,6 +728,9 @@ class AppViewModel @JvmOverloads constructor(
     var isAppLocked by mutableStateOf(false)
     var currentPinInput by mutableStateOf("")
     var lockScreenError by mutableStateOf<String?>(null)
+    var securitySettingsLoaded by mutableStateOf(false)
+        private set
+    private val pendingExternalLaunches = ArrayDeque<ExternalLaunchRequest>()
     var dotsFlashRed by mutableStateOf(false)
     /** Blocks screenshots and the task-switcher preview (FLAG_SECURE). Defaults on for sensitive ops. */
     var isFlagSecureEnabled by mutableStateOf(true)
@@ -1043,6 +1057,8 @@ class AppViewModel @JvmOverloads constructor(
     private var shareClient: RemoteFsClient? = null
     private var shareClientShareId: Int? = null
     private val shareClientDialLock = Mutex()
+    /** Invalidates a client that finishes dialing after its browser was closed or switched. */
+    private var shareBrowserGeneration = 0L
     /** Snapshot/transaction/compensation must be single-flight across restore requests. */
     private val backupRestoreMutex = Mutex()
     private var shareJob: Job? = null
@@ -1256,6 +1272,8 @@ class AppViewModel @JvmOverloads constructor(
     var sftpClipboardIsMove by mutableStateOf(false); private set
     /** Host the [sftpClipboard] paths live on — a paste on any other host must stream, not `cp`. */
     private var sftpClipboardServerId: Int? = null
+    /** Changes whenever the local clipboard is replaced or cleared, invalidating in-flight scans. */
+    private var sftpClipboardGeneration = 0L
     /** True while a paste (server-side cp/mv) is running, to gate the paste button. */
     var sftpPasteRunning by mutableStateOf(false); private set
 
@@ -1268,6 +1286,15 @@ class AppViewModel @JvmOverloads constructor(
      * The dialog must say so rather than implying the comparison was authoritative.
      */
     var pasteConflictUnverified by mutableStateOf(false); private set
+    private data class PendingSftpPaste(
+        val server: ServerEntity,
+        val sources: List<String>,
+        val isMove: Boolean,
+        val destDir: String,
+        val sudo: Boolean,
+        val clipboardGeneration: Long,
+    )
+    private var pendingSftpPaste: PendingSftpPaste? = null
 
     /**
      * When true, SFTP mutations (save/copy/move/delete/mkdir/rename) and reading a file for editing
@@ -1885,6 +1912,27 @@ class AppViewModel @JvmOverloads constructor(
     // Ensures the cold-start lock is evaluated once, not on every settings write.
     private var coldStartLockEvaluated = false
     private fun loadSecuritySettings() {
+        viewModelScope.launch {
+            // Read the authoritative snapshot before allowing an external launch action to run.
+            // allSettings starts with an artificial empty StateFlow value, so waiting only for its
+            // collector lets a cold-start shortcut connect with saved credentials before app lock
+            // has been evaluated.
+            val initial = repository.getAllSettings()
+            val pinVal = initial.find { it.key == "app_pin" }?.value
+            val hasPinLock =
+                !pinVal.isNullOrBlank() &&
+                    initial.find { it.key == "app_lock_enabled" }?.value == "true"
+            savedPin = pinVal
+            isAppLockEnabled = hasPinLock
+            useBiometrics =
+                hasPinLock && initial.find { it.key == "biometrics_enabled" }?.value == "true"
+            if (!coldStartLockEvaluated) {
+                coldStartLockEvaluated = true
+                isAppLocked = hasPinLock
+            }
+            securitySettingsLoaded = true
+            drainPendingExternalLaunches()
+        }
         viewModelScope.launch {
             isFirstRun = repository.getSetting("first_run_complete") != "true"
         }
@@ -2805,6 +2853,7 @@ class AppViewModel @JvmOverloads constructor(
             lockScreenError = null
             migratePinHashAfterSuccess(verifiedPin)
             resetPinThrottle()
+            drainPendingExternalLaunches()
         } else {
             failedPinAttempts += 1
             pinLockoutAfterFailure(failedPinAttempts, System.currentTimeMillis())
@@ -2860,6 +2909,35 @@ class AppViewModel @JvmOverloads constructor(
         isAppLocked = false
         currentPinInput = ""
         lockScreenError = null
+        drainPendingExternalLaunches()
+    }
+
+    /**
+     * Queue system/launcher entry points until the authoritative cold-start lock state is known.
+     * Requests live in the ViewModel, so configuration changes neither replay the consumed Intent
+     * nor lose an action that is waiting for PIN/biometric unlock.
+     */
+    fun handleExternalLaunch(request: ExternalLaunchRequest) {
+        if (pendingExternalLaunches.lastOrNull() != request) {
+            pendingExternalLaunches.addLast(request)
+        }
+        drainPendingExternalLaunches()
+    }
+
+    private fun drainPendingExternalLaunches() {
+        if (!securitySettingsLoaded || (isAppLockEnabled && isAppLocked)) return
+        while (pendingExternalLaunches.isNotEmpty()) {
+            when (val request = pendingExternalLaunches.removeFirst()) {
+                is ExternalLaunchRequest.ResumeSession -> attachSession(request.sessionId)
+                is ExternalLaunchRequest.ConnectServer -> connectTerminalByServerId(request.serverId)
+                is ExternalLaunchRequest.OpenSplit ->
+                    openMultiSshByServerIds(request.firstServerId, request.secondServerId)
+                is ExternalLaunchRequest.OpenShare -> openShareBrowserById(request.shareId)
+                ExternalLaunchRequest.AddServer -> requestAddServerFromShortcut()
+                ExternalLaunchRequest.OpenSftp -> navigateTo(Screen.SFTP)
+                ExternalLaunchRequest.OpenNetworkTools -> navigateTo(Screen.Network)
+            }
+        }
     }
 
     // CRUDS FOR SERVERS
@@ -6870,31 +6948,41 @@ class AppViewModel @JvmOverloads constructor(
      * upload right after the browser opens) would otherwise both miss the cache, both dial, and
      * the loser's connection would be overwritten into a leak.
      */
-    private suspend fun browserClient(share: NetworkShareEntity): RemoteFsClient = shareClientDialLock.withLock {
-        shareClient?.takeIf { shareClientShareId == share.id }?.let { return@withLock it }
+    private suspend fun browserClient(share: NetworkShareEntity): RemoteFsClient {
+        val requestedGeneration = shareBrowserGeneration
+        return shareClientDialLock.withLock {
+            if (requestedGeneration != shareBrowserGeneration || browsingShare?.id != share.id) {
+                throw CancellationException("Share browser switched")
+            }
+            shareClient?.takeIf { shareClientShareId == share.id }?.let { return@withLock it }
 
-        val stale = shareClient
-        shareClient = null
-        shareClientShareId = null
-        // NonCancellable: these run when the browser was switched or the job is being torn down —
-        // exactly when the calling job may already be cancelled, and a cancelled withContext would
-        // skip the close and leak the connection.
-        withContext(NonCancellable + Dispatchers.IO) { runCatching { stale?.close() } }
+            val stale = shareClient
+            shareClient = null
+            shareClientShareId = null
+            // NonCancellable: these run when the browser was switched or the job is being torn down —
+            // exactly when the calling job may already be cancelled, and a cancelled withContext would
+            // skip the close and leak the connection.
+            withContext(NonCancellable + Dispatchers.IO) { runCatching { stale?.close() } }
 
-        val client = shareFsClient(share)
-        if (browsingShare?.id != share.id) {
-            withContext(NonCancellable + Dispatchers.IO) { runCatching { client.close() } }
-            throw CancellationException("Share browser switched")
+            val client = shareFsClient(share)
+            if (requestedGeneration != shareBrowserGeneration || browsingShare?.id != share.id) {
+                withContext(NonCancellable + Dispatchers.IO) { runCatching { client.close() } }
+                throw CancellationException("Share browser switched")
+            }
+            shareClient = client
+            shareClientShareId = share.id
+            client
         }
-        shareClient = client
-        shareClientShareId = share.id
-        client
     }
 
     private fun closeShareBrowserClient() {
-        val client = shareClient ?: return
+        // Increment even when no client is cached: a dial may be blocked in shareFsClient and has
+        // not assigned itself yet. Its post-dial generation check will close that stale connection.
+        shareBrowserGeneration++
+        val client = shareClient
         shareClient = null
         shareClientShareId = null
+        if (client == null) return
         // Teardown can block on socket close, so it must leave the main thread — and it can't use
         // viewModelScope because that is already cancelled when onCleared calls this. Reuse the
         // process-owned session cleanup scope instead of an unstructured GlobalScope coroutine.
@@ -7185,8 +7273,7 @@ class AppViewModel @JvmOverloads constructor(
             }
         }
         stageCrossRefs(refs, move)
-        sftpClipboard = emptyList()
-        sftpClipboardIsMove = false
+        clearLocalSftpClipboard()
         val verb = if (move) "Cut" else "Copied"
         shareStatus = "$verb ${refs.size} item(s) — paste in a folder here, another share, or the SFTP tab"
         shareSelected.clear()
@@ -7625,8 +7712,7 @@ class AppViewModel @JvmOverloads constructor(
         )
         stageCrossRefs(listOf(ref), move)
         // A share staging replaces any same-server SFTP staging (the two would be ambiguous).
-        sftpClipboard = emptyList()
-        sftpClipboardIsMove = false
+        clearLocalSftpClipboard()
         shareStatus = "${if (move) "Cut" else "Copied"} \"${file.name}\" — paste in a folder here, another share, or the SFTP tab"
     }
 
@@ -7650,7 +7736,7 @@ class AppViewModel @JvmOverloads constructor(
     fun pasteIntoSftp() {
         val srv = selectedServer ?: return
         if (sftpClipboardIsLocal) {
-            sftpPaste()
+            sftpBeginPaste()
             return
         }
         pasteCrossTo(destServer = srv, destShare = null, destDir = sftpPath.ifBlank { "/" })
@@ -8069,8 +8155,7 @@ class AppViewModel @JvmOverloads constructor(
             size = file.size,
         )
         stageCrossRefs(listOf(ref), move)
-        sftpClipboard = emptyList()
-        sftpClipboardIsMove = false
+        clearLocalSftpClipboard()
         sftpStatus = "${if (move) "Cut" else "Copied"} \"${file.name}\" from ${srv.name} — paste in the other pane"
     }
 
@@ -8640,9 +8725,11 @@ class AppViewModel @JvmOverloads constructor(
     fun sftpClipSelection(move: Boolean) {
         if (sftpSelected.isEmpty()) return
         val srv = selectedServer
+        sftpClipboardGeneration++
         sftpClipboard = sftpSelected.map { joinPath(sftpPath, it) }
         sftpClipboardIsMove = move
         sftpClipboardServerId = srv?.id
+        clearPendingSftpPaste()
         // Mirror the staging onto the cross-endpoint clipboard so the same copy/cut can be pasted
         // into a network share's browser or onto a different host, not just back on this server.
         if (srv != null) {
@@ -8667,10 +8754,37 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     fun sftpClearClipboard() {
+        clearLocalSftpClipboard()
+        clearCrossClipboard()
+    }
+
+    /** Clear only the same-host staging; cross-endpoint callers manage their own clipboard. */
+    private fun clearLocalSftpClipboard() {
+        sftpClipboardGeneration++
         sftpClipboard = emptyList()
         sftpClipboardIsMove = false
         sftpClipboardServerId = null
-        clearCrossClipboard()
+        clearPendingSftpPaste()
+    }
+
+    private fun clearPendingSftpPaste() {
+        pendingSftpPaste = null
+        pasteConflicts = emptyList()
+        pasteConflictUnverified = false
+    }
+
+    private fun isCurrentPasteContext(context: PendingSftpPaste): Boolean =
+        context.clipboardGeneration == sftpClipboardGeneration &&
+            context.sources == sftpClipboard &&
+            context.isMove == sftpClipboardIsMove &&
+            context.server.id == selectedServerId &&
+            context.destDir == sftpPath.ifBlank { "/" } &&
+            context.sudo == sftpSudo
+
+    private fun reportStalePasteContext() {
+        clearPendingSftpPaste()
+        sftpStatus = null
+        sftpError = "Paste cancelled because the clipboard, destination, host, or sudo mode changed."
     }
 
     /**
@@ -8685,15 +8799,97 @@ class AppViewModel @JvmOverloads constructor(
     fun sftpBeginPaste() {
         if (sftpClipboard.isEmpty() || sftpPasteRunning || pasteConflictScanRunning) return
         val srv = selectedServer ?: return
-        val sources = sftpClipboard
-        val destDir = sftpPath.ifBlank { "/" }
+        val context = PendingSftpPaste(
+            server = srv,
+            sources = sftpClipboard.toList(),
+            isMove = sftpClipboardIsMove,
+            destDir = sftpPath.ifBlank { "/" },
+            sudo = sftpSudo,
+            clipboardGeneration = sftpClipboardGeneration,
+        )
+        clearPendingSftpPaste()
+        pasteConflictScanRunning = true
+        sftpError = null
         viewModelScope.launch {
-            pasteConflictScanRunning = true
             try {
-                val out = executeSshCommand(srv, RemoteCommands.compareForConflicts(destDir, sources))
-                val found = RemoteParsers.parseTransferConflicts(out)
+                val script = RemoteCommands.compareForConflicts(context.destDir, context.sources)
+                val out = if (context.sudo) {
+                    executeSshCommand(
+                        context.server,
+                        RemoteCommands.sudoShWrap(script, context.server.sudoPassword),
+                        stdin = RemoteCommands.sudoStdin(context.server.sudoPassword),
+                    )
+                } else {
+                    executeSshCommand(context.server, script)
+                }
+                if (!isCurrentPasteContext(context)) {
+                    reportStalePasteContext()
+                    return@launch
+                }
+                val lines = out.lineSequence().toList()
+                if (lines.none { it.trim() == RemoteCommands.CONFLICT_SCAN_OK }) {
+                    sftpError = "Paste cancelled: the destination conflict scan did not complete."
+                    return@launch
+                }
+                val scanOutput = lines
+                    .filterNot { it.trim() == RemoteCommands.CONFLICT_SCAN_OK }
+                    .joinToString("\n")
+                val diagnostics = scanOutput.lineSequence()
+                    .filter { it.isNotBlank() && '\t' !in it }
+                    .joinToString("\n")
+                sftpExecError(diagnostics)?.let {
+                    sftpError = "Paste cancelled: $it"
+                    return@launch
+                }
+                val encodedRecords = scanOutput.lineSequence()
+                    .filter { it.isNotBlank() && '\t' in it }
+                    .toList()
+                val parsedRecords = RemoteParsers.parseTransferConflicts(scanOutput)
+                if (parsedRecords.size != encodedRecords.size) {
+                    sftpError = "Paste cancelled: the destination conflict scan returned malformed data."
+                    return@launch
+                }
+                val seenIndexes = mutableSetOf<Int>()
+                val decodedRecords = parsedRecords.map { conflict ->
+                    val sourceIndex = conflict.name.toIntOrNull()
+                        ?.takeIf { it in context.sources.indices && seenIndexes.add(it) }
+                        ?: throw IllegalStateException("Invalid conflict scan source index")
+                    conflict.copy(name = context.sources[sourceIndex].substringAfterLast('/'))
+                }
+                val found = decodedRecords.map { conflict ->
+                    val source = context.sources.firstOrNull {
+                        it.substringAfterLast('/') == conflict.name
+                    }
+                    val sourceDir = source
+                        ?.substringBeforeLast('/', "")
+                        ?.trimEnd('/')
+                        ?.ifBlank { "/" }
+                    if (sourceDir == context.destDir.trimEnd('/').ifBlank { "/" }) {
+                        // Copying into the source folder should create "name (1)", while moving
+                        // there is a no-op. An IDENTICAL default of overwrite would instead issue
+                        // cp/mv with the same source and destination and fail.
+                        conflict.copy(
+                            action = if (context.isMove) {
+                                ConflictAction.SKIP
+                            } else {
+                                ConflictAction.KEEP_BOTH
+                            },
+                        )
+                    } else {
+                        conflict
+                    }
+                }
                 pasteConflictUnverified = found.any { it.verdict == ConflictVerdict.UNKNOWN }
-                if (found.isEmpty()) sftpPaste() else pasteConflicts = found
+                if (found.isEmpty()) {
+                    runSftpPaste(context, emptySet(), emptySet())
+                } else {
+                    pendingSftpPaste = context
+                    pasteConflicts = found
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                sftpError = "Paste cancelled: conflict scan failed: ${e.message}"
             } finally {
                 pasteConflictScanRunning = false
             }
@@ -8709,15 +8905,20 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     fun cancelPasteConflicts() {
-        pasteConflicts = emptyList()
-        pasteConflictUnverified = false
+        clearPendingSftpPaste()
     }
 
     /** Apply the user's per-item choices, then run the paste with those resolutions. */
     fun confirmPasteConflicts() {
         val decided = pasteConflicts
-        pasteConflicts = emptyList()
-        sftpPaste(
+        val context = pendingSftpPaste
+        clearPendingSftpPaste()
+        if (context == null || !isCurrentPasteContext(context)) {
+            reportStalePasteContext()
+            return
+        }
+        runSftpPaste(
+            context = context,
             skip = decided.filter { it.action == ConflictAction.SKIP }.mapTo(mutableSetOf()) { it.name },
             keepBoth = decided.filter { it.action == ConflictAction.KEEP_BOTH }.mapTo(mutableSetOf()) { it.name },
         )
@@ -8731,30 +8932,49 @@ class AppViewModel @JvmOverloads constructor(
      * [skip] names are never issued; [keepBoth] names land on a free "name (n).ext" so nothing is
      * destroyed; everything else overwrites.
      */
-    fun sftpPaste(skip: Set<String> = emptySet(), keepBoth: Set<String> = emptySet()) {
-        if (sftpClipboard.isEmpty() || sftpPasteRunning) return
-        val srv = selectedServer ?: return
-        val sources = sftpClipboard
-        val isMove = sftpClipboardIsMove
-        val destDir = sftpPath.ifBlank { "/" }
-        val sudo = sftpSudo
+    private fun runSftpPaste(
+        context: PendingSftpPaste,
+        skip: Set<String>,
+        keepBoth: Set<String>,
+    ) {
+        if (context.sources.isEmpty() || sftpPasteRunning) return
+        if (!isCurrentPasteContext(context)) {
+            reportStalePasteContext()
+            return
+        }
+        val processedCount = context.sources.count { it.substringAfterLast('/') !in skip }
         viewModelScope.launch {
             sftpPasteRunning = true
             sftpError = null
             try {
                 // Honour the per-item decisions: skipped names are never issued, keep-both names
                 // land on a free "name (n).ext" so nothing is destroyed, the rest overwrite.
-                val script = RemoteCommands.pasteResolved(destDir, sources, isMove, skip, keepBoth)
+                val script = RemoteCommands.pasteResolved(
+                    context.destDir,
+                    context.sources,
+                    context.isMove,
+                    skip,
+                    keepBoth,
+                )
                 // Same server-side cp/mv, optionally elevated so protected destinations work.
-                val out = if (sudo)
-                    executeSshCommand(srv, RemoteCommands.sudoShWrap(script, srv.sudoPassword), stdin = RemoteCommands.sudoStdin(srv.sudoPassword)).trim()
+                val out = if (context.sudo)
+                    executeSshCommand(
+                        context.server,
+                        RemoteCommands.sudoShWrap(script, context.server.sudoPassword),
+                        stdin = RemoteCommands.sudoStdin(context.server.sudoPassword),
+                    ).trim()
                 else
-                    executeSshCommand(srv, script).trim()
+                    executeSshCommand(context.server, script).trim()
                 val err = sftpExecError(out)
                 if (err != null) {
                     sftpError = err
                 } else {
-                    sftpStatus = "${if (isMove) "Moved" else "Copied"} ${sources.size} item(s) here${sudoTag()}"
+                    sftpStatus = if (processedCount == 0) {
+                        "Skipped all ${context.sources.size} item(s)"
+                    } else {
+                        "${if (context.isMove) "Moved" else "Copied"} $processedCount item(s) here" +
+                            if (context.sudo) " (sudo)" else ""
+                    }
                     // A successful paste consumes the clipboard (copy included — re-copying is one tap).
                     sftpClearClipboard()
                 }
@@ -8762,7 +8982,11 @@ class AppViewModel @JvmOverloads constructor(
             catch (e: Exception) { sftpError = "Paste failed: ${e.message}" }
             finally { sftpPasteRunning = false }
             // Refresh the destination listing without clobbering the status/error set above.
-            loadSftp(destDir, clearError = false)
+            if (selectedServerId == context.server.id &&
+                sftpPath.ifBlank { "/" } == context.destDir
+            ) {
+                loadSftp(context.destDir, clearError = false)
+            }
         }
     }
 
@@ -8814,14 +9038,16 @@ class AppViewModel @JvmOverloads constructor(
         "cannot", "permission denied", "no such", "ssh error", "not a directory", "same file",
         "error:", "sudo:", "a password is required", "incorrect password", "try again",
         "not in the sudoers", "operation not permitted", "read-only file system",
+        "omniterm_paste_failed",
     )
 
     /** Inspect exec output for a failure; returns the first offending line, or null if it looks OK. */
     private fun sftpExecError(out: String): String? {
         val t = out.trim()
         if (t.isEmpty()) return null
-        return if (SFTP_EXEC_ERROR_MARKERS.any { t.contains(it, ignoreCase = true) })
-            (t.lineSequence().firstOrNull { it.isNotBlank() } ?: t) else null
+        return t.lineSequence().firstOrNull { line ->
+            SFTP_EXEC_ERROR_MARKERS.any { line.contains(it, ignoreCase = true) }
+        }?.trim()
     }
 
     /**
@@ -10004,8 +10230,11 @@ class AppViewModel @JvmOverloads constructor(
             recordAlertHistory(alert, "resolved")
             repository.deleteAlert(alert.id)
             clearAlertNotification(alert.ruleId, alert.serverId)
-            alertBreachTracker.forget(ruleId to alert.serverId)
         }
+        // A rule can have a sustained-breach window without having fired an ActiveAlert yet.
+        // Reset all such host windows too; otherwise an edited/recreated rule can inherit elapsed
+        // time from its old threshold and fire immediately.
+        alertBreachTracker.forgetRule(ruleId)
     }
 
     fun deleteKey(key: SshKeyEntity) {
