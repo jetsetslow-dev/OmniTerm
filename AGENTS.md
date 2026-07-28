@@ -78,11 +78,26 @@ These rules apply to every contributor and automation tool working in this repos
   PRs and wait for Dependabot to recreate them.
 - Dependabot cannot safely author complete Gradle checksums itself. Preserve
   `.github/workflows/dependabot-verification-metadata.yml`: it reads only the version catalog and
-  metadata from the bot PR, regenerates on trusted `main`, and opens a separate fixup PR without
-  executing untrusted PR code under `pull_request_target`.
+  never trusts metadata from the bot PR, regenerates on trusted `main`, and opens a separate fixup
+  PR without executing untrusted PR code under `pull_request_target`. Keep it scoped to Gradle
+  Dependabot branches. It requires the repository Actions setting that permits PR creation, but
+  must never approve its own PR; independent review and normal branch protections still apply.
+- Use `./scripts/refresh-verification-metadata.sh --write` for checksum regeneration and
+  `--verify` for a non-mutating forced-refresh check. Keep local and CI dependency resolution
+  aligned through this script rather than adding partial one-off Gradle commands.
 - Keep GitHub Actions pinned to full commit SHAs and retain dependency-review, dependency-submission,
   CodeQL, Scorecard, and secret-scan gates. A version bump is incomplete until these checks and the
   two release SBOM graphs pass on the exact final head.
+
+## Debug publishing
+
+- Keep manual debug publishing separate from production release automation in
+  `.github/workflows/android-debug.yml`. It must build reviewed `main`, default to a non-publishing
+  dry run, use only `debug-*` tags, and never upload to Google Play.
+- A published debug APK must use the stable `ANDROID_DEBUG_KEYSTORE_BASE64` secret from the `debug`
+  environment and require a successful exact-SHA main gate. Dry runs must use an ephemeral key.
+- Verify the APK signature, package ID, version name/code, debuggable flag, and SHA-256 checksums
+  before uploading or creating a GitHub prerelease.
 
 ## CI failure discipline
 

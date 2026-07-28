@@ -5,8 +5,8 @@ plugins {
   alias(libs.plugins.roborazzi)
 }
 
-// Version identity comes from CI (.github/workflows/android-release.yml). VERSION_NAME is the
-// release tag without the leading "v"; VERSION_CODE packs it as
+// Version identity comes from CI (.github/workflows/android-release.yml and android-debug.yml).
+// VERSION_NAME is the release tag without the leading "v"; VERSION_CODE packs it as
 //   major*10_000_000 + minor*100_000 + patch*100 + build
 // where a bare release owns build slot 99 and a -Suffix takes its trailing digits as the build
 // (1.0.0-Beta -> 1, 1.0.0-Beta2 -> 2, 1.0.0 -> 99) — so a Beta chain climbs 1..98 and dropping
