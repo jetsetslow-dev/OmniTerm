@@ -5,15 +5,10 @@ env:
   GIT_CONFIG_KEY_0: init.defaultBranch
   GIT_CONFIG_VALUE_0: main
 
-# One workflow for both build types:
-#   - Manual "Run workflow": pick build_type = release (default) or debug.
-#       release: signed AAB + source-available APK, optional GitHub Release + Play upload.
-#                release_channel picks whether the GitHub Release is a production release
-#                or a prerelease (tag pushes derive it from the tag name instead).
-#       debug:   source-available debug APK, creates a uniquely tagged PRERELEASE GitHub Release.
-#                Debug tags use a "debug-" prefix so they can never fire the automated
-#                release trigger below, and the release is always flagged prerelease so
-#                a debuggable, unminified APK can't be mistaken for a production build.
+# Release publishing only:
+#   - Manual "Run workflow": signed AAB + optional source-available APK, with optional publication.
+#     release_channel picks whether the GitHub Release is a production release or a prerelease
+#     (tag pushes derive it from the tag name instead).
 #   - Pushing a tag "v*" (automation): always the full signed release path.
 #   - A successful CodeQL workflow for main (automation): full signed release on the PRERELEASE
 #       channel with a deterministic per-commit tag. Waiting for that aggregate workflow prevents
@@ -24,14 +19,8 @@ env:
 on:
   workflow_dispatch:
     inputs:
-      build_type:
-        description: "What to build"
-        required: true
-        type: choice
-        options: [release, debug]
-        default: release
       release_tag:
-        description: "Release tag vMAJOR.MINOR.PATCH[-SuffixN]. Debug tags must start debug-; empty debug tags are unique per run."
+        description: "Release tag vMAJOR.MINOR.PATCH[-SuffixN]."
         required: false
         type: string
       release_channel:
@@ -81,7 +70,7 @@ jobs:
        github.event.workflow_run.head_repository.full_name == github.repository &&
        github.event.workflow_run.head_branch == 'main') ||
       github.event_name == 'push' ||
-      inputs.build_type == 'release'
+      github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -602,116 +591,3 @@ jobs:
             esac
           done
           [ "$rc" -eq 0 ] || echo "One or more releases could not be pruned; see log above."
-
-  debug:
-    name: Build and publish debug APK
-    if: github.event_name == 'workflow_dispatch' && inputs.build_type == 'debug'
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    environment: debug
-    permissions:
-      contents: write
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-          # The stable sideload-signing key belongs only to reviewed main-branch code. The live
-          # debug environment also enforces this branch policy; pinning checkout is a second layer.
-          ref: main
-
-      - name: Set up Android Gradle
-        uses: ./.github/actions/setup-android-gradle
-        with:
-          install-sdk-packages: "true"
-          cache-read-only: "true"
-
-      - name: Resolve release tag and version
-        env:
-          GH_TOKEN: ${{ github.token }}
-          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
-        run: |
-          source scripts/release-version.sh
-          BUILD_SHA="$(git rev-parse HEAD)"
-          # Keep debug artifacts in a namespace that can never squat or modify a production tag.
-          SHORT_SHA="${BUILD_SHA:0:12}"
-          RELEASE_TAG="${INPUT_RELEASE_TAG:-debug-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-${SHORT_SHA}}"
-          [[ "$RELEASE_TAG" =~ ^debug-[0-9A-Za-z._-]+$ ]] || {
-            echo "Debug release tags must start with 'debug-' and contain only safe tag characters." >&2
-            exit 1
-          }
-          if gh release view "$RELEASE_TAG" >/dev/null 2>&1 ||
-             gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
-            echo "Debug tag $RELEASE_TAG already exists; immutable releases are never modified." >&2
-            exit 1
-          fi
-          echo "BUILD_SHA=$BUILD_SHA" >> "$GITHUB_ENV"
-          echo "RELEASE_TAG=$RELEASE_TAG" >> "$GITHUB_ENV"
-          # Debug builds never reach Play, but sideloaded APKs update in place, so the code must
-          # never drop below earlier installs. Use the next patch of the highest released version,
-          # packed the same way as the release job; the run number in the name tells builds apart.
-          RELEASE_TAGS="$({
-            git tag --list 'v*'
-            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '.[].tag_name'
-          } | sort -u)"
-          LAST_TAG="$(printf '%s\n' "$RELEASE_TAGS" | version_highest)"
-          NEXT_TAG="$(version_next_prerelease "${LAST_TAG:-v0.9.239}" debug.1)" || {
-            echo "Could not allocate a bounded debug version after ${LAST_TAG:-v0.9.239}" >&2
-            exit 1
-          }
-          BASE="${NEXT_TAG#v}"; BASE="${BASE%%-*}"
-          # Build slot 1 (lowest): a debug build must never outrank a real release of its triple.
-          echo "VERSION_CODE=$(version_pack "$NEXT_TAG")" >> "$GITHUB_ENV"
-          echo "VERSION_NAME=$BASE-debug.${GITHUB_RUN_NUMBER}" >> "$GITHUB_ENV"
-
-      # Sideloaded debug APKs must keep the same signature across releases so they update in
-      # place, so the real debug keystore comes from a secret (it was never committed).
-      - name: Decode debug keystore
-        env:
-          PUBLISH_EXTERNAL: ${{ inputs.publish_artifacts }}
-          ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
-        run: |
-          umask 077
-          if [ "$PUBLISH_EXTERNAL" = "true" ]; then
-            test -n "$ANDROID_DEBUG_KEYSTORE_BASE64" || { echo "Missing ANDROID_DEBUG_KEYSTORE_BASE64 secret"; exit 1; }
-            printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > debug.keystore
-          else
-            keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
-              -alias androiddebugkey -dname CN=Android-Debug -keyalg RSA -keysize 2048 -validity 1
-          fi
-
-      # Same cold-start gate as the release job, followed by the source-available APK in one Gradle
-      # process. Sideloaders get the openSource flavor (no ad SDK / Play Services dependency).
-      - name: Test and build debug APK
-        run: >-
-          ./gradlew
-          testOpenSourceDebugUnitTest :app:assembleOpenSourceDebug
-          --no-daemon -Dorg.gradle.jvmargs=-Xmx2g
-          -Domniterm.publishScan=true
-
-      - name: Stage release artifacts
-        run: |
-          mkdir -p release-artifacts
-          APK=app/build/outputs/apk/openSource/debug/app-openSource-debug.apk
-          cp "$APK" "release-artifacts/app-debug.apk"
-          cp "$APK" "release-artifacts/OmniTerm-${RELEASE_TAG}-debug.apk"
-          (cd release-artifacts && sha256sum -- ./* > SHA256SUMS.txt)
-          ls -la release-artifacts
-
-      - name: Create unique release with debug assets
-        if: inputs.publish_artifacts
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          # Debug releases are unique and immutable; never clobber an earlier artifact.
-          gh release create "$RELEASE_TAG" release-artifacts/* \
-            --prerelease \
-            --target "$BUILD_SHA" \
-            --title "OmniTerm $RELEASE_TAG (debug build)" \
-            --notes "Debug build for testing only — unminified and debuggable. Not a production release."
-
-      - name: Delete debug keystore
-        if: always()
-        run: rm -f debug.keystore

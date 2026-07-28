@@ -21,9 +21,7 @@ if [[ "$OS_NAME" == "Linux" && ( "$ARCH_NAME" == "aarch64" || "$ARCH_NAME" == "a
 fi
 
 CREATED_DEBUG_KEYSTORE=false
-TEMP_DIR="$(mktemp -d)"
 cleanup() {
-  rm -rf "$TEMP_DIR"
   if [[ "$CREATED_DEBUG_KEYSTORE" == "true" ]]; then
     rm -f "$ROOT/debug.keystore"
   fi
@@ -67,22 +65,12 @@ fi
   "${GRADLE_ARGS[@]}"
 
 if [[ "$MODE" == "--full" ]]; then
-  RELEASE_KEYSTORE="$TEMP_DIR/release-check.keystore"
-  umask 077
-  keytool -genkeypair -keystore "$RELEASE_KEYSTORE" -storepass android -keypass android \
-    -alias androidcheckkey -dname CN=Android-SBOM-Check -keyalg RSA -keysize 2048 -validity 1 \
-    >/dev/null 2>&1
-
-  for config in playStoreReleaseRuntimeClasspath openSourceReleaseRuntimeClasspath; do
-    ADMOB_APP_ID="ca-app-pub-0000000000000000~0000000000" \
-    ADMOB_BANNER_UNIT_ID="ca-app-pub-0000000000000000/0000000000" \
-    KEYSTORE_PATH="$RELEASE_KEYSTORE" \
-    STORE_PASSWORD=android \
-    KEY_ALIAS=androidcheckkey \
-    KEY_PASSWORD=android \
-    SBOM_CONFIGURATION="$config" \
-      ./gradlew cyclonedxBom --init-script .github/cyclonedx.init.gradle.kts "${GRADLE_ARGS[@]}"
-  done
+  if [[ "$LINUX_ARM64" == "true" ]]; then
+    OMNITERM_DEPENDENCY_JVMARGS="-Xmx2g -Dfile.encoding=UTF-8" \
+      ./scripts/refresh-verification-metadata.sh --verify
+  else
+    ./scripts/refresh-verification-metadata.sh --verify
+  fi
 fi
 
 if command -v adb >/dev/null 2>&1 &&

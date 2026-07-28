@@ -1,0 +1,202 @@
+name: Android debug build & publish
+
+env:
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+
+# Debug publishing is deliberately separate from production release automation:
+# - it never uploads to Google Play;
+# - it always builds reviewed main;
+# - publishing is opt-in, while the default dispatch is a safe build-only validation;
+# - debug-* tags cannot trigger android-release.yml's v* release path.
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional unique debug-* tag. Empty uses the run number and source SHA."
+        required: false
+        type: string
+      publish_artifacts:
+        description: "Create a public prerelease with the signed debug APK"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-debug
+  cancel-in-progress: false
+
+jobs:
+  debug:
+    name: Build and optionally publish debug APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: debug
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+
+    steps:
+      - name: Check out reviewed main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: main
+
+      - name: Resolve source, tag, and Android version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          source scripts/release-version.sh
+
+          BUILD_SHA="$(git rev-parse HEAD)"
+          SHORT_SHA="${BUILD_SHA:0:12}"
+          RELEASE_TAG="${INPUT_RELEASE_TAG:-debug-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}-${SHORT_SHA}}"
+          [[ "$RELEASE_TAG" =~ ^debug-[0-9A-Za-z._-]+$ ]] || {
+            echo "Debug tags must start with debug- and contain only safe tag characters." >&2
+            exit 1
+          }
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1 ||
+             gh api "repos/${GITHUB_REPOSITORY}/git/ref/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Debug tag $RELEASE_TAG already exists; debug releases are immutable." >&2
+            exit 1
+          fi
+
+          RELEASE_TAGS="$({
+            git tag --list 'v*'
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" --jq '.[].tag_name'
+          } | sort -u)"
+          LAST_TAG="$(printf '%s\n' "$RELEASE_TAGS" | version_highest)"
+          NEXT_TAG="$(version_next_prerelease "${LAST_TAG:-v0.9.239}" debug.1)" || {
+            echo "Could not allocate a bounded debug version after ${LAST_TAG:-v0.9.239}" >&2
+            exit 1
+          }
+          VERSION_BASE="${NEXT_TAG#v}"
+          VERSION_BASE="${VERSION_BASE%%-*}"
+
+          {
+            echo "BUILD_SHA=$BUILD_SHA"
+            echo "RELEASE_TAG=$RELEASE_TAG"
+            echo "VERSION_CODE=$(version_pack "$NEXT_TAG")"
+            echo "VERSION_NAME=$VERSION_BASE-debug.${GITHUB_RUN_NUMBER}"
+          } >> "$GITHUB_ENV"
+
+      - name: Require successful exact-SHA main gate before publishing
+        if: inputs.publish_artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUNS="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/codeql.yml/runs?head_sha=${BUILD_SHA}&per_page=100")"
+          jq -e --arg sha "$BUILD_SHA" '
+            any(.workflow_runs[];
+              .head_sha == $sha and .event == "push" and .head_branch == "main" and
+              .status == "completed" and .conclusion == "success")
+          ' <<<"$RUNS" >/dev/null || {
+            echo "No successful exact-SHA main gate exists for $BUILD_SHA" >&2
+            exit 1
+          }
+
+      - name: Set up Android Gradle
+        uses: ./.github/actions/setup-android-gradle
+        with:
+          install-sdk-packages: "true"
+          cache-read-only: "true"
+
+      - name: Validate release tooling
+        run: ./scripts/test-release-version.sh
+
+      # Published debug APKs retain one stable signature so installed test builds update in place.
+      # A build-only dispatch uses a throwaway key and therefore never needs the environment secret.
+      - name: Provide debug keystore
+        env:
+          PUBLISH_EXTERNAL: ${{ inputs.publish_artifacts }}
+          ANDROID_DEBUG_KEYSTORE_BASE64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if [ "$PUBLISH_EXTERNAL" = "true" ]; then
+            test -n "$ANDROID_DEBUG_KEYSTORE_BASE64" || {
+              echo "Missing ANDROID_DEBUG_KEYSTORE_BASE64 in the debug environment" >&2
+              exit 1
+            }
+            printf '%s' "$ANDROID_DEBUG_KEYSTORE_BASE64" | base64 --decode > debug.keystore
+          else
+            keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
+              -alias androiddebugkey -dname CN=OmniTerm-Debug-Dry-Run \
+              -keyalg RSA -keysize 2048 -validity 1
+          fi
+
+      - name: Test and build source-available debug APK
+        run: >-
+          ./gradlew
+          testOpenSourceDebugUnitTest :app:assembleOpenSourceDebug
+          --no-daemon --no-configuration-cache
+          -Dorg.gradle.jvmargs=-Xmx4g
+          -Domniterm.publishScan=true
+
+      - name: Delete debug keystore
+        if: always()
+        run: rm -f debug.keystore
+
+      - name: Verify and stage debug artifacts
+        run: |
+          set -euo pipefail
+          APK="app/build/outputs/apk/openSource/debug/app-openSource-debug.apk"
+          test -s "$APK" || {
+            echo "Expected debug APK is missing or empty: $APK" >&2
+            exit 1
+          }
+
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$APK"
+          test "$("$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest application-id "$APK")" \
+            = "com.jetsetslow.omniterm.app.oss"
+          test "$("$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest version-name "$APK")" \
+            = "$VERSION_NAME"
+          test "$("$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest version-code "$APK")" \
+            = "$VERSION_CODE"
+          test "$("$ANDROID_HOME/cmdline-tools/latest/bin/apkanalyzer" manifest debuggable "$APK")" \
+            = "true"
+
+          mkdir -p release-artifacts
+          cp "$APK" "release-artifacts/app-debug.apk"
+          cp "$APK" "release-artifacts/OmniTerm-${RELEASE_TAG}-debug.apk"
+          (
+            cd release-artifacts
+            sha256sum -- ./*.apk > SHA256SUMS.txt
+            sha256sum -c SHA256SUMS.txt
+          )
+
+      - name: Upload inspectable workflow artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: omniterm-debug-${{ github.run_number }}-${{ github.run_attempt }}
+          path: release-artifacts/*
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Attest debug artifact provenance
+        if: inputs.publish_artifacts
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-path: release-artifacts/*
+
+      - name: Create immutable debug prerelease
+        if: inputs.publish_artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$RELEASE_TAG" release-artifacts/* \
+            --prerelease \
+            --target "$BUILD_SHA" \
+            --title "OmniTerm $RELEASE_TAG (debug build)" \
+            --notes "Debug build for testing only — unminified and debuggable. Not a production release."
