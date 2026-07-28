@@ -66,6 +66,33 @@ class TerminalAltScreenExitTest {
     }
 
     /**
+     * Claude/Codex enable and pop Kitty keyboard-protocol flags immediately before 1049. Those
+     * controls share the final `u` byte with ANSI restore-cursor but are parameterized forms and
+     * must not move the primary cursor that 1049 is about to save.
+     */
+    @Test
+    fun kittyKeyboardProtocolDoesNotCorruptAlternateScreenEntryCursor() {
+        val e = TerminalEmulator(40, 10, scrollbackLimit = 100)
+        e.feed("line one\r\nline two\r\n$ ".toByteArray())
+        val cursorBefore = e.snapshot().let { it.cursorRow to it.cursorCol }
+
+        // Ordering captured from current Claude Code: pop flags, set flags, enter alternate screen.
+        e.feed("${csi}<u${csi}>1u${csi}?1049h".toByteArray())
+        e.feed("CLAUDE FULLSCREEN UI".toByteArray())
+        e.feed("${csi}<u${csi}?1049l".toByteArray())
+
+        val cursorAfter = e.snapshot().let { it.cursorRow to it.cursorCol }
+        assertEquals("Kitty keyboard controls moved the shell cursor", cursorBefore, cursorAfter)
+
+        e.feed("next-command\r\n".toByteArray())
+        val after = lines(e)
+        assertTrue("New shell output did not continue at the saved prompt: $after",
+            after.any { it.contains("$ next-command") })
+        assertFalse("TUI content survived after its alternate screen closed: $after",
+            after.any { it.contains("CLAUDE FULLSCREEN UI") })
+    }
+
+    /**
      * 47/1047 switch buffers only. xterm clears the alternate buffer before switching back, so its
      * content must not reappear on a later entry, and the cursor must be left where it is — cursor
      * restore belongs to 1048/1049.

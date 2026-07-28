@@ -740,13 +740,47 @@ class AppViewModel @JvmOverloads constructor(
     var hideSensitiveInfo by mutableStateOf(false)
         private set
 
-    // App lock engages on cold start only: every process relaunch demands the PIN/biometric when
-    // lock is enabled. Warm reopens (process still in memory) are not re-locked.
-    //
-    // There is deliberately no background grace timer. The configurable one it replaced was read as
-    // "lock after N minutes" but actually meant "skip the lock for N minutes after leaving", so
-    // reopening inside the window silently bypassed auth — reported as biometrics no longer
-    // prompting. One rule, no timestamps to reason about across process death.
+    // Every process relaunch demands authentication when lock is enabled. Warm reopens additionally
+    // re-lock after the configured time away. The tracker is in-memory and monotonic: process death
+    // can never preserve a stale grace timestamp, and wall-clock changes cannot bypass the policy.
+    var appLockBackgroundTimeoutMs by mutableStateOf(DEFAULT_APP_LOCK_BACKGROUND_TIMEOUT_MS)
+        private set
+    private val appLockTimeoutTracker = AppLockTimeoutTracker()
+
+    fun saveAppLockBackgroundTimeout(timeoutMs: Long) {
+        appLockBackgroundTimeoutMs = normalizeAppLockBackgroundTimeout(timeoutMs)
+        viewModelScope.launch {
+            // Keep the historical key so users who configured this before its temporary removal
+            // retain their choice after upgrading.
+            repository.insertSetting(
+                "app_lock_grace_ms",
+                appLockBackgroundTimeoutMs.toString(),
+            )
+        }
+    }
+
+    /** Called only when the Activity genuinely becomes non-visible, not for configuration changes. */
+    fun noteAppBackgrounded(nowMs: Long = System.nanoTime() / 1_000_000L) {
+        appLockTimeoutTracker.noteBackgrounded(nowMs)
+    }
+
+    /** Consume one background interval and re-engage authentication when its timeout has elapsed. */
+    fun relockIfNeeded(nowMs: Long = System.nanoTime() / 1_000_000L) {
+        if (!securitySettingsLoaded) return
+        if (
+            appLockTimeoutTracker.consumeShouldRelock(
+                nowMs = nowMs,
+                timeoutMs = appLockBackgroundTimeoutMs,
+                lockEnabled = isAppLockEnabled,
+                hasPin = !savedPin.isNullOrBlank(),
+            )
+        ) {
+            currentPinInput = ""
+            lockScreenError = null
+            isAppLocked = true
+        }
+    }
+
     private fun shouldLockOnColdStart(): Boolean =
         !savedPin.isNullOrBlank() && isAppLockEnabled
 
@@ -1924,6 +1958,9 @@ class AppViewModel @JvmOverloads constructor(
                     initial.find { it.key == "app_lock_enabled" }?.value == "true"
             savedPin = pinVal
             isAppLockEnabled = hasPinLock
+            appLockBackgroundTimeoutMs = normalizeAppLockBackgroundTimeout(
+                initial.find { it.key == "app_lock_grace_ms" }?.value?.toLongOrNull(),
+            )
             useBiometrics =
                 hasPinLock && initial.find { it.key == "biometrics_enabled" }?.value == "true"
             if (!coldStartLockEvaluated) {
@@ -1931,6 +1968,9 @@ class AppViewModel @JvmOverloads constructor(
                 isAppLocked = hasPinLock
             }
             securitySettingsLoaded = true
+            // Covers the rare case where the app was backgrounded and foregrounded while this
+            // authoritative database read was still in flight.
+            relockIfNeeded()
             drainPendingExternalLaunches()
         }
         viewModelScope.launch {
@@ -2020,6 +2060,9 @@ class AppViewModel @JvmOverloads constructor(
                 val hasPinLock = !pinVal.isNullOrBlank() && lockEnabled
                 savedPin = pinVal
                 isAppLockEnabled = hasPinLock
+                appLockBackgroundTimeoutMs = normalizeAppLockBackgroundTimeout(
+                    list.find { it.key == "app_lock_grace_ms" }?.value?.toLongOrNull(),
+                )
                 useBiometrics = hasPinLock && bioEnabled
                 // Screenshot blocking defaults on until explicitly set; terminal and credential
                 // screens are sensitive even when the user has not configured an app lock.
@@ -2849,6 +2892,7 @@ class AppViewModel @JvmOverloads constructor(
             val verifiedPin = currentPinInput
             // Unlock app successfully
             isAppLocked = false
+            appLockTimeoutTracker.clear()
             currentPinInput = ""
             lockScreenError = null
             migratePinHashAfterSuccess(verifiedPin)
@@ -2907,6 +2951,7 @@ class AppViewModel @JvmOverloads constructor(
 
     fun biometricSuccessUnlock() {
         isAppLocked = false
+        appLockTimeoutTracker.clear()
         currentPinInput = ""
         lockScreenError = null
         drainPendingExternalLaunches()
@@ -5394,10 +5439,8 @@ class AppViewModel @JvmOverloads constructor(
         // consumer follows a reconnect's channel swap, same as the input job.
         s.resizeChannel.trySend(cols to rows)
         if (s.resizeJob?.isActive != true) {
-            s.resizeJob = TerminalSessionManager.scope.launch(Dispatchers.IO) {
-                for ((c, r) in s.resizeChannel) {
-                    try { s.session.resize(c, r) } catch (_: Exception) {}
-                }
+            s.resizeJob = TerminalSessionManager.scope.launchTerminalResizeConsumer(s.resizeChannel) { c, r ->
+                s.session.resize(c, r)
             }
         }
         // Control clients aren't sized by their PTY — tmux takes the size from refresh-client.
@@ -9855,6 +9898,7 @@ class AppViewModel @JvmOverloads constructor(
         if (!enabled) {
             useBiometrics = false
             isAppLocked = false
+            appLockTimeoutTracker.clear()
         }
         viewModelScope.launch {
             repository.insertSetting("app_lock_enabled", enabled.toString())
@@ -10115,6 +10159,7 @@ class AppViewModel @JvmOverloads constructor(
             isAppLockEnabled = false
             useBiometrics = false
             isAppLocked = false
+            appLockTimeoutTracker.clear()
             failedPinAttempts = 0
             pinLockedUntilMs = 0L
         }
@@ -10451,7 +10496,7 @@ class AppViewModel @JvmOverloads constructor(
         // travel between devices. Everything else (theme, retention, scoring, interval, …) is kept.
         val securityKeys = setOf(
             "app_pin", "app_lock_enabled", "biometrics_enabled",
-            "pin_failed_attempts", "pin_locked_until",
+            "pin_failed_attempts", "pin_locked_until", "app_lock_grace_ms",
         )
         if (closedSelection.settings) {
             for (st in settings) {

@@ -7,9 +7,13 @@ import com.jetsetslow.omniterm.data.term.TerminalEmulator
 import com.jetsetslow.omniterm.data.term.TerminalSnapshot
 import com.jetsetslow.omniterm.data.ssh.SshCredentials
 import com.jetsetslow.omniterm.data.ssh.TerminalSession as SshSession
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlin.random.Random
 import java.util.UUID
@@ -73,6 +77,27 @@ internal fun displayTmuxSessionName(tmuxName: String): String =
     tmuxName.removePrefix("omniterm-")
         .replace(Regex("-[a-p]{32}$"), "")
         .replace('-', ' ')
+
+/**
+ * Start the single newest-wins PTY resize consumer.
+ *
+ * Kept outside Android/ViewModel code so the ordering guarantee can be exercised by a plain JVM
+ * test on every development host, including Linux ARM64 machines where Robolectric cannot load its
+ * native runtime.
+ */
+internal fun CoroutineScope.launchTerminalResizeConsumer(
+    channel: Channel<Pair<Int, Int>>,
+    dispatcher: CoroutineDispatcher = Dispatchers.IO,
+    resize: suspend (cols: Int, rows: Int) -> Unit,
+): Job = launch(dispatcher) {
+    for ((cols, rows) in channel) {
+        try {
+            resize(cols, rows)
+        } catch (_: Exception) {
+            // A failed resize must not kill the consumer; a later layout update can still recover.
+        }
+    }
+}
 
 /**
  * Represents an active, background-capable SSH terminal session in the app.

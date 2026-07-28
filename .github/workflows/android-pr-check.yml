@@ -101,6 +101,7 @@ jobs:
           testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest
           lintOpenSourceDebug lintPlayStoreDebug
           --no-daemon --no-configuration-cache
+          -Dorg.gradle.jvmargs=-Xmx4g
           -Domniterm.publishScan=true
 
       - name: Delete debug keystore
