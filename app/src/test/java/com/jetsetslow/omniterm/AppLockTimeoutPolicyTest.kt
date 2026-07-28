@@ -1,5 +1,6 @@
 package com.jetsetslow.omniterm
 
+import com.jetsetslow.omniterm.ui.AppLockTimeoutDraft
 import com.jetsetslow.omniterm.ui.AppLockTimeoutTracker
 import com.jetsetslow.omniterm.ui.DEFAULT_APP_LOCK_BACKGROUND_TIMEOUT_MS
 import com.jetsetslow.omniterm.ui.MAX_APP_LOCK_BACKGROUND_TIMEOUT_MS
@@ -71,5 +72,37 @@ class AppLockTimeoutPolicyTest {
     fun configurationChangeDoesNotStartBackgroundTimer() {
         assertFalse(shouldRecordAppBackground(isChangingConfigurations = true))
         assertTrue(shouldRecordAppBackground(isChangingConfigurations = false))
+    }
+
+    @Test
+    fun customTimeoutRemainsSelectedWhileDeletingDefaultValue() {
+        val custom = AppLockTimeoutDraft.fromTimeout(30_000L).selectCustom()
+
+        val oneMinute = custom.editCustomValue("1")
+        assertTrue(oneMinute.customSelected)
+        assertEquals("1", oneMinute.customValue)
+        assertEquals(60_000L, oneMinute.timeoutMs)
+        assertTrue(oneMinute.isValid)
+
+        val empty = oneMinute.editCustomValue("")
+        assertTrue(empty.customSelected)
+        assertEquals("", empty.customValue)
+        assertEquals(60_000L, empty.timeoutMs)
+        assertFalse(empty.isValid)
+
+        val replacement = empty.editCustomValue("25")
+        assertTrue(replacement.customSelected)
+        assertEquals(25 * 60_000L, replacement.timeoutMs)
+        assertTrue(replacement.isValid)
+    }
+
+    @Test
+    fun presetSelectionLeavesCustomEditingModeExplicitly() {
+        val custom = AppLockTimeoutDraft.fromTimeout(10 * 60_000L)
+        assertTrue(custom.customSelected)
+
+        val preset = custom.selectPreset(60_000L)
+        assertFalse(preset.customSelected)
+        assertEquals(60_000L, preset.timeoutMs)
     }
 }

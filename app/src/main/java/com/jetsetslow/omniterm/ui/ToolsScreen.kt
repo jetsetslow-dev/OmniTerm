@@ -67,27 +67,6 @@ private val APP_LOCK_TIMEOUT_PRESETS = listOf(
     "5 min" to 300_000L,
 )
 
-private fun appLockCustomDurationParts(timeoutMs: Long): Pair<String, String> = when {
-    timeoutMs > 0L && timeoutMs % 3_600_000L == 0L ->
-        (timeoutMs / 3_600_000L).toString() to "Hours"
-    timeoutMs > 0L && timeoutMs % 60_000L == 0L ->
-        (timeoutMs / 60_000L).toString() to "Minutes"
-    timeoutMs > 0L ->
-        (timeoutMs / 1_000L).coerceAtLeast(1L).toString() to "Seconds"
-    else -> "10" to "Minutes"
-}
-
-private fun appLockCustomDurationMs(value: String, unit: String): Long? {
-    val amount = value.toLongOrNull()?.takeIf { it > 0L } ?: return null
-    val multiplier = when (unit) {
-        "Seconds" -> 1_000L
-        "Minutes" -> 60_000L
-        "Hours" -> 3_600_000L
-        else -> return null
-    }
-    return (amount * multiplier).takeIf { it in 1L..MAX_APP_LOCK_BACKGROUND_TIMEOUT_MS }
-}
-
 private fun copySensitiveClipboard(
     context: android.content.Context,
     scope: kotlinx.coroutines.CoroutineScope,
@@ -2893,12 +2872,18 @@ fun SettingsToolView(viewModel: AppViewModel) {
     var draftLinkInApp by rememberSaveable { mutableStateOf(viewModel.linkOpenInApp) }
     var draftTmuxControl by rememberSaveable { mutableStateOf(viewModel.tmuxControlMode) }
     var draftAppLock by rememberSaveable { mutableStateOf(viewModel.isAppLockEnabled) }
-    var draftAppLockTimeout by rememberSaveable {
-        mutableStateOf(viewModel.appLockBackgroundTimeoutMs)
+    val initialAppLockTimeoutDraft =
+        AppLockTimeoutDraft.fromTimeout(viewModel.appLockBackgroundTimeoutMs)
+    var draftAppLockTimeout by rememberSaveable { mutableStateOf(initialAppLockTimeoutDraft.timeoutMs) }
+    var draftCustomLockValue by rememberSaveable {
+        mutableStateOf(initialAppLockTimeoutDraft.customValue)
     }
-    val initialCustomLockParts = appLockCustomDurationParts(viewModel.appLockBackgroundTimeoutMs)
-    var draftCustomLockValue by rememberSaveable { mutableStateOf(initialCustomLockParts.first) }
-    var draftCustomLockUnit by rememberSaveable { mutableStateOf(initialCustomLockParts.second) }
+    var draftCustomLockUnit by rememberSaveable {
+        mutableStateOf(initialAppLockTimeoutDraft.customUnit)
+    }
+    var draftCustomLockSelected by rememberSaveable {
+        mutableStateOf(initialAppLockTimeoutDraft.customSelected)
+    }
     var draftBiometrics by rememberSaveable { mutableStateOf(viewModel.useBiometrics) }
     var draftBlockScreenshots by rememberSaveable { mutableStateOf(viewModel.isFlagSecureEnabled) }
     var draftHideSensitive by rememberSaveable { mutableStateOf(viewModel.hideSensitiveInfo) }
@@ -2907,9 +2892,14 @@ fun SettingsToolView(viewModel: AppViewModel) {
     val draftSftpWarnFileCountValue = draftSftpWarnFileCount.toIntOrNull()?.coerceIn(1, 10_000)
     val currentSftpWarnGb = (viewModel.sftpLargeBatchBytesThreshold / 1_000_000_000L).coerceAtLeast(1L)
     val draftSftpWarnGbValue = draftSftpWarnGb.toLongOrNull()?.coerceAtLeast(1L)
-    val customAppLockTimeout = appLockCustomDurationMs(draftCustomLockValue, draftCustomLockUnit)
-    val customAppLockSelected = APP_LOCK_TIMEOUT_PRESETS.none { it.second == draftAppLockTimeout }
-    val appLockTimeoutValid = !draftAppLock || !customAppLockSelected || customAppLockTimeout != null
+    val appLockTimeoutDraft = AppLockTimeoutDraft(
+        timeoutMs = draftAppLockTimeout,
+        customValue = draftCustomLockValue,
+        customUnit = draftCustomLockUnit,
+        customSelected = draftCustomLockSelected,
+    )
+    val customAppLockTimeout = appLockTimeoutDraft.customTimeoutMs
+    val appLockTimeoutValid = !draftAppLock || appLockTimeoutDraft.isValid
 
     val dirty = draftDark != viewModel.isDarkModeEnabled ||
         draftAmoled != viewModel.isAmoledEnabled ||
@@ -2965,10 +2955,11 @@ fun SettingsToolView(viewModel: AppViewModel) {
         draftLinkInApp = viewModel.linkOpenInApp
         draftTmuxControl = viewModel.tmuxControlMode
         draftAppLock = viewModel.isAppLockEnabled
-        draftAppLockTimeout = viewModel.appLockBackgroundTimeoutMs
-        appLockCustomDurationParts(viewModel.appLockBackgroundTimeoutMs).let { (value, unit) ->
-            draftCustomLockValue = value
-            draftCustomLockUnit = unit
+        AppLockTimeoutDraft.fromTimeout(viewModel.appLockBackgroundTimeoutMs).let { timeoutDraft ->
+            draftAppLockTimeout = timeoutDraft.timeoutMs
+            draftCustomLockValue = timeoutDraft.customValue
+            draftCustomLockUnit = timeoutDraft.customUnit
+            draftCustomLockSelected = timeoutDraft.customSelected
         }
         draftBiometrics = viewModel.useBiometrics
         draftBlockScreenshots = viewModel.isFlagSecureEnabled
@@ -3094,24 +3085,29 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 APP_LOCK_TIMEOUT_PRESETS.forEach { (label, timeoutMs) ->
                                     FilterChip(
-                                        selected = draftAppLockTimeout == timeoutMs,
-                                        onClick = { draftAppLockTimeout = timeoutMs },
+                                        selected = !draftCustomLockSelected &&
+                                            draftAppLockTimeout == timeoutMs,
+                                        onClick = {
+                                            val updated = appLockTimeoutDraft.selectPreset(timeoutMs)
+                                            draftAppLockTimeout = updated.timeoutMs
+                                            draftCustomLockSelected = updated.customSelected
+                                        },
                                         label = { Text(label, fontSize = 12.sp) },
                                     )
                                 }
                                 FilterChip(
-                                    selected = customAppLockSelected,
+                                    selected = draftCustomLockSelected,
                                     onClick = {
-                                        if (!customAppLockSelected) {
-                                            draftCustomLockValue = "10"
-                                            draftCustomLockUnit = "Minutes"
-                                            draftAppLockTimeout = 10 * 60_000L
-                                        }
+                                        val updated = appLockTimeoutDraft.selectCustom()
+                                        draftAppLockTimeout = updated.timeoutMs
+                                        draftCustomLockValue = updated.customValue
+                                        draftCustomLockUnit = updated.customUnit
+                                        draftCustomLockSelected = updated.customSelected
                                     },
                                     label = { Text("Custom", fontSize = 12.sp) },
                                 )
                             }
-                            if (customAppLockSelected) {
+                            if (draftCustomLockSelected) {
                                 Spacer(Modifier.height(6.dp))
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
@@ -3121,11 +3117,9 @@ fun SettingsToolView(viewModel: AppViewModel) {
                                     OutlinedTextField(
                                         value = draftCustomLockValue,
                                         onValueChange = { input ->
-                                            draftCustomLockValue = input.filter(Char::isDigit).take(5)
-                                            appLockCustomDurationMs(
-                                                draftCustomLockValue,
-                                                draftCustomLockUnit,
-                                            )?.let { draftAppLockTimeout = it }
+                                            val updated = appLockTimeoutDraft.editCustomValue(input)
+                                            draftCustomLockValue = updated.customValue
+                                            draftAppLockTimeout = updated.timeoutMs
                                         },
                                         label = { Text("Custom duration") },
                                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
@@ -3151,11 +3145,10 @@ fun SettingsToolView(viewModel: AppViewModel) {
                                                 DropdownMenuItem(
                                                     text = { Text(unit) },
                                                     onClick = {
-                                                        draftCustomLockUnit = unit
-                                                        appLockCustomDurationMs(
-                                                            draftCustomLockValue,
-                                                            unit,
-                                                        )?.let { draftAppLockTimeout = it }
+                                                        val updated =
+                                                            appLockTimeoutDraft.selectCustomUnit(unit)
+                                                        draftCustomLockUnit = updated.customUnit
+                                                        draftAppLockTimeout = updated.timeoutMs
                                                         unitMenuExpanded = false
                                                     },
                                                 )
