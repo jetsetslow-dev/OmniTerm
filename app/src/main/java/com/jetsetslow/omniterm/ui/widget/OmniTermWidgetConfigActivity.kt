@@ -149,23 +149,25 @@ class OmniTermWidgetConfigActivity : ComponentActivity() {
 
     private fun saveConfigAndFinish(selectedIds: List<Int>, onFailure: () -> Unit) {
         lifecycleScope.launch {
-            if (AppWidgetManager.getInstance(this@OmniTermWidgetConfigActivity)
-                    .getAppWidgetInfo(appWidgetId) == null
-            ) {
-                Toast.makeText(
-                    this@OmniTermWidgetConfigActivity,
-                    "This widget is no longer available.",
-                    Toast.LENGTH_LONG,
-                ).show()
-                onFailure()
-                return@launch
-            }
-
+            // No getAppWidgetInfo() guard here: during initial placement the widget is not bound
+            // yet, so it returns null and would abort the very first save (leaving RESULT_CANCELED
+            // and making the launcher drop the widget). The system only starts this activity with
+            // a real widget id, and a stale id makes updateAppWidget below a harmless no-op.
             val preferencesSaved = withContext(Dispatchers.IO) {
-                getSharedPreferences("widget_prefs", MODE_PRIVATE)
-                    .edit()
-                    .putStringSet("widget_$appWidgetId", selectedIds.map { it.toString() }.toSet())
-                    .commit()
+                try {
+                    getSharedPreferences("widget_prefs", MODE_PRIVATE)
+                        .edit()
+                        .putStringSet(
+                            "widget_$appWidgetId",
+                            selectedIds.map { it.toString() }.toSet(),
+                        )
+                        .commit()
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    android.util.Log.w("OmniTermWidget", "Widget preference save failed", failure)
+                    false
+                }
             }
             if (!preferencesSaved) {
                 Toast.makeText(
