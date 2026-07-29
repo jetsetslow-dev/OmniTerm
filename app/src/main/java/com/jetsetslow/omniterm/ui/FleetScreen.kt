@@ -273,9 +273,6 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
     }
     var controlsExpanded by remember { mutableStateOf(true) }
 
-    LaunchedEffect(Unit) {
-        viewModel.seedFleetPresetsIfMissing()
-    }
     LaunchedEffect(viewModel.broadcastResults.size) {
         if (viewModel.broadcastResults.isNotEmpty()) controlsExpanded = false
     }

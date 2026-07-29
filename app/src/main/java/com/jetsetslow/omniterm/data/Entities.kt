@@ -15,6 +15,11 @@ data class PersistentSessionEntity(
     val serverId: Int,
     val serverName: String,
     val createdAt: Long = System.currentTimeMillis(),
+    // When this session was most recently left running in the background. Unlike [createdAt] —
+    // which dates the tmux session itself and survives resume/background cycles — this restarts
+    // every time the user backgrounds the session again, so "backgrounded since" answers "how long
+    // has it been sitting there since I last used it?".
+    val backgroundedAt: Long = System.currentTimeMillis(),
 )
 
 /**
@@ -121,14 +126,20 @@ data class CredentialProfileEntity(
 data class AlertRuleEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val serverId: Int,
-    val metricName: String, // "CPU Usage", "Memory Usage", "Disk Usage", "Network In", "Network Out", "Latency"
+    // "CPU Usage", "Memory Usage", "Disk Usage", "Network In", "Network Out", "Latency",
+    // "Temperature" (only evaluates on hosts that expose a thermal sensor)
+    val metricName: String,
     val mountPoint: String = "/",
     val thresholdValue: Float,
     val severity: String, // "WARNING", "CRITICAL"
     val triggerWindow: String = "5m", // "2m", "5m", "10m", "15m"
     val enabled: Boolean = true,
     // Free-text note documenting why this rule exists / what it watches for.
-    val notes: String = ""
+    val notes: String = "",
+    // Stable identity of the built-in preset this rule was seeded from (e.g. "alert.cpu"), or null
+    // for user-created rules. Survives threshold/severity edits, so the default-rules toggle can
+    // delete exactly what it seeded instead of matching on mutable content.
+    val presetKey: String? = null
 )
 
 @Entity(
@@ -181,7 +192,11 @@ data class QuickScriptEntity(
     val targetOs: String = "Any",
     val targetSystem: String = "Any",
     // Free-text note documenting what this script does / caveats.
-    val notes: String = ""
+    val notes: String = "",
+    // Stable identity of the built-in preset this row was seeded from (e.g. "fleet.cpu"), or null
+    // for user-created scripts. Survives edits to the name/command, so the preset toggles can
+    // delete exactly what they seeded instead of matching on mutable content.
+    val presetKey: String? = null
 )
 
 @Entity(tableName = "wol_targets")

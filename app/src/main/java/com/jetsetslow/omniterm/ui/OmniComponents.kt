@@ -481,6 +481,25 @@ fun formatUptime(seconds: Long): String {
     }
 }
 
+/**
+ * Compact "how long ago" for a session start time, e.g. "just now", "12m", "3h 04m", "2d 07h".
+ * Used on terminal session entries so a backgrounded or resumable tmux session shows its age.
+ */
+fun formatSessionAge(startedAtMs: Long, nowMs: Long = System.currentTimeMillis()): String {
+    val elapsed = nowMs - startedAtMs
+    if (startedAtMs <= 0L || elapsed < 0L) return "—"
+    val totalMinutes = elapsed / 60_000L
+    if (totalMinutes < 1L) return "just now"
+    val days = totalMinutes / 1440L
+    val hours = (totalMinutes % 1440L) / 60L
+    val minutes = totalMinutes % 60L
+    return when {
+        days > 0L -> String.format(java.util.Locale.US, "%dd %02dh", days, hours)
+        hours > 0L -> String.format(java.util.Locale.US, "%dh %02dm", hours, minutes)
+        else -> "${minutes}m"
+    }
+}
+
 fun formatDateTime(timeMs: Long): String =
     java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date(timeMs))
 

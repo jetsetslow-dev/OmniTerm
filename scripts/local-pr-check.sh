@@ -21,8 +21,12 @@ if [[ "$OS_NAME" == "Linux" && ( "$ARCH_NAME" == "aarch64" || "$ARCH_NAME" == "a
 fi
 
 CREATED_DEBUG_KEYSTORE=false
+GENERATED_THROWAWAY_KEYSTORE=false
 cleanup() {
-  if [[ "$CREATED_DEBUG_KEYSTORE" == "true" ]]; then
+  # Only a throwaway generated key is removed. A keystore restored from the repo's committed
+  # debug.keystore.base64 is kept so repeat runs — and the test device — keep the same signature.
+  # (debug.keystore is gitignored, so keeping it never risks committing a credential.)
+  if [[ "$CREATED_DEBUG_KEYSTORE" == "true" && "$GENERATED_THROWAWAY_KEYSTORE" == "true" ]]; then
     rm -f "$ROOT/debug.keystore"
   fi
 }
@@ -30,9 +34,22 @@ trap cleanup EXIT
 
 if [[ ! -f "$ROOT/debug.keystore" ]]; then
   umask 077
-  keytool -genkeypair -keystore "$ROOT/debug.keystore" -storepass android -keypass android \
-    -alias androiddebugkey -dname CN=Android-Debug -keyalg RSA -keysize 2048 -validity 1 \
-    >/dev/null 2>&1
+  if [[ -f "$ROOT/debug.keystore.base64" ]]; then
+    # Prefer the repo's stable debug key. Generating a throwaway key instead gives every run a
+    # DIFFERENT signature, so an APK already installed on a test device can no longer be updated
+    # (INSTALL_FAILED_UPDATE_INCOMPATIBLE) and has to be uninstalled — losing its data — every time.
+    #
+    # This intentionally DIFFERS from android-pr-check.yml, which always generates an ephemeral key:
+    # CI runs untrusted PR code and must not expose a stable signing key, and its verification APKs
+    # never need signing continuity. Locally the opposite is true — the same trusted developer keeps
+    # re-installing onto one test device, so continuity is the whole point.
+    base64 -d "$ROOT/debug.keystore.base64" > "$ROOT/debug.keystore"
+  else
+    keytool -genkeypair -keystore "$ROOT/debug.keystore" -storepass android -keypass android \
+      -alias androiddebugkey -dname CN=Android-Debug -keyalg RSA -keysize 2048 -validity 1 \
+      >/dev/null 2>&1
+    GENERATED_THROWAWAY_KEYSTORE=true
+  fi
   CREATED_DEBUG_KEYSTORE=true
 fi
 

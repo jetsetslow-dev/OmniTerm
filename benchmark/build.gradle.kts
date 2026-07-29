@@ -4,7 +4,7 @@ plugins {
 
 android {
     namespace = "com.jetsetslow.omniterm.benchmark"
-    compileSdk = 36
+    compileSdk = 37
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
@@ -13,7 +13,7 @@ android {
 
     defaultConfig {
         minSdk = 28
-        targetSdk = 36
+        targetSdk = 37
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // :app has a "distribution" flavor dimension this module doesn't declare.
         missingDimensionStrategy("distribution", "playStore")

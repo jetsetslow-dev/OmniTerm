@@ -78,6 +78,29 @@ private const val BROADCAST_OUTPUT_MAX_CHARS = 120_000
 /** Default hard stop for one Fleet Broadcast run. */
 private const val BROADCAST_TIMEOUT_MS = 10 * 60 * 1000L
 
+/**
+ * A preset is safe to omit from backup only when every persisted field still matches its canonical
+ * row. Comparing only the command loses user changes such as a rename, visibility, or target OS.
+ */
+internal fun isPristinePresetScript(
+    script: QuickScriptEntity,
+    presets: List<QuickScriptEntity>,
+): Boolean = presets.any { preset ->
+    preset.presetKey != null &&
+        script.presetKey == preset.presetKey &&
+        script.copy(id = 0) == preset.copy(id = 0)
+}
+
+/** Alert window/enabled edits are customizations just as threshold and severity edits are. */
+internal fun isPristinePresetRule(
+    rule: AlertRuleEntity,
+    presets: List<AlertRuleEntity>,
+): Boolean = presets.any { preset ->
+    preset.presetKey != null &&
+        rule.presetKey == preset.presetKey &&
+        rule.copy(id = 0) == preset.copy(id = 0)
+}
+
 private const val TERMINAL_INPUT_CHUNK_BYTES = 4096
 private const val TERMINAL_INPUT_QUEUE_MAX_BYTES = 4 * 1024 * 1024
 private const val CONTROL_PENDING_INPUT_MAX_BYTES = 1024 * 1024
@@ -678,14 +701,14 @@ internal fun verifyStoredPin(stored: String?, pin: String): Boolean {
 }
 
 private val builtInFleetPresets: List<QuickScriptEntity> = listOf(
-    QuickScriptEntity(0, "CPU", "CPU/RAM", "uptime 2>/dev/null || powershell -NoProfile -Command \"(Get-CimInstance Win32_OperatingSystem).LastBootUpTime\"; free -h 2>/dev/null || vm_stat 2>/dev/null || powershell -NoProfile -Command \"Get-CimInstance Win32_OperatingSystem | ForEach-Object { 'TotalMB=' + [int](\$_.TotalVisibleMemorySize/1024) + ' FreeMB=' + [int](\$_.FreePhysicalMemory/1024) }\"", "cyan", false, "Fleet", 0, availableForQuick = false, availableForFleet = true),
-    QuickScriptEntity(0, "DSK", "Disk", "df -h 2>/dev/null | head -6 || powershell -NoProfile -Command \"Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Select-Object DeviceID,Size,FreeSpace\"", "cyan", false, "Fleet", 1, availableForQuick = false, availableForFleet = true),
-    QuickScriptEntity(0, "PRC", "Processes", "ps aux 2>/dev/null | sort -k3 -nr | head -8 || ps -axo pid,user,pcpu,pmem,comm 2>/dev/null | sort -k3 -nr | head -8 || powershell -NoProfile -Command \"Get-Process | Sort-Object CPU -Descending | Select-Object -First 8 Id,ProcessName,CPU,WorkingSet\"", "cyan", false, "Fleet", 2, availableForQuick = false, availableForFleet = true),
-    QuickScriptEntity(0, "SVC", "Failed services", "systemctl --failed 2>/dev/null || rc-status -c 2>/dev/null || powershell -NoProfile -Command \"Get-Service | Where-Object Status -eq Stopped | Select-Object -First 12 Name,Status\"", "cyan", false, "Fleet", 3, availableForQuick = false, availableForFleet = true),
-    QuickScriptEntity(0, "LOG", "Syslog errors", "journalctl -p err -n 8 2>/dev/null || logread 2>/dev/null | grep -iE 'error|fail|critical' | tail -8 || grep -iE 'error|fail|critical' /var/log/syslog /var/log/messages 2>/dev/null | tail -8 || powershell -NoProfile -Command \"Get-WinEvent -FilterHashtable @{LogName='System'; Level=2} -MaxEvents 8 | Select-Object TimeCreated,ProviderName,Message\"", "cyan", false, "Fleet", 4, availableForQuick = false, availableForFleet = true),
-    QuickScriptEntity(0, "CTR", "Containers", "docker ps --format \"table {{.Names}}\t{{.Status}}\" 2>/dev/null || podman ps --format \"table {{.Names}}\t{{.Status}}\"", "cyan", false, "Fleet", 5, availableForQuick = false, availableForFleet = true),
-    QuickScriptEntity(0, "NET", "Listening ports", "ss -tlnp 2>/dev/null | grep LISTEN || netstat -tlnp 2>/dev/null | grep LISTEN || netstat -an 2>/dev/null | grep LISTEN || powershell -NoProfile -Command \"Get-NetTCPConnection -State Listen | Select-Object -First 25 LocalAddress,LocalPort,OwningProcess\"", "cyan", false, "Fleet", 6, availableForQuick = false, availableForFleet = true),
-    QuickScriptEntity(0, "KRN", "Kernel", "uname -sr 2>/dev/null || powershell -NoProfile -Command \"[Environment]::OSVersion.VersionString\"", "cyan", false, "Fleet", 7, availableForQuick = false, availableForFleet = true),
+    QuickScriptEntity(0, "CPU", "CPU/RAM", "uptime 2>/dev/null || powershell -NoProfile -Command \"(Get-CimInstance Win32_OperatingSystem).LastBootUpTime\"; free -h 2>/dev/null || vm_stat 2>/dev/null || powershell -NoProfile -Command \"Get-CimInstance Win32_OperatingSystem | ForEach-Object { 'TotalMB=' + [int](\$_.TotalVisibleMemorySize/1024) + ' FreeMB=' + [int](\$_.FreePhysicalMemory/1024) }\"", "cyan", false, "Fleet", 0, availableForQuick = false, availableForFleet = true, presetKey = "fleet.cpu"),
+    QuickScriptEntity(0, "DSK", "Disk", "df -h 2>/dev/null | head -6 || powershell -NoProfile -Command \"Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3' | Select-Object DeviceID,Size,FreeSpace\"", "cyan", false, "Fleet", 1, availableForQuick = false, availableForFleet = true, presetKey = "fleet.disk"),
+    QuickScriptEntity(0, "PRC", "Processes", "ps aux 2>/dev/null | sort -k3 -nr | head -8 || ps -axo pid,user,pcpu,pmem,comm 2>/dev/null | sort -k3 -nr | head -8 || powershell -NoProfile -Command \"Get-Process | Sort-Object CPU -Descending | Select-Object -First 8 Id,ProcessName,CPU,WorkingSet\"", "cyan", false, "Fleet", 2, availableForQuick = false, availableForFleet = true, presetKey = "fleet.processes"),
+    QuickScriptEntity(0, "SVC", "Failed services", "systemctl --failed 2>/dev/null || rc-status -c 2>/dev/null || powershell -NoProfile -Command \"Get-Service | Where-Object Status -eq Stopped | Select-Object -First 12 Name,Status\"", "cyan", false, "Fleet", 3, availableForQuick = false, availableForFleet = true, presetKey = "fleet.services"),
+    QuickScriptEntity(0, "LOG", "Syslog errors", "journalctl -p err -n 8 2>/dev/null || logread 2>/dev/null | grep -iE 'error|fail|critical' | tail -8 || grep -iE 'error|fail|critical' /var/log/syslog /var/log/messages 2>/dev/null | tail -8 || powershell -NoProfile -Command \"Get-WinEvent -FilterHashtable @{LogName='System'; Level=2} -MaxEvents 8 | Select-Object TimeCreated,ProviderName,Message\"", "cyan", false, "Fleet", 4, availableForQuick = false, availableForFleet = true, presetKey = "fleet.syslog"),
+    QuickScriptEntity(0, "CTR", "Containers", "docker ps --format \"table {{.Names}}\t{{.Status}}\" 2>/dev/null || podman ps --format \"table {{.Names}}\t{{.Status}}\"", "cyan", false, "Fleet", 5, availableForQuick = false, availableForFleet = true, presetKey = "fleet.containers"),
+    QuickScriptEntity(0, "NET", "Listening ports", "ss -tlnp 2>/dev/null | grep LISTEN || netstat -tlnp 2>/dev/null | grep LISTEN || netstat -an 2>/dev/null | grep LISTEN || powershell -NoProfile -Command \"Get-NetTCPConnection -State Listen | Select-Object -First 25 LocalAddress,LocalPort,OwningProcess\"", "cyan", false, "Fleet", 6, availableForQuick = false, availableForFleet = true, presetKey = "fleet.ports"),
+    QuickScriptEntity(0, "KRN", "Kernel", "uname -sr 2>/dev/null || powershell -NoProfile -Command \"[Environment]::OSVersion.VersionString\"", "cyan", false, "Fleet", 7, availableForQuick = false, availableForFleet = true, presetKey = "fleet.kernel"),
 )
 
 class AppViewModel @JvmOverloads constructor(
@@ -934,7 +957,7 @@ class AppViewModel @JvmOverloads constructor(
     var homelabPresetsEnabled by mutableStateOf(false); private set
     var alertsEnabled by mutableStateOf(true); private set
     var alertPresetsEnabled by mutableStateOf(false); private set
-    var fleetPresetsEnabled by mutableStateOf(true); private set
+    var fleetPresetsEnabled by mutableStateOf(false); private set
     var backupExportSelection by mutableStateOf(BackupSelection()); private set
     var lastBackupExportTime by mutableStateOf(0L); private set
     var isLanScanning by mutableStateOf(false)
@@ -1375,8 +1398,8 @@ class AppViewModel @JvmOverloads constructor(
 
     // SPEED TEST MODULE — HTTP download throughput against a chosen URL. Self-contained (no SSH
     // host needed); complements the SSH-driven iperf option below.
-    // Named endpoints for the speed-test server dropdown. HTTPS only — targetSdk 36 blocks
-    // cleartext HTTP. The URL field stays editable, so any custom endpoint still works.
+    // Named endpoints for the speed-test server dropdown. HTTPS only — the app disables cleartext
+    // traffic. The URL field stays editable, so any custom endpoint still works.
     val speedTestServers: List<Pair<String, String>> = listOf(
         "Cloudflare — global anycast (50 MB)" to "https://speed.cloudflare.com/__down?bytes=52428800",
         "Cloudflare — global anycast (200 MB)" to "https://speed.cloudflare.com/__down?bytes=209715200",
@@ -1577,7 +1600,11 @@ class AppViewModel @JvmOverloads constructor(
         // model as well as the picker so stale UI events cannot duplicate a session.
         if (sessionId != null && sessionId == otherSessionId) return
         if (pane == 1) multiSshSessionId1 = sessionId else multiSshSessionId2 = sessionId
-        if (sessionId != null) setMultiSshFocus(pane)
+        if (sessionId != null) {
+            // Assigned to a visible pane: it is no longer backgrounded.
+            activeSessions.find { it.id == sessionId }?.backgroundedAtMs = null
+            setMultiSshFocus(pane)
+        }
     }
 
     /**
@@ -2053,7 +2080,7 @@ class AppViewModel @JvmOverloads constructor(
                 homelabPresetsEnabled = list.find { it.key == "homelab_presets" }?.value == "true"
                 alertsEnabled = list.find { it.key == "alerts_enabled" }?.value != "false"
                 alertPresetsEnabled = list.find { it.key == "alert_presets" }?.value == "true"
-                fleetPresetsEnabled = list.find { it.key == "fleet_presets" }?.value != "false"
+                fleetPresetsEnabled = list.find { it.key == "fleet_presets" }?.value == "true"
                 backupExportSelection = decodeBackupSelection(list.find { it.key == "backup_export_selection" }?.value)
                 lastBackupExportTime = list.find { it.key == "backup_last_export_time" }?.value?.toLongOrNull() ?: 0L
 
@@ -2310,7 +2337,7 @@ class AppViewModel @JvmOverloads constructor(
                 // Fleet, Monitor) can read without waiting for a separate SSH round-trip. Compose
                 // snapshot state must be mutated on the main thread.
                 withContext(Dispatchers.Main) { hostMetricsById[srv.id] = m }
-                evaluateAlertRules(srv, cpu, ram, disk, rtt, m.disks)
+                evaluateAlertRules(srv, cpu, ram, disk, rtt, m.disks, m.cpuTempC)
                 val health = healthFromMetrics(cpu, ram, disk, rtt)
                 if (srv.id == activeServerId) {
                     // Drive the Monitor → Overview view directly from this poller so it doesn't
@@ -2389,6 +2416,7 @@ class AppViewModel @JvmOverloads constructor(
     private suspend fun evaluateAlertRules(
         srv: ServerEntity, cpu: Float, ram: Float, disk: Float, latency: Int,
         mounts: List<DiskUsage> = emptyList(),
+        cpuTempC: Float? = null,
     ) = alertStateMutex.withLock {
         if (!alertsEnabled) return@withLock
         val rules = (repository.getRulesForServer(srv.id) + repository.getRulesForServer(0)).filter { it.enabled }
@@ -2403,6 +2431,9 @@ class AppViewModel @JvmOverloads constructor(
                 "Disk Usage" -> mounts.find { it.mount == r.mountPoint }?.percent
                     ?: disk.takeIf { r.mountPoint.isBlank() || r.mountPoint == "/" }
                 "Latency" -> latency.toFloat()
+                // Null on hosts with no thermal sensor (many VMs/containers). A null current value
+                // is treated as "not breaching", so the rule simply never fires there.
+                "Temperature" -> cpuTempC
                 else -> null
             }
             val breachKey = r.id to srv.id
@@ -2473,7 +2504,11 @@ class AppViewModel @JvmOverloads constructor(
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
         )
         val mountSuffix = if (rule.metricName == "Disk Usage" && rule.mountPoint.isNotBlank()) " on ${rule.mountPoint}" else ""
-        val unit = if (rule.metricName == "Latency") "ms" else "%"
+        val unit = when (rule.metricName) {
+            "Latency" -> "ms"
+            "Temperature" -> "°C"
+            else -> "%"
+        }
         val n = NotificationCompat.Builder(app, ALERT_CHANNEL_ID)
             .setContentTitle("${rule.severity}: ${srv.name}")
             .setContentText("${rule.metricName}$mountSuffix at ${"%.0f".format(value)}$unit (threshold ${"%.0f".format(rule.thresholdValue)}$unit)")
@@ -2525,14 +2560,25 @@ class AppViewModel @JvmOverloads constructor(
     /** Set by the "New host" static launcher shortcut; ServersMainView consumes it to open the add sheet. */
     var addServerSheetRequested by mutableStateOf(false)
 
+    private var widgetRefreshJob: Job? = null
+
     /**
      * Re-render all home-screen widgets from current DB state. [delayMs] lets the telemetry
      * loop wait for in-flight probes to land before the widget reads their results.
      */
     fun refreshHomeWidgets(delayMs: Long = 0) {
-        viewModelScope.launch {
+        // A fast telemetry interval must not accumulate overlapping delayed widget updates. Keep
+        // the first pending refresh; an explicit immediate refresh supersedes it.
+        if (delayMs > 0 && widgetRefreshJob?.isActive == true) return
+        widgetRefreshJob?.cancel()
+        widgetRefreshJob = viewModelScope.launch {
             if (delayMs > 0) delay(delayMs)
             runCatching { OmniTermWidget().updateAll(getApplication()) }
+                .onFailure { failure ->
+                    if (failure !is CancellationException) {
+                        android.util.Log.w("OmniTermWidget", "Widget refresh failed", failure)
+                    }
+                }
         }
     }
 
@@ -3048,6 +3094,7 @@ class AppViewModel @JvmOverloads constructor(
                 authError = null,
             )
             val newId = repository.insertServer(server)
+            refreshHomeWidgets()
             onResult(null)
             // Start pessimistic: only promote reachability/auth after a real probe succeeds.
             withContext(Dispatchers.IO) {
@@ -3067,6 +3114,7 @@ class AppViewModel @JvmOverloads constructor(
                     }
                 }
             }
+            refreshHomeWidgets()
         }
     }
 
@@ -3506,43 +3554,37 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    fun seedFleetPresetsIfMissing() {
-        viewModelScope.launch {
-            if (!fleetPresetsEnabled) return@launch
-            if (repository.getSetting("fleet_presets_seeded") == "true") return@launch
-            val existing = repository.getAllScripts()
-                .filter { it.category == "Fleet" }
-                .map { it.name.lowercase(Locale.ROOT) to it.command.trim() }
-                .toSet()
-            for (preset in builtInFleetPresets) {
-                val key = preset.name.lowercase(Locale.ROOT) to preset.command.trim()
-                if (key !in existing) repository.insertScript(preset)
-            }
-            repository.insertSetting("fleet_presets_seeded", "true")
-        }
+    /**
+     * Replace the seeded preset scripts for one preset family with a pristine copy of [presets].
+     *
+     * Identity is the row's [QuickScriptEntity.presetKey], so a preset the user renamed or edited is
+     * still recognised as ours: enabling deletes every previously seeded row and re-inserts the
+     * defaults (an OFF→ON cycle is the documented "reset to defaults" gesture), while user-created
+     * scripts — which carry a null presetKey — are never touched.
+     */
+    private suspend fun reseedPresetScripts(presets: List<QuickScriptEntity>) {
+        val keys = presets.mapNotNull { it.presetKey }.toSet()
+        repository.getAllScripts()
+            .filter { it.presetKey in keys }
+            .forEach { repository.deleteScript(it) }
+        for (preset in presets) repository.insertScript(preset)
+    }
+
+    /** Remove the seeded rows for one preset family, keeping the user's own scripts. */
+    private suspend fun removePresetScripts(presets: List<QuickScriptEntity>) {
+        val keys = presets.mapNotNull { it.presetKey }.toSet()
+        repository.getAllScripts()
+            .filter { it.presetKey in keys }
+            .forEach { repository.deleteScript(it) }
     }
 
     fun toggleFleetPresets(enabled: Boolean) {
         fleetPresetsEnabled = enabled
         viewModelScope.launch {
-            repository.insertSetting("fleet_presets", enabled.toString())
-            val presetKeys = builtInFleetPresets
-                .map { it.name.lowercase(Locale.ROOT) to it.command.trim() }
-                .toSet()
-            if (enabled) {
-                val existing = repository.getAllScripts()
-                    .filter { it.category == "Fleet" }
-                    .map { it.name.lowercase(Locale.ROOT) to it.command.trim() }
-                    .toSet()
-                for (preset in builtInFleetPresets) {
-                    val key = preset.name.lowercase(Locale.ROOT) to preset.command.trim()
-                    if (key !in existing) repository.insertScript(preset)
-                }
-                repository.insertSetting("fleet_presets_seeded", "true")
-            } else {
-                repository.getAllScripts()
-                    .filter { it.category == "Fleet" && (it.name.lowercase(Locale.ROOT) to it.command.trim()) in presetKeys }
-                    .forEach { repository.deleteScript(it) }
+            repository.inTransaction {
+                repository.insertSetting("fleet_presets", enabled.toString())
+                if (enabled) reseedPresetScripts(builtInFleetPresets)
+                else removePresetScripts(builtInFleetPresets)
             }
         }
     }
@@ -3564,85 +3606,60 @@ class AppViewModel @JvmOverloads constructor(
      * Home Assistant, Linux, plus general ops). Toggled on/off from Scripts.
      */
     private val homelabPresetScripts: List<QuickScriptEntity> = listOf(
-        QuickScriptEntity(0, "PVE", "PVE: list VMs", "qm list", "orange", false, "Proxmox"),
-        QuickScriptEntity(0, "PCT", "PVE: list containers", "pct list", "orange", false, "Proxmox"),
-        QuickScriptEntity(0, "CLS", "PVE: cluster status", "pvecm status 2>/dev/null || echo 'standalone node'", "orange", false, "Proxmox"),
-        QuickScriptEntity(0, "STO", "PVE: storage status", "pvesm status", "orange", false, "Proxmox"),
-        QuickScriptEntity(0, "RUN", "PVE: start VM <id>", "qm start 100", "orange", false, "Proxmox"),
-        QuickScriptEntity(0, "STP", "PVE: stop VM <id>", "qm stop 100", "orange", false, "Proxmox"),
-        QuickScriptEntity(0, "CAS", "CasaOS: status", "systemctl status 'casaos*' --no-pager 2>&1 | head -40", "green", false, "CasaOS"),
-        QuickScriptEntity(0, "RST", "CasaOS: restart", "sudo systemctl restart 'casaos*'", "green", false, "CasaOS"),
-        QuickScriptEntity(0, "VER", "CasaOS: version", "casaos -v 2>/dev/null || cat /etc/casaos/* 2>/dev/null | head", "green", false, "CasaOS"),
-        QuickScriptEntity(0, "HA", "HA: info", "ha info 2>/dev/null || docker ps --filter name=homeassistant", "cyan", false, "Home Assistant"),
-        QuickScriptEntity(0, "LOG", "HA: core logs", "ha core logs 2>/dev/null || docker logs --tail 100 homeassistant 2>&1", "cyan", false, "Home Assistant"),
-        QuickScriptEntity(0, "RST", "HA: restart core", "ha core restart 2>/dev/null || docker restart homeassistant", "cyan", false, "Home Assistant"),
-        QuickScriptEntity(0, "SUP", "HA: supervisor logs", "ha supervisor logs 2>/dev/null | tail -100", "cyan", false, "Home Assistant"),
-        QuickScriptEntity(0, "TMP", "Temperature", "if [ \"\$(uname -s 2>/dev/null)\" = Linux ]; then max=\"\"; for f in /sys/class/thermal/thermal_zone*/temp; do [ -r \"\$f\" ] || continue; v=\$(cat \"\$f\" 2>/dev/null); case \"\$v\" in ''|*[!0-9]*) continue;; esac; [ -z \"\$max\" ] || [ \"\$v\" -gt \"\$max\" ] && max=\"\$v\"; done; if [ -n \"\$max\" ]; then awk -v t=\"\$max\" 'BEGIN { printf \"CPU %.1f°C\\n\", t / 1000 }'; elif command -v vcgencmd >/dev/null 2>&1; then vcgencmd measure_temp; else echo \"No thermal sensor exposed\"; fi; else echo \"Temperature preset supports Linux hosts\"; fi", "red", false, "Linux"),
-        QuickScriptEntity(0, "UPD", "Updates available", "apt list --upgradable 2>/dev/null | tail -n +2 || (command -v dnf >/dev/null && dnf check-update)", "amber", false, "Homelab"),
-        QuickScriptEntity(0, "RBT", "Reboot required?", "test -f /var/run/reboot-required && echo 'reboot required' || echo 'no reboot needed'", "amber", false, "Homelab"),
-        QuickScriptEntity(0, "CPU", "Top 10 by CPU", "ps aux --sort=-%cpu | head -11", "purple", false, "Homelab"),
-        QuickScriptEntity(0, "CTR", "Docker stats", "docker stats --no-stream 2>/dev/null || podman stats --no-stream", "purple", false, "Homelab"),
-        QuickScriptEntity(0, "DSK", "Disk usage", "df -h | grep -vE 'tmpfs|udev'", "purple", false, "Homelab"),
+        QuickScriptEntity(0, "PVE", "PVE: list VMs", "qm list", "orange", false, "Proxmox", presetKey = "homelab.pve_vms"),
+        QuickScriptEntity(0, "PCT", "PVE: list containers", "pct list", "orange", false, "Proxmox", presetKey = "homelab.pve_containers"),
+        QuickScriptEntity(0, "CLS", "PVE: cluster status", "pvecm status 2>/dev/null || echo 'standalone node'", "orange", false, "Proxmox", presetKey = "homelab.pve_cluster"),
+        QuickScriptEntity(0, "STO", "PVE: storage status", "pvesm status", "orange", false, "Proxmox", presetKey = "homelab.pve_storage"),
+        QuickScriptEntity(0, "RUN", "PVE: start VM <id>", "qm start 100", "orange", false, "Proxmox", presetKey = "homelab.pve_start_vm"),
+        QuickScriptEntity(0, "STP", "PVE: stop VM <id>", "qm stop 100", "orange", false, "Proxmox", presetKey = "homelab.pve_stop_vm"),
+        QuickScriptEntity(0, "CAS", "CasaOS: status", "systemctl status 'casaos*' --no-pager 2>&1 | head -40", "green", false, "CasaOS", presetKey = "homelab.casaos_status"),
+        QuickScriptEntity(0, "RST", "CasaOS: restart", "sudo systemctl restart 'casaos*'", "green", false, "CasaOS", presetKey = "homelab.casaos_restart"),
+        QuickScriptEntity(0, "VER", "CasaOS: version", "casaos -v 2>/dev/null || cat /etc/casaos/* 2>/dev/null | head", "green", false, "CasaOS", presetKey = "homelab.casaos_version"),
+        QuickScriptEntity(0, "HA", "HA: info", "ha info 2>/dev/null || docker ps --filter name=homeassistant", "cyan", false, "Home Assistant", presetKey = "homelab.ha_info"),
+        QuickScriptEntity(0, "LOG", "HA: core logs", "ha core logs 2>/dev/null || docker logs --tail 100 homeassistant 2>&1", "cyan", false, "Home Assistant", presetKey = "homelab.ha_core_logs"),
+        QuickScriptEntity(0, "RST", "HA: restart core", "ha core restart 2>/dev/null || docker restart homeassistant", "cyan", false, "Home Assistant", presetKey = "homelab.ha_restart_core"),
+        QuickScriptEntity(0, "SUP", "HA: supervisor logs", "ha supervisor logs 2>/dev/null | tail -100", "cyan", false, "Home Assistant", presetKey = "homelab.ha_supervisor_logs"),
+        QuickScriptEntity(0, "TMP", "Temperature", "if [ \"\$(uname -s 2>/dev/null)\" = Linux ]; then max=\"\"; for f in /sys/class/thermal/thermal_zone*/temp; do [ -r \"\$f\" ] || continue; v=\$(cat \"\$f\" 2>/dev/null); case \"\$v\" in ''|*[!0-9]*) continue;; esac; [ -z \"\$max\" ] || [ \"\$v\" -gt \"\$max\" ] && max=\"\$v\"; done; if [ -n \"\$max\" ]; then awk -v t=\"\$max\" 'BEGIN { printf \"CPU %.1f°C\\n\", t / 1000 }'; elif command -v vcgencmd >/dev/null 2>&1; then vcgencmd measure_temp; else echo \"No thermal sensor exposed\"; fi; else echo \"Temperature preset supports Linux hosts\"; fi", "red", false, "Linux", presetKey = "homelab.temperature"),
+        QuickScriptEntity(0, "UPD", "Updates available", "apt list --upgradable 2>/dev/null | tail -n +2 || (command -v dnf >/dev/null && dnf check-update)", "amber", false, "Homelab", presetKey = "homelab.updates"),
+        QuickScriptEntity(0, "RBT", "Reboot required?", "test -f /var/run/reboot-required && echo 'reboot required' || echo 'no reboot needed'", "amber", false, "Homelab", presetKey = "homelab.reboot_required"),
+        QuickScriptEntity(0, "CPU", "Top 10 by CPU", "ps aux --sort=-%cpu | head -11", "purple", false, "Homelab", presetKey = "homelab.top_cpu"),
+        QuickScriptEntity(0, "CTR", "Docker stats", "docker stats --no-stream 2>/dev/null || podman stats --no-stream", "purple", false, "Homelab", presetKey = "homelab.docker_stats"),
+        QuickScriptEntity(0, "DSK", "Disk usage", "df -h | grep -vE 'tmpfs|udev'", "purple", false, "Homelab", presetKey = "homelab.disk_usage"),
     )
 
     /** Enable/disable the homelab preset scripts. Disabling removes the (default) presets. */
     fun toggleHomelabPresets(enabled: Boolean) {
         homelabPresetsEnabled = enabled
         viewModelScope.launch {
-            repository.insertSetting("homelab_presets", enabled.toString())
-            if (enabled) {
-                val presetNames = homelabPresetScripts.map { it.name }.toSet()
-                repository.getAllScripts().filter { it.name in presetNames }.forEach { repository.deleteScript(it) }
-                for (p in homelabPresetScripts) repository.insertScript(p)
-            } else {
-                val names = homelabPresetScripts.map { it.name }.toSet()
-                repository.getAllScripts().filter { it.name in names }.forEach { repository.deleteScript(it) }
+            repository.inTransaction {
+                repository.insertSetting("homelab_presets", enabled.toString())
+                if (enabled) reseedPresetScripts(homelabPresetScripts)
+                else removePresetScripts(homelabPresetScripts)
             }
         }
     }
 
     /** Default alert-rule presets applied to every host: CPU/memory/disk/latency thresholds. */
-    private val alertRulePresets = listOf(
-        Triple("CPU Usage", 90f, "CRITICAL"),
-        Triple("Memory Usage", 90f, "CRITICAL"),
-        Triple("Disk Usage", 90f, "WARNING"),
-        Triple("Latency", 250f, "WARNING"),
+    private val alertRulePresets: List<AlertRuleEntity> = listOf(
+        AlertRuleEntity(serverId = 0, metricName = "CPU Usage", thresholdValue = 90f, severity = "CRITICAL", presetKey = "alert.cpu"),
+        AlertRuleEntity(serverId = 0, metricName = "Memory Usage", thresholdValue = 90f, severity = "CRITICAL", presetKey = "alert.memory"),
+        AlertRuleEntity(serverId = 0, metricName = "Disk Usage", thresholdValue = 90f, severity = "WARNING", presetKey = "alert.disk"),
+        AlertRuleEntity(serverId = 0, metricName = "Latency", thresholdValue = 250f, severity = "WARNING", presetKey = "alert.latency"),
     )
 
     // ── Backup default-filtering ──────────────────────────────────────────────────────────────────
     // A backup should preserve what the user CREATED or CHANGED — not the app's own seeded presets,
-    // which are re-seeded automatically on a fresh install. We identify a preset by its name; if the
-    // stored row still matches the preset's original command/threshold it's pristine (skip it). If the
-    // command/threshold differs, the user edited it, so it's effectively custom and we keep it.
-
-    /** Original command for a built-in/homelab preset script keyed by name, or null if not a preset. */
-    private val presetScriptOriginalCommands: Map<String, String> by lazy {
-        (builtInFleetPresets + homelabPresetScripts)
-            .associate { it.name.lowercase(Locale.ROOT) to it.command.trim() }
-    }
-
-    /**
-     * True when [script] is an untouched copy of a seeded preset: same name + same command AND no
-     * user note. Adding a note counts as customizing it, so a noted preset is kept in the backup.
-     */
-    private fun isPristineDefaultScript(script: QuickScriptEntity): Boolean =
-        script.notes.isBlank() &&
-            presetScriptOriginalCommands[script.name.lowercase(Locale.ROOT)] == script.command.trim()
+    // which the preset toggles re-seed on demand. A row is ours when its presetKey matches a known
+    // preset; if its command/threshold still equals the seeded value it's pristine (skip it). If the
+    // user edited it, it's effectively custom and we keep it so the edit survives the backup.
 
     /** Keep only user-created or user-edited scripts; drop pristine seeded presets. */
     private fun customScriptsOnly(scripts: List<QuickScriptEntity>): List<QuickScriptEntity> =
-        scripts.filterNot { isPristineDefaultScript(it) }
-
-    /** True when [rule] is an untouched fleet-wide (serverId=0) default alert preset (no user note). */
-    private fun isPristineDefaultRule(rule: AlertRuleEntity): Boolean =
-        rule.serverId == 0 && rule.notes.isBlank() && alertRulePresets.any { (metric, threshold, severity) ->
-            rule.metricName == metric && rule.thresholdValue == threshold &&
-                rule.severity == severity && rule.mountPoint == "/"
-        }
+        scripts.filterNot { isPristinePresetScript(it, builtInFleetPresets + homelabPresetScripts) }
 
     /** Keep only user-created or user-edited alert rules; drop pristine default presets. */
     private fun customRulesOnly(rules: List<AlertRuleEntity>): List<AlertRuleEntity> =
-        rules.filterNot { isPristineDefaultRule(it) }
+        rules.filterNot { isPristinePresetRule(it, alertRulePresets) }
 
     /**
      * Insert any default alert-rule preset that isn't already present (fleet-wide, serverId=0).
@@ -3651,10 +3668,8 @@ class AppViewModel @JvmOverloads constructor(
      */
     private suspend fun seedMissingDefaultAlertRules() {
         val existing = repository.getRulesForServer(0)
-        for ((metric, threshold, severity) in alertRulePresets) {
-            if (existing.none { it.metricName == metric && it.thresholdValue == threshold }) {
-                repository.insertRule(AlertRuleEntity(serverId = 0, metricName = metric, thresholdValue = threshold, severity = severity))
-            }
+        for (preset in alertRulePresets) {
+            if (existing.none { it.presetKey == preset.presetKey }) repository.insertRule(preset)
         }
     }
 
@@ -3664,17 +3679,17 @@ class AppViewModel @JvmOverloads constructor(
         viewModelScope.launch {
             alertStateMutex.withLock {
                 repository.insertSetting("alert_presets", enabled.toString())
-                if (enabled) {
-                    seedMissingDefaultAlertRules()
-                } else {
-                    val sigs = alertRulePresets.map { it.first to it.second }.toSet()
-                    repository.getAllRules()
-                        .filter { it.serverId == 0 && (it.metricName to it.thresholdValue) in sigs }
-                        .forEach { rule ->
-                            closeAlertsForRule(rule.id)
-                            repository.deleteRule(rule)
-                        }
-                }
+                // Both branches clear the previously seeded rows by presetKey, so an OFF→ON cycle
+                // resets edited thresholds to the defaults instead of leaving a stale rule behind
+                // (or adding a duplicate next to it). User-created rules have a null presetKey.
+                val presetKeys = alertRulePresets.mapNotNull { it.presetKey }.toSet()
+                repository.getAllRules()
+                    .filter { it.serverId == 0 && it.presetKey in presetKeys }
+                    .forEach { rule ->
+                        closeAlertsForRule(rule.id)
+                        repository.deleteRule(rule)
+                    }
+                if (enabled) seedMissingDefaultAlertRules()
             }
         }
     }
@@ -4888,6 +4903,9 @@ class AppViewModel @JvmOverloads constructor(
                 shellSession.persistent = true
                 shellSession.tmuxName = tmuxName
                 shellSession.controlMode = tmuxControlMode
+                // Age the resumed shell from when the tmux session was first created, not from
+                // this re-attach — the remote session (and whatever runs in it) is that old.
+                shellSession.startedAtMs = sessionEntity.createdAt
                 emulator.setCaptureAlternateScreenScrollback(!shellSession.controlMode)
                 val initialScreenPainted = if (shellSession.controlMode) {
                     session.write(RemoteCommands.tmuxControlAttachCommand(tmuxName, terminalScrollbackLimit).toByteArray())
@@ -5174,16 +5192,21 @@ class AppViewModel @JvmOverloads constructor(
 
     private suspend fun rememberRestorablePersistentSession(shellSession: ShellSession) {
         if (!shellSession.persistent) return
-        val entity = PersistentSessionEntity(
-            shellSession.tmuxName,
-            shellSession.serverId,
-            shellSession.serverName,
-        )
         persistentSessionMutationMutex.withLock {
+            // The tmux session's own age is fixed at first creation and must survive every
+            // resume/background cycle; "backgrounded since" restarts on each of them. Reuse the
+            // stored createdAt when we already know this session, so only the former is preserved.
+            val known = restorablePersistentSessions.find { it.tmuxName == shellSession.tmuxName }
+            val entity = PersistentSessionEntity(
+                shellSession.tmuxName,
+                shellSession.serverId,
+                shellSession.serverName,
+                createdAt = known?.createdAt ?: shellSession.startedAtMs,
+                backgroundedAt = System.currentTimeMillis(),
+            )
             repository.upsertPersistentSession(entity)
-            if (restorablePersistentSessions.none { it.tmuxName == entity.tmuxName }) {
-                restorablePersistentSessions = restorablePersistentSessions + entity
-            }
+            restorablePersistentSessions =
+                restorablePersistentSessions.filterNot { it.tmuxName == entity.tmuxName } + entity
         }
     }
 
@@ -5784,6 +5807,7 @@ class AppViewModel @JvmOverloads constructor(
         val s = activeSessions.find { it.id == sessionId } ?: return
         if (isMultiSsh) clearMultiSshRefsFor(s.id)
         if (currentSessionId == s.id) currentSessionId = null
+        s.backgroundedAtMs = System.currentTimeMillis()
         // Stay on Shell — ShellScreen shows SessionPicker when currentSession==null && activeSessions.isNotEmpty()
         // Always start the service so per-session notifications with Disconnect buttons appear
         val connected = activeSessions.filter { it.isConnected }
@@ -5822,6 +5846,8 @@ class AppViewModel @JvmOverloads constructor(
         }
         selectedServerId = session.serverId
         currentSessionId = sessionId
+        // Back in the foreground: the backgrounded clock restarts from the next background.
+        session.backgroundedAtMs = null
         TerminalSessionManager.publishTerminalSnapshot(session)
         screenHistory.clear()
         screenHistory.add(Screen.Servers)
@@ -10383,6 +10409,9 @@ class AppViewModel @JvmOverloads constructor(
                 put("targetOs", q.targetOs)
                 put("targetSystem", q.targetSystem)
                 put("notes", q.notes)
+                // Only user-EDITED presets reach a backup; keep their identity so the preset toggle
+                // can still remove/reset them after a restore instead of treating them as custom.
+                q.presetKey?.let { put("presetKey", it) }
             })
         }
         val ruleArr = org.json.JSONArray()
@@ -10408,6 +10437,7 @@ class AppViewModel @JvmOverloads constructor(
                 put("mountPoint", r.mountPoint); put("thresholdValue", r.thresholdValue.toDouble())
                 put("severity", r.severity); put("triggerWindow", r.triggerWindow); put("enabled", r.enabled)
                 put("notes", r.notes)
+                r.presetKey?.let { put("presetKey", it) }
             })
         }
         val historyArr = org.json.JSONArray()
@@ -11068,6 +11098,7 @@ class AppViewModel @JvmOverloads constructor(
                                     targetOs = o.optString("targetOs", "Any").ifBlank { "Any" },
                                     targetSystem = o.optString("targetSystem", "Any").ifBlank { "Any" },
                                     notes = o.optString("notes", ""),
+                                    presetKey = o.optString("presetKey", "").ifBlank { null },
                                 )
                             )
                             existingScripts.add(scriptKey)
@@ -11104,6 +11135,7 @@ class AppViewModel @JvmOverloads constructor(
                                     severity = o.optString("severity", "WARNING"), triggerWindow = window,
                                     enabled = o.optBoolean("enabled", true),
                                     notes = o.optString("notes", ""),
+                                    presetKey = o.optString("presetKey", "").ifBlank { null },
                                 )
                             )
                             repository.getAllRules().find {

@@ -56,9 +56,15 @@ import java.util.Date
 import androidx.compose.ui.res.stringResource
 import com.jetsetslow.omniterm.R
 
-/** Display unit for an alert metric: thresholds are percentages except latency, which is in ms. */
-private fun alertMetricUnit(metricName: String): String =
-    if (metricName == "Latency") "ms" else "%"
+/**
+ * Display unit for an alert metric: thresholds are percentages except latency (ms) and CPU
+ * temperature (°C).
+ */
+private fun alertMetricUnit(metricName: String): String = when (metricName) {
+    "Latency" -> "ms"
+    "Temperature" -> "°C"
+    else -> "%"
+}
 
 private val APP_LOCK_TIMEOUT_PRESETS = listOf(
     "Immediately" to 0L,
@@ -578,7 +584,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                         if (on) {
                                             confirm.ask(
                                                 "Enable default rules?",
-                                                "This creates editable All Hosts alert rules for CPU, memory, disk, and latency.",
+                                                "This creates editable All Hosts alert rules for CPU, memory, disk, and latency, resetting any earlier edits to them.",
                                                 confirmLabel = "Enable",
                                                 destructive = false,
                                             ) {
@@ -587,7 +593,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                         } else {
                                             confirm.ask(
                                                 "Disable default rules?",
-                                                "This removes the default CPU/memory/disk/latency All Hosts rules. Custom rules you added are kept.",
+                                                "This removes the default CPU/memory/disk/latency All Hosts rules, including any edits to them. Custom rules you added are kept.",
                                                 confirmLabel = "Disable",
                                             ) {
                                                 viewModel.toggleAlertPresets(false)
@@ -689,6 +695,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
         var metricSelect by remember(existing) { mutableStateOf(existing?.metricName ?: "CPU Usage") }
         var threshInput by remember(existing) { mutableStateOf(existing?.thresholdValue?.toString() ?: "80") }
         var severitySelect by remember(existing) { mutableStateOf(existing?.severity ?: "CRITICAL") }
+        var windowSelect by remember(existing) { mutableStateOf(existing?.triggerWindow ?: "5m") }
         var notesInput by remember(existing) { mutableStateOf(existing?.notes ?: "") }
 
         AlertDialog(
@@ -715,14 +722,32 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         },
                     )
                     Text(stringResource(R.string.select_metric_key))
-                    val metricsOptions = listOf("CPU Usage", "Memory Usage", "Disk Usage", "Latency")
+                    val metricsOptions = listOf("CPU Usage", "Memory Usage", "Disk Usage", "Latency", "Temperature")
                     @OptIn(ExperimentalLayoutApi::class)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         metricsOptions.forEach { opt ->
                             FilterChip(selected = metricSelect == opt, onClick = { metricSelect = opt }, label = { Text(opt) })
                         }
                     }
+                    // CPU temperature comes from the host's thermal sensors, which plenty of hosts
+                    // (most VMs and containers) simply don't expose. The rule is harmless there, it
+                    // just never evaluates — say so rather than let it look silently broken.
+                    if (metricSelect == "Temperature") {
+                        Text(
+                            "Only triggers on hosts that report a CPU temperature. Hosts without a " +
+                                "thermal sensor (many VMs and containers) never evaluate this rule.",
+                            fontSize = 11.sp,
+                            color = OmniColors.amber,
+                        )
+                    }
                     OutlinedTextField(value = threshInput, onValueChange = { threshInput = it }, label = { Text("Threshold value (${alertMetricUnit(metricSelect)})") }, modifier = Modifier.fillMaxWidth())
+                    Text(stringResource(R.string.trigger_window_label))
+                    @OptIn(ExperimentalLayoutApi::class)
+                    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf("2m", "5m", "10m", "15m").forEach { opt ->
+                            FilterChip(selected = windowSelect == opt, onClick = { windowSelect = opt }, label = { Text(opt) })
+                        }
+                    }
                     OutlinedTextField(
                         value = notesInput,
                         onValueChange = { notesInput = it },
@@ -742,10 +767,10 @@ fun AlertsToolView(viewModel: AppViewModel) {
                             // One rule per picked host ("All hosts" collapses to a single id-0 rule).
                             val targets = if (0 in selectedSrvIds) listOf(0) else selectedSrvIds.toList()
                             targets.forEach { srvId ->
-                                viewModel.addAlertRule(srvId, metricSelect, "/", thresh, severitySelect, "5m", notesInput.trim())
+                                viewModel.addAlertRule(srvId, metricSelect, "/", thresh, severitySelect, windowSelect, notesInput.trim())
                             }
                         } else {
-                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvIds.first(), metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, notes = notesInput.trim()))
+                            viewModel.updateAlertRule(existing.copy(serverId = selectedSrvIds.first(), metricName = metricSelect, thresholdValue = thresh, severity = severitySelect, triggerWindow = windowSelect, notes = notesInput.trim()))
                         }
                         showCreateRuleDialog = false
                         editRule = null
@@ -838,7 +863,7 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
                                     if (on) {
                                         confirm.ask(
                                             "Enable preset scripts?",
-                                            "This adds curated quick scripts for common homelab platforms. You can edit or delete them afterwards.",
+                                            "This adds curated quick scripts for common homelab platforms, resetting any earlier edits to them. You can edit or delete them afterwards.",
                                             confirmLabel = "Enable",
                                             destructive = false,
                                         ) {
@@ -877,7 +902,7 @@ fun QuickScriptsToolView(viewModel: AppViewModel) {
                                     if (on) {
                                         confirm.ask(
                                             "Enable fleet defaults?",
-                                            "This adds built-in fleet broadcast commands. You can edit or delete them afterwards.",
+                                            "This adds built-in fleet broadcast commands, resetting any earlier edits to them. You can edit or delete them afterwards.",
                                             confirmLabel = "Enable",
                                             destructive = false,
                                         ) {

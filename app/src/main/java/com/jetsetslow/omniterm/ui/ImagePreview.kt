@@ -130,7 +130,9 @@ fun ImagePreviewOverlay(preview: AppViewModel.RemoteImagePreview, onClose: () ->
 private fun ZoomableImage(bitmap: android.graphics.Bitmap) {
     var scale by remember { mutableFloatStateOf(1f) }
     var offset by remember { mutableStateOf(Offset.Zero) }
-    val transformState = rememberTransformableState { zoomChange, panChange, _ ->
+    // Centroid-aware overload: (centroid, zoomChange, panChange, rotationChange). The centroid is
+    // unused here — zoom stays anchored at the image centre, matching the previous behaviour.
+    val transformState = rememberTransformableState { _, zoomChange, panChange, _ ->
         scale = (scale * zoomChange).coerceIn(1f, 8f)
         offset = if (scale <= 1f) Offset.Zero else offset + panChange
     }

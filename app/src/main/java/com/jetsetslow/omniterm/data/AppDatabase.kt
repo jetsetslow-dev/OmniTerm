@@ -29,7 +29,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     // against the exact prior shape. Versions ≤7 predate schema export (several v5 builds shipped
     // with differing schemas), so upgrades from those still fall back to a destructive wipe — but
     // from v8 on, a version bump without a Migration must fail loudly instead of deleting data.
-    version = 19,
+    version = 20,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -188,6 +188,112 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // Preset rows get a stable presetKey so the "default presets" toggles can remove exactly
+        // what they seeded even after the user edits one. Back-stamping is deliberately gated by
+        // the corresponding setting: a matching name/category or fleet-wide metric is not proof
+        // that a row belongs to OmniTerm when that preset family was disabled.
+        private val MIGRATION_19_20 = object : Migration(19, 20) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE quick_scripts ADD COLUMN presetKey TEXT")
+                db.execSQL("ALTER TABLE alert_rules ADD COLUMN presetKey TEXT")
+                // "Backgrounded since" for saved tmux sessions. Existing rows have never been
+                // observed being backgrounded, so seed them from createdAt rather than "now",
+                // which would falsely show every restored session as just-backgrounded.
+                db.execSQL("ALTER TABLE persistent_sessions ADD COLUMN backgroundedAt INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("UPDATE persistent_sessions SET backgroundedAt = createdAt WHERE backgroundedAt = 0")
+
+                // Fleet presets used to be on by default without persisting a setting. Preserve
+                // that state only when a recognisable legacy fleet row exists. A stored false
+                // value wins because INSERT OR IGNORE never overwrites the user's choice.
+                db.execSQL(
+                    "INSERT OR IGNORE INTO app_settings (`key`, value) " +
+                        "SELECT 'fleet_presets', 'true' WHERE EXISTS (" +
+                        "SELECT 1 FROM quick_scripts WHERE category = 'Fleet' AND name IN (" +
+                        LEGACY_SCRIPT_PRESET_KEYS
+                            .filter { it.familySetting == "fleet_presets" }
+                            .joinToString(",") { "'${it.name.replace("'", "''")}'" } +
+                        "))"
+                )
+                for (preset in LEGACY_SCRIPT_PRESET_KEYS) {
+                    db.execSQL(
+                        "UPDATE quick_scripts SET presetKey = ? " +
+                            "WHERE presetKey IS NULL AND name = ? AND category = ? " +
+                            "AND EXISTS (SELECT 1 FROM app_settings WHERE `key` = ? AND value = 'true')",
+                        arrayOf(preset.key, preset.name, preset.category, preset.familySetting),
+                    )
+                }
+                for (preset in LEGACY_RULE_PRESETS) {
+                    db.execSQL(
+                        "UPDATE alert_rules SET presetKey = ? " +
+                            "WHERE presetKey IS NULL AND serverId = 0 AND metricName = ? " +
+                            "AND mountPoint = '/' AND thresholdValue = ? AND severity = ? " +
+                            "AND triggerWindow = '5m' AND enabled = 1 AND notes = '' " +
+                            "AND EXISTS (SELECT 1 FROM app_settings " +
+                            "WHERE `key` = 'alert_presets' AND value = 'true')",
+                        arrayOf<Any>(
+                            preset.key,
+                            preset.metric,
+                            preset.threshold,
+                            preset.severity,
+                        ),
+                    )
+                }
+            }
+        }
+
+        private data class LegacyScriptPreset(
+            val key: String,
+            val name: String,
+            val category: String,
+            val familySetting: String,
+        )
+
+        /** Seeded identities for rows created before the presetKey column existed. */
+        private val LEGACY_SCRIPT_PRESET_KEYS = listOf(
+            LegacyScriptPreset("fleet.cpu", "CPU/RAM", "Fleet", "fleet_presets"),
+            LegacyScriptPreset("fleet.disk", "Disk", "Fleet", "fleet_presets"),
+            LegacyScriptPreset("fleet.processes", "Processes", "Fleet", "fleet_presets"),
+            LegacyScriptPreset("fleet.services", "Failed services", "Fleet", "fleet_presets"),
+            LegacyScriptPreset("fleet.syslog", "Syslog errors", "Fleet", "fleet_presets"),
+            LegacyScriptPreset("fleet.containers", "Containers", "Fleet", "fleet_presets"),
+            LegacyScriptPreset("fleet.ports", "Listening ports", "Fleet", "fleet_presets"),
+            LegacyScriptPreset("fleet.kernel", "Kernel", "Fleet", "fleet_presets"),
+            LegacyScriptPreset("homelab.pve_vms", "PVE: list VMs", "Proxmox", "homelab_presets"),
+            LegacyScriptPreset("homelab.pve_containers", "PVE: list containers", "Proxmox", "homelab_presets"),
+            LegacyScriptPreset("homelab.pve_cluster", "PVE: cluster status", "Proxmox", "homelab_presets"),
+            LegacyScriptPreset("homelab.pve_storage", "PVE: storage status", "Proxmox", "homelab_presets"),
+            LegacyScriptPreset("homelab.pve_start_vm", "PVE: start VM <id>", "Proxmox", "homelab_presets"),
+            LegacyScriptPreset("homelab.pve_stop_vm", "PVE: stop VM <id>", "Proxmox", "homelab_presets"),
+            LegacyScriptPreset("homelab.casaos_status", "CasaOS: status", "CasaOS", "homelab_presets"),
+            LegacyScriptPreset("homelab.casaos_restart", "CasaOS: restart", "CasaOS", "homelab_presets"),
+            LegacyScriptPreset("homelab.casaos_version", "CasaOS: version", "CasaOS", "homelab_presets"),
+            LegacyScriptPreset("homelab.ha_info", "HA: info", "Home Assistant", "homelab_presets"),
+            LegacyScriptPreset("homelab.ha_core_logs", "HA: core logs", "Home Assistant", "homelab_presets"),
+            LegacyScriptPreset("homelab.ha_restart_core", "HA: restart core", "Home Assistant", "homelab_presets"),
+            LegacyScriptPreset("homelab.ha_supervisor_logs", "HA: supervisor logs", "Home Assistant", "homelab_presets"),
+            LegacyScriptPreset("homelab.temperature", "Temperature", "Linux", "homelab_presets"),
+            LegacyScriptPreset("homelab.updates", "Updates available", "Homelab", "homelab_presets"),
+            LegacyScriptPreset("homelab.reboot_required", "Reboot required?", "Homelab", "homelab_presets"),
+            LegacyScriptPreset("homelab.top_cpu", "Top 10 by CPU", "Homelab", "homelab_presets"),
+            LegacyScriptPreset("homelab.docker_stats", "Docker stats", "Homelab", "homelab_presets"),
+            LegacyScriptPreset("homelab.disk_usage", "Disk usage", "Homelab", "homelab_presets"),
+        )
+
+        private data class LegacyRulePreset(
+            val key: String,
+            val metric: String,
+            val threshold: Float,
+            val severity: String,
+        )
+
+        /** Exact pristine alert identities predating presetKey. */
+        private val LEGACY_RULE_PRESETS = listOf(
+            LegacyRulePreset("alert.cpu", "CPU Usage", 90f, "CRITICAL"),
+            LegacyRulePreset("alert.memory", "Memory Usage", 90f, "CRITICAL"),
+            LegacyRulePreset("alert.disk", "Disk Usage", 90f, "WARNING"),
+            LegacyRulePreset("alert.latency", "Latency", 250f, "WARNING"),
+        )
+
         /** Complete non-destructive migration chain for builders and schema regression tests. */
         internal val ALL_MIGRATIONS: Array<Migration> = arrayOf(
             MIGRATION_8_9,
@@ -201,6 +307,7 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_16_17,
             MIGRATION_17_18,
             MIGRATION_18_19,
+            MIGRATION_19_20,
         )
 
         fun getDatabase(context: Context): AppDatabase {

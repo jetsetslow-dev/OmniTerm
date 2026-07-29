@@ -3,6 +3,9 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Android 17 (target 37) gates direct TCP/UDP access to nearby devices. OmniTerm needs broad
+         local-network access for SSH/SFTP, LAN discovery, tunnels, shares, and Wake-on-LAN. -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!--

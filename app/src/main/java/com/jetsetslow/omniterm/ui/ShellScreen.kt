@@ -713,6 +713,20 @@ private fun TerminalHeaderAction(
 }
 
 /**
+ * A clock that re-reads the current time once a minute while [active], for session ages. Session
+ * ages have minute resolution, so ticking faster would only cost recompositions; when the menu is
+ * closed the clock stops entirely.
+ */
+@Composable
+private fun rememberSessionAgeClock(active: Boolean): Long =
+    produceState(initialValue = System.currentTimeMillis(), active) {
+        while (active) {
+            value = System.currentTimeMillis()
+            delay(60_000L)
+        }
+    }.value
+
+/**
  * Top-level session switcher. It replaces the ambiguous NEW-only action with one place to attach a
  * background session, resume a saved tmux session, or deliberately create a fresh terminal.
  */
@@ -735,6 +749,9 @@ private fun TerminalOpenPicker(
         viewModel.activeSessions.none { it.tmuxName == saved.tmuxName }
     }
     var expanded by remember { mutableStateOf(false) }
+    // Session ages are minute-resolution, so re-read the clock once a minute while the menu is
+    // open rather than recomposing the whole switcher on every frame.
+    val ageNowMs = rememberSessionAgeClock(expanded)
 
     Box(modifier) {
         Text(stringResource(R.string.open),
@@ -771,6 +788,11 @@ private fun TerminalOpenPicker(
                             if (session.persistent) {
                                 Text(displayTmuxSessionName(session.tmuxName), fontSize = 10.sp, color = scheme.onSurfaceVariant)
                             }
+                            Text(
+                                "Started ${formatSessionAge(session.startedAtMs, ageNowMs)} ago",
+                                fontSize = 10.sp,
+                                color = scheme.onSurfaceVariant,
+                            )
                         }
                     },
                     leadingIcon = { Icon(Icons.Filled.Check, contentDescription = null) },
@@ -792,6 +814,16 @@ private fun TerminalOpenPicker(
                                 Text(session.serverName, fontFamily = OmniFonts.mono, fontSize = 12.sp)
                                 Text(
                                     if (session.persistent) displayTmuxSessionName(session.tmuxName) else "Live SSH session",
+                                    fontSize = 10.sp,
+                                    color = scheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    buildString {
+                                        append("Started ${formatSessionAge(session.startedAtMs, ageNowMs)} ago")
+                                        session.backgroundedAtMs?.let {
+                                            append(" · backgrounded ${formatSessionAge(it, ageNowMs)} ago")
+                                        }
+                                    },
                                     fontSize = 10.sp,
                                     color = scheme.onSurfaceVariant,
                                 )
@@ -818,6 +850,12 @@ private fun TerminalOpenPicker(
                             Column {
                                 Text(saved.serverName, fontFamily = OmniFonts.mono, fontSize = 12.sp)
                                 Text(displayTmuxSessionName(saved.tmuxName), fontSize = 10.sp, color = scheme.onSurfaceVariant)
+                                Text(
+                                    "Started ${formatSessionAge(saved.createdAt, ageNowMs)} ago · " +
+                                        "backgrounded ${formatSessionAge(saved.backgroundedAt, ageNowMs)} ago",
+                                    fontSize = 10.sp,
+                                    color = scheme.onSurfaceVariant,
+                                )
                             }
                         },
                         onClick = {
@@ -1194,6 +1232,7 @@ private fun MultiSshPanePicker(
         viewModel.activeSessions.none { it.tmuxName == saved.tmuxName }
     }
     var expanded by remember { mutableStateOf(false) }
+    val ageNowMs = rememberSessionAgeClock(expanded)
 
     Box(modifier) {
         if (compact) {
@@ -1240,6 +1279,16 @@ private fun MultiSshPanePicker(
                                     fontSize = 10.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                                Text(
+                                    buildString {
+                                        append("Started ${formatSessionAge(candidate.startedAtMs, ageNowMs)} ago")
+                                        candidate.backgroundedAtMs?.let {
+                                            append(" · backgrounded ${formatSessionAge(it, ageNowMs)} ago")
+                                        }
+                                    },
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
                             }
                         },
                         onClick = {
@@ -1262,6 +1311,12 @@ private fun MultiSshPanePicker(
                             Column {
                                 Text(saved.serverName, fontFamily = OmniFonts.mono, fontSize = 12.sp)
                                 Text(displayTmuxSessionName(saved.tmuxName), fontSize = 10.sp, color = scheme.onSurfaceVariant)
+                                Text(
+                                    "Started ${formatSessionAge(saved.createdAt, ageNowMs)} ago · " +
+                                        "backgrounded ${formatSessionAge(saved.backgroundedAt, ageNowMs)} ago",
+                                    fontSize = 10.sp,
+                                    color = scheme.onSurfaceVariant,
+                                )
                             }
                         },
                         enabled = !viewModel.isTerminalConnecting,
