@@ -174,6 +174,7 @@ fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                         // Labelled CPU% line chart (axes + current value).
                         MetricLineChart(
                             points = viewModel.fetchCachedSparkline(s.id),
+                            timestamps = viewModel.fetchCachedSparklineTimestamps(s.id),
                             color = accentColor,
                             label = "CPU",
                             unit = "%",
@@ -707,11 +708,12 @@ fun StatBox(value: String, label: String, tint: Color = MaterialTheme.colorSchem
 
 /**
  * Compact line chart with a labelled Y axis (0..[maxY]), baseline gridlines, the current value,
- * and an oldest→newest X caption — so the trend reads clearly instead of being a bare line.
+ * and real endpoint timestamps — so the trend reads clearly instead of being a bare line.
  */
 @Composable
 fun MetricLineChart(
     points: List<Float>,
+    timestamps: List<Long> = emptyList(),
     modifier: Modifier = Modifier,
     color: Color = OmniColors.cyan,
     label: String = "CPU",
@@ -719,6 +721,7 @@ fun MetricLineChart(
     maxY: Float = 100f,
 ) {
     val axisColor = MaterialTheme.colorScheme.onSurfaceVariant
+    val endpointLabels = remember(timestamps) { chartEndpointLabels(timestamps) }
     Column(modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text("$label · ${points.size} samples", fontSize = 10.sp, color = axisColor, fontFamily = OmniFonts.mono)
@@ -760,8 +763,8 @@ fun MetricLineChart(
             Modifier.fillMaxWidth().padding(start = 28.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text(stringResource(R.string.oldest), fontSize = 10.sp, color = axisColor, fontFamily = OmniFonts.mono)
-            Text(stringResource(R.string.now), fontSize = 10.sp, color = axisColor, fontFamily = OmniFonts.mono)
+            Text(endpointLabels.first, fontSize = 10.sp, color = axisColor, fontFamily = OmniFonts.mono)
+            Text(endpointLabels.second, fontSize = 10.sp, color = axisColor, fontFamily = OmniFonts.mono)
         }
     }
 }

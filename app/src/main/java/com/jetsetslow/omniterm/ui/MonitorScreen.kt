@@ -606,6 +606,9 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
     val m = viewModel.hostMetrics
     val accent = getServerColor(srv)
     val spark = viewModel.fetchCachedSparkline(srv.id)
+    val ramSpark = viewModel.fetchCachedRamSparkline(srv.id)
+    val sparkTimes = viewModel.fetchCachedSparklineTimestamps(srv.id)
+    val measurementSystem = viewModel.measurementSystem
 
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -619,7 +622,11 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                         Text(stringResource(R.string.cpu_utilisation), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text("Load: ${m.load1} · ${m.load5} · ${m.load15}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         m.cpuTempC?.let {
-                            Text("Temp: ${it.roundToInt()}°C", fontSize = 12.sp, color = if (it >= 80f) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(
+                                "Temp: ${formatTemperature(it, measurementSystem)}",
+                                fontSize = 12.sp,
+                                color = if (it >= 80f) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                         }
                     }
                     Text("${m.cpuPercent.roundToInt()}%", fontSize = 28.sp, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, color = accent)
@@ -627,6 +634,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                 Spacer(modifier = Modifier.height(12.dp))
                 MetricLineChart(
                     points = spark,
+                    timestamps = sparkTimes,
                     color = accent,
                     label = "CPU utilisation",
                     unit = "%",
@@ -656,6 +664,14 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 GaugeBar(value = m.memPercent, color = OmniColors.amber, height = 7.dp)
+                Spacer(modifier = Modifier.height(12.dp))
+                MetricLineChart(
+                    points = ramSpark,
+                    timestamps = sparkTimes,
+                    color = OmniColors.amber,
+                    label = "RAM utilisation",
+                    unit = "%",
+                )
             }
         }
 
@@ -754,13 +770,39 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                 OmniCard(modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.str_7_day_history), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(8.dp))
-                    val hourlyBuckets = history.groupBy { it.timestamp / (3_600_000L) }
-                        .entries.sortedBy { it.key }
-                    val cpuPoints = hourlyBuckets.map { (_, rows) -> rows.map { it.cpuUsage }.average().toFloat() }
-                    val ramPoints = hourlyBuckets.map { (_, rows) -> rows.map { it.ramUsage }.average().toFloat() }
-                    MetricLineChart(points = cpuPoints, color = accent, label = "CPU (hourly avg)", unit = "%")
+                    val series = remember(history) { buildHourlyMetricSeries(history) }
+                    MetricLineChart(
+                        points = series.cpu.map { it.value },
+                        timestamps = series.cpu.map { it.timestamp },
+                        color = accent,
+                        label = "CPU (hourly avg)",
+                        unit = "%",
+                    )
                     Spacer(Modifier.height(12.dp))
-                    MetricLineChart(points = ramPoints, color = OmniColors.amber, label = "RAM (hourly avg)", unit = "%")
+                    MetricLineChart(
+                        points = series.ram.map { it.value },
+                        timestamps = series.ram.map { it.timestamp },
+                        color = OmniColors.amber,
+                        label = "RAM (hourly avg)",
+                        unit = "%",
+                    )
+                    if (series.temperature.isNotEmpty()) {
+                        val displayedTemperatures = series.temperature.map {
+                            celsiusToDisplay(it.value, measurementSystem)
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        MetricLineChart(
+                            points = displayedTemperatures,
+                            timestamps = series.temperature.map { it.timestamp },
+                            color = OmniColors.red,
+                            label = "Temperature (hourly avg)",
+                            unit = temperatureUnit(measurementSystem),
+                            maxY = maxOf(
+                                celsiusToDisplay(100f, measurementSystem),
+                                displayedTemperatures.max(),
+                            ),
+                        )
+                    }
                     Spacer(Modifier.height(4.dp))
                     Text("${history.size} data points over the last 7 days", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }

@@ -4,7 +4,6 @@ import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
-import android.widget.RemoteViews
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -17,7 +16,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.lifecycle.lifecycleScope
 import com.jetsetslow.omniterm.R
 import com.jetsetslow.omniterm.data.AppDatabase
@@ -151,12 +149,9 @@ class OmniTermWidgetConfigActivity : ComponentActivity() {
 
     private fun saveConfigAndFinish(selectedIds: List<Int>, onFailure: () -> Unit) {
         lifecycleScope.launch {
-            val glanceId = withContext(Dispatchers.IO) {
-                runCatching {
-                    GlanceAppWidgetManager(this@OmniTermWidgetConfigActivity)
-                        .getGlanceIdBy(appWidgetId)
-                }
-            }.getOrElse {
+            if (AppWidgetManager.getInstance(this@OmniTermWidgetConfigActivity)
+                    .getAppWidgetInfo(appWidgetId) == null
+            ) {
                 Toast.makeText(
                     this@OmniTermWidgetConfigActivity,
                     "This widget is no longer available.",
@@ -184,7 +179,10 @@ class OmniTermWidgetConfigActivity : ComponentActivity() {
 
             val renderFailure = withContext(Dispatchers.IO) {
                 try {
-                    OmniTermWidget().update(this@OmniTermWidgetConfigActivity, glanceId)
+                    OmniTermWidgetUpdater.update(
+                        this@OmniTermWidgetConfigActivity,
+                        intArrayOf(appWidgetId),
+                    )
                     null
                 } catch (cancelled: CancellationException) {
                     throw cancelled
@@ -194,11 +192,9 @@ class OmniTermWidgetConfigActivity : ComponentActivity() {
             }
             if (renderFailure != null) {
                 android.util.Log.w("OmniTermWidget", "Initial widget render failed", renderFailure)
-                // Configuration is valid even when Glance cannot compose. Replace the initial
-                // loading view immediately so the launcher never leaves a permanent blank box.
-                AppWidgetManager.getInstance(this@OmniTermWidgetConfigActivity).updateAppWidget(
-                    appWidgetId,
-                    RemoteViews(packageName, R.layout.omniterm_widget_error),
+                OmniTermWidgetUpdater.showError(
+                    this@OmniTermWidgetConfigActivity,
+                    intArrayOf(appWidgetId),
                 )
             }
 

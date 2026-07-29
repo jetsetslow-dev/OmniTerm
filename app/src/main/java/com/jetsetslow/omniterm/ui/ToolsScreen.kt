@@ -57,13 +57,22 @@ import androidx.compose.ui.res.stringResource
 import com.jetsetslow.omniterm.R
 
 /**
- * Display unit for an alert metric: thresholds are percentages except latency (ms) and CPU
- * temperature (°C).
+ * Display unit for an alert metric: thresholds are percentages except latency and temperature.
  */
-private fun alertMetricUnit(metricName: String): String = when (metricName) {
+private fun alertMetricUnit(metricName: String, system: MeasurementSystem): String = when (metricName) {
     "Latency" -> "ms"
-    "Temperature" -> "°C"
+    "Temperature" -> temperatureUnit(system)
     else -> "%"
+}
+
+private fun alertMetricDisplay(
+    metricName: String,
+    canonicalValue: Float,
+    system: MeasurementSystem,
+): String = if (metricName == "Temperature") {
+    formatTemperature(canonicalValue, system, decimals = 1)
+} else {
+    "$canonicalValue${alertMetricUnit(metricName, system)}"
 }
 
 private val APP_LOCK_TIMEOUT_PRESETS = listOf(
@@ -240,6 +249,7 @@ fun AlertsPopup(
                         active = active,
                         muted = muted,
                         servers = servers,
+                        measurementSystem = viewModel.measurementSystem,
                         modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
                         onAcknowledge = viewModel::acknowledgeAlert,
                         onMute = viewModel::muteAlertForOneHour,
@@ -304,6 +314,7 @@ fun AlertPopupIncidentList(
     active: List<ActiveAlertEntity>,
     muted: List<ActiveAlertEntity>,
     servers: List<ServerEntity>,
+    measurementSystem: MeasurementSystem = MeasurementSystem.Metric,
     onAcknowledge: (Int) -> Unit,
     onMute: (Int) -> Unit,
     onUnmute: (Int) -> Unit,
@@ -318,6 +329,7 @@ fun AlertPopupIncidentList(
             AlertPopupIncidentCard(
                 alert = alert,
                 server = servers.find { it.id == alert.serverId },
+                measurementSystem = measurementSystem,
                 muted = false,
                 onAcknowledge = { onAcknowledge(alert.id) },
                 onMuteToggle = { onMute(alert.id) },
@@ -338,6 +350,7 @@ fun AlertPopupIncidentList(
             AlertPopupIncidentCard(
                 alert = alert,
                 server = servers.find { it.id == alert.serverId },
+                measurementSystem = measurementSystem,
                 muted = true,
                 onAcknowledge = null,
                 onMuteToggle = { onUnmute(alert.id) },
@@ -351,6 +364,7 @@ fun AlertPopupIncidentList(
 fun AlertPopupIncidentCard(
     alert: ActiveAlertEntity,
     server: ServerEntity?,
+    measurementSystem: MeasurementSystem = MeasurementSystem.Metric,
     muted: Boolean,
     onAcknowledge: (() -> Unit)?,
     onMuteToggle: () -> Unit,
@@ -374,7 +388,9 @@ fun AlertPopupIncidentCard(
                 )
             }
             Text(
-                "${server?.name ?: "Server"} · current ${alert.currentValue}${alertMetricUnit(alert.metricName)} · threshold ${alert.thresholdValue}${alertMetricUnit(alert.metricName)}",
+                "${server?.name ?: "Server"} · current " +
+                    "${alertMetricDisplay(alert.metricName, alert.currentValue, measurementSystem)} · " +
+                    "threshold ${alertMetricDisplay(alert.metricName, alert.thresholdValue, measurementSystem)}",
                 fontSize = OmniTextSize.Meta,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -422,6 +438,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
     val alertHistory by viewModel.alertHistory.collectAsStateWithLifecycle()
     val rules by viewModel.alertRules.collectAsStateWithLifecycle()
     val serversList by viewModel.servers.collectAsStateWithLifecycle()
+    val measurementSystem = viewModel.measurementSystem
     var showCreateRuleDialog by remember { mutableStateOf(false) }
     var editRule by remember { mutableStateOf<AlertRuleEntity?>(null) }
     // A mute can expire without a database emission (for example while the host is offline), so a
@@ -512,7 +529,12 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                             color = if (alert.acknowledged) Color.Gray else if (alert.severity == "CRITICAL") Color.Red else Color(0xFFF59E0B),
                                             fontWeight = FontWeight.ExtraBold, fontSize = 11.sp)
                                     }
-                                    Text("Threshold: ${alert.thresholdValue}${alertMetricUnit(alert.metricName)} · Current: ${alert.currentValue}${alertMetricUnit(alert.metricName)}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(
+                                        "Threshold: ${alertMetricDisplay(alert.metricName, alert.thresholdValue, measurementSystem)} · " +
+                                            "Current: ${alertMetricDisplay(alert.metricName, alert.currentValue, measurementSystem)}",
+                                        fontSize = 12.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
                                     Text("Server: ${srv?.name ?: "server"}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                     Spacer(modifier = Modifier.height(8.dp))
                                     Row(horizontalArrangement = Arrangement.End, modifier = Modifier.fillMaxWidth()) {
@@ -573,7 +595,8 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(stringResource(R.string.default_alert_rules), fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                     Text(
-                                        "CPU/memory/disk 90%, latency 250ms. Created as editable All Hosts rules.",
+                                        "CPU/memory/disk 90%, latency 250ms, temperature " +
+                                            "${formatTemperature(80f, measurementSystem)}. Created as editable All Hosts rules.",
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -584,7 +607,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                         if (on) {
                                             confirm.ask(
                                                 "Enable default rules?",
-                                                "This creates editable All Hosts alert rules for CPU, memory, disk, and latency, resetting any earlier edits to them.",
+                                                "This creates editable All Hosts alert rules for CPU, memory, disk, latency, and temperature, resetting any earlier edits to them.",
                                                 confirmLabel = "Enable",
                                                 destructive = false,
                                             ) {
@@ -593,7 +616,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                         } else {
                                             confirm.ask(
                                                 "Disable default rules?",
-                                                "This removes the default CPU/memory/disk/latency All Hosts rules, including any edits to them. Custom rules you added are kept.",
+                                                "This removes the default CPU/memory/disk/latency/temperature All Hosts rules, including any edits to them. Custom rules you added are kept.",
                                                 confirmLabel = "Disable",
                                             ) {
                                                 viewModel.toggleAlertPresets(false)
@@ -615,7 +638,13 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(r.metricName, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                                     val targetName = if (r.serverId == 0) "All Hosts" else srv?.name ?: "host"
-                                    Text("$targetName · Threshold > ${r.thresholdValue}${alertMetricUnit(r.metricName)} for ${r.triggerWindow}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    Text(
+                                        "$targetName · Threshold > " +
+                                            "${alertMetricDisplay(r.metricName, r.thresholdValue, measurementSystem)} " +
+                                            "for ${r.triggerWindow}",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
                                     if (r.notes.isNotBlank()) {
                                         Text(r.notes, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontStyle = androidx.compose.ui.text.font.FontStyle.Italic)
                                     }
@@ -669,7 +698,9 @@ fun AlertsToolView(viewModel: AppViewModel) {
                                         Text(item.status.uppercase(), color = accent, fontWeight = FontWeight.Bold, fontSize = 11.sp)
                                     }
                                     Text(
-                                        "Current ${item.currentValue.toInt()}${alertMetricUnit(item.metricName)} · threshold ${item.thresholdValue.toInt()}${alertMetricUnit(item.metricName)} · ${item.severity}",
+                                        "Current ${alertMetricDisplay(item.metricName, item.currentValue, measurementSystem)} · " +
+                                            "threshold ${alertMetricDisplay(item.metricName, item.thresholdValue, measurementSystem)} · " +
+                                            item.severity,
                                         fontSize = 12.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
@@ -693,7 +724,18 @@ fun AlertsToolView(viewModel: AppViewModel) {
         // existing rule keeps its single-host identity, so the picker becomes single-select.
         val selectedSrvIds = remember(existing) { mutableStateListOf(existing?.serverId ?: 0) }
         var metricSelect by remember(existing) { mutableStateOf(existing?.metricName ?: "CPU Usage") }
-        var threshInput by remember(existing) { mutableStateOf(existing?.thresholdValue?.toString() ?: "80") }
+        var threshInput by remember(existing, measurementSystem) {
+            mutableStateOf(
+                existing?.let {
+                    val shown = if (it.metricName == "Temperature") {
+                        celsiusToDisplay(it.thresholdValue, measurementSystem)
+                    } else {
+                        it.thresholdValue
+                    }
+                    shown.toString()
+                } ?: "80"
+            )
+        }
         var severitySelect by remember(existing) { mutableStateOf(existing?.severity ?: "CRITICAL") }
         var windowSelect by remember(existing) { mutableStateOf(existing?.triggerWindow ?: "5m") }
         var notesInput by remember(existing) { mutableStateOf(existing?.notes ?: "") }
@@ -726,7 +768,21 @@ fun AlertsToolView(viewModel: AppViewModel) {
                     @OptIn(ExperimentalLayoutApi::class)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         metricsOptions.forEach { opt ->
-                            FilterChip(selected = metricSelect == opt, onClick = { metricSelect = opt }, label = { Text(opt) })
+                            FilterChip(
+                                selected = metricSelect == opt,
+                                onClick = {
+                                    if (metricSelect != opt) {
+                                        metricSelect = opt
+                                        threshInput = when (opt) {
+                                            "Latency" -> "250"
+                                            "Temperature" ->
+                                                celsiusToDisplay(80f, measurementSystem).toString()
+                                            else -> "90"
+                                        }
+                                    }
+                                },
+                                label = { Text(opt) },
+                            )
                         }
                     }
                     // CPU temperature comes from the host's thermal sensors, which plenty of hosts
@@ -740,7 +796,12 @@ fun AlertsToolView(viewModel: AppViewModel) {
                             color = OmniColors.amber,
                         )
                     }
-                    OutlinedTextField(value = threshInput, onValueChange = { threshInput = it }, label = { Text("Threshold value (${alertMetricUnit(metricSelect)})") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(
+                        value = threshInput,
+                        onValueChange = { threshInput = it },
+                        label = { Text("Threshold value (${alertMetricUnit(metricSelect, measurementSystem)})") },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                     Text(stringResource(R.string.trigger_window_label))
                     @OptIn(ExperimentalLayoutApi::class)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -762,7 +823,12 @@ fun AlertsToolView(viewModel: AppViewModel) {
                 Button(
                     enabled = selectedSrvIds.isNotEmpty(),
                     onClick = {
-                        val thresh = threshInput.toFloatOrNull() ?: 80f
+                        val enteredThreshold = threshInput.toFloatOrNull() ?: 80f
+                        val thresh = if (metricSelect == "Temperature") {
+                            displayTemperatureToCelsius(enteredThreshold, measurementSystem)
+                        } else {
+                            enteredThreshold
+                        }
                         if (existing == null) {
                             // One rule per picked host ("All hosts" collapses to a single id-0 rule).
                             val targets = if (0 in selectedSrvIds) listOf(0) else selectedSrvIds.toList()
@@ -2882,6 +2948,9 @@ fun SettingsToolView(viewModel: AppViewModel) {
     var draftHighlightLimit by rememberSaveable { mutableStateOf(viewModel.editorHighlightLimit) }
     var draftAccessibility by rememberSaveable { mutableStateOf(viewModel.isAccessibilityEnabled) }
     var draftTextScale by rememberSaveable { mutableStateOf(viewModel.textScale) }
+    var draftMeasurementSystem by rememberSaveable {
+        mutableStateOf(viewModel.measurementSystem.settingValue)
+    }
     var draftIntervalSec by rememberSaveable { mutableStateOf((viewModel.telemetryIntervalMs / 1000).toInt()) }
     var draftKeepOn by rememberSaveable { mutableStateOf(viewModel.defaultKeepScreenOn) }
     var draftBgKeepAlive by rememberSaveable { mutableStateOf(viewModel.isBackgroundKeepAlive) }
@@ -2931,6 +3000,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
         draftHighlightLimit != viewModel.editorHighlightLimit ||
         draftAccessibility != viewModel.isAccessibilityEnabled ||
         draftTextScale != viewModel.textScale ||
+        draftMeasurementSystem != viewModel.measurementSystem.settingValue ||
         draftIntervalSec != (viewModel.telemetryIntervalMs / 1000).toInt() ||
         draftKeepOn != viewModel.defaultKeepScreenOn ||
         draftBgKeepAlive != viewModel.isBackgroundKeepAlive ||
@@ -2965,6 +3035,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
         draftHighlightLimit = viewModel.editorHighlightLimit
         draftAccessibility = viewModel.isAccessibilityEnabled
         draftTextScale = viewModel.textScale
+        draftMeasurementSystem = viewModel.measurementSystem.settingValue
         draftIntervalSec = (viewModel.telemetryIntervalMs / 1000).toInt()
         draftKeepOn = viewModel.defaultKeepScreenOn
         draftBgKeepAlive = viewModel.isBackgroundKeepAlive
@@ -2999,6 +3070,11 @@ fun SettingsToolView(viewModel: AppViewModel) {
         if (draftHighlightLimit != viewModel.editorHighlightLimit) viewModel.saveEditorHighlightLimit(draftHighlightLimit)
         if (draftAccessibility != viewModel.isAccessibilityEnabled) viewModel.saveAccessibilityToggle(draftAccessibility)
         if (draftTextScale != viewModel.textScale) viewModel.saveTextScale(draftTextScale)
+        if (draftMeasurementSystem != viewModel.measurementSystem.settingValue) {
+            viewModel.saveMeasurementSystem(
+                MeasurementSystem.fromSetting(draftMeasurementSystem)
+            )
+        }
         if (draftIntervalSec != (viewModel.telemetryIntervalMs / 1000).toInt()) viewModel.saveTelemetryInterval(draftIntervalSec)
         if (draftKeepOn != viewModel.defaultKeepScreenOn) viewModel.saveKeepScreenOnToggle(draftKeepOn)
         if (draftBgKeepAlive != viewModel.isBackgroundKeepAlive) viewModel.saveBackgroundKeepAliveToggle(draftBgKeepAlive)
@@ -3227,6 +3303,39 @@ fun SettingsToolView(viewModel: AppViewModel) {
                 OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.green) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         SettingsCardHeader("Display Behavior", "App appearance, refresh cadence, and screen power.", OmniColors.green)
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Measurement system")
+                                Text(
+                                    "Applies to temperatures and other physical measurements throughout the app.",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                FilterChip(
+                                    selected = draftMeasurementSystem == MeasurementSystem.Metric.settingValue,
+                                    onClick = {
+                                        draftMeasurementSystem = MeasurementSystem.Metric.settingValue
+                                    },
+                                    label = { Text("Metric") },
+                                )
+                                FilterChip(
+                                    selected = draftMeasurementSystem == MeasurementSystem.Imperial.settingValue,
+                                    onClick = {
+                                        draftMeasurementSystem = MeasurementSystem.Imperial.settingValue
+                                    },
+                                    label = { Text("Imperial") },
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(10.dp))
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),

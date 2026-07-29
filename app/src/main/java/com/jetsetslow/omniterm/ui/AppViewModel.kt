@@ -17,10 +17,9 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.glance.appwidget.updateAll
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.jetsetslow.omniterm.ui.widget.OmniTermWidget
+import com.jetsetslow.omniterm.ui.widget.OmniTermWidgetUpdater
 import com.jetsetslow.omniterm.data.*
 import com.jetsetslow.omniterm.data.shares.RemoteFsClient
 import com.jetsetslow.omniterm.data.shares.ShareClients
@@ -100,6 +99,15 @@ internal fun isPristinePresetRule(
         rule.presetKey == preset.presetKey &&
         rule.copy(id = 0) == preset.copy(id = 0)
 }
+
+/** Canonical fleet-wide alert defaults. Keep this list stable so preset ownership remains exact. */
+internal val DEFAULT_ALERT_RULE_PRESETS: List<AlertRuleEntity> = listOf(
+    AlertRuleEntity(serverId = 0, metricName = "CPU Usage", thresholdValue = 90f, severity = "CRITICAL", presetKey = "alert.cpu"),
+    AlertRuleEntity(serverId = 0, metricName = "Memory Usage", thresholdValue = 90f, severity = "CRITICAL", presetKey = "alert.memory"),
+    AlertRuleEntity(serverId = 0, metricName = "Disk Usage", thresholdValue = 90f, severity = "WARNING", presetKey = "alert.disk"),
+    AlertRuleEntity(serverId = 0, metricName = "Latency", thresholdValue = 250f, severity = "WARNING", presetKey = "alert.latency"),
+    AlertRuleEntity(serverId = 0, metricName = "Temperature", thresholdValue = 80f, severity = "WARNING", presetKey = "alert.temperature"),
+)
 
 private const val TERMINAL_INPUT_CHUNK_BYTES = 4096
 private const val TERMINAL_INPUT_QUEUE_MAX_BYTES = 4 * 1024 * 1024
@@ -953,6 +961,8 @@ class AppViewModel @JvmOverloads constructor(
 
     // RETENTION & CRON STUFF
     var metricsRetentionDays by mutableStateOf(7)
+    var measurementSystem by mutableStateOf(MeasurementSystem.Metric)
+        private set
     /** Settings toggle state for built-in command/rule presets. */
     var homelabPresetsEnabled by mutableStateOf(false); private set
     var alertsEnabled by mutableStateOf(true); private set
@@ -1979,6 +1989,12 @@ class AppViewModel @JvmOverloads constructor(
             // collector lets a cold-start shortcut connect with saved credentials before app lock
             // has been evaluated.
             val initial = repository.getAllSettings()
+            // Existing users may already have the default-rule toggle enabled. Reconcile newly
+            // introduced presets (such as temperature) once at startup instead of requiring an
+            // off/on toggle that would also reset their edits to the older defaults.
+            if (initial.find { it.key == "alert_presets" }?.value == "true") {
+                seedMissingDefaultAlertRules()
+            }
             val pinVal = initial.find { it.key == "app_pin" }?.value
             val hasPinLock =
                 !pinVal.isNullOrBlank() &&
@@ -2099,6 +2115,9 @@ class AppViewModel @JvmOverloads constructor(
                     ?.toBooleanStrictOrNull() ?: false
                 HostDisplay.hideSensitiveInfo = hideSensitiveInfo
                 metricsRetentionDays = retentionVal
+                measurementSystem = MeasurementSystem.fromSetting(
+                    list.find { it.key == "measurement_system" }?.value
+                )
                 if (!initialKeepScreenOnLoaded || defaultKeepScreenOn != keepScreenOn) {
                     defaultKeepScreenOn = keepScreenOn
                     isKeepScreenOnEnabled = keepScreenOn
@@ -2130,8 +2149,10 @@ class AppViewModel @JvmOverloads constructor(
 
 
     // TELEMETRY POLLING: runs continuously every 10 seconds
-    /** Recent CPU% samples per server id, for the Monitor/Fleet sparklines. */
-    private val sparklineCache = mutableStateMapOf<Int, List<Float>>()
+    /** Recent telemetry samples per server id, for the Monitor/Fleet live charts. */
+    private val cpuSparklineCache = mutableStateMapOf<Int, List<Float>>()
+    private val ramSparklineCache = mutableStateMapOf<Int, List<Float>>()
+    private val sparklineTimestampCache = mutableStateMapOf<Int, List<Long>>()
 
     // Per-host caches touched by the concurrent telemetry probes (distinct keys per host, but
     // concurrent resizes still demand thread-safe maps).
@@ -2185,6 +2206,13 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     fun resetHealthConfig() = saveHealthConfig(HealthScoringConfig.DEFAULT)
+
+    fun saveMeasurementSystem(system: MeasurementSystem) {
+        measurementSystem = system
+        viewModelScope.launch {
+            repository.insertSetting("measurement_system", system.settingValue)
+        }
+    }
 
     fun updateBackupExportSelection(selection: BackupSelection) {
         val closed = selection.withReferentialClosure()
@@ -2333,30 +2361,61 @@ class AppViewModel @JvmOverloads constructor(
                     diskReadPerSec = dRead, diskWritePerSec = dWrite,
                 )
                 val cpu = m.cpuPercent; val ram = m.memPercent; val disk = m.diskPercent
-                // Store live metrics in the shared in-memory map so every screen (Servers tab,
-                // Fleet, Monitor) can read without waiting for a separate SSH round-trip. Compose
-                // snapshot state must be mutated on the main thread.
-                withContext(Dispatchers.Main) { hostMetricsById[srv.id] = m }
-                evaluateAlertRules(srv, cpu, ram, disk, rtt, m.disks, m.cpuTempC)
+                recordTelemetrySample(
+                    srv = srv,
+                    metrics = m,
+                    latency = rtt,
+                    timestamp = now,
+                    updateMonitor = srv.id == activeServerId,
+                )
                 val health = healthFromMetrics(cpu, ram, disk, rtt)
-                if (srv.id == activeServerId) {
-                    // Drive the Monitor → Overview view directly from this poller so it doesn't
-                    // run its own redundant SSH metrics loop.
-                    withContext(Dispatchers.Main) { hostMetrics = m }
-                    repository.insertMetric(
-                        MetricHistoryEntity(
-                            serverId = srv.id,
-                            timestamp = System.currentTimeMillis(),
-                            cpuUsage = cpu, ramUsage = ram, diskUsage = disk,
-                            latency = rtt, networkIn = 0f, networkOut = 0f,
-                        )
-                    )
-                }
-                withContext(Dispatchers.Main) {
-                    sparklineCache[srv.id] = (sparklineCache[srv.id].orEmpty() + cpu).takeLast(30)
-                }
                 repository.updateConnectionState(srv.id, "online", health, rtt)
             }
+    }
+
+    /**
+     * Records every successful host sample, not just the currently open Monitor host. This keeps
+     * retained history complete and gives CPU/RAM charts the same real sampling timestamps.
+     */
+    private suspend fun recordTelemetrySample(
+        srv: ServerEntity,
+        metrics: HostMetrics,
+        latency: Int,
+        timestamp: Long = System.currentTimeMillis(),
+        updateMonitor: Boolean,
+    ) {
+        withContext(Dispatchers.Main) {
+            hostMetricsById[srv.id] = metrics
+            cpuSparklineCache[srv.id] =
+                (cpuSparklineCache[srv.id].orEmpty() + metrics.cpuPercent).takeLast(30)
+            ramSparklineCache[srv.id] =
+                (ramSparklineCache[srv.id].orEmpty() + metrics.memPercent).takeLast(30)
+            sparklineTimestampCache[srv.id] =
+                (sparklineTimestampCache[srv.id].orEmpty() + timestamp).takeLast(30)
+            if (updateMonitor) hostMetrics = metrics
+        }
+        repository.insertMetric(
+            MetricHistoryEntity(
+                serverId = srv.id,
+                timestamp = timestamp,
+                cpuUsage = metrics.cpuPercent,
+                ramUsage = metrics.memPercent,
+                diskUsage = metrics.diskPercent,
+                latency = latency,
+                networkIn = 0f,
+                networkOut = 0f,
+                cpuTemperatureC = metrics.cpuTempC,
+            )
+        )
+        evaluateAlertRules(
+            srv,
+            metrics.cpuPercent,
+            metrics.memPercent,
+            metrics.diskPercent,
+            latency,
+            metrics.disks,
+            metrics.cpuTempC,
+        )
     }
 
     /**
@@ -2506,12 +2565,20 @@ class AppViewModel @JvmOverloads constructor(
         val mountSuffix = if (rule.metricName == "Disk Usage" && rule.mountPoint.isNotBlank()) " on ${rule.mountPoint}" else ""
         val unit = when (rule.metricName) {
             "Latency" -> "ms"
-            "Temperature" -> "°C"
+            "Temperature" -> temperatureUnit(measurementSystem)
             else -> "%"
         }
+        val shownValue =
+            if (rule.metricName == "Temperature") celsiusToDisplay(value, measurementSystem) else value
+        val shownThreshold =
+            if (rule.metricName == "Temperature") {
+                celsiusToDisplay(rule.thresholdValue, measurementSystem)
+            } else {
+                rule.thresholdValue
+            }
         val n = NotificationCompat.Builder(app, ALERT_CHANNEL_ID)
             .setContentTitle("${rule.severity}: ${srv.name}")
-            .setContentText("${rule.metricName}$mountSuffix at ${"%.0f".format(value)}$unit (threshold ${"%.0f".format(rule.thresholdValue)}$unit)")
+            .setContentText("${rule.metricName}$mountSuffix at ${"%.0f".format(shownValue)}$unit (threshold ${"%.0f".format(shownThreshold)}$unit)")
             .setSmallIcon(R.drawable.ic_stat_omniterm)
             .setLargeIcon(launcherNotificationBitmap())
             .setContentIntent(contentIntent)
@@ -2573,7 +2640,7 @@ class AppViewModel @JvmOverloads constructor(
         widgetRefreshJob?.cancel()
         widgetRefreshJob = viewModelScope.launch {
             if (delayMs > 0) delay(delayMs)
-            runCatching { OmniTermWidget().updateAll(getApplication()) }
+            runCatching { OmniTermWidgetUpdater.updateAll(getApplication()) }
                 .onFailure { failure ->
                     if (failure !is CancellationException) {
                         android.util.Log.w("OmniTermWidget", "Widget refresh failed", failure)
@@ -3505,6 +3572,25 @@ class AppViewModel @JvmOverloads constructor(
                 notes = notes,
             )
             repository.insertRule(rule)
+            // Start the sustained window from the current observed value when available. Without
+            // this, a newly created five-minute rule waits for the next poll before its clock starts.
+            evaluateCachedAlertTargets(serverId)
+        }
+    }
+
+    private suspend fun evaluateCachedAlertTargets(serverId: Int) {
+        val targets = repository.getAllServers().filter { serverId == 0 || it.id == serverId }
+        for (server in targets) {
+            val metrics = hostMetricsById[server.id] ?: continue
+            evaluateAlertRules(
+                server,
+                metrics.cpuPercent,
+                metrics.memPercent,
+                metrics.diskPercent,
+                server.lastLatency,
+                metrics.disks,
+                metrics.cpuTempC,
+            )
         }
     }
 
@@ -3639,14 +3725,6 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    /** Default alert-rule presets applied to every host: CPU/memory/disk/latency thresholds. */
-    private val alertRulePresets: List<AlertRuleEntity> = listOf(
-        AlertRuleEntity(serverId = 0, metricName = "CPU Usage", thresholdValue = 90f, severity = "CRITICAL", presetKey = "alert.cpu"),
-        AlertRuleEntity(serverId = 0, metricName = "Memory Usage", thresholdValue = 90f, severity = "CRITICAL", presetKey = "alert.memory"),
-        AlertRuleEntity(serverId = 0, metricName = "Disk Usage", thresholdValue = 90f, severity = "WARNING", presetKey = "alert.disk"),
-        AlertRuleEntity(serverId = 0, metricName = "Latency", thresholdValue = 250f, severity = "WARNING", presetKey = "alert.latency"),
-    )
-
     // ── Backup default-filtering ──────────────────────────────────────────────────────────────────
     // A backup should preserve what the user CREATED or CHANGED — not the app's own seeded presets,
     // which the preset toggles re-seed on demand. A row is ours when its presetKey matches a known
@@ -3659,7 +3737,7 @@ class AppViewModel @JvmOverloads constructor(
 
     /** Keep only user-created or user-edited alert rules; drop pristine default presets. */
     private fun customRulesOnly(rules: List<AlertRuleEntity>): List<AlertRuleEntity> =
-        rules.filterNot { isPristinePresetRule(it, alertRulePresets) }
+        rules.filterNot { isPristinePresetRule(it, DEFAULT_ALERT_RULE_PRESETS) }
 
     /**
      * Insert any default alert-rule preset that isn't already present (fleet-wide, serverId=0).
@@ -3668,7 +3746,7 @@ class AppViewModel @JvmOverloads constructor(
      */
     private suspend fun seedMissingDefaultAlertRules() {
         val existing = repository.getRulesForServer(0)
-        for (preset in alertRulePresets) {
+        for (preset in DEFAULT_ALERT_RULE_PRESETS) {
             if (existing.none { it.presetKey == preset.presetKey }) repository.insertRule(preset)
         }
     }
@@ -3682,7 +3760,7 @@ class AppViewModel @JvmOverloads constructor(
                 // Both branches clear the previously seeded rows by presetKey, so an OFF→ON cycle
                 // resets edited thresholds to the defaults instead of leaving a stale rule behind
                 // (or adding a duplicate next to it). User-created rules have a null presetKey.
-                val presetKeys = alertRulePresets.mapNotNull { it.presetKey }.toSet()
+                val presetKeys = DEFAULT_ALERT_RULE_PRESETS.mapNotNull { it.presetKey }.toSet()
                 repository.getAllRules()
                     .filter { it.serverId == 0 && it.presetKey in presetKeys }
                     .forEach { rule ->
@@ -6372,10 +6450,12 @@ class AppViewModel @JvmOverloads constructor(
                     perCoreCpu = parsed.perCoreCpu.ifEmpty { prev?.perCoreCpu ?: emptyList() },
                     netInterfaces = parsed.netInterfaces.ifEmpty { prev?.netInterfaces ?: emptyList() },
                 )
-                hostMetrics = m
-                // Keep the shared map in sync so the Servers tab and Fleet always reflect the
-                // most-recent values fetched by the Monitor tab as well.
-                hostMetricsById[srv.id] = m
+                recordTelemetrySample(
+                    srv = srv,
+                    metrics = m,
+                    latency = srv.lastLatency,
+                    updateMonitor = true,
+                )
             } finally {
                 // Switching hosts takes the early return above; without this the spinner sticks.
                 metricsLoading = false
@@ -10191,8 +10271,15 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    /** Recent real CPU% samples for the server's sparkline (collected by telemetry polling). */
-    fun fetchCachedSparkline(serverId: Int): List<Float> = sparklineCache[serverId] ?: emptyList()
+    /** Recent real telemetry samples for live CPU/RAM charts, with their actual poll times. */
+    fun fetchCachedSparkline(serverId: Int): List<Float> =
+        cpuSparklineCache[serverId] ?: emptyList()
+
+    fun fetchCachedRamSparkline(serverId: Int): List<Float> =
+        ramSparklineCache[serverId] ?: emptyList()
+
+    fun fetchCachedSparklineTimestamps(serverId: Int): List<Long> =
+        sparklineTimestampCache[serverId] ?: emptyList()
 
     // ACTIVE ALERTS CONFLICT CORRECTION
     fun acknowledgeAlert(alertId: Int) {
@@ -10415,7 +10502,7 @@ class AppViewModel @JvmOverloads constructor(
             })
         }
         val ruleArr = org.json.JSONArray()
-        // Skip the pristine fleet-wide default alert presets (CPU/Mem/Disk/Latency); keep custom and
+        // Skip pristine fleet-wide default alert presets (CPU/Mem/Disk/Latency/Temperature); keep custom and
         // edited rules. A pristine default referenced by an exported active alert is the exception:
         // include it so the alert's old rule id can be mapped to the seeded/restored rule on import.
         val customRules = customRulesOnly(rules)
