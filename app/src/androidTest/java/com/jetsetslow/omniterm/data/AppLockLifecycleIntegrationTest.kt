@@ -32,9 +32,31 @@ class AppLockLifecycleIntegrationTest {
         "first_run_complete",
     )
 
+    /**
+     * A covered Activity never reaches RESUMED, so `recreate()` below would stall in STOPPED until
+     * ActivityScenario times out. CI emulators have no lockscreen, but a real test device usually
+     * does — and when it is secured with a PIN/pattern, `wm dismiss-keyguard` cannot clear it
+     * (`deviceLocked` stays 1). Asking the window to show over the keyguard works either way and
+     * needs no credential.
+     */
+    private fun showOverKeyguard(scenario: ActivityScenario<MainActivity>) {
+        scenario.onActivity { activity ->
+            activity.setShowWhenLocked(true)
+            activity.setTurnScreenOn(true)
+        }
+    }
+
+    private fun wakeScreen(instrumentation: android.app.Instrumentation) {
+        listOf("input keyevent KEYCODE_WAKEUP", "wm dismiss-keyguard").forEach { command ->
+            runCatching { instrumentation.uiAutomation.executeShellCommand(command).close() }
+        }
+        SystemClock.sleep(1_000L)
+    }
+
     @Test
     fun zeroTimeoutRelocksAfterBackgroundButNotConfigurationChange() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
+        wakeScreen(instrumentation)
         val context = instrumentation.targetContext
         val repository = AppRepository(AppDatabase.getDatabase(context))
         val before = repository.getAllSettings()
@@ -52,6 +74,7 @@ class AppLockLifecycleIntegrationTest {
             repository.insertSetting("first_run_complete", "true")
 
             scenario = ActivityScenario.launch(MainActivity::class.java)
+            showOverKeyguard(scenario)
             lateinit var viewModel: AppViewModel
             scenario.onActivity { activity ->
                 viewModel = ViewModelProvider(activity)[AppViewModel::class.java]
@@ -66,6 +89,8 @@ class AppLockLifecycleIntegrationTest {
             // Activity recreation invokes onStop, but isChangingConfigurations must prevent it
             // from starting the background timer.
             scenario.recreate()
+            // The recreated Activity is a new instance and does not inherit the flag.
+            showOverKeyguard(scenario)
             instrumentation.waitForIdleSync()
             assertFalse("configuration change re-locked the app", viewModel.isAppLocked)
 

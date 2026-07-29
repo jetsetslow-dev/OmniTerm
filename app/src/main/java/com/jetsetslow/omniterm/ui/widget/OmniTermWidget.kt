@@ -23,7 +23,6 @@ import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.lazy.LazyColumn
 import androidx.glance.appwidget.lazy.itemsIndexed
 import androidx.glance.appwidget.provideContent
-import androidx.glance.appwidget.updateAll
 import androidx.glance.background
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Box
@@ -41,9 +40,13 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import com.jetsetslow.omniterm.MainActivity
+import com.jetsetslow.omniterm.R
 import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.MetricHistoryEntity
 import com.jetsetslow.omniterm.data.ServerEntity
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.withTimeout
 
 /** One widget row: the host plus its freshest persisted telemetry (may be null/stale). */
 private data class WidgetServerRow(
@@ -51,7 +54,7 @@ private data class WidgetServerRow(
     val metric: MetricHistoryEntity?,
 )
 
-class OmniTermWidget : GlanceAppWidget() {
+class OmniTermWidget : GlanceAppWidget(errorUiLayout = R.layout.omniterm_widget_error) {
 
     companion object {
         private val COMPACT = DpSize(110.dp, 110.dp)
@@ -59,11 +62,36 @@ class OmniTermWidget : GlanceAppWidget() {
 
         // Metrics older than this are shown dimmed with an age suffix instead of as live values.
         private const val STALE_AFTER_MS = 15 * 60 * 1000L
+        private const val LOAD_TIMEOUT_MS = 15_000L
     }
 
     override val sizeMode = SizeMode.Responsive(setOf(COMPACT, FULL))
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
+        // Everything here runs BEFORE provideContent, so any failure (a database open/migration
+        // error, a disk problem) means no content is ever supplied and the launcher keeps showing
+        // Glance's loading layout — a blank box with a spinner — with no way for the user to tell
+        // what went wrong. Degrade to an error row instead of hanging on the placeholder forever.
+        val rows = try {
+            withTimeout(LOAD_TIMEOUT_MS) { loadWidgetRows(context, id) }
+        } catch (timeout: TimeoutCancellationException) {
+            android.util.Log.w("OmniTermWidget", "Widget data load timed out", timeout)
+            null
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (failure: Throwable) {
+            android.util.Log.w("OmniTermWidget", "Widget data load failed", failure)
+            null
+        }
+
+        provideContent {
+            GlanceTheme {
+                if (rows == null) WidgetLoadError(context) else WidgetContent(context, rows)
+            }
+        }
+    }
+
+    private suspend fun loadWidgetRows(context: Context, id: GlanceId): List<WidgetServerRow> {
         val db = AppDatabase.getDatabase(context)
         val allServers = db.serverDao().getAllServers()
 
@@ -79,12 +107,28 @@ class OmniTermWidget : GlanceAppWidget() {
         // One snapshot query avoids an N+1 database walk every time the launcher refreshes a fleet
         // widget. This matters for larger fleets and for the platform's constrained widget worker.
         val latestByServer = db.metricHistoryDao().getLatestMetricsForAllServers().associateBy { it.serverId }
-        val rows = servers.map { WidgetServerRow(it, latestByServer[it.id]) }
+        return servers.map { WidgetServerRow(it, latestByServer[it.id]) }
+    }
 
-        provideContent {
-            GlanceTheme {
-                WidgetContent(context, rows)
-            }
+    /** Shown when the widget's data could not be read; tapping retries via a normal refresh. */
+    @Composable
+    private fun WidgetLoadError(context: Context) {
+        Column(
+            modifier = GlanceModifier.fillMaxSize()
+                .background(GlanceTheme.colors.widgetBackground)
+                .cornerRadius(16.dp)
+                .padding(12.dp)
+                .clickable(actionRunCallback<RefreshWidgetAction>()),
+            horizontalAlignment = Alignment.Start,
+        ) {
+            Text(
+                text = context.getString(com.jetsetslow.omniterm.R.string.widget_load_failed),
+                style = TextStyle(color = GlanceTheme.colors.onSurface, fontWeight = FontWeight.Bold),
+            )
+            Text(
+                text = context.getString(com.jetsetslow.omniterm.R.string.widget_tap_to_retry),
+                style = TextStyle(color = GlanceTheme.colors.primary, fontSize = 12.sp),
+            )
         }
     }
 
@@ -210,7 +254,7 @@ class OmniTermWidget : GlanceAppWidget() {
 /** Manual refresh tap target on the widget header. */
 class RefreshWidgetAction : ActionCallback {
     override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: androidx.glance.action.ActionParameters) {
-        OmniTermWidget().updateAll(context)
+        OmniTermWidget().update(context, glanceId)
     }
 }
 

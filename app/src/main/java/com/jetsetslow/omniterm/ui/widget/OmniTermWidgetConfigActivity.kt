@@ -4,6 +4,8 @@ import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.widget.RemoteViews
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
@@ -17,8 +19,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.lifecycle.lifecycleScope
+import com.jetsetslow.omniterm.R
 import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.ServerEntity
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -50,18 +54,31 @@ class OmniTermWidgetConfigActivity : ComponentActivity() {
             var servers by remember { mutableStateOf<List<ServerEntity>>(emptyList()) }
             val selectedIds = remember { mutableStateListOf<Int>() }
             var loading by remember { mutableStateOf(true) }
+            var loadError by remember { mutableStateOf<String?>(null) }
+            var loadAttempt by remember { mutableIntStateOf(0) }
             var saving by remember { mutableStateOf(false) }
 
-            LaunchedEffect(Unit) {
-                servers = withContext(Dispatchers.IO) {
-                    AppDatabase.getDatabase(this@OmniTermWidgetConfigActivity).serverDao().getAllServers()
+            LaunchedEffect(loadAttempt) {
+                loading = true
+                loadError = null
+                try {
+                    servers = withContext(Dispatchers.IO) {
+                        AppDatabase.getDatabase(this@OmniTermWidgetConfigActivity)
+                            .serverDao()
+                            .getAllServers()
+                    }
+                    // Reconfiguration re-opens this screen: start from the widget's saved selection.
+                    val saved = getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
+                        .getStringSet("widget_$appWidgetId", null)
+                        ?.mapNotNull { it.toIntOrNull() }
+                    selectedIds.clear()
+                    selectedIds.addAll(saved ?: servers.map { it.id })
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    android.util.Log.w("OmniTermWidget", "Widget configuration load failed", failure)
+                    loadError = getString(R.string.widget_config_load_failed)
                 }
-                // Reconfiguration re-opens this screen: start from the widget's saved selection.
-                val saved = getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
-                    .getStringSet("widget_$appWidgetId", null)
-                    ?.mapNotNull { it.toIntOrNull() }
-                selectedIds.clear()
-                selectedIds.addAll(saved ?: servers.map { it.id })
                 loading = false
             }
 
@@ -76,34 +93,54 @@ class OmniTermWidgetConfigActivity : ComponentActivity() {
                                         saving = true
                                         saveConfigAndFinish(selectedIds.toList()) { saving = false }
                                     }
-                                }, enabled = !loading && !saving && (servers.isEmpty() || selectedIds.isNotEmpty())) {
+                                }, enabled = !loading && loadError == null && !saving &&
+                                    (servers.isEmpty() || selectedIds.isNotEmpty())) {
                                     Text(if (saving) "Saving…" else "Save")
                                 }
                             }
                         )
                     }
                 ) { padding ->
-                    LazyColumn(contentPadding = padding) {
-                        items(servers) { server ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .clickable {
-                                        if (selectedIds.contains(server.id)) {
-                                            selectedIds.remove(server.id)
-                                        } else {
-                                            selectedIds.add(server.id)
+                    when {
+                        loading -> Box(
+                            modifier = Modifier.fillMaxSize().padding(padding),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator()
+                        }
+                        loadError != null -> Column(
+                            modifier = Modifier.fillMaxSize().padding(padding).padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            Text(loadError.orEmpty())
+                            Spacer(modifier = Modifier.height(12.dp))
+                            Button(onClick = { loadAttempt++ }) {
+                                Text(getString(R.string.retry))
+                            }
+                        }
+                        else -> LazyColumn(contentPadding = padding) {
+                            items(servers) { server ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            if (selectedIds.contains(server.id)) {
+                                                selectedIds.remove(server.id)
+                                            } else {
+                                                selectedIds.add(server.id)
+                                            }
                                         }
-                                    }
-                                    .padding(16.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Checkbox(
-                                    checked = selectedIds.contains(server.id),
-                                    onCheckedChange = null
-                                )
-                                Spacer(modifier = Modifier.width(16.dp))
-                                Text(server.name.takeIf { it.isNotBlank() } ?: server.host)
+                                        .padding(16.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = selectedIds.contains(server.id),
+                                        onCheckedChange = null
+                                    )
+                                    Spacer(modifier = Modifier.width(16.dp))
+                                    Text(server.name.takeIf { it.isNotBlank() } ?: server.host)
+                                }
                             }
                         }
                     }
@@ -120,25 +157,49 @@ class OmniTermWidgetConfigActivity : ComponentActivity() {
                         .getGlanceIdBy(appWidgetId)
                 }
             }.getOrElse {
-                android.widget.Toast.makeText(
+                Toast.makeText(
                     this@OmniTermWidgetConfigActivity,
                     "This widget is no longer available.",
-                    android.widget.Toast.LENGTH_LONG,
+                    Toast.LENGTH_LONG,
                 ).show()
                 onFailure()
                 return@launch
             }
 
-            withContext(Dispatchers.IO) {
-                getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
+            val preferencesSaved = withContext(Dispatchers.IO) {
+                getSharedPreferences("widget_prefs", MODE_PRIVATE)
                     .edit()
                     .putStringSet("widget_$appWidgetId", selectedIds.map { it.toString() }.toSet())
                     .commit()
-                // A render failure should not strand a valid widget in a permanently-cancelled
-                // configuration flow; the platform or the next telemetry write can retry it.
-                runCatching {
+            }
+            if (!preferencesSaved) {
+                Toast.makeText(
+                    this@OmniTermWidgetConfigActivity,
+                    "Could not save the widget configuration.",
+                    Toast.LENGTH_LONG,
+                ).show()
+                onFailure()
+                return@launch
+            }
+
+            val renderFailure = withContext(Dispatchers.IO) {
+                try {
                     OmniTermWidget().update(this@OmniTermWidgetConfigActivity, glanceId)
+                    null
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (failure: Throwable) {
+                    failure
                 }
+            }
+            if (renderFailure != null) {
+                android.util.Log.w("OmniTermWidget", "Initial widget render failed", renderFailure)
+                // Configuration is valid even when Glance cannot compose. Replace the initial
+                // loading view immediately so the launcher never leaves a permanent blank box.
+                AppWidgetManager.getInstance(this@OmniTermWidgetConfigActivity).updateAppWidget(
+                    appWidgetId,
+                    RemoteViews(packageName, R.layout.omniterm_widget_error),
+                )
             }
 
             val resultValue = Intent().apply {

@@ -18,6 +18,14 @@
     <string name="widget_description">Monitor your fleet: online status, health and live metrics on the home screen.</string>
     <string name="widget_no_servers">No servers added.</string>
     <string name="widget_add_server">Add a host to get started</string>
+    <string name="widget_load_failed">Couldn\'t load fleet data</string>
+    <string name="widget_tap_to_retry">Tap to retry</string>
+    <string name="widget_loading">Loading OmniTerm…</string>
+    <string name="widget_error_hint">Open OmniTerm, then refresh the widget.</string>
+    <string name="widget_config_load_failed">Could not load saved hosts for this widget.</string>
+    <string name="local_network_access">Connect to devices on your network</string>
+    <string name="local_network_access_explanation">Android requires permission before OmniTerm can connect directly to hosts on Wi‑Fi or Ethernet. This is used for SSH, files, monitoring, LAN discovery, tunnels, shares, and Wake-on-LAN. If you choose Not now, internet hosts remain available but nearby-device features may not work.</string>
+    <string name="allow_nearby_devices">Allow nearby devices</string>
     <string name="no_online_hosts_available_to_monitor">"No online hosts available to monitor. Offline hosts reappear after the next successful probe."</string>
     <string name="reboot">"Reboot"</string>
     <string name="cancel">"Cancel"</string>
@@ -297,6 +305,7 @@
     <string name="no_alert_history_yet">"No alert history yet."</string>
     <string name="clear_history">"Clear History"</string>
     <string name="select_metric_key">"Select Metric Key:"</string>
+    <string name="trigger_window_label">"Trigger after breaching for:"</string>
     <string name="why_this_rule_exists_what_it">"Why this rule exists / what it watches for"</string>
     <string name="quick_scripts">"Quick scripts"</string>
     <string name="fleet_commands">"Fleet commands"</string>

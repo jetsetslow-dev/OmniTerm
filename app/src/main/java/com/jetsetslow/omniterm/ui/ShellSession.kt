@@ -202,6 +202,21 @@ class ShellSession(
     var isConnected by mutableStateOf(true)
     var disconnectError by mutableStateOf<String?>(null)
 
+    /**
+     * When this shell was first opened, for the session-age shown in the switcher. Survives
+     * reconnects (the shell is the same one), and for a resumed tmux session it is back-dated to
+     * the persisted [com.jetsetslow.omniterm.data.PersistentSessionEntity.createdAt] so the age
+     * reflects the tmux session's real lifetime, not the moment we re-attached to it.
+     */
+    var startedAtMs: Long = System.currentTimeMillis()
+
+    /**
+     * When this shell was last sent to the background, or null while it is the foreground session.
+     * Reset on every background/attach cycle, so it answers "how long has this been sitting idle
+     * since I last looked at it?" rather than [startedAtMs]'s "how old is this session?".
+     */
+    var backgroundedAtMs by mutableStateOf<Long?>(null)
+
     // ── Auto-reconnect / persistent-session state ──
     // Credentials + last known PTY size are kept so a dropped session can be reopened without the UI.
     var creds: SshCredentials? = null

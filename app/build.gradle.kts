@@ -26,12 +26,12 @@ val versionCodeValue = System.getenv("VERSION_CODE")?.toIntOrNull()
 
 android {
   namespace = "com.jetsetslow.omniterm"
-  compileSdk = 36
+  compileSdk = 37
 
   defaultConfig {
     applicationId = "com.jetsetslow.omniterm.app"
     minSdk = 24
-    targetSdk = 36
+    targetSdk = 37
     versionCode = versionCodeValue
     versionName = versionNameValue
 

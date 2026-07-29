@@ -1084,7 +1084,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                                         }
                                         DropdownMenuItem(
                                             text = { Text(stringResource(R.string.open_with_device_app)) },
-                                            leadingIcon = { Icon(Icons.Filled.OpenInNew, null) },
+                                            leadingIcon = { Icon(Icons.AutoMirrored.Filled.OpenInNew, null) },
                                             enabled = !viewModel.openWithBusy,
                                             onClick = { menuForName = null; viewModel.openShareFileWithDevice(file, context) },
                                         )
@@ -2448,7 +2448,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                     viewModel.openSftpFileWithDevice(file, openWithContext)
                                 }
                             ) {
-                                Icon(Icons.Filled.OpenInNew, null)
+                                Icon(Icons.AutoMirrored.Filled.OpenInNew, null)
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(stringResource(R.string.open_with_device_app_2))
                             }

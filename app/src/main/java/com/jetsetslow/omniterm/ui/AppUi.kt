@@ -839,6 +839,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
         )
     }
     val current = viewModel.currentScreen
+    val configuredServers by viewModel.servers.collectAsStateWithLifecycle()
     fun activeFor(key: Any) = key == current || (key == Screen.Tools && isToolSubScreen(current))
     val activeColor = navItems.firstOrNull { activeFor(it.key) }?.color ?: OmniColors.cyan
     val alerts by viewModel.activeAlerts.collectAsStateWithLifecycle()
@@ -1126,8 +1127,37 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                 HostLimitReconciliationDialog(viewModel)
             }
 
-            // Force permissions
+            // Android 17 gates all direct local TCP/UDP traffic behind a runtime permission.
+            // Prompt after a host exists (or when entering a network tool), so a fresh install
+            // gets the request in context rather than at launch.
             val context = androidx.compose.ui.platform.LocalContext.current
+            var hasLocalNetworkPermission by remember {
+                mutableStateOf(
+                    android.os.Build.VERSION.SDK_INT < 37 ||
+                        ContextCompat.checkSelfPermission(
+                            context,
+                            android.Manifest.permission.ACCESS_LOCAL_NETWORK,
+                        ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                )
+            }
+            var localNetworkPromptDismissed by rememberSaveable { mutableStateOf(false) }
+            val localNetworkPermissionLauncher =
+                androidx.activity.compose.rememberLauncherForActivityResult(
+                    androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+                ) { granted ->
+                    hasLocalNetworkPermission = granted
+                    if (!granted) localNetworkPromptDismissed = true
+                }
+            val needsLocalNetworkAccess =
+                android.os.Build.VERSION.SDK_INT >= 37 &&
+                    !hasLocalNetworkPermission &&
+                    (
+                        configuredServers.isNotEmpty() ||
+                            current in setOf(Screen.Network, Screen.SFTP, Screen.Fleet, Screen.Monitor)
+                    )
+
+            // Background-session permissions are separate and only become relevant for an active
+            // keep-alive session.
             var needsPermissions by remember { mutableStateOf(false) }
             var permissionPromptDismissed by rememberSaveable { mutableStateOf(false) }
             val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
@@ -1148,17 +1178,61 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                 val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                     if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                         refreshPermissionNeed()
+                        if (android.os.Build.VERSION.SDK_INT >= 37) {
+                            hasLocalNetworkPermission =
+                                ContextCompat.checkSelfPermission(
+                                    context,
+                                    android.Manifest.permission.ACCESS_LOCAL_NETWORK,
+                                ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                        }
                     }
                 }
                 lifecycleOwner.lifecycle.addObserver(observer)
                 onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
             }
 
-            if (needsPermissions && !permissionPromptDismissed) {
+            if (
+                needsLocalNetworkAccess &&
+                !localNetworkPromptDismissed &&
+                !viewModel.hostLimitReconciliationRequired
+            ) {
+                LocalNetworkPermissionDialog(
+                    onGrant = {
+                        localNetworkPermissionLauncher.launch(
+                            android.Manifest.permission.ACCESS_LOCAL_NETWORK
+                        )
+                    },
+                    onNotNow = { localNetworkPromptDismissed = true },
+                )
+            } else if (needsPermissions && !permissionPromptDismissed) {
                 FirstRunDialog(viewModel) { permissionPromptDismissed = true }
             }
         }
     }
+}
+
+@Composable
+private fun LocalNetworkPermissionDialog(
+    onGrant: () -> Unit,
+    onNotNow: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onNotNow,
+        title = { Text(stringResource(R.string.local_network_access)) },
+        text = {
+            Text(stringResource(R.string.local_network_access_explanation))
+        },
+        confirmButton = {
+            Button(onClick = onGrant) {
+                Text(stringResource(R.string.allow_nearby_devices))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onNotNow) {
+                Text(stringResource(R.string.not_now))
+            }
+        },
+    )
 }
 
 @Composable
