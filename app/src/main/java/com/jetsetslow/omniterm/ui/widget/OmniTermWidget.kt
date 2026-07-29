@@ -1,270 +1,381 @@
 package com.jetsetslow.omniterm.ui.widget
 
+import android.app.PendingIntent
+import android.appwidget.AppWidgetManager
+import android.appwidget.AppWidgetProvider
 import android.content.Context
 import android.content.Intent
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.unit.DpSize
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.glance.GlanceId
-import androidx.glance.GlanceModifier
-import androidx.glance.GlanceTheme
-import androidx.glance.LocalSize
-import androidx.glance.action.clickable
-import androidx.glance.appwidget.GlanceAppWidget
-import androidx.glance.appwidget.GlanceAppWidgetManager
-import androidx.glance.appwidget.GlanceAppWidgetReceiver
-import androidx.glance.appwidget.SizeMode
-import androidx.glance.appwidget.action.ActionCallback
-import androidx.glance.appwidget.action.actionRunCallback
-import androidx.glance.appwidget.action.actionStartActivity
-import androidx.glance.appwidget.cornerRadius
-import androidx.glance.appwidget.lazy.LazyColumn
-import androidx.glance.appwidget.lazy.itemsIndexed
-import androidx.glance.appwidget.provideContent
-import androidx.glance.background
-import androidx.glance.layout.Alignment
-import androidx.glance.layout.Box
-import androidx.glance.layout.Column
-import androidx.glance.layout.Row
-import androidx.glance.layout.Spacer
-import androidx.glance.layout.fillMaxSize
-import androidx.glance.layout.fillMaxWidth
-import androidx.glance.layout.height
-import androidx.glance.layout.padding
-import androidx.glance.layout.size
-import androidx.glance.layout.width
-import androidx.glance.text.FontWeight
-import androidx.glance.text.Text
-import androidx.glance.text.TextStyle
-import androidx.glance.unit.ColorProvider
+import android.net.Uri
+import android.view.View
+import android.widget.RemoteViews
+import android.widget.RemoteViewsService
 import com.jetsetslow.omniterm.MainActivity
 import com.jetsetslow.omniterm.R
 import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.MetricHistoryEntity
 import com.jetsetslow.omniterm.data.ServerEntity
+import com.jetsetslow.omniterm.ui.MeasurementSystem
+import com.jetsetslow.omniterm.ui.formatTemperature
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
 /** One widget row: the host plus its freshest persisted telemetry (may be null/stale). */
-private data class WidgetServerRow(
+internal data class WidgetServerRow(
     val server: ServerEntity,
     val metric: MetricHistoryEntity?,
 )
 
-class OmniTermWidget : GlanceAppWidget(errorUiLayout = R.layout.omniterm_widget_error) {
+/**
+ * Renders widgets directly through [AppWidgetManager].
+ *
+ * Glance 1.1 delegated every update to WorkManager. That made update() return after enqueueing,
+ * so a worker that never started could leave the launcher's initial "Loading OmniTerm" layout in
+ * place forever. Direct RemoteViews keep the load, render, and launcher update in one bounded
+ * operation whose failure can be surfaced immediately.
+ */
+object OmniTermWidgetUpdater {
+    private const val LOAD_TIMEOUT_MS = 8_000L
 
-    companion object {
-        private val COMPACT = DpSize(110.dp, 110.dp)
-        private val FULL = DpSize(250.dp, 140.dp)
-
-        // Metrics older than this are shown dimmed with an age suffix instead of as live values.
-        private const val STALE_AFTER_MS = 15 * 60 * 1000L
-        private const val LOAD_TIMEOUT_MS = 15_000L
+    suspend fun updateAll(context: Context) {
+        val manager = AppWidgetManager.getInstance(context)
+        val ids = manager.getAppWidgetIds(
+            android.content.ComponentName(context, OmniTermWidgetReceiver::class.java)
+        )
+        if (ids.isNotEmpty()) update(context, ids)
     }
 
-    override val sizeMode = SizeMode.Responsive(setOf(COMPACT, FULL))
-
-    override suspend fun provideGlance(context: Context, id: GlanceId) {
-        // Everything here runs BEFORE provideContent, so any failure (a database open/migration
-        // error, a disk problem) means no content is ever supplied and the launcher keeps showing
-        // Glance's loading layout — a blank box with a spinner — with no way for the user to tell
-        // what went wrong. Degrade to an error row instead of hanging on the placeholder forever.
-        val rows = try {
-            withTimeout(LOAD_TIMEOUT_MS) { loadWidgetRows(context, id) }
-        } catch (timeout: TimeoutCancellationException) {
-            android.util.Log.w("OmniTermWidget", "Widget data load timed out", timeout)
-            null
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (failure: Throwable) {
-            android.util.Log.w("OmniTermWidget", "Widget data load failed", failure)
-            null
+    suspend fun update(context: Context, appWidgetIds: IntArray) {
+        if (appWidgetIds.isEmpty()) return
+        val appContext = context.applicationContext
+        val rows = withContext(Dispatchers.IO) {
+            withTimeout(LOAD_TIMEOUT_MS) { loadRows(appContext) }
         }
+        val manager = AppWidgetManager.getInstance(appContext)
+        appWidgetIds.forEach { appWidgetId ->
+            manager.updateAppWidget(appWidgetId, createRemoteViews(appContext, appWidgetId, rows))
+        }
+        manager.notifyAppWidgetViewDataChanged(appWidgetIds, R.id.widget_rows)
+    }
 
-        provideContent {
-            GlanceTheme {
-                if (rows == null) WidgetLoadError(context) else WidgetContent(context, rows)
-            }
+    fun showError(context: Context, appWidgetIds: IntArray) {
+        val manager = AppWidgetManager.getInstance(context)
+        appWidgetIds.forEach { appWidgetId ->
+            val views = RemoteViews(context.packageName, R.layout.omniterm_widget_error)
+            views.setOnClickPendingIntent(
+                R.id.widget_error_root,
+                refreshPendingIntent(context, appWidgetId),
+            )
+            manager.updateAppWidget(appWidgetId, views)
         }
     }
 
-    private suspend fun loadWidgetRows(context: Context, id: GlanceId): List<WidgetServerRow> {
+    private suspend fun loadRows(context: Context): List<WidgetServerRow> {
         val db = AppDatabase.getDatabase(context)
         val allServers = db.serverDao().getAllServers()
+        val latestByServer = db.metricHistoryDao()
+            .getLatestMetricsForAllServers()
+            .associateBy { it.serverId }
+        return allServers.map { server -> WidgetServerRow(server, latestByServer[server.id]) }
+    }
 
-        val appWidgetId = runCatching { GlanceAppWidgetManager(context).getAppWidgetId(id) }.getOrNull()
-        val prefs = context.getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
-        val selectedIds = prefs.getStringSet("widget_$appWidgetId", null)?.mapNotNull { it.toIntOrNull() }?.toSet()
-
-        val servers = if (selectedIds.isNullOrEmpty()) {
-            allServers
+    private fun createRemoteViews(
+        context: Context,
+        appWidgetId: Int,
+        allRows: List<WidgetServerRow>,
+    ): RemoteViews {
+        val selectedIds = context.getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
+            .getStringSet("widget_$appWidgetId", null)
+            ?.mapNotNull { it.toIntOrNull() }
+            ?.toSet()
+        val rows = if (selectedIds.isNullOrEmpty()) {
+            allRows
         } else {
-            allServers.filter { it.id in selectedIds }
+            allRows.filter { it.server.id in selectedIds }
         }
-        // One snapshot query avoids an N+1 database walk every time the launcher refreshes a fleet
-        // widget. This matters for larger fleets and for the platform's constrained widget worker.
-        val latestByServer = db.metricHistoryDao().getLatestMetricsForAllServers().associateBy { it.serverId }
-        return servers.map { WidgetServerRow(it, latestByServer[it.id]) }
-    }
 
-    /** Shown when the widget's data could not be read; tapping retries via a normal refresh. */
-    @Composable
-    private fun WidgetLoadError(context: Context) {
-        Column(
-            modifier = GlanceModifier.fillMaxSize()
-                .background(GlanceTheme.colors.widgetBackground)
-                .cornerRadius(16.dp)
-                .padding(12.dp)
-                .clickable(actionRunCallback<RefreshWidgetAction>()),
-            horizontalAlignment = Alignment.Start,
-        ) {
-            Text(
-                text = context.getString(com.jetsetslow.omniterm.R.string.widget_load_failed),
-                style = TextStyle(color = GlanceTheme.colors.onSurface, fontWeight = FontWeight.Bold),
+        return RemoteViews(context.packageName, R.layout.omniterm_widget).apply {
+            setTextViewText(
+                R.id.widget_title,
+                context.getString(
+                    R.string.widget_fleet_summary,
+                    rows.count { it.server.status == "online" },
+                    rows.size,
+                ),
             )
-            Text(
-                text = context.getString(com.jetsetslow.omniterm.R.string.widget_tap_to_retry),
-                style = TextStyle(color = GlanceTheme.colors.primary, fontSize = 12.sp),
-            )
-        }
-    }
-
-    @Composable
-    private fun WidgetContent(context: Context, rows: List<WidgetServerRow>) {
-        val showMetrics = LocalSize.current.width >= FULL.width
-        Column(
-            modifier = GlanceModifier.fillMaxSize()
-                .background(GlanceTheme.colors.widgetBackground)
-                .cornerRadius(16.dp)
-                .padding(12.dp),
-            horizontalAlignment = Alignment.Start,
-        ) {
-            Row(
-                modifier = GlanceModifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = "OmniTerm Fleet (${rows.count { it.server.status == "online" }}/${rows.size})",
-                    style = TextStyle(color = GlanceTheme.colors.onSurface, fontWeight = FontWeight.Bold),
-                    modifier = GlanceModifier.defaultWeight().clickable(
-                        actionStartActivity(Intent(context, MainActivity::class.java))
-                    ),
-                )
-                Text(
-                    text = "↻",
-                    style = TextStyle(color = GlanceTheme.colors.primary, fontSize = 18.sp, fontWeight = FontWeight.Bold),
-                    modifier = GlanceModifier.padding(horizontal = 6.dp)
-                        .clickable(actionRunCallback<RefreshWidgetAction>()),
-                )
-            }
-            Spacer(modifier = GlanceModifier.height(8.dp))
+            setOnClickPendingIntent(R.id.widget_title, openAppPendingIntent(context, appWidgetId))
+            setOnClickPendingIntent(R.id.widget_refresh, refreshPendingIntent(context, appWidgetId))
 
             if (rows.isEmpty()) {
-                Column(
-                    modifier = GlanceModifier.fillMaxWidth().clickable(
-                        actionStartActivity(
-                            Intent(context, MainActivity::class.java)
-                                .setAction("com.jetsetslow.omniterm.action.NEW_HOST")
-                        )
-                    ),
-                ) {
-                    Text(
-                        text = context.getString(com.jetsetslow.omniterm.R.string.widget_no_servers),
-                        style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant),
-                    )
-                    Text(
-                        text = context.getString(com.jetsetslow.omniterm.R.string.widget_add_server),
-                        style = TextStyle(color = GlanceTheme.colors.primary, fontSize = 12.sp),
-                    )
-                }
-            } else {
-                LazyColumn(modifier = GlanceModifier.fillMaxSize()) {
-                    itemsIndexed(rows) { _, row ->
-                        ServerRow(context, row, showMetrics)
-                    }
-                }
+                setViewVisibility(R.id.widget_empty, View.VISIBLE)
+                setViewVisibility(R.id.widget_rows, View.GONE)
+                setOnClickPendingIntent(
+                    R.id.widget_empty,
+                    addHostPendingIntent(context, appWidgetId),
+                )
+                return@apply
             }
-        }
-    }
 
-    @Composable
-    private fun ServerRow(context: Context, row: WidgetServerRow, showMetrics: Boolean) {
-        val server = row.server
-        val online = server.status == "online"
-        val dotColor = when (server.status) {
-            "online" -> Color(0xFF66BB6A)
-            "connecting" -> Color(0xFFFFB300)
-            else -> Color(0xFFE53935)
-        }
-        Row(
-            modifier = GlanceModifier.fillMaxWidth().padding(vertical = 4.dp)
-                .clickable(
-                    actionStartActivity(
-                        Intent(context, MainActivity::class.java)
-                            .setAction(Intent.ACTION_VIEW)
-                            .putExtra("shortcut_server_id", server.id)
-                    )
-                ),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Box(
-                modifier = GlanceModifier.size(8.dp).cornerRadius(4.dp).background(ColorProvider(dotColor)),
-            ) {}
-            Spacer(modifier = GlanceModifier.width(8.dp))
-            Text(
-                text = server.name.takeIf { it.isNotBlank() } ?: server.host,
-                style = TextStyle(color = GlanceTheme.colors.onSurface, fontWeight = FontWeight.Medium),
-                maxLines = 1,
-                modifier = GlanceModifier.defaultWeight(),
+            setViewVisibility(R.id.widget_empty, View.GONE)
+            setViewVisibility(R.id.widget_rows, View.VISIBLE)
+            val serviceIntent = Intent(context, OmniTermWidgetService::class.java)
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+                .setData(widgetUri(appWidgetId, "rows"))
+            setRemoteAdapter(R.id.widget_rows, serviceIntent)
+            setPendingIntentTemplate(
+                R.id.widget_rows,
+                serverPendingIntentTemplate(context, appWidgetId),
             )
-            if (online) {
-                Text(
-                    text = "HP ${server.healthScore}",
-                    style = TextStyle(color = GlanceTheme.colors.primary, fontSize = 12.sp),
-                )
-                val metric = row.metric
-                if (showMetrics && metric != null) {
-                    val age = System.currentTimeMillis() - metric.timestamp
-                    val stale = age > STALE_AFTER_MS
-                    val label = "CPU ${metric.cpuUsage.toInt()}% · RAM ${metric.ramUsage.toInt()}%" +
-                        if (stale) " · ${age / 60000}m ago" else ""
-                    Spacer(modifier = GlanceModifier.width(8.dp))
-                    Text(
-                        text = label,
-                        style = TextStyle(
-                            color = if (stale) GlanceTheme.colors.onSurfaceVariant else GlanceTheme.colors.onSurface,
-                            fontSize = 12.sp,
-                        ),
-                        maxLines = 1,
+        }
+    }
+
+    private fun openAppPendingIntent(context: Context, appWidgetId: Int): PendingIntent =
+        activityPendingIntent(
+            context,
+            appWidgetId,
+            "fleet",
+            Intent(context, MainActivity::class.java).setAction(Intent.ACTION_MAIN),
+        )
+
+    private fun addHostPendingIntent(context: Context, appWidgetId: Int): PendingIntent =
+        activityPendingIntent(
+            context,
+            appWidgetId,
+            "new-host",
+            Intent(context, MainActivity::class.java)
+                .setAction("com.jetsetslow.omniterm.action.NEW_HOST"),
+        )
+
+    private fun serverPendingIntentTemplate(
+        context: Context,
+        appWidgetId: Int,
+    ): PendingIntent {
+        val mutableFlag =
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                PendingIntent.FLAG_MUTABLE
+            } else {
+                0
+            }
+        return PendingIntent.getActivity(
+            context,
+            appWidgetId,
+            Intent(context, MainActivity::class.java)
+                .setAction(Intent.ACTION_VIEW)
+                .setData(widgetUri(appWidgetId, "server")),
+            PendingIntent.FLAG_UPDATE_CURRENT or mutableFlag,
+        )
+    }
+
+    private fun activityPendingIntent(
+        context: Context,
+        appWidgetId: Int,
+        destination: String,
+        intent: Intent,
+    ): PendingIntent {
+        intent.data = widgetUri(appWidgetId, destination)
+        return PendingIntent.getActivity(
+            context,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
+
+    private fun refreshPendingIntent(context: Context, appWidgetId: Int): PendingIntent {
+        val intent = Intent(context, OmniTermWidgetReceiver::class.java)
+            .setAction(OmniTermWidgetReceiver.ACTION_REFRESH)
+            .setData(widgetUri(appWidgetId, "refresh"))
+            .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
+        return PendingIntent.getBroadcast(
+            context,
+            0,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
+    }
+
+    private fun widgetUri(appWidgetId: Int, destination: String): Uri =
+        Uri.parse("omniterm://widget/$appWidgetId/$destination")
+}
+
+/** Supplies scrollable host rows to the launcher-owned widget collection. */
+class OmniTermWidgetService : RemoteViewsService() {
+    override fun onGetViewFactory(intent: Intent): RemoteViewsFactory =
+        OmniTermWidgetRowFactory(
+            applicationContext,
+            intent.getIntExtra(
+                AppWidgetManager.EXTRA_APPWIDGET_ID,
+                AppWidgetManager.INVALID_APPWIDGET_ID,
+            ),
+        )
+}
+
+private class OmniTermWidgetRowFactory(
+    private val context: Context,
+    private val appWidgetId: Int,
+) : RemoteViewsService.RemoteViewsFactory {
+    private var rows: List<WidgetServerRow> = emptyList()
+    private var measurementSystem = MeasurementSystem.Metric
+
+    override fun onCreate() = Unit
+
+    override fun onDataSetChanged() {
+        runBlocking(Dispatchers.IO) {
+            runCatching {
+                withTimeout(8_000L) {
+                    val db = AppDatabase.getDatabase(context)
+                    val selectedIds = context
+                        .getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
+                        .getStringSet("widget_$appWidgetId", null)
+                        ?.mapNotNull { it.toIntOrNull() }
+                        ?.toSet()
+                    val metrics = db.metricHistoryDao()
+                        .getLatestMetricsForAllServers()
+                        .associateBy { it.serverId }
+                    rows = db.serverDao().getAllServers()
+                        .filter { selectedIds.isNullOrEmpty() || it.id in selectedIds }
+                        .map { WidgetServerRow(it, metrics[it.id]) }
+                    measurementSystem = MeasurementSystem.fromSetting(
+                        db.appSettingDao().getSetting("measurement_system")?.value
                     )
                 }
-            } else {
-                Text(
-                    text = if (server.status == "connecting") "…" else "offline",
-                    style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 12.sp),
-                )
+            }.onFailure {
+                android.util.Log.w("OmniTermWidget", "Widget row load failed", it)
+                rows = emptyList()
             }
         }
     }
-}
 
-/** Manual refresh tap target on the widget header. */
-class RefreshWidgetAction : ActionCallback {
-    override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: androidx.glance.action.ActionParameters) {
-        OmniTermWidget().update(context, glanceId)
+    override fun onDestroy() {
+        rows = emptyList()
     }
+
+    override fun getCount(): Int = rows.size
+
+    override fun getViewAt(position: Int): RemoteViews? {
+        val row = rows.getOrNull(position) ?: return null
+        val server = row.server
+        return RemoteViews(context.packageName, R.layout.omniterm_widget_row).apply {
+            setImageViewResource(
+                R.id.widget_status,
+                when (server.status) {
+                    "online" -> R.drawable.widget_status_online
+                    "connecting" -> R.drawable.widget_status_connecting
+                    else -> R.drawable.widget_status_offline
+                },
+            )
+            setTextViewText(
+                R.id.widget_server_name,
+                server.name.takeIf { it.isNotBlank() }
+                    ?: context.getString(R.string.widget_unnamed_host),
+            )
+            setTextViewText(
+                R.id.widget_server_health,
+                when {
+                    server.status == "online" ->
+                        context.getString(R.string.widget_health, server.healthScore)
+                    server.status == "connecting" ->
+                        context.getString(R.string.widget_connecting)
+                    else -> context.getString(R.string.widget_offline)
+                },
+            )
+            setTextViewText(R.id.widget_server_metrics, formatMetrics(row.metric))
+            setOnClickFillInIntent(
+                R.id.widget_server_row,
+                Intent()
+                    .setData(Uri.parse("omniterm://widget/$appWidgetId/server/${server.id}"))
+                    .putExtra("shortcut_server_id", server.id),
+            )
+        }
+    }
+
+    private fun formatMetrics(metric: MetricHistoryEntity?): String {
+        if (metric == null) return "CPU — · RAM — · TEMP — · DISK —"
+        val temperature = metric.cpuTemperatureC?.let {
+            formatTemperature(it, measurementSystem)
+        } ?: "—"
+        return context.getString(
+            R.string.widget_metrics,
+            metric.cpuUsage.toInt(),
+            metric.ramUsage.toInt(),
+            temperature,
+            metric.diskUsage.toInt(),
+        )
+    }
+
+    override fun getLoadingView(): RemoteViews? = null
+    override fun getViewTypeCount(): Int = 1
+    override fun getItemId(position: Int): Long =
+        rows.getOrNull(position)?.server?.id?.toLong() ?: position.toLong()
+    override fun hasStableIds(): Boolean = true
 }
 
-class OmniTermWidgetReceiver : GlanceAppWidgetReceiver() {
-    override val glanceAppWidget: GlanceAppWidget = OmniTermWidget()
+class OmniTermWidgetReceiver : AppWidgetProvider() {
+    companion object {
+        const val ACTION_REFRESH = "com.jetsetslow.omniterm.action.REFRESH_WIDGET"
+    }
+
+    override fun onUpdate(
+        context: Context,
+        appWidgetManager: AppWidgetManager,
+        appWidgetIds: IntArray,
+    ) {
+        super.onUpdate(context, appWidgetManager, appWidgetIds)
+        renderAsync(context, appWidgetIds)
+    }
+
+    override fun onAppWidgetOptionsChanged(
+        context: Context,
+        appWidgetManager: AppWidgetManager,
+        appWidgetId: Int,
+        newOptions: android.os.Bundle,
+    ) {
+        super.onAppWidgetOptionsChanged(context, appWidgetManager, appWidgetId, newOptions)
+        renderAsync(context, intArrayOf(appWidgetId))
+    }
+
+    override fun onReceive(context: Context, intent: Intent) {
+        super.onReceive(context, intent)
+        if (intent.action == ACTION_REFRESH) {
+            val appWidgetId = intent.getIntExtra(
+                AppWidgetManager.EXTRA_APPWIDGET_ID,
+                AppWidgetManager.INVALID_APPWIDGET_ID,
+            )
+            if (appWidgetId != AppWidgetManager.INVALID_APPWIDGET_ID) {
+                renderAsync(context, intArrayOf(appWidgetId))
+            }
+        }
+    }
 
     override fun onDeleted(context: Context, appWidgetIds: IntArray) {
         super.onDeleted(context, appWidgetIds)
         val editor = context.getSharedPreferences("widget_prefs", Context.MODE_PRIVATE).edit()
         appWidgetIds.forEach { editor.remove("widget_$it") }
         editor.apply()
+    }
+
+    private fun renderAsync(context: Context, appWidgetIds: IntArray) {
+        val pendingResult = goAsync()
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                OmniTermWidgetUpdater.update(context, appWidgetIds)
+            } catch (timeout: TimeoutCancellationException) {
+                android.util.Log.w("OmniTermWidget", "Widget data load timed out", timeout)
+                OmniTermWidgetUpdater.showError(context, appWidgetIds)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Throwable) {
+                android.util.Log.w("OmniTermWidget", "Widget refresh failed", failure)
+                OmniTermWidgetUpdater.showError(context, appWidgetIds)
+            } finally {
+                pendingResult.finish()
+            }
+        }
     }
 }

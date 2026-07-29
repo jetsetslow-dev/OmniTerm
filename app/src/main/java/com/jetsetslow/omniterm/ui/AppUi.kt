@@ -1687,7 +1687,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                     items(filteredList, key = { it.id }) { server ->
                         val identityColor = getServerColor(server)
                         // Live metrics for THIS host — populated for every reachable host by
-                        // the concurrent telemetry loop, so all cards show real CPU/RAM/DISK.
+                        // the concurrent telemetry loop, so all cards show real host measurements.
                         val liveMetrics = viewModel.hostMetricsById[server.id]
                         Box(
                             modifier = Modifier
@@ -1834,6 +1834,19 @@ fun ServersMainView(viewModel: AppViewModel) {
                                             MiniMetric("CPU", liveMetrics?.cpuPercent ?: 0f, modifier = Modifier.weight(1f), color = identityColor)
                                             MiniMetric("RAM", liveMetrics?.memPercent ?: 0f, modifier = Modifier.weight(1f), color = identityColor)
                                             MiniMetric("DISK", liveMetrics?.diskPercent ?: 0f, modifier = Modifier.weight(1f), color = identityColor)
+                                            liveMetrics?.cpuTempC?.let { temperatureC ->
+                                                MiniMetric(
+                                                    label = "TEMP",
+                                                    value = temperatureC,
+                                                    displayValue = celsiusToDisplay(
+                                                        temperatureC,
+                                                        viewModel.measurementSystem,
+                                                    ),
+                                                    unit = temperatureUnit(viewModel.measurementSystem),
+                                                    modifier = Modifier.weight(1f),
+                                                    color = identityColor,
+                                                )
+                                            }
                                         }
 
                                         Row(

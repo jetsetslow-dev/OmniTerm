@@ -98,7 +98,9 @@ data class MetricHistoryEntity(
     val diskUsage: Float,
     val latency: Int,
     val networkIn: Float, // KB/s
-    val networkOut: Float // KB/s
+    val networkOut: Float, // KB/s
+    // Null when the host exposes no readable thermal sensor.
+    val cpuTemperatureC: Float? = null,
 )
 
 @Entity(tableName = "ssh_keys")

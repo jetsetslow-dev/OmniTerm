@@ -2,6 +2,7 @@ package com.jetsetslow.omniterm
 
 import com.jetsetslow.omniterm.data.AlertRuleEntity
 import com.jetsetslow.omniterm.data.QuickScriptEntity
+import com.jetsetslow.omniterm.ui.DEFAULT_ALERT_RULE_PRESETS
 import com.jetsetslow.omniterm.ui.isPristinePresetRule
 import com.jetsetslow.omniterm.ui.isPristinePresetScript
 import org.junit.Assert.assertFalse
@@ -42,5 +43,14 @@ class PresetBackupFilterTest {
         assertFalse(isPristinePresetRule(alertPreset.copy(triggerWindow = "15m"), listOf(alertPreset)))
         assertFalse(isPristinePresetRule(alertPreset.copy(enabled = false), listOf(alertPreset)))
         assertFalse(isPristinePresetRule(alertPreset.copy(notes = "After-hours only"), listOf(alertPreset)))
+    }
+
+    @Test
+    fun defaultAlertRulesIncludeTemperatureForSensorCapableHosts() {
+        val temperature = DEFAULT_ALERT_RULE_PRESETS.single { it.metricName == "Temperature" }
+
+        assertTrue(temperature.serverId == 0)
+        assertTrue(temperature.thresholdValue == 80f)
+        assertTrue(temperature.presetKey == "alert.temperature")
     }
 }

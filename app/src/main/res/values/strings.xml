@@ -23,6 +23,12 @@
     <string name="widget_loading">Loading OmniTerm…</string>
     <string name="widget_error_hint">Open OmniTerm, then refresh the widget.</string>
     <string name="widget_config_load_failed">Could not load saved hosts for this widget.</string>
+    <string name="widget_fleet_summary">OmniTerm Fleet (%1$d/%2$d)</string>
+    <string name="widget_health">HP %1$d</string>
+    <string name="widget_connecting">…</string>
+    <string name="widget_offline">offline</string>
+    <string name="widget_metrics">CPU %1$d%% · RAM %2$d%% · TEMP %3$s · DISK %4$d%%</string>
+    <string name="widget_unnamed_host">Unnamed host</string>
     <string name="local_network_access">Connect to devices on your network</string>
     <string name="local_network_access_explanation">Android requires permission before OmniTerm can connect directly to hosts on Wi‑Fi or Ethernet. This is used for SSH, files, monitoring, LAN discovery, tunnels, shares, and Wake-on-LAN. If you choose Not now, internet hosts remain available but nearby-device features may not work.</string>
     <string name="allow_nearby_devices">Allow nearby devices</string>
@@ -142,8 +148,6 @@
     <string name="broadcast_targets">"Broadcast Targets"</string>
     <string name="servers">"Servers"</string>
     <string name="groups">"Groups"</string>
-    <string name="oldest">"oldest"</string>
-    <string name="now">"now"</string>
     <string name="select_hosts_then_tap_fetch_logs">"Select hosts then tap Fetch Logs:"</string>
     <string name="no_logs_select_hosts_and_tap">"No logs. Select hosts and tap Fetch Logs."</string>
     <string name="host">"Host"</string>

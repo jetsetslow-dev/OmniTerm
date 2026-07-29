@@ -99,6 +99,11 @@
             </intent-filter>
         </activity>
 
+        <service
+            android:name=".ui.widget.OmniTermWidgetService"
+            android:exported="false"
+            android:permission="android.permission.BIND_REMOTEVIEWS" />
+
         <!-- Widget Receiver -->
         <receiver
             android:name=".ui.widget.OmniTermWidgetReceiver"

@@ -13,7 +13,7 @@ import org.junit.runner.RunWith
 class AppDatabaseMigrationTest {
     private companion object {
         /** Keep in step with AppDatabase's @Database(version = …). */
-        const val CURRENT_VERSION = 20
+        const val CURRENT_VERSION = 21
     }
 
     @get:Rule
@@ -144,6 +144,38 @@ class AppDatabaseMigrationTest {
                 cursor.moveToFirst()
                 assertEquals(1, cursor.getInt(0))
                 assertEquals(11, cursor.getInt(1))
+            }
+        }
+        context.deleteDatabase(databaseName)
+    }
+
+    @Test
+    fun migrationToTwentyOnePreservesMetricsAndAddsNullableTemperature() {
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val databaseName = "migration-20-temperature-history"
+        context.deleteDatabase(databaseName)
+        helper.createDatabase(databaseName, 20).use { db ->
+            db.execSQL(
+                "INSERT INTO metric_history " +
+                    "(id, serverId, timestamp, cpuUsage, ramUsage, diskUsage, latency, networkIn, networkOut) " +
+                    "VALUES (1, 7, 1234, 11.0, 22.0, 33.0, 44, 55.0, 66.0)"
+            )
+        }
+
+        helper.runMigrationsAndValidate(
+            databaseName,
+            CURRENT_VERSION,
+            true,
+            *AppDatabase.ALL_MIGRATIONS,
+        ).use { db ->
+            db.query(
+                "SELECT serverId, cpuUsage, ramUsage, cpuTemperatureC FROM metric_history WHERE id = 1"
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                assertEquals(7, cursor.getInt(0))
+                assertEquals(11f, cursor.getFloat(1))
+                assertEquals(22f, cursor.getFloat(2))
+                assertTrue(cursor.isNull(3))
             }
         }
         context.deleteDatabase(databaseName)

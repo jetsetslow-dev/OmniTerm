@@ -270,7 +270,14 @@ fun OmniButton(label: String, onClick: () -> Unit, modifier: Modifier = Modifier
 }
 
 @Composable
-fun MiniMetric(label: String, value: Float, modifier: Modifier = Modifier, color: Color = OmniColors.cyan) {
+fun MiniMetric(
+    label: String,
+    value: Float,
+    modifier: Modifier = Modifier,
+    color: Color = OmniColors.cyan,
+    displayValue: Float = value,
+    unit: String = "%",
+) {
     val metricColor = when {
         value > 85f -> OmniColors.red
         value > 70f -> OmniColors.amber
@@ -279,7 +286,7 @@ fun MiniMetric(label: String, value: Float, modifier: Modifier = Modifier, color
     Column(modifier) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             Text(label, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono, fontSize = 10.sp)
-            Text("${value.toInt()}%", color = metricColor, fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold, fontSize = 10.sp)
+            Text("${displayValue.toInt()}$unit", color = metricColor, fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold, fontSize = 10.sp)
         }
         Spacer(Modifier.height(3.dp))
         GaugeBar(value = value, color = color, height = 3.dp)
