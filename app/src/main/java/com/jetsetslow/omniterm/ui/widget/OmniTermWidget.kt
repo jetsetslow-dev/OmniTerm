@@ -6,6 +6,7 @@ import android.appwidget.AppWidgetProvider
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Looper
 import android.view.View
 import android.widget.RemoteViews
 import android.widget.RemoteViewsService
@@ -58,10 +59,17 @@ object OmniTermWidgetUpdater {
             withTimeout(LOAD_TIMEOUT_MS) { loadRows(appContext) }
         }
         val manager = AppWidgetManager.getInstance(appContext)
-        appWidgetIds.forEach { appWidgetId ->
-            manager.updateAppWidget(appWidgetId, createRemoteViews(appContext, appWidgetId, rows))
+        withContext(Dispatchers.IO) {
+            appWidgetIds.forEach { appWidgetId ->
+                manager.updateAppWidget(
+                    appWidgetId,
+                    createRemoteViews(appContext, appWidgetId, rows),
+                )
+            }
+            // Keep this off the main thread: the launcher may answer it by re-entering our
+            // RemoteViewsFactory.onDataSetChanged() synchronously, which blocks on a DB read.
+            manager.notifyAppWidgetViewDataChanged(appWidgetIds, R.id.widget_rows)
         }
-        manager.notifyAppWidgetViewDataChanged(appWidgetIds, R.id.widget_rows)
     }
 
     fun showError(context: Context, appWidgetIds: IntArray) {
@@ -226,6 +234,15 @@ private class OmniTermWidgetRowFactory(
     override fun onCreate() = Unit
 
     override fun onDataSetChanged() {
+        // The launcher normally calls this on a binder thread, where blocking is expected. But when
+        // our own process triggers notifyAppWidgetViewDataChanged() while a widget is visible, the
+        // callback can re-enter here on the main thread -- and blocking that ANRs the app. Loading
+        // synchronously is only safe off the main thread; on it, keep the previous rows and let the
+        // refresh that follows repopulate them.
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            android.util.Log.w("OmniTermWidget", "onDataSetChanged() on main thread; skipping load")
+            return
+        }
         runBlocking(Dispatchers.IO) {
             runCatching {
                 withTimeout(8_000L) {
