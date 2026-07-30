@@ -1401,6 +1401,7 @@ private fun NetworkShareDialog(
                     OutlinedTextField(
                         value = portText,
                         onValueChange = { portText = it.filter(Char::isDigit).take(5) },
+                        isError = protocol.uppercase(Locale.ROOT) != "CUSTOM" && portError(portText) != null,
                         label = { Text(stringResource(R.string.port)) },
                         modifier = Modifier.width(96.dp),
                         singleLine = true,
@@ -1490,7 +1491,9 @@ private fun NetworkShareDialog(
             }
         },
         confirmButton = {
-            Button(onClick = {
+            // Keep Save disabled while the draft is invalid; validateDraft() still runs on click so
+            // the reason is shown if anything slips through.
+            Button(enabled = validateDraft() == null, onClick = {
                 validateDraft()?.let {
                     errorText = it
                     return@Button

@@ -6,6 +6,7 @@ import android.appwidget.AppWidgetProvider
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Looper
 import android.view.View
 import android.widget.RemoteViews
 import android.widget.RemoteViewsService
@@ -21,10 +22,15 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+
+/** Bound on every widget data load, so a slow database can never wedge the launcher's binder call. */
+private const val WIDGET_LOAD_TIMEOUT_MS = 8_000L
 
 /** One widget row: the host plus its freshest persisted telemetry (may be null/stale). */
 internal data class WidgetServerRow(
@@ -41,8 +47,6 @@ internal data class WidgetServerRow(
  * operation whose failure can be surfaced immediately.
  */
 object OmniTermWidgetUpdater {
-    private const val LOAD_TIMEOUT_MS = 8_000L
-
     suspend fun updateAll(context: Context) {
         val manager = AppWidgetManager.getInstance(context)
         val ids = manager.getAppWidgetIds(
@@ -55,13 +59,20 @@ object OmniTermWidgetUpdater {
         if (appWidgetIds.isEmpty()) return
         val appContext = context.applicationContext
         val rows = withContext(Dispatchers.IO) {
-            withTimeout(LOAD_TIMEOUT_MS) { loadRows(appContext) }
+            withTimeout(WIDGET_LOAD_TIMEOUT_MS) { loadRows(appContext) }
         }
         val manager = AppWidgetManager.getInstance(appContext)
-        appWidgetIds.forEach { appWidgetId ->
-            manager.updateAppWidget(appWidgetId, createRemoteViews(appContext, appWidgetId, rows))
+        withContext(Dispatchers.IO) {
+            appWidgetIds.forEach { appWidgetId ->
+                manager.updateAppWidget(
+                    appWidgetId,
+                    createRemoteViews(appContext, appWidgetId, rows),
+                )
+            }
+            // Keep this off the main thread: the launcher may answer it by re-entering our
+            // RemoteViewsFactory.onDataSetChanged() synchronously, which blocks on a DB read.
+            manager.notifyAppWidgetViewDataChanged(appWidgetIds, R.id.widget_rows)
         }
-        manager.notifyAppWidgetViewDataChanged(appWidgetIds, R.id.widget_rows)
     }
 
     fun showError(context: Context, appWidgetIds: IntArray) {
@@ -220,39 +231,66 @@ private class OmniTermWidgetRowFactory(
     private val context: Context,
     private val appWidgetId: Int,
 ) : RemoteViewsService.RemoteViewsFactory {
+    // onDataSetChanged() loads on one thread while getCount()/getViewAt() read from the launcher's
+    // binder thread. Without a memory barrier the launcher can pair a fresh getCount() with a stale
+    // row, rendering one host's metrics under another's name.
+    @Volatile
     private var rows: List<WidgetServerRow> = emptyList()
+
+    @Volatile
     private var measurementSystem = MeasurementSystem.Metric
+
+    private val loadScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onCreate() = Unit
 
     override fun onDataSetChanged() {
-        runBlocking(Dispatchers.IO) {
-            runCatching {
-                withTimeout(8_000L) {
-                    val db = AppDatabase.getDatabase(context)
-                    val selectedIds = context
-                        .getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
-                        .getStringSet("widget_$appWidgetId", null)
-                        ?.mapNotNull { it.toIntOrNull() }
-                        ?.toSet()
-                    val metrics = db.metricHistoryDao()
-                        .getLatestMetricsForAllServers()
-                        .associateBy { it.serverId }
-                    rows = db.serverDao().getAllServers()
-                        .filter { selectedIds.isNullOrEmpty() || it.id in selectedIds }
-                        .map { WidgetServerRow(it, metrics[it.id]) }
-                    measurementSystem = MeasurementSystem.fromSetting(
-                        db.appSettingDao().getSetting("measurement_system")?.value
-                    )
-                }
-            }.onFailure {
-                android.util.Log.w("OmniTermWidget", "Widget row load failed", it)
-                rows = emptyList()
+        // The launcher normally calls this on a binder thread, where blocking is expected. But when
+        // our own process triggers notifyAppWidgetViewDataChanged() while a widget is visible, the
+        // callback can re-enter here on the main thread -- and blocking there ANRs the app. Hand the
+        // load to an IO thread and wait only off the main thread, so rows still refresh either way.
+        val load = loadScope.async { loadRows() }
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            // Cannot block the main thread. The load still completes and publishes rows; the
+            // launcher picks them up on its next bind, which this update already schedules.
+            android.util.Log.w("OmniTermWidget", "onDataSetChanged() on main thread; loading async")
+            return
+        }
+        runBlocking { load.join() }
+    }
+
+    /** Reads the selection and telemetry, then publishes both in one write. */
+    private suspend fun loadRows() {
+        runCatching {
+            withTimeout(WIDGET_LOAD_TIMEOUT_MS) {
+                val db = AppDatabase.getDatabase(context)
+                val selectedIds = context
+                    .getSharedPreferences("widget_prefs", Context.MODE_PRIVATE)
+                    .getStringSet("widget_$appWidgetId", null)
+                    ?.mapNotNull { it.toIntOrNull() }
+                    ?.toSet()
+                val metrics = db.metricHistoryDao()
+                    .getLatestMetricsForAllServers()
+                    .associateBy { it.serverId }
+                val loaded = db.serverDao().getAllServers()
+                    .filter { selectedIds.isNullOrEmpty() || it.id in selectedIds }
+                    .map { WidgetServerRow(it, metrics[it.id]) }
+                val system = MeasurementSystem.fromSetting(
+                    db.appSettingDao().getSetting("measurement_system")?.value
+                )
+                // Publish the unit before the rows: getViewAt() formats using it, and the rows write
+                // is what makes the new data visible to the launcher's thread.
+                measurementSystem = system
+                rows = loaded
             }
+        }.onFailure {
+            android.util.Log.w("OmniTermWidget", "Widget row load failed", it)
+            rows = emptyList()
         }
     }
 
     override fun onDestroy() {
+        loadScope.cancel()
         rows = emptyList()
     }
 

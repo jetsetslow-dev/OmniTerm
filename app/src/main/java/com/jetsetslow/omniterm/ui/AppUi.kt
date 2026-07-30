@@ -2364,7 +2364,16 @@ fun AddServerSheet(
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text(stringResource(R.string.display_name_unique)) }, modifier = Modifier.fillMaxWidth(), singleLine = true)
                         OutlinedTextField(value = host, onValueChange = { host = it }, label = { Text(stringResource(R.string.ip_address_hostname)) }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri), singleLine = true)
-                        OutlinedTextField(value = port, onValueChange = { port = it }, label = { Text(stringResource(R.string.ssh_port)) }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+                        OutlinedTextField(
+                            value = port,
+                            onValueChange = { port = it.filter { c -> c.isDigit() } },
+                            label = { Text(stringResource(R.string.ssh_port)) },
+                            modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            singleLine = true,
+                            isError = portError(port) != null,
+                            supportingText = portError(port)?.let { { Text(it) } },
+                        )
 
                         // Group label: pick an existing one (prevents typo-forked labels) or type a new one.
                         var groupMenuOpen by remember { mutableStateOf(false) }
@@ -2609,7 +2618,15 @@ fun AddServerSheet(
                         if (proxyType != "none") {
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedTextField(value = proxyHost, onValueChange = { proxyHost = it }, label = { Text(stringResource(R.string.proxy_host)) }, modifier = Modifier.weight(2f), singleLine = true)
-                                OutlinedTextField(value = proxyPort, onValueChange = { proxyPort = it.filter { c -> c.isDigit() } }, label = { Text(stringResource(R.string.port)) }, modifier = Modifier.weight(1f), singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                                OutlinedTextField(
+                                    value = proxyPort,
+                                    onValueChange = { proxyPort = it.filter { c -> c.isDigit() } },
+                                    label = { Text(stringResource(R.string.port)) },
+                                    modifier = Modifier.weight(1f),
+                                    singleLine = true,
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    isError = proxyPort.isNotBlank() && portError(proxyPort) != null,
+                                )
                             }
                             Spacer(Modifier.height(8.dp))
                             OutlinedTextField(value = proxyUser, onValueChange = { proxyUser = it }, label = { Text(if (proxyType == "ssh") "Jump user (optional)" else "Proxy user (optional)") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
@@ -2659,6 +2676,12 @@ fun AddServerSheet(
                         if (name.isBlank() || host.isBlank()) { errorText = "Name and host are required."; return@Button }
                         activeTab = 1
                     } else {
+                        // Ports and keep-alive silently fell back to defaults when unparseable,
+                        // which saved a host that connects somewhere the user never typed.
+                        portError(port)?.let { errorText = "SSH port: $it"; return@Button }
+                        if (proxyType != "none" && proxyPort.isNotBlank()) {
+                            portError(proxyPort)?.let { errorText = "Proxy port: $it"; return@Button }
+                        }
                         if (authType != "profile" && user.isBlank()) { errorText = "SSH username is required."; return@Button }
                         if (authType == "profile" && selectedProfileId == null) { errorText = "Select a credential profile."; return@Button }
                         if (authType == "key" && selectedKey.isBlank()) { errorText = "Select a key."; return@Button }

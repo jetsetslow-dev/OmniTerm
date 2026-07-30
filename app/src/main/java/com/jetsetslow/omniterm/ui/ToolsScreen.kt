@@ -65,6 +65,36 @@ private fun alertMetricUnit(metricName: String, system: MeasurementSystem): Stri
     else -> "%"
 }
 
+/**
+ * Validates a typed alert threshold, in the unit currently shown to the user.
+ *
+ * Returns null when [input] is a usable threshold, otherwise the reason to surface on the field.
+ * Percentage metrics are capped at 100 because a rule above it can never fire.
+ */
+internal fun alertThresholdError(
+    input: String,
+    metricName: String,
+    system: MeasurementSystem,
+): String? {
+    val trimmed = input.trim()
+    if (trimmed.isEmpty()) return "Enter a threshold value"
+    val value = trimmed.toFloatOrNull() ?: return "Enter a number"
+    if (!value.isFinite()) return "Enter a number"
+    return when (metricName) {
+        "Latency" -> if (value <= 0f) "Must be greater than 0 ms" else null
+        "Temperature" -> {
+            // Compare in Celsius so the bound holds in either unit system.
+            val celsius = displayTemperatureToCelsius(value, system)
+            if (celsius <= -273.15f) "Below absolute zero" else null
+        }
+        else -> when {
+            value < 0f -> "Must be 0 or more"
+            value > 100f -> "Must be 100 or less"
+            else -> null
+        }
+    }
+}
+
 private fun alertMetricDisplay(
     metricName: String,
     canonicalValue: Float,
@@ -739,6 +769,9 @@ fun AlertsToolView(viewModel: AppViewModel) {
         var severitySelect by remember(existing) { mutableStateOf(existing?.severity ?: "CRITICAL") }
         var windowSelect by remember(existing) { mutableStateOf(existing?.triggerWindow ?: "5m") }
         var notesInput by remember(existing) { mutableStateOf(existing?.notes ?: "") }
+        // A rule whose threshold silently fell back to a default is a rule that never fires when the
+        // user expects it to, so refuse to save instead of guessing.
+        val thresholdError = alertThresholdError(threshInput, metricSelect, measurementSystem)
 
         AlertDialog(
             onDismissRequest = { showCreateRuleDialog = false; editRule = null },
@@ -801,6 +834,9 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         onValueChange = { threshInput = it },
                         label = { Text("Threshold value (${alertMetricUnit(metricSelect, measurementSystem)})") },
                         modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                        isError = thresholdError != null,
+                        supportingText = thresholdError?.let { { Text(it) } },
                     )
                     Text(stringResource(R.string.trigger_window_label))
                     @OptIn(ExperimentalLayoutApi::class)
@@ -821,9 +857,9 @@ fun AlertsToolView(viewModel: AppViewModel) {
             },
             confirmButton = {
                 Button(
-                    enabled = selectedSrvIds.isNotEmpty(),
+                    enabled = selectedSrvIds.isNotEmpty() && thresholdError == null,
                     onClick = {
-                        val enteredThreshold = threshInput.toFloatOrNull() ?: 80f
+                        val enteredThreshold = threshInput.trim().toFloatOrNull() ?: return@Button
                         val thresh = if (metricSelect == "Temperature") {
                             displayTemperatureToCelsius(enteredThreshold, measurementSystem)
                         } else {
@@ -1476,6 +1512,8 @@ private fun PingTab(viewModel: AppViewModel) {
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
         )
+        // 0 is meaningful here (ping until stopped), so the floor is 0 rather than 1.
+        val pingTriesError = countError(pingTries, min = 0, max = 9_999)
         OutlinedTextField(
             value = pingTries,
             onValueChange = { pingTries = it.filter { c -> c.isDigit() }.take(4) },
@@ -1483,14 +1521,20 @@ private fun PingTab(viewModel: AppViewModel) {
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+            isError = pingTriesError != null,
+            supportingText = pingTriesError?.let { { Text(it) } },
         )
         Button(
             onClick = {
                 if (viewModel.pingRunning) viewModel.stopPing()
-                else viewModel.startPing(viewModel.portScannerTarget, pingTries.toIntOrNull() ?: 4)
+                else viewModel.startPing(
+                    viewModel.portScannerTarget,
+                    pingTries.trim().toIntOrNull() ?: return@Button,
+                )
             },
             modifier = Modifier.fillMaxWidth(),
-            enabled = viewModel.pingRunning || viewModel.portScannerTarget.isNotBlank(),
+            enabled = viewModel.pingRunning ||
+                (viewModel.portScannerTarget.isNotBlank() && pingTriesError == null),
         ) {
             if (viewModel.pingRunning) {
                 CircularProgressIndicator(modifier = Modifier.size(16.dp), color = Color.White, strokeWidth = 2.dp)
@@ -1775,6 +1819,10 @@ private fun WolTab(viewModel: AppViewModel) {
         var ipAddress by remember(target, prefill) { mutableStateOf(target?.ipAddress ?: prefill?.ip ?: "") }
         var port by remember(target, prefill) { mutableStateOf((target?.port ?: 9).toString()) }
         var notes by remember(target, prefill) { mutableStateOf(target?.notes ?: "") }
+        // A malformed MAC makes the magic packet unroutable, and a blank port used to fall back to 9
+        // silently -- both save a target that simply never wakes the machine.
+        val macError = macAddressError(mac)
+        val wolPortError = portError(port)
         fun dismissEditor() {
             showAddWol = false
             editingTarget = null
@@ -1787,24 +1835,42 @@ private fun WolTab(viewModel: AppViewModel) {
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text(stringResource(R.string.machine_name)) }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = mac, onValueChange = { mac = it }, label = { Text(stringResource(R.string.mac_address_target)) }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(
+                        value = mac,
+                        onValueChange = { mac = it },
+                        label = { Text(stringResource(R.string.mac_address_target)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        isError = mac.isNotEmpty() && macError != null,
+                        supportingText = macError?.takeIf { mac.isNotEmpty() }?.let { { Text(it) } },
+                    )
                     OutlinedTextField(value = broadcastIp, onValueChange = { broadcastIp = it }, label = { Text(stringResource(R.string.broadcast_ip_network_segment)) }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
                     OutlinedTextField(value = ipAddress, onValueChange = { ipAddress = it }, label = { Text(stringResource(R.string.host_ip_address_for_online_status)) }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone), singleLine = true)
-                    OutlinedTextField(value = port, onValueChange = { port = it.filter { c -> c.isDigit() } }, label = { Text(stringResource(R.string.udp_port)) }, modifier = Modifier.fillMaxWidth(), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), singleLine = true)
+                    OutlinedTextField(
+                        value = port,
+                        onValueChange = { port = it.filter { c -> c.isDigit() } },
+                        label = { Text(stringResource(R.string.udp_port)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        isError = wolPortError != null,
+                        supportingText = wolPortError?.let { { Text(it) } },
+                    )
                     OutlinedTextField(value = notes, onValueChange = { notes = it }, label = { Text(stringResource(R.string.notes)) }, modifier = Modifier.fillMaxWidth(), minLines = 2)
                 }
             },
             confirmButton = {
                 Button(
                     onClick = {
+                        val wolPort = port.trim().toIntOrNull() ?: return@Button
                         if (target == null) {
-                            viewModel.addWolTarget(name, mac, broadcastIp, ipAddress, port.toIntOrNull() ?: 9, notes)
+                            viewModel.addWolTarget(name, mac, broadcastIp, ipAddress, wolPort, notes)
                         } else {
-                            viewModel.updateWolTarget(target, name, mac, broadcastIp, ipAddress, port.toIntOrNull() ?: 9, notes)
+                            viewModel.updateWolTarget(target, name, mac, broadcastIp, ipAddress, wolPort, notes)
                         }
                         dismissEditor()
                     },
-                    enabled = name.isNotBlank() && mac.isNotBlank() && broadcastIp.isNotBlank(),
+                    enabled = name.isNotBlank() && broadcastIp.isNotBlank() &&
+                        macError == null && wolPortError == null,
                 ) {
                     Text(if (target == null) "Add configuration" else "Save changes")
                 }
@@ -4177,7 +4243,13 @@ private class TierFields(t: MetricTiers) {
 }
 
 @Composable
-private fun ScoreField(label: String, value: String, modifier: Modifier = Modifier, onValue: (String) -> Unit) {
+private fun ScoreField(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    error: String? = null,
+    onValue: (String) -> Unit,
+) {
     OutlinedTextField(
         value = value,
         onValueChange = { onValue(it.filter { ch -> ch.isDigit() || ch == '.' }) },
@@ -4185,7 +4257,35 @@ private fun ScoreField(label: String, value: String, modifier: Modifier = Modifi
         singleLine = true,
         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
         modifier = modifier.width(82.dp),
+        isError = error != null,
     )
+}
+
+/**
+ * Per-field errors for one metric's scoring tiers.
+ *
+ * Thresholds for percentage metrics are capped at 100; latency is milliseconds so it only has to be
+ * positive. Penalties are points off a 100-point score, so they cannot exceed 100. Tiers must also
+ * ascend (warn <= high <= critical) or the higher tiers are unreachable.
+ */
+private class TierErrors(f: TierFields, isPercent: Boolean) {
+    val warn = if (isPercent) percentError(f.warn) else countError(f.warn, min = 1, max = 600_000)
+    val high = if (isPercent) percentError(f.high) else countError(f.high, min = 1, max = 600_000)
+    val crit = if (isPercent) percentError(f.crit) else countError(f.crit, min = 1, max = 600_000)
+    val warnPen = percentError(f.warnPen)
+    val highPen = percentError(f.highPen)
+    val critPen = percentError(f.critPen)
+
+    /** Non-null when the three thresholds are individually valid but out of order. */
+    val order: String? = run {
+        val w = f.warn.trim().toFloatOrNull()
+        val h = f.high.trim().toFloatOrNull()
+        val c = f.crit.trim().toFloatOrNull()
+        if (w == null || h == null || c == null) null
+        else if (w > h || h > c) "Thresholds must increase: warn <= high <= crit" else null
+    }
+
+    val firstError: String? = warn ?: high ?: crit ?: warnPen ?: highPen ?: critPen ?: order
 }
 
 /** Dedicated Tools section hosting the health-scoring editor. */
@@ -4223,28 +4323,38 @@ private fun HealthScoringCard(viewModel: AppViewModel) {
                 fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
+            val cpuErrors = TierErrors(cpu, isPercent = true)
+            val memErrors = TierErrors(mem, isPercent = true)
+            val diskErrors = TierErrors(disk, isPercent = true)
+            val latErrors = TierErrors(lat, isPercent = false)
+            val scoringError = cpuErrors.firstError ?: memErrors.firstError
+                ?: diskErrors.firstError ?: latErrors.firstError
+
             @Composable
-            fun block(name: String, unit: String, f: TierFields) {
+            fun block(name: String, unit: String, f: TierFields, e: TierErrors) {
                 Text("$name · threshold ($unit) then penalty", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ScoreField("warn ≥", f.warn) { f.warn = it }
-                    ScoreField("high ≥", f.high) { f.high = it }
-                    ScoreField("crit ≥", f.crit) { f.crit = it }
+                    ScoreField("warn ≥", f.warn, error = e.warn ?: e.order) { f.warn = it }
+                    ScoreField("high ≥", f.high, error = e.high ?: e.order) { f.high = it }
+                    ScoreField("crit ≥", f.crit, error = e.crit ?: e.order) { f.crit = it }
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    ScoreField("-pts", f.warnPen) { f.warnPen = it }
-                    ScoreField("-pts", f.highPen) { f.highPen = it }
-                    ScoreField("-pts", f.critPen) { f.critPen = it }
+                    ScoreField("-pts", f.warnPen, error = e.warnPen) { f.warnPen = it }
+                    ScoreField("-pts", f.highPen, error = e.highPen) { f.highPen = it }
+                    ScoreField("-pts", f.critPen, error = e.critPen) { f.critPen = it }
+                }
+                e.firstError?.let {
+                    Text(it, color = OmniColors.red, fontSize = 11.sp)
                 }
             }
 
-            block("CPU", "%", cpu)
-            block("Memory", "%", mem)
-            block("Disk", "%", disk)
-            block("Latency", "ms", lat)
+            block("CPU", "%", cpu, cpuErrors)
+            block("Memory", "%", mem, memErrors)
+            block("Disk", "%", disk, diskErrors)
+            block("Latency", "ms", lat, latErrors)
 
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = {
+                Button(enabled = scoringError == null, onClick = {
                     confirm.ask(
                         "Save scoring config?",
                         "Replace the current health-scoring thresholds and penalties? Health scores for all hosts will be recalculated with the new values.",
@@ -4626,6 +4736,14 @@ private fun TunnelEditorDialog(
     var serverMenu by remember { mutableStateOf(false) }
     var kindMenu by remember { mutableStateOf(false) }
 
+    // savePortForward() rejects these too, but surfacing them on the fields keeps Save disabled
+    // instead of letting a tap fail. A dynamic (SOCKS) forward has no destination.
+    val bindPortError = portError(bindPort)
+    val destPortError = if (kind == "dynamic") null else portError(destPort)
+    val destHostError = if (kind == "dynamic" || destHost.isNotBlank()) null else "Required"
+    val tunnelValid = name.isNotBlank() && bindPortError == null &&
+        destPortError == null && destHostError == null
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (existing == null) "New tunnel" else "Edit tunnel") },
@@ -4668,12 +4786,38 @@ private fun TunnelEditorDialog(
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(value = bindHost, onValueChange = { bindHost = it }, label = { Text(if (kind == "remote") "Remote bind host" else "Bind host") }, singleLine = true, modifier = Modifier.weight(1.4f))
-                    OutlinedTextField(value = bindPort, onValueChange = { bindPort = it.filter(Char::isDigit).take(5) }, label = { Text(stringResource(R.string.port)) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                    OutlinedTextField(
+                        value = bindPort,
+                        onValueChange = { bindPort = it.filter(Char::isDigit).take(5) },
+                        label = { Text(stringResource(R.string.port)) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.weight(1f),
+                        isError = bindPortError != null,
+                        supportingText = bindPortError?.let { { Text(it) } },
+                    )
                 }
                 if (kind != "dynamic") {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        OutlinedTextField(value = destHost, onValueChange = { destHost = it }, label = { Text(stringResource(R.string.dest_host)) }, singleLine = true, modifier = Modifier.weight(1.4f))
-                        OutlinedTextField(value = destPort, onValueChange = { destPort = it.filter(Char::isDigit).take(5) }, label = { Text(stringResource(R.string.port)) }, singleLine = true, keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number), modifier = Modifier.weight(1f))
+                        OutlinedTextField(
+                            value = destHost,
+                            onValueChange = { destHost = it },
+                            label = { Text(stringResource(R.string.dest_host)) },
+                            singleLine = true,
+                            modifier = Modifier.weight(1.4f),
+                            isError = destHostError != null,
+                            supportingText = destHostError?.let { { Text(it) } },
+                        )
+                        OutlinedTextField(
+                            value = destPort,
+                            onValueChange = { destPort = it.filter(Char::isDigit).take(5) },
+                            label = { Text(stringResource(R.string.port)) },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.weight(1f),
+                            isError = destPortError != null,
+                            supportingText = destPortError?.let { { Text(it) } },
+                        )
                     }
                 }
                 Text(
@@ -4699,16 +4843,16 @@ private fun TunnelEditorDialog(
             }
         },
         confirmButton = {
-            Button(onClick = {
+            Button(enabled = tunnelValid, onClick = {
                 val pf = PortForwardEntity(
                     id = existing?.id ?: 0,
                     serverId = serverId,
                     name = name.trim(),
                     kind = kind,
                     bindHost = bindHost.trim().ifBlank { "127.0.0.1" },
-                    bindPort = bindPort.toIntOrNull() ?: 0,
+                    bindPort = bindPort.trim().toIntOrNull() ?: return@Button,
                     destHost = destHost.trim(),
-                    destPort = destPort.toIntOrNull() ?: 0,
+                    destPort = destPort.trim().toIntOrNull() ?: 0,
                     autoStart = autoStart,
                 )
                 viewModel.savePortForward(pf) { err ->
