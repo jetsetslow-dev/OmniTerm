@@ -698,6 +698,9 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
     }
     scaleTarget?.let { target ->
         var replicas by remember(target) { mutableStateOf(target.service.running.coerceAtLeast(1).toString()) }
+        // Scaling to 0 is a legitimate way to stop a service, so the floor is 0. An empty field used
+        // to silently re-send the current count, making Scale look like it did nothing.
+        val replicasError = countError(replicas, min = 0, max = 999)
         AlertDialog(
             onDismissRequest = { scaleTarget = null },
             title = { Text("Scale ${target.service.name}") },
@@ -709,10 +712,13 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                     singleLine = true,
                     colors = omniTextFieldColors(),
                     modifier = Modifier.fillMaxWidth(),
+                    isError = replicasError != null,
+                    supportingText = replicasError?.let { { Text(it) } },
                 )
             },
             confirmButton = {
                 TextButton(
+                    enabled = replicasError == null,
                     onClick = {
                         viewModel.dockerStackServiceAction(
                             target.stack.name,
@@ -720,7 +726,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                             target.stack.configFiles,
                             target.service.name,
                             "scale",
-                            replicas.toIntOrNull() ?: target.service.running.coerceAtLeast(1),
+                            replicas.trim().toIntOrNull() ?: return@TextButton,
                             runtime = target.stack.runtime,
                         )
                         scaleTarget = null
