@@ -182,6 +182,12 @@ migration matrix. Robolectric's Android 15 native runtime is unavailable on Linu
 specific classes are deferred to the required x86_64 PR check there; platform-neutral logic remains
 covered locally by ordinary JVM tests.
 
+An emulator is sufficient for the migration matrix — no physical device is needed. Required CI runs
+it on API 29 (an older SQLite platform, and cheap on runners without KVM). On a KVM-capable x86_64
+machine it is worth also running it against an **API 35** AVD, which covers the modern end of the
+supported range. API 35 is currently the newest level that boots: emulator 37.1.11 crash-loops on
+any API 36+ image, so Android 16/17 can be compiled and targeted but not yet emulated.
+
 Contributors should also read [CONTRIBUTING.md](CONTRIBUTING.md) and the
 [AI-first development policy](AI_FIRST_DEVELOPMENT.md); maintainers should use
 the [release runbook](docs/RELEASE_RUNBOOK.md) and

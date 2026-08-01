@@ -88,7 +88,15 @@ data class ServerEntity(
     val authError: String? = null
 )
 
-@Entity(tableName = "metric_history")
+// Indexed on (serverId, timestamp) because every read path groups or filters by exactly that pair:
+// getLatestMetricsForAllServers() groups by serverId to find MAX(timestamp), then re-probes the
+// table per matched row to break ties. Unindexed those become repeated full scans, and the cost
+// grows with retained history (7 days by default) rather than with fleet size. Measured on an
+// emulator at 150k rows: 469s before the index, 0.008s after.
+@Entity(
+    tableName = "metric_history",
+    indices = [Index(value = ["serverId", "timestamp"])],
+)
 data class MetricHistoryEntity(
     @PrimaryKey(autoGenerate = true) val id: Int = 0,
     val serverId: Int,

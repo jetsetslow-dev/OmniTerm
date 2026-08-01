@@ -7,11 +7,17 @@ GRADLEW="${OMNITERM_GRADLEW:-$ROOT/gradlew}"
 # CodeQL instrumentation and Compose/Kotlin compilation need more compiler headroom than the
 # environment-neutral defaults in gradle.properties. Keep these limits CI-local: 4 GiB for Gradle
 # and the Kotlin daemon still leaves ample space for CodeQL on a standard 16 GiB hosted runner.
+#
+# --max-workers matches the runner's vCPU count. This repository is public, and since 2023-12-01
+# GitHub's standard Linux runners for public repositories are 4 vCPU / 16 GiB (private repos stay
+# at 2 vCPU / 8 GiB). The previous value of 2 predated that change and left half the CPU idle.
+# scripts/test-ci-gradle-gate.sh asserts this exact argument list, and scripts/local-pr-check.sh
+# mirrors it — change all three together.
 COMMON_ARGS=(
   --no-daemon
   --no-build-cache
   --no-configuration-cache
-  --max-workers=2
+  --max-workers=4
   "-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8"
   -Pkotlin.daemon.jvmargs=-Xmx4g
   -Domniterm.publishScan=true

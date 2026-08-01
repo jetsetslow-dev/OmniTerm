@@ -32,6 +32,30 @@ import kotlinx.coroutines.withTimeout
 /** Bound on every widget data load, so a slow database can never wedge the launcher's binder call. */
 private const val WIDGET_LOAD_TIMEOUT_MS = 8_000L
 
+/**
+ * Run a widget render and classify its outcome: returns the failure to report, or null on success.
+ *
+ * The ordering of these catches is the contract, not an implementation detail.
+ * [TimeoutCancellationException] IS a [CancellationException], so a handler that checks
+ * `CancellationException` first swallows the render timeout as if the caller had been cancelled.
+ * In a coroutine that means silent termination -- no crash and no log -- so any code after the call
+ * (finishing an Activity, clearing a "Saving…" flag) never runs and the UI wedges permanently.
+ *
+ * A timeout is a *recoverable render failure* and must be returned. Genuine cancellation (the
+ * caller's scope going away) must still propagate, or the caller would keep working after teardown.
+ */
+internal suspend fun runWidgetRender(block: suspend () -> Unit): Throwable? =
+    try {
+        block()
+        null
+    } catch (timeout: TimeoutCancellationException) {
+        timeout
+    } catch (cancelled: CancellationException) {
+        throw cancelled
+    } catch (failure: Throwable) {
+        failure
+    }
+
 /** One widget row: the host plus its freshest persisted telemetry (may be null/stale). */
 internal data class WidgetServerRow(
     val server: ServerEntity,

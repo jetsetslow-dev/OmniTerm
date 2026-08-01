@@ -23,7 +23,7 @@ cat >"$COMMON_EXPECTED" <<'EOF'
 --no-daemon
 --no-build-cache
 --no-configuration-cache
---max-workers=2
+--max-workers=4
 -Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
 -Pkotlin.daemon.jvmargs=-Xmx4g
 -Domniterm.publishScan=true

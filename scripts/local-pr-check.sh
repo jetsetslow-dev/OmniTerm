@@ -61,19 +61,19 @@ git diff --check
 GRADLE_ARGS=(
   --no-daemon
   --no-configuration-cache
-  --max-workers=2
   -Pomniterm.lowResourceBuild=false
 )
 
 if [[ "$LINUX_ARM64" == "true" ]]; then
   # Stay inside a Raspberry Pi-class host's memory budget. build.gradle.kts automatically excludes
   # only the Robolectric classes whose native runtime is unavailable on Linux ARM64.
-  GRADLE_ARGS+=("-Dorg.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8")
+  GRADLE_ARGS+=(--max-workers=2 "-Dorg.gradle.jvmargs=-Xmx2g -Dfile.encoding=UTF-8")
   echo "Robolectric native-runtime classes: unsupported on Linux ARM64; deferred to x86_64 CI"
 else
-  # Match the hosted PR/release test gate. The 2 GiB default has previously made coroutine-heavy
-  # Robolectric tests miss their wall-clock budgets under GC pressure.
-  GRADLE_ARGS+=("-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8")
+  # Match the hosted PR/release test gate (scripts/ci-gradle-gate.sh): 4 workers and 4 GiB, the
+  # shape of a public-repo standard runner (4 vCPU / 16 GiB). The 2 GiB default has previously made
+  # coroutine-heavy Robolectric tests miss their wall-clock budgets under GC pressure.
+  GRADLE_ARGS+=(--max-workers=4 "-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8")
 fi
 
 ./gradlew \

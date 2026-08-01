@@ -58,3 +58,7 @@ test.txt
 *.keystore
 *.base64
 *.b64
+
+# Generated SSH keys for the local test fleet (scripts/test-hosts.sh)
+/scripts/test-hosts/keys/
+/scripts/test-hosts/.env
