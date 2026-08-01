@@ -62,16 +62,29 @@ guarantee that the repository has not changed.
 | IOS-005 | Implemented | Each dependency PR still runs forced-refresh verification and release SBOM gates. |
 | IOS-010–013 | Implemented foundation | Continue moving reusable regression tests into common tests. |
 | IOS-020–021 | Implemented foundation | Wire production adapters incrementally at platform roots. |
+| IOS-030 | Portable store implemented | `TerminalStore` runs the full session state machine against a fake transport; Android `AppViewModel` adoption and a real SSH adapter remain. |
 | IOS-031 | Portable store implemented | App integration depends on the IOS-030 terminal/session split. |
+| IOS-032 | Portable store implemented | `FilesStore` owns navigation, the transfer queue, conflicts, and cancellation; platform `LocalFileGateway` implementations remain. |
 | IOS-033 | Portable stores implemented | Repository wiring remains platform composition work. |
 | IOS-040 | Audit complete | `IOS_ROOM_KMP_AUDIT.md` keeps movement blocked by migration evidence. |
+| IOS-041, IOS-042 | Not started | Blocked by IOS-040: no Room code moves before every unsupported API has a replacement and full migration evidence. |
 | IOS-050 | Shared Ktor/WebDAV implemented | Android/iOS deterministic TLS server tests precede production replacement. |
+| IOS-051 – IOS-053 | Not started | Engine selection is a macOS/device spike with its own ADR; the shared contracts and host-key trust policy are ready for it. |
+| IOS-052 (trust policy) | Portable half implemented | `HostKeyTrust` enforces strict first-use, changed-key, and malformed-key rules; engine integration remains. |
+| IOS-054, IOS-064, IOS-100 | Not started | Requires the project owner's written decision and an ADR before any implementation. |
+| IOS-060 | Portable half implemented | `SecretVault` owns namespacing, the authentication gate, and typed failures; Keychain/Keystore adapters and locked-device tests remain. |
 | IOS-061 | Adapter/policy implemented | IOS-060 secure storage and physical Face ID tests remain. |
-| IOS-062 | Contracts/policies only | Production picker adapter depends on excluded IOS-032 orchestration. |
+| IOS-062 | Contracts/policies only | Production picker adapter depends on the platform half of IOS-032. |
 | IOS-063 | Adapter/routing policy implemented | Device permission/tap reconciliation and store wiring remain. |
+| IOS-065 | Portable half implemented | Secret-free snapshot, masking, staleness, and reload policy are shared; WidgetKit timelines and the App Group container remain. |
 | IOS-070, IOS-080 | Shell/facade implemented | Xcode launch/test and generated-header review run on macOS. |
+| IOS-071 – IOS-074 | Not started | Requires an Xcode gate; no iOS screen may be claimed from a Linux compile. |
 | IOS-081 | Implemented foundation | Crash-report integration remains optional and consent-gated. |
-| IOS-093 | Manifest/checklist implemented | Signed archive validation requires IOS-091 security review. |
+| IOS-090 | Matrix published | `IOS_TEST_MATRIX.md` records executed rows and every deferred Apple-runtime row. |
+| IOS-091 | Partial review published | `IOS_SECURITY_REVIEW.md` closes 14 findings in shared code; nine areas stay open pending Apple-runtime and SSH decisions. |
+| IOS-092 | Portable half implemented | Bounded validation, import planning, and atomic apply are shared; the real backup file format binding remains. |
+| IOS-093 | Manifest/checklist implemented | Signed archive validation requires the remaining IOS-091 open items. |
+| IOS-094 | Not started | Depends on IOS-090/091/093 exit criteria. |
 
 ## 3. Complexity and risk scale
 
