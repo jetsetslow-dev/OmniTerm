@@ -113,3 +113,19 @@ These are unchanged by the iOS work and remain the responsibility of the existin
 - Room migration matrix on API 29 (required CI) and API 35 (local, KVM host).
 - Robolectric native-runtime classes: excluded on Linux ARM64, exercised on x86_64 CI.
 - Release SBOM generation for both `playStoreRelease` and `openSourceRelease` graphs.
+
+### Executed on this branch (2026-08-02, `omniterm-api35` AVD, API 35)
+
+The Android app was built, installed and exercised from the iOS branch to confirm the shared-module
+moves did not regress it:
+
+| Check | Result |
+|---|---|
+| `:app:assembleOpenSourceDebug` | builds |
+| Install + launch on API 35 | launches, holds focus, process survives |
+| Fleet / Monitor / Files / Tools navigation | every tab renders content, no crash and no ANR in `logcat -b crash,main` |
+| `connectedOpenSourceDebugAndroidTest` filtered to `com.jetsetslow.omniterm.data` | 6 tests, 0 failures, 0 skipped — including `everyExportedSchemaFromVersionEightMigratesToCurrent`, the full v8-to-current migration walk |
+
+A screenshot of the running app is intentionally black: `MainActivity` sets `FLAG_SECURE`, so
+`screencap` cannot capture it. The view hierarchy was dumped with `uiautomator` instead, which is
+how the rendered content above was confirmed. API 29 remains the required CI gate.
