@@ -3,7 +3,7 @@
 This document records what has actually been executed for the iOS port and what is deferred, per
 `AGENTS.md`: a suite is never reported as passing when a target, class, or platform was excluded.
 
-Last updated: 2026-08-01, on branch `feature/ios-compose-port`.
+Last updated: 2026-08-02, on branch `feature/ios-compose-port`.
 
 ## 1. Host used for the recorded runs
 
@@ -19,7 +19,7 @@ Last updated: 2026-08-01, on branch `feature/ios-compose-port`.
 
 | Suite | Command | Result |
 |---|---|---|
-| Shared common tests on the JVM host | `./gradlew :shared:allTests` | 112 tests, 0 failures |
+| Shared common tests on the JVM host | `./gradlew :shared:allTests` | 134 tests, 0 failures |
 | Apple-target compilation of `commonMain`/`commonTest`/`iosMain` | `:shared:compileKotlinIosSimulatorArm64`, `:shared:compileKotlinIosArm64`, `:shared:compileTestKotlinIosSimulatorArm64` | compiles to klib, including every Keychain/UIKit/Foundation adapter |
 | Android unit tests (both flavors) | `./scripts/local-pr-check.sh --full` | see the PR/preflight log for the exact head |
 | Android lint (both flavors) | `./scripts/local-pr-check.sh --full` | as above |
@@ -42,11 +42,15 @@ Shared coverage executed on the JVM host:
 | Terminal paste policy (portable half of IOS-073) | `TerminalPastePolicyTest` | Android's `BracketedPastePayloadTest` fixtures, single-Enter detection, code-point prefix never splitting a surrogate pair, large-paste threshold |
 | Widget container payload (IOS-065) | `WidgetSnapshotCodecTest` | round trip, empty fleet, a host name containing the delimiters cannot forge a row, truncated/wrong-version payloads decode to null |
 | SSH adapter conformance kit (IOS-051/052) | `SshAdapterConformanceSelfTest` | the suite itself: a compliant fake passes; an adapter that opens a shell for an unreachable host, or presents a malformed key, fails |
+| iOS host store (IOS-042) | `HostRecordCodecTest`, `FileBackedHostRepositoryTest` | escaped round trip, a crafted name cannot forge a record, a corrupt file refuses to load rather than reading as an empty fleet, a failed write is reported and rolled back, ids never restart |
+| Background grace (IOS-064) | `BackgroundSessionPolicyTest` | foreground inside the grace keeps the connection, expiry detaches tmux and keeps it resumable with the local shell closed, a non-tmux session is warned rather than silently detached |
+| Terminal grid arithmetic (IOS-072) | `TerminalGridMetricsTest` | wide CJK/emoji glyphs count two columns, crafted widths are clamped, only visible rows plus one overscan row are drawn from a 50k-line buffer |
+| Share protocol capability (IOS-054) | `NetworkShareCapabilityTest` | Android keeps all three, iOS ships WebDAV and declares SMB/FTP unavailable with a reason, the guard never lets an unsupported operation run or report success |
+| Earlier foundation work | `TerminalPortabilityTest`, `RefreshStoreTest`, `SafetyPoliciesTest`, `RedactionTest`, `PlatformServicesTest`, `WebDavMultistatusParserTest`, `OmniTermSharedTest` | see IOS-010 – IOS-021 |
 
 `SshAdapterConformance` is the acceptance harness IOS-052 asks for. It runs today only against a
 fake, which proves the harness — **not** any SSH implementation. Each platform's test source set
 runs it against its own adapter once one exists.
-| Earlier foundation work | `TerminalPortabilityTest`, `RefreshStoreTest`, `SafetyPoliciesTest`, `RedactionTest`, `PlatformServicesTest`, `WebDavMultistatusParserTest`, `OmniTermSharedTest` | see IOS-010 – IOS-021 |
 
 Where Android already implements a behavior, the shared code is a port of it rather than a fresh
 design, and the Android test fixtures are reused so a divergence fails here instead of quietly
