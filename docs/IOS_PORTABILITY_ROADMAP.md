@@ -67,16 +67,19 @@ guarantee that the repository has not changed.
 | IOS-032 | Portable store implemented | `FilesStore` owns navigation, the transfer queue, conflicts, and cancellation; platform `LocalFileGateway` implementations remain. |
 | IOS-033 | Portable stores implemented | Repository wiring remains platform composition work. |
 | IOS-040 | Audit complete | `IOS_ROOM_KMP_AUDIT.md` keeps movement blocked by migration evidence. |
-| IOS-041, IOS-042 | Not started | Blocked by IOS-040: no Room code moves before every unsupported API has a replacement and full migration evidence. |
+| IOS-041 | Not started | Blocked by IOS-040: no Room code moves before every unsupported API has a replacement and full migration evidence. Adding the Room KMP artifacts also requires the checksum regeneration workflow, and the move must be proven on the API 29/35 migration matrices. |
+| IOS-042 | Location/protection implemented | `IosDatabaseLocation` puts the database in Application Support with `NSFileProtectionComplete` and backup exclusion covering the WAL/SHM siblings. The builder itself waits on IOS-041. |
 | IOS-050 | Shared Ktor/WebDAV implemented | Android/iOS deterministic TLS server tests precede production replacement. |
-| IOS-051 – IOS-053 | Not started | Engine selection is a macOS/device spike with its own ADR; the shared contracts and host-key trust policy are ready for it. |
+| IOS-051 – IOS-053 | Harness ready, engine not selected | `SshAdapterConformance` is the reusable acceptance suite an engine must pass, and `IosKeychainKnownHostsStore` persists trust. Choosing the engine is still a macOS/device spike with its own ADR; no library has been added. |
 | IOS-052 (trust policy) | Portable half implemented | `HostKeyTrust` enforces strict first-use, changed-key, and malformed-key rules; engine integration remains. |
+| IOS-060 (platform half) | Implemented | `IosKeychainSecretStorage`: generic-password items, `ThisDeviceOnly` accessibility, update-before-add, typed OSStatus mapping. Compiles for both iOS targets; locked-device behavior is an iOS-runtime gate. |
+| IOS-062 (platform half) | Implemented | `IosLocalFileGateway` (container-rooted transfers with `KeepBoth` naming and partial cleanup) and `IosExternalViewer`. The document picker still needs a view controller and stays with IOS-070. |
 | IOS-054, IOS-064, IOS-100 | Not started | Requires the project owner's written decision and an ADR before any implementation. |
 | IOS-060 | Portable half implemented | `SecretVault` owns namespacing, the authentication gate, and typed failures; Keychain/Keystore adapters and locked-device tests remain. |
 | IOS-061 | Adapter/policy implemented | IOS-060 secure storage and physical Face ID tests remain. |
 | IOS-062 | Contracts/policies only | Production picker adapter depends on the platform half of IOS-032. |
 | IOS-063 | Portable half implemented | Alert notification content, the `omniterm://` link shapes, launch-request validation, and the lock-gated launch queue are ported from Android; permission prompts and delivered-notification reconciliation remain platform work. |
-| IOS-065 | Portable half implemented | Snapshot rows now carry the same text Android renders; WidgetKit timelines and the App Group container remain. |
+| IOS-065 | Portable half + container writer implemented | Snapshot rows carry the same text Android renders, `WidgetSnapshotCodec` is the escaped container payload, and `IosAppGroupWidgetPublisher` writes it only when the displayed data changes. The WidgetKit timeline provider and its entitlement remain Xcode work. |
 | IOS-070, IOS-080 | Shell/facade implemented | Xcode launch/test and generated-header review run on macOS. |
 | IOS-071, IOS-072, IOS-074 | Not started | Requires an Xcode gate; no iOS screen or renderer may be claimed from a Linux compile. |
 | IOS-073 | Portable half implemented | Read-only enforcement lives below the UI in `TerminalStore`; bracketed paste, single-Enter detection, and the large-paste threshold moved into `:shared`. Keyboard, IME, and VoiceOver behavior remain an Xcode gate. |

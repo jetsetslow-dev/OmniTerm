@@ -19,8 +19,8 @@ Last updated: 2026-08-01, on branch `feature/ios-compose-port`.
 
 | Suite | Command | Result |
 |---|---|---|
-| Shared common tests on the JVM host | `./gradlew :shared:allTests` | 95 tests, 0 failures |
-| Apple-target compilation of `commonMain`/`commonTest`/`iosMain` | `:shared:compileKotlinIosSimulatorArm64`, `:shared:compileTestKotlinIosSimulatorArm64` (run as part of `:shared:allTests`) | compiles to klib |
+| Shared common tests on the JVM host | `./gradlew :shared:allTests` | 112 tests, 0 failures |
+| Apple-target compilation of `commonMain`/`commonTest`/`iosMain` | `:shared:compileKotlinIosSimulatorArm64`, `:shared:compileKotlinIosArm64`, `:shared:compileTestKotlinIosSimulatorArm64` | compiles to klib, including every Keychain/UIKit/Foundation adapter |
 | Android unit tests (both flavors) | `./scripts/local-pr-check.sh --full` | see the PR/preflight log for the exact head |
 | Android lint (both flavors) | `./scripts/local-pr-check.sh --full` | as above |
 | Dependency verification, forced refresh | `./scripts/refresh-verification-metadata.sh --verify` | as above |
@@ -40,6 +40,12 @@ Shared coverage executed on the JVM host:
 | Launch routing and deep links (portable half of IOS-063) | `LaunchRoutingTest` | only the two published `omniterm://` shapes parse, unknown host/alert/share/session ids dropped, repeated intents not queued twice, nothing drains while locked or still loading |
 | Session notification payload (`SessionNotificationPayload` port) | `SessionNotificationPayloadTest` | Android's own fixtures: names containing `\|` survive, legacy/blank records rejected |
 | Terminal paste policy (portable half of IOS-073) | `TerminalPastePolicyTest` | Android's `BracketedPastePayloadTest` fixtures, single-Enter detection, code-point prefix never splitting a surrogate pair, large-paste threshold |
+| Widget container payload (IOS-065) | `WidgetSnapshotCodecTest` | round trip, empty fleet, a host name containing the delimiters cannot forge a row, truncated/wrong-version payloads decode to null |
+| SSH adapter conformance kit (IOS-051/052) | `SshAdapterConformanceSelfTest` | the suite itself: a compliant fake passes; an adapter that opens a shell for an unreachable host, or presents a malformed key, fails |
+
+`SshAdapterConformance` is the acceptance harness IOS-052 asks for. It runs today only against a
+fake, which proves the harness — **not** any SSH implementation. Each platform's test source set
+runs it against its own adapter once one exists.
 | Earlier foundation work | `TerminalPortabilityTest`, `RefreshStoreTest`, `SafetyPoliciesTest`, `RedactionTest`, `PlatformServicesTest`, `WebDavMultistatusParserTest`, `OmniTermSharedTest` | see IOS-010 – IOS-021 |
 
 Where Android already implements a behavior, the shared code is a port of it rather than a fresh
@@ -62,6 +68,8 @@ it does not link a framework, run a test binary, or exercise any Apple API.
 | Xcode unit/UI tests for the shell app | macOS + Xcode | IOS-070 |
 | Physical iPhone smoke tests | Apple team, certificate, device | IOS-002 |
 | Keychain behavior: locked device, deletion, replacement, auth failure | iOS runtime | IOS-060 |
+| App Group container read/write from a widget extension | iOS runtime + entitlement | IOS-065 |
+| Application Support protection class and backup exclusion | iOS runtime | IOS-042 |
 | Face ID / LocalAuthentication behavior | physical device | IOS-061 |
 | UserNotifications permission-denied and tap routing | iOS runtime | IOS-063 |
 | WidgetKit timeline, App Group container | iOS runtime | IOS-065 |
