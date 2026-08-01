@@ -13,6 +13,9 @@ import com.jetsetslow.omniterm.shared.platform.PlatformError
 import com.jetsetslow.omniterm.shared.platform.SshAdapter
 import com.jetsetslow.omniterm.shared.platform.SshEndpoint
 import com.jetsetslow.omniterm.shared.platform.SshShell
+import com.jetsetslow.omniterm.ui.TermKey
+import com.jetsetslow.omniterm.ui.terminalGeometryMatches
+import com.jetsetslow.omniterm.ui.terminalKeyAllowedInReadOnly
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -114,10 +117,21 @@ sealed interface TerminalAction {
     data class Focus(val sessionId: String) : TerminalAction
     data class Resize(val sessionId: String, val geometry: TerminalGeometry) : TerminalAction
     data class SetReadOnly(val sessionId: String, val readOnly: Boolean) : TerminalAction
-    /** Routed to [TerminalState.inputSession]; the caller never picks the target. */
+    /** Typed or pasted text, routed to [TerminalState.inputSession]; the caller never picks the target. */
     data class SendInput(val bytes: ByteArray) : TerminalAction {
         override fun equals(other: Any?): Boolean = other is SendInput && bytes.contentEquals(other.bytes)
         override fun hashCode(): Int = bytes.contentHashCode()
+    }
+
+    /**
+     * A non-printable key. Separate from [SendInput] because read-only treats the two differently:
+     * paging is allowed, typing is not.
+     */
+    data class SendKey(val key: TermKey, val encoded: ByteArray) : TerminalAction {
+        override fun equals(other: Any?): Boolean =
+            other is SendKey && key == other.key && encoded.contentEquals(other.encoded)
+
+        override fun hashCode(): Int = 31 * key.hashCode() + encoded.contentHashCode()
     }
 
     data class Disconnect(val sessionId: String) : TerminalAction
@@ -176,7 +190,8 @@ class TerminalStore(
             is TerminalAction.Focus -> mutableState.update { it.copy(focusedSessionId = action.sessionId) }
             is TerminalAction.Resize -> resize(action.sessionId, action.geometry)
             is TerminalAction.SetReadOnly -> updateSession(action.sessionId) { it.copy(readOnly = action.readOnly) }
-            is TerminalAction.SendInput -> sendInput(action.bytes)
+            is TerminalAction.SendInput -> sendInput(action.bytes, key = null)
+            is TerminalAction.SendKey -> sendInput(action.encoded, action.key)
             is TerminalAction.Disconnect -> disconnect(action.sessionId)
             is TerminalAction.LeaveOrBackground -> leaveOrBackground(action.sessionId)
             is TerminalAction.Reconnect -> reconnect(action.sessionId)
@@ -332,10 +347,19 @@ class TerminalStore(
     private suspend fun hydrateHistory(sessionId: String) {
         val loader = historyLoader ?: return
         val session = mutableState.value.session(sessionId) ?: return
-        val geometryAtStart = session.geometryGeneration
+        val captured = session.geometry
+        val capturedGeneration = session.geometryGeneration
         val lines = runCatching { loader.load(session) { } }.getOrNull() ?: return
         val now = mutableState.value.session(sessionId) ?: return
-        if (now.geometryGeneration != geometryAtStart || now.phase != TerminalPhase.Connected) {
+        val sameGrid = terminalGeometryMatches(
+            captured.columns,
+            captured.rows,
+            capturedGeneration,
+            now.geometry.columns,
+            now.geometry.rows,
+            now.geometryGeneration,
+        )
+        if (!sameGrid || now.phase != TerminalPhase.Connected) {
             // A resize (or teardown) won the race. Publishing this scrollback would restore a screen
             // laid out for the old geometry over the live one.
             logger.log(DiagnosticEvent("terminal.history.discarded", mapOf("session" to sessionId)))
@@ -346,11 +370,15 @@ class TerminalStore(
 
     // ── Input, geometry, focus ──
 
-    private fun sendInput(bytes: ByteArray) {
+    /**
+     * Read-only is enforced here, below every UI: no accessory bar, paste, or hardware keyboard
+     * path can reach the remote by bypassing a view. [key] is null for typed/pasted text, which
+     * read-only always refuses; a key is refused unless [terminalKeyAllowedInReadOnly] permits it,
+     * exactly as Android's `sendKey` does.
+     */
+    private fun sendInput(bytes: ByteArray, key: TermKey?) {
         val target = mutableState.value.inputSession ?: return
-        if (target.readOnly) {
-            // Read-only is enforced here, below every UI: no accessory bar, paste, or hardware
-            // keyboard path can reach the remote by bypassing a view.
+        if (target.readOnly && (key == null || !terminalKeyAllowedInReadOnly(key))) {
             logger.log(DiagnosticEvent("terminal.input.blocked", mapOf("session" to target.id)))
             return
         }

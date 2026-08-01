@@ -395,35 +395,9 @@ internal fun classifySshConnectionPhase(raw: String, viaJumpHost: Boolean): SshC
 // TermKey now lives in :shared (com.jetsetslow.omniterm.ui.TermKey) so both platforms encode the
 // same key set. Same package, so call sites are unchanged.
 
-/** Input policy shared by terminal UI implementations, including a future iOS presentation. */
-internal fun terminalKeyAllowedInReadOnly(key: TermKey): Boolean =
-    key == TermKey.PAGE_UP || key == TermKey.PAGE_DOWN
-
-internal enum class TerminalClipboardPasteAction { EMPTY, BLOCKED_READ_ONLY, SEND, CONFIRM }
-
-/** Policy shared by the explicit terminal paste button and its unit tests. */
-internal fun terminalClipboardPasteAction(
-    text: String?,
-    readOnly: Boolean,
-    confirmThreshold: Int = 100,
-): TerminalClipboardPasteAction = when {
-    readOnly -> TerminalClipboardPasteAction.BLOCKED_READ_ONLY
-    text.isNullOrEmpty() -> TerminalClipboardPasteAction.EMPTY
-    text.length > confirmThreshold -> TerminalClipboardPasteAction.CONFIRM
-    else -> TerminalClipboardPasteAction.SEND
-}
-
-/** A tmux history capture is safe to adopt only into the exact grid generation it observed. */
-internal fun terminalGeometryMatches(
-    capturedCols: Int,
-    capturedRows: Int,
-    capturedGeneration: Long,
-    currentCols: Int,
-    currentRows: Int,
-    currentGeneration: Long,
-): Boolean = capturedCols == currentCols &&
-    capturedRows == currentRows &&
-    capturedGeneration == currentGeneration
+// The read-only key policy, clipboard paste policy, and tmux geometry guard added in #69 now live
+// in :shared (com.jetsetslow.omniterm.ui.TerminalInputPolicy) so the iOS terminal enforces the same
+// rules. Same package, so call sites and their Android tests are unchanged.
 
 enum class SftpTransferStatus { InProgress, Success, Failure }
 

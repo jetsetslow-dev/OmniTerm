@@ -11,6 +11,7 @@ import com.jetsetslow.omniterm.shared.platform.SshAdapter
 import com.jetsetslow.omniterm.shared.platform.SshEndpoint
 import com.jetsetslow.omniterm.shared.platform.SshShell
 import com.jetsetslow.omniterm.shared.platform.hostKeyAlias
+import com.jetsetslow.omniterm.ui.TermKey
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -302,6 +303,63 @@ class TerminalStoreTest {
         terminal.dispatch(TerminalAction.SendInput("ls\n".encodeToByteArray()))
         advanceUntilIdle()
         assertEquals("ls\n", ssh.shells.single().sent.single().decodeToString())
+        terminal.close()
+    }
+
+    @Test
+    fun readOnlyStillAllowsPagingSoAPagerCanBeScrolled() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val hosts = MemoryKnownHosts().apply { entries[hostKeyAlias(endpoint("a.example"))] = ED25519 }
+        val ssh = FakeSsh()
+        val terminal = store(scope, ssh, hosts)
+
+        terminal.dispatch(TerminalAction.Connect(endpoint("a.example"), TerminalGeometry(80, 24)))
+        advanceUntilIdle()
+        val id = terminal.state.value.sessions.single().id
+        terminal.dispatch(TerminalAction.SetReadOnly(id, readOnly = true))
+
+        // Android's rule: PAGE_UP/PAGE_DOWN move a pager's viewport and mutate nothing.
+        terminal.dispatch(TerminalAction.SendKey(TermKey.PAGE_UP, "pgup".encodeToByteArray()))
+        terminal.dispatch(TerminalAction.SendKey(TermKey.PAGE_DOWN, "pgdn".encodeToByteArray()))
+        advanceUntilIdle()
+        assertEquals(listOf("pgup", "pgdn"), ssh.shells.single().sent.map { it.decodeToString() })
+
+        // Everything else stays blocked, including keys that look harmless.
+        listOf(TermKey.ENTER, TermKey.UP, TermKey.BACKSPACE, TermKey.TAB, TermKey.F1).forEach { key ->
+            terminal.dispatch(TerminalAction.SendKey(key, "x".encodeToByteArray()))
+        }
+        advanceUntilIdle()
+        assertEquals(2, ssh.shells.single().sent.size, "only paging may pass in read-only")
+        terminal.close()
+    }
+
+    @Test
+    fun historyIsDiscardedWhenAResizeReturnsToTheOriginalSize() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val hosts = MemoryKnownHosts().apply { entries[hostKeyAlias(endpoint("a.example"))] = ED25519 }
+        val release = CompletableDeferred<Unit>()
+        val terminal = store(scope, FakeSsh(), hosts, history = TerminalHistoryLoader { _, _ ->
+            release.await()
+            listOf("a", "b")
+        })
+
+        terminal.dispatch(
+            TerminalAction.Connect(endpoint("a.example"), TerminalGeometry(80, 24), persistent = true, tmuxName = "work"),
+        )
+        advanceUntilIdle()
+        val id = terminal.state.value.sessions.single().id
+
+        // Resize away and back: the columns and rows match again, but the generation does not, and
+        // the capture describes a grid that no longer exists.
+        terminal.dispatch(TerminalAction.Resize(id, TerminalGeometry(120, 40)))
+        terminal.dispatch(TerminalAction.Resize(id, TerminalGeometry(80, 24)))
+        advanceUntilIdle()
+        release.complete(Unit)
+        advanceUntilIdle()
+
+        val session = terminal.state.value.sessions.single()
+        assertFalse(session.historyHydrated, "a matching size is not the same grid generation")
+        assertEquals(TerminalGeometry(80, 24), session.geometry)
         terminal.close()
     }
 
