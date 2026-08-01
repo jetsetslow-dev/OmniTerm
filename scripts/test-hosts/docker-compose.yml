@@ -1,0 +1,132 @@
+# Disposable SSH fixtures for local OmniTerm testing.
+#
+# Not fixtures for one feature: this is a small fleet whose SHAPE mirrors OmniTerm's connection
+# surface, so fleet, monitoring, terminal, files, containers, tunnels, and widget flows can all be
+# exercised against it. Everything is throwaway -- no state is worth keeping, and `down` discards
+# the host keys so the next `up` re-exercises OmniTerm's trust-on-first-use dialog.
+#
+# Credentials are deliberately NOT written here. This file is committed to a public repository, and
+# a literal password beside USER_PASSWORD is both a secret-scanning finding and a bad habit to copy.
+# `./scripts/test-hosts.sh up` generates random per-machine values into scripts/test-hosts/.env
+# (gitignored) and compose reads them from there; the `:?` syntax below fails loudly with an
+# actionable message rather than silently starting a host with an empty or guessable password.
+#
+# Topology (ServerEntity.proxyType in Entities.kt is "none" | "http" | "socks5" | "ssh"):
+#
+#   host machine ──► direct    :2201   password auth, sudo, tmux   proxyType=none
+#                 ├► keyauth   :2202   SSH key auth only           proxyType=none  (key path)
+#                 ├► bastion   :2203   jump host, sudo             proxyType=none
+#                 └► proxy     :1080 SOCKS5, :8888 HTTP CONNECT
+#
+#   internal-only (NO published port, unreachable from the host by design):
+#                    internal-a       reached via bastion          proxyType=ssh    (jump path)
+#                                     or via proxy                 proxyType=socks5 / http
+#
+# HTTP/SOCKS5 proxies ride inside the session (JschSession.applyProxy); SSH jump uses a separate
+# jump session plus a local forward (buildJumpedJschSession). internal-a is the only way to prove a
+# proxy is actually carrying traffic, because it cannot be reached any other way.
+#
+# From an Android emulator the host machine is 10.0.2.2, so use 10.0.2.2:2201 etc.
+# `internal-a` is addressed by its container name on the internal network.
+#
+# Usage: ./scripts/test-hosts.sh up | down | status | verify | keys
+networks:
+  edge:
+    name: omniterm-test-edge
+  internal:
+    name: omniterm-test-internal
+    internal: true
+
+x-ssh-common: &ssh-common
+  image: lscr.io/linuxserver/openssh-server:latest
+  environment: &ssh-env
+    PUID: "1000"
+    PGID: "1000"
+    TZ: Etc/UTC
+    SUDO_ACCESS: "true"
+  restart: "no"
+
+services:
+  # Baseline host: password auth plus tmux, so persistent-session flows work here.
+  direct:
+    <<: *ssh-common
+    container_name: omniterm-test-direct
+    environment:
+      <<: *ssh-env
+      PASSWORD_ACCESS: "true"
+      USER_NAME: "${OMNITERM_TEST_USER:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+      USER_PASSWORD: "${OMNITERM_TEST_PASSWORD:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+      DOCKER_MODS: linuxserver/mods:universal-package-install
+      INSTALL_PACKAGES: tmux|htop|curl
+    ports:
+      - "127.0.0.1:2201:2222"
+    networks: [edge]
+
+  # Key-only host: password auth disabled, so this exercises the private-key credential path.
+  # scripts/test-hosts.sh generates the keypair into scripts/test-hosts/keys/ (gitignored).
+  keyauth:
+    <<: *ssh-common
+    container_name: omniterm-test-keyauth
+    environment:
+      <<: *ssh-env
+      PASSWORD_ACCESS: "false"
+      USER_NAME: "${OMNITERM_TEST_USER:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+      PUBLIC_KEY_FILE: /config/testkey.pub
+    volumes:
+      - ./keys/omniterm_test_ed25519.pub:/config/testkey.pub:ro
+    ports:
+      - "127.0.0.1:2202:2222"
+    networks: [edge]
+
+  # Same as keyauth, but the client key is passphrase-protected. Separate host because a
+  # passphrase failure and a wrong-key failure look identical from the app if they share a target.
+  keyauth-passphrase:
+    <<: *ssh-common
+    container_name: omniterm-test-keyauth-passphrase
+    environment:
+      <<: *ssh-env
+      PASSWORD_ACCESS: "false"
+      USER_NAME: "${OMNITERM_TEST_USER:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+      PUBLIC_KEY_FILE: /config/testkey.pub
+    volumes:
+      - ./keys/omniterm_test_passphrase_ed25519.pub:/config/testkey.pub:ro
+    ports:
+      - "127.0.0.1:2204:2222"
+    networks: [edge]
+
+  # Jump host. Sits on both networks so it can reach internal-a on OmniTerm's behalf.
+  bastion:
+    <<: *ssh-common
+    container_name: omniterm-test-bastion
+    environment:
+      <<: *ssh-env
+      PASSWORD_ACCESS: "true"
+      USER_NAME: "${OMNITERM_TEST_USER:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+      USER_PASSWORD: "${OMNITERM_TEST_PASSWORD:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+    ports:
+      - "127.0.0.1:2203:2222"
+    networks: [edge, internal]
+
+  # Reachable ONLY through bastion or proxy. No published port, and `internal: true` on the network
+  # means it has no route to the host either. If the app can talk to this, the proxy path works.
+  internal-a:
+    <<: *ssh-common
+    container_name: omniterm-test-internal-a
+    environment:
+      <<: *ssh-env
+      PASSWORD_ACCESS: "true"
+      USER_NAME: "${OMNITERM_TEST_USER:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+      USER_PASSWORD: "${OMNITERM_TEST_PASSWORD:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+    networks: [internal]
+
+  # One container serving both proxy protocols the app supports, so http and socks5 can be tested
+  # without a second image. On both networks: reachable from the emulator, can dial internal-a.
+  proxy:
+    image: ginuerzh/gost:latest
+    container_name: omniterm-test-proxy
+    command: -L socks5://:1080 -L http://:8888
+    ports:
+      - "127.0.0.1:1080:1080"
+      - "127.0.0.1:8888:8888"
+    networks: [edge, internal]
+    restart: "no"

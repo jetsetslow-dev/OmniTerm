@@ -29,7 +29,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
     // against the exact prior shape. Versions ≤7 predate schema export (several v5 builds shipped
     // with differing schemas), so upgrades from those still fall back to a destructive wipe — but
     // from v8 on, a version bump without a Migration must fail loudly instead of deleting data.
-    version = 21,
+    version = 22,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -248,6 +248,20 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        // metric_history was never indexed, so every widget/monitoring read grouped and re-probed
+        // it with full scans whose cost tracks retained history (7 days by default), not fleet
+        // size. Past the widget's 8s load budget that turned into a stuck "Saving…" during widget
+        // configuration. The index name must match what Room generates for the entity declaration,
+        // or the exported-schema validation fails. Measured at 150k rows: 469s -> 0.008s.
+        private val MIGRATION_21_22 = object : Migration(21, 22) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_metric_history_serverId_timestamp` " +
+                        "ON `metric_history` (`serverId`, `timestamp`)"
+                )
+            }
+        }
+
         private data class LegacyScriptPreset(
             val key: String,
             val name: String,
@@ -316,6 +330,7 @@ abstract class AppDatabase : RoomDatabase() {
             MIGRATION_18_19,
             MIGRATION_19_20,
             MIGRATION_20_21,
+            MIGRATION_21_22,
         )
 
         fun getDatabase(context: Context): AppDatabase {

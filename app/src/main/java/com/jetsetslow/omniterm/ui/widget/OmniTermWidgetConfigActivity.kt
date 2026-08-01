@@ -179,17 +179,18 @@ class OmniTermWidgetConfigActivity : ComponentActivity() {
                 return@launch
             }
 
+            // runWidgetRender classifies a render timeout as a reportable failure instead of
+            // letting it cancel this coroutine. Previously a TimeoutCancellationException (which
+            // IS a CancellationException) was rethrown here, silently killing the save with no
+            // crash and no log: setResult/finish/onFailure never ran, so the button stayed on
+            // "Saving…" forever and the launcher dropped the widget. The preferences are already
+            // committed above, so a slow render must not abandon the save.
             val renderFailure = withContext(Dispatchers.IO) {
-                try {
+                runWidgetRender {
                     OmniTermWidgetUpdater.update(
                         this@OmniTermWidgetConfigActivity,
                         intArrayOf(appWidgetId),
                     )
-                    null
-                } catch (cancelled: CancellationException) {
-                    throw cancelled
-                } catch (failure: Throwable) {
-                    failure
                 }
             }
             if (renderFailure != null) {
