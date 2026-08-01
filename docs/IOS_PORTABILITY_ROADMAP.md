@@ -75,10 +75,11 @@ guarantee that the repository has not changed.
 | IOS-060 | Portable half implemented | `SecretVault` owns namespacing, the authentication gate, and typed failures; Keychain/Keystore adapters and locked-device tests remain. |
 | IOS-061 | Adapter/policy implemented | IOS-060 secure storage and physical Face ID tests remain. |
 | IOS-062 | Contracts/policies only | Production picker adapter depends on the platform half of IOS-032. |
-| IOS-063 | Adapter/routing policy implemented | Device permission/tap reconciliation and store wiring remain. |
-| IOS-065 | Portable half implemented | Secret-free snapshot, masking, staleness, and reload policy are shared; WidgetKit timelines and the App Group container remain. |
+| IOS-063 | Portable half implemented | Alert notification content, the `omniterm://` link shapes, launch-request validation, and the lock-gated launch queue are ported from Android; permission prompts and delivered-notification reconciliation remain platform work. |
+| IOS-065 | Portable half implemented | Snapshot rows now carry the same text Android renders; WidgetKit timelines and the App Group container remain. |
 | IOS-070, IOS-080 | Shell/facade implemented | Xcode launch/test and generated-header review run on macOS. |
-| IOS-071 – IOS-074 | Not started | Requires an Xcode gate; no iOS screen may be claimed from a Linux compile. |
+| IOS-071, IOS-072, IOS-074 | Not started | Requires an Xcode gate; no iOS screen or renderer may be claimed from a Linux compile. |
+| IOS-073 | Portable half implemented | Read-only enforcement lives below the UI in `TerminalStore`; bracketed paste, single-Enter detection, and the large-paste threshold moved into `:shared`. Keyboard, IME, and VoiceOver behavior remain an Xcode gate. |
 | IOS-081 | Implemented foundation | Crash-report integration remains optional and consent-gated. |
 | IOS-090 | Matrix published | `IOS_TEST_MATRIX.md` records executed rows and every deferred Apple-runtime row. |
 | IOS-091 | Partial review published | `IOS_SECURITY_REVIEW.md` closes 14 findings in shared code; nine areas stay open pending Apple-runtime and SSH decisions. |
@@ -131,6 +132,11 @@ These rules apply to every task in this roadmap:
     claim iOS application or simulator validation.
 13. Each pull request should normally implement one task or one explicitly identified slice of a
     task. Avoid combining module migration, behavior changes, and UI redesign.
+14. Where Android already implements a behavior, the shared version is a **port of it**, not a fresh
+    design: reuse its rules, its constants, its user-visible strings, and its test fixtures. Two
+    implementations that merely look equivalent will drift, and the difference shows up as one
+    platform accepting a file, a link, or a limit that the other rejects. If the Android behavior
+    looks wrong, change it there first — do not fork it in `commonMain`.
 
 ## 5. Target module and source-set structure
 

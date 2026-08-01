@@ -108,6 +108,8 @@ sealed interface TerminalAction {
         val tmuxName: String? = null,
     ) : TerminalAction
 
+    /** Abandons an in-flight connect, mirroring the Android "Cancel" action on the connect screen. */
+    data object CancelConnect : TerminalAction
     data class ResolveHostKey(val requestId: String, val trust: Boolean) : TerminalAction
     data class Focus(val sessionId: String) : TerminalAction
     data class Resize(val sessionId: String, val geometry: TerminalGeometry) : TerminalAction
@@ -169,6 +171,7 @@ class TerminalStore(
     override fun dispatch(action: TerminalAction) {
         when (action) {
             is TerminalAction.Connect -> connect(action)
+            TerminalAction.CancelConnect -> cancelConnect()
             is TerminalAction.ResolveHostKey -> resolveHostKey(action)
             is TerminalAction.Focus -> mutableState.update { it.copy(focusedSessionId = action.sessionId) }
             is TerminalAction.Resize -> resize(action.sessionId, action.geometry)
@@ -188,11 +191,14 @@ class TerminalStore(
     // ── Connection ──
 
     private fun connect(request: TerminalAction.Connect) {
-        // Switching hosts mid-connect abandons the pending attempt outright. Keeping it would let a
-        // late success attach a session for a host the user has already moved away from.
-        mutableState.value.sessions
-            .filter { it.phase == TerminalPhase.Connecting || it.phase == TerminalPhase.AwaitingHostKey }
-            .forEach { teardown(it.id, "Superseded by a newer connection") }
+        // One connect at a time, matching Android's `if (isTerminalConnecting) return`. Letting a
+        // second attempt supersede the first means two half-opened SSH channels race to attach, and
+        // whichever loses must be found and closed; refusing removes the race instead of policing
+        // it. The user's escape hatch is CancelConnect, not a competing Connect.
+        if (mutableState.value.connecting) {
+            logger.log(DiagnosticEvent("terminal.connect.refused", mapOf("reason" to "already-connecting")))
+            return
+        }
 
         val sessionId = ids.nextId()
         val session = TerminalSessionState(
@@ -304,7 +310,7 @@ class TerminalStore(
         }
         shells[sessionId] = shell
         updateSession(sessionId) { it.copy(phase = TerminalPhase.Connected, error = null) }
-        mutableState.update { it.copy(connecting = it.sessions.any { s -> s.phase == TerminalPhase.Connecting }) }
+        mutableState.update { it.recomputeConnecting() }
         scope.launch { pump(sessionId, shell) }
         if (session.persistent && historyLoader != null) hydrateHistory(sessionId)
     }
@@ -366,6 +372,18 @@ class TerminalStore(
 
     // ── Teardown ──
 
+    /**
+     * Abandons the in-flight attempt. Mirrors Android's `cancelConnect()`: the job is cancelled and
+     * the pending session removed, so a shell that still arrives afterwards owns nothing and is
+     * closed by [attach].
+     */
+    private fun cancelConnect() {
+        mutableState.value.sessions
+            .filter { it.phase == TerminalPhase.Connecting || it.phase == TerminalPhase.AwaitingHostKey }
+            .forEach { disconnect(it.id) }
+        mutableState.update { it.recomputeConnecting().copy(error = null) }
+    }
+
     private fun disconnect(sessionId: String) {
         teardown(sessionId, null)
         mutableState.update { current ->
@@ -374,8 +392,7 @@ class TerminalStore(
                 sessions = remaining,
                 focusedSessionId = current.focusedSessionId.takeIf { it != sessionId } ?: remaining.firstOrNull()?.id,
                 paneSessionIds = current.paneSessionIds.map { if (it == sessionId) null else it },
-                connecting = remaining.any { it.phase == TerminalPhase.Connecting },
-            )
+            ).recomputeConnecting()
         }
     }
 
@@ -404,7 +421,7 @@ class TerminalStore(
                 resumable = if (resumable == null) current.resumable else current.resumable.filterNot { it.tmuxName == resumable.tmuxName } + resumable,
                 focusedSessionId = current.focusedSessionId.takeIf { it != sessionId } ?: remaining.firstOrNull()?.id,
                 paneSessionIds = current.paneSessionIds.map { if (it == sessionId) null else it },
-            )
+            ).recomputeConnecting()
         }
     }
 
@@ -474,11 +491,19 @@ class TerminalStore(
     private fun fail(sessionId: String, message: String) {
         if (mutableState.value.session(sessionId) == null) return
         updateSession(sessionId) { it.copy(phase = TerminalPhase.Disconnected, error = message) }
-        mutableState.update {
-            it.copy(connecting = it.sessions.any { s -> s.phase == TerminalPhase.Connecting }, error = message)
-        }
+        mutableState.update { it.recomputeConnecting().copy(error = message) }
         mutableEffects.tryEmit(StoreEffect.Message(message))
     }
+
+    /**
+     * `connecting` covers the whole in-flight window, host-key prompt included: an unanswered
+     * approval dialog is still an open attempt, and a second Connect behind it would strand it.
+     * A per-session reconnect is deliberately not counted — it belongs to a session that already
+     * exists and must not block opening a different host.
+     */
+    private fun TerminalState.recomputeConnecting(): TerminalState = copy(
+        connecting = sessions.any { it.phase == TerminalPhase.Connecting || it.phase == TerminalPhase.AwaitingHostKey },
+    )
 
     private fun updateSession(sessionId: String, transform: (TerminalSessionState) -> TerminalSessionState) {
         mutableState.update { current ->

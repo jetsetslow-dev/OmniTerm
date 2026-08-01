@@ -31,8 +31,48 @@ enum class TransferDirection { Download, Upload }
 
 enum class TransferStatus { Queued, AwaitingConflictDecision, Running, Completed, Cancelled, Failed }
 
-/** What to do when a download's destination name is already taken. */
+/** What to do when a destination name is already taken. */
 enum class ConflictResolution { Overwrite, KeepBoth, Skip }
+
+/**
+ * What the destination scan found for one clipboard item. `Unknown` means the host had no digest
+ * tool, so the comparison is unverified — the UI must say so rather than imply certainty.
+ */
+enum class ConflictVerdict { Identical, Different, Directory, Unknown }
+
+data class RemoteConflict(
+    val name: String,
+    val verdict: ConflictVerdict,
+    val resolution: ConflictResolution = ConflictResolution.Overwrite,
+)
+
+data class FileClipboard(val sources: List<String>, val move: Boolean, val generation: Long)
+
+/**
+ * Same-host copy/move, performed *on the server*. No bytes cross the device, which is both far
+ * faster on a high-latency link and the reason a skip cannot destroy anything: a skipped name has
+ * no command issued for it at all.
+ */
+interface RemoteFileGateway {
+    /**
+     * Compares [sources] against [destDir] by content, not by name/size/mtime. Returns one entry per
+     * clashing name; an empty list means the paste can run unattended.
+     */
+    suspend fun scanConflicts(destDir: String, sources: List<String>): CapabilityResult<List<RemoteConflict>>
+
+    /**
+     * Copies (or moves) [sources] into [destDir]. Names in [skip] must never be issued; names in
+     * [keepBoth] must land on a free `name (n).ext` variant found server-side; everything else
+     * overwrites.
+     */
+    suspend fun paste(
+        destDir: String,
+        sources: List<String>,
+        move: Boolean,
+        skip: Set<String>,
+        keepBoth: Set<String>,
+    ): CapabilityResult<Unit>
+}
 
 data class TransferItem(
     val id: String,
@@ -56,6 +96,7 @@ data class TransferItem(
 data class TransferConflict(val transferId: String, val localName: String)
 
 data class FilesState(
+    val endpointId: String = "",
     val path: String = "/",
     val entries: List<RemoteEntry> = emptyList(),
     val sort: FileSort = FileSort.Name,
@@ -63,9 +104,16 @@ data class FilesState(
     val loading: Boolean = false,
     val progress: OperationProgress? = null,
     val error: String? = null,
+    val status: String? = null,
     val bookmarks: List<String> = emptyList(),
     val transfers: List<TransferItem> = emptyList(),
     val pendingConflict: TransferConflict? = null,
+    val clipboard: FileClipboard? = null,
+    val pasteScanning: Boolean = false,
+    val pasteRunning: Boolean = false,
+    val pasteConflicts: List<RemoteConflict> = emptyList(),
+    /** True when at least one verdict is [ConflictVerdict.Unknown]. */
+    val pasteUnverified: Boolean = false,
 ) {
     val activeTransfers: List<TransferItem> get() = transfers.filter { it.active }
 
@@ -88,6 +136,7 @@ data class FilesState(
 }
 
 sealed interface FilesAction {
+    data class SelectEndpoint(val endpointId: String) : FilesAction
     data class Navigate(val path: String) : FilesAction
     data object NavigateUp : FilesAction
     data object Refresh : FilesAction
@@ -98,6 +147,16 @@ sealed interface FilesAction {
     data class Upload(val localName: String, val remotePath: String) : FilesAction
     data class ResolveConflict(val transferId: String, val resolution: ConflictResolution) : FilesAction
     data class CancelTransfer(val transferId: String) : FilesAction
+
+    // ── Same-host clipboard (server-side copy/move) ──
+    data class Copy(val sources: List<String>) : FilesAction
+    data class Cut(val sources: List<String>) : FilesAction
+    data object ClearClipboard : FilesAction
+    data object BeginPaste : FilesAction
+    data class SetConflictResolution(val name: String, val resolution: ConflictResolution) : FilesAction
+    data class SetAllConflictResolutions(val resolution: ConflictResolution) : FilesAction
+    data object ConfirmPaste : FilesAction
+    data object CancelPaste : FilesAction
 }
 
 /**
@@ -151,7 +210,17 @@ class FilesStore(
     private val sftp: SftpAdapter,
     private val local: LocalFileGateway,
     private val ids: IdGenerator,
+    private val remote: RemoteFileGateway? = null,
 ) : FeatureStore<FilesState, FilesAction> {
+    /** The clipboard, destination, host, and mode a paste was planned against. */
+    private data class PasteContext(
+        val endpointId: String,
+        val destDir: String,
+        val sources: List<String>,
+        val move: Boolean,
+        val clipboardGeneration: Long,
+    )
+
     private val mutableState = MutableStateFlow(FilesState())
     override val state: StateFlow<FilesState> = mutableState.asStateFlow()
     private val mutableEffects = MutableSharedFlow<StoreEffect>(extraBufferCapacity = 8)
@@ -161,9 +230,13 @@ class FilesStore(
     private var listingJob: Job? = null
     private val transferJobs = mutableMapOf<String, Job>()
     private val conflictDecisions = mutableMapOf<String, CompletableDeferred<ConflictResolution>>()
+    private var pasteJob: Job? = null
+    private var pendingPaste: PasteContext? = null
+    private var clipboardGeneration = 0L
 
     override fun dispatch(action: FilesAction) {
         when (action) {
+            is FilesAction.SelectEndpoint -> mutableState.update { it.copy(endpointId = action.endpointId) }
             is FilesAction.Navigate -> load(action.path)
             FilesAction.NavigateUp -> load(parentPath(mutableState.value.path))
             FilesAction.Refresh -> load(mutableState.value.path)
@@ -180,15 +253,39 @@ class FilesStore(
             is FilesAction.Upload -> enqueueUpload(action.localName, action.remotePath)
             is FilesAction.ResolveConflict -> conflictDecisions.remove(action.transferId)?.complete(action.resolution)
             is FilesAction.CancelTransfer -> cancelTransfer(action.transferId)
+            is FilesAction.Copy -> stage(action.sources, move = false)
+            is FilesAction.Cut -> stage(action.sources, move = true)
+            FilesAction.ClearClipboard -> clearClipboard()
+            FilesAction.BeginPaste -> beginPaste()
+            is FilesAction.SetConflictResolution -> mutableState.update { current ->
+                current.copy(
+                    pasteConflicts = current.pasteConflicts.map {
+                        if (it.name == action.name) it.copy(resolution = action.resolution) else it
+                    },
+                )
+            }
+            is FilesAction.SetAllConflictResolutions -> mutableState.update { current ->
+                current.copy(pasteConflicts = current.pasteConflicts.map { it.copy(resolution = action.resolution) })
+            }
+            FilesAction.ConfirmPaste -> confirmPaste()
+            FilesAction.CancelPaste -> clearPendingPaste()
         }
     }
 
     // ── Listing ──
 
-    private fun load(path: String) {
+    /** [clearError] is false for the refresh after a paste, which must keep its own status/error. */
+    private fun load(path: String, clearError: Boolean = true) {
         listingJob?.cancel()
         val owner = listingGeneration.next()
-        mutableState.update { it.copy(path = path, loading = true, error = null, progress = OperationProgress("Listing $path")) }
+        mutableState.update {
+            it.copy(
+                path = path,
+                loading = true,
+                error = if (clearError) null else it.error,
+                progress = OperationProgress("Listing $path"),
+            )
+        }
         listingJob = scope.launch {
             when (val result = sftp.list(path)) {
                 is CapabilityResult.Available -> publish(owner, path) { current ->
@@ -196,7 +293,7 @@ class FilesStore(
                         entries = sortEntries(result.value, current.sort, current.ascending),
                         loading = false,
                         progress = null,
-                        error = null,
+                        error = if (clearError) null else current.error,
                     )
                 }
                 is CapabilityResult.Unsupported -> publish(owner, path) {
@@ -379,6 +476,166 @@ class FilesStore(
         }
     }
 
+    // ── Same-host clipboard ──
+
+    private fun stage(sources: List<String>, move: Boolean) {
+        if (sources.isEmpty()) return
+        clipboardGeneration++
+        clearPendingPaste()
+        mutableState.update {
+            it.copy(clipboard = FileClipboard(sources, move, clipboardGeneration), error = null, status = null)
+        }
+    }
+
+    private fun clearClipboard() {
+        clipboardGeneration++
+        clearPendingPaste()
+        mutableState.update { it.copy(clipboard = null) }
+    }
+
+    private fun clearPendingPaste() {
+        pendingPaste = null
+        mutableState.update { it.copy(pasteConflicts = emptyList(), pasteUnverified = false) }
+    }
+
+    /**
+     * Compares the clipboard against the destination before anything is written. When nothing
+     * clashes the paste runs straight away; otherwise the per-item decisions are surfaced and
+     * nothing happens until [FilesAction.ConfirmPaste].
+     */
+    private fun beginPaste() {
+        val gateway = remote ?: return
+        val state = mutableState.value
+        val clipboard = state.clipboard ?: return
+        if (clipboard.sources.isEmpty() || state.pasteScanning || state.pasteRunning) return
+        val context = PasteContext(
+            endpointId = state.endpointId,
+            destDir = state.path,
+            sources = clipboard.sources,
+            move = clipboard.move,
+            clipboardGeneration = clipboard.generation,
+        )
+        mutableState.update { it.copy(pasteScanning = true, error = null, status = null) }
+        pasteJob = scope.launch {
+            try {
+                when (val scan = gateway.scanConflicts(context.destDir, context.sources)) {
+                    is CapabilityResult.Available -> {
+                        val found = scan.value.map { conflict -> applySameDirectoryDefault(conflict, context) }
+                        mutableState.update {
+                            it.copy(
+                                pasteScanning = false,
+                                pasteConflicts = found,
+                                pasteUnverified = found.any { conflict -> conflict.verdict == ConflictVerdict.Unknown },
+                            )
+                        }
+                        if (found.isEmpty()) runPaste(context, emptySet(), emptySet())
+                        else pendingPaste = context
+                    }
+                    is CapabilityResult.Unsupported -> failPaste("Paste cancelled: ${scan.reason}")
+                    is CapabilityResult.Failed -> failPaste("Paste cancelled: conflict scan failed (${describe(scan.error)})")
+                }
+            } catch (cancellation: CancellationException) {
+                mutableState.update { it.copy(pasteScanning = false) }
+                throw cancellation
+            } catch (error: Throwable) {
+                failPaste("Paste cancelled: conflict scan failed")
+            }
+        }
+    }
+
+    /**
+     * Pasting into the item's own folder is a special case: a copy should produce `name (1)`, and a
+     * move is a no-op. An overwrite default would issue a copy with identical source and
+     * destination, which fails.
+     */
+    private fun applySameDirectoryDefault(conflict: RemoteConflict, context: PasteContext): RemoteConflict {
+        val source = context.sources.firstOrNull { fileName(it) == conflict.name } ?: return conflict
+        val sourceDir = parentPath(source)
+        if (sourceDir != context.destDir.trimEnd('/').ifBlank { "/" }) return conflict
+        return conflict.copy(
+            resolution = if (context.move) ConflictResolution.Skip else ConflictResolution.KeepBoth,
+        )
+    }
+
+    private fun confirmPaste() {
+        val context = pendingPaste ?: return
+        val decided = mutableState.value.pasteConflicts
+        clearPendingPaste()
+        pasteJob = scope.launch {
+            runPaste(
+                context,
+                skip = decided.filter { it.resolution == ConflictResolution.Skip }.mapTo(mutableSetOf()) { it.name },
+                keepBoth = decided.filter { it.resolution == ConflictResolution.KeepBoth }.mapTo(mutableSetOf()) { it.name },
+            )
+        }
+    }
+
+    private suspend fun runPaste(context: PasteContext, skip: Set<String>, keepBoth: Set<String>) {
+        val gateway = remote ?: return
+        if (context.sources.isEmpty() || mutableState.value.pasteRunning) return
+        if (!isCurrentPasteContext(context)) {
+            reportStalePasteContext()
+            return
+        }
+        val processed = context.sources.count { fileName(it) !in skip }
+        mutableState.update { it.copy(pasteRunning = true, error = null) }
+        try {
+            when (val result = gateway.paste(context.destDir, context.sources, context.move, skip, keepBoth)) {
+                is CapabilityResult.Available -> {
+                    mutableState.update {
+                        it.copy(
+                            status = if (processed == 0) {
+                                "Skipped all ${context.sources.size} item(s)"
+                            } else {
+                                "${if (context.move) "Moved" else "Copied"} $processed item(s) here"
+                            },
+                        )
+                    }
+                    // A successful paste consumes the clipboard, copies included — re-copying is one tap.
+                    clearClipboard()
+                }
+                is CapabilityResult.Unsupported -> mutableState.update { it.copy(error = "Paste failed: ${result.reason}") }
+                is CapabilityResult.Failed -> mutableState.update { it.copy(error = "Paste failed: ${describe(result.error)}") }
+            }
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Throwable) {
+            mutableState.update { it.copy(error = "Paste failed") }
+        } finally {
+            mutableState.update { it.copy(pasteRunning = false) }
+        }
+        // Refresh the destination without clobbering the status/error just set, and only while the
+        // user is still looking at it.
+        val now = mutableState.value
+        if (now.endpointId == context.endpointId && now.path == context.destDir) load(context.destDir, clearError = false)
+    }
+
+    private fun isCurrentPasteContext(context: PasteContext): Boolean {
+        val state = mutableState.value
+        val clipboard = state.clipboard ?: return false
+        return context.endpointId == state.endpointId &&
+            context.destDir == state.path &&
+            context.sources == clipboard.sources &&
+            context.move == clipboard.move &&
+            context.clipboardGeneration == clipboard.generation
+    }
+
+    private fun reportStalePasteContext() {
+        clearPendingPaste()
+        mutableState.update {
+            it.copy(
+                status = null,
+                pasteRunning = false,
+                error = "Paste cancelled because the clipboard, destination, host, or move mode changed.",
+            )
+        }
+    }
+
+    private fun failPaste(message: String) {
+        clearPendingPaste()
+        mutableState.update { it.copy(pasteScanning = false, pasteRunning = false, error = message) }
+    }
+
     private fun describe(error: PlatformError): String = when (error) {
         PlatformError.Cancelled -> "Cancelled"
         PlatformError.PermissionDenied -> "Permission denied"
@@ -392,6 +649,9 @@ class FilesStore(
 
     override fun close() {
         cancelLoad()
+        pasteJob?.cancel()
+        pasteJob = null
+        pendingPaste = null
         conflictDecisions.values.forEach { it.complete(ConflictResolution.Skip) }
         conflictDecisions.clear()
         transferJobs.values.forEach { it.cancel() }

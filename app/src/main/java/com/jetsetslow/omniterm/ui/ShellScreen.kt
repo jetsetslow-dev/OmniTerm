@@ -1876,7 +1876,7 @@ private fun PaneTerminal(
                     return@BasicTextField
                 }
                 val insertedDelta = insertedCodePointDelta(prevText, newText)
-                if (insertedDelta > 100) {
+                if (insertedDelta > LARGE_PASTE_CODE_POINTS) {
                     // Large paste: defer to the paste dialog and clear the field.
                     pendingLargePaste = newText
                     inputField = TextFieldValue("")
@@ -2476,45 +2476,6 @@ private fun diffToRemote(old: String, new: String, viewModel: AppViewModel) {
         insert = new.substring(prefix),
     )
 }
-
-private fun commonCodePointPrefixIndex(first: String, second: String): Int {
-    var firstIndex = 0
-    var secondIndex = 0
-    while (firstIndex < first.length && secondIndex < second.length) {
-        val firstCodePoint = first.codePointAt(firstIndex)
-        val secondCodePoint = second.codePointAt(secondIndex)
-        if (firstCodePoint != secondCodePoint) break
-        firstIndex += Character.charCount(firstCodePoint)
-        secondIndex += Character.charCount(secondCodePoint)
-    }
-    return firstIndex // equal code points always consume the same UTF-16 width
-}
-
-/**
- * Number of Unicode scalar values [new] shares with [old] at the start and end combined (clamped so
- * the two matched regions never overlap). Subtracting this from [new]'s code-point count gives the
- * changed middle size used to distinguish a paste from an incremental swipe edit.
- */
-private fun longestCommonAffix(old: String, new: String): Int {
-    val oldPoints = old.codePoints().toArray()
-    val newPoints = new.codePoints().toArray()
-    val max = minOf(oldPoints.size, newPoints.size)
-    var prefix = 0
-    while (prefix < max && oldPoints[prefix] == newPoints[prefix]) prefix++
-    var suffix = 0
-    while (suffix < max - prefix &&
-        oldPoints[oldPoints.lastIndex - suffix] == newPoints[newPoints.lastIndex - suffix]
-    ) suffix++
-    return prefix + suffix
-}
-
-/** Number of newly inserted Unicode scalar values, independent of UTF-16 surrogate width. */
-internal fun insertedCodePointDelta(old: String, new: String): Int =
-    (new.codePointCount(0, new.length) - longestCommonAffix(old, new)).coerceAtLeast(0)
-
-/** True only for one IME Enter commit; multi-line clipboard/paste blocks stay byte-preserving. */
-internal fun isSingleTerminalEnter(text: String): Boolean =
-    text == "\n" || text == "\r" || text == "\r\n"
 
 private data class CursorGlyph(val text: String, val startColumn: Int, val width: Int)
 

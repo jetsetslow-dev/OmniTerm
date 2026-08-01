@@ -19,7 +19,7 @@ Last updated: 2026-08-01, on branch `feature/ios-compose-port`.
 
 | Suite | Command | Result |
 |---|---|---|
-| Shared common tests on the JVM host | `./gradlew :shared:allTests` | 57 tests, 0 failures |
+| Shared common tests on the JVM host | `./gradlew :shared:allTests` | 95 tests, 0 failures |
 | Apple-target compilation of `commonMain`/`commonTest`/`iosMain` | `:shared:compileKotlinIosSimulatorArm64`, `:shared:compileTestKotlinIosSimulatorArm64` (run as part of `:shared:allTests`) | compiles to klib |
 | Android unit tests (both flavors) | `./scripts/local-pr-check.sh --full` | see the PR/preflight log for the exact head |
 | Android lint (both flavors) | `./scripts/local-pr-check.sh --full` | as above |
@@ -33,9 +33,20 @@ Shared coverage executed on the JVM host:
 | Files/transfers orchestration (IOS-032) | `FilesStoreTest` | directory sorting with directories first, parent-path bounds, stale listing rejection after navigation, determinate download progress, explicitly indeterminate unknown-size transfers, cancellation closing the sink and deleting the partial file, conflict overwrite/keep-both/skip, upload source closure, aggregate progress, observable listing failure |
 | Host-key trust (portable half of IOS-052) | `HostKeyTrustTest` | never auto-trusting an unknown host, changed-key reporting without overwriting stored trust, alias separation by port and hostname case, malformed/MD5/short fingerprint rejection, per-alias forget |
 | Secret handling (portable half of IOS-060) | `SecretVaultTest` | namespaced keys, no secret or key name in diagnostics, missing item as `NotFound` rather than empty success, failed authentication never reaching storage, rotation keeping the reference, orphan cleanup, key-material wipe |
-| Widget snapshot policy (portable half of IOS-065) | `WidgetSnapshotPolicyTest` | secret-free lines, privacy masking, staleness window, timeline reload only when displayed data changes |
-| Cross-platform backup transfer (portable half of IOS-092) | `BackupTransferTest` | schema and KDF bounds, duplicate/invalid rows, add/update/unchanged classification, partial selection, credentials never transported, rejected envelope leaving the destination unchanged |
+| Widget snapshot policy (portable half of IOS-065) | `WidgetSnapshotParityTest` | the row text Android renders (`HP n` / `…` / `offline`, `CPU n% · RAM n% · TEMP x · DISK n%`, `Unnamed host`), connecting excluded from the online count, staleness window, timeline reload only when displayed data changes |
+| Cross-platform backup transfer (portable half of IOS-092) | `BackupTransferTest` | Android's format/schema/KDF/collection bounds, duplicate/invalid rows, add/update/unchanged classification, partial selection, credentials never transported, rejected envelope leaving the destination unchanged |
+| Host privacy labelling (`HostDisplay` port) | `HostDisplayPolicyTest` | name substituted for address when sensitive info is hidden, blank-name fallbacks, generic masking |
+| Alert notification content (portable half of IOS-063) | `AlertNotificationPolicyTest` | Android's title/body strings, disk mount suffix, latency and temperature units converted on both sides, stable per-(rule, host) key, removal of resolved alerts |
+| Launch routing and deep links (portable half of IOS-063) | `LaunchRoutingTest` | only the two published `omniterm://` shapes parse, unknown host/alert/share/session ids dropped, repeated intents not queued twice, nothing drains while locked or still loading |
+| Session notification payload (`SessionNotificationPayload` port) | `SessionNotificationPayloadTest` | Android's own fixtures: names containing `\|` survive, legacy/blank records rejected |
+| Terminal paste policy (portable half of IOS-073) | `TerminalPastePolicyTest` | Android's `BracketedPastePayloadTest` fixtures, single-Enter detection, code-point prefix never splitting a surrogate pair, large-paste threshold |
 | Earlier foundation work | `TerminalPortabilityTest`, `RefreshStoreTest`, `SafetyPoliciesTest`, `RedactionTest`, `PlatformServicesTest`, `WebDavMultistatusParserTest`, `OmniTermSharedTest` | see IOS-010 – IOS-021 |
+
+Where Android already implements a behavior, the shared code is a port of it rather than a fresh
+design, and the Android test fixtures are reused so a divergence fails here instead of quietly
+producing two apps that disagree. `bracketedPastePayload`, `insertedCodePointDelta`,
+`isSingleTerminalEnter`, and `commonCodePointPrefixIndex` were *moved* into `:shared` (same package),
+so Android's `BracketedPastePayloadTest` now exercises the shared implementation directly.
 
 ## 3. Deferred — requires macOS/Xcode
 

@@ -180,7 +180,7 @@ class TerminalStoreTest {
     }
 
     @Test
-    fun switchingHostMidConnectDiscardsTheSupersededSessionAndClosesItsShell() = runTest {
+    fun aSecondConnectDuringAConnectIsRefusedSoTheFirstKeepsOwnership() = runTest {
         val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
         val hosts = MemoryKnownHosts().apply {
             entries[hostKeyAlias(endpoint("a.example"))] = ED25519
@@ -193,16 +193,92 @@ class TerminalStoreTest {
 
         terminal.dispatch(TerminalAction.Connect(endpoint("a.example"), TerminalGeometry(80, 24)))
         advanceUntilIdle()
+        assertTrue(terminal.state.value.connecting)
+
         terminal.dispatch(TerminalAction.Connect(endpoint("b.example"), TerminalGeometry(80, 24)))
         advanceUntilIdle()
         gate.complete(Unit)
         advanceUntilIdle()
 
+        // Matches Android: the in-flight attempt wins and the second Connect never starts, so no
+        // second channel is opened and nothing has to be found and closed afterwards.
         val session = terminal.state.value.sessions.single()
-        assertEquals("b.example", session.endpoint.host)
+        assertEquals("a.example", session.endpoint.host)
         assertEquals(TerminalPhase.Connected, session.phase)
-        // The first attempt's shell may still have been created; it must not stay open.
-        assertTrue(ssh.shells.dropLast(1).all { it.closed }, "superseded shells must be closed")
+        assertEquals(listOf("a.example"), ssh.openedFor)
+        assertFalse(terminal.state.value.connecting)
+
+        // The guard lifts as soon as the attempt finishes.
+        terminal.dispatch(TerminalAction.Connect(endpoint("b.example"), TerminalGeometry(80, 24)))
+        advanceUntilIdle()
+        assertEquals(listOf("a.example", "b.example"), ssh.openedFor)
+        terminal.close()
+    }
+
+    @Test
+    fun anUnansweredHostKeyPromptStillCountsAsConnecting() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val ssh = FakeSsh()
+        val terminal = store(scope, ssh, MemoryKnownHosts())
+
+        terminal.dispatch(TerminalAction.Connect(endpoint("a.example"), TerminalGeometry(80, 24)))
+        advanceUntilIdle()
+
+        assertTrue(terminal.state.value.connecting, "an open approval dialog is still an attempt")
+        terminal.dispatch(TerminalAction.Connect(endpoint("b.example"), TerminalGeometry(80, 24)))
+        advanceUntilIdle()
+        assertEquals(1, terminal.state.value.sessions.size)
+        terminal.close()
+    }
+
+    @Test
+    fun cancelConnectClearsTheAttemptAndClosesALateShell() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val hosts = MemoryKnownHosts().apply { entries[hostKeyAlias(endpoint("a.example"))] = ED25519 }
+        val ssh = FakeSsh()
+        val gate = CompletableDeferred<Unit>()
+        ssh.gate = gate
+        val terminal = store(scope, ssh, hosts)
+
+        terminal.dispatch(TerminalAction.Connect(endpoint("a.example"), TerminalGeometry(80, 24)))
+        advanceUntilIdle()
+        terminal.dispatch(TerminalAction.CancelConnect)
+        advanceUntilIdle()
+
+        assertTrue(terminal.state.value.sessions.isEmpty())
+        assertFalse(terminal.state.value.connecting)
+
+        // A shell that arrives after the cancel owns nothing and must be closed, not attached.
+        gate.complete(Unit)
+        advanceUntilIdle()
+        assertTrue(terminal.state.value.sessions.isEmpty())
+        assertTrue(ssh.shells.all { it.closed })
+
+        terminal.dispatch(TerminalAction.Connect(endpoint("a.example"), TerminalGeometry(80, 24)))
+        advanceUntilIdle()
+        assertEquals(TerminalPhase.Connected, terminal.state.value.sessions.single().phase)
+        terminal.close()
+    }
+
+    @Test
+    fun cancellingAHostKeyPromptRejectsItAndUnblocksTheNextConnect() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val hosts = MemoryKnownHosts()
+        val ssh = FakeSsh()
+        val terminal = store(scope, ssh, hosts)
+
+        terminal.dispatch(TerminalAction.Connect(endpoint("a.example"), TerminalGeometry(80, 24)))
+        advanceUntilIdle()
+        assertNotNull(terminal.state.value.pendingApproval)
+
+        terminal.dispatch(TerminalAction.CancelConnect)
+        advanceUntilIdle()
+
+        assertTrue(terminal.state.value.sessions.isEmpty())
+        assertNull(terminal.state.value.pendingApproval)
+        assertTrue(hosts.entries.isEmpty(), "a cancelled prompt must never record trust")
+        assertFalse(terminal.state.value.connecting)
+        assertTrue(ssh.openedFor.isEmpty())
         terminal.close()
     }
 

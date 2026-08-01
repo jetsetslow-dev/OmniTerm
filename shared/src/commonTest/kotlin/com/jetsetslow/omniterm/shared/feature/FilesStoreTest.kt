@@ -126,6 +126,37 @@ private class TransferIds : IdGenerator {
 private fun entry(path: String, directory: Boolean = false, size: Long = 0, modified: Long? = null) =
     RemoteEntry(path, directory, size, modified)
 
+private class FakeRemoteFiles(var conflicts: List<RemoteConflict> = emptyList()) : RemoteFileGateway {
+    var scans = 0
+    var scanResult: CapabilityResult<List<RemoteConflict>>? = null
+    var pasteResult: CapabilityResult<Unit> = CapabilityResult.Available(Unit)
+    data class PasteCall(
+        val destDir: String,
+        val sources: List<String>,
+        val move: Boolean,
+        val skip: Set<String>,
+        val keepBoth: Set<String>,
+    )
+
+    val pastes = mutableListOf<PasteCall>()
+
+    override suspend fun scanConflicts(destDir: String, sources: List<String>): CapabilityResult<List<RemoteConflict>> {
+        scans++
+        return scanResult ?: CapabilityResult.Available(conflicts)
+    }
+
+    override suspend fun paste(
+        destDir: String,
+        sources: List<String>,
+        move: Boolean,
+        skip: Set<String>,
+        keepBoth: Set<String>,
+    ): CapabilityResult<Unit> {
+        pastes += PasteCall(destDir, sources, move, skip, keepBoth)
+        return pasteResult
+    }
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class FilesStoreTest {
     @Test
@@ -305,6 +336,195 @@ class FilesStoreTest {
         assertEquals(2_048L, transfer.totalBytes)
         assertTrue(local.sources.getValue("report.pdf").closed)
         assertNull(files.state.value.aggregateProgress, "no active transfers means no progress bar")
+        files.close()
+    }
+
+    @Test
+    fun aCleanPasteRunsServerSideWithoutStreamingBytes() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val remote = FakeRemoteFiles()
+        val local = MemoryLocalFiles()
+        val files = FilesStore(scope, FakeSftp(), local, TransferIds(), remote)
+
+        files.dispatch(FilesAction.Navigate("/dest"))
+        advanceUntilIdle()
+        files.dispatch(FilesAction.Copy(listOf("/src/a.txt", "/src/b.txt")))
+        files.dispatch(FilesAction.BeginPaste)
+        advanceUntilIdle()
+
+        val call = remote.pastes.single()
+        assertEquals("/dest", call.destDir)
+        assertEquals(listOf("/src/a.txt", "/src/b.txt"), call.sources)
+        assertFalse(call.move)
+        assertTrue(call.skip.isEmpty() && call.keepBoth.isEmpty())
+        assertEquals("Copied 2 item(s) here", files.state.value.status)
+        // A successful paste consumes the clipboard, copies included.
+        assertNull(files.state.value.clipboard)
+        assertTrue(local.sinks.isEmpty(), "a same-host paste must not stream through the device")
+        files.close()
+    }
+
+    @Test
+    fun conflictsWaitForPerItemDecisionsAndSkippedNamesAreNeverIssued() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val remote = FakeRemoteFiles(
+            listOf(
+                RemoteConflict("a.txt", ConflictVerdict.Different),
+                RemoteConflict("b.txt", ConflictVerdict.Identical),
+                RemoteConflict("c.txt", ConflictVerdict.Different),
+            ),
+        )
+        val files = FilesStore(scope, FakeSftp(), MemoryLocalFiles(), TransferIds(), remote)
+
+        files.dispatch(FilesAction.Navigate("/dest"))
+        advanceUntilIdle()
+        files.dispatch(FilesAction.Copy(listOf("/src/a.txt", "/src/b.txt", "/src/c.txt")))
+        files.dispatch(FilesAction.BeginPaste)
+        advanceUntilIdle()
+
+        // Nothing is written until the user decides.
+        assertTrue(remote.pastes.isEmpty())
+        assertEquals(3, files.state.value.pasteConflicts.size)
+        assertTrue(files.state.value.pasteConflicts.all { it.resolution == ConflictResolution.Overwrite })
+        assertFalse(files.state.value.pasteUnverified)
+
+        files.dispatch(FilesAction.SetConflictResolution("b.txt", ConflictResolution.Skip))
+        files.dispatch(FilesAction.SetConflictResolution("c.txt", ConflictResolution.KeepBoth))
+        files.dispatch(FilesAction.ConfirmPaste)
+        advanceUntilIdle()
+
+        val call = remote.pastes.single()
+        assertEquals(setOf("b.txt"), call.skip)
+        assertEquals(setOf("c.txt"), call.keepBoth)
+        assertEquals("Copied 2 item(s) here", files.state.value.status)
+        files.close()
+    }
+
+    @Test
+    fun pastingIntoTheSourceFolderDefaultsToKeepBothOnCopyAndSkipOnMove() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val remote = FakeRemoteFiles(listOf(RemoteConflict("a.txt", ConflictVerdict.Identical)))
+        val files = FilesStore(scope, FakeSftp(), MemoryLocalFiles(), TransferIds(), remote)
+
+        files.dispatch(FilesAction.Navigate("/src"))
+        advanceUntilIdle()
+        files.dispatch(FilesAction.Copy(listOf("/src/a.txt")))
+        files.dispatch(FilesAction.BeginPaste)
+        advanceUntilIdle()
+        // Overwriting in place would issue a copy with identical source and destination, which fails.
+        assertEquals(ConflictResolution.KeepBoth, files.state.value.pasteConflicts.single().resolution)
+
+        files.dispatch(FilesAction.CancelPaste)
+        files.dispatch(FilesAction.Cut(listOf("/src/a.txt")))
+        files.dispatch(FilesAction.BeginPaste)
+        advanceUntilIdle()
+        assertEquals(ConflictResolution.Skip, files.state.value.pasteConflicts.single().resolution)
+
+        files.dispatch(FilesAction.ConfirmPaste)
+        advanceUntilIdle()
+        assertEquals(setOf("a.txt"), remote.pastes.single().skip)
+        assertEquals("Skipped all 1 item(s)", files.state.value.status)
+        files.close()
+    }
+
+    @Test
+    fun anUnverifiedComparisonIsFlaggedRatherThanImplyingCertainty() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val remote = FakeRemoteFiles(listOf(RemoteConflict("a.txt", ConflictVerdict.Unknown)))
+        val files = FilesStore(scope, FakeSftp(), MemoryLocalFiles(), TransferIds(), remote)
+
+        files.dispatch(FilesAction.Navigate("/dest"))
+        advanceUntilIdle()
+        files.dispatch(FilesAction.Copy(listOf("/src/a.txt")))
+        files.dispatch(FilesAction.BeginPaste)
+        advanceUntilIdle()
+
+        assertTrue(files.state.value.pasteUnverified)
+        files.close()
+    }
+
+    @Test
+    fun navigatingAwayAfterTheScanCancelsThePasteInsteadOfWritingElsewhere() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val remote = FakeRemoteFiles(listOf(RemoteConflict("a.txt", ConflictVerdict.Different)))
+        val files = FilesStore(scope, FakeSftp(), MemoryLocalFiles(), TransferIds(), remote)
+
+        files.dispatch(FilesAction.Navigate("/dest"))
+        advanceUntilIdle()
+        files.dispatch(FilesAction.Copy(listOf("/src/a.txt")))
+        files.dispatch(FilesAction.BeginPaste)
+        advanceUntilIdle()
+
+        files.dispatch(FilesAction.Navigate("/elsewhere"))
+        advanceUntilIdle()
+        files.dispatch(FilesAction.ConfirmPaste)
+        advanceUntilIdle()
+
+        assertTrue(remote.pastes.isEmpty(), "a stale destination must never be pasted into")
+        assertEquals(
+            "Paste cancelled because the clipboard, destination, host, or move mode changed.",
+            files.state.value.error,
+        )
+        files.close()
+    }
+
+    @Test
+    fun switchingHostAfterTheScanAlsoCancelsThePaste() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val remote = FakeRemoteFiles(listOf(RemoteConflict("a.txt", ConflictVerdict.Different)))
+        val files = FilesStore(scope, FakeSftp(), MemoryLocalFiles(), TransferIds(), remote)
+
+        files.dispatch(FilesAction.SelectEndpoint("host-1"))
+        files.dispatch(FilesAction.Navigate("/dest"))
+        advanceUntilIdle()
+        files.dispatch(FilesAction.Copy(listOf("/src/a.txt")))
+        files.dispatch(FilesAction.BeginPaste)
+        advanceUntilIdle()
+
+        files.dispatch(FilesAction.SelectEndpoint("host-2"))
+        files.dispatch(FilesAction.ConfirmPaste)
+        advanceUntilIdle()
+
+        assertTrue(remote.pastes.isEmpty())
+        files.close()
+    }
+
+    @Test
+    fun aFailedScanCancelsThePasteAndKeepsTheClipboard() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val remote = FakeRemoteFiles()
+        remote.scanResult = CapabilityResult.Failed(com.jetsetslow.omniterm.shared.platform.PlatformError.NetworkUnavailable)
+        val files = FilesStore(scope, FakeSftp(), MemoryLocalFiles(), TransferIds(), remote)
+
+        files.dispatch(FilesAction.Navigate("/dest"))
+        advanceUntilIdle()
+        files.dispatch(FilesAction.Copy(listOf("/src/a.txt")))
+        files.dispatch(FilesAction.BeginPaste)
+        advanceUntilIdle()
+
+        assertTrue(remote.pastes.isEmpty())
+        assertFalse(files.state.value.pasteScanning)
+        assertEquals("Paste cancelled: conflict scan failed (Network unavailable)", files.state.value.error)
+        // The clipboard survives a failed scan so the user can retry.
+        assertNotNull(files.state.value.clipboard)
+        files.close()
+    }
+
+    @Test
+    fun aFailedPasteKeepsItsErrorThroughTheRefresh() = runTest {
+        val scope = CoroutineScope(StandardTestDispatcher(testScheduler))
+        val remote = FakeRemoteFiles()
+        remote.pasteResult = CapabilityResult.Failed(com.jetsetslow.omniterm.shared.platform.PlatformError.PermissionDenied)
+        val files = FilesStore(scope, FakeSftp(), MemoryLocalFiles(), TransferIds(), remote)
+
+        files.dispatch(FilesAction.Navigate("/dest"))
+        advanceUntilIdle()
+        files.dispatch(FilesAction.Copy(listOf("/src/a.txt")))
+        files.dispatch(FilesAction.BeginPaste)
+        advanceUntilIdle()
+
+        assertEquals("Paste failed: Permission denied", files.state.value.error)
+        assertNotNull(files.state.value.clipboard, "a failed paste must not consume the clipboard")
         files.close()
     }
 

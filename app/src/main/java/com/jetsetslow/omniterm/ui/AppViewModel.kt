@@ -658,21 +658,8 @@ private const val PIN_PBKDF2_ITERATIONS = 210_000
 internal const val PIN_MAX_ATTEMPTS = 5
 internal const val PIN_LOCKOUT_MS = 30_000L
 
-/**
- * Build the wire payload for a paste. When the remote enabled bracketed paste (DECSET 2004),
- * readline treats EVERYTHING between the markers as literal text — including a trailing Enter —
- * so a pasted command ending in a newline was echoed at the prompt but never executed (and the
- * IME's multi-line commit path funnels through the same paste). Matching mainstream terminals,
- * the pasted body is wrapped but any trailing CRs are sent AFTER the closing marker so they act
- * as real Enter presses. Interior newlines stay inside the bracket (literal, as the mode
- * intends). Pure for unit-testing; [normalized] must already use CR line endings.
- */
-internal fun bracketedPastePayload(normalized: String, bracketed: Boolean): String {
-    if (!bracketed) return normalized
-    val body = normalized.trimEnd('\r')
-    val trailingEnters = normalized.substring(body.length)
-    return "\u001B[200~$body\u001B[201~$trailingEnters"
-}
+// bracketedPastePayload lives in :shared (com.jetsetslow.omniterm.ui.TerminalPastePolicy) so
+// iOS applies the identical DECSET 2004 rules. Same package, so call sites are unchanged.
 
 /** True while PIN entry is throttled after too many failures. */
 internal fun isPinThrottled(lockedUntilMs: Long, nowMs: Long): Boolean = nowMs < lockedUntilMs

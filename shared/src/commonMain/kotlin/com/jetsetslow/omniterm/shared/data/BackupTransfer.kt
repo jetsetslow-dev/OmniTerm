@@ -15,6 +15,7 @@ data class BackupHost(
 )
 
 data class BackupEnvelope(
+    val format: String = BACKUP_FORMAT,
     val schemaVersion: Int,
     val producedBy: String,
     val kdfIterations: Int,
@@ -27,32 +28,37 @@ sealed interface BackupValidation {
     data class Rejected(val reason: String) : BackupValidation
 }
 
-/** Bounds applied before any parsing work: a crafted backup must not be able to exhaust memory. */
-const val BACKUP_MIN_SCHEMA_VERSION: Int = 1
-const val BACKUP_MAX_SCHEMA_VERSION: Int = 3
-const val BACKUP_MAX_HOSTS: Int = 5_000
+/**
+ * Bounds and messages ported from the Android backup implementation
+ * (`AppViewModel.validateBackupRoot` / `validateBackupCryptoParameters`). They must not drift: a
+ * file written by one platform is read by the other, and a limit that differs would make an archive
+ * importable on one device and rejected on the other.
+ */
+const val BACKUP_FORMAT: String = "omniterm-backup"
+const val BACKUP_SCHEMA_VERSION: Int = 5
+const val BACKUP_MAX_COLLECTION_ITEMS: Int = 50_000
 const val BACKUP_MIN_KDF_ITERATIONS: Int = 100_000
-const val BACKUP_MAX_KDF_ITERATIONS: Int = 2_000_000
+const val BACKUP_MAX_KDF_ITERATIONS: Int = 1_000_000
 
 fun validateBackup(envelope: BackupEnvelope): BackupValidation = when {
-    envelope.schemaVersion < BACKUP_MIN_SCHEMA_VERSION ->
-        BackupValidation.Rejected("Backup schema ${envelope.schemaVersion} is older than this app supports")
-    envelope.schemaVersion > BACKUP_MAX_SCHEMA_VERSION ->
-        BackupValidation.Rejected("Backup schema ${envelope.schemaVersion} was written by a newer OmniTerm")
-    envelope.hosts.size > BACKUP_MAX_HOSTS ->
-        BackupValidation.Rejected("Backup declares ${envelope.hosts.size} hosts, above the ${BACKUP_MAX_HOSTS} limit")
+    envelope.format != BACKUP_FORMAT -> BackupValidation.Rejected("Not an OmniTerm backup file.")
+    envelope.schemaVersion > BACKUP_SCHEMA_VERSION ->
+        BackupValidation.Rejected("Backup schema is newer than this app supports.")
+    envelope.schemaVersion < 1 -> BackupValidation.Rejected("Backup schema is missing or invalid.")
+    envelope.hosts.size > BACKUP_MAX_COLLECTION_ITEMS ->
+        BackupValidation.Rejected("Backup contains too many servers entries.")
     // A low iteration count is a downgrade attack on the archive's own protection; a huge one is a
     // denial of service against the importing device.
     envelope.kdfIterations < BACKUP_MIN_KDF_ITERATIONS ->
-        BackupValidation.Rejected("Backup key derivation is weaker than the supported minimum")
+        BackupValidation.Rejected("Backup key derivation is weaker than the supported minimum.")
     envelope.kdfIterations > BACKUP_MAX_KDF_ITERATIONS ->
-        BackupValidation.Rejected("Backup key derivation cost is above the supported maximum")
+        BackupValidation.Rejected("Backup key derivation cost is above the supported maximum.")
     envelope.hosts.any { it.externalId.isBlank() } ->
-        BackupValidation.Rejected("Backup contains a host without a stable identifier")
+        BackupValidation.Rejected("Backup contains a host without a stable identifier.")
     envelope.hosts.map { it.externalId }.toSet().size != envelope.hosts.size ->
-        BackupValidation.Rejected("Backup contains duplicate host identifiers")
+        BackupValidation.Rejected("Backup contains duplicate host identifiers.")
     envelope.hosts.any { it.port !in 1..65_535 } ->
-        BackupValidation.Rejected("Backup contains a host with an invalid port")
+        BackupValidation.Rejected("Backup contains a host with an invalid port.")
     else -> BackupValidation.Valid
 }
 

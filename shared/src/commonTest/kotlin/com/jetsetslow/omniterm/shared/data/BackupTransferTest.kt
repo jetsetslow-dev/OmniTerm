@@ -8,14 +8,20 @@ import kotlin.test.assertTrue
 private fun host(id: String, name: String = id, port: Int = 22, secret: Boolean = false) =
     BackupHost(externalId = id, name = name, host = "$id.example", port = port, username = "root", hadSecret = secret)
 
-private fun envelope(hosts: List<BackupHost>, version: Int = 2, iterations: Int = 210_000, unsupported: List<String> = emptyList()) =
-    BackupEnvelope(version, "android", iterations, hosts, unsupported)
+private fun envelope(
+    hosts: List<BackupHost>,
+    version: Int = BACKUP_SCHEMA_VERSION,
+    iterations: Int = 210_000,
+    unsupported: List<String> = emptyList(),
+    format: String = BACKUP_FORMAT,
+) = BackupEnvelope(format, version, "android", iterations, hosts, unsupported)
 
 class BackupTransferTest {
     @Test
     fun boundsRejectHostileOrUnsupportedEnvelopes() {
         assertIs<BackupValidation.Rejected>(validateBackup(envelope(emptyList(), version = 0)))
-        assertIs<BackupValidation.Rejected>(validateBackup(envelope(emptyList(), version = BACKUP_MAX_SCHEMA_VERSION + 1)))
+        assertIs<BackupValidation.Rejected>(validateBackup(envelope(emptyList(), version = BACKUP_SCHEMA_VERSION + 1)))
+        assertIs<BackupValidation.Rejected>(validateBackup(envelope(emptyList(), format = "other-backup")))
         assertIs<BackupValidation.Rejected>(validateBackup(envelope(emptyList(), iterations = 1_000)))
         assertIs<BackupValidation.Rejected>(validateBackup(envelope(emptyList(), iterations = BACKUP_MAX_KDF_ITERATIONS + 1)))
         assertIs<BackupValidation.Rejected>(validateBackup(envelope(listOf(host("a"), host("a")))))
