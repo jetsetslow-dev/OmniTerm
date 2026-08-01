@@ -1,0 +1,42 @@
+# Compose file format 2.x — still accepted by Docker Compose V2 and podman-compose. Carries the
+# 2.x-only keys (mem_limit, links, cpu_shares) plus a top-level key that follows a section and must
+# close it (`volumes:` after `services:`, then `networks:` after `volumes:`).
+version: '2.4'
+
+services:
+  web:
+    image: nginx:1.27-alpine
+    mem_limit: 256m
+    cpu_shares: 512
+    links:
+      - app
+    ports:
+      - "80:80"
+    volumes:
+      - web-cache:/var/cache/nginx
+
+  app:
+    image: myorg/app:2.1
+    mem_limit: 1g
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - RACK_ENV=production
+      - DATABASE_URL=postgres://db/app
+
+  db:
+    image: postgres:13
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready"]
+      interval: 5s
+
+volumes:
+  web-cache:
+  db-data:
+
+networks:
+  default:
+    driver: bridge

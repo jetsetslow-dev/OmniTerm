@@ -1,0 +1,48 @@
+# Compose Specification (no `version:`). Anchor/merge-key shape taken from apache/airflow,
+# getsentry/self-hosted and netbox-community/netbox-docker.
+name: anchored
+
+x-common: &common
+  restart: always
+  env_file:
+    - .env
+
+services:
+  netbox: &netbox
+    image: docker.io/netboxcommunity/netbox:v4.6
+    user: "netbox:root"
+    depends_on:
+      - postgres
+      - redis
+    healthcheck:
+      test: curl -f http://localhost:8080/login/ || exit 1
+      start_period: 90s
+    volumes:
+      - netbox-media:/opt/netbox/netbox/media:rw
+
+  netbox-worker:
+    <<: *netbox
+    depends_on:
+      netbox:
+        condition: service_healthy
+    command:
+      - /opt/netbox/venv/bin/python
+      - rqworker
+
+  postgres:
+    <<: *common
+    image: docker.io/postgres:18-alpine
+    environment:
+      POSTGRES_DB: netbox
+      POSTGRES_USER: netbox
+    volumes:
+      - netbox-postgres:/var/lib/postgresql/data
+
+  redis:
+    <<: *common
+    image: docker.io/valkey/valkey:8.1-alpine
+    command: -- --appendonly yes
+
+volumes:
+  netbox-media:
+  netbox-postgres:

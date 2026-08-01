@@ -1,0 +1,38 @@
+# Every interpolation form Compose resolves before it reads a value, plus the trailing "# comment"
+# authors leave on list rows. None of it is knowable at edit time, so none of it may be reported as
+# invalid. Shape taken from immich and Freika/dawarich.
+name: interpolated
+
+services:
+  app:
+    image: freikin/dawarich:${APP_TAG:-latest}
+    ports:
+      - "${APP_PORT:-3001}:3000"
+      - "${PROMETHEUS_PORT:-9394}:9394" # exporter, uncomment if needed
+      - "127.0.0.1:${ADMIN_PORT}:9000/tcp"
+    volumes:
+      # Do not edit the next line; change UPLOAD_LOCATION in .env instead
+      - ${UPLOAD_LOCATION}:/data
+      - ${DB_DATA_LOCATION:?set me}:/var/lib/postgresql/data
+      - /etc/localtime:/etc/localtime:ro
+      - app-storage:/var/app/storage
+    environment:
+      - RUN_EVERY_SECONDS=3600 # syncs hourly
+      - HEALTH_PATH=/api/v1/health
+    restart: unless-stopped
+
+  journal:
+    image: swalabtech/journiv-app:latest
+    container_name: journal
+    ports:
+      - "8000:8000"
+#    environment:
+#      - SECRET_KEY=redacted
+#      - DOMAIN_NAME=192.168.1.1
+    volumes:
+      - journal-data:/data
+    restart: unless-stopped
+
+volumes:
+  app-storage:
+  journal-data:
