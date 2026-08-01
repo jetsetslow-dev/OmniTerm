@@ -494,28 +494,30 @@ fun ShellScreen(viewModel: AppViewModel) {
                             else currentSession
                         val connected = actionSession?.isConnected == true
                         val reconnecting = actionSession?.reconnecting == true
+                        // Order follows the session's own lifecycle, left to right: open a session,
+                        // leave it running, split the view, then the two per-session controls
+                        // (INPUT/VIEW and OPT), and finally the destructive DISC at the far end so
+                        // it is the hardest chip to hit by accident.
+                        TerminalOpenPicker(viewModel, actionSession, modifier = Modifier.weight(1f))
+                        val persistent = actionSession?.persistent == true
                         TerminalHeaderAction(
-                            if (viewModel.terminalReadOnly) "🔒 VIEW" else "🔓 INPUT",
-                            if (viewModel.terminalReadOnly) scheme.onTertiaryContainer else scheme.onSecondaryContainer,
-                            if (viewModel.terminalReadOnly) scheme.tertiaryContainer else scheme.secondaryContainer,
+                            if (persistent) "LEAVE" else "BG",
+                            scheme.onPrimaryContainer,
+                            scheme.primaryContainer,
+                            enabled = actionSession != null && (persistent || connected),
                             modifier = Modifier.weight(1f),
                         ) {
-                            val newReadOnly = !viewModel.terminalReadOnly
-                            viewModel.updateTerminalReadOnly(newReadOnly)
-                            if (newReadOnly) {
-                                keyboard?.hide()
-                                focusManager.clearFocus(force = true)
-                            }
-                        }
-                        TerminalHeaderAction(
-                            "⋮ OPT",
-                            scheme.onSurfaceVariant,
-                            scheme.surfaceContainerHighest,
-                            enabled = actionSession != null,
-                            modifier = Modifier.weight(1f),
-                        ) {
-                            actionSession?.let {
-                                it.terminalOptionsRequestGeneration++
+                            confirm.ask(
+                                title = if (persistent) "Leave Session Resumable?" else "Send Session to Background?",
+                                message = if (persistent) {
+                                    "OmniTerm will detach and close this local SSH connection. The tmux session and anything running inside it stay available to resume."
+                                } else {
+                                    "OmniTerm will keep the SSH session active in the background. This may increase battery consumption."
+                                },
+                                confirmLabel = if (persistent) "Leave resumable" else "Send to background",
+                                destructive = false,
+                            ) {
+                                actionSession?.let { viewModel.leaveOrBackgroundSession(it.id) }
                             }
                         }
                         if (viewModel.isMultiSsh) {
@@ -548,26 +550,28 @@ fun ShellScreen(viewModel: AppViewModel) {
                                 viewModel.enterMultiSsh()
                             }
                         }
-                        TerminalOpenPicker(viewModel, actionSession, modifier = Modifier.weight(1f))
-                        val persistent = actionSession?.persistent == true
                         TerminalHeaderAction(
-                            if (persistent) "LEAVE" else "BG",
-                            scheme.onPrimaryContainer,
-                            scheme.primaryContainer,
-                            enabled = actionSession != null && (persistent || connected),
+                            if (viewModel.terminalReadOnly) "🔒 VIEW" else "🔓 INPUT",
+                            if (viewModel.terminalReadOnly) scheme.onTertiaryContainer else scheme.onSecondaryContainer,
+                            if (viewModel.terminalReadOnly) scheme.tertiaryContainer else scheme.secondaryContainer,
                             modifier = Modifier.weight(1f),
                         ) {
-                            confirm.ask(
-                                title = if (persistent) "Leave Session Resumable?" else "Send Session to Background?",
-                                message = if (persistent) {
-                                    "OmniTerm will detach and close this local SSH connection. The tmux session and anything running inside it stay available to resume."
-                                } else {
-                                    "OmniTerm will keep the SSH session active in the background. This may increase battery consumption."
-                                },
-                                confirmLabel = if (persistent) "Leave resumable" else "Send to background",
-                                destructive = false,
-                            ) {
-                                actionSession?.let { viewModel.leaveOrBackgroundSession(it.id) }
+                            val newReadOnly = !viewModel.terminalReadOnly
+                            viewModel.updateTerminalReadOnly(newReadOnly)
+                            if (newReadOnly) {
+                                keyboard?.hide()
+                                focusManager.clearFocus(force = true)
+                            }
+                        }
+                        TerminalHeaderAction(
+                            "⋮ OPT",
+                            scheme.onSurfaceVariant,
+                            scheme.surfaceContainerHighest,
+                            enabled = actionSession != null,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            actionSession?.let {
+                                it.terminalOptionsRequestGeneration++
                             }
                         }
                         // A dropped session that isn't already retrying gets a manual reconnect here,
