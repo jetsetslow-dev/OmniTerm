@@ -837,6 +837,10 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
             Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
             }
+        } else if (viewModel.processesLoading) {
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+            )
         }
         Row(
             modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
@@ -959,6 +963,10 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
             Box(Modifier.fillMaxWidth().padding(16.dp), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
             }
+        } else if (viewModel.servicesLoading) {
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+            )
         }
         serviceOutputFeedback?.let {
             OmniCard(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp), leftAccent = OmniColors.cyan) {
@@ -1082,6 +1090,11 @@ fun LogsTab(viewModel: AppViewModel) {
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
+        if (viewModel.logsLoading) {
+            LinearProgressIndicator(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+            )
+        }
         Row(
             modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
