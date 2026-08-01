@@ -140,6 +140,9 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
+          # Keep in step with android-pr-check.yml's migration matrix, which documents why this
+          # stays at 29: emulator 37.1.11 cannot boot any API >= 36 image (surfaceflinger aborts
+          # on `hasReadColorBufferDma`). Change both together.
           api-level: 29
           arch: x86_64
           emulator-boot-timeout: 900

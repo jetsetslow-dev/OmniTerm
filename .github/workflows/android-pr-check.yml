@@ -157,6 +157,15 @@ jobs:
         with:
           # Room migration correctness is API-independent; API 29 is smaller/faster when a free
           # hosted runner lacks KVM, while still exercising an older supported SQLite platform.
+          #
+          # API 29 is also the practical ceiling-avoider: emulator 37.1.11 (current stable,
+          # 2026-07-30) cannot boot ANY API >= 36 image. surfaceflinger aborts on
+          # `Assertion failed: !rcEnc->featureInfo()->hasReadColorBufferDma` inside
+          # RegionSamplingThread, restarting system_server in a loop. Bisected locally on x86_64:
+          # API 29 and 35 stable, API 36.1 and 37 crash-loop. The symptom impersonates an app bug
+          # (`adb install` succeeds, then `am start` reports "Activity class ... does not exist"),
+          # so check a system app before suspecting OmniTerm. Raise this only once a stable
+          # emulator boots API >= 36; see the local modern-target note in AGENTS.md.
           api-level: 29
           arch: x86_64
           emulator-boot-timeout: 900

@@ -21,6 +21,15 @@ These rules apply to every contributor and automation tool working in this repos
   assumption inside the class is too late because Robolectric fails before `@Before` runs.
 - Android-framework behavior may remain in Robolectric/instrumentation tests, but required PR CI
   must exercise it on a supported x86_64 runner.
+- Required CI runs the Room migration matrix on API 29 only. On a KVM-capable x86_64 host, also run
+  it locally against **API 35**, the newest level the current stable emulator can boot, so the
+  modern end of the supported range (`targetSdk` 37, `minSdk` 24) is exercised and not just the
+  oldest. Do not raise CI's API level to match: hosted runners may lack KVM, and API >= 36 images
+  cannot boot at all on emulator 37.1.11 — surfaceflinger aborts on `hasReadColorBufferDma` and
+  crash-loops system_server. Re-test API 36/37 when a stable emulator newer than 37.1.11 ships.
+- An emulator satisfies the migration matrix; no physical device is required. A crash-looping
+  emulator misreports as an app bug (`am start` says the launcher activity does not exist even
+  though `adb install` succeeded) — confirm against a system app before blaming the APK.
 - Do not use `kotlinx.coroutines.test.runTest` around production work dispatched to real
   `Dispatchers.IO`/`Default`; virtual timeout advancement can race real threads. Inject a test
   dispatcher or use a plain JVM `runBlocking` integration test with bounded real-time waits.
