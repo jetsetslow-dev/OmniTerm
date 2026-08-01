@@ -16,6 +16,7 @@ import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.MetricHistoryEntity
 import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.ui.MeasurementSystem
+import com.jetsetslow.omniterm.ui.OperationGeneration
 import com.jetsetslow.omniterm.ui.formatTemperature
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -79,7 +80,11 @@ object OmniTermWidgetUpdater {
         if (ids.isNotEmpty()) update(context, ids)
     }
 
-    suspend fun update(context: Context, appWidgetIds: IntArray) {
+    suspend fun update(
+        context: Context,
+        appWidgetIds: IntArray,
+        publishIfCurrent: (Int, () -> Unit) -> Unit = { _, publish -> publish() },
+    ) {
         if (appWidgetIds.isEmpty()) return
         val appContext = context.applicationContext
         val rows = withContext(Dispatchers.IO) {
@@ -88,18 +93,34 @@ object OmniTermWidgetUpdater {
         val manager = AppWidgetManager.getInstance(appContext)
         withContext(Dispatchers.IO) {
             appWidgetIds.forEach { appWidgetId ->
-                manager.updateAppWidget(
-                    appWidgetId,
-                    createRemoteViews(appContext, appWidgetId, rows),
-                )
+                publishIfCurrent(appWidgetId) {
+                    manager.updateAppWidget(
+                        appWidgetId,
+                        createRemoteViews(appContext, appWidgetId, rows),
+                    )
+                    // Keep this off the main thread: the launcher may answer it by re-entering our
+                    // RemoteViewsFactory.onDataSetChanged() synchronously, which blocks on a DB read.
+                    manager.notifyAppWidgetViewDataChanged(appWidgetId, R.id.widget_rows)
+                }
             }
-            // Keep this off the main thread: the launcher may answer it by re-entering our
-            // RemoteViewsFactory.onDataSetChanged() synchronously, which blocks on a DB read.
-            manager.notifyAppWidgetViewDataChanged(appWidgetIds, R.id.widget_rows)
         }
     }
 
-    fun showError(context: Context, appWidgetIds: IntArray) {
+    fun showLoading(context: Context, appWidgetIds: IntArray) {
+        val manager = AppWidgetManager.getInstance(context)
+        appWidgetIds.forEach { appWidgetId ->
+            manager.updateAppWidget(
+                appWidgetId,
+                RemoteViews(context.packageName, R.layout.omniterm_widget_loading),
+            )
+        }
+    }
+
+    fun showError(
+        context: Context,
+        appWidgetIds: IntArray,
+        publishIfCurrent: (Int, () -> Unit) -> Unit = { _, publish -> publish() },
+    ) {
         val manager = AppWidgetManager.getInstance(context)
         appWidgetIds.forEach { appWidgetId ->
             val views = RemoteViews(context.packageName, R.layout.omniterm_widget_error)
@@ -107,7 +128,7 @@ object OmniTermWidgetUpdater {
                 R.id.widget_error_root,
                 refreshPendingIntent(context, appWidgetId),
             )
-            manager.updateAppWidget(appWidgetId, views)
+            publishIfCurrent(appWidgetId) { manager.updateAppWidget(appWidgetId, views) }
         }
     }
 
@@ -381,6 +402,7 @@ private class OmniTermWidgetRowFactory(
 class OmniTermWidgetReceiver : AppWidgetProvider() {
     companion object {
         const val ACTION_REFRESH = "com.jetsetslow.omniterm.action.REFRESH_WIDGET"
+        private val refreshGenerations = OperationGeneration<Int>()
     }
 
     override fun onUpdate(
@@ -420,21 +442,32 @@ class OmniTermWidgetReceiver : AppWidgetProvider() {
         val editor = context.getSharedPreferences("widget_prefs", Context.MODE_PRIVATE).edit()
         appWidgetIds.forEach { editor.remove("widget_$it") }
         editor.apply()
+        refreshGenerations.forget(appWidgetIds.toList())
     }
 
     private fun renderAsync(context: Context, appWidgetIds: IntArray) {
+        // RemoteViews has no implicit busy state. Publish this before starting I/O so even a manual
+        // refresh of an already-populated widget gives immediate, accessible feedback.
+        val generations = refreshGenerations.begin(appWidgetIds.toList())
+        OmniTermWidgetUpdater.showLoading(context, appWidgetIds)
         val pendingResult = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
             try {
-                OmniTermWidgetUpdater.update(context, appWidgetIds)
+                OmniTermWidgetUpdater.update(context, appWidgetIds) { id, publish ->
+                    refreshGenerations.publishIfCurrent(id, generations.getValue(id), publish)
+                }
             } catch (timeout: TimeoutCancellationException) {
                 android.util.Log.w("OmniTermWidget", "Widget data load timed out", timeout)
-                OmniTermWidgetUpdater.showError(context, appWidgetIds)
+                OmniTermWidgetUpdater.showError(context, appWidgetIds) { id, publish ->
+                    refreshGenerations.publishIfCurrent(id, generations.getValue(id), publish)
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (failure: Throwable) {
                 android.util.Log.w("OmniTermWidget", "Widget refresh failed", failure)
-                OmniTermWidgetUpdater.showError(context, appWidgetIds)
+                OmniTermWidgetUpdater.showError(context, appWidgetIds) { id, publish ->
+                    refreshGenerations.publishIfCurrent(id, generations.getValue(id), publish)
+                }
             } finally {
                 pendingResult.finish()
             }

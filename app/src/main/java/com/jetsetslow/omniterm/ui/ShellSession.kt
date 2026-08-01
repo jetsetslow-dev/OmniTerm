@@ -127,12 +127,16 @@ class ShellSession(
      */
     var termCols: Int = 80
     var termRows: Int = 24
+    /** Invalidates a side-channel history capture whenever either local grid dimension changes. */
+    val terminalGeometryGeneration = AtomicLong(0)
     /**
      * True when THIS session (running in tmux) has been scrolled up into copy-mode, so its pane
      * should show a jump-to-bottom control. Per-session so one split pane scrolling back doesn't
      * arm the control on the other. Mirrors the old global terminalTmuxScrolledBack flag.
      */
     var tmuxScrolledBack by mutableStateOf(false)
+    /** Incremented by terminal chrome to ask this pane to open its session options. */
+    var terminalOptionsRequestGeneration by mutableStateOf(0L)
     /**
      * True when output has arrived since the last tmux history re-sync, meaning local scrollback
      * may be missing rows the user never had on screen (tmux collapses fast output into a repaint

@@ -400,6 +400,36 @@ enum class TermKey {
     F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12
 }
 
+/** Input policy shared by terminal UI implementations, including a future iOS presentation. */
+internal fun terminalKeyAllowedInReadOnly(key: TermKey): Boolean =
+    key == TermKey.PAGE_UP || key == TermKey.PAGE_DOWN
+
+internal enum class TerminalClipboardPasteAction { EMPTY, BLOCKED_READ_ONLY, SEND, CONFIRM }
+
+/** Policy shared by the explicit terminal paste button and its unit tests. */
+internal fun terminalClipboardPasteAction(
+    text: String?,
+    readOnly: Boolean,
+    confirmThreshold: Int = 100,
+): TerminalClipboardPasteAction = when {
+    readOnly -> TerminalClipboardPasteAction.BLOCKED_READ_ONLY
+    text.isNullOrEmpty() -> TerminalClipboardPasteAction.EMPTY
+    text.length > confirmThreshold -> TerminalClipboardPasteAction.CONFIRM
+    else -> TerminalClipboardPasteAction.SEND
+}
+
+/** A tmux history capture is safe to adopt only into the exact grid generation it observed. */
+internal fun terminalGeometryMatches(
+    capturedCols: Int,
+    capturedRows: Int,
+    capturedGeneration: Long,
+    currentCols: Int,
+    currentRows: Int,
+    currentGeneration: Long,
+): Boolean = capturedCols == currentCols &&
+    capturedRows == currentRows &&
+    capturedGeneration == currentGeneration
+
 enum class SftpTransferStatus { InProgress, Success, Failure }
 
 enum class SftpSortOption(val label: String) {
@@ -1852,6 +1882,19 @@ class AppViewModel @JvmOverloads constructor(
     var isAltPressed by mutableStateOf(false)
     var isShiftPressed by mutableStateOf(false)
     var isFunctionSetVisible by mutableStateOf(false)
+    /** Display-only terminal mode: blocks text/paste keys while retaining scroll navigation. */
+    var terminalReadOnly by mutableStateOf(false)
+        private set
+
+    fun updateTerminalReadOnly(enabled: Boolean) {
+        terminalReadOnly = enabled
+        if (enabled) {
+            isCtrlPressed = false
+            isAltPressed = false
+            isShiftPressed = false
+            pendingSwipeFlush?.invoke()
+        }
+    }
 
     // BACKGROUND KEEPALIVE BACKGROUND STATE SIMULATION
     val activeKeepaliveSessionsCount get() = TerminalSessionManager.activeKeepaliveSessionsCount
@@ -4606,10 +4649,12 @@ class AppViewModel @JvmOverloads constructor(
             val altGuardApplies = !allowAlternateScreen && session.controlMode
             val cols: Int
             val rows: Int
+            val geometryGeneration: Long
             synchronized(emulator) {
                 if (altGuardApplies && emulator.isAlternateScreenActive()) return 0
                 cols = emulator.cols
                 rows = emulator.rows
+                geometryGeneration = session.terminalGeometryGeneration.get()
             }
             // Clear the dirty flag BEFORE capturing: output arriving mid-capture re-arms it, so
             // the next scroll-up re-syncs again rather than trusting a capture that missed it.
@@ -4630,7 +4675,16 @@ class AppViewModel @JvmOverloads constructor(
                 scratch.feed(history.replace("\n", "\r\n").toByteArray())
                 scratch.feed("\r\n".repeat(rows).toByteArray())
                 synchronized(emulator) {
-                    if ((altGuardApplies && emulator.isAlternateScreenActive()) || emulator.cols != cols) {
+                    if ((altGuardApplies && emulator.isAlternateScreenActive()) ||
+                        !terminalGeometryMatches(
+                            cols,
+                            rows,
+                            geometryGeneration,
+                            emulator.cols,
+                            emulator.rows,
+                            session.terminalGeometryGeneration.get(),
+                        )
+                    ) {
                         // The capture is valid only for the grid/mode observed at the start. Keep it
                         // dirty so a later scroll gesture can retry instead of trusting no-op data.
                         session.scrollbackDirty = true
@@ -5025,7 +5079,14 @@ class AppViewModel @JvmOverloads constructor(
                             // time this background parse finishes. Initial hydration may still
                             // replace only scrollback; adoptScrollbackFrom leaves that live screen
                             // untouched. Later gesture-driven syncs keep the stricter TUI guard.
-                            resyncTmuxScrollbackFor(shellSession, allowAlternateScreen = true)
+                            // The first Compose measure commonly resizes the initial 80x24 grid.
+                            // A large capture may span that resize, so retry a few times until one
+                            // capture belongs to the stable geometry (or a live TUI keeps it dirty).
+                            repeat(3) { attempt ->
+                                resyncTmuxScrollbackFor(shellSession, allowAlternateScreen = true)
+                                if (!shellSession.scrollbackDirty) return@launch
+                                if (attempt < 2) delay(250L * (attempt + 1))
+                            }
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e
                         } catch (e: Exception) {
@@ -5532,6 +5593,7 @@ class AppViewModel @JvmOverloads constructor(
         if (s.id == currentSessionId) { termCols = cols; termRows = rows }
         synchronized(s.emulator) {
             s.emulator.resize(cols, rows)
+            s.terminalGeometryGeneration.incrementAndGet()
         }
         TerminalSessionManager.publishTerminalSnapshot(s)
         // Remote resize goes through the session's conflated channel + single consumer so a burst
@@ -5694,6 +5756,7 @@ class AppViewModel @JvmOverloads constructor(
 
     /** Printable text typed by the user (soft or hardware keyboard). Applies sticky Ctrl/Alt. */
     fun typeText(text: String) {
+        if (terminalReadOnly) return
         val session = focusedTerminalSession ?: return
         if (text.isEmpty() || !session.isConnected) return
         // Printable input exits tmux copy-mode, so the pane is back at the live tail — drop the
@@ -5736,6 +5799,7 @@ class AppViewModel @JvmOverloads constructor(
      * Ctrl/Alt/Shift modifiers are intentionally ignored for bulk paste.
      */
     fun pasteText(text: String) {
+        if (terminalReadOnly) return
         val session = focusedTerminalSession ?: return
         if (text.isEmpty() || !session.isConnected) return
         val normalized = text.replace("\r\n", "\n").replace('\n', '\r')
@@ -5749,6 +5813,7 @@ class AppViewModel @JvmOverloads constructor(
      * NOT trigger pendingSwipeFlush — it IS the field mirroring its own edit, not a shell-owned key.
      */
     fun applyLineEdit(backspaces: Int, insert: String) {
+        if (terminalReadOnly) return
         val session = focusedTerminalSession ?: return
         if (!session.isConnected) return
         if (backspaces <= 0 && insert.isEmpty()) return
@@ -5759,6 +5824,7 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     fun sendKey(key: TermKey) {
+        if (terminalReadOnly && !terminalKeyAllowedInReadOnly(key)) return
         val session = focusedTerminalSession ?: return
         if (!session.isConnected) return
         pendingSwipeFlush?.invoke()
@@ -6079,7 +6145,7 @@ class AppViewModel @JvmOverloads constructor(
                     downedStacks = emptyList()
                 }
             } finally {
-                if (srv.id == selectedServerId) dockerLoading = false
+                if (dockerJob == coroutineContext[Job]) dockerLoading = false
             }
         }
     }
@@ -6395,10 +6461,19 @@ class AppViewModel @JvmOverloads constructor(
         servicesJob?.cancel()
         servicesJob = viewModelScope.launch {
             servicesLoading = true
-            val parsed = RemoteParsers.parseServices(executeSshCommand(srv, RemoteCommands.SERVICES))
-            if (srv.id != selectedServerId) return@launch
-            services = parsed
-            servicesLoading = false
+            try {
+                val parsed = RemoteParsers.parseServices(executeSshCommand(srv, RemoteCommands.SERVICES))
+                if (srv.id != selectedServerId) return@launch
+                services = parsed
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (srv.id == selectedServerId) {
+                    services = emptyList()
+                }
+            } finally {
+                if (servicesJob == coroutineContext[Job]) servicesLoading = false
+            }
         }
     }
 
@@ -6428,8 +6503,7 @@ class AppViewModel @JvmOverloads constructor(
                 logsUnsupported = RemoteParsers.journalUnsupported(raw)
                 logs = if (level == "ALL") all else all.filter { it.level == level }
             } finally {
-                // Cancellation (host switch) took the early return path and left the spinner on.
-                logsLoading = false
+                if (logsJob == coroutineContext[Job]) logsLoading = false
             }
         }
     }
@@ -6457,8 +6531,7 @@ class AppViewModel @JvmOverloads constructor(
                     updateMonitor = true,
                 )
             } finally {
-                // Switching hosts takes the early return above; without this the spinner sticks.
-                metricsLoading = false
+                if (hostMetricsJob == coroutineContext[Job]) metricsLoading = false
             }
         }
     }
@@ -6475,7 +6548,7 @@ class AppViewModel @JvmOverloads constructor(
                 processes = if (processSortByCpu) list.sortedByDescending { it.cpu }
                             else list.sortedByDescending { it.mem }
             } finally {
-                processesLoading = false
+                if (processesJob == coroutineContext[Job]) processesLoading = false
             }
         }
     }
@@ -6498,7 +6571,7 @@ class AppViewModel @JvmOverloads constructor(
                 if (srv.id != selectedServerId) return@launch
                 cronText = out
             } finally {
-                cronLoading = false
+                if (cronJob == coroutineContext[Job]) cronLoading = false
             }
         }
     }
@@ -6508,17 +6581,26 @@ class AppViewModel @JvmOverloads constructor(
         cronJob?.cancel()
         cronJob = viewModelScope.launch {
             cronLoading = true
-            val normalized = text.trimEnd() + "\n"
-            val encoded = android.util.Base64.encodeToString(normalized.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
-            val decode = "{ printf '%s' '$encoded' | base64 -d 2>/dev/null || printf '%s' '$encoded' | base64 --decode 2>/dev/null || printf '%s' '$encoded' | base64 -D; }"
-            val out = executeSshCommand(srv, "$decode | crontab - 2>&1").trim()
-            val ok = out.isBlank()
-            if (srv.id == selectedServerId) {
-                if (ok) cronText = normalized.trimEnd()
-                cronStatus = if (ok) "Crontab saved." else out
-                cronLoading = false
+            try {
+                val normalized = text.trimEnd() + "\n"
+                val encoded = android.util.Base64.encodeToString(normalized.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
+                val decode = "{ printf '%s' '$encoded' | base64 -d 2>/dev/null || printf '%s' '$encoded' | base64 --decode 2>/dev/null || printf '%s' '$encoded' | base64 -D; }"
+                val out = executeSshCommand(srv, "$decode | crontab - 2>&1").trim()
+                val ok = out.isBlank()
+                if (srv.id == selectedServerId) {
+                    if (ok) cronText = normalized.trimEnd()
+                    cronStatus = if (ok) "Crontab saved." else out
+                }
+                onResult(ok, if (ok) "Crontab saved." else out)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val message = e.message ?: "Could not save crontab."
+                if (srv.id == selectedServerId) cronStatus = message
+                onResult(false, message)
+            } finally {
+                if (cronJob == coroutineContext[Job]) cronLoading = false
             }
-            onResult(ok, if (ok) "Crontab saved." else out)
         }
     }
 

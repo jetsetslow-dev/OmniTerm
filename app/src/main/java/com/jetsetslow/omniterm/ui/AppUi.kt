@@ -843,6 +843,11 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
     fun activeFor(key: Any) = key == current || (key == Screen.Tools && isToolSubScreen(current))
     val activeColor = navItems.firstOrNull { activeFor(it.key) }?.color ?: OmniColors.cyan
     val alerts by viewModel.activeAlerts.collectAsStateWithLifecycle()
+    val visibleAlertCount = if (viewModel.alertsEnabled) {
+        alerts.count { !it.acknowledged && it.mutedUntil < System.currentTimeMillis() }
+    } else {
+        0
+    }
     // A landscape software keyboard can consume over half of the physical display. Keeping both
     // global bars mounted in that state left the terminal with zero drawable rows (and made split
     // panes effectively unusable). Terminal-local controls remain available; the global chrome
@@ -861,11 +866,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
             if (!compactTerminalIme) Column {
                 OmniAppBar(
                     activeColor = activeColor,
-                    alertCount = if (viewModel.alertsEnabled) {
-                        alerts.count { !it.acknowledged && it.mutedUntil < System.currentTimeMillis() }
-                    } else {
-                        0
-                    },
+                    alertCount = visibleAlertCount,
                     keepScreenOn = viewModel.isKeepScreenOnEnabled,
                     onHome = { viewModel.navigateTo(Screen.Servers) },
                     onAlerts = { viewModel.openAlertsPopup() },
@@ -918,6 +919,33 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                 Screen.HealthScoring -> HealthScoringToolView(viewModel)
                 Screen.Settings -> SettingsToolView(viewModel)
                 Screen.About -> AboutToolView(viewModel)
+            }
+
+            // In a landscape terminal the IME intentionally hides both global bars to preserve
+            // usable rows. Keep alerts independently reachable even in that compact state.
+            if (compactTerminalIme) {
+                FloatingActionButton(
+                    onClick = { viewModel.openAlertsPopup() },
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(8.dp)
+                        .size(44.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                ) {
+                    BadgedBox(
+                        badge = {
+                            if (visibleAlertCount > 0) Badge {
+                                Text(visibleAlertCount.coerceAtMost(99).toString())
+                            }
+                        },
+                    ) {
+                        Icon(
+                            Icons.Filled.Notifications,
+                            contentDescription = "Open alerts popup",
+                            tint = if (visibleAlertCount > 0) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
             }
 
             if (allowGlobalGestures) {

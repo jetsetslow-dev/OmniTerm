@@ -11,10 +11,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -399,17 +402,23 @@ fun OmniAppBar(
                 tint = if (keepScreenOn) OmniColors.amber else MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        if (alertCount > 0) {
-            Box(
-                Modifier
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(OmniColors.red.copy(alpha = 0.12f))
-                    .border(1.dp, OmniColors.red.copy(alpha = 0.35f), RoundedCornerShape(6.dp))
-                    .clickable { onAlerts() }
-                    .semantics { contentDescription = "Open alerts popup" }
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
+        IconButton(onClick = onAlerts) {
+            BadgedBox(
+                badge = {
+                    if (alertCount > 0) {
+                        Badge { Text(alertCount.coerceAtMost(99).toString()) }
+                    }
+                },
             ) {
-                Text("ALERTS $alertCount", color = OmniColors.red, fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Icon(
+                    Icons.Filled.Notifications,
+                    contentDescription = if (alertCount > 0) {
+                        "Open alerts popup, $alertCount active"
+                    } else {
+                        "Open alerts popup"
+                    },
+                    tint = if (alertCount > 0) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
         }
     }

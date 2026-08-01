@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowDown
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
@@ -340,6 +341,8 @@ fun ShellScreen(viewModel: AppViewModel) {
     ConfirmHost(confirm)
     val chrome = shellChromePalette()
     val scheme = MaterialTheme.colorScheme
+    val keyboard = LocalSoftwareKeyboardController.current
+    val focusManager = androidx.compose.ui.platform.LocalFocusManager.current
     val compactIme = WindowInsets.isImeVisible &&
         LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
     val currentSession = viewModel.currentSession
@@ -491,6 +494,30 @@ fun ShellScreen(viewModel: AppViewModel) {
                             else currentSession
                         val connected = actionSession?.isConnected == true
                         val reconnecting = actionSession?.reconnecting == true
+                        TerminalHeaderAction(
+                            if (viewModel.terminalReadOnly) "🔒 VIEW" else "🔓 INPUT",
+                            if (viewModel.terminalReadOnly) scheme.onTertiaryContainer else scheme.onSecondaryContainer,
+                            if (viewModel.terminalReadOnly) scheme.tertiaryContainer else scheme.secondaryContainer,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            val newReadOnly = !viewModel.terminalReadOnly
+                            viewModel.updateTerminalReadOnly(newReadOnly)
+                            if (newReadOnly) {
+                                keyboard?.hide()
+                                focusManager.clearFocus(force = true)
+                            }
+                        }
+                        TerminalHeaderAction(
+                            "⋮ OPT",
+                            scheme.onSurfaceVariant,
+                            scheme.surfaceContainerHighest,
+                            enabled = actionSession != null,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            actionSession?.let {
+                                it.terminalOptionsRequestGeneration++
+                            }
+                        }
                         if (viewModel.isMultiSsh) {
                             // Flip side-by-side ↔ stacked, and a way back to single-session view.
                             val layoutLabel = if (viewModel.multiSshLayout == MultiSshLayout.SideBySide) "⬍ STACK" else "⬌ COLS"
@@ -577,7 +604,8 @@ fun ShellScreen(viewModel: AppViewModel) {
         // view it targets the focused pane (input routing already follows the focused session).
         val keyBarSession = if (viewModel.isMultiSsh) viewModel.multiSshPaneSession(viewModel.multiSshFocusedPane) else currentSession
         if (keyBarSession?.isConnected == true) {
-            TerminalKeyBar(viewModel, compact = compactIme)
+            if (viewModel.terminalReadOnly) TerminalReadOnlyNavigationBar(viewModel)
+            else TerminalKeyBar(viewModel, compact = compactIme)
         }
     }
 
@@ -690,8 +718,11 @@ private fun TerminalHeaderAction(
         label == "LEAVE" -> "Leave current tmux session resumable"
         label == "DISC" -> "Disconnect current session"
         label == "RECON" -> "Reconnect current session"
+        label.contains("VIEW") -> "Enable read-only terminal mode"
+        label.contains("INPUT") -> "Disable read-only terminal mode"
         label.contains("STACK") -> "Stack split panes"
         label.contains("COLS") -> "Show split panes side by side"
+        label.contains("OPT") -> "Open terminal options"
         else -> label
     }
     Text(
@@ -1452,6 +1483,12 @@ private fun PaneTerminal(
     val viewport = remember(sessionId) { TerminalViewportState() }
     var visibleRowCount by remember(sessionId) { mutableStateOf(1) }
 
+    LaunchedEffect(currentSession.terminalOptionsRequestGeneration) {
+        if (currentSession.terminalOptionsRequestGeneration > 0L) {
+            showCopyOptions = true
+        }
+    }
+
     // Cursor blink - disabled for performance
     val cursorOn = true
 
@@ -1480,10 +1517,13 @@ private fun PaneTerminal(
 
     // Focus the hidden input immediately so the keyboard is available — but only for the focused
     // pane. In split view the unfocused pane must not grab the keyboard.
-    LaunchedEffect(sessionId, isFocused) {
-        if (isFocused) {
+    LaunchedEffect(sessionId, isFocused, viewModel.terminalReadOnly) {
+        if (isFocused && !viewModel.terminalReadOnly) {
             focusRequester.requestFocus()
             keyboard?.show()
+        } else if (viewModel.terminalReadOnly) {
+            runCatching { focusRequester.freeFocus() }
+            keyboard?.hide()
         }
         // A fresh session starts at its live tail; clear any stale tmux copy-mode scroll flag.
         currentSession.tmuxScrolledBack = false
@@ -1503,7 +1543,7 @@ private fun PaneTerminal(
                     keyboard?.hide()
                 }
                 Lifecycle.Event.ON_RESUME -> {
-                    if (isFocused) {
+                    if (isFocused && !viewModel.terminalReadOnly) {
                         runCatching { focusRequester.requestFocus() }
                         keyboard?.show()
                     }
@@ -1665,17 +1705,26 @@ private fun PaneTerminal(
                                             linkContext, "No app on this device can open links", android.widget.Toast.LENGTH_SHORT
                                         ).show()
                                     }
-                                } else if (isFocused) {
+                                } else if (isFocused && !viewModel.terminalReadOnly) {
                                     focusRequester.requestFocus()
                                     keyboard?.show()
                                 } else {
-                                    // Tapping an unfocused split pane hands it the keyboard.
-                                    onRequestFocus()
+                                    // Read-only taps may focus a split pane for scrolling but never
+                                    // summon its keyboard.
+                                    if (!isFocused) onRequestFocus()
                                 }
                             },
                             onLongPress = {
                                 if (!isFocused) onRequestFocus()
-                                showCopyOptions = true
+                                val liveSnapshot = currentSession.terminalScreen
+                                val start = viewport.firstVisibleRow.coerceIn(0, liveSnapshot.totalRows)
+                                copyDialogTitle = "Visible screen"
+                                copyDialogText = viewModel.terminalBufferTextFor(
+                                    currentSession,
+                                    full = false,
+                                    firstRow = start,
+                                    rowCount = visibleRowCount,
+                                )
                             }
                         )
                     },
@@ -1773,7 +1822,7 @@ private fun PaneTerminal(
         // Invisible input sink: captures soft-keyboard text + hardware special keys. Only the
         // focused pane mounts it — in split view the unfocused pane is display + gesture only, so
         // there's a single keyboard target and no ambiguity about which remote receives typing.
-        if (isFocused) {
+        if (isFocused && !viewModel.terminalReadOnly) {
         var inputField by remember(sessionId) { mutableStateOf(TextFieldValue("")) }
         val smartSwipe = viewModel.smartSwipeInput
 
@@ -2001,7 +2050,49 @@ private fun PaneTerminal(
                             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
-                            // ── Session-scoped quick toggles (runtime only, not saved to settings) ──
+                            Text("Terminal input", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                            Button(
+                                onClick = {
+                                    val clipboard = linkContext.getSystemService(android.content.ClipboardManager::class.java)
+                                    val clip = clipboard?.primaryClip
+                                    val text = if (clip != null && clip.itemCount > 0) {
+                                        clip.getItemAt(0).coerceToText(linkContext)?.toString()
+                                    } else null
+                                    when (terminalClipboardPasteAction(text, viewModel.terminalReadOnly)) {
+                                        TerminalClipboardPasteAction.EMPTY -> android.widget.Toast.makeText(
+                                            linkContext,
+                                            "Clipboard has no text to paste",
+                                            android.widget.Toast.LENGTH_SHORT,
+                                        ).show()
+                                        TerminalClipboardPasteAction.BLOCKED_READ_ONLY -> android.widget.Toast.makeText(
+                                            linkContext,
+                                            "Disable read-only mode before pasting",
+                                            android.widget.Toast.LENGTH_SHORT,
+                                        ).show()
+                                        TerminalClipboardPasteAction.CONFIRM -> {
+                                            showCopyOptions = false
+                                            pendingLargePaste = text
+                                        }
+                                        TerminalClipboardPasteAction.SEND -> {
+                                            showCopyOptions = false
+                                            viewModel.pasteText(text.orEmpty())
+                                        }
+                                    }
+                                },
+                                enabled = !viewModel.terminalReadOnly,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Icon(Icons.Filled.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(if (viewModel.terminalReadOnly) "Paste unavailable in read-only mode" else "Paste from clipboard")
+                            }
+                            Text(
+                                "Use this when an incognito keyboard does not expose clipboard history.",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            HorizontalDivider()
+                            // ── Session-scoped options (runtime only, not saved to settings) ──
                             // Rendered as Switch rows: the switch shows current state at a glance, and
                             // flipping it acts immediately. Unlike the copy actions, these stay on the
                             // menu after toggling so the user can adjust both without re-opening it.
@@ -2091,8 +2182,10 @@ private fun PaneTerminal(
             fun dismiss() {
                 copyDialogTitle = null
                 copyDialogText = ""
-                focusRequester.requestFocus()
-                keyboard?.show()
+                if (!viewModel.terminalReadOnly) {
+                    focusRequester.requestFocus()
+                    keyboard?.show()
+                }
             }
             Dialog(
                 onDismissRequest = { dismiss() },
@@ -2188,6 +2281,28 @@ private fun PaneTerminal(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun TerminalReadOnlyNavigationBar(viewModel: AppViewModel) {
+    val chrome = shellChromePalette()
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .background(chrome.keyBackground)
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Text(
+            "READ ONLY · drag to scroll",
+            color = chrome.mutedText,
+            fontFamily = OmniFonts.mono,
+            fontSize = 10.sp,
+            modifier = Modifier.weight(2f).align(Alignment.CenterVertically),
+        )
+        KeyCap("PGUP", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_UP) }
+        KeyCap("PGDN", Modifier.weight(1f), repeatable = true) { viewModel.sendKey(TermKey.PAGE_DOWN) }
     }
 }
 
