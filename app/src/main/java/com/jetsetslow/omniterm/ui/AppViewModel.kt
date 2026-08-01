@@ -130,6 +130,21 @@ internal val ANDROID_TRACEROUTE_BINARIES = listOf(
     "/system/xbin/traceroute",
 )
 
+/**
+ * Network Tools subtab indices. Named because several surfaces now jump straight to a tool with a
+ * target already loaded (the Host Scan action sheet, pull-to-refresh, launcher shortcuts), and bare
+ * literals in those call sites made the tab order impossible to change safely.
+ */
+internal object NetworkTab {
+    const val HOST_SCAN = 0
+    const val WAKE_ON_LAN = 1
+    const val PING = 2
+    const val TRACEROUTE = 3
+    const val PORT_SCAN = 4
+    const val DNS_LOOKUP = 5
+    const val WHOIS = 6
+}
+
 private const val BACKUP_SCHEMA_VERSION = 5
 private const val BACKUP_MAX_INPUT_CHARS = 20 * 1024 * 1024
 private const val BACKUP_MAX_CIPHERTEXT_BYTES = 12 * 1024 * 1024
@@ -226,6 +241,12 @@ private const val NETWORK_SHARE_PROBE_INTERVAL_MS = 60_000L
 private const val RECONNECT_BASE_DELAY_MS = 1_000L
 private const val RECONNECT_MAX_DELAY_MS = 30_000L
 private const val RECONNECT_MAX_ATTEMPTS = 12
+
+/**
+ * How many dead-but-retryable sessions to keep around. Enough that a couple of simultaneous drops
+ * (say both panes of a split) stay recoverable, few enough that they cannot accumulate unboundedly.
+ */
+private const val MAX_RETAINED_DEAD_SESSIONS = 3
 
 /**
  * Decide whether a closed shell session was a CLEAN exit (the remote shell ran `exit`, so the
@@ -808,6 +829,17 @@ class AppViewModel @JvmOverloads constructor(
         private set
     private val appLockTimeoutTracker = AppLockTimeoutTracker()
 
+    /**
+     * Clock for the background lock timer: [android.os.SystemClock.elapsedRealtime] (CLOCK_BOOTTIME).
+     *
+     * NOT System.nanoTime()/currentTimeMillis(). nanoTime is CLOCK_MONOTONIC, which STOPS while the
+     * device is suspended in deep sleep — so backgrounding the app and letting the screen turn off
+     * froze the countdown and the app never re-locked, which is the exact case users hit most.
+     * elapsedRealtime keeps counting through suspend while still being immune to wall-clock changes,
+     * so a user-set timeout cannot be bypassed by moving the system clock backwards either.
+     */
+    private fun appLockClockMs(): Long = android.os.SystemClock.elapsedRealtime()
+
     fun saveAppLockBackgroundTimeout(timeoutMs: Long) {
         appLockBackgroundTimeoutMs = normalizeAppLockBackgroundTimeout(timeoutMs)
         viewModelScope.launch {
@@ -821,12 +853,12 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /** Called only when the Activity genuinely becomes non-visible, not for configuration changes. */
-    fun noteAppBackgrounded(nowMs: Long = System.nanoTime() / 1_000_000L) {
+    fun noteAppBackgrounded(nowMs: Long = appLockClockMs()) {
         appLockTimeoutTracker.noteBackgrounded(nowMs)
     }
 
     /** Consume one background interval and re-engage authentication when its timeout has elapsed. */
-    fun relockIfNeeded(nowMs: Long = System.nanoTime() / 1_000_000L) {
+    fun relockIfNeeded(nowMs: Long = appLockClockMs()) {
         if (!securitySettingsLoaded) return
         if (
             appLockTimeoutTracker.consumeShouldRelock(
@@ -909,6 +941,24 @@ class AppViewModel @JvmOverloads constructor(
 
     private fun hostLimitMessage(): String =
         "The free Play Store build supports $freePlayStoreLimit saved ${if (freePlayStoreLimit == 1) "host" else "hosts"}. Unlock OmniTerm to add unlimited hosts."
+
+    /**
+     * Ad-hoc connections are a full-unlock feature. The saved-host limit counts database rows, so a
+     * connection that deliberately writes none would otherwise be an unmetered way around it — the
+     * free build must route every host through the saved list where the limit applies.
+     *
+     * Deliberately keyed to the same entitlement as [hasHostLimit], which tracks the "Unlock
+     * OmniTerm" product alone. Buying "Remove Ads" must NOT unlock this: that product only ever
+     * sets LicenseState.adsRemoved, which is not plumbed into this ViewModel at all — only
+     * LicenseState.unlocked reaches [updateLicenseEntitlement]. Gating on anything other than the
+     * host-limit entitlement would let the cheaper ad-removal purchase lift the host limit.
+     */
+    val isQuickConnectAvailable: Boolean
+        get() = !hasHostLimit
+
+    fun quickConnectLockedMessage(): String =
+        "Quick connect needs Unlock OmniTerm (Remove Ads does not include it). The free Play Store " +
+            "build connects through saved hosts, which are limited to $freePlayStoreLimit."
 
     fun credentialProfileLimitMessage(): String =
         "The free Play Store build supports $freePlayStoreLimit authentication ${if (freePlayStoreLimit == 1) "method" else "methods"}. Unlock OmniTerm to save unlimited credentials."
@@ -1216,8 +1266,8 @@ class AppViewModel @JvmOverloads constructor(
     var downedStacks by mutableStateOf<List<StackRegistryEntity>>(emptyList()); private set
 
     var activeInfraTab by mutableStateOf(0)
-    // Network Tools subtab (0: Host Scan, 1: Wake-on-LAN, 2: Ping, 3: Traceroute, 4: Port Scan). Held
-    // in the VM (not local screen state) so the global horizontal swipe gesture can page between them.
+    // Network Tools subtab (see NetworkTab). Held in the VM (not local screen state) so the global
+    // horizontal swipe gesture can page between them.
     var activeNetworkTab by mutableStateOf(0)
     // Alerts (0: Active, 1: Rules, 2: History) and Scripts (0: Quick scripts, 1: Fleet commands)
     // subtabs, VM-held for the same swipe-paging reason as activeNetworkTab.
@@ -3893,10 +3943,123 @@ class AppViewModel @JvmOverloads constructor(
         val mac: String = "",
         val vendor: String = "",
         val openPorts: List<Int> = emptyList(),
-    )
+    ) {
+        /** Prefers the reverse-DNS name for anything that resolves names; falls back to the IP. */
+        val displayName: String get() = hostname.ifBlank { ip }
+    }
+
+    // ── Acting on a discovered host ──
+    //
+    // The LAN sweep is where a user first meets an address, so every device-side tool and the
+    // "save this as a host" flow are reachable from a scan result rather than requiring the address
+    // to be re-typed into each tab. These all switch to the owning tab and START the action, because
+    // the user already expressed intent by choosing it from the host's action sheet.
+    //
+    // Each one stops an in-flight run of the same tool first: startPing/startTraceroute are no-ops
+    // while running, so without this the second host a user picked would silently show the first
+    // host's output.
+
+    private fun openNetworkTab(tab: Int) {
+        activeNetworkTab = tab
+        if (currentScreen != Screen.Network) navigateTo(Screen.Network)
+    }
+
+    /** Ping [ip] from the phone (4 tries), on the Ping tab. */
+    fun pingTargetFromScan(ip: String) {
+        portScannerTarget = ip
+        openNetworkTab(NetworkTab.PING)
+        stopPing()
+        startPing(ip, 4)
+    }
+
+    /** Traceroute to [ip] from the phone, on the Traceroute tab. */
+    fun tracerouteTargetFromScan(ip: String) {
+        portScannerTarget = ip
+        openNetworkTab(NetworkTab.TRACEROUTE)
+        stopTraceroute()
+        startTraceroute(ip)
+    }
+
+    /**
+     * Scan [ip] on the Port Scan tab. When the sweep already found open ports they are merged into
+     * the port list so the deep scan confirms what the sweep saw instead of missing it — the sweep
+     * probes only [hostScanPorts], and the default range does not contain all of them (445, 3389,
+     * 5900) nor whatever non-default port this particular host answered on.
+     */
+    fun portScanTargetFromScan(ip: String, knownOpenPorts: List<Int> = emptyList()) {
+        portScannerTarget = ip
+        if (knownOpenPorts.isNotEmpty()) {
+            val existing = portScannerRange.split(",").mapNotNull { it.trim().toIntOrNull() }
+            portScannerRange = (existing + knownOpenPorts).distinct().sorted().joinToString(",")
+        }
+        openNetworkTab(NetworkTab.PORT_SCAN)
+        runPortScanner()
+    }
+
+    /** Resolve [target] on the DNS Lookup tab. */
+    fun dnsLookupTargetFromScan(target: String) {
+        dnsLookupTarget = target
+        openNetworkTab(NetworkTab.DNS_LOOKUP)
+        runDnsLookup()
+    }
+
+    /** Look [target] up on the WHOIS tab. */
+    fun whoisTargetFromScan(target: String) {
+        whoisTarget = target
+        openNetworkTab(NetworkTab.WHOIS)
+        runWhois()
+    }
+
+    /**
+     * One-shot request for the Wake-on-LAN tab to open its Add dialog pre-filled from a scan result.
+     * Consumed by WolTab; held here (not passed as a nav argument) so it survives the tab switch and
+     * any recomposition in between.
+     */
+    var pendingWolPrefill by mutableStateOf<ScannedWolDevice?>(null)
+
+    /** Send a scanned host to the WoL tab's Add dialog. Only meaningful when its MAC is known. */
+    fun addWolTargetFromScan(host: ScannedHost) {
+        pendingWolPrefill = ScannedWolDevice(
+            name = host.displayName,
+            mac = host.mac,
+            ip = host.ip,
+            isOnline = host.isOnline,
+        )
+        openNetworkTab(NetworkTab.WAKE_ON_LAN)
+    }
+
+    /**
+     * One-shot prefill for the Add-server sheet, set when saving a discovered host as a real
+     * OmniTerm host. Only the address and a suggested name — the sheet stays a normal empty add
+     * form for everything else (credentials, port, group), so nothing is written until the user
+     * saves and the first-connect host-key trust gate applies exactly as for any new host.
+     */
+    data class NewServerPrefill(val host: String, val suggestedName: String, val port: Int = 22)
+
+    var pendingNewServerPrefill by mutableStateOf<NewServerPrefill?>(null)
+        private set
+
+    /** Open the Add-server sheet for a discovered host, addressed by IP on the standard SSH port. */
+    fun addServerFromScan(host: ScannedHost) {
+        pendingNewServerPrefill = NewServerPrefill(
+            host = host.ip,
+            suggestedName = host.displayName,
+        )
+        requestAddServerFromShortcut()
+    }
+
+    fun consumeNewServerPrefill() {
+        pendingNewServerPrefill = null
+    }
 
     /** Common ports probed during a host scan (kept short so a full /24 sweep stays fast). */
     private val hostScanPorts = listOf(22, 80, 443, 445, 3389, 5900, 8080)
+
+    // Name-resolution budgets per host. Every live host pays the reverse-DNS bound, and unnamed ones
+    // additionally pay the mDNS/NetBIOS bound once (both run in parallel), so a /24 of silent devices
+    // costs about one of each rather than the unbounded stall the old code could hit.
+    private val REVERSE_DNS_TIMEOUT_MS = 1_200L
+    private val LAN_NAME_PROBE_TIMEOUT_MS = 900
 
     /**
      * Best-effort OUI (MAC prefix) → vendor map for the most common devices on a home/office LAN.
@@ -3917,6 +4080,43 @@ class AppViewModel @JvmOverloads constructor(
     private fun vendorForMac(mac: String): String {
         if (mac.length < 8) return ""
         return ouiVendors[mac.substring(0, 8).uppercase(Locale.ROOT)] ?: ""
+    }
+
+    /**
+     * Reverse-resolve one scanned IP, trying every naming scheme a LAN actually uses instead of
+     * reverse DNS alone: PTR, then mDNS, then NetBIOS. mDNS and NetBIOS run concurrently because
+     * they are pure timeouts for devices that do not speak them — serialising them would add their
+     * timeouts together on every unnamed host.
+     *
+     * Reverse DNS is the reason names were unreliable before. It is the only scheme the old code
+     * used, yet most consumer routers publish no PTR records for DHCP clients, so it returned the IP
+     * literal for nearly everything. It is also unbounded — the JDK resolver exposes no per-call
+     * timeout — so against a slow or blackholing resolver each lookup blocked for seconds, and since
+     * the sweep awaits all of them the whole scan looked hung. [withTimeoutOrNull] over
+     * [runInterruptible] is what actually bounds it.
+     */
+    private suspend fun resolveLanHostname(ip: String): String = coroutineScope {
+        val reverseDns = withTimeoutOrNull(REVERSE_DNS_TIMEOUT_MS) {
+            runInterruptible(Dispatchers.IO) { LanHostnameResolver.queryReverseDns(ip) }
+        }
+        LanHostnameWire.normalizeHostname(reverseDns, ip).takeIf { it.isNotBlank() }?.let {
+            return@coroutineScope it
+        }
+
+        val mdns = async(Dispatchers.IO) {
+            LanHostnameWire.normalizeHostname(
+                LanHostnameResolver.queryMdns(ip, LAN_NAME_PROBE_TIMEOUT_MS),
+                ip,
+            )
+        }
+        val netbios = async(Dispatchers.IO) {
+            LanHostnameResolver.queryNetbios(ip, LAN_NAME_PROBE_TIMEOUT_MS)
+                ?.let { LanHostnameResolver.prettifyNetbios(it) }
+                .let { LanHostnameWire.normalizeHostname(it, ip) }
+        }
+        // mDNS wins ties: a `.local` name is the device's own published identity, whereas a NetBIOS
+        // name is capped at 15 shouted characters.
+        mdns.await().ifBlank { netbios.await() }
     }
 
     /**
@@ -3970,13 +4170,11 @@ class AppViewModel @JvmOverloads constructor(
                 }
             } catch (_: Exception) {}
 
-            // Enrich each live host with rDNS hostname + open common ports (bounded concurrency).
+            // Enrich each live host with a hostname + open common ports (bounded concurrency).
             online.map { host ->
                 async {
                     limiter.withPermit {
-                        val hostname = try {
-                            java.net.InetAddress.getByName(host).canonicalHostName.takeIf { it != host } ?: ""
-                        } catch (_: Exception) { "" }
+                        val hostname = resolveLanHostname(host)
                         val open = hostScanPorts.filter { port ->
                             try {
                                 java.net.Socket().use { s ->
@@ -4346,6 +4544,131 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    // ── Ad-hoc (unsaved) connections ──
+
+    /** True while the Terminal's quick-connect sheet is open. */
+    var quickConnectSheetOpen by mutableStateOf(false)
+
+    /**
+     * Server id handed to sessions that have no database row. Negative and decreasing, so it can
+     * never collide with a Room autoGenerate id (those start at 1) and every
+     * `servers.find { it.id == session.serverId }` in the UI cleanly misses and falls back to the
+     * session's own label. Negative-means-unsaved is already the convention here (see the SFTP
+     * network-share refs, which encode share ids the same way).
+     */
+    private var nextAdHocServerId = -1
+
+    /**
+     * Open a terminal on a host that is NOT saved, for a one-off connection.
+     *
+     * The [ServerEntity] built here is never written to the database — it exists only to carry the
+     * connection parameters into the shared connect path, so this reuses [buildCredentials] and
+     * [connectTerminal] unchanged and therefore inherits every one of their behaviours: the
+     * first-connect host-key trust prompt (SshHostKeyTrust is keyed by host:port, not by server id,
+     * so an unsaved host is gated exactly like a saved one), the changed-host-key refusal, proxy and
+     * jump-host handling, and the connection-failure classification.
+     *
+     * The validations mirror [addServer] and the Add-host form, minus the two that only make sense
+     * for a stored row: the unique-name check and the saved-host limit. Nothing is persisted, so
+     * there is no name and nothing to count.
+     *
+     * Persistence (tmux) is forced off: re-attaching a persistent session requires the host to still
+     * be around to reconnect to, and an unsaved host cannot be reconnected to after the session ends.
+     */
+    fun quickConnect(
+        host: String,
+        port: Int,
+        username: String,
+        authType: String,
+        password: String?,
+        keyAlias: String?,
+        profileId: Int?,
+        proxyType: String = "none",
+        proxyHost: String = "",
+        proxyPort: Int = 0,
+        proxyUser: String = "",
+        proxyPassword: String = "",
+        proxyKeyAlias: String? = null,
+        agentForwarding: Boolean = false,
+        compression: Boolean = false,
+        keepAlive: Int = 30,
+        // Called ONLY when the input is rejected, so the form can stay open and point at the
+        // problem. The outcome of an accepted connection is not reported here — it belongs to the
+        // terminal's own connection UI, which names the failure and offers the matching recovery.
+        onValidationError: (String) -> Unit,
+    ) {
+        // Enforced here and not only by hiding the UI entry points: this is the single funnel for
+        // every ad-hoc connection, so the entitlement check cannot be bypassed by any caller.
+        if (!isQuickConnectAvailable) {
+            quickConnectSheetOpen = false
+            onValidationError(quickConnectLockedMessage())
+            return
+        }
+        val trimmedHost = host.trim()
+        if (trimmedHost.isBlank()) {
+            onValidationError("Host is required.")
+            return
+        }
+        if (port !in 1..65535) {
+            onValidationError("SSH port must be 1-65535.")
+            return
+        }
+        if (authType != "profile" && username.isBlank()) {
+            onValidationError("SSH username is required.")
+            return
+        }
+        if (authType == "profile" && profileId == null) {
+            onValidationError("Select a credential profile.")
+            return
+        }
+        if (authType == "key" && keyAlias.isNullOrBlank()) {
+            onValidationError("Select a key.")
+            return
+        }
+        if (proxyType != "none") {
+            if (proxyHost.isBlank()) {
+                onValidationError("Proxy host is required for a $proxyType proxy.")
+                return
+            }
+            if (proxyPort !in 1..65535) {
+                onValidationError("Proxy port must be 1-65535.")
+                return
+            }
+        }
+        if (isTerminalConnecting) {
+            onValidationError("A connection is already in progress.")
+            return
+        }
+
+        val adHoc = ServerEntity(
+            id = nextAdHocServerId--,
+            name = "$username@$trimmedHost".removePrefix("@"),
+            host = trimmedHost,
+            port = port,
+            username = username,
+            groupName = null,
+            authType = authType,
+            authPassword = password,
+            authKeyAlias = keyAlias,
+            authProfileId = profileId,
+            keepAlive = keepAlive,
+            sshCompression = compression,
+            persistentSession = false,
+            proxyType = proxyType,
+            proxyHost = proxyHost.trim(),
+            proxyPort = proxyPort,
+            proxyUser = proxyUser,
+            proxyPassword = proxyPassword,
+            proxyKeyAlias = proxyKeyAlias?.takeIf { it.isNotBlank() && proxyType == "ssh" },
+            agentForwarding = agentForwarding,
+        )
+
+        quickConnectSheetOpen = false
+        if (activeSshTab == 1) exitMultiSsh()
+        navigateTo(Screen.Shell)
+        connectTerminal(adHoc, forceDisablePersistence = true)
+    }
+
     /** Split-terminal shortcut entry point; same DB-first resolution as single connects. */
     fun openMultiSshByServerIds(id1: Int, id2: Int) {
         viewModelScope.launch {
@@ -4381,9 +4704,13 @@ class AppViewModel @JvmOverloads constructor(
         if (isTerminalConnecting) return
         // Publish/refresh the launcher shortcut for this host; connecting is the usage signal
         // that keeps frequently used hosts ranked in the launcher's dynamic shortcut list.
-        runCatching {
-            ShortcutHelper.pushServerShortcut(getApplication(), srv)
-            ShortcutHelper.reportServerShortcutUsed(getApplication(), srv.id)
+        // Skipped for ad-hoc hosts (negative id, see quickConnect): they have no database row, so
+        // the shortcut would resolve to nothing and report "host missing" when tapped.
+        if (srv.id > 0) {
+            runCatching {
+                ShortcutHelper.pushServerShortcut(getApplication(), srv)
+                ShortcutHelper.reportServerShortcutUsed(getApplication(), srv.id)
+            }
         }
         // Capture the destination now. Split-pane focus is still interactive while a connection is
         // in flight; reading it only after SSH completes lets a harmless focus tap redirect the new
@@ -5319,9 +5646,14 @@ class AppViewModel @JvmOverloads constructor(
                     }
                     cleanupSession(shellSession)
                 } else {
+                    // Reached only when the session has no credentials, so it can neither
+                    // auto-reconnect nor be retried by hand — retrySession() goes through
+                    // reconnectSession(), which bails immediately on null creds. Keeping it would
+                    // park a permanently dead entry in the session list that the user cannot act on
+                    // or dismiss, so tear it down instead of stranding it.
                     shellSession.disconnectError = "Connection lost."
                     rememberRestorablePersistentSession(shellSession)
-                    TerminalSessionManager.startKeepAliveService()
+                    cleanupSession(shellSession)
                 }
             }
         }
@@ -5504,6 +5836,11 @@ class AppViewModel @JvmOverloads constructor(
                     cleanupSession(shellSession)
                     if (currentSessionId == shellSession.id) currentSessionId = null
                 } else {
+                    // A non-persistent session that gave up is kept so the user can hit Reconnect,
+                    // but it is dead weight until they do — and nothing else ever removes it. Every
+                    // Wi-Fi drop or mobile handover left one behind permanently, so the session
+                    // list filled up with unusable entries. Bound how many are retained.
+                    reapAbandonedSessions(keepMostRecent = MAX_RETAINED_DEAD_SESSIONS)
                     TerminalSessionManager.updateKeepaliveCount()
                     if (TerminalSessionManager.activeKeepaliveSessionsCount == 0) {
                         TerminalSessionManager.stopKeepAliveService()
@@ -5513,6 +5850,29 @@ class AppViewModel @JvmOverloads constructor(
                 }
             }
         }
+    }
+
+    /**
+     * Drop all but the [keepMostRecent] newest sessions that are dead and idle — disconnected, not
+     * reconnecting, not user-closed, and not currently shown in the single or split view.
+     *
+     * Retaining a dropped session so its Reconnect button still works is deliberate, but there was
+     * no upper bound on it: nothing removed a session that gave up reconnecting, so they piled up
+     * across days of Wi-Fi/mobile handovers until the session picker was mostly corpses. Anything
+     * still on screen is never reaped, however old, so this can't pull a terminal out from under
+     * the user.
+     */
+    private fun reapAbandonedSessions(keepMostRecent: Int) {
+        val onScreen = setOfNotNull(currentSessionId, multiSshSessionId1, multiSshSessionId2)
+        val dead = activeSessions.filter { session ->
+            !session.isConnected &&
+                !session.reconnecting &&
+                session.id !in onScreen
+        }
+        if (dead.size <= keepMostRecent) return
+        dead.sortedByDescending { it.backgroundedAtMs ?: it.startedAtMs }
+            .drop(keepMostRecent)
+            .forEach { cleanupSession(it) }
     }
 
     /** Manually retry a dropped session (the UI "Reconnect" button after auto-retry gives up). */
@@ -6615,7 +6975,11 @@ class AppViewModel @JvmOverloads constructor(
     var pingRunning by mutableStateOf(false); private set
     var pingLines by mutableStateOf<List<String>>(emptyList()); private set
     private var pingJob: Job? = null
-    private var pingProcess: Process? = null
+    // @Volatile because the IO coroutine publishes the handle and stopPing() reads it from Main.
+    // Without it Main can read a stale null, skip destroy(), and leave the reader coroutine parked
+    // in a blocking readLine() that cancellation alone cannot interrupt — which is the very thing
+    // holding this handle is for.
+    @Volatile private var pingProcess: Process? = null
 
     /**
      * Ping [host] from the phone itself ([count] tries, 0 = until stopped). Runs the platform
@@ -6641,6 +7005,12 @@ class AppViewModel @JvmOverloads constructor(
                 }
                 val process = ProcessBuilder(cmd).redirectErrorStream(true).start()
                 pingProcess = process
+                // stopPing() may have run between start() and the assignment above, in which case it
+                // saw a null handle and destroyed nothing. Re-check now that the handle is published.
+                if (!isActive) {
+                    process.destroy()
+                    return@launch
+                }
                 val reader = process.inputStream.bufferedReader()
                 while (isActive) {
                     val line = reader.readLine() ?: break
@@ -6672,7 +7042,8 @@ class AppViewModel @JvmOverloads constructor(
     var tracerouteRunning by mutableStateOf(false); private set
     var tracerouteLines by mutableStateOf<List<String>>(emptyList()); private set
     private var tracerouteJob: Job? = null
-    private var tracerouteProcess: Process? = null
+    /** @Volatile for the same cross-thread publication reason as [pingProcess]. */
+    @Volatile private var tracerouteProcess: Process? = null
 
     /**
      * Trace the route to [host] from the phone, streaming each hop. Runs the platform `traceroute`
@@ -6715,6 +7086,12 @@ class AppViewModel @JvmOverloads constructor(
                     return@launch
                 }
                 tracerouteProcess = process
+                // Same publication window as startPing: a stop that landed before this assignment
+                // destroyed nothing, so re-check before entering the uninterruptible read loop.
+                if (!isActive) {
+                    process.destroy()
+                    return@launch
+                }
                 val reader = process.inputStream.bufferedReader()
                 while (isActive) {
                     val line = reader.readLine() ?: break
@@ -6771,6 +7148,11 @@ class AppViewModel @JvmOverloads constructor(
                 }
                 return
             } finally {
+                // Destroy, don't just drop the handle. On the cancellation path readText() unblocks
+                // only because stopTraceroute() destroyed the process; on every other early exit
+                // (unresolvable host, loop abandoned) nulling the field alone would strand a live
+                // `ping` child with nobody holding a reference to it.
+                tracerouteProcess?.destroy()
                 tracerouteProcess = null
             }
             if (ttl == 1 && (output.contains("unknown host", ignoreCase = true) || output.contains("Name or service not known", ignoreCase = true))) {
@@ -10013,44 +10395,51 @@ class AppViewModel @JvmOverloads constructor(
                         instanceFollowRedirects = true
                     }
                     val startedAt = System.nanoTime()
-                    conn.connect()
-                    val ttfb = (System.nanoTime() - startedAt) / 1_000_000
-                    withContext(Dispatchers.Main) { speedTestLatencyMs = ttfb }
-                    val code = conn.responseCode
-                    if (code !in 200..299) {
-                        throw java.io.IOException("HTTP $code from server")
-                    }
-                    conn.inputStream.use { input ->
-                        val buf = ByteArray(64 * 1024)
-                        var total = 0L
-                        val downloadStart = System.nanoTime()
-                        val deadline = downloadStart + 15_000_000_000L  // 15s cap
-                        var lastEmit = downloadStart
-                        while (isActive) {
-                            val n = input.read(buf)
-                            if (n < 0) break
-                            total += n
-                            val now = System.nanoTime()
-                            // Throttle UI updates to ~10/s.
-                            if (now - lastEmit > 100_000_000L) {
-                                lastEmit = now
-                                val secs = (now - downloadStart) / 1e9
-                                val mbps = if (secs > 0) (total * 8.0) / 1e6 / secs else 0.0
-                                val snapshotTotal = total
-                                withContext(Dispatchers.Main) {
-                                    speedTestBytes = snapshotTotal
-                                    speedTestMbps = mbps
+                    // A non-2xx response and a cancelled download both leave the socket connected
+                    // with its stream unread, which parks it in the keep-alive pool until GC.
+                    // Nothing below closes it on those paths, so own the whole connection here.
+                    try {
+                        conn.connect()
+                        val ttfb = (System.nanoTime() - startedAt) / 1_000_000
+                        withContext(Dispatchers.Main) { speedTestLatencyMs = ttfb }
+                        val code = conn.responseCode
+                        if (code !in 200..299) {
+                            throw java.io.IOException("HTTP $code from server")
+                        }
+                        conn.inputStream.use { input ->
+                            val buf = ByteArray(64 * 1024)
+                            var total = 0L
+                            val downloadStart = System.nanoTime()
+                            val deadline = downloadStart + 15_000_000_000L  // 15s cap
+                            var lastEmit = downloadStart
+                            while (isActive) {
+                                val n = input.read(buf)
+                                if (n < 0) break
+                                total += n
+                                val now = System.nanoTime()
+                                // Throttle UI updates to ~10/s.
+                                if (now - lastEmit > 100_000_000L) {
+                                    lastEmit = now
+                                    val secs = (now - downloadStart) / 1e9
+                                    val mbps = if (secs > 0) (total * 8.0) / 1e6 / secs else 0.0
+                                    val snapshotTotal = total
+                                    withContext(Dispatchers.Main) {
+                                        speedTestBytes = snapshotTotal
+                                        speedTestMbps = mbps
+                                    }
                                 }
+                                if (now > deadline) break
                             }
-                            if (now > deadline) break
+                            val secs = (System.nanoTime() - downloadStart) / 1e9
+                            val mbps = if (secs > 0) (total * 8.0) / 1e6 / secs else 0.0
+                            val finalTotal = total
+                            withContext(Dispatchers.Main) {
+                                speedTestBytes = finalTotal
+                                speedTestMbps = mbps
+                            }
                         }
-                        val secs = (System.nanoTime() - downloadStart) / 1e9
-                        val mbps = if (secs > 0) (total * 8.0) / 1e6 / secs else 0.0
-                        val finalTotal = total
-                        withContext(Dispatchers.Main) {
-                            speedTestBytes = finalTotal
-                            speedTestMbps = mbps
-                        }
+                    } finally {
+                        conn.disconnect()
                     }
                 }
             } catch (e: CancellationException) {

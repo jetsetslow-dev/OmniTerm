@@ -715,8 +715,23 @@ fun PinLockGateway(viewModel: AppViewModel) {
         }
     }
 
-    // When biometrics is the chosen method, present the system prompt automatically on entry.
-    LaunchedEffect(Unit) { if (viewModel.useBiometrics) triggerBiometric() }
+    // When biometrics is the chosen method, present the system prompt automatically on entry AND on
+    // every later resume. Entry alone is not enough: leaving the app while the lock screen is up
+    // makes the framework cancel its prompt, but this composable is never disposed (the Activity
+    // only stops), so an entry-keyed effect would not re-fire and the user came back to a bare PIN
+    // screen. Re-prompting is safe against loops — BiometricCryptoGate is single-flight and a
+    // user-cancelled prompt leaves the Activity resumed, so no ON_RESUME follows it.
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner, viewModel.useBiometrics) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME && viewModel.useBiometrics) {
+                triggerBiometric()
+            }
+        }
+        // Registering below RESUMED replays up to the current state, so this also covers first entry.
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Box(
         modifier = Modifier
@@ -1968,7 +1983,17 @@ fun ServersMainView(viewModel: AppViewModel) {
         }
 
         if (showAddSheet) {
-            AddServerSheet(viewModel = viewModel, serverToEdit = null) { showAddSheet = false }
+            // Non-null only when the sheet was opened from a LAN scan result: seeds the address and
+            // a suggested name, nothing else. Consumed on dismiss so reopening the sheet by hand
+            // does not resurrect a stale scanned address.
+            AddServerSheet(
+                viewModel = viewModel,
+                serverToEdit = null,
+                prefillAddress = viewModel.pendingNewServerPrefill,
+            ) {
+                showAddSheet = false
+                viewModel.consumeNewServerPrefill()
+            }
         }
 
         editingServer?.let { s ->
@@ -2194,6 +2219,10 @@ fun AddServerSheet(
     // host-key trust gate is enforced (testedOkSignature starts null) exactly like any new host. This
     // guarantees the copy shares no live state with its source.
     prefillFrom: ServerEntity? = null,
+    // Address-only seed from a LAN scan result. Unlike [prefillFrom] this is NOT a host to copy —
+    // it carries no credentials and no saved row, so the sheet stays an ordinary add form and every
+    // validation and trust gate applies unchanged.
+    prefillAddress: AppViewModel.NewServerPrefill? = null,
     onDismiss: () -> Unit,
 ) {
     var activeTab by remember { mutableStateOf(0) } // 0: Connect, 1: Auth, 2: Adv
@@ -2203,9 +2232,17 @@ fun AddServerSheet(
     val isDuplicate = serverToEdit == null && prefillFrom != null
 
     // Form parameter captures
-    var name by remember { mutableStateOf(if (isDuplicate) "${src?.name} copy" else (src?.name ?: "")) }
-    var host by remember { mutableStateOf(src?.host ?: "") }
-    var port by remember { mutableStateOf(src?.port?.toString() ?: "22") }
+    var name by remember {
+        mutableStateOf(
+            when {
+                isDuplicate -> "${src?.name} copy"
+                src != null -> src.name
+                else -> prefillAddress?.suggestedName ?: ""
+            },
+        )
+    }
+    var host by remember { mutableStateOf(src?.host ?: prefillAddress?.host ?: "") }
+    var port by remember { mutableStateOf((src?.port ?: prefillAddress?.port ?: 22).toString()) }
     var user by remember { mutableStateOf(src?.username ?: "") }
     var group by remember { mutableStateOf(src?.groupName ?: "Default") }
     var serverColor by remember { mutableStateOf(src?.serverColor ?: "Default") }
