@@ -278,6 +278,21 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
         if (viewModel.broadcastResults.isNotEmpty()) controlsExpanded = false
     }
 
+    // Collapsed output cards, by server id. This MUST be hoisted out of the results LazyColumn:
+    // holding it per-item meant LazyColumn discarded it the moment a card scrolled out of the
+    // viewport, so collapsing a card and then scrolling to the top or bottom of the list brought it
+    // back expanded. Absent = expanded, so new results still default to expanded, and the only thing
+    // that ever writes to this map is the user tapping a card header.
+    val collapsedOutputs = remember { mutableStateMapOf<Int, Boolean>() }
+
+    // Clearing the outputs or kicking off a new broadcast starts everyone expanded again — carrying
+    // a previous run's collapse choices onto fresh output would hide results the user just asked for.
+    LaunchedEffect(viewModel.isBroadcastExecuting, viewModel.broadcastResults.isEmpty()) {
+        if (viewModel.isBroadcastExecuting || viewModel.broadcastResults.isEmpty()) {
+            collapsedOutputs.clear()
+        }
+    }
+
     fun openPresetEditor() {
         showPresetPicker = false
         showPresetEditor = true
@@ -429,14 +444,15 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                     BroadcastStatus.Success -> OmniColors.green
                     BroadcastStatus.Failure -> OmniColors.red
                 }
-                var expanded by remember(item.serverId) { mutableStateOf(true) }
+                val expanded = collapsedOutputs[item.serverId] != true
                 val outScroll = rememberScrollState()
                 LaunchedEffect(item.output, expanded) {
                     if (expanded) outScroll.scrollTo(outScroll.maxValue)
                 }
                 OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.hostColor(item.serverName)) {
                         Row(
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp).clickable { expanded = !expanded },
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)
+                                .clickable { collapsedOutputs[item.serverId] = expanded },
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {

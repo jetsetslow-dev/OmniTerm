@@ -35,8 +35,8 @@ Install the APK from the OmniTerm GitHub release page. It has **no host limits, 
 
 ### Play Store build
 Free with a 1-host limit and a single bottom banner. Both purchases are **one-time** (not subscriptions):
-- **Remove Ads** hides the banner.
-- **Unlock OmniTerm** removes the banner *and* lifts the host/credential limits (so you never need both).
+- **Remove Ads** hides the banner. It does *not* lift any limit or unlock any feature.
+- **Unlock OmniTerm** removes the banner *and* lifts the host/credential limits (so you never need both). It also enables **Quick connect**, the ad-hoc SSH session to an unsaved host — the free build must save a host first, so that the 1-host limit still means something.
 - Purchases are tied to your Google account — use **Restore purchase** on the unlock screen after a reinstall or device switch.
 
 *OmniTerm source is available under the PolyForm Noncommercial License 1.0.0. Personal, educational, evaluation, and other noncommercial source builds are allowed. Commercial redistribution, paid forks, third-party app-store publication, hosted/managed paid builds, and monetized derivatives require separate written permission.*
@@ -62,6 +62,7 @@ Groups make Fleet Broadcast targeting easier; host colors help you tell servers 
 ### Terminal
 Open **Term** for an interactive SSH shell on the selected host.
 - **MultiSSH split screen** — tap **SPLIT** to view two sessions at once, side-by-side or stacked (flip with the layout button). In split mode only, check two hosts in the top picker to load them into the panes. The focused pane and current host are labelled at the top; the cyan-bordered pane owns the keyboard and special-key bar. **OPEN** and each pane's **PICK** menu can attach a background session, resume saved tmux, or start a new host without filling the terminal with a long server list. **BG** frees a pane while keeping its session connected, and **✕** offers either a resumable tmux detach or a background normal SSH session before disconnecting. **SINGLE** returns to single-session view while keeping both sessions available.
+- **Quick connect** (**Unlock OmniTerm** only) — **OPEN › Quick connect** SSHes to a host that is not in your saved list, for one-off access. It offers the same options as Add Host (password, saved key, or credential profile; HTTP/SOCKS5 proxy or SSH jump host, optionally filled from a saved host) and enforces the same validation and host-key trust prompts, but writes nothing to the database. The free Play Store build does not include it — save the host instead, within the 1-host limit. **Remove Ads does not unlock it.**
 - **Persistent `tmux`-backed sessions** survive network drops and app restarts, and reconnect automatically.
 - Multiple background sessions with session switching and explicit disconnect prompts.
 - Adjustable, persisted font size with reflowing scrollback on resize.

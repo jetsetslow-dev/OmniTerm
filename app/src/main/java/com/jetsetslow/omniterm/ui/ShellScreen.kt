@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.FlashOn
 import androidx.compose.material.icons.filled.KeyboardDoubleArrowDown
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.*
@@ -85,8 +86,10 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -368,19 +371,37 @@ fun ShellScreen(viewModel: AppViewModel) {
                 viewModel.restorablePersistentSessions.isNotEmpty() ||
                 viewModel.isTerminalConnecting
         }
+    // Quick connect is hosted here rather than inside a branch below, so it stays mounted whether
+    // the screen is showing a host, the session picker, or the no-hosts empty state. The
+    // entitlement is re-checked at render time, not just at the entry points, so an unlock that
+    // lapses while the sheet is open takes the sheet away with it.
+    if (viewModel.quickConnectSheetOpen && viewModel.isQuickConnectAvailable) QuickConnectSheet(viewModel)
+
     if (srv == null) {
         Box(Modifier.fillMaxSize().background(chrome.background), contentAlignment = Alignment.Center) {
-            Text(
-                if (servers.isEmpty()) {
-                    "Add a server first."
-                } else {
-                    "No online hosts. To SSH into an offline host anyway, use its connect button on the Hosts tab."
-                },
-                color = chrome.mutedText,
-                fontFamily = OmniFonts.mono,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(24.dp),
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(24.dp)) {
+                Text(
+                    if (servers.isEmpty()) {
+                        "Add a server first."
+                    } else {
+                        "No online hosts. To SSH into an offline host anyway, use its connect button on the Hosts tab."
+                    },
+                    color = chrome.mutedText,
+                    fontFamily = OmniFonts.mono,
+                    textAlign = TextAlign.Center,
+                )
+                // With no saved hosts at all this is the only way out of this screen, so it must be
+                // offered here and not only from the header chips that need a selected host. Absent
+                // on the free build, where every host must go through the saved list.
+                if (viewModel.isQuickConnectAvailable) {
+                    Spacer(Modifier.height(16.dp))
+                    OutlinedButton(onClick = { viewModel.quickConnectSheetOpen = true }) {
+                        Icon(Icons.Filled.FlashOn, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Quick connect (don't save)")
+                    }
+                }
+            }
         }
         return
     }
@@ -916,6 +937,21 @@ private fun TerminalOpenPicker(
                     expanded = false
                 },
             )
+            // Opening a session to somewhere that isn't in the hosts list belongs in the same menu
+            // as every other "open a session" action, rather than as another chip in a row that
+            // already divides its width five ways. Unlock-only: the free build has to save a host
+            // first, so the entry point is absent rather than shown-and-refused.
+            if (viewModel.isQuickConnectAvailable) {
+                DropdownMenuItem(
+                    text = { Text("Quick connect (don't save)…", fontFamily = OmniFonts.mono) },
+                    leadingIcon = { Icon(Icons.Filled.FlashOn, contentDescription = null) },
+                    enabled = !viewModel.isTerminalConnecting,
+                    onClick = {
+                        viewModel.quickConnectSheetOpen = true
+                        expanded = false
+                    },
+                )
+            }
         }
     }
 }
@@ -977,8 +1013,337 @@ private fun ConnectPrompt(srv: ServerEntity, viewModel: AppViewModel) {
             ) {
                 Text(stringResource(R.string.connect), color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
             }
+            Spacer(Modifier.height(10.dp))
+            TextButton(onClick = { viewModel.quickConnectSheetOpen = true }) {
+                Text("Quick connect to another host…", fontSize = 12.sp, color = OmniColors.cyan)
+            }
         }
     }
+}
+
+/**
+ * One-off SSH to a host that is not in the saved list. Deliberately built from the same pieces as
+ * the Add-host form — the same auth types, the same saved keys and credential profiles, the same
+ * proxy/jump-host options — so a connection that works here works there and vice versa; it simply
+ * writes nothing to the database.
+ *
+ * The one gate that is NOT reproduced as a form step is Add-host's "Test Connection first". There it
+ * exists so a host cannot be *saved* in a state that never connects, and it works by making the user
+ * perform the real connection (and its host-key trust prompt) before the row is written. Here the
+ * connection IS the action, so it runs through the identical connect path: an unknown or changed
+ * host key raises the same approval/refusal dialogs, because that trust store is keyed by host and
+ * port and knows nothing about whether a host was saved.
+ */
+@Composable
+private fun QuickConnectSheet(viewModel: AppViewModel) {
+    val savedKeys by viewModel.keys.collectAsStateWithLifecycle()
+    val savedProfiles by viewModel.profiles.collectAsStateWithLifecycle()
+    val servers by viewModel.servers.collectAsStateWithLifecycle()
+
+    var host by rememberSaveable { mutableStateOf("") }
+    var port by rememberSaveable { mutableStateOf("22") }
+    var user by rememberSaveable { mutableStateOf("") }
+    var authType by rememberSaveable { mutableStateOf("password") }
+    var password by rememberSaveable { mutableStateOf("") }
+    var selectedKey by rememberSaveable { mutableStateOf("") }
+    var selectedProfileId by rememberSaveable { mutableStateOf<Int?>(null) }
+
+    var proxyType by rememberSaveable { mutableStateOf("none") }
+    var proxyHost by rememberSaveable { mutableStateOf("") }
+    var proxyPort by rememberSaveable { mutableStateOf("") }
+    var proxyUser by rememberSaveable { mutableStateOf("") }
+    var proxyPassword by rememberSaveable { mutableStateOf("") }
+    var proxyKeyAlias by rememberSaveable { mutableStateOf("") }
+    var showProxyHostPicker by rememberSaveable { mutableStateOf(false) }
+
+    var errorText by remember { mutableStateOf<String?>(null) }
+
+    val portIssue = portError(port)
+    val proxyPortIssue = if (proxyType != "none") portError(proxyPort) else null
+
+    fun dismiss() {
+        viewModel.quickConnectSheetOpen = false
+    }
+
+    // Saved hosts offered as jump hosts. Only meaningful for an SSH jump (an HTTP/SOCKS proxy is not
+    // a shell host), and a saved host's own key alias carries over so the jump authenticates the
+    // same way it does when that host is connected to directly.
+    if (showProxyHostPicker) {
+        AlertDialog(
+            onDismissRequest = { showProxyHostPicker = false },
+            title = { Text("Use a saved host as jump host") },
+            text = {
+                if (servers.isEmpty()) {
+                    Text("No saved hosts to use as a jump host.")
+                } else {
+                    LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                        items(servers) { candidate ->
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        proxyHost = candidate.host
+                                        proxyPort = candidate.port.toString()
+                                        proxyUser = candidate.username
+                                        proxyKeyAlias = candidate.authKeyAlias.orEmpty()
+                                        // Never copy a stored password into the form: it would be
+                                        // shown in a plain field. Key auth carries over; a
+                                        // password jump has to be typed here.
+                                        proxyPassword = ""
+                                        showProxyHostPicker = false
+                                    }
+                                    .padding(vertical = 8.dp),
+                            ) {
+                                Text(candidate.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                                Text(
+                                    "${HostDisplay.userAtHost(candidate)}:${candidate.port}",
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showProxyHostPicker = false }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+
+    AlertDialog(
+        onDismissRequest = { dismiss() },
+        title = { Text("Quick connect") },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 520.dp)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Text(
+                    "Connects without saving. Nothing here is written to your hosts list.",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = host,
+                        onValueChange = { host = it },
+                        label = { Text(stringResource(R.string.hostname_or_ip)) },
+                        modifier = Modifier.weight(2f),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = port,
+                        onValueChange = { port = it },
+                        label = { Text("Port") },
+                        modifier = Modifier.weight(1f),
+                        singleLine = true,
+                        isError = portIssue != null,
+                        supportingText = portIssue?.let { msg -> { Text(msg, fontSize = 10.sp) } },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    )
+                }
+
+                OutlinedTextField(
+                    value = user,
+                    onValueChange = { user = it },
+                    label = { Text("SSH username") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    enabled = authType != "profile",
+                    supportingText = if (authType == "profile") {
+                        { Text("Taken from the credential profile", fontSize = 10.sp) }
+                    } else {
+                        null
+                    },
+                )
+
+                Text("Authentication", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("password" to "Password", "key" to "SSH key", "profile" to "Profile")
+                        .forEach { (key, label) ->
+                            FilterChip(
+                                selected = authType == key,
+                                onClick = { authType = key },
+                                label = { Text(label, fontSize = 11.sp) },
+                            )
+                        }
+                }
+
+                when (authType) {
+                    "password" -> OutlinedTextField(
+                        value = password,
+                        onValueChange = { password = it },
+                        label = { Text(stringResource(R.string.password)) },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    )
+                    "key" -> if (savedKeys.isEmpty()) {
+                        Text("No saved SSH keys. Add one under Tools › Auth Keys.", fontSize = 11.sp, color = OmniColors.red)
+                    } else {
+                        LazyColumn(modifier = Modifier.heightIn(max = 120.dp)) {
+                            items(savedKeys) { key ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { selectedKey = key.alias }
+                                        .padding(vertical = 4.dp),
+                                ) {
+                                    RadioButton(selected = selectedKey == key.alias, onClick = null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(key.alias, fontSize = 13.sp)
+                                }
+                            }
+                        }
+                    }
+                    else -> if (savedProfiles.isEmpty()) {
+                        Text("No credential profiles saved.", fontSize = 11.sp, color = OmniColors.red)
+                    } else {
+                        LazyColumn(modifier = Modifier.heightIn(max = 120.dp)) {
+                            items(savedProfiles) { profile ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { selectedProfileId = profile.id }
+                                        .padding(vertical = 4.dp),
+                                ) {
+                                    RadioButton(selected = selectedProfileId == profile.id, onClick = null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Column {
+                                        Text(profile.profileName, fontSize = 13.sp)
+                                        Text(
+                                            "User: ${profile.username}",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                HorizontalDivider()
+                Text("Proxy / jump host", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf("none" to "None", "ssh" to "SSH jump", "http" to "HTTP", "socks5" to "SOCKS5")
+                        .forEach { (key, label) ->
+                            FilterChip(
+                                selected = proxyType == key,
+                                onClick = { proxyType = key },
+                                label = { Text(label, fontSize = 11.sp) },
+                            )
+                        }
+                }
+
+                if (proxyType != "none") {
+                    if (proxyType == "ssh" && servers.isNotEmpty()) {
+                        TextButton(onClick = { showProxyHostPicker = true }) {
+                            Text("Use a saved host…", fontSize = 12.sp)
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = proxyHost,
+                            onValueChange = { proxyHost = it },
+                            label = { Text(stringResource(R.string.proxy_host)) },
+                            modifier = Modifier.weight(2f),
+                            singleLine = true,
+                        )
+                        OutlinedTextField(
+                            value = proxyPort,
+                            onValueChange = { proxyPort = it },
+                            label = { Text("Port") },
+                            modifier = Modifier.weight(1f),
+                            singleLine = true,
+                            isError = proxyPortIssue != null,
+                            supportingText = proxyPortIssue?.let { msg -> { Text(msg, fontSize = 10.sp) } },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        )
+                    }
+                    OutlinedTextField(
+                        value = proxyUser,
+                        onValueChange = { proxyUser = it },
+                        label = { Text(if (proxyType == "ssh") "Jump user (optional)" else "Proxy user (optional)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                    OutlinedTextField(
+                        value = proxyPassword,
+                        onValueChange = { proxyPassword = it },
+                        label = { Text(if (proxyType == "ssh") "Jump password (optional)" else "Proxy password (optional)") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                    )
+                    if (proxyType == "ssh" && savedKeys.isNotEmpty()) {
+                        Text("Jump host key (optional)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        LazyColumn(modifier = Modifier.heightIn(max = 100.dp)) {
+                            items(savedKeys) { key ->
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        // Tap again to deselect — key auth on the jump host is optional.
+                                        .clickable {
+                                            proxyKeyAlias = if (proxyKeyAlias == key.alias) "" else key.alias
+                                        }
+                                        .padding(vertical = 4.dp),
+                                ) {
+                                    RadioButton(selected = proxyKeyAlias == key.alias, onClick = null)
+                                    Spacer(Modifier.width(8.dp))
+                                    Text(key.alias, fontSize = 13.sp)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                errorText?.let {
+                    Text(it, color = OmniColors.red, fontSize = 12.sp)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                enabled = !viewModel.isTerminalConnecting,
+                onClick = {
+                    errorText = null
+                    // Field-level checks first so the message points at the offending field; the VM
+                    // repeats them because it is also the entry point for any non-UI caller.
+                    portIssue?.let { errorText = "SSH port: $it"; return@Button }
+                    proxyPortIssue?.let { errorText = "Proxy port: $it"; return@Button }
+                    viewModel.quickConnect(
+                        host = host,
+                        port = port.trim().toIntOrNull() ?: 22,
+                        username = user.trim(),
+                        authType = authType,
+                        password = password.takeIf { authType == "password" && it.isNotBlank() },
+                        keyAlias = selectedKey.takeIf { authType == "key" && it.isNotBlank() },
+                        profileId = selectedProfileId.takeIf { authType == "profile" },
+                        proxyType = proxyType,
+                        proxyHost = proxyHost,
+                        proxyPort = proxyPort.trim().toIntOrNull() ?: 0,
+                        proxyUser = proxyUser,
+                        proxyPassword = proxyPassword,
+                        proxyKeyAlias = proxyKeyAlias.takeIf { it.isNotBlank() && proxyType == "ssh" },
+                    ) { validationError ->
+                        // Rejected input only: the sheet stays open showing why. An accepted
+                        // connection closes the sheet and reports its own outcome in the terminal.
+                        errorText = validationError
+                    }
+                },
+            ) { Text("Connect") }
+        },
+        dismissButton = { TextButton(onClick = { dismiss() }) { Text(stringResource(R.string.cancel)) } },
+    )
 }
 
 @Composable

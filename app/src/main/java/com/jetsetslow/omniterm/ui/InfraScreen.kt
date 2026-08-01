@@ -155,6 +155,10 @@ private fun ContainerList(viewModel: AppViewModel, containers: List<SimContainer
 
     var isSelectionMode by remember { mutableStateOf(false) }
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    // Which containers have their detail panel open, by container id. Hoisted out of the LazyColumn
+    // because per-item `remember` is discarded as soon as a row leaves the viewport: expanding a
+    // container, scrolling down and coming back showed it collapsed again.
+    val expandedContainers = remember { mutableStateMapOf<String, Boolean>() }
 
     LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
@@ -180,13 +184,13 @@ private fun ContainerList(viewModel: AppViewModel, containers: List<SimContainer
             }
         }
         items(containers, key = { it.id }) { c ->
-            var expanded by remember { mutableStateOf(false) }
+            val expanded = expandedContainers[c.id] == true
             OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = if (c.status == "running") OmniColors.green else OmniColors.red) {
                 Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     if (isSelectionMode) {
                         Checkbox(checked = c.id in selectedIds, onCheckedChange = { if (it) selectedIds += c.id else selectedIds -= c.id })
                     }
-                    Column(modifier = Modifier.weight(1f).clickable { expanded = !expanded }.padding(12.dp)) {
+                    Column(modifier = Modifier.weight(1f).clickable { expandedContainers[c.id] = !expanded }.padding(12.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -401,6 +405,10 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
             editBuilderError = viewModel.composeFileReadError ?: "Could not read compose file: $composePath"
         }
     }
+    // Which stacks have their service list open, by stack name. Hoisted for the same reason as the
+    // container list: per-item `remember` dies when the row scrolls out of the LazyColumn viewport,
+    // so an expanded stack silently collapsed itself as soon as the user scrolled past it.
+    val expandedStacks = remember { mutableStateMapOf<String, Boolean>() }
     LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         editBuilderError?.let { msg ->
             item {
@@ -426,7 +434,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
         }
         items(stacks) { stack ->
             val canCompose = stack.name != "standalone" && stack.workingDir.isNotBlank()
-            var servicesExpanded by remember(stack.name) { mutableStateOf(false) }
+            val servicesExpanded = expandedStacks[stack.name] == true
             OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.cyan) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(
@@ -515,7 +523,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                     if (stack.services.isNotEmpty()) {
                         HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         Row(
-                            modifier = Modifier.fillMaxWidth().clickable { servicesExpanded = !servicesExpanded }.padding(vertical = 2.dp),
+                            modifier = Modifier.fillMaxWidth().clickable { expandedStacks[stack.name] = !servicesExpanded }.padding(vertical = 2.dp),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically,
                         ) {

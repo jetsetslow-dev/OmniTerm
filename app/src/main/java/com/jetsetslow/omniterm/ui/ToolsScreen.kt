@@ -1297,7 +1297,7 @@ fun NetworkToolView(viewModel: AppViewModel) {
             }
             Box(modifier = Modifier.fillMaxSize()) {
                 when (tab) {
-                    0 -> HostScanTab(viewModel, onUseHost = { viewModel.portScannerTarget = it; viewModel.activeNetworkTab = 4 })
+                    0 -> HostScanTab(viewModel)
                     1 -> WolTab(viewModel)
                     2 -> PingTab(viewModel)
                     3 -> TracerouteTab(viewModel)
@@ -1312,14 +1312,29 @@ fun NetworkToolView(viewModel: AppViewModel) {
     }
 }
 
-// ── Host Scan: rich subnet sweep (rDNS hostname, MAC + vendor, open common ports) ──
+// ── Host Scan: rich subnet sweep (hostname, MAC + vendor, open common ports) ──
+//
+// Unlike the per-tool LanHostPicker (which only fills in that one tab's target field), a result here
+// is not yet bound to any tool — the user has just found a device. So tapping one opens an action
+// sheet offering every tool that takes an address, plus saving it as a real OmniTerm host. These
+// shortcuts deliberately live only on this tab: on Ping/Traceroute/Port Scan the user already chose
+// the tool, and the picker there is correctly scoped to that choice.
 @Composable
-private fun HostScanTab(viewModel: AppViewModel, onUseHost: (String) -> Unit) {
+private fun HostScanTab(viewModel: AppViewModel) {
     // Reads the shared session cache: a sweep run from any picker shows up here, and the button
     // force-refreshes it for everyone. Parent of the pickers — same underlying scanHosts() sweep.
     val hosts = viewModel.hostScanResults
     val scanning = viewModel.isLanScanInProgress
     val scope = rememberCoroutineScope()
+    var actionsFor by remember { mutableStateOf<AppViewModel.ScannedHost?>(null) }
+
+    actionsFor?.let { host ->
+        ScannedHostActionsSheet(
+            viewModel = viewModel,
+            host = host,
+            onDismiss = { actionsFor = null },
+        )
+    }
 
     Column(modifier = Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text(stringResource(R.string.sweep_your_local_network_and_gather),
@@ -1348,9 +1363,9 @@ private fun HostScanTab(viewModel: AppViewModel, onUseHost: (String) -> Unit) {
                 ScannedHostCard(
                     host = host,
                     accent = if (host.isOnline) OmniColors.green else MaterialTheme.colorScheme.onSurfaceVariant,
-                    trailingIcon = Icons.Filled.NetworkCheck,
-                    trailingDesc = "Use as port-scan target",
-                    onClick = { onUseHost(host.ip) },
+                    trailingIcon = Icons.Filled.MoreVert,
+                    trailingDesc = "Actions for this host",
+                    onClick = { actionsFor = host },
                 )
             }
         }
@@ -1406,6 +1421,121 @@ private fun ScannedHostCard(
                     )
                 }
             }
+        }
+    }
+}
+
+/**
+ * What you can do with a host you just discovered. Every entry hands the address to an existing
+ * feature and starts it, so the address never has to be retyped: the network tools switch to their
+ * own tab with the run already underway, and "Add as host" opens the normal Add-server sheet
+ * pre-filled (nothing is saved until the user confirms, and the first-connect host-key trust gate
+ * still applies).
+ */
+@Composable
+private fun ScannedHostActionsSheet(
+    viewModel: AppViewModel,
+    host: AppViewModel.ScannedHost,
+    onDismiss: () -> Unit,
+) {
+    val context = LocalContext.current
+    val alreadySaved by viewModel.servers.collectAsStateWithLifecycle()
+    val savedMatch = remember(alreadySaved, host.ip) { alreadySaved.firstOrNull { it.host == host.ip } }
+
+    // Run the action first, then dismiss: the tool functions switch tabs, and dismissing first would
+    // drop this composable mid-click on some of the paths that also navigate away from the screen.
+    fun act(block: () -> Unit) {
+        block()
+        onDismiss()
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Column {
+                Text(host.displayName, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (host.hostname.isNotBlank()) {
+                    Text(host.ip, fontSize = 12.sp, fontFamily = OmniFonts.mono, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        },
+        text = {
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+                if (savedMatch != null) {
+                    Text(
+                        "Already saved as \"${savedMatch.name}\".",
+                        fontSize = 12.sp,
+                        color = OmniColors.cyan,
+                        modifier = Modifier.padding(bottom = 8.dp),
+                    )
+                } else {
+                    HostActionRow(
+                        icon = Icons.Filled.AddCircle,
+                        label = "Add as OmniTerm host",
+                        detail = if (22 in host.openPorts) "SSH is open on port 22" else "Opens the add-host form for ${host.ip}",
+                        tint = OmniColors.cyan,
+                    ) { act { viewModel.addServerFromScan(host) } }
+                }
+
+                HostActionRow(Icons.Filled.NetworkPing, "Ping", "4 echo requests from this device") {
+                    act { viewModel.pingTargetFromScan(host.ip) }
+                }
+                HostActionRow(Icons.Filled.Route, "Traceroute", "Trace the path to this host") {
+                    act { viewModel.tracerouteTargetFromScan(host.ip) }
+                }
+                HostActionRow(
+                    icon = Icons.Filled.NetworkCheck,
+                    label = "Port scan",
+                    detail = if (host.openPorts.isEmpty()) {
+                        "Scan the common port list"
+                    } else {
+                        "Includes the ${host.openPorts.size} port(s) the sweep found open"
+                    },
+                ) { act { viewModel.portScanTargetFromScan(host.ip, host.openPorts) } }
+                HostActionRow(Icons.Filled.Dns, "DNS lookup", "Resolve ${host.displayName}") {
+                    act { viewModel.dnsLookupTargetFromScan(host.displayName) }
+                }
+
+                if (host.mac.isNotBlank()) {
+                    HostActionRow(
+                        icon = Icons.Filled.PowerSettingsNew,
+                        label = "Add as Wake-on-LAN target",
+                        detail = "MAC ${host.mac} is known, so this host can be woken",
+                    ) { act { viewModel.addWolTargetFromScan(host) } }
+                }
+
+                HostActionRow(Icons.Filled.ContentCopy, "Copy IP address", host.ip) {
+                    act {
+                        val clipboard = context.getSystemService(android.content.ClipboardManager::class.java)
+                        clipboard?.setPrimaryClip(android.content.ClipData.newPlainText("IP address", host.ip))
+                    }
+                }
+            }
+        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) } },
+    )
+}
+
+@Composable
+private fun HostActionRow(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    detail: String,
+    tint: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(12.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(label, fontSize = 14.sp)
+            Text(detail, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
     }
 }
@@ -1701,6 +1831,16 @@ private fun WolTab(viewModel: AppViewModel) {
     var editingTarget by remember { mutableStateOf<WolTargetEntity?>(null) }
     // When a scanned host is tapped, prefill the Add dialog from it.
     var prefill by remember { mutableStateOf<AppViewModel.ScannedWolDevice?>(null) }
+    // "Add as Wake-on-LAN target" on the Host Scan tab lands here: it switches to this tab and
+    // leaves the device in the VM, because this composable does not exist yet at the moment of the
+    // tap and so cannot be handed the device directly.
+    LaunchedEffect(viewModel.pendingWolPrefill) {
+        viewModel.pendingWolPrefill?.let { device ->
+            prefill = device
+            showAddWol = true
+            viewModel.pendingWolPrefill = null
+        }
+    }
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
     val context = LocalContext.current

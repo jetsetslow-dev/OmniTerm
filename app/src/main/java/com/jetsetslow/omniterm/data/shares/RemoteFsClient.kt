@@ -84,10 +84,19 @@ object ShareClients {
         share.sharePath.trim('/').split('/').firstOrNull()?.takeIf { it.isNotBlank() }
 }
 
-private val fsModDateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
+/**
+ * Per-thread, because [SimpleDateFormat] is not thread-safe and this formatter is shared by the FTP,
+ * SMB and WebDAV listing parsers. Those run on the IO dispatcher and genuinely overlap — two shares
+ * browsed at once, or a listing while a transfer refreshes — and a concurrently used SimpleDateFormat
+ * does not merely interleave: its internal calendar is shared mutable state, so it emits dates
+ * belonging to the other thread's entry or throws out of the number formatter.
+ */
+private val fsModDateFormat = ThreadLocal.withInitial {
+    SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
+}
 
 internal fun formatFsDate(epochMillis: Long): String =
-    if (epochMillis <= 0L) "" else fsModDateFormat.format(Date(epochMillis))
+    if (epochMillis <= 0L) "" else fsModDateFormat.get()!!.format(Date(epochMillis))
 
 /**
  * Pump [input] into [output] with the same throttled progress cadence JschSftp uses (every 64 KiB
