@@ -60,3 +60,4 @@ rootProject.name = "OmniTerm"
 
 include(":app")
 include(":benchmark")
+include(":shared")

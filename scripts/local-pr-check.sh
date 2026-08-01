@@ -77,6 +77,7 @@ else
 fi
 
 ./gradlew \
+  :shared:allTests \
   testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest \
   lintOpenSourceDebug lintPlayStoreDebug \
   "${GRADLE_ARGS[@]}"

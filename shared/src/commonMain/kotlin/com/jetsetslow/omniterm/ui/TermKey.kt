@@ -1,0 +1,31 @@
+package com.jetsetslow.omniterm.ui
+
+/** Non-printable keys the terminal key bar, mini keyboard, and hardware keyboard can send. */
+enum class TermKey {
+    ENTER,
+    BACKSPACE,
+    TAB,
+    ESC,
+    UP,
+    DOWN,
+    LEFT,
+    RIGHT,
+    HOME,
+    END,
+    INSERT,
+    DELETE,
+    PAGE_UP,
+    PAGE_DOWN,
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+    F8,
+    F9,
+    F10,
+    F11,
+    F12,
+}

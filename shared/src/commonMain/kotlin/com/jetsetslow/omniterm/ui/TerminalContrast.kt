@@ -10,7 +10,7 @@ import kotlin.math.pow
  * [ensureLegibleOnBackground] against the cell's effective background, nudging it toward black or
  * white just far enough to clear a minimum contrast ratio.
  *
- * Pure JVM (no Android/Compose deps) so the maths is unit-testable in plain tests.
+ * Pure Kotlin (no platform or Compose dependencies) so the maths is testable on every target.
  */
 
 /**

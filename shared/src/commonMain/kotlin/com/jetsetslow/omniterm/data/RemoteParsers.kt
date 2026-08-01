@@ -1,5 +1,7 @@
 package com.jetsetslow.omniterm.data
 
+import kotlin.math.roundToLong
+
 /** The exact remote commands we run, kept next to the parsers that consume their output. */
 object RemoteCommands {
     /** Emitted only after a conflict scan script reaches its end successfully. */
@@ -1599,6 +1601,7 @@ object RemoteParsers {
         var v = bytes.toDouble(); var i = 0
         while (v >= 1024 && i < units.size - 1) { v /= 1024; i++ }
         // Force Locale.US so the decimal separator is always '.' regardless of device locale.
-        return if (i == 0) "${bytes} B" else String.format(java.util.Locale.US, "%.1f %s", v, units[i])
+        val oneDecimal = (v * 10.0).roundToLong() / 10.0
+        return if (i == 0) "${bytes} B" else "$oneDecimal ${units[i]}"
     }
 }

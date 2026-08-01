@@ -1,10 +1,11 @@
 package com.jetsetslow.omniterm.data.term
 
+import kotlin.text.CharCategory
+
 /**
  * A compact VT100 / xterm-subset terminal emulator.
  *
- * Pure Kotlin (no Android / Compose / java.nio deps) so it can move into a Compose
- * Multiplatform `commonMain` module untouched. It maintains a character grid + scrollback,
+ * Pure Kotlin (no Android / Compose / JVM dependencies). It maintains a character grid + scrollback,
  * a cursor, SGR pen state, scroll regions, and an alternate screen, and parses the common
  * C0 controls, CSI and SGR sequences. Unknown sequences are skipped gracefully.
  *
@@ -54,8 +55,8 @@ class TerminalEmulator(
     // with one structural blank left at the edge; retaining this length prevents resize/copy from
     // turning that padding into a real space. Keyed by row-array identity so it follows scrollUp.
     // (see scrollUp). Used by [resize] to reflow: only soft-wrapped runs are re-joined and re-wrapped,
-    // so genuine line breaks are preserved. IdentityHashMap because Array has no value-based equals.
-    private val softWrapped = java.util.IdentityHashMap<Array<Cell>, Int>()
+    // so genuine line breaks are preserved. Kotlin arrays retain identity equality on every target.
+    private val softWrapped = mutableMapOf<Array<Cell>, Int>()
 
     // alternate screen save slot
     private var savedScreen: Array<Array<Cell>>? = null
@@ -136,9 +137,9 @@ class TerminalEmulator(
     private fun processDecodedText(text: String) {
         var index = 0
         while (index < text.length) {
-            val codePoint = text.codePointAt(index)
+            val codePoint = text.unicodeCodePointAt(index)
             processCodePoint(codePoint)
-            index += Character.charCount(codePoint)
+            index += codePointCharCount(codePoint)
         }
     }
 
@@ -666,7 +667,7 @@ class TerminalEmulator(
         val value = if (codePoint in ASCII_FIRST..ASCII_LAST) {
             ASCII_GLYPHS[codePoint - ASCII_FIRST]
         } else {
-            String(Character.toChars(codePoint))
+            codePointToText(codePoint)
         }
         screen[curRow][curCol].set(
             value, penFg, penBg, penBold, penInverse, penItalic, penUnderline, penDim, width,
@@ -700,7 +701,7 @@ class TerminalEmulator(
         if (screen[curRow][column].width == 0 && column > 0) column--
         val cell = screen[curRow][column]
         if (cell.width <= 0) return
-        cell.text += String(Character.toChars(codePoint))
+        cell.text += codePointToText(codePoint)
         repairClusterWidth(column)
     }
 
@@ -714,13 +715,13 @@ class TerminalEmulator(
         if (screen[curRow][column].width == 0 && column > 0) column--
         val cell = screen[curRow][column]
         if (cell.width <= 0 || cell.text.isEmpty()) return false
-        val last = cell.text.codePointBefore(cell.text.length)
-        val first = cell.text.codePointAt(0)
+        val last = cell.text.unicodeCodePointBefore(cell.text.length)
+        val first = cell.text.unicodeCodePointAt(0)
         val joinsZwjSequence = last == 0x200D
         val joinsRegionalFlag = first in 0x1F1E6..0x1F1FF &&
-            codePoint in 0x1F1E6..0x1F1FF && cell.text.codePointCount(0, cell.text.length) == 1
+            codePoint in 0x1F1E6..0x1F1FF && cell.text.unicodeCodePointCount() == 1
         if (!joinsZwjSequence && !joinsRegionalFlag) return false
-        cell.text += String(Character.toChars(codePoint))
+        cell.text += codePointToText(codePoint)
         repairClusterWidth(column)
         return true
     }
@@ -796,10 +797,10 @@ class TerminalEmulator(
 
     private fun codePointWidth(codePoint: Int): Int {
         if (codePoint in ASCII_FIRST..ASCII_LAST) return 1
-        val type = Character.getType(codePoint)
-        if (type == Character.NON_SPACING_MARK.toInt() ||
-            type == Character.COMBINING_SPACING_MARK.toInt() ||
-            type == Character.ENCLOSING_MARK.toInt() ||
+        val category = if (codePoint <= Char.MAX_VALUE.code) codePoint.toChar().category else null
+        if (category == CharCategory.NON_SPACING_MARK ||
+            category == CharCategory.COMBINING_SPACING_MARK ||
+            category == CharCategory.ENCLOSING_MARK ||
             codePoint == 0x00AD || codePoint == 0x061C ||
             codePoint in 0x1160..0x11FF || codePoint in 0x200B..0x200F ||
             codePoint in 0x202A..0x202E || codePoint in 0x2060..0x206F ||
@@ -820,7 +821,7 @@ class TerminalEmulator(
 
     private fun clusterDisplayWidth(text: String): Int {
         if (text.isEmpty()) return 0
-        val points = text.codePoints().toArray()
+        val points = text.unicodeCodePoints()
         if (points.any { it == 0xFE0E }) return 1 // explicit text presentation
         if (points.any { it == 0xFE0F || it == 0x20E3 } ||
             points.count { it in 0x1F1E6..0x1F1FF } >= 2
@@ -1174,4 +1175,53 @@ data class TerminalSnapshot(
     companion object {
         val EMPTY = TerminalSnapshot(emptyList(), 0, 0, true, 80, 0, 0)
     }
+}
+
+private fun codePointCharCount(codePoint: Int): Int = if (codePoint >= 0x10000) 2 else 1
+
+private fun codePointToText(codePoint: Int): String {
+    if (codePoint <= Char.MAX_VALUE.code) return codePoint.toChar().toString()
+    val scalar = codePoint - 0x10000
+    val high = (0xD800 + (scalar shr 10)).toChar()
+    val low = (0xDC00 + (scalar and 0x3FF)).toChar()
+    return "$high$low"
+}
+
+private fun String.unicodeCodePointAt(index: Int): Int {
+    val first = this[index].code
+    if (first !in 0xD800..0xDBFF || index + 1 >= length) return first
+    val second = this[index + 1].code
+    if (second !in 0xDC00..0xDFFF) return first
+    return 0x10000 + ((first - 0xD800) shl 10) + (second - 0xDC00)
+}
+
+private fun String.unicodeCodePointBefore(endIndex: Int): Int {
+    val lastIndex = endIndex - 1
+    val last = this[lastIndex].code
+    if (last !in 0xDC00..0xDFFF || lastIndex == 0) return last
+    val first = this[lastIndex - 1].code
+    if (first !in 0xD800..0xDBFF) return last
+    return 0x10000 + ((first - 0xD800) shl 10) + (last - 0xDC00)
+}
+
+private fun String.unicodeCodePoints(): IntArray {
+    val result = IntArray(length)
+    var count = 0
+    var index = 0
+    while (index < length) {
+        val codePoint = unicodeCodePointAt(index)
+        result[count++] = codePoint
+        index += codePointCharCount(codePoint)
+    }
+    return result.copyOf(count)
+}
+
+private fun String.unicodeCodePointCount(): Int {
+    var count = 0
+    var index = 0
+    while (index < length) {
+        index += codePointCharCount(unicodeCodePointAt(index))
+        count++
+    }
+    return count
 }

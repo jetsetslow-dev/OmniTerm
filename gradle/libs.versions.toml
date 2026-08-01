@@ -11,6 +11,8 @@ lifecycleViewmodelCompose = "2.10.0"
 lifecycleRuntimeCompose = "2.10.0"
 activityCompose = "1.13.0"
 kotlin = "2.4.0" # held back: CodeQL 2.26.1's Kotlin extractor rejects 2.4.10 (kotlin-version-too-new)
+composeMultiplatform = "1.11.1"
+ktor = "3.5.1"
 composeBom = "2026.06.01"
 googleDevtoolsKsp = "2.3.10"
 navigationCompose = "2.9.8"
@@ -117,9 +119,19 @@ bcprov = { group = "org.bouncycastle", name = "bcprov-jdk18on", version.ref = "b
 guava-android = { group = "com.google.guava", name = "guava", version.ref = "guavaAndroid" }
 androidx-compose-material = { group = "androidx.compose.material", name = "material" }
 androidx-browser = { group = "androidx.browser", name = "browser", version.ref = "browser" }
+compose-multiplatform-runtime = { group = "org.jetbrains.compose.runtime", name = "runtime", version.ref = "composeMultiplatform" }
+compose-multiplatform-foundation = { group = "org.jetbrains.compose.foundation", name = "foundation", version.ref = "composeMultiplatform" }
+compose-multiplatform-ui = { group = "org.jetbrains.compose.ui", name = "ui", version.ref = "composeMultiplatform" }
+compose-multiplatform-material3 = { group = "org.jetbrains.compose.material3", name = "material3", version = "1.9.0" }
+ktor-client-core = { group = "io.ktor", name = "ktor-client-core", version.ref = "ktor" }
+ktor-client-android = { group = "io.ktor", name = "ktor-client-android", version.ref = "ktor" }
+ktor-client-darwin = { group = "io.ktor", name = "ktor-client-darwin", version.ref = "ktor" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
+android-kotlin-multiplatform-library = { id = "com.android.kotlin.multiplatform.library", version.ref = "agp" }
+kotlin-multiplatform = { id = "org.jetbrains.kotlin.multiplatform", version.ref = "kotlin" }
+jetbrains-compose = { id = "org.jetbrains.compose", version.ref = "composeMultiplatform" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 google-devtools-ksp = { id = "com.google.devtools.ksp", version.ref = "googleDevtoolsKsp" }
 roborazzi = { id = "io.github.takahirom.roborazzi", version.ref = "roborazzi" }

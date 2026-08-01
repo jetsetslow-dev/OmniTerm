@@ -23,8 +23,8 @@ object TerminalKeyEncoder {
         ctrl: Boolean,
     ): ByteArray {
         val mod = 1 + (if (shift) 1 else 0) + (if (alt) 2 else 0) + (if (ctrl) 4 else 0)
-        fun csi(value: String) = "\u001B[$value".toByteArray()
-        fun ss3(letter: Char) = "\u001BO$letter".toByteArray()
+        fun csi(value: String) = "\u001B[$value".encodeToByteArray()
+        fun ss3(letter: Char) = "\u001BO$letter".encodeToByteArray()
         fun cursor(letter: Char): ByteArray = when {
             mod > 1 -> csi("1;$mod$letter")
             applicationCursorKeys -> ss3(letter)

@@ -43,10 +43,13 @@ Free with a 1-host limit and a single bottom banner. Both purchases are **one-ti
 
 ## Architecture
 
-OmniTerm is built natively for Android in Kotlin and Jetpack Compose.
+OmniTerm's shipping app is built for Android in Kotlin and Jetpack Compose. A Kotlin Multiplatform
+module now hosts portable terminal/domain foundations and the incremental Compose Multiplatform iOS UI.
+
+The implementation-ready [iOS portability roadmap](docs/IOS_PORTABILITY_ROADMAP.md) defines shared and platform boundaries, dependencies, validation evidence, complexity, and risk for each independently assignable task.
 
 - **Connection layer** — SSH, SFTP, and port-forward tunnels use JSch (the maintained `com.github.mwiede` fork) directly from the device. Network shares go through a common `RemoteFsClient` abstraction over smbj (SMB2/3), Apache Commons Net (FTP), OkHttp (WebDAV), and JSch (SFTP), so the file browser and the streamed cross-protocol transfer engine behave identically across protocols.
-- **Data storage** — SQLite via Room stores hosts, keys, credential profiles, scripts, alert rules, saved shares, tunnels, and local metric history. Schemas are versioned and migrated (current schema v18).
+- **Data storage** — SQLite via Room stores hosts, keys, credential profiles, scripts, alert rules, saved shares, tunnels, and local metric history. Schemas are versioned and migrated (current schema v22).
 - **Security** — credentials, private keys, sudo passwords, and proxy passwords are encrypted with AES-GCM using a key managed by Android Keystore. Key size and hardware backing depend on the device's Keystore implementation.
 - **Execution model** — Foreground services and WakeLocks keep SSH terminal sessions (`tmux`-backed when available) alive across network drops and app backgrounding. Monitoring parses standard Linux `/proc` and utility output, so **zero agents** run on your servers.
 

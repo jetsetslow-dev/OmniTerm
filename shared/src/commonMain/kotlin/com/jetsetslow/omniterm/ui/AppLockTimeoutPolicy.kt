@@ -1,15 +1,15 @@
 package com.jetsetslow.omniterm.ui
 
-internal const val DEFAULT_APP_LOCK_BACKGROUND_TIMEOUT_MS = 30_000L
-internal const val MAX_APP_LOCK_BACKGROUND_TIMEOUT_MS = 24 * 60 * 60 * 1000L
+const val DEFAULT_APP_LOCK_BACKGROUND_TIMEOUT_MS = 30_000L
+const val MAX_APP_LOCK_BACKGROUND_TIMEOUT_MS = 24 * 60 * 60 * 1000L
 
 private val APP_LOCK_TIMEOUT_PRESET_VALUES_MS = setOf(0L, 30_000L, 60_000L, 300_000L)
 
-internal fun normalizeAppLockBackgroundTimeout(value: Long?): Long =
+fun normalizeAppLockBackgroundTimeout(value: Long?): Long =
     value?.coerceIn(0L, MAX_APP_LOCK_BACKGROUND_TIMEOUT_MS)
         ?: DEFAULT_APP_LOCK_BACKGROUND_TIMEOUT_MS
 
-internal data class AppLockTimeoutDraft(
+data class AppLockTimeoutDraft(
     val timeoutMs: Long,
     val customValue: String,
     val customUnit: String,
@@ -84,7 +84,7 @@ private fun parseAppLockCustomDuration(value: String, unit: String): Long? {
     return (amount * multiplier).takeIf { it in 1L..MAX_APP_LOCK_BACKGROUND_TIMEOUT_MS }
 }
 
-internal fun shouldRecordAppBackground(isChangingConfigurations: Boolean): Boolean =
+fun shouldRecordAppBackground(isChangingConfigurations: Boolean): Boolean =
     !isChangingConfigurations
 
 /**
@@ -94,7 +94,7 @@ internal fun shouldRecordAppBackground(isChangingConfigurations: Boolean): Boole
  * cold-start lock. Callers supply monotonic time so wall-clock changes cannot shorten or extend the
  * configured interval.
  */
-internal class AppLockTimeoutTracker {
+class AppLockTimeoutTracker {
     private var backgroundedAtMs: Long? = null
 
     fun noteBackgrounded(nowMs: Long) {

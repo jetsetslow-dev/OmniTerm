@@ -4,6 +4,9 @@
 .android-sdk/
 /secrets/
 /app/build/
+/shared/build/
+/iosApp/OmniTerm.xcodeproj/
+/iosApp/DerivedData/
 /local.properties
 /.idea/caches
 /.idea/libraries

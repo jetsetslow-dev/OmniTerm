@@ -1,0 +1,10 @@
+# Command-line tools used by OmniTerm's iOS build and review workflow.
+# Xcode itself must be installed from Apple before running `brew bundle`.
+brew "cocoapods"
+brew "swiftformat"
+brew "swiftlint"
+brew "xcbeautify"
+brew "xcodegen"
+
+# Keep the Gradle JVM aligned with Android CI and AGENTS.md.
+cask "temurin@17"

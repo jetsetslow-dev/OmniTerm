@@ -26,12 +26,14 @@ resolve_project_graphs() {
   local -a metadata_args=("$@")
   local log_file
   log_file="$(mktemp "${TMPDIR:-/tmp}/omniterm-project-graphs.XXXXXX.log")"
-  echo "Resolving buildscript, app, test, lint, instrumentation, and benchmark graphs"
+  echo "Resolving buildscript, app, shared KMP, test, lint, instrumentation, and benchmark graphs"
   if ! ./gradlew \
       buildEnvironment \
       :app:buildEnvironment \
+      :shared:buildEnvironment \
       :benchmark:buildEnvironment \
       :app:dependencies \
+      :shared:dependencies \
       :benchmark:dependencies \
       "${COMMON_ARGS[@]}" \
       "${metadata_args[@]}" >"$log_file" 2>&1; then

@@ -170,6 +170,7 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
 }
 
 dependencies {
+  implementation(project(":shared"))
     implementation("androidx.glance:glance-appwidget:1.1.1")
     // Material3 for Glance
     implementation("androidx.glance:glance-material3:1.1.1")

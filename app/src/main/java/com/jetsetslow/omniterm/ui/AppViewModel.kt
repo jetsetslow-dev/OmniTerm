@@ -392,13 +392,8 @@ internal fun classifySshConnectionPhase(raw: String, viaJumpHost: Boolean): SshC
     else -> SshConnectionPhase.Connecting
 }
 
-/** Non-printable keys the terminal key-bar / hardware keyboard can send. */
-enum class TermKey {
-    ENTER, BACKSPACE, TAB, ESC,
-    UP, DOWN, LEFT, RIGHT,
-    HOME, END, INSERT, DELETE, PAGE_UP, PAGE_DOWN,
-    F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12
-}
+// TermKey now lives in :shared (com.jetsetslow.omniterm.ui.TermKey) so both platforms encode the
+// same key set. Same package, so call sites are unchanged.
 
 /** Input policy shared by terminal UI implementations, including a future iOS presentation. */
 internal fun terminalKeyAllowedInReadOnly(key: TermKey): Boolean =
