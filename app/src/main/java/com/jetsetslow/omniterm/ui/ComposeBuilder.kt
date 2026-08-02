@@ -277,7 +277,10 @@ private val FLOW_DRIVER = Regex("(?:^|[,{]\\s*)driver\\s*:\\s*([^,}]+)")
 
 // Compose interpolates ${VAR}, ${VAR:-default} and $VAR from the environment/.env before it ever
 // reads the value, so what a mapping resolves to is unknowable here.
-private val YAML_INTERPOLATION = Regex("""\$\{[^}]*}|\$[A-Za-z_][A-Za-z0-9_]*""")
+// The closing brace must be escaped: Android's regex engine is ICU, not the JDK's, and ICU rejects a
+// bare "}" outside a character class as a syntax error. Desktop JVM tolerates it, so this compiles
+// clean in unit tests and only throws once it reaches a device.
+private val YAML_INTERPOLATION = Regex("""\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*""")
 private const val INTERPOLATION_MASK = "\u0001"
 
 private fun isValidPortMapping(value: String): Boolean {
