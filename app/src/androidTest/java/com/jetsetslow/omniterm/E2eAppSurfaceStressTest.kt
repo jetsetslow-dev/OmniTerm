@@ -90,9 +90,15 @@ class E2eAppSurfaceStressTest {
             // Await the load's OUTCOME rather than the loading-flag start edge: with a warm pooled
             // SFTP session a LAN listing completes faster than one poll interval, so the
             // true-then-false pulse can be missed entirely and the start await times out.
-            vm.loadSftp("/home/${host.username}")
+            // The home LAYOUT is as fixture-specific as the name: scripts/test-hosts.sh containers
+            // put the account's home at /config, not /home/<user>. The repository's own fleet is the
+            // default so a clean checkout passes with no arguments; a physical lab passes its own
+            // layout with -e omniterm_e2e_sftp_home /home/<user>.
+            val sftpHome = InstrumentationRegistry.getArguments().getString("omniterm_e2e_sftp_home")
+                ?: "/config"
+            vm.loadSftp(sftpHome)
             await("SFTP listing applied", 20_000) {
-                vm.sftpPath == "/home/${host.username}" && !vm.sftpLoading
+                vm.sftpPath == sftpHome && !vm.sftpLoading
             }
             assertTrue("SFTP loader failed: ${vm.sftpError}", vm.sftpError.isNullOrBlank())
 

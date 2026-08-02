@@ -1,0 +1,44 @@
+#!/usr/bin/with-contenv bash
+# Enable SSH TCP forwarding on the disposable fleet.
+#
+# lscr.io/linuxserver/openssh-server ships `AllowTcpForwarding no`, which makes the SSH server
+# refuse every direct-tcpip channel. That silently breaks two things the fleet claims to support:
+#
+#   * OmniTerm's local (-L) and dynamic (-D/SOCKS) tunnels against `direct`. The failure is
+#     particularly unhelpful -- JSch closes the client stream as part of its own connect-failure
+#     path, so the SOCKS error reply cannot be delivered and the client just sees the connection
+#     drop mid-handshake rather than a SOCKS "connection refused" code.
+#   * The bastion jump path to internal-a documented at the top of docker-compose.yml, which is the
+#     only way to prove proxyType=ssh actually carries traffic.
+#
+# The image's sshd_config has `Include /etc/ssh/sshd_config.d/*.conf` commented out, so a drop-in
+# file would be ignored; the setting has to be rewritten in place before sshd starts.
+#
+# Both paths are patched deliberately. sshd actually runs with `-f /config/sshd/sshd_config` (the
+# copy in the persisted config volume), NOT /etc/ssh/sshd_config -- patching only the latter looks
+# like it worked, logs a reassuring "yes", and still leaves every forward administratively
+# prohibited. /etc is patched too so a rebuilt config volume inherits the setting.
+set -euo pipefail
+
+patch_config() {
+  config="$1"
+  [ -f "$config" ] || return 0
+  if grep -qE '^[[:space:]]*AllowTcpForwarding[[:space:]]' "$config"; then
+    sed -i 's/^[[:space:]]*AllowTcpForwarding[[:space:]].*/AllowTcpForwarding yes/' "$config"
+  else
+    printf '\nAllowTcpForwarding yes\n' >>"$config"
+  fi
+  echo "[omniterm-fixture] $config -> $(grep -E '^AllowTcpForwarding' "$config")"
+}
+
+patched=0
+for config in /config/sshd/sshd_config /etc/ssh/sshd_config; do
+  if [ -f "$config" ]; then
+    patch_config "$config"
+    patched=1
+  fi
+done
+
+if [ "$patched" -eq 0 ]; then
+  echo "[omniterm-fixture] WARNING: no sshd_config found; tunnels will be refused" >&2
+fi

@@ -92,11 +92,14 @@ fi
 
 if command -v adb >/dev/null 2>&1 &&
   adb devices | awk 'NR > 1 && $2 == "device" { found=1 } END { exit !found }'; then
-  ./gradlew connectedOpenSourceDebugAndroidTest \
-    -Pandroid.testInstrumentationRunnerArguments.package=com.jetsetslow.omniterm.data \
-    "${GRADLE_ARGS[@]}"
+  # Run the WHOLE instrumentation package, not just `...data`. Filtering to the data layer meant no
+  # UI instrumentation test ever ran here, so a screen could crash on first open with the preflight
+  # still green -- exactly how an ICU-only regex defect in ComposeBuilder reached a release. The
+  # lab-dependent `E2e*` suites self-skip through `assumeTrue` when their instrumentation arguments
+  # are absent, so this stays runnable on a bare emulator; see AGENTS.md for running them for real.
+  ./gradlew connectedOpenSourceDebugAndroidTest "${GRADLE_ARGS[@]}"
 else
-  echo "Room migration device matrix: no Android device/emulator available; deferred to PR CI"
+  echo "Device matrix (Room migrations + UI instrumentation): no Android device/emulator available; deferred to PR CI"
 fi
 
 echo "Local PR preflight passed ($MODE)."

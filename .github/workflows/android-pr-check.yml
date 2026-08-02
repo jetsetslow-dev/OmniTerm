@@ -171,6 +171,13 @@ jobs:
           emulator-boot-timeout: 900
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot -no-metrics
+          # Deliberately narrower than scripts/local-pr-check.sh, which runs the whole
+          # instrumentation package. This job stays data-layer-only because it is pinned to API 29,
+          # and API 29 cannot gate the modern-device defects UI tests are here to catch: the ICU
+          # regex engine that rejects a bare `}` only backs java.util.regex from API 34 on. Running
+          # UI suites here would add runtime and still pass on the exact defect class. Screen
+          # coverage is therefore a local API 34+ gate; see "Open every screen you touched on a real
+          # device" in AGENTS.md. Widen this once a stable emulator boots API >= 36 on hosted CI.
           script: >-
             ./gradlew connectedOpenSourceDebugAndroidTest --no-daemon
             -Domniterm.publishScan=true
