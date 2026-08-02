@@ -5,7 +5,6 @@ import com.jetsetslow.omniterm.ui.theme.OmniFonts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
@@ -155,179 +154,6 @@ private fun RuntimeTag(runtime: String) {
         runtime.uppercase(),
         color = if (runtime == "podman") OmniColors.purple else OmniColors.cyan,
     )
-}
-
-@Composable
-private fun ContainerList(viewModel: AppViewModel, containers: List<SimContainer>) {
-    val confirm = rememberConfirm()
-    ConfirmHost(confirm)
-    if (containers.isEmpty()) {
-        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            Text(stringResource(R.string.no_containers_found_on_this_host), color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        return
-    }
-
-    var isSelectionMode by remember { mutableStateOf(false) }
-    var selectedIds by remember { mutableStateOf(setOf<String>()) }
-    // Which containers have their detail panel open, by container id. Hoisted out of the LazyColumn
-    // because per-item `remember` is discarded as soon as a row leaves the viewport: expanding a
-    // container, scrolling down and coming back showed it collapsed again.
-    val expandedContainers = remember { mutableStateMapOf<String, Boolean>() }
-
-    LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        item {
-            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = { isSelectionMode = !isSelectionMode; if (!isSelectionMode) selectedIds = setOf() }) {
-                    Text(if (isSelectionMode) "Cancel Selection" else "Multi-Select")
-                }
-                if (isSelectionMode && selectedIds.isNotEmpty()) {
-                    Button(
-                        onClick = {
-                            confirm.ask("Remove Containers?", "Permanently remove ${selectedIds.size} containers?", confirmLabel = "Remove") {
-                                selectedIds.forEach { id ->
-                                    val runtime = containers.firstOrNull { it.id == id }?.runtime.orEmpty()
-                                    viewModel.dockerAction(id, "remove", runtime)
-                                }
-                                selectedIds = setOf()
-                                isSelectionMode = false
-                            }
-                        },
-                        colors = ButtonDefaults.buttonColors(containerColor = OmniColors.red)
-                    ) { Text(stringResource(R.string.delete_selected)) }
-                }
-            }
-        }
-        items(containers, key = { it.id }) { c ->
-            val expanded = expandedContainers[c.id] == true
-            OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = if (c.status == "running") OmniColors.green else OmniColors.red) {
-                Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    if (isSelectionMode) {
-                        Checkbox(checked = c.id in selectedIds, onCheckedChange = { if (it) selectedIds += c.id else selectedIds -= c.id })
-                    }
-                    Column(modifier = Modifier.weight(1f).clickable { expandedContainers[c.id] = !expanded }.padding(12.dp)) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            StatusDot(online = c.status == "running", color = OmniColors.green, size = 8.dp)
-                            Spacer(Modifier.width(8.dp))
-                            Column {
-                                Text(c.name, fontWeight = FontWeight.Bold, fontSize = 14.sp)
-                                Text(c.image, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
-                            }
-                        }
-                        OmniTag(c.group, color = OmniColors.cyan)
-                    }
-
-                    if (expanded) {
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
-                        Text("ID: ${c.id}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
-                        Text("Ports: ${c.ports}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = OmniFonts.mono)
-                        Spacer(Modifier.height(10.dp))
-                        Row(
-                            modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                        ) {
-                            OmniButton(label = "Logs", onClick = {
-                                viewModel.dockerContainerLogs(c.id, c.name, c.runtime)
-                            }, color = OmniColors.cyan, small = true)
-                            OmniButton(label = "Stats", onClick = {
-                                viewModel.dockerContainerStats(c.id, c.name, c.runtime)
-                            }, color = OmniColors.cyan, small = true)
-                            // Exec into a shell only makes sense for a running container.
-                            if (c.status == "running" || c.status == "paused") {
-                                OmniButton(label = "Shell", onClick = {
-                                    viewModel.dockerExecIntoContainer(c)
-                                }, color = OmniColors.purple, small = true)
-                            }
-
-                            when (c.status) {
-                                "paused" -> {
-                                    OmniButton(
-                                        label = "Unpause",
-                                        onClick = { viewModel.dockerAction(c.id, "unpause", c.runtime) },
-                                        color = OmniColors.green,
-                                        small = true,
-                                    )
-                                    OmniButton(
-                                        label = "Stop",
-                                        onClick = {
-                                            confirm.ask("Stop ${c.name}?", "Stop this container? It will remain stopped until started again.", confirmLabel = "Stop") {
-                                                viewModel.dockerAction(c.id, "stop", c.runtime)
-                                            }
-                                        },
-                                        color = OmniColors.red,
-                                        small = true,
-                                    )
-                                }
-                                "running", "restarting" -> {
-                                    OmniButton(
-                                        label = "Pause",
-                                        onClick = { viewModel.dockerAction(c.id, "pause", c.runtime) },
-                                        color = OmniColors.amber,
-                                        small = true,
-                                    )
-                                    OmniButton(
-                                        label = "Restart",
-                                        onClick = {
-                                            confirm.ask("Restart ${c.name}?", "Restart this container? It will briefly go down.", confirmLabel = "Restart") {
-                                                viewModel.dockerAction(c.id, "restart", c.runtime)
-                                            }
-                                        },
-                                        color = OmniColors.cyan,
-                                        small = true,
-                                    )
-                                    OmniButton(
-                                        label = "Stop",
-                                        onClick = {
-                                            confirm.ask("Stop ${c.name}?", "Stop this container? It will remain stopped until started again.", confirmLabel = "Stop") {
-                                                viewModel.dockerAction(c.id, "stop", c.runtime)
-                                            }
-                                        },
-                                        color = OmniColors.red,
-                                        small = true,
-                                    )
-                                    OmniButton(
-                                        label = "Delete",
-                                        onClick = {
-                                            confirm.ask("Delete ${c.name}?", "Force-remove this running container? This cannot be undone.", confirmLabel = "Delete") {
-                                                viewModel.dockerAction(c.id, "remove", c.runtime)
-                                            }
-                                        },
-                                        color = OmniColors.red,
-                                        small = true,
-                                    )
-                                }
-                                else -> {
-                                    OmniButton(
-                                        label = "Start",
-                                        onClick = { viewModel.dockerAction(c.id, "start", c.runtime) },
-                                        color = OmniColors.green,
-                                        small = true,
-                                    )
-                                    OmniButton(
-                                        label = "Remove",
-                                        onClick = {
-                                            confirm.ask("Remove ${c.name}?", "Permanently remove this container? This cannot be undone.", confirmLabel = "Remove") {
-                                                viewModel.dockerAction(c.id, "remove", c.runtime)
-                                            }
-                                        },
-                                        color = OmniColors.red,
-                                        small = true,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    }
-                }
-            }
-        }
-    }
-
 }
 
 @Composable
@@ -600,7 +426,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                                             confirmLabel = "Stop",
                                         ) { viewModel.dockerStackServiceAction(stack.name, stack.workingDir, stack.configFiles, service.name, "serviceStop", runtime = stack.runtime) }
                                     },
-                                    onShell = { viewModel.openDockerExecShell(service.containerId) },
+                                    onShell = { viewModel.openDockerExecShell(service.containerId, stack.runtime) },
                                     onScale = { scaleTarget = ScaleTarget(stack, service) },
                                     onRemove = {
                                         confirm.ask(
