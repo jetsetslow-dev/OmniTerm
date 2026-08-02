@@ -142,6 +142,21 @@ private fun ContainerRuntimeError(error: String) {
     }
 }
 
+/**
+ * DOCKER/PODMAN badge. A host running both lists each runtime's resources side by side — the same
+ * `repo:tag` pulled into each, a `bridge` network per runtime — and nothing else on those rows says
+ * which one owns the entry. Stacks already carried this badge; images, volumes and networks now
+ * render the identical one.
+ */
+@Composable
+private fun RuntimeTag(runtime: String) {
+    if (runtime.isBlank()) return
+    OmniTag(
+        runtime.uppercase(),
+        color = if (runtime == "podman") OmniColors.purple else OmniColors.cyan,
+    )
+}
+
 @Composable
 private fun ContainerList(viewModel: AppViewModel, containers: List<SimContainer>) {
     val confirm = rememberConfirm()
@@ -449,7 +464,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(stack.name, fontWeight = FontWeight.Bold, fontSize = 16.sp, fontFamily = OmniFonts.mono)
                     Spacer(Modifier.width(6.dp))
-                    OmniTag(stack.runtime.uppercase(), color = if (stack.runtime == "podman") OmniColors.purple else OmniColors.cyan)
+                    RuntimeTag(stack.runtime)
                 }
                                 Text(
                                     if (canCompose) stack.workingDir else "No compose metadata for stack actions",
@@ -619,7 +634,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Text(stack.project, fontWeight = FontWeight.Bold, fontSize = 16.sp, fontFamily = OmniFonts.mono)
                                     Spacer(Modifier.width(6.dp))
-                                    OmniTag(stack.runtime.uppercase(), color = if (stack.runtime == "podman") OmniColors.purple else OmniColors.cyan)
+                                    RuntimeTag(stack.runtime)
                                 }
                                 Text(
                                     stack.workingDir,
@@ -963,7 +978,11 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Text(img.created, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(img.created, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.width(6.dp))
+                            RuntimeTag(img.runtime)
+                        }
                         OmniButton(
                             label = "Remove",
                             onClick = {
@@ -1064,8 +1083,10 @@ private fun VolumeList(viewModel: AppViewModel, volumes: List<SimDockerVolume>) 
                     Spacer(Modifier.height(8.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.End
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        RuntimeTag(vol.runtime)
                         OmniButton(
                             label = "Remove",
                             onClick = {
@@ -1145,7 +1166,11 @@ private fun NetworkList(viewModel: AppViewModel, networks: List<SimDockerNetwork
                     }
                     Spacer(Modifier.height(4.dp))
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-                        Text(net.id.take(12), fontSize = 10.sp, color = MaterialTheme.colorScheme.outline, fontFamily = OmniFonts.mono)
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(net.id.take(12), fontSize = 10.sp, color = MaterialTheme.colorScheme.outline, fontFamily = OmniFonts.mono)
+                            Spacer(Modifier.width(6.dp))
+                            RuntimeTag(net.runtime)
+                        }
                         if (!isBuiltin) {
                             OmniButton(
                                 label = "Remove",
