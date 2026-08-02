@@ -10277,12 +10277,26 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    /**
+     * API 37 deprecated `DnsResolver.getInstance()` in favour of a `Context`/`Looper` constructor —
+     * which only exists from 37. This path is reachable from API 29, so the singleton stays as the
+     * fallback for everything below that.
+     */
+    @androidx.annotation.RequiresApi(29)
+    private fun dnsResolver(): android.net.DnsResolver =
+        if (Build.VERSION.SDK_INT >= 37) {
+            android.net.DnsResolver(getApplication(), android.os.Looper.getMainLooper())
+        } else {
+            @Suppress("DEPRECATION")
+            android.net.DnsResolver.getInstance()
+        }
+
     @androidx.annotation.RequiresApi(29)
     private suspend fun systemDnsRawQuery(query: ByteArray): ByteArray =
         suspendCancellableCoroutine { cont ->
             val signal = android.os.CancellationSignal()
             cont.invokeOnCancellation { signal.cancel() }
-            android.net.DnsResolver.getInstance().rawQuery(
+            dnsResolver().rawQuery(
                 null, // default network
                 query,
                 android.net.DnsResolver.FLAG_EMPTY,
