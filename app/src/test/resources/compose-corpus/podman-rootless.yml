@@ -1,0 +1,33 @@
+# podman-compose: the x-podman extension and rootless keep-id mapping, alongside a service that is
+# built rather than pulled and one that extends another file.
+name: rootless
+
+x-podman:
+  in_pod: pod_rootless
+
+services:
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    userns_mode: keep-id
+    ports:
+      - "3000:3000"
+
+  accel:
+    extends:
+      file: hwaccel.yml
+      service: vaapi
+    image: myorg/accel:latest
+    userns_mode: keep-id
+    devices:
+      - /dev/dri:/dev/dri
+
+  cache:
+    image: docker.io/valkey/valkey:8-alpine
+    userns_mode: keep-id
+    volumes:
+      - cache-data:/data
+
+volumes:
+  cache-data:

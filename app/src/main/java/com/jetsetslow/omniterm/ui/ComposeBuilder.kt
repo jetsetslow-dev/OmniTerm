@@ -82,6 +82,24 @@ data class ComposeServiceDraft(
     var bodyIndent: Int = -1,
     val scalarLine: MutableMap<String, Int> = mutableMapOf(),
     val arraySpan: MutableMap<String, IntRange> = mutableMapOf(),
+    // ── read-only facts the parser records about constructs the visual editor does NOT own ──
+    // Never rendered; they exist so validation can reason about the real file.
+    //
+    // [anchorName] is the "&name" on this service's header ("netbox: &netbox") and [aliasRefs] the
+    // anchors its body pulls in ("<<: *netbox"). [inheritsImage] is true when the service gets its
+    // image from somewhere other than a literal `image:` line — a merge key, `extends:`, or
+    // `build:` — so "needs an image" must not fire. [dependsOnRefs] lists every service depended
+    // on INCLUDING the map form (`depends_on: {db: {condition: service_healthy}}`) that the
+    // editable [dependsOn] list cannot hold.
+    var anchorName: String = "",
+    var inheritsImage: Boolean = false,
+    val aliasRefs: MutableList<String> = mutableListOf(),
+    val dependsOnRefs: MutableList<String> = mutableListOf(),
+    // Array keys whose body is a MAP or long-form sequence (`environment: {KEY: v}`,
+    // `ports: [- target: 5432]`). The list editor cannot represent them, so they are parsed as
+    // empty and never rewritten — rewriting one in place produced a list glued on top of the
+    // surviving map entries, i.e. invalid YAML.
+    val unmodeledArrayKeys: MutableSet<String> = mutableSetOf(),
 )
 
 data class TopLevelVolumeDraft(
@@ -117,6 +135,11 @@ data class ComposeStackDraft(
     // Line index of the top-level `volumes:` / `networks:` header in the original file (-1 = absent).
     var volumesSrcHeader: Int = -1,
     var networksSrcHeader: Int = -1,
+    // Whether the parsed file actually had a `services:` section. Compose file format v1 — the only
+    // version without one — puts service names at the top level; Compose V2 and podman-compose both
+    // refuse to run it. Format 2.x, 3.x and the current Compose Spec are structurally identical here
+    // (`version:` is obsolete and merely informative), so they need no special casing.
+    var hasServicesSection: Boolean = true,
     // Non-null when editing a real on-disk file. Drives surgical (non-destructive) saves.
     var originalText: String? = null,
     // Absolute working directory of the stack being edited (empty for brand-new drafts).
@@ -155,6 +178,52 @@ private fun String.stripYamlInlineComment(): String {
     val ci = indexOf(" #")
     return if (ci > 0) substring(0, ci).trimEnd() else this
 }
+
+// Value of a "- " list item. YAML only treats " #" as a comment OUTSIDE a quoted scalar, so a
+// fully quoted item keeps its text verbatim while a plain one drops its trailing comment. Without
+// this, `- "${PORT:-9394}:9394" # exporter` kept the comment inside the value: it failed port
+// validation, and any later rewrite of that list re-quoted the whole thing (comment included),
+// producing invalid YAML.
+private fun String.unquoteYamlListItem(): String {
+    val t = trim()
+    val quoted = t.length >= 2 &&
+        ((t.startsWith("\"") && t.endsWith("\"")) || (t.startsWith("'") && t.endsWith("'")))
+    return if (quoted) t.substring(1, t.length - 1) else t.stripYamlInlineComment().unquoteYaml()
+}
+
+// A YAML anchor ("&name") or alias ("*name") standing alone as a line's value.
+private val ANCHOR_ONLY = Regex("""^&\S+$""")
+private val ALIAS_ONLY = Regex("""^\*(\S+)$""")
+
+/**
+ * The key of a BLOCK mapping line — `web:` or, when the author anchors it for reuse, `web: &web` —
+ * or null when the line is a scalar (`image: nginx`) or a list item.
+ *
+ * An anchor lives on the key's own line, so an anchored header no longer ends with ":". Testing
+ * for a trailing colon therefore made `netbox: &netbox` invisible as a service header, and the
+ * indent scale was handed to its first child key instead — `depends_on:`, `healthcheck:` and
+ * `volumes:` each parsed as a service of their own (seen in netbox-docker).
+ */
+private fun blockKeyOf(content: String): String? {
+    if (content.startsWith("-") || !content.contains(":")) return null
+    val key = content.substringBefore(":").trim()
+    if (key.isEmpty() || key.contains(" ")) return null
+    val rest = content.substringAfter(":").trim().stripYamlInlineComment()
+    return if (rest.isEmpty() || ANCHOR_ONLY.matches(rest)) key else null
+}
+
+/** The anchor name declared on a block key line, or "" when it declares none. */
+private fun anchorOf(content: String): String =
+    content.substringAfter(":", "").trim().stripYamlInlineComment()
+        .takeIf { ANCHOR_ONLY.matches(it) }?.removePrefix("&").orEmpty()
+
+// Service keys the builder models as an editable list of scalars.
+private val MODELED_ARRAY_KEYS = setOf("ports", "environment", "volumes", "networks", "depends_on")
+
+// A list item that is really a mapping entry — Compose's long syntax, e.g. "- target: 5432".
+// YAML opens a mapping only on a colon followed by WHITESPACE, which is what separates the long
+// form from a short-syntax volume ("journal_data:/data") or port ("8000:8000").
+private val LONG_FORM_ITEM = Regex("""^[A-Za-z_][A-Za-z0-9_.-]*:\s+\S""")
 
 private fun isValidComposeName(value: String): Boolean =
     value.matches(Regex("""[A-Za-z0-9][A-Za-z0-9_.-]*"""))
@@ -206,9 +275,20 @@ private val TOP_ENTRY_CONFIG_KEYS = setOf(
 private val FLOW_EXTERNAL_TRUE = Regex("(?:^|[,{]\\s*)external\\s*:\\s*true(?:\\s*[,}]|$)")
 private val FLOW_DRIVER = Regex("(?:^|[,{]\\s*)driver\\s*:\\s*([^,}]+)")
 
+// Compose interpolates ${VAR}, ${VAR:-default} and $VAR from the environment/.env before it ever
+// reads the value, so what a mapping resolves to is unknowable here.
+private val YAML_INTERPOLATION = Regex("""\$\{[^}]*}|\$[A-Za-z_][A-Za-z0-9_]*""")
+private const val INTERPOLATION_MASK = "\u0001"
+
 private fun isValidPortMapping(value: String): Boolean {
-    val raw = value.trim().removeSurrounding("\"").removeSurrounding("'")
-    if (raw.isBlank()) return false
+    val unquoted = value.trim().stripYamlInlineComment()
+        .removeSurrounding("\"").removeSurrounding("'").trim()
+    if (unquoted.isBlank()) return false
+    // Mask interpolations to a single sentinel BEFORE splitting on ":". A default value carries its
+    // own colon ("${DAWARICH_APP_PORT:-3001}:3000"), so an unmasked split saw three segments and
+    // validated the literal "-3001}" as a port number — a false "invalid port mapping" on a file
+    // Compose accepts. Masked, the structure is still checked and only the variable part is trusted.
+    val raw = YAML_INTERPOLATION.replace(unquoted, INTERPOLATION_MASK)
     val portRegex = Regex("""^\d{1,5}(-\d{1,5})?$""")
     val parts = raw.split(":")
     val portParts = when (parts.size) {
@@ -219,12 +299,20 @@ private fun isValidPortMapping(value: String): Boolean {
     }
     return portParts.all { part ->
         val p = part.substringBefore("/").trim()
+        if (p.contains(INTERPOLATION_MASK)) return@all true
         portRegex.matches(p) && p.split("-").all { it.toIntOrNull()?.let { n -> n in 1..65535 } == true }
     }
 }
 
 fun validateComposeDraft(draft: ComposeStackDraft): List<String> {
     val issues = mutableListOf<String>()
+    // Compose file format v1 (services at the top level, no `services:` key) is the one version
+    // neither Docker Compose V2 nor podman-compose can run, and the visual editor cannot show it.
+    // Say so instead of presenting an empty stack the user might then save over the real file.
+    if (!draft.hasServicesSection) {
+        issues += "No services: section. This looks like the Compose v1 format, " +
+            "which current Docker/Podman Compose cannot run — convert it in Raw YAML."
+    }
     val activeServices = draft.services.filterNot { it.isCommentedOut }
     val names = activeServices.map { it.serviceName.trim() }
     val duplicates = names.filter { it.isNotBlank() }.groupingBy { it }.eachCount().filterValues { it > 1 }.keys
@@ -235,7 +323,10 @@ fun validateComposeDraft(draft: ComposeStackDraft): List<String> {
         if (svc.serviceName.isNotBlank() && !isValidComposeName(svc.serviceName)) {
             issues += "$label has an invalid service name. Use letters, numbers, dots, dashes, or underscores."
         }
-        if (!svc.isCommentedOut && svc.image.isBlank()) {
+        // A service can legitimately have no `image:` line: `build:` produces one, `extends:` and a
+        // `<<: *base` merge inherit one. Demanding a literal image failed every anchor-based file
+        // (Airflow, Sentry, netbox) on services Compose itself accepts.
+        if (svc.image.isBlank() && !svc.inheritsImage) {
             issues += "$label needs an image in the visual editor. Use Raw YAML for build-only services."
         }
         svc.ports.filter { it.isNotBlank() && !isValidPortMapping(it) }.forEach {
@@ -244,8 +335,37 @@ fun validateComposeDraft(draft: ComposeStackDraft): List<String> {
         if (listOf(svc.ports, svc.environment, svc.volumes, svc.networks, svc.dependsOn).any { list -> list.any { it.isBlank() } }) {
             issues += "$label has empty list rows. Remove or fill them before deploy."
         }
+        // Rows typed into a list the file expresses as a map/long syntax are dropped on save
+        // rather than written, because writing them would strand the original entries.
+        svc.unmodeledArrayKeys.filter { key ->
+            when (key) {
+                "ports" -> svc.ports
+                "environment" -> svc.environment
+                "volumes" -> svc.volumes
+                "networks" -> svc.networks
+                else -> svc.dependsOn
+            }.any { it.isNotBlank() }
+        }.forEach {
+            issues += "$label declares $it in map or long syntax. Edit it in Raw YAML — rows added here are not saved."
+        }
     }
     duplicates.forEach { issues += "Duplicate active service name: $it" }
+
+    // Commenting a service out silently breaks whatever still points at it. Both references are
+    // resolved against services the file actually defines, so a merge of an anchor declared by a
+    // top-level x- extension (which the builder does not model) never produces a false alarm.
+    val liveNames = activeServices.map { it.serviceName.trim() }.toSet()
+    val commentedByAnchor = draft.services.filter { it.isCommentedOut && it.anchorName.isNotBlank() }
+        .associateBy { it.anchorName }
+    val commentedNames = draft.services.filter { it.isCommentedOut }.map { it.serviceName.trim() }.toSet()
+    for (svc in activeServices) {
+        val label = svc.serviceName.ifBlank { "A service" }
+        svc.aliasRefs.mapNotNull { commentedByAnchor[it] }.forEach {
+            issues += "$label merges &${it.anchorName} from ${it.serviceName}, which is commented out."
+        }
+        svc.dependsOnRefs.map { it.trim() }.filter { it.isNotBlank() && it in commentedNames && it !in liveNames }
+            .forEach { issues += "$label depends on $it, which is commented out." }
+    }
     val topVolumeNames = draft.topVolumes.filterNot { it.isCommentedOut }.map { it.name.trim() }
     val topNetworkNames = draft.topNetworks.filterNot { it.isCommentedOut }.map { it.name.trim() }
     topVolumeNames.filter { it.isBlank() }.forEach { _ -> issues += "Top-level volumes cannot have blank names." }
@@ -299,6 +419,7 @@ fun parseDockerComposeYaml(
     )
 
     var inServices = false
+    var sawServicesSection = false
     var inTopVolumes = false
     var inTopNetworks = false
     var inXPodman = false
@@ -309,6 +430,9 @@ fun parseDockerComposeYaml(
     var topSectionItemIndent = -1     // indent of keys directly under volumes:/networks: (e.g. 2)
     var arrayKey = ""                 // current "- " list context (ports/environment/…)
     var arrayKeyLine = -1
+    var arrayKeyIndent = -1           // indent of the current array key, to spot its body's shape
+    var dependsOnIndent = -1          // indent of a `depends_on:` whose body is a map
+    var dependsOnEntryIndent = -1     // indent of that map's entry names
 
     fun indentOf(s: String) = s.takeWhile { it == ' ' }.length
     fun finish() {
@@ -356,31 +480,29 @@ fun parseDockerComposeYaml(
         // service map; `volumes:`/`networks:` open their respective top-level sections; any other
         // top-level key ends whichever section is active. Sections can appear in any order and may
         // repeat (unusual, but valid YAML merges them in practice — we just parse sequentially).
-        if (indent == 0) {
-            if (!content.startsWith("-") && content.contains(":")) {
-                val k = content.substringBefore(":").trim()
-                if (k == "name") {
-                    val v = content.substringAfter(":").trim().unquoteYaml().stripYamlInlineComment()
-                    if (v.isNotEmpty()) { draft.stackName = v; draft.stackNameSrcLine = idx }
-                    finish(); finishTopVol(); finishTopNet()
-                    inServices = false; inTopVolumes = false; inTopNetworks = false; inXPodman = false
-                    serviceIndent = -1; topSectionItemIndent = -1
-                    continue
-                }
+        // Any key at indent 0 CLOSES whichever section is open, then possibly opens a new one.
+        // Closing unconditionally matters: a top-level key that carries an inline value
+        // (`version: "3.8"`, `networks: {}`, `x-shared: &base`) used to fall through with the
+        // previous section still open, so the next section's parser absorbed it as one of its own
+        // entries and stretched that entry's source span over an unrelated line.
+        if (indent == 0 && !content.startsWith("-") && content.contains(":")) {
+            val sectionKey = blockKeyOf(content)
+            val k = content.substringBefore(":").trim()
+            finish(); finishTopVol(); finishTopNet()
+            inServices = sectionKey == "services"
+            inTopVolumes = sectionKey == "volumes"
+            inTopNetworks = sectionKey == "networks"
+            inXPodman = sectionKey == "x-podman"
+            if (inServices) sawServicesSection = true
+            if (inTopVolumes) draft.volumesSrcHeader = idx
+            if (inTopNetworks) draft.networksSrcHeader = idx
+            if (inXPodman) draft.xPodmanSrcHeader = idx
+            serviceIndent = -1; topSectionItemIndent = -1
+            if (sectionKey == null && k == "name") {
+                val v = content.substringAfter(":").trim().unquoteYaml().stripYamlInlineComment()
+                if (v.isNotEmpty()) { draft.stackName = v; draft.stackNameSrcLine = idx }
             }
-            if (content.endsWith(":")) {
-                val sectionKey = content.removeSuffix(":").trim()
-                finish(); finishTopVol(); finishTopNet()
-                inServices = sectionKey == "services"
-                inTopVolumes = sectionKey == "volumes"
-                inTopNetworks = sectionKey == "networks"
-                inXPodman = sectionKey == "x-podman"
-                if (inTopVolumes) draft.volumesSrcHeader = idx
-                if (inTopNetworks) draft.networksSrcHeader = idx
-                if (inXPodman) draft.xPodmanSrcHeader = idx
-                serviceIndent = -1; topSectionItemIndent = -1
-                continue
-            }
+            continue
         }
 
         // Podman Compose extension documented by podman-compose. `true` selects its default
@@ -493,8 +615,9 @@ fun parseDockerComposeYaml(
         if (!inServices) continue
 
         // service header (first indented key level under services:)
-        if (content.endsWith(":")) {
-            val keyName = content.removeSuffix(":").unquoteYaml()
+        val blockKey = blockKeyOf(content)
+        if (blockKey != null) {
+            val keyName = blockKey.unquoteYaml()
             val isHeader = if (!isCommented) {
                 if (serviceIndent == -1) serviceIndent = indent
                 indent == serviceIndent
@@ -518,8 +641,10 @@ fun parseDockerComposeYaml(
                     isExpanded = false,
                     srcStart = idx,
                     srcEnd = idx,
+                    anchorName = anchorOf(content),
                 )
-                arrayKey = ""
+                arrayKey = ""; arrayKeyIndent = -1
+                dependsOnIndent = -1; dependsOnEntryIndent = -1
                 continue
             }
         }
@@ -533,15 +658,38 @@ fun parseDockerComposeYaml(
         svc.srcEnd = idx
         if (svc.bodyIndent == -1 && indent > serviceIndent && !content.startsWith("-")) svc.bodyIndent = indent
 
+        // Drop an array key whose body turns out to be a map or Compose's long syntax. The list
+        // editor cannot hold those, so they are surfaced as empty and — crucially — never
+        // rewritten: splicing a freshly generated list over just the `key:` header left the map's
+        // own entries stranded underneath it, which is invalid YAML.
+        fun demoteArrayKey() {
+            if (arrayKey.isEmpty()) return
+            svc.unmodeledArrayKeys += arrayKey
+            svc.arraySpan.remove(arrayKey)
+            when (arrayKey) {
+                "ports" -> svc.ports
+                "environment" -> svc.environment
+                "volumes" -> svc.volumes
+                "networks" -> svc.networks
+                else -> svc.dependsOn
+            }.clear()
+            arrayKey = ""; arrayKeyIndent = -1
+        }
+
         // list item under the current array key
         if (content.startsWith("-")) {
-            val item = content.removePrefix("-").trim().unquoteYaml()
+            val item = content.removePrefix("-").trim().unquoteYamlListItem()
+            if (arrayKey.isNotEmpty() && LONG_FORM_ITEM.containsMatchIn(item)) {
+                if (arrayKey == "depends_on") svc.dependsOnRefs += item.substringBefore(":").trim()
+                demoteArrayKey()
+                continue
+            }
             when (arrayKey) {
                 "ports" -> svc.ports.add(item)
                 "environment" -> svc.environment.add(item)
                 "volumes" -> svc.volumes.add(item)
                 "networks" -> svc.networks.add(item)
-                "depends_on" -> svc.dependsOn.add(item)
+                "depends_on" -> { svc.dependsOn.add(item); svc.dependsOnRefs += item }
             }
             if (arrayKey.isNotEmpty()) {
                 val prev = svc.arraySpan[arrayKey]
@@ -554,15 +702,25 @@ fun parseDockerComposeYaml(
         if (content.contains(":")) {
             val key = content.substringBefore(":").trim()
             val value = content.substringAfter(":").trim().unquoteYaml().stripYamlInlineComment()
-            arrayKey = ""
+            // A key nested INSIDE the open array key means that key's body is a map, not a list.
+            if (arrayKey.isNotEmpty() && indent > arrayKeyIndent) demoteArrayKey() else arrayKey = ""
+            // Map-form depends_on: its entry names are the real dependencies. Recorded read-only so
+            // "commented out a service something still depends on" is catchable either way.
+            if (dependsOnIndent >= 0 && indent > dependsOnIndent) {
+                if (dependsOnEntryIndent == -1) dependsOnEntryIndent = indent
+                if (indent == dependsOnEntryIndent) svc.dependsOnRefs += key.unquoteYaml()
+            } else if (dependsOnIndent >= 0 && indent <= dependsOnIndent) {
+                dependsOnIndent = -1; dependsOnEntryIndent = -1
+            }
             if (value.isEmpty()) {
                 // block key whose value is on following lines (a list or map)
-                when (key) {
-                    "ports", "environment", "volumes", "networks", "depends_on" -> {
-                        arrayKey = key; arrayKeyLine = idx
-                        svc.arraySpan[key] = idx..idx
-                    }
+                if (key in MODELED_ARRAY_KEYS) {
+                    arrayKey = key; arrayKeyLine = idx; arrayKeyIndent = indent
+                    svc.arraySpan[key] = idx..idx
+                    if (key == "depends_on") { dependsOnIndent = indent; dependsOnEntryIndent = -1 }
                 }
+                // `build:` as a block — the image is produced, not pulled.
+                if (key == "build" || key == "extends") svc.inheritsImage = true
             } else {
                 when (key) {
                     "image" -> { svc.image = value; svc.scalarLine["image"] = idx }
@@ -570,6 +728,12 @@ fun parseDockerComposeYaml(
                     "restart" -> { svc.restart = value; svc.scalarLine["restart"] = idx }
                     "command" -> { svc.command = value; svc.scalarLine["command"] = idx }
                     "userns_mode" -> { svc.usernsMode = value; svc.scalarLine["userns_mode"] = idx }
+                    // `<<: *base` merges another mapping in, so image/ports/… can come from there.
+                    "<<" -> {
+                        svc.inheritsImage = true
+                        ALIAS_ONLY.find(value)?.let { svc.aliasRefs += it.groupValues[1] }
+                    }
+                    "build", "extends" -> svc.inheritsImage = true
                     // Inline KEY=VALUE handled when it appears as an environment list item above.
                 }
             }
@@ -580,9 +744,19 @@ fun parseDockerComposeYaml(
     finishTopNet()
     // podman-compose defaults to grouping in pod_<project> when x-podman.in_pod is absent.
     if (runtime == "podman" && draft.xPodmanSrcHeader < 0) draft.podmanPodEnabled = true
-    if (draft.services.isEmpty()) draft.services.add(ComposeServiceDraft())
+    draft.hasServicesSection = sawServicesSection || draft.originalText == null
+    // The blank starter row is a UI seed for a NEW stack. Seeding it into a real file that simply
+    // has no `services:` section (Compose format v1 puts services at the top level) invented an
+    // "app" service the file never had, and a save would have appended it.
+    if (draft.services.isEmpty() && draft.originalText == null) draft.services.add(ComposeServiceDraft())
     return draft
 }
+
+/** True when this draft would emit nothing but a bare `name:` key — not a service Compose accepts. */
+private fun ComposeServiceDraft.isEmptyPlaceholder(): Boolean =
+    image.isBlank() && containerName.isBlank() && restart.isBlank() && command.isBlank() &&
+        usernsMode.isBlank() &&
+        listOf(ports, environment, volumes, networks, dependsOn).all { l -> l.none { it.isNotBlank() } }
 
 /** Generate one service's YAML block (2-space service key, 4-space body), no trailing newline. */
 private fun generateServiceBlock(svc: ComposeServiceDraft, podmanRuntime: Boolean): String {
@@ -671,6 +845,7 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
     val slot = arrayUListOfLines(lines)             // MutableList<String?> sized to lines
     val insertAfter = HashMap<Int, MutableList<String>>()   // anchorIndex → extra lines after it
     val prepend = mutableListOf<String>()                   // lines emitted before everything else
+    val appended = mutableListOf<String>()                  // blocks emitted after everything else
     fun insert(at: Int, text: String) {
         val anchor = at.coerceIn(0, lines.lastIndex.coerceAtLeast(0))
         insertAfter.getOrPut(anchor) { mutableListOf() }.add(text)
@@ -721,7 +896,12 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
                 for (i in src.srcStart..src.srcEnd) {
                     if (i !in slot.indices) continue
                     val line = slot[i] ?: continue
-                    if (line.trimStart().startsWith("#")) continue
+                    // Lines the AUTHOR had already commented out get a second "# " too. Skipping
+                    // them made the operation lossy in one direction: uncommenting later stripped
+                    // the single "#" they still carried and resurrected a block the author had
+                    // deliberately disabled — an env block with real secrets, in the file that
+                    // prompted this — at an indent that then swallowed the sibling key above it.
+                    // A second level makes uncomment remove exactly what comment-out added.
                     val lead = line.takeWhile { it == ' ' }
                     val drop = minOf(2, lead.length)             // "# " replaces up to 2 indent spaces
                     slot[i] = "# " + line.substring(drop)
@@ -742,6 +922,9 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
                     val line = slot[i] ?: continue
                     if (!line.trimStart().startsWith("#")) continue
                     val stripped = strip(line)
+                    // Still a comment after one level came off: it was a comment before the service
+                    // was commented out, so restore it verbatim instead of promoting it to code.
+                    if (stripped.trimStart().startsWith("#")) { slot[i] = stripped; continue }
                     val ind = (indentOfLine(stripped) + delta).coerceAtLeast(0)
                     slot[i] = " ".repeat(ind) + stripped.trimStart()
                 }
@@ -763,11 +946,17 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
         applyScalar("container_name", svc.containerName, src.containerName)
         applyScalar("restart", svc.restart, src.restart)
         applyScalar("command", svc.command, src.command)
+        // Strip Podman's `keep-id` only when the stack is known to be Docker. A blank runtime means
+        // "not resolved yet", and treating that as Docker deleted the line from a Podman file the
+        // moment any other field was touched.
         val renderedUsernsMode =
-            if (draft.runtime == "podman" || svc.usernsMode != "keep-id") svc.usernsMode else ""
+            if (draft.runtime == "docker" && svc.usernsMode == "keep-id") "" else svc.usernsMode
         applyScalar("userns_mode", renderedUsernsMode, src.usernsMode)
 
         fun applyArray(key: String, items: List<String>, old: List<String>, quote: Boolean) {
+            // The file expresses this key as a map or long syntax; the list editor can't represent
+            // it, so leave the original bytes alone instead of splicing a list over them.
+            if (key in src.unmodeledArrayKeys) return
             val cleaned = items.filter { it.isNotBlank() }
             if (cleaned == old.filter { it.isNotBlank() }) return
             val span = src.arraySpan[key]
@@ -893,6 +1082,18 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
         }
     }
 
+    // Brand-new services (added in the builder, no source mapping) go at the END OF THE SERVICES
+    // SECTION, not the end of the file: `services:` is rarely the last section, so emitting them
+    // last dropped the new service inside a trailing `volumes:`/`networks:` block, where it then
+    // parsed as a top-level volume named after the service.
+    val newServices = draft.services.filter { it.id !in originals && !it.isEmptyPlaceholder() }
+    val servicesSectionEnd = parsedFrom.services.filter { it.srcEnd >= 0 }.maxOfOrNull { it.srcEnd }
+        ?: lines.indexOfFirst { it.trimEnd() == "services:" }.takeIf { it >= 0 }
+    for (svc in newServices) {
+        val block = generateServiceBlock(svc, podmanRuntime = draft.runtime == "podman")
+        if (servicesSectionEnd != null) insert(servicesSectionEnd, block) else appended += block
+    }
+
     // Flatten: prepended lines, then each surviving slot followed by anything inserted after it.
     val sb = StringBuilder()
     var firstOut = true
@@ -902,13 +1103,7 @@ fun renderComposeYaml(draft: ComposeStackDraft, parsedFrom: ComposeStackDraft?):
         slot[i]?.let { emit(it) }
         insertAfter[i]?.forEach { emit(it) }
     }
-
-    // Brand-new services (added in the builder, no source mapping) are appended as fresh blocks.
-    for (svc in draft.services) {
-        if (svc.id in originals) continue
-        if (svc.serviceName.isBlank() && svc.image.isBlank()) continue   // skip empty placeholder rows
-        generateServiceBlock(svc, podmanRuntime = draft.runtime == "podman").split("\n").forEach { emit(it) }
-    }
+    appended.forEach { block -> block.split("\n").forEach { emit(it) } }
 
     // Brand-new top-level volumes (no srcStart) — append as a fresh section or into the existing header.
     val brandNewVols = draft.topVolumes.filter { it.name.isNotBlank() && it.id !in origTopVols }
@@ -1369,7 +1564,11 @@ private fun namedVolumeFrom(entry: String): String? {
     val raw = entry.trim()
     if (raw.isBlank() || raw.startsWith(".") || raw.startsWith("/")) return null
     val name = if (raw.contains(":")) raw.substringBefore(":").trim() else raw
-    return name.ifBlank { null }
+    // Only something that could actually BE a volume name earns a top-level declaration. A host
+    // path Compose interpolates at deploy time ("${UPLOAD_LOCATION}:/data", "~/data:/data") is a
+    // bind-mount, not a named volume: declaring it wrote "${UPLOAD_LOCATION}:" under `volumes:` and
+    // then failed validation with an invalid-name error for a volume the user never typed.
+    return name.takeIf { isValidComposeName(it) }
 }
 
 /**
@@ -1391,7 +1590,7 @@ private fun namedVolumeFrom(entry: String): String? {
  *
  * "Active" means not commented out. Bind-mounts (./… or /…) are ignored throughout.
  */
-private fun reconcileTopLevelVolumes(draft: ComposeStackDraft): ComposeStackDraft {
+internal fun reconcileTopLevelVolumes(draft: ComposeStackDraft): ComposeStackDraft {
     val activeRefs = draft.services
         .filter { !it.isCommentedOut }
         .flatMap { it.volumes }

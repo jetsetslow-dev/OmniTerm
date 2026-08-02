@@ -318,7 +318,7 @@
     <string name="fleet_default_commands">"Fleet default commands"</string>
     <string name="cpu_ram_disk_services_logs_containers">"CPU/RAM, disk, services, logs, containers, ports, and kernel presets for broadcast use."</string>
     <string name="category_group_2">"Category / Group"</string>
-    <string name="sweep_your_local_network_and_gather">"Sweep your local network and gather as much detail as possible per host: hostname, MAC + vendor, and which common ports answer. Tap a host to scan its ports."</string>
+    <string name="sweep_your_local_network_and_gather">"Sweep your local network and gather as much detail as possible per host: hostname, MAC + vendor, and which common ports answer. Tap a host for actions — save it, ping, port scan, and more."</string>
     <string name="scanning_network">"Scanning network…"</string>
     <string name="no_hosts_yet_run_a_scan">"No hosts yet — run a scan."</string>
     <string name="pick_lan_host">"Pick LAN host"</string>

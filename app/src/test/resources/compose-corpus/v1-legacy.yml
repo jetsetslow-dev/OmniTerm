@@ -1,0 +1,14 @@
+# Compose file format 1: service names ARE the top-level keys and there is no `services:` section.
+# Neither Docker Compose V2 nor podman-compose can run this, so the builder must say so rather than
+# show an empty stack and offer to save over it.
+web:
+  image: nginx:1.27-alpine
+  ports:
+    - "80:80"
+  links:
+    - redis
+
+redis:
+  image: redis:7-alpine
+  volumes:
+    - /var/lib/redis:/data

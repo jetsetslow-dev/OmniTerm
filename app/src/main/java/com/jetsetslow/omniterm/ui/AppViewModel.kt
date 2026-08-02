@@ -6797,7 +6797,13 @@ class AppViewModel @JvmOverloads constructor(
         ) { loadDocker() }
     }
 
-    fun openDockerExecShell(containerId: String) {
+    /**
+     * [runtime] is passed in rather than looked up by [containerId]. Docker and Podman issue IDs
+     * from independent spaces, so on a host running both, matching on the ID alone can resolve to
+     * the other runtime's container and exec with the wrong CLI. Every caller already knows which
+     * runtime owns the container it is acting on.
+     */
+    fun openDockerExecShell(containerId: String, runtime: String) {
         if (containerId.isBlank()) return
         navigateTo(Screen.Shell)
         if (!isTerminalConnected && !isTerminalConnecting) connectTerminal()
@@ -6806,7 +6812,6 @@ class AppViewModel @JvmOverloads constructor(
             // it's ready. `return@repeat` only ends one iteration, so exit via return@launch.
             repeat(30) {
                 if (isTerminalConnected) {
-                    val runtime = dockerContainers.firstOrNull { it.id == containerId }?.runtime.orEmpty()
                     typeText(RemoteCommands.dockerComposeExecShellCommand(containerId, runtime) + "\r")
                     return@launch
                 }
@@ -10272,12 +10277,26 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    /**
+     * API 37 deprecated `DnsResolver.getInstance()` in favour of a `Context`/`Looper` constructor —
+     * which only exists from 37. This path is reachable from API 29, so the singleton stays as the
+     * fallback for everything below that.
+     */
+    @androidx.annotation.RequiresApi(29)
+    private fun dnsResolver(): android.net.DnsResolver =
+        if (Build.VERSION.SDK_INT >= 37) {
+            android.net.DnsResolver(getApplication(), android.os.Looper.getMainLooper())
+        } else {
+            @Suppress("DEPRECATION")
+            android.net.DnsResolver.getInstance()
+        }
+
     @androidx.annotation.RequiresApi(29)
     private suspend fun systemDnsRawQuery(query: ByteArray): ByteArray =
         suspendCancellableCoroutine { cont ->
             val signal = android.os.CancellationSignal()
             cont.invokeOnCancellation { signal.cancel() }
-            android.net.DnsResolver.getInstance().rawQuery(
+            dnsResolver().rawQuery(
                 null, // default network
                 query,
                 android.net.DnsResolver.FLAG_EMPTY,

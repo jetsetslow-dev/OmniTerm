@@ -6,6 +6,7 @@ import com.jetsetslow.omniterm.ui.TopLevelNetworkDraft
 import com.jetsetslow.omniterm.ui.composeRawEditsDiffer
 import com.jetsetslow.omniterm.ui.generateDockerComposeYaml
 import com.jetsetslow.omniterm.ui.parseDockerComposeYaml
+import com.jetsetslow.omniterm.ui.reconcileTopLevelVolumes
 import com.jetsetslow.omniterm.ui.renderComposeYaml
 import com.jetsetslow.omniterm.ui.validateComposeDraft
 import org.junit.Assert.assertEquals
@@ -413,5 +414,78 @@ class ComposeBuilderTest {
         assertEquals(listOf("data", "external-data"), baseline.topVolumes.map { it.name })
         assertTrue(baseline.topVolumes.last().external)
         assertEquals(yaml, renderComposeYaml(baseline.copy(), baseline))
+    }
+
+    // ── Interpolated values must not read as validation errors ────────────────────────────────
+    // A stack Compose accepts (env-var host paths and ports, trailing "# comments" on list rows)
+    // used to fail the builder's own validation the moment any service was edited.
+
+    private val interpolatedFile = """
+        services:
+          app:
+            image: freikin/dawarich:latest
+            volumes:
+              - ${'$'}{UPLOAD_LOCATION}:/data
+              - app_storage:/var/app/storage
+            ports:
+              - "${'$'}{APP_PORT:-3001}:3000"
+              - "${'$'}{PROMETHEUS_PORT:-9394}:9394" # exporter, uncomment if needed
+          journal:
+            image: swalabtech/journiv-app:latest
+            ports:
+              - "8000:8000"
+        #    environment:
+        #      - SECRET_KEY=redacted
+            volumes:
+              - journal_data:/data
+
+        volumes:
+          app_storage:
+          journal_data:
+    """.trimIndent()
+
+    @Test
+    fun interpolated_ports_are_not_reported_as_invalid() {
+        val draft = parseDockerComposeYaml(interpolatedFile, "immich")
+        val app = draft.services.first { it.serviceName == "app" }
+        // The trailing comment belongs to the file, not to the port value.
+        assertEquals(
+            listOf("\${APP_PORT:-3001}:3000", "\${PROMETHEUS_PORT:-9394}:9394"),
+            app.ports,
+        )
+        assertEquals(emptyList<String>(), validateComposeDraft(draft))
+    }
+
+    @Test
+    fun interpolated_bind_mount_is_not_declared_as_a_named_volume() {
+        val draft = parseDockerComposeYaml(interpolatedFile, "immich")
+        val reconciled = reconcileTopLevelVolumes(draft)
+        assertEquals(listOf("app_storage", "journal_data"), reconciled.topVolumes.map { it.name })
+        assertEquals(emptyList<String>(), validateComposeDraft(reconciled))
+    }
+
+    @Test
+    fun commenting_out_a_service_keeps_the_stack_valid_and_only_comments_its_volume() {
+        val baseline = parseDockerComposeYaml(interpolatedFile, "immich")
+        val services = baseline.services.map {
+            if (it.serviceName == "journal") it.copy(isCommentedOut = true) else it
+        }.toMutableList()
+        val edited = reconcileTopLevelVolumes(baseline.copy(services = services))
+
+        assertEquals(emptyList<String>(), validateComposeDraft(edited))
+        // journal_data is now referenced only by a commented-out service, so it follows it out.
+        assertEquals(
+            mapOf("app_storage" to false, "journal_data" to true),
+            edited.topVolumes.associate { it.name to it.isCommentedOut },
+        )
+
+        val out = renderComposeYaml(edited, baseline)
+        assertTrue(out.contains("# journal:"))
+        assertTrue(out.contains("#   image: swalabtech/journiv-app:latest"))
+        assertTrue(out.contains("#   journal_data:"))
+        // The untouched service and the interpolated rows survive byte-for-byte.
+        assertTrue(out.contains("    image: freikin/dawarich:latest"))
+        assertTrue(out.contains("      - \"\${PROMETHEUS_PORT:-9394}:9394\" # exporter, uncomment if needed"))
+        assertFalse(out.contains("\${UPLOAD_LOCATION}:\n"))
     }
 }

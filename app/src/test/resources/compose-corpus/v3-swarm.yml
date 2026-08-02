@@ -1,0 +1,45 @@
+# Compose file format 3.x. `version:` is obsolete under the Compose Spec but still parsed, and it
+# must not leak into the section that follows it. Long-form ports and map-form environment are the
+# constructs the visual list editor cannot represent.
+version: "3.8"
+
+services:
+  database:
+    image: postgres:16-alpine
+    ports:
+      - target: 5432
+        published: 5433
+        protocol: tcp
+        mode: host
+    environment:
+      POSTGRES_PASSWORD: example
+      POSTGRES_DB: app
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+
+  api:
+    image: myorg/api:1.4.0
+    ports:
+      - "8080:8080"
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - backend
+    labels:
+      - traefik.enable=true
+
+networks:
+  backend:
+    driver: bridge
+
+volumes:
+  db-data:

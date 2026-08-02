@@ -100,6 +100,7 @@ object OmniTermWidgetUpdater {
                     )
                     // Keep this off the main thread: the launcher may answer it by re-entering our
                     // RemoteViewsFactory.onDataSetChanged() synchronously, which blocks on a DB read.
+                    // Deprecated since API 35; its replacement needs minSdk 31 — docs/adr/0002.
                     manager.notifyAppWidgetViewDataChanged(appWidgetId, R.id.widget_rows)
                 }
             }
@@ -183,6 +184,7 @@ object OmniTermWidgetUpdater {
             val serviceIntent = Intent(context, OmniTermWidgetService::class.java)
                 .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, appWidgetId)
                 .setData(widgetUri(appWidgetId, "rows"))
+            // Deprecated since API 35; RemoteCollectionItems needs minSdk 31 — docs/adr/0002.
             setRemoteAdapter(R.id.widget_rows, serviceIntent)
             setPendingIntentTemplate(
                 R.id.widget_rows,
