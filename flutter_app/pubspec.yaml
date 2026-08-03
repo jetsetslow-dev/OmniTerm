@@ -50,7 +50,6 @@ dependencies:
   network_info_plus: ^8.2.1
   wakelock_plus: ^1.7.0
   share_plus: ^13.3.0
-  file_picker: ^3.0.4
   ftpconnect: ^2.0.10
   dio: ^5.11.0
   pointycastle: ^4.0.0
@@ -61,6 +60,9 @@ dependencies:
   intl: ^0.20.3
   collection: ^1.19.1
   url_launcher: ^6.3.2
+  file_selector: ^1.1.0
+  flutter_file_dialog: ^3.3.2
+
 
 dev_dependencies:
   flutter_test:
@@ -83,6 +85,21 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  # OmniTerm type families, mirroring the prototype: Oxanium for the techno display/wordmark,
+  # JetBrains Mono for code, hostnames, metrics and the terminal. These are the same .ttf files
+  # the Android build ships in app/src/main/res/font/.
+  fonts:
+    - family: JetBrainsMono
+      fonts:
+        - asset: assets/fonts/jetbrains_mono_regular.ttf
+        - asset: assets/fonts/jetbrains_mono_medium.ttf
+          weight: 500
+        - asset: assets/fonts/jetbrains_mono_bold.ttf
+          weight: 700
+    - family: Oxanium
+      fonts:
+        - asset: assets/fonts/oxanium.ttf
 
   # To add assets to your application, add an assets section, like this:
   # assets:

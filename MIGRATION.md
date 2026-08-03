@@ -6,7 +6,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** Phase 1 (scaffolding + core ports) — see [Progress log](#progress-log)
+- **Status:** Phase 2 (theme + shell done; data layer next) — see [Progress log](#14-progress-log)
 
 ---
 
@@ -18,6 +18,11 @@ without re-deriving anything.
 4. Research best practices online rather than guessing.
 5. Work should run in a **loop that retries every 15 minutes** if a usage/rate limit is hit, and
    resume automatically from this document.
+6. **End-to-end UI automation** covering every feature, click, and navigation path (in *and* out of
+   each screen) — see §11.
+7. **Port the CI/CD pipeline** to the Flutter app — see §12.
+8. **Use the best open-source tooling available** for testing, validation and feature enrichment —
+   see §13.
 
 ### Consequence of constraint 3 (important, drives everything)
 
@@ -115,13 +120,13 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | ⬜ |
 | `ui/SftpScreen.kt` | 3474 | `lib/ui/screens/sftp/` | ⬜ |
 | `ui/ShellScreen.kt` | 3175 | `lib/ui/screens/shell/` | ⬜ |
-| `ui/AppUi.kt` | 2806 | `lib/ui/app_scaffold.dart` + `lib/ui/screens/servers/` | ⬜ |
+| `ui/AppUi.kt` | 2806 | `lib/ui/app_scaffold.dart` + `lib/ui/screens/servers/` | 🟨 scaffold+nav done; screens pending |
 | `ui/ComposeBuilder.kt` | 2100 | `lib/ui/screens/infra/compose_builder.dart` | ⬜ |
 | `ui/MonitorScreen.kt` | 1185 | `lib/ui/screens/monitor/` | ⬜ |
 | `ui/InfraScreen.kt` | 1020 | `lib/ui/screens/infra/` | ⬜ |
 | `ui/FleetScreen.kt` | 878 | `lib/ui/screens/fleet/` | ⬜ |
 | `ui/CodeEditor.kt` | 850 | `lib/ui/widgets/code_editor.dart` | ⬜ |
-| `ui/OmniComponents.kt` | 779 | `lib/ui/widgets/omni_components.dart` | ⬜ |
+| `ui/OmniComponents.kt` | 779 | `lib/ui/widgets/omni_components.dart` | 🟨 app bar + bottom nav done (`omni_chrome.dart`) |
 | `ui/LanHostnameResolver.kt` | 295 | `lib/domain/lan_hostname_resolver.dart` | ⬜ |
 | `ui/ShellSession.kt` | 252 | `lib/domain/shell_session.dart` | ⬜ |
 | `ui/ScriptEditorDialog.kt` | 230 | `lib/ui/widgets/script_editor_dialog.dart` | ⬜ |
@@ -145,9 +150,9 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | `ui/MeasurementUnits.kt` | 31 | `lib/domain/measurement_units.dart` | ⬜ |
 | `ui/SessionNotificationPayload.kt` | 22 | `lib/platform/session_notification_payload.dart` | ⬜ |
 | `ui/MultiSshLayout.kt` | 6 | `lib/domain/multi_ssh_layout.dart` | ⬜ |
-| `ui/theme/Theme.kt` | 182 | `lib/ui/theme/theme.dart` | ⬜ |
-| `ui/theme/Color.kt` | 67 | `lib/ui/theme/colors.dart` | ⬜ |
-| `ui/theme/Type.kt` | 56 | `lib/ui/theme/typography.dart` | ⬜ |
+| `ui/theme/Theme.kt` | 182 | `lib/ui/theme/theme.dart` | ✅ |
+| `ui/theme/Color.kt` | 67 | `lib/ui/theme/colors.dart` | ✅ |
+| `ui/theme/Type.kt` | 56 | `lib/ui/theme/typography.dart` | ✅ |
 
 ### 3.7 Widgets & billing (728 LOC)
 | File | LOC | Flutter destination | Status |
@@ -302,13 +307,26 @@ long-lived sessions behave on iOS and needs a product decision.
 ### 7.5 `sqlite3_flutter_libs` resolved as `0.6.0+eol`
 Pub resolved an end-of-life release. Revisit before the Drift work lands.
 
+### 7.6 `file_picker` is unusable — replaced by `file_selector`
+`file_picker` 11.0.3 (newest stable; 12.x is beta-only) pins `win32 ^5.9.0`, while every `*_plus`
+plugin we use (`wakelock_plus`, `share_plus`, `network_info_plus`, `connectivity_plus`) requires
+`win32 ^6.0.1`. Forcing `dependency_overrides: win32: ^6.0.1` resolves but then **fails the Android
+build**: Dart still type-checks `file_picker`'s Windows sources against the new win32 API
+(`HRESULT` signature changes), so the kernel snapshot errors out even though Windows is never a
+target. Replaced with **`file_selector`** (Flutter-team maintained, C++ Windows impl, no win32 Dart
+dependency) plus **`flutter_file_dialog`** (zero transitive deps) for Android SAF save flows.
+
+### 7.7 Plugins still applying the Kotlin Gradle Plugin
+`flutter_file_dialog`, `flutter_foreground_task` and `home_widget` apply KGP directly. Flutter warns
+that **future versions will fail to build** on this. Not blocking today; track upstream.
+
 ---
 
 ## 8. Recovery procedure (read this after any context loss)
 
 1. `cd /home/sbvino/Omniterm && git branch --show-current` → must be `migration-to-flutter`.
 2. `export PATH="/home/sbvino/sdks/flutter/bin:$PATH"` (Flutter is NOT on PATH by default).
-3. Read this file's [Progress log](#progress-log) — the last entry is the resume point.
+3. Read this file's [Progress log](#14-progress-log) — the last entry is the resume point.
 4. `git log --oneline origin/main..HEAD` shows everything committed so far this migration.
 5. Check the task list (TaskList tool) for per-phase status.
 6. Legacy behaviour questions are answered by `app/src/main/java/com/jetsetslow/omniterm/…`
@@ -334,7 +352,70 @@ Pub resolved an end-of-life release. Revisit before the Drift work lands.
 
 ---
 
-## 10. Progress log
+## 11. End-to-end UI automation (requirement 6)
+
+**Primary: [Patrol](https://patrol.leancode.co)** — chosen after comparing it against Maestro and
+Appium. Flutter paints its own pixels with Skia rather than emitting native views, so generic native
+automation sees one opaque canvas. Patrol extends Flutter's `integration_test` with real native
+interaction (permission dialogs, notifications, system settings), tests are written in Dart next to
+the app, and the same suite runs on Android and iOS — which requirement 3 demands.
+
+**Secondary: [Maestro](https://maestro.mobile.dev)** — YAML flows against the built APK/IPA, used as
+the CI smoke suite. Patrol has had reported CI stability issues through late-2025/2026, so a
+black-box suite that does not depend on the Dart test harness is a deliberate hedge.
+
+Appium + Flutter driver is **not** adopted: setup cost is high and it duplicates what Patrol does
+better, with known animation/hybrid-view limitations. UIAutomator is reachable *through* Patrol for
+the Android-only surfaces (home-screen widget, foreground-service notification, biometric prompt).
+
+**Hard requirement on every ported screen:** each interactive widget must carry a stable
+`Key`/semantics identifier as it is written, so flows can target it on both platforms. Retrofitting
+keys after 36k LOC of UI is far more expensive than adding them during the port.
+
+Coverage target: every screen reachable, every control exercised, and every navigation path
+**entered and left** — including the guard-intercepted ones (unsaved Settings, leave-terminal
+transaction), which are exactly where the legacy app has had regressions.
+
+---
+
+## 12. CI/CD pipeline port (requirement 7)
+
+Legacy workflows live in `.github/workflows/` (`android-release.yml`, `android-debug.yml`, PR gates)
+and encode real constraints that must survive: the `VERSION_CODE` packing scheme
+(`major*10^7 + minor*10^5 + patch*100 + build`, bare release = build 99), the two product flavors,
+release signing from secrets, and the AdMob-ID guard that fails a Play release built with Google's
+sample IDs.
+
+Flutter pipeline to build:
+- `flutter analyze --fatal-infos` + `dart format --set-exit-if-changed` + `flutter test --coverage`
+- Android: `build apk`/`build appbundle` per flavor, signed from the existing secrets
+- **iOS: `build ipa`** — requires a macOS runner, which the current pipeline has never needed
+- Patrol E2E on an Android emulator; Maestro smoke on both
+- Version identity derived from the tag exactly as today
+
+---
+
+## 13. Open-source tooling baseline (requirement 8)
+
+| Concern | Tool | Why |
+|---|---|---|
+| Lints | `very_good_analysis` | Much stricter than `flutter_lints`; catches real bugs |
+| Mocking | `mocktail` | Null-safe, no codegen |
+| E2E | `patrol` + `maestro` | §11 |
+| Golden/visual | `alchemist` | Deterministic goldens in CI (replaces Roborazzi) |
+| Coverage | `flutter test --coverage` + `lcov` | Legacy had a coverage gate |
+| DB | `drift` | Compile-time-checked SQL, real migration tests |
+| Serialization | `json_serializable` | Replaces Moshi codegen |
+| Crash reporting | keep the existing on-device `CrashLog` | No new cloud dependency — the app's selling point is "no cloud account" |
+
+**Constraint on "feature enrichment":** requirement 2 (keep functionality/layout/architecture the
+same) takes precedence during the migration. Tooling is upgraded freely; user-visible behaviour is
+not changed until the port reaches parity, so that any behavioural difference found while testing is
+unambiguously a porting bug rather than an intentional change.
+
+---
+
+## 14. Progress log
 
 > Append one entry per work session. Newest last. Never rewrite history here.
 
@@ -354,3 +435,44 @@ Pub resolved an end-of-life release. Revisit before the Drift work lands.
 - **Discovered blocker §7.1:** `smb_connect` is incompatible with `dartssh2` (pointycastle 3 vs 4).
   Excluded `smb_connect`; SMB support deferred pending a decision.
 - Wrote this document.
+- Commit: `8fad45b` "Scaffold the Flutter migration (Android + iOS) and record the plan".
+
+### 2026-08-03 — Session 1 (continued): Phase 2, theme + shell
+
+Received four further requirements mid-session (iOS parity, E2E automation, CI port, best-of-OSS
+tooling) — folded into §1 and detailed in §11–§13. Scheduled the 15-minute resume loop
+(cron `*/15 * * * *`, job `3fab2233`) so a usage limit costs at most one interval.
+
+Ported and verified:
+- `ui/theme/Color.kt` → `lib/ui/theme/colors.dart`. `hostColor` sums **UTF-16 code units**
+  (`String.codeUnits`), matching Kotlin's `Char.code`; summing runes would diverge outside the BMP
+  and silently recolour saved hosts. Locked down by tests with values computed from the algorithm.
+- `ui/theme/Type.kt` → `lib/ui/theme/typography.dart`, shipping the **same four .ttf binaries** the
+  Android build uses (copied to `assets/fonts/`).
+- `ui/theme/Theme.kt` → `lib/ui/theme/theme.dart`. All five schemes (dark/light/AMOLED/high-contrast
+  ×2) and the original `when`-chain priority. Compose's `background` role has no Flutter equivalent
+  (deprecated in `ColorScheme`) and the legacy themes set it *differently* from `surface` (bg0 vs
+  bg1), so it is carried separately into `ThemeData.scaffoldBackgroundColor`.
+- Navigation → `lib/ui/navigation.dart`: the 15-screen enum (with `wireName` round-tripping the
+  Kotlin constant names for persisted state/shortcuts/widgets), `isToolSubScreen`, `swipeNavOrder`,
+  `subtabCount`, and `NavigationController` reproducing `commitNavigation` / `navigateBack` /
+  `swipeNavigate` exactly — including the Servers-collapses-the-stack and revisit-unwinds rules.
+  The `navigateTo` guards (unsaved Settings, leave-terminal transaction) are modelled as a
+  `NavigationGuard` list so their precedence survives without importing the 12k-line ViewModel.
+- `OmniAppBar` + `OmniBottomNav` → `lib/ui/widgets/omni_chrome.dart` (exact 52dp/48dp/2px/1px
+  metrics and the three renamed labels: Term, Files, Containers).
+- `AppCoreScaffold` → `lib/ui/app_scaffold.dart`, including the compact-terminal-IME rule and
+  gesture suppression on Shell. 15 placeholder screens name their legacy source.
+
+**Verified:** `flutter analyze` clean, **30/30 tests pass**, and `flutter build apk --debug`
+**succeeds** (161 MB debug APK). Not yet run on a device — per `MEMORY.md`
+(validate-on-device-before-reporting-done) that is required before any parity claim.
+
+Build fixes needed along the way (see §7.6, §7.7):
+- `file_picker` → replaced with `file_selector` + `flutter_file_dialog`; the win32 override approach
+  was tried and **fails the build**, so it was reverted rather than left in.
+- Enabled core library desugaring (`desugar_jdk_libs 2.1.5`) for `flutter_local_notifications`.
+- Set `minSdk = 24` and `applicationId = com.jetsetslow.omniterm.app` to match the legacy app.
+
+**Next:** Phase 3 — Drift data layer (§3.2), then the pure-logic ports (§3.5/RemoteParsers), which
+carry their existing unit tests across.
