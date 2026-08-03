@@ -6,7 +6,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** Phase 4 complete (pure-logic ports done); Phase 5 (SSH transport) next — see [Progress log](#14-progress-log)
+- **Status:** Phase 5 in progress (SSH interface + host-key trust done) — see [Progress log](#14-progress-log)
 
 ---
 
@@ -99,12 +99,12 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 |---|---|---|---|
 | `data/ssh/JschSshTransport.kt` | 533 | `lib/data/ssh/dartssh_transport.dart` | ⬜ |
 | `data/ssh/SshTunnelManager.kt` | 333 | `lib/data/ssh/ssh_tunnel_manager.dart` | ⬜ |
-| `data/ssh/SshHostKeyTrust.kt` | 315 | `lib/data/ssh/ssh_host_key_trust.dart` | ⬜ |
+| `data/ssh/SshHostKeyTrust.kt` | 315 | `lib/data/ssh/ssh_host_key_trust.dart` | ✅ |
 | `data/ssh/JschSftp.kt` | 294 | `lib/data/ssh/dartssh_sftp.dart` | ⬜ |
 | `data/ssh/JschSession.kt` | 219 | `lib/data/ssh/dartssh_session.dart` | ⬜ |
 | `data/ssh/SshSessionPool.kt` | 144 | `lib/data/ssh/ssh_session_pool.dart` | ⬜ |
-| `data/ssh/SshTransport.kt` | 123 | `lib/data/ssh/ssh_transport.dart` (interface — port first) | ⬜ |
-| `data/ssh/CappedTextBuffer.kt` | 23 | `lib/data/ssh/capped_text_buffer.dart` | ⬜ |
+| `data/ssh/SshTransport.kt` | 123 | `lib/data/ssh/ssh_transport.dart` (interface) | ✅ |
+| `data/ssh/CappedTextBuffer.kt` | 23 | `lib/data/ssh/capped_text_buffer.dart` | ✅ |
 
 ### 3.5 Terminal (1,486 LOC)
 | File | LOC | Flutter destination | Status |
@@ -331,6 +331,18 @@ The Dart port **reproduces this exactly**, and a test pins the wrong-looking beh
 is that behaviour does not change during the migration: if the port silently fixed it, a real
 behavioural difference found while testing could no longer be assumed to be a porting error. Fix
 after parity is reached and validated.
+
+### 7.9 Host-key pins change representation (accepted, one-way)
+dartssh2's `SSHHostkeyVerifyHandler` exposes only `(type, fingerprint)` — never the raw public key
+JSch pinned. Pins are therefore stored as the OpenSSH `SHA256:…` fingerprint instead of the base64
+key blob. Not a security downgrade (pinning a SHA-256 digest is as strong as pinning its preimage),
+and **legacy pins convert losslessly on read**, so an existing trust store keeps working with no
+re-prompting.
+
+The consequence is one-way: a backup written by the Flutter app cannot be restored into the old
+Kotlin app, because the fingerprint cannot be turned back into a key blob. Acceptable — the Kotlin
+app is being retired — but it means **the cut-over is not reversible for host-key trust**, so a user
+who rolls back re-approves their fleet.
 
 ### 7.7 Plugins still applying the Kotlin Gradle Plugin
 `flutter_file_dialog`, `flutter_foreground_task` and `home_widget` apply KGP directly. Flutter warns
@@ -614,3 +626,45 @@ every arrow key. The byte-level tests are what surfaced it.
 
 **Next:** Phase 5 — the dartssh2 transport (§3.4), starting with the `SshTransport` interface so the
 rest of the SSH layer can be written against it.
+
+### 2026-08-03 — Session 5: Phase 5 begins — SSH interface + host-key trust
+
+Ported the SSH contract and the security control that sits under it:
+`SshTransport.kt` → `lib/data/ssh/ssh_transport.dart`, `CappedTextBuffer.kt`, and
+`SshHostKeyTrust.kt` → `lib/data/ssh/ssh_host_key_trust.dart`.
+
+The interface port was nearly free. The Kotlin was deliberately written without a single JSch type,
+in anticipation of becoming an `expect`/`actual` boundary under Compose Multiplatform — so the whole
+contract carried over and only the implementation behind it changes. Mappings: `suspend fun` →
+`Future`, `Flow<ByteArray>` → `Stream<Uint8List>`, `StateFlow<T>` → `ValueListenable<T>`.
+
+**The host-key trust port needed a real design decision (§7.9).** JSch handed its
+`HostKeyRepository` the raw public key blob; dartssh2's `SSHHostkeyVerifyHandler` is
+`(String type, Uint8List fingerprint)` — only the SHA-256 fingerprint, and **no host at all**. So:
+
+- Pins are now the OpenSSH `SHA256:…` fingerprint. Not a security downgrade — pinning a digest is
+  as strong as pinning its preimage, and it is the value OpenSSH shows the user to compare.
+- **Legacy pins convert losslessly on read**, using the same computation the Kotlin `listKnownHosts`
+  used. This is the difference between a silent migration and re-prompting a user's whole fleet —
+  which would train them to click through the one dialog meant to stop an interception.
+- The verify handler must be built per connection, closing over host and port.
+- All three legacy alias forms (`host`, `host:port`, `[host]:port`) are still recognised.
+
+**One concurrency finding worth contrasting with Phase 4.** There I noted that `@Synchronized` does
+not translate, because a Dart isolate cannot interleave purely synchronous methods. That reasoning
+does **not** extend here: the trust store read is `await`ed, so a second connection to the same host
+genuinely can run between this one's read and its write. The Kotlin
+`synchronized(firstPinCommitLock)` therefore needed a real equivalent, and got one (`_AsyncLock`).
+A test drives two concurrent first connections with different keys and asserts the first pin wins.
+
+Also simplified: the Kotlin needed `runBlocking` + `withTimeoutOrNull` because JSch called the
+repository synchronously. dartssh2 awaits the handler, so approval is a plain `Future` with a
+timeout that fails closed on decline, timeout, or a throwing handler.
+
+**Verified — 232 tests pass, `flutter analyze` clean.** The 34 trust tests are written around the
+ways pinning could *wrongly succeed*: a changed key with an auto-approving handler still reports
+`changed`; a corrupt entry fails closed rather than matching; import never overwrites a verified
+pin; `toString` leaks no secrets.
+
+**Next:** the transport implementation itself — `JschSshTransport.kt` (533 LOC) → dartssh2, then the
+session, SFTP, pool and tunnel manager.

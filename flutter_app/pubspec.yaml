@@ -63,6 +63,7 @@ dependencies:
   flutter_file_dialog: ^3.3.2
   path: ^1.9.1
   sqlite3: ^3.5.0
+  crypto: ^3.0.7
 
 
 dev_dependencies:
