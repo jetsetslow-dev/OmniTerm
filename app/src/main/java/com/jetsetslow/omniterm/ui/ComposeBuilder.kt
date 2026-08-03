@@ -1225,23 +1225,40 @@ fun ComposeBuilder(viewModel: AppViewModel) {
         return currentYaml != initialYaml
     }
 
-    fun attemptClearOrExit() {
+    // Clearing alone is the right outcome for the "New / Clear" button, which stays on this tab to
+    // start a fresh stack. It is NOT enough for Back, which must also leave the tab -- see the
+    // BackHandler below.
+    fun clearDraft(exitBuilder: Boolean) {
+        viewModel.clearActiveComposeDraft()
+        if (exitBuilder) viewModel.activeInfraTab = INFRA_TAB_STACKS
+    }
+
+    fun attemptClearOrExit(exitBuilder: Boolean) {
         if (isDirty()) {
             confirm.ask(
                 "Discard changes?",
                 "You have unsaved changes to this stack. Discard them?",
                 confirmLabel = "Discard"
-            ) { viewModel.clearActiveComposeDraft() }
+            ) { clearDraft(exitBuilder) }
         } else {
-            viewModel.clearActiveComposeDraft()
+            clearDraft(exitBuilder)
         }
     }
 
-    // The full-screen code editor installs its own BackHandler. Disable the builder-level
-    // handler while that overlay is visible so Android Back closes only the editor instead of
-    // racing both handlers and incorrectly offering to discard the entire compose draft.
+    // Back must end in a VISIBLE navigation, never in state mutation alone. Clearing the draft
+    // leaves the user on the Builder tab, and this composable recreates an empty draft the moment
+    // it sees `activeComposeDraft == null` (the mirror LaunchedEffect above, which exists so edits
+    // survive a tab switch). A handler that only cleared therefore made the tab inescapable: every
+    // press cleared the draft, immediately rebuilt it, and left the user exactly where they were
+    // with no visible change at all. Returning to the Stacks tab breaks that loop and also
+    // unregisters this handler, since the builder only composes on tab 1 -- so a second Back
+    // reaches the app-level handler and leaves the screen as the user expects.
+    //
+    // The full-screen code editor installs its own BackHandler. Disable the builder-level handler
+    // while that overlay is visible so Android Back closes only the editor instead of racing both
+    // handlers and incorrectly offering to discard the entire compose draft.
     BackHandler(enabled = !rawFullScreen) {
-        attemptClearOrExit()
+        attemptClearOrExit(exitBuilder = true)
     }
 
     val validationIssues = remember(draft, rawMode) {
@@ -1298,7 +1315,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                     Text(if (isExisting) "Editing existing stack" else "New stack", fontSize = 11.sp, color = OmniColors.textMuted)
                 }
                 if (active != null) {
-                    TextButton(onClick = { attemptClearOrExit() }) { Text(stringResource(R.string.new_clear)) }
+                    TextButton(onClick = { attemptClearOrExit(exitBuilder = false) }) { Text(stringResource(R.string.new_clear)) }
                 }
             }
 

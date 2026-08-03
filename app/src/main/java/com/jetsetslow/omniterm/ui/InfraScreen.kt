@@ -29,6 +29,11 @@ import kotlinx.coroutines.launch
 import androidx.compose.ui.res.stringResource
 import com.jetsetslow.omniterm.R
 
+// Infra sub-tab indices, named because two of them are referenced from outside the tab row itself:
+// opening a stack jumps to the builder, and Back out of the builder returns to the stack list.
+internal const val INFRA_TAB_STACKS = 0
+internal const val INFRA_TAB_BUILDER = 1
+
 @Composable
 fun InfraScreen(viewModel: AppViewModel) {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
@@ -239,7 +244,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                 composeConfigFiles = configFiles,
                 runtime = runtime,
             ))
-            viewModel.activeInfraTab = 1
+            viewModel.activeInfraTab = INFRA_TAB_BUILDER
         } else {
             editBuilderError = viewModel.composeFileReadError ?: "Could not read compose file: $composePath"
         }
