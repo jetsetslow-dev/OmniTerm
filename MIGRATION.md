@@ -2,16 +2,18 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 6 — terminal emulator (§3.5).** Start with
-> `app/src/main/java/com/jetsetslow/omniterm/data/term/TmuxControl.kt` (232 LOC) →
-> `flutter_app/lib/data/term/tmux_control.dart`, then the big one,
-> `data/term/TerminalEmulator.kt` (1,177 LOC). `Utf8StreamDecoder` is already ported.
+> **Phase 6, the big one:** port
+> `app/src/main/java/com/jetsetslow/omniterm/data/term/TerminalEmulator.kt` (1,177 LOC) →
+> `flutter_app/lib/data/term/`. The tmux control layer and `Utf8StreamDecoder` are already done.
 >
-> Read `docs/TERMINAL_COMPATIBILITY.md` first — it is the spec for the implemented xterm/VT subset
-> and tmux control-mode status. Rendering will use `xterm` 4.0.0's `TerminalView`, but the app's own
-> emulator semantics must be ported where they diverge (§7.2); its existing Kotlin tests
-> (`TerminalAdvancedResilienceTest`, `TerminalAltScreenExitTest`, and others in `app/src/test/`) are
-> the acceptance criteria.
+> Read `docs/TERMINAL_COMPATIBILITY.md` first — it is the spec for the implemented xterm/VT subset.
+> Rendering will use `xterm` 4.0.0's `TerminalView`, but the app's own emulator semantics must be
+> ported where they diverge (§7.2). The existing Kotlin tests are the acceptance criteria:
+> `app/src/test/java/com/jetsetslow/omniterm/Terminal*Test.kt` (advanced resilience, alt-screen exit,
+> and others) — port them alongside.
+>
+> Split it by responsibility (§16): parser/state machine, screen buffer, scrollback, and
+> attribute/colour handling belong in separate files rather than one 1,177-line class.
 >
 > Working rules that are easy to lose: never `git add -A` (`shared/` must stay untracked, stage
 > explicit paths); `export PATH="/home/sbvino/sdks/flutter/bin:$PATH"`; run `flutter analyze` and
@@ -24,7 +26,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** **Phase 5 complete.** Phase 6 (terminal emulator) next — see [Progress log](#14-progress-log)
+- **Status:** Phase 6 in progress (tmux control done; `TerminalEmulator` next) — see [Progress log](#14-progress-log)
 
 ---
 
@@ -141,7 +143,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | File | LOC | Flutter destination | Status |
 |---|---|---|---|
 | `data/term/TerminalEmulator.kt` | 1177 | `lib/data/term/terminal_emulator.dart` — see §7.2 | ⬜ |
-| `data/term/TmuxControl.kt` | 232 | `lib/data/term/tmux_control.dart` | ⬜ |
+| `data/term/TmuxControl.kt` | 232 | `tmux_control_event.dart` + `tmux_control_parser.dart` + `tmux_control_commands.dart` | ✅ |
 | `data/term/Utf8StreamDecoder.kt` | 77 | `lib/data/term/utf8_stream_decoder.dart` | ✅ |
 
 ### 3.6 UI (36,033 LOC — the bulk)
@@ -1012,3 +1014,32 @@ Capabilities where the Dart port does not yet match the Kotlin. Each needs a dec
 | Encrypted jump-host keys | Not supported (Kotlin passed a null passphrase) | Not supported | No regression; documented so it is not mistaken for one. |
 | SMB browsing | smbj (SMB 2/3) | **Not implemented** — see §7.1 | Blocks a headline feature. Must be resolved before cut-over. |
 
+
+### 2026-08-04 — Session 11: tmux control mode
+
+Ported `TmuxControl.kt` → three files by responsibility (§16): `tmux_control_event.dart` (the event
+hierarchy), `tmux_control_parser.dart` (the wire protocol), `tmux_control_commands.dart` (command
+construction). One 232-line file with three jobs became three files with one each.
+
+Control mode is what makes fast output safe: tmux streams **every** byte as `%output` instead of
+rendering a UI, so the "fast output collapses into a repaint and unseen rows are lost" failure of a
+regular attach cannot happen by construction.
+
+Two properties carried over deliberately, both code-security relevant (§17):
+
+1. **Parsing stays byte-level.** `%output` escapes control bytes as exactly three octal digits, but
+   bytes ≥ 0x80 pass through **raw** — so decoding a line to a String before parsing would mangle
+   every multi-byte character in the pane. Tested with a CJK payload and with an escape split across
+   two chunks.
+2. **The 1 MiB buffer cap is a DoS guard, not tidiness.** Without it a remote that never sends a
+   newline grows the buffer until the app dies. Both the unterminated tail and a single reply body
+   are bounded, and both are tested.
+
+Also preserved: only `%end`/`%error` terminate a reply block, because body lines legitimately start
+with `%` (that is what `list-panes` prints); and every pane id is validated against `%\\d+` before
+interpolation, since these strings become tmux command lines and an unvalidated id is command
+injection. A test drives `%0; kill-server` through all four command builders.
+
+**Verified — 338 tests pass, `flutter analyze` clean.**
+
+**Next:** `TerminalEmulator.kt` (1,177 LOC), the largest single file left in the non-UI layers.
