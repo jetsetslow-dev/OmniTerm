@@ -6,7 +6,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** Phase 5 in progress (transport, trust, pool, key parsing, FS abstraction done; SFTP + tunnels next) — see [Progress log](#14-progress-log)
+- **Status:** Phase 5 nearly done (only `SshTunnelManager` left) — see [Progress log](#14-progress-log)
 
 ---
 
@@ -26,6 +26,8 @@ without re-deriving anything.
 9. **Fix major bugs and flaws found in the Kotlin while porting**, rather than reproducing them.
    This *amends* requirement 2: behaviour still may not drift casually, but a genuine defect is
    corrected in the port and recorded here so the change is traceable. See §15.
+10. **Modularise as far as is reasonable.** One responsibility per file, dependencies pointing
+    inward (UI → domain → data), and no module reaching around its neighbour's abstraction. See §16.
 
 ### Consequence of constraint 3 (important, drives everything)
 
@@ -103,7 +105,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | `data/ssh/JschSshTransport.kt` | 533 | `lib/data/ssh/dartssh_transport.dart` + `terminal_close.dart` | ✅ |
 | `data/ssh/SshTunnelManager.kt` | 333 | `lib/data/ssh/ssh_tunnel_manager.dart` | ⬜ |
 | `data/ssh/SshHostKeyTrust.kt` | 315 | `lib/data/ssh/ssh_host_key_trust.dart` | ✅ |
-| `data/ssh/JschSftp.kt` | 294 | `lib/data/ssh/dartssh_sftp.dart` | ⬜ |
+| `data/ssh/JschSftp.kt` | 294 | `lib/data/ssh/dartssh_sftp.dart` | ✅ |
 | `data/ssh/JschSession.kt` | 219 | `lib/data/ssh/ssh_private_key.dart` (key validation); connection setup absorbed into `dartssh_transport.dart` | ✅ |
 | `data/ssh/SshSessionPool.kt` | 144 | `lib/data/ssh/ssh_session_pool.dart` (+ `async_lock.dart`) | ✅ |
 | `data/ssh/SshTransport.kt` | 123 | `lib/data/ssh/ssh_transport.dart` (interface) | ✅ |
@@ -815,3 +817,67 @@ callback per chunk floods the UI thread and makes a fast transfer slower than a 
 **Verified — 286 tests pass, `flutter analyze` clean, debug APK builds.**
 
 **Next:** `JschSftp` on top of the new abstraction, then `SshTunnelManager`, then Phase 6.
+
+---
+
+## 16. Modularisation rules (requirement 10)
+
+The legacy app concentrates enormous responsibility in a few files — `AppViewModel.kt` alone is
+12,310 lines. The port deliberately does not reproduce that shape.
+
+**Rules being applied:**
+1. **One responsibility per file.** Where the Kotlin bundled several, the port splits them. Already
+   done: `classifyTerminalClose` out of the transport into `terminal_close.dart`; key validation out
+   of connection setup into `ssh_private_key.dart`; the shared `AsyncLock` out of the trust store.
+2. **Dependencies point inward:** `ui → domain → data`. `lib/domain/` imports no Flutter widget and
+   no transport; `lib/data/` imports no UI.
+3. **Depend on an abstraction, not a neighbour's internals.** `DartSshSftp` takes an
+   `SshConnectionLease` rather than the pool or `SSHClient`, so it can express "retry only on a
+   *dropped* connection" while knowing nothing about pooling or dartssh2.
+4. **Extract the pure decision.** Policy that is easy to get wrong and hard to test through I/O
+   becomes a standalone function: `classifyTerminalClose`, the SFTP retry rules, `entryPredatesReset`.
+5. **Generic over the transport where it buys testability.** `SshSessionPool<C>` is generic purely so
+   its lifecycle can be tested without a socket.
+
+**Still to do:** the big one is §5.2 — splitting `AppViewModel.kt` (12,310 lines) into per-feature
+ViewModels over a shared `AppState`, keeping every public member name so the screen ports stay
+mechanical. Likewise `ToolsScreen.kt` (5,005 lines) becomes one file per tool view.
+
+
+### 2026-08-03 — Session 9: SFTP, and modularisation becomes a stated requirement
+
+Ported `JschSftp.kt` → `lib/data/ssh/dartssh_sftp.dart` on the `RemoteFsClient` seam.
+
+The performance shape is preserved exactly, because it is the whole design: authenticating a
+connection dominates every SFTP call on a high-latency link, so the connection stays warm in the
+pool and only a lightweight SFTP client is opened per operation — one open + `ls` per folder rather
+than a full handshake. Each operation gets its own short-lived client so a long transfer never
+blocks a folder listing on the same connection.
+
+**The retry rule is the part that matters most**, and it is subtle enough that it was extracted into
+a standalone decision function and tested directly rather than only through I/O:
+- a failure *opening* the client is always retried once — nothing has happened yet, so a reconnect
+  has no side effects;
+- a failure *inside* a metadata read is retried once;
+- a **transfer is never retried**, because the caller's sink already holds bytes or their source is
+  already partly read, so a retry would duplicate downloaded bytes or upload only the leftover tail;
+- a logical error (no such file, permission denied) never evicts the warm connection.
+
+Two smaller decisions: `readText` applies its cap *while streaming*, so opening a multi-GB file for
+editing costs at most `maxBytes` rather than the file's size; and listing renders `modDate` from the
+epoch seconds rather than trusting SFTP's `longname`, which is free-form and varies by server.
+
+`cancelActiveTransfers` simplifies. The Kotlin had to close the caller-side stream *first*, because
+JSch could stay blocked inside `put()`/`get()` after a channel disconnect. Dart's streaming loops
+check a cancellation flag per chunk and unwind themselves, so the flag suffices.
+
+**Requirement 10 arrived mid-session: modularise as far as reasonable.** Recorded in §16 with the
+rules already being applied (one responsibility per file; dependencies pointing inward; depend on an
+abstraction rather than a neighbour's internals; extract the pure decision; generic where it buys
+testability). SFTP is the clearest example so far — it takes an `SshConnectionLease` rather than the
+pool or `SSHClient`, so it can express its retry policy while knowing nothing about pooling or
+dartssh2. The outstanding item is the big one: splitting the 12,310-line `AppViewModel`.
+
+**Verified — 298 tests pass, `flutter analyze` clean.**
+
+**Next:** `SshTunnelManager` (333 LOC) finishes Phase 5, then Phase 6 — the terminal emulator.

@@ -25,6 +25,7 @@ import 'package:flutter/foundation.dart';
 import '../term/utf8_stream_decoder.dart';
 import 'capped_text_buffer.dart';
 import 'ssh_host_key_trust.dart';
+import 'dartssh_sftp.dart';
 import 'ssh_private_key.dart';
 import 'ssh_session_pool.dart';
 import 'ssh_transport.dart';
@@ -364,6 +365,23 @@ class DartSshTransport implements SshTransport {
       if (e is SshHostKeyException) rethrow;
       throw SshConnectException(_describe(e), e);
     }
+  }
+
+  /// Builds an SFTP client that borrows from this transport's connection pool.
+  ///
+  /// The SFTP client owns no connection policy of its own: it receives a lease with staleness and
+  /// eviction hooks, which is what lets it implement "retry once on a *dropped* connection, never on
+  /// a logical error" without knowing about the pool or dartssh2's client type.
+  DartSshSftp sftp(SshCredentials creds) => DartSshSftp(creds, _lease);
+
+  Future<SshConnectionLease> _lease(SshCredentials creds) async {
+    final lease = await _acquire(creds);
+    return SshConnectionLease(
+      client: lease.client,
+      isStaleCheck: () => lease.client.isClosed,
+      onEvict: () => _pool.evict(creds, lease.client),
+      onClose: lease.close,
+    );
   }
 
   @override
