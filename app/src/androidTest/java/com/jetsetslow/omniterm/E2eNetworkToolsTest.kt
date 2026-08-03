@@ -35,16 +35,25 @@ class E2eNetworkToolsTest {
         await("traceroute", 75_000) { !vm.tracerouteRunning }
         assertTrue(vm.tracerouteLines.joinToString("\n"), vm.tracerouteLines.isNotEmpty())
 
+        // Every scanned port is one the repository's own fleet publishes. This used to scan 22 and
+        // assert it open, which silently required the DEVELOPER MACHINE to be running sshd -- a
+        // dependency on the workstation rather than on the fixture, and one that passes or fails
+        // for reasons that have nothing to do with the app. The fleet's SSH port is used instead.
+        val sshPort = args.getString("ssh_port")?.toIntOrNull() ?: 2201
+        val openPorts = listOf(21, sshPort, 445, 1080, 8080, 8081, 8888)
+        val closedPort = 65500
         vm.portScannerTarget = host
-        vm.portScannerRange = "21,22,445,1080,8080,8081,8888,65500,not-a-port,22"
+        // Deliberately keeps a duplicate entry and an unparseable token: deduplication and invalid
+        // input are part of what the range parser has to get right.
+        vm.portScannerRange = (openPorts + closedPort).joinToString(",") + ",not-a-port,$sshPort"
         vm.runPortScanner()
         await("port scan", 20_000) { !vm.isPortScannerScanning && vm.portScannerResults.isNotEmpty() }
         val ports = vm.portScannerResults.toMap()
-        listOf(21, 22, 445, 1080, 8080, 8081, 8888).forEach { port ->
+        openPorts.forEach { port ->
             assertTrue("$port was ${ports[port]}", ports[port]?.contains("Open") == true)
         }
-        assertEquals("Closed", ports[65500])
-        assertEquals(8, ports.size)
+        assertEquals("Closed", ports[closedPort])
+        assertEquals(openPorts.size + 1, ports.size)
 
         vm.dnsLookupTarget = "example.com"
         vm.dnsLookupType = "A"

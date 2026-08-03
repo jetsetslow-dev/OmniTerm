@@ -58,9 +58,38 @@ services:
       USER_PASSWORD: "${OMNITERM_TEST_PASSWORD:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
       DOCKER_MODS: linuxserver/mods:universal-package-install
       INSTALL_PACKAGES: tmux|htop|curl
+    volumes:
+      # The 400-service Compose stack the builder stress test edits. Mounted read-only so the test
+      # cannot mutate its own input, and committed rather than generated at `up` time so every
+      # contributor reads byte-identical bytes. Regenerate via ComposeLargeStackFixtureTest; see
+      # AGENTS.md. It replaces a path that only existed under one contributor's home directory.
+      - ./fixtures/large-stack/compose.yml:/fixtures/large-stack/compose.yml:ro
+      # Without this the image refuses every -L/-D tunnel; see the script for why.
+      - ./fixtures/ssh-init:/custom-cont-init.d:ro
     ports:
       - "127.0.0.1:2201:2222"
+      # Published on behalf of `labhttp`, which shares this container's network namespace. A service
+      # using network_mode cannot publish its own ports, so they belong to the namespace owner.
+      # Port 22 is deliberately absent: the developer machine's own sshd already answers there, and
+      # the Network Tools port scan expects it open.
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8081:8081"
+      - "127.0.0.1:21:21"
+      - "127.0.0.1:445:445"
     networks: [edge]
+
+  # HTTP origin + spare TCP listeners for the Network Tools suite. Joins `direct`'s network
+  # namespace so it answers on the SSH host's OWN loopback, which is what the seeded local forward
+  # (127.0.0.1:8080) and the dynamic SOCKS tunnel (CONNECT 127.0.0.1:8080) both dial. See
+  # fixtures/lab-http/nginx.conf.
+  labhttp:
+    image: nginx:alpine
+    container_name: omniterm-test-labhttp
+    network_mode: "service:direct"
+    depends_on: [direct]
+    volumes:
+      - ./fixtures/lab-http/nginx.conf:/etc/nginx/nginx.conf:ro
+    restart: "no"
 
   # Key-only host: password auth disabled, so this exercises the private-key credential path.
   # scripts/test-hosts.sh generates the keypair into scripts/test-hosts/keys/ (gitignored).
@@ -103,6 +132,10 @@ services:
       PASSWORD_ACCESS: "true"
       USER_NAME: "${OMNITERM_TEST_USER:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
       USER_PASSWORD: "${OMNITERM_TEST_PASSWORD:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+    volumes:
+      # A jump host that cannot forward is not a jump host: without this the proxyType=ssh path to
+      # internal-a documented above silently cannot work.
+      - ./fixtures/ssh-init:/custom-cont-init.d:ro
     ports:
       - "127.0.0.1:2203:2222"
     networks: [edge, internal]

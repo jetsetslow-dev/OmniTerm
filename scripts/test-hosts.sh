@@ -204,6 +204,16 @@ Enter these in OmniTerm. From an Android emulator the host machine is 10.0.2.2
         proxy: ssh     jump  10.0.2.2:2203 ($USER_NAME/$PASSWORD)
         proxy: socks5  10.0.2.2:1080
         proxy: http    10.0.2.2:8888
+
+Also served, for the Network Tools and tunnel suites (see fixtures/lab-http/nginx.conf):
+
+  http origin         10.0.2.2:8080, :8081     also 127.0.0.1:8080 ON the direct host itself,
+                                               which is what -L and -D tunnels dial
+  scan-only listeners 10.0.2.2:21, :445        open TCP ports for the port scanner; NOT ftp/smb
+
+Fixture files mounted read-only into direct:
+
+  /fixtures/large-stack/compose.yml            400-service stack for the Compose builder stress test
 EOF
     ;;
 

@@ -31,7 +31,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.hamcrest.Matchers.equalTo
 
-/** Opt-in physical UI stress for a 335 KB, 400-service Compose stack and Raw YAML editor. */
+/** Opt-in physical UI stress for a 382 KB, 400-service Compose stack and Raw YAML editor. */
 class E2eComposeBuilderUiStressTest {
     @get:Rule
     val composeRule = createAndroidComposeRule<MainActivity>()
@@ -48,16 +48,17 @@ class E2eComposeBuilderUiStressTest {
         checkpoint("host-ready")
         composeRule.runOnUiThread { vm.selectedServerId = host.id }
 
-        val yaml = requireNotNull(vm.readComposeFile(COMPOSE_PATH)) { "Could not read $COMPOSE_PATH" }
+        val composePath = args.getString("omniterm_e2e_compose_path") ?: DEFAULT_COMPOSE_PATH
+        val yaml = requireNotNull(vm.readComposeFile(composePath)) { "Could not read $composePath" }
         checkpoint("file-read")
         assertTrue("fixture must cross the highlighter cutoff", yaml.length > 300_000)
         val draft = parseDockerComposeYaml(
             yaml = yaml,
             projectName = "omniterm-large-stack",
-            workingDir = COMPOSE_PATH.substringBeforeLast('/'),
+            workingDir = composePath.substringBeforeLast('/'),
             fileName = "compose.yml",
-            composeFilePath = COMPOSE_PATH,
-            composeConfigFiles = COMPOSE_PATH,
+            composeFilePath = composePath,
+            composeConfigFiles = composePath,
             runtime = "docker",
         )
         assertEquals(400, draft.services.size)
@@ -78,7 +79,7 @@ class E2eComposeBuilderUiStressTest {
         composeRule.onNodeWithText("service-000").fetchSemanticsNode()
         checkpoint("visual-ready")
 
-        // At 335 KB the editor must remain responsive while deliberately skipping token spans.
+        // At 382 KB the editor must remain responsive while deliberately skipping token spans.
         composeRule.onNodeWithText("Raw YAML").performScrollTo().performClick()
         checkpoint("raw-click-returned")
         composeRule.waitUntil(20_000) {
@@ -96,7 +97,7 @@ class E2eComposeBuilderUiStressTest {
         })
         composeRule.waitUntil(10_000) { vm.activeComposeRawText?.contains(MARKER) == true }
 
-        // Rotation recreates every composable; raw mode and the unsaved 335 KB buffer must come
+        // Rotation recreates every composable; raw mode and the unsaved 382 KB buffer must come
         // back from the ViewModel, not silently reset to the on-disk YAML.
         composeRule.runOnUiThread {
             composeRule.activity.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
@@ -140,7 +141,12 @@ class E2eComposeBuilderUiStressTest {
 
     private companion object {
         const val HOST_NAME = "E2E Foreground Demo"
-        const val COMPOSE_PATH = "/home/tempadmin/omniterm-e2e/corpus/07-large-stack/compose.yml"
+        // Default to the fixture the repository's own disposable fleet mounts read-only, so this
+        // suite runs for anyone with `./scripts/test-hosts.sh up`. It previously pointed at
+        // /home/tempadmin/omniterm-e2e/corpus/... , which existed on exactly one machine and made
+        // the test unrunnable — and therefore unrun — everywhere else. Override with
+        // `-e omniterm_e2e_compose_path <path>` to aim it at another lab.
+        const val DEFAULT_COMPOSE_PATH = "/fixtures/large-stack/compose.yml"
         const val MARKER = "# unsaved-rotation-marker\n"
     }
 }

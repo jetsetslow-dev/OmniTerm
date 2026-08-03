@@ -150,6 +150,13 @@ val linuxArm64Host =
     System.getProperty("os.arch").lowercase() in setOf("aarch64", "arm64")
 
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+  // Forward the fixture-regeneration opt-in into the test JVM. A bare `-Domniterm...` on the Gradle
+  // command line only reaches the daemon, so without this the flag is silently ignored and the
+  // fixture appears to regenerate while the committed file never changes.
+  systemProperty(
+    "omniterm.regenerateFixture",
+    providers.systemProperty("omniterm.regenerateFixture").getOrElse("false"),
+  )
   if (lowResourceBuild || linuxArm64Host) {
     maxParallelForks = 1
     maxHeapSize = "768m"
