@@ -1,5 +1,25 @@
 # OmniTerm → Flutter Migration (running log)
 
+> ## ▶ NEXT ACTION (read this first)
+>
+> **Phase 5, last file:** port `app/src/main/java/com/jetsetslow/omniterm/data/ssh/SshTunnelManager.kt`
+> (333 LOC) → `flutter_app/lib/data/ssh/ssh_tunnel_manager.dart`.
+>
+> It manages user-defined SSH port forwards: **local (-L)**, **remote (-R)** and **dynamic SOCKS
+> (-D)**, started/stopped per tunnel and kept up until stopped or the app exits. dartssh2 provides
+> `forwardLocal`, `forwardRemote` and `SSHClient.forwardDynamic` (see
+> `~/.pub-cache/hosted/pub.dev/dartssh2-2.22.5/lib/src/ssh_client.dart`). Reuse the existing
+> `SshSessionPool` for the owning connection — do **not** add a second pool (requirement 11).
+> Port rows live in the `port_forwards` Drift table, already migrated.
+>
+> Then Phase 5 is complete and Phase 6 (terminal emulator, §3.5) begins with
+> `data/term/TmuxControl.kt`; `Utf8StreamDecoder` is already done.
+>
+> Working rules that are easy to lose: never `git add -A` (`shared/` must stay untracked, stage
+> explicit paths); `export PATH="/home/sbvino/sdks/flutter/bin:$PATH"`; run `flutter analyze` and
+> `flutter test` from `flutter_app/` before every commit; append a §14 progress entry and commit
+> each iteration.
+
 **This file is the single source of truth for the migration.** If context is lost, compacted, or
 the session restarts, read this file top-to-bottom first — it is written so that work can resume
 without re-deriving anything.
