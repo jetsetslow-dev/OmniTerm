@@ -8747,6 +8747,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'index_stack_registry_serverId_runtime_project',
     'CREATE UNIQUE INDEX index_stack_registry_serverId_runtime_project ON stack_registry (serverId, runtime, project)',
   );
+  late final ServerDao serverDao = ServerDao(this as AppDatabase);
+  late final AlertsDao alertsDao = AlertsDao(this as AppDatabase);
+  late final AppDataDao appDataDao = AppDataDao(this as AppDatabase);
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();

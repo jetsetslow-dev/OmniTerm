@@ -2,21 +2,24 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Finish the data-access layer, which Phase 7 depends on.** `SecretStore` is done
-> (`lib/platform/secret_store.dart`). Still to port from `app/src/main/java/.../data/`:
+> **Port `AppRepository.kt` (191 LOC) → `lib/data/app_repository.dart`.** The DAOs
+> (`lib/data/dao/`) and `SecretStore` are done.
 >
-> 1. `Daos.kt` (362 LOC) → Drift DAOs under `lib/data/dao/`. The Drift tables already exist.
-> 2. `AppRepository.kt` (191 LOC) → `lib/data/app_repository.dart`. It is the **only** place secrets
->    are encrypted/decrypted — see its `SecretStore.encrypt/decrypt` call sites — so wire
->    `SecretStore.onUpgraded` here to persist the §7.10 legacy upgrade.
-> 3. `CrashLog.kt` (206) and `BiometricCryptoGate.kt` (167) can follow, or wait for Phase 9.
+> The repository is the **only** place secrets are encrypted or decrypted — see its 22
+> `SecretStore.encrypt/decrypt` call sites covering server/sudo/proxy passwords, private keys,
+> profile passwords and share passwords. Two things must happen there:
+> 1. mirror that encrypt-on-write / decrypt-on-read boundary exactly, so no plaintext ever reaches
+>    the database and no ciphertext ever reaches the UI;
+> 2. wire `SecretStore.onUpgraded` to write the re-encrypted value back — that is what makes the
+>    §7.10 legacy migration actually persist rather than re-running on every read.
+>
+> ⚠️ **§7.10 is still an open blocker:** without a small Android method channel decrypting
+> `enc:v1:` under the Keystore alias `omniterm_local_secret_key`, every existing user's saved
+> passwords and keys read as blank after the update.
 >
 > **Then Phase 7** (§3.6, ~36k LOC): split `ui/AppViewModel.kt` per §5.2, then screens in the §9
 > order. Give every interactive widget a stable `Key` **as it is written** — retrofitting them for
 > the Patrol suite later is far more expensive.
->
-> ⚠️ **Do not lose §7.10:** without a small Android method channel, every existing user's saved
-> passwords and keys read as blank after the update.
 >
 > Working rules that are easy to lose: never `git add -A` (`shared/` must stay untracked, stage
 > explicit paths); `export PATH="/home/sbvino/sdks/flutter/bin:$PATH"`; run `flutter analyze` and
@@ -29,7 +32,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** Finishing the data-access layer before Phase 7 (SecretStore done; DAOs + repository next) — see [Progress log](#14-progress-log)
+- **Status:** Finishing the data-access layer (SecretStore + DAOs done; repository next) — see [Progress log](#14-progress-log)
 
 ---
 
@@ -112,7 +115,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | File | LOC | Flutter destination | Status |
 |---|---|---|---|
 | `data/RemoteParsers.kt` | 1604 | `lib/data/remote_parsers.dart` + `lib/data/remote_commands.dart` | 🟨 parsers ✅; `RemoteCommands` strings pending |
-| `data/Daos.kt` | 362 | `lib/data/dao/*.dart` (Drift) | ⬜ |
+| `data/Daos.kt` | 362 | `lib/data/dao/{server,alerts,app_data}_dao.dart` | ✅ |
 | `data/AppDatabase.kt` | 352 | `lib/data/app_database.dart` (Drift, schema **v22**) | ✅ |
 | `data/Entities.kt` | 271 | `lib/data/tables.dart` (**14** tables) | ✅ |
 | `data/CrashLog.kt` | 206 | `lib/data/crash_log.dart` | ⬜ |
@@ -1215,3 +1218,32 @@ protection (a Keystore/Keychain-guarded key) is preserved.
 
 **Next:** `Daos.kt` → Drift DAOs and `AppRepository.kt`, which is where the §7.10 upgrade hook gets
 wired, then Phase 7.
+
+### 2026-08-04 — Session 16: the Drift DAOs
+
+Ported `Daos.kt` — 14 Room interfaces — into three Drift accessors grouped by domain
+(`server_dao`, `alerts_dao`, `app_data_dao`) rather than 14 near-empty files. Most of these are
+plain CRUD; the value is in the handful of queries whose shape is deliberate, and those are what the
+24 new tests target, running against a real in-memory database.
+
+Three behaviours worth naming, because each would be easy to lose in a mechanical port:
+
+- **`getLatestMetricsForAllServers` keeps its raw SQL.** The `MAX(id)` tie-break is not decoration:
+  two samples written in the same millisecond — a manual refresh racing the periodic poller — would
+  otherwise both return and the dashboard would flicker between them. Tested directly. This is also
+  the query the `(serverId, timestamp)` index exists for (150k rows: 469s → 0.008s).
+- **`serverId != 0` in the "delete except these hosts" queries protects the fleet-wide rule.**
+  Rule 0 applies to every host, so a restore keeping a subset of hosts must not delete it —
+  dropping it would silently disable fleet-wide alerting. Tested.
+- **Alert-history pruning stays raw SQL** with its counting subquery and `(historyTime, id)`
+  ordering, applied *per server* so one noisy host cannot evict another's history. A naive
+  `ORDER BY … LIMIT -1 OFFSET n` delete is not portable across SQLite builds.
+
+Also pinned: `resetAllConnectionStates` clearing every live field at startup (a persisted "online"
+is a lie until re-probed), auth state tracked independently of TCP reachability, and
+`deleteSftpBookmarksExcept` touching only bookmark rows rather than taking unrelated settings with it.
+
+**Verified — 487 tests pass, `flutter analyze` clean.**
+
+**Next:** `AppRepository.kt`, which owns the encrypt/decrypt boundary and is where the §7.10 legacy
+upgrade must be persisted.

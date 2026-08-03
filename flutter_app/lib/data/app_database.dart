@@ -6,6 +6,9 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:sqlite3/sqlite3.dart';
 
+import 'dao/alerts_dao.dart';
+import 'dao/app_data_dao.dart';
+import 'dao/server_dao.dart';
 import 'legacy_presets.dart';
 import 'tables.dart';
 
@@ -44,6 +47,7 @@ const kRoomSchemaVersion = 22;
     PortForwards,
     StackRegistry,
   ],
+  daos: [ServerDao, AlertsDao, AppDataDao],
 )
 class AppDatabase extends _$AppDatabase {
   AppDatabase([QueryExecutor? executor]) : super(executor ?? _open());
