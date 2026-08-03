@@ -6,7 +6,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** Phase 4 (data layer done; pure-logic ports next) — see [Progress log](#14-progress-log)
+- **Status:** Phase 4 in progress (parsers + health scoring done) — see [Progress log](#14-progress-log)
 
 ---
 
@@ -75,15 +75,15 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 ### 3.2 Data layer (3,546 LOC)
 | File | LOC | Flutter destination | Status |
 |---|---|---|---|
-| `data/RemoteParsers.kt` | 1604 | `lib/data/remote_parsers.dart` (pure Dart, portable 1:1) | ⬜ |
+| `data/RemoteParsers.kt` | 1604 | `lib/data/remote_parsers.dart` + `lib/data/remote_commands.dart` | 🟨 parsers ✅; `RemoteCommands` strings pending |
 | `data/Daos.kt` | 362 | `lib/data/dao/*.dart` (Drift) | ⬜ |
 | `data/AppDatabase.kt` | 352 | `lib/data/app_database.dart` (Drift, schema **v22**) | ✅ |
 | `data/Entities.kt` | 271 | `lib/data/tables.dart` (**14** tables) | ✅ |
 | `data/CrashLog.kt` | 206 | `lib/data/crash_log.dart` | ⬜ |
-| `data/RemoteModels.kt` | 203 | `lib/data/remote_models.dart` | ⬜ |
+| `data/RemoteModels.kt` | 203 | `lib/data/remote_models.dart` | ✅ |
 | `data/AppRepository.kt` | 191 | `lib/data/app_repository.dart` | ⬜ |
 | `data/BiometricCryptoGate.kt` | 167 | `lib/platform/biometric_gate.dart` (local_auth) | ⬜ |
-| `data/HealthScoring.kt` | 119 | `lib/domain/health_scoring.dart` | ⬜ |
+| `data/HealthScoring.kt` | 119 | `lib/domain/health_scoring.dart` | ✅ |
 | `data/SecretStore.kt` | 71 | `lib/platform/secret_store.dart` (flutter_secure_storage) | ⬜ |
 
 ### 3.3 Network shares (705 LOC)
@@ -320,6 +320,18 @@ build**: Dart still type-checks `file_picker`'s Windows sources against the new 
 target. Replaced with **`file_selector`** (Flutter-team maintained, C++ Windows impl, no win32 Dart
 dependency) plus **`flutter_file_dialog`** (zero transitive deps) for Android SAF save flows.
 
+### 7.8 Latent bug found in `inferLevel` — reproduced deliberately, not fixed
+`RemoteParsers.inferLevel` classifies a log line's severity with
+`\b(warn|warning|deprecat|timeout|retry)\b`. The **trailing `\b` makes the `deprecat` stem dead**:
+the boundary fails between the 't' and the 'e' of "deprecated", so it can only ever match the bare
+word "deprecat". A line reading "deprecated option in use" is classified INFO, not WARN. ("warn" is
+likewise dead for "warned", though the separate "warning" alternative covers the common case.)
+
+The Dart port **reproduces this exactly**, and a test pins the wrong-looking behaviour. Requirement 2
+is that behaviour does not change during the migration: if the port silently fixed it, a real
+behavioural difference found while testing could no longer be assumed to be a porting error. Fix
+after parity is reached and validated.
+
 ### 7.7 Plugins still applying the Kotlin Gradle Plugin
 `flutter_file_dialog`, `flutter_foreground_task` and `home_widget` apply KGP directly. Flutter warns
 that **future versions will fail to build** on this. Not blocking today; track upstream.
@@ -523,3 +535,47 @@ index fails locally instead of on a device:
 
 **Next:** Phase 4 — pure-logic ports, starting with `RemoteParsers.kt` (1,604 LOC) and its existing
 JVM unit tests, which are the highest-value, lowest-risk translations remaining.
+
+### 2026-08-03 — Session 3: Phase 4, pure-logic ports
+
+Ported the parsing and scoring layer — pure `String in, model out` code with no I/O and no platform
+dependency, which is exactly why it moves to iOS unchanged and why its Kotlin tests come across
+almost verbatim.
+
+- `data/RemoteModels.kt` → `lib/data/remote_models.dart` (all 17 models). The Kotlin `var` fields
+  that call sites mutate in place stay mutable so the screen ports remain mechanical.
+- `data/RemoteParsers.kt` (the `RemoteParsers` object) → `lib/data/remote_parsers.dart`. Covers
+  processes, systemd/OpenRC services, journald, docker/podman ps/images/volumes/networks/restart
+  counts, transfer conflicts, and the four per-OS metric probes (Linux, FreeBSD, Darwin, Windows)
+  plus `/proc` stat/diskstats/net-dev parsing.
+- `RemoteCommands.normaliseOs` → `lib/data/remote_commands.dart` (**partial**: the ~940 lines of
+  shell command strings land with the screens that issue them).
+- `data/HealthScoring.kt` → `lib/domain/health_scoring.dart`.
+
+**`lib/data/kotlin_strings.dart` is new and load-bearing.** Kotlin's
+`split(Regex, limit)` has no Dart equivalent, and it is what lets `ps` keep a command containing
+spaces in a single field. `takeChars`/`removePrefix`/`substringAfter`/`ifBlank`/`distinctBy` are in
+the same file for the same reason: these parsers' tolerance for malformed remote output *is* the
+feature (a poll that throws blanks the whole Monitor screen; one that skips a line shows the rest),
+and reimplementing those idioms approximately is how that tolerance gets lost. Implemented once,
+tested directly.
+
+Two translation traps worth recording:
+- `coerceAtLeast(0)` is a **lower bound only**. Using Dart's `clamp(0, x)` also caps the upper end
+  and throws when `lower > upper`; all six sites use `math.max(0, …)` instead.
+- Kotlin sums UTF-16 code units and renders `Float` as "50.0" — the health-scoring `encode()` string
+  must match byte for byte, since it is persisted in `app_settings`. Pinned by a test.
+
+**Found a latent bug in the original (§7.8) and deliberately did not fix it.** `inferLevel`'s
+pattern `\b(warn|warning|deprecat|timeout|retry)\b` has a trailing `\b` that makes the `deprecat`
+stem dead — "deprecated option in use" is classified INFO, not WARN. The port reproduces this
+exactly and a test pins it, because changing behaviour mid-migration would make a genuine
+behavioural difference indistinguishable from an intentional one. Fix after parity.
+
+**Verified — 122 tests pass, `flutter analyze` clean.** The parser tests reuse the Kotlin fixtures
+verbatim, so they are evidence the port is faithful rather than merely self-consistent. Still no
+on-device run: no parity claim.
+
+**Next:** finish Phase 4's remaining pure-logic files (`InputValidation`, `MeasurementUnits`,
+`OperationGeneration`, `HostDisplay`, `ScriptFilters`, `MonitorHistory`, `AlertBreachTracker`,
+`AppLockTimeoutPolicy`, `TerminalKeyEncoder`), then Phase 5 — the dartssh2 transport.
