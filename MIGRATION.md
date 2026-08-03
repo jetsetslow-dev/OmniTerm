@@ -6,7 +6,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** Phase 4 in progress (parsers + health scoring done) — see [Progress log](#14-progress-log)
+- **Status:** Phase 4 complete (pure-logic ports done); Phase 5 (SSH transport) next — see [Progress log](#14-progress-log)
 
 ---
 
@@ -135,19 +135,19 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | `ui/ImagePreview.kt` | 164 | `lib/ui/widgets/image_preview.dart` | ⬜ |
 | `ui/TerminalBufferText.kt` | 120 | `lib/ui/screens/shell/terminal_buffer_text.dart` | ⬜ |
 | `ui/ShortcutHelper.kt` | 120 | `lib/platform/shortcut_helper.dart` | ⬜ |
-| `ui/AppLockTimeoutPolicy.kt` | 120 | `lib/domain/app_lock_timeout_policy.dart` | ⬜ |
+| `ui/AppLockTimeoutPolicy.kt` | 120 | `lib/domain/app_lock_timeout_policy.dart` | ✅ |
 | `ui/TuiScrollRouter.kt` | 118 | `lib/domain/tui_scroll_router.dart` | ⬜ |
 | `ui/TerminalViewportState.kt` | 93 | `lib/domain/terminal_viewport_state.dart` | ⬜ |
-| `ui/TerminalKeyEncoder.kt` | 72 | `lib/domain/terminal_key_encoder.dart` | ⬜ |
+| `ui/TerminalKeyEncoder.kt` | 72 | `lib/domain/terminal_key_encoder.dart` | ✅ (+ `TermKey`) |
 | `ui/TerminalContrast.kt` | 71 | `lib/ui/theme/terminal_contrast.dart` | ⬜ |
-| `ui/MonitorHistory.kt` | 65 | `lib/domain/monitor_history.dart` | ⬜ |
-| `ui/AlertBreachTracker.kt` | 64 | `lib/domain/alert_breach_tracker.dart` | ⬜ |
-| `ui/InputValidation.kt` | 54 | `lib/domain/input_validation.dart` | ⬜ |
-| `ui/ScriptFilters.kt` | 41 | `lib/domain/script_filters.dart` | ⬜ |
+| `ui/MonitorHistory.kt` | 65 | `lib/domain/monitor_history.dart` | ✅ |
+| `ui/AlertBreachTracker.kt` | 64 | `lib/domain/alert_breach_tracker.dart` | ✅ |
+| `ui/InputValidation.kt` | 54 | `lib/domain/input_validation.dart` | ✅ |
+| `ui/ScriptFilters.kt` | 41 | `lib/domain/script_filters.dart` | ✅ |
 | `ui/LinkOpener.kt` | 41 | `lib/platform/link_opener.dart` (url_launcher) | ⬜ |
-| `ui/OperationGeneration.kt` | 37 | `lib/domain/operation_generation.dart` | ⬜ |
-| `ui/HostDisplay.kt` | 37 | `lib/domain/host_display.dart` | ⬜ |
-| `ui/MeasurementUnits.kt` | 31 | `lib/domain/measurement_units.dart` | ⬜ |
+| `ui/OperationGeneration.kt` | 37 | `lib/domain/operation_generation.dart` | ✅ |
+| `ui/HostDisplay.kt` | 37 | `lib/domain/host_display.dart` | ✅ |
+| `ui/MeasurementUnits.kt` | 31 | `lib/domain/measurement_units.dart` | ✅ |
 | `ui/SessionNotificationPayload.kt` | 22 | `lib/platform/session_notification_payload.dart` | ⬜ |
 | `ui/MultiSshLayout.kt` | 6 | `lib/domain/multi_ssh_layout.dart` | ⬜ |
 | `ui/theme/Theme.kt` | 182 | `lib/ui/theme/theme.dart` | ✅ |
@@ -579,3 +579,38 @@ on-device run: no parity claim.
 **Next:** finish Phase 4's remaining pure-logic files (`InputValidation`, `MeasurementUnits`,
 `OperationGeneration`, `HostDisplay`, `ScriptFilters`, `MonitorHistory`, `AlertBreachTracker`,
 `AppLockTimeoutPolicy`, `TerminalKeyEncoder`), then Phase 5 — the dartssh2 transport.
+
+### 2026-08-03 — Session 4: Phase 4 complete
+
+Ported the nine remaining pure-logic files: `InputValidation`, `MeasurementUnits`,
+`OperationGeneration`, `HostDisplay`, `ScriptFilters`, `MonitorHistory`, `AlertBreachTracker`,
+`AppLockTimeoutPolicy`, and `TerminalKeyEncoder` (which brings `TermKey` and
+`terminalKeyAllowedInReadOnly` across with it). All now live under `lib/domain/`.
+
+Three places where a literal translation would have been wrong:
+
+- **`@Synchronized` / `ConcurrentHashMap` do not translate.** `OperationGeneration` and
+  `AlertBreachTracker` are lock-free in Dart because an isolate is single-threaded and only yields
+  at an `await`. `publishIfCurrent` keeps a **synchronous** callback parameter on purpose — an
+  `async` one would reintroduce exactly the check-then-publish race the Kotlin `synchronized` block
+  existed to close.
+- **`HostDisplay` was a Compose-observable `object`.** It becomes a `ChangeNotifier` singleton so
+  leaf widgets can still render a masked label without the ViewModel threaded through.
+- **`formatTemperature` deliberately uses the *default* locale**, unlike `humanBytes` which forces
+  `Locale.US`. Reproduced by formatting with `toStringAsFixed` (which rounds half away from zero, as
+  Java's `%f` does) and then substituting the locale's decimal separator — using `NumberFormat`
+  directly would have applied half-even rounding and disagreed at exact .5 boundaries.
+
+Two smaller fidelity notes: `macAddressError` checks hex digits explicitly because Dart's
+`int.tryParse(radix: 16)` accepts a leading `+`/`-` where Kotlin's `toIntOrNull(radix = 16)` does
+not; and `chartEndpointLabels` takes a `utc` flag in place of Kotlin's `TimeZone` parameter, since
+Dart's `DateTime` only distinguishes local from UTC — the tests use it to stay host-independent.
+
+**Caught a bug in my own port before it shipped:** the `csi`/`ss3` helpers in `TerminalKeyEncoder`
+initially omitted the ESC (0x1B) introducer, which would have sent `[A` instead of `ESC [ A` for
+every arrow key. The byte-level tests are what surfaced it.
+
+**Verified — 198 tests pass, `flutter analyze` clean, debug APK builds.** Phase 4 is done.
+
+**Next:** Phase 5 — the dartssh2 transport (§3.4), starting with the `SshTransport` interface so the
+rest of the SSH layer can be written against it.
