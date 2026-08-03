@@ -2,20 +2,22 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 6 — the emulator state machine.** `terminal_unicode.dart` (width rules) and
-> `terminal_snapshot.dart` (TermSpan/TermRow/TerminalSnapshot) are **done**. What remains from
-> `app/src/main/java/com/jetsetslow/omniterm/data/term/TerminalEmulator.kt` is the class itself
-> (~1,000 LOC), which should land in `flutter_app/lib/data/term/` as **separate files** (§16):
+> **Phase 6 — the screen model, the last piece of `TerminalEmulator.kt`.** Already done:
+> `terminal_unicode.dart` (widths), `terminal_snapshot.dart` (TermSpan/TermRow/TerminalSnapshot),
+> `terminal_parser.dart` (the ESC/CSI/OSC state machine, emitting to a `TerminalSink`),
+> `terminal_cell.dart` (the mutable grid cell).
 >
-> 1. `terminal_cell.dart` — the mutable `Cell` + row helpers (Kotlin lines 22–46).
-> 2. `terminal_parser.dart` — the ground/ESC/CSI/OSC state machine (lines 438–564).
-> 3. `terminal_emulator.dart` — screen buffer, scrollback, cursor, scroll regions, alt screen,
->    SGR pen, resize/reflow (the rest).
+> What remains is `terminal_emulator.dart`: a class implementing `TerminalSink` that owns the screen
+> grid, scrollback, cursor, scroll regions, alternate screen, SGR pen, and resize/reflow. Map the
+> Kotlin as follows —
+> `putCodePoint`/`appendCombining`/`appendJoined`/`repairClusterWidth` (lines 638–795),
+> cursor + erase + insert/delete + scroll (831–994), `applySgr` (995–1048),
+> `rowToSpans`/`rowAt`/`snapshot` (1049–1140), `resize`/reflow (145–341), alt screen (605–637).
 >
 > Acceptance criteria are the existing Kotlin tests — port them alongside:
-> `app/src/test/java/com/jetsetslow/omniterm/Terminal*Test.kt` plus `BracketedPastePayloadTest`
-> and `CleanShellExitTest`. `docs/TERMINAL_COMPATIBILITY.md` is the contract (defensive subset;
-> unknown sequences are *ignored*, never rendered as text).
+> `app/src/test/java/com/jetsetslow/omniterm/Terminal*Test.kt`, plus `BracketedPastePayloadTest`.
+> `docs/TERMINAL_COMPATIBILITY.md` is the contract: a defensive subset where unknown sequences are
+> *ignored*, never rendered as text.
 >
 > Working rules that are easy to lose: never `git add -A` (`shared/` must stay untracked, stage
 > explicit paths); `export PATH="/home/sbvino/sdks/flutter/bin:$PATH"`; run `flutter analyze` and
@@ -28,7 +30,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** Phase 6 in progress (tmux control + terminal width/snapshot types done; emulator state machine next) — see [Progress log](#14-progress-log)
+- **Status:** Phase 6 in progress (parser + cell + width + snapshot done; screen/scrollback next) — see [Progress log](#14-progress-log)
 
 ---
 
@@ -144,7 +146,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 ### 3.5 Terminal (1,486 LOC)
 | File | LOC | Flutter destination | Status |
 |---|---|---|---|
-| `data/term/TerminalEmulator.kt` | 1177 | `terminal_unicode.dart` + `terminal_snapshot.dart` ✅; state machine ⬜ | 🟨 |
+| `data/term/TerminalEmulator.kt` | 1177 | `terminal_unicode` + `terminal_snapshot` + `terminal_parser` + `terminal_cell` ✅; screen/scrollback ⬜ | 🟨 |
 | `data/term/TmuxControl.kt` | 232 | `tmux_control_event.dart` + `tmux_control_parser.dart` + `tmux_control_commands.dart` | ✅ |
 | `data/term/Utf8StreamDecoder.kt` | 77 | `lib/data/term/utf8_stream_decoder.dart` | ✅ |
 
@@ -1078,3 +1080,40 @@ dependency arrow pointing away from the UI.
 **Verified — 364 tests pass, `flutter analyze` clean.**
 
 **Next:** the emulator state machine, split into cell/parser/emulator files per §16.
+
+### 2026-08-04 — Session 13: the escape-sequence parser and the grid cell
+
+Ported the state machine and the cell type. The parser is the one place this port deliberately
+**restructures** rather than transcribing, which requirement 13 now explicitly permits (feature
+parity, not code parity).
+
+**The Kotlin parser called screen operations directly** — `dispatchCsi` invoked `moveCursor`,
+`eraseInDisplay` and friends inline. Here it is a pure lexer that owns only parse state and reports
+semantic events to a `TerminalSink` interface, which is the shape vte and vtparse use. The payoff is
+immediate: sequence handling is now testable without a screen at all, and the 38 tests in
+`terminal_parser_test.dart` assert ESC/CSI/OSC/DCS handling directly rather than inferring it from
+rendered output.
+
+Behaviour is unchanged, including the defensive parts that matter:
+- unknown sequences are **ignored**, never rendered as text (the contract in
+  `docs/TERMINAL_COMPATIBILITY.md`), and C0 controls other than the handled ones are dropped rather
+  than printed as glyphs — printing them is the classic way a terminal shows garbage on binary output;
+- OSC payloads (titles, hyperlinks, **OSC 52 clipboard writes**) are parsed and discarded, never
+  acted on;
+- a control sequence longer than 1024 chars is abandoned rather than buffered, so a remote that
+  never sends a final byte cannot grow memory without bound.
+
+**A test of mine was wrong, not the port.** I asserted that an over-long sequence's remaining
+parameter bytes were dropped. Tracing the Kotlin shows it clears the buffer and returns to *ground*,
+so those bytes then print as ordinary text. Test corrected to assert the real behaviour, and to pin
+the property that actually matters — nothing is buffered indefinitely and no giant CSI ever
+dispatches.
+
+`terminal_cell.dart` keeps the cell **mutable**, deliberately: the emulator rewrites cells tens of
+thousands of times a second while a build scrolls past, and allocating an immutable cell per write
+would make that path allocation-bound. The immutable view is `TermSpan`, built only at snapshot time.
+
+**Verified — 402 tests pass, `flutter analyze` clean.**
+
+**Next:** `terminal_emulator.dart` — the screen grid, scrollback, scroll regions, alt screen, SGR
+pen and reflow.
