@@ -1,0 +1,10 @@
+targets:
+  $default:
+    builders:
+      drift_dev:
+        options:
+          # Room named its columns exactly as the Kotlin properties (camelCase). Drift's default is
+          # to snake_case Dart field names, which would rename every column and make the generated
+          # schema incompatible with the databases already on users' devices. Preserve the casing so
+          # the Dart tables map onto the shipped Room schema unchanged.
+          case_from_dart_to_sql: preserve

@@ -6,7 +6,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** Phase 2 (theme + shell done; data layer next) — see [Progress log](#14-progress-log)
+- **Status:** Phase 4 (data layer done; pure-logic ports next) — see [Progress log](#14-progress-log)
 
 ---
 
@@ -77,8 +77,8 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 |---|---|---|---|
 | `data/RemoteParsers.kt` | 1604 | `lib/data/remote_parsers.dart` (pure Dart, portable 1:1) | ⬜ |
 | `data/Daos.kt` | 362 | `lib/data/dao/*.dart` (Drift) | ⬜ |
-| `data/AppDatabase.kt` | 352 | `lib/data/app_database.dart` (Drift, schema v18) | ⬜ |
-| `data/Entities.kt` | 271 | `lib/data/tables.dart` (13 tables) | ⬜ |
+| `data/AppDatabase.kt` | 352 | `lib/data/app_database.dart` (Drift, schema **v22**) | ✅ |
+| `data/Entities.kt` | 271 | `lib/data/tables.dart` (**14** tables) | ✅ |
 | `data/CrashLog.kt` | 206 | `lib/data/crash_log.dart` | ⬜ |
 | `data/RemoteModels.kt` | 203 | `lib/data/remote_models.dart` | ⬜ |
 | `data/AppRepository.kt` | 191 | `lib/data/app_repository.dart` | ⬜ |
@@ -304,8 +304,12 @@ Glance code may be kept nearly as-is; the iOS widget is new Swift work.
 See §6 — this is a genuine platform capability gap, not a porting problem. It will change how
 long-lived sessions behave on iOS and needs a product decision.
 
-### 7.5 `sqlite3_flutter_libs` resolved as `0.6.0+eol`
-Pub resolved an end-of-life release. Revisit before the Drift work lands.
+### 7.5 ~~`sqlite3_flutter_libs` resolved as `0.6.0+eol`~~ — RESOLVED
+Not a problem: `0.6.0+eol` is an intentional **no-op stub**. The package only ever existed to ship
+SQLite for `sqlite3` 2.x; `sqlite3` 3.x bundles the library itself, and the stub is published purely
+so dependents can pin it and be sure the old build scripts are excluded. It has been **removed** from
+the dependency set and `sqlite3` added explicitly. The matching
+`applyWorkaroundToOpenSqlite3OnOldAndroidVersions()` call is likewise obsolete and is not used.
 
 ### 7.6 `file_picker` is unusable — replaced by `file_selector`
 `file_picker` 11.0.3 (newest stable; 12.x is beta-only) pins `win32 ^5.9.0`, while every `*_plus`
@@ -476,3 +480,46 @@ Build fixes needed along the way (see §7.6, §7.7):
 
 **Next:** Phase 3 — Drift data layer (§3.2), then the pure-logic ports (§3.5/RemoteParsers), which
 carry their existing unit tests across.
+
+### 2026-08-03 — Session 2: Phase 3, Drift data layer
+
+**Correction to an earlier assumption:** the live schema is **v22, not v18**. The README says v18 and
+this document repeated it; `AppDatabase.kt` declares `version = 22` and the exported schemas run to
+`22.json`. Inventory and §3.2 corrected. There are **14** entities, not 13.
+
+The central design point: **the Flutter app opens the same database file the native app created.**
+Android's `SQLiteOpenHelper` (which Room is built on) records the schema version in
+`PRAGMA user_version`, and that is exactly the pragma Drift reads. So a Drift schema declared at
+version 22, whose tables match Room's shape, sees an existing database as "already current" and runs
+no migration — the user's hosts, keys, scripts and alerts simply open. That makes the table
+definitions a **binary compatibility surface**, not a style choice:
+- `build.yaml` sets `case_from_dart_to_sql: preserve`, because Drift would otherwise snake_case
+  every camelCase column and rename the entire schema.
+- Defaults use `clientDefault` (Dart-side), not `withDefault` — Room's Kotlin defaults are *not* SQL
+  `DEFAULT` clauses, and the exported DDL has none.
+- `_open()` resolves the Room directory (`<app data>/databases/`, derived from
+  `getApplicationSupportDirectory()`'s parent) rather than `path_provider`'s documents directory,
+  and keeps the extension-less file name `omniterm_database`. `drift_flutter`'s `driftDatabase()`
+  helper cannot be used for this: it always appends `.sqlite` to the name.
+
+Ported: all 14 tables (`lib/data/tables.dart`), the database + full Room migration chain 8→22
+(`lib/data/app_database.dart`), and the historical preset identities the 19→20 back-stamp needs
+(`lib/data/legacy_presets.dart`).
+
+**Verified — 42 tests pass, `flutter analyze` clean, debug APK builds.** The schema tests compare
+against Room's **committed schema export**, not a transcription of it, so a renamed column or lost
+index fails locally instead of on a device:
+- all 14 tables present with identical column names, order, types and nullability
+- all 4 indices reproduced, including uniqueness
+- a database stamped `user_version = 22` reopens with its rows intact and no migration
+- the chain migrates v8/v12/v18/v21 fixtures (built from Room's own exports) up to v22
+- the semantically tricky steps are pinned: the 15→16 `useHttps` port backfill (443/8443, case-
+  insensitive, WebDAV only), the 18→19 duplicate-incident dedup keeping the newest row, the 19→20
+  `backgroundedAt = createdAt` seeding, and the 19→20 rule that a name/category match does **not**
+  claim a row when that preset family is disabled.
+
+**Closed risk §7.5:** `sqlite3_flutter_libs 0.6.0+eol` is an intentional no-op stub — obsolete once
+`sqlite3` 3.x bundles the library. Removed from the dependency set; `sqlite3` added explicitly.
+
+**Next:** Phase 4 — pure-logic ports, starting with `RemoteParsers.kt` (1,604 LOC) and its existing
+JVM unit tests, which are the highest-value, lowest-risk translations remaining.
