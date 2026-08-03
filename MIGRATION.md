@@ -2,17 +2,21 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 6 is complete** — the terminal emulator is ported and covered by 109 tests. Two follow-ups
-> are tracked in §18 rather than being silently skipped: **resize reflow** (the biggest, and listed
-> as Supported in the compatibility matrix) and the Unicode combining-mark table.
+> **Finish the data-access layer, which Phase 7 depends on.** `SecretStore` is done
+> (`lib/platform/secret_store.dart`). Still to port from `app/src/main/java/.../data/`:
 >
-> **Phase 7 — feature screens (§3.6), the largest remaining body of work: ~36k LOC.** Start with
-> the split of `ui/AppViewModel.kt` (12,310 lines) per §5.2 — per-feature ViewModels over a shared
-> `AppState`, keeping every public member name so the screen ports stay mechanical. Then screens in
-> the order given in §9: Servers → Monitor → Infra → Fleet → SFTP → Tools.
+> 1. `Daos.kt` (362 LOC) → Drift DAOs under `lib/data/dao/`. The Drift tables already exist.
+> 2. `AppRepository.kt` (191 LOC) → `lib/data/app_repository.dart`. It is the **only** place secrets
+>    are encrypted/decrypted — see its `SecretStore.encrypt/decrypt` call sites — so wire
+>    `SecretStore.onUpgraded` here to persist the §7.10 legacy upgrade.
+> 3. `CrashLog.kt` (206) and `BiometricCryptoGate.kt` (167) can follow, or wait for Phase 9.
 >
-> Add a stable `Key`/semantics id to **every** interactive widget as it is written (§11 requirement
-> for the Patrol suite) — retrofitting keys across 36k LOC later is far more expensive.
+> **Then Phase 7** (§3.6, ~36k LOC): split `ui/AppViewModel.kt` per §5.2, then screens in the §9
+> order. Give every interactive widget a stable `Key` **as it is written** — retrofitting them for
+> the Patrol suite later is far more expensive.
+>
+> ⚠️ **Do not lose §7.10:** without a small Android method channel, every existing user's saved
+> passwords and keys read as blank after the update.
 >
 > Working rules that are easy to lose: never `git add -A` (`shared/` must stay untracked, stage
 > explicit paths); `export PATH="/home/sbvino/sdks/flutter/bin:$PATH"`; run `flutter analyze` and
@@ -25,7 +29,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** **Phase 6 complete** (emulator done; resize reflow tracked in §18). Phase 7 (feature screens) next — see [Progress log](#14-progress-log)
+- **Status:** Finishing the data-access layer before Phase 7 (SecretStore done; DAOs + repository next) — see [Progress log](#14-progress-log)
 
 ---
 
@@ -116,7 +120,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | `data/AppRepository.kt` | 191 | `lib/data/app_repository.dart` | ⬜ |
 | `data/BiometricCryptoGate.kt` | 167 | `lib/platform/biometric_gate.dart` (local_auth) | ⬜ |
 | `data/HealthScoring.kt` | 119 | `lib/domain/health_scoring.dart` | ✅ |
-| `data/SecretStore.kt` | 71 | `lib/platform/secret_store.dart` (flutter_secure_storage) | ⬜ |
+| `data/SecretStore.kt` | 71 | `lib/platform/secret_store.dart` | ✅ (⚠️ needs the §7.10 Android bridge) |
 
 ### 3.3 Network shares (705 LOC)
 | File | LOC | Flutter destination | Status |
@@ -335,6 +339,28 @@ What actually remains against `smb_connect`, and it is still decisive:
 
 **Leaning: option 1.** Recorded, not yet decided — it is the user's call and blocks nothing until
 Phase 8, because `RemoteFsClient` makes the choice swappable.
+
+### 7.10 ⚠️ **BLOCKER: existing credentials cannot be decrypted without an Android bridge**
+The most serious finding of the migration so far.
+
+`SecretStore` encrypts **every** credential the app stores — server passwords, sudo passwords, proxy
+passwords, imported private keys, credential-profile passwords, share passwords — with AES-GCM under
+a key generated **inside the Android Keystore**. That key is non-exportable by design, and no Flutter
+plugin can use it as a cipher.
+
+So the Dart port necessarily uses its own key (in `flutter_secure_storage`) and tags its output
+`enc:v2:`. **Every `enc:v1:` value already on a user's device is therefore unreadable.** Shipped
+without a fix, an updating user opens the app and finds every saved password and private key blank —
+silently, since `decrypt` returns null on failure by contract.
+
+**Required before cut-over:** a small Android-native method channel that decrypts `enc:v1:` using the
+original Keystore alias `omniterm_local_secret_key`. The Dart side is already built for it:
+`SecretStore.legacyDecryptor` is the seam, and `onUpgraded` reports the re-encrypted value so the
+repository can write it back — the migration then happens once per value, transparently, on first
+read. iOS needs nothing (no legacy data). Tests cover the whole path including a failing decryptor.
+
+This is Android-only, ~40 lines of Kotlin, and it is **not optional**: it is the difference between
+an update and a data-loss event.
 
 ### 7.2 Terminal emulator: port vs. adopt `xterm`
 The app has its **own** 1,177-LOC `TerminalEmulator` plus a documented compatibility matrix
@@ -1154,3 +1180,38 @@ it exercises the decomposed sequence, and to assert the glyph/width split rather
 **Verified — 447 tests pass, `flutter analyze` clean.** Phase 6 done.
 
 **Next:** Phase 7 — the ~36k LOC of feature screens, starting with the `AppViewModel` split.
+
+### 2026-08-04 — Session 15: SecretStore, and a data-loss blocker found
+
+Started closing out the data-access layer that Phase 7 depends on, beginning with the
+security-critical piece: `SecretStore.kt` → `lib/platform/secret_store.dart`.
+
+**Porting it surfaced the most serious issue of the migration (§7.10).** The Kotlin encrypts every
+stored credential under a key generated *inside the Android Keystore* — non-exportable by design,
+and unusable from Flutter. The Dart implementation therefore has to use its own key and tag output
+`enc:v2:`, which means **every `enc:v1:` value already on a user's device is unreadable**. Shipped
+as-is, an updating user would open the app to find every saved password and private key blank — and
+silently, because `decrypt` returns null on failure by contract.
+
+The fix is a ~40-line Android method channel that decrypts `enc:v1:` with the original Keystore
+alias. The Dart side is already built for it: `legacyDecryptor` is the seam and `onUpgraded` reports
+the re-encrypted value so the repository can write it back, making the migration a once-per-value
+transparent upgrade on first read. iOS needs nothing. Recorded as a **blocker**, not a nice-to-have.
+
+Design notes on the port itself:
+- The wire layout matches the Kotlin (`iv || ciphertext || tag`, base64, no wrapping), so only the
+  key differs — which is what makes a bridged migration possible at all rather than a re-entry prompt.
+- The pass-through contract is preserved exactly: null/empty unchanged, encryption idempotent, and
+  **decrypting plaintext returns null** — callers depend on that to tell "no secret stored" from
+  "stored but unreadable".
+- A tampered payload fails closed; AES-GCM authentication is asserted by a test that flips bytes.
+
+**Security trade-off recorded honestly (requirement 12):** the v2 key is retrievable into app memory,
+where the v1 key was not. Accepted because the alternative is two hand-maintained native crypto
+implementations — a larger code-security surface than the one it removes — and because the at-rest
+protection (a Keystore/Keychain-guarded key) is preserved.
+
+**Verified — 463 tests pass, `flutter analyze` clean.**
+
+**Next:** `Daos.kt` → Drift DAOs and `AppRepository.kt`, which is where the §7.10 upgrade hook gets
+wired, then Phase 7.
