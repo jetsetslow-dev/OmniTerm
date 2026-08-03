@@ -25,6 +25,7 @@ import 'package:flutter/foundation.dart';
 import '../term/utf8_stream_decoder.dart';
 import 'capped_text_buffer.dart';
 import 'ssh_host_key_trust.dart';
+import 'ssh_private_key.dart';
 import 'ssh_session_pool.dart';
 import 'ssh_transport.dart';
 import 'terminal_close.dart';
@@ -84,7 +85,7 @@ class DartSshTransport implements SshTransport {
 
   List<SSHKeyPair> _keyPairs(String? pem, String? passphrase) {
     if (pem == null || pem.trim().isEmpty) return const [];
-    return SSHKeyPair.fromPem(pem, passphrase);
+    return parsePrivateKey(pem, passphrase: passphrase);
   }
 
   /// Opens a client to [creds], routing through a jump host or proxy when configured.
@@ -101,7 +102,10 @@ class DartSshTransport implements SshTransport {
           await SSHSocket.connect(creds.proxyHost, creds.proxyPort, timeout: _connectTimeout),
           username: creds.proxyUser,
           onPasswordRequest: () => creds.proxyPassword,
-          identities: _keyPairs(creds.proxyKeyPem, creds.passphrase),
+          // The passphrase field belongs to the *target* key, not the bastion's — feeding it here
+          // would try to decrypt the jump key with the wrong secret. Matches the Kotlin, which
+          // passed null. (Encrypted jump keys are consequently unsupported, as before.)
+          identities: _keyPairs(creds.proxyKeyPem, null),
           onVerifyHostKey: _verifier(creds.proxyHost, creds.proxyPort),
         );
         // Tunnel the target connection through the bastion, exactly as `ssh -J` does: the target's
@@ -296,6 +300,7 @@ class DartSshTransport implements SshTransport {
   }
 
   static String _describe(Object e) {
+    if (e is InvalidPrivateKeyException) return e.message;
     if (e is SshHostKeyException) return e.message;
     if (e is SSHAuthAbortError) return e.message;
     if (e is SSHAuthFailError) return e.message;

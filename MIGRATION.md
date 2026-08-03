@@ -6,7 +6,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** Phase 5 in progress (transport, trust, pool done; SFTP + tunnels next) — see [Progress log](#14-progress-log)
+- **Status:** Phase 5 in progress (transport, trust, pool, key parsing, FS abstraction done; SFTP + tunnels next) — see [Progress log](#14-progress-log)
 
 ---
 
@@ -92,7 +92,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 ### 3.3 Network shares (705 LOC)
 | File | LOC | Flutter destination | Status |
 |---|---|---|---|
-| `data/shares/RemoteFsClient.kt` | 132 | `lib/data/shares/remote_fs_client.dart` (abstraction) | ⬜ |
+| `data/shares/RemoteFsClient.kt` | 132 | `lib/data/shares/remote_fs_client.dart` (abstraction) | ✅ |
 | `data/shares/WebDavFsClient.kt` | 217 | `lib/data/shares/webdav_fs_client.dart` (dio + xml) | ⬜ |
 | `data/shares/FtpFsClient.kt` | 183 | `lib/data/shares/ftp_fs_client.dart` (ftpconnect) | ⬜ |
 | `data/shares/SmbFsClient.kt` | 173 | `lib/data/shares/smb_fs_client.dart` | ⚠️ **blocked — see §7.1** |
@@ -104,7 +104,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | `data/ssh/SshTunnelManager.kt` | 333 | `lib/data/ssh/ssh_tunnel_manager.dart` | ⬜ |
 | `data/ssh/SshHostKeyTrust.kt` | 315 | `lib/data/ssh/ssh_host_key_trust.dart` | ✅ |
 | `data/ssh/JschSftp.kt` | 294 | `lib/data/ssh/dartssh_sftp.dart` | ⬜ |
-| `data/ssh/JschSession.kt` | 219 | `lib/data/ssh/dartssh_session.dart` | ⬜ |
+| `data/ssh/JschSession.kt` | 219 | `lib/data/ssh/ssh_private_key.dart` (key validation); connection setup absorbed into `dartssh_transport.dart` | ✅ |
 | `data/ssh/SshSessionPool.kt` | 144 | `lib/data/ssh/ssh_session_pool.dart` (+ `async_lock.dart`) | ✅ |
 | `data/ssh/SshTransport.kt` | 123 | `lib/data/ssh/ssh_transport.dart` (interface) | ✅ |
 | `data/ssh/CappedTextBuffer.kt` | 23 | `lib/data/ssh/capped_text_buffer.dart` | ✅ |
@@ -777,3 +777,41 @@ failure from evicting the healthy replacement that already took its place.
 **Verified — 271 tests pass, `flutter analyze` clean.**
 
 **Next:** `JschSession` and `JschSftp`, then `SshTunnelManager`, then Phase 6 (terminal emulator).
+
+### 2026-08-03 — Session 8: key validation and the remote-filesystem abstraction
+
+`JschSession.kt` splits in two on the way across. Its **connection setup** (proxy wiring, keepalive,
+preferred-auth ordering, cipher/compression config) has no separate home in the Dart port: dartssh2
+takes those as `SSHClient` constructor arguments, so that half was already absorbed into
+`dartssh_transport.dart`. What genuinely needed porting is the **key validation**, now
+`lib/data/ssh/ssh_private_key.dart`.
+
+That validation is worth its own file because all of its value is diagnostic. JSch threw
+`JSchException("invalid privatekey: " + byte[])`, and the array rendered as `[B@1a2b3c` — which is
+what reached users. The guards run *before* parsing: a pasted **public** key gets its own message
+(the two files differ only by a `.pub` suffix), text without PEM markers is rejected outright, line
+endings are normalised with a guaranteed trailing newline (phone pasting introduces CRLF or strips
+it), and any parser message that would leak an internal representation is suppressed in favour of
+the passphrase hint. Tests assert the absence of both `[B@` and Dart's equivalent `Instance of`.
+
+**Fixed a mismatch I had introduced:** the transport was passing `creds.passphrase` when parsing the
+*jump host's* key. That field belongs to the target key, so it would try to decrypt the bastion key
+with the wrong secret. Kotlin passed null; now so does the port, with the resulting limitation
+(encrypted jump keys unsupported) written down rather than left implicit.
+
+Also checked, and correct by construction: the Kotlin needed `setHostKeyAlias` so a jump target was
+pinned to its **logical** host rather than the ephemeral `127.0.0.1:<random>` forward endpoint. The
+Dart port cannot get this wrong — dartssh2 hands us the verify callback instead of deriving identity
+from the socket, and the transport closes over `creds.host`/`creds.port`.
+
+`RemoteFsClient.kt` → `lib/data/shares/remote_fs_client.dart`, the seam SFTP and every share protocol
+implement. Java's `InputStream`/`OutputStream` become `Stream<Uint8List>`/`StreamSink<List<int>>`,
+which also removes the manual read loops. One more entry in the running concurrency theme: the
+Kotlin wrapped its date formatter in a `ThreadLocal` because `SimpleDateFormat` is not thread-safe
+and two shares genuinely browse at once on the IO dispatcher — **Dart needs no such guard**, since
+an isolate is single-threaded. The 64 KiB / 150 ms progress throttle *is* kept: an unthrottled
+callback per chunk floods the UI thread and makes a fast transfer slower than a throttled one.
+
+**Verified — 286 tests pass, `flutter analyze` clean, debug APK builds.**
+
+**Next:** `JschSftp` on top of the new abstraction, then `SshTunnelManager`, then Phase 6.
