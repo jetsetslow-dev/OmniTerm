@@ -6,7 +6,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** Phase 5 in progress (SSH interface + host-key trust done) — see [Progress log](#14-progress-log)
+- **Status:** Phase 5 in progress (transport + trust done; pool/SFTP/tunnels next) — see [Progress log](#14-progress-log)
 
 ---
 
@@ -23,6 +23,9 @@ without re-deriving anything.
 7. **Port the CI/CD pipeline** to the Flutter app — see §12.
 8. **Use the best open-source tooling available** for testing, validation and feature enrichment —
    see §13.
+9. **Fix major bugs and flaws found in the Kotlin while porting**, rather than reproducing them.
+   This *amends* requirement 2: behaviour still may not drift casually, but a genuine defect is
+   corrected in the port and recorded here so the change is traceable. See §15.
 
 ### Consequence of constraint 3 (important, drives everything)
 
@@ -97,7 +100,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 ### 3.4 SSH (1,984 LOC)
 | File | LOC | Flutter destination | Status |
 |---|---|---|---|
-| `data/ssh/JschSshTransport.kt` | 533 | `lib/data/ssh/dartssh_transport.dart` | ⬜ |
+| `data/ssh/JschSshTransport.kt` | 533 | `lib/data/ssh/dartssh_transport.dart` + `terminal_close.dart` | ✅ |
 | `data/ssh/SshTunnelManager.kt` | 333 | `lib/data/ssh/ssh_tunnel_manager.dart` | ⬜ |
 | `data/ssh/SshHostKeyTrust.kt` | 315 | `lib/data/ssh/ssh_host_key_trust.dart` | ✅ |
 | `data/ssh/JschSftp.kt` | 294 | `lib/data/ssh/dartssh_sftp.dart` | ⬜ |
@@ -111,7 +114,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 |---|---|---|---|
 | `data/term/TerminalEmulator.kt` | 1177 | `lib/data/term/terminal_emulator.dart` — see §7.2 | ⬜ |
 | `data/term/TmuxControl.kt` | 232 | `lib/data/term/tmux_control.dart` | ⬜ |
-| `data/term/Utf8StreamDecoder.kt` | 77 | `lib/data/term/utf8_stream_decoder.dart` | ⬜ |
+| `data/term/Utf8StreamDecoder.kt` | 77 | `lib/data/term/utf8_stream_decoder.dart` | ✅ |
 
 ### 3.6 UI (36,033 LOC — the bulk)
 | File | LOC | Flutter destination | Status |
@@ -320,29 +323,8 @@ build**: Dart still type-checks `file_picker`'s Windows sources against the new 
 target. Replaced with **`file_selector`** (Flutter-team maintained, C++ Windows impl, no win32 Dart
 dependency) plus **`flutter_file_dialog`** (zero transitive deps) for Android SAF save flows.
 
-### 7.8 Latent bug found in `inferLevel` — reproduced deliberately, not fixed
-`RemoteParsers.inferLevel` classifies a log line's severity with
-`\b(warn|warning|deprecat|timeout|retry)\b`. The **trailing `\b` makes the `deprecat` stem dead**:
-the boundary fails between the 't' and the 'e' of "deprecated", so it can only ever match the bare
-word "deprecat". A line reading "deprecated option in use" is classified INFO, not WARN. ("warn" is
-likewise dead for "warned", though the separate "warning" alternative covers the common case.)
-
-The Dart port **reproduces this exactly**, and a test pins the wrong-looking behaviour. Requirement 2
-is that behaviour does not change during the migration: if the port silently fixed it, a real
-behavioural difference found while testing could no longer be assumed to be a porting error. Fix
-after parity is reached and validated.
-
-### 7.9 Host-key pins change representation (accepted, one-way)
-dartssh2's `SSHHostkeyVerifyHandler` exposes only `(type, fingerprint)` — never the raw public key
-JSch pinned. Pins are therefore stored as the OpenSSH `SHA256:…` fingerprint instead of the base64
-key blob. Not a security downgrade (pinning a SHA-256 digest is as strong as pinning its preimage),
-and **legacy pins convert losslessly on read**, so an existing trust store keeps working with no
-re-prompting.
-
-The consequence is one-way: a backup written by the Flutter app cannot be restored into the old
-Kotlin app, because the fingerprint cannot be turned back into a key blob. Acceptable — the Kotlin
-app is being retired — but it means **the cut-over is not reversible for host-key trust**, so a user
-who rolls back re-approves their fleet.
+### 7.8 ~~Latent bug in `inferLevel`~~ — **FIXED** (see §15.1)
+Originally reproduced verbatim to preserve parity. Under requirement 9 it is now fixed in the port.
 
 ### 7.7 Plugins still applying the Kotlin Gradle Plugin
 `flutter_file_dialog`, `flutter_foreground_task` and `home_widget` apply KGP directly. Flutter warns
@@ -437,9 +419,11 @@ Flutter pipeline to build:
 | Crash reporting | keep the existing on-device `CrashLog` | No new cloud dependency — the app's selling point is "no cloud account" |
 
 **Constraint on "feature enrichment":** requirement 2 (keep functionality/layout/architecture the
-same) takes precedence during the migration. Tooling is upgraded freely; user-visible behaviour is
-not changed until the port reaches parity, so that any behavioural difference found while testing is
-unambiguously a porting bug rather than an intentional change.
+same) still governs *incidental* change — tooling is upgraded freely, but the UI and behaviour are
+not redesigned mid-migration. Requirement 9 carves out the exception: a **genuine defect** is fixed
+in the port rather than reproduced. Every such fix is logged in §15 with the observable
+before/after, so a behavioural difference found during testing can still be traced to a deliberate
+decision rather than mistaken for porting drift.
 
 ---
 
@@ -668,3 +652,83 @@ pin; `toString` leaks no secrets.
 
 **Next:** the transport implementation itself — `JschSshTransport.kt` (533 LOC) → dartssh2, then the
 session, SFTP, pool and tunnel manager.
+
+---
+
+## 15. Deliberate behaviour fixes (requirement 9)
+
+Defects found in the Kotlin and **corrected** in the Dart port. Each entry records the observable
+before/after so a difference spotted during testing is traceable to a decision, not to drift.
+
+### 15.1 Log severity was silently misclassified (`inferLevel`)
+
+`RemoteParsers.inferLevel` classified journald lines with:
+
+```
+ERROR: \b(error|fail|failed|fatal|critical|denied|refused|panic|segfault)\b
+WARN:  \b(warn|warning|deprecat|timeout|retry)\b
+```
+
+The **trailing `\b` disabled every stem in both lists.** A stem only matches when the word ends
+exactly there, so `fail` could not match "failure" or "failing", `error` could not match "errors",
+and `deprecat` — plainly written as a stem — could only ever match the literal string "deprecat".
+
+Observable effect in the shipped app, verified against the actual patterns:
+
+| Log line | Before | After |
+|---|---|---|
+| `connection failure` | INFO | **ERROR** |
+| `disk errors detected` | INFO | **ERROR** |
+| `task is failing` | INFO | **ERROR** |
+| `deprecated option in use` | INFO | **WARN** |
+| `deprecation notice` | INFO | **WARN** |
+| `warned twice` | INFO | **WARN** |
+| `retrying now` | INFO | **WARN** |
+| `timeouts observed` | INFO | **WARN** |
+
+Real errors were being shown as ordinary INFO lines in the Monitor → Logs view and in Fleet
+Broadcast output — exactly backwards for triage. **Fixed** by dropping the trailing boundary from
+both patterns; the leading `\b` is kept so a stem must still start a word and cannot match
+mid-token ("shutdown" stays INFO). Pinned by tests both ways.
+
+**This defect exists in the shipped Android app today** and is worth a separate fix on `main` if
+the Kotlin build ships again before cut-over.
+
+
+### 2026-08-03 — Session 6: the dartssh2 transport, and a policy change
+
+Ported `JschSshTransport.kt` → `lib/data/ssh/dartssh_transport.dart`, with
+`classifyTerminalClose` split out to `terminal_close.dart` and `Utf8StreamDecoder.kt` brought
+forward from Phase 6 (the transport needs it to decode chunked output).
+
+**The rewrite is substantially smaller than the original, and that is the point.** JSch's channel
+streams are blocking, so the Kotlin needed a dedicated daemon thread per shell reading into a
+bounded coroutine `Channel` to get backpressure, plus a 50 ms `available()` polling loop in `exec`
+because a blocking read could not be cancelled. dartssh2 exposes `Stream<Uint8List>` directly and
+Dart streams carry backpressure natively, so the reader thread, the bounded channel, the
+`trySendBlocking` dance and both polling loops all disappear.
+
+What was deliberately **kept** is the behaviour that was hard-won:
+- at-most-once semantics — a failed command is never retried, because the request may already have
+  reached the server; the suspect connection is evicted instead;
+- the exit-status/EOF classification distinguishing a real `exit` from a network drop (a drop must
+  never normalise to status 0, or a tmux-backed session with running work is killed instead of
+  reconnected);
+- secrets travel via channel stdin, never inside the command string, so they cannot appear in `ps`,
+  shell history or sshd debug logs. Dart needs `stdin.close()` after the write, or a command reading
+  to EOF (`sudo -S`) hangs forever.
+
+Jump hosts use `forwardLocal` through the bastion, mirroring `ssh -J`, with the target's own host
+key still verified end-to-end and the bastion torn down with the target.
+
+**Requirement 9 arrived mid-session: fix real bugs found in the Kotlin rather than reproducing
+them.** That reverses the earlier decision on §7.8, which is now fixed and documented in the new
+§15. Re-examining it turned up that the *same* boundary flaw affects the ERROR pattern, which is
+the more serious half: "connection failure", "disk errors detected" and "task is failing" were all
+classified INFO in the shipped app. Fixed both, kept the leading `\b` so stems still cannot match
+mid-token, and pinned it with tests in both directions.
+
+**Verified — 253 tests pass, `flutter analyze` clean.**
+
+**Next:** the remaining SSH files — `SshSessionPool` (a richer pool than the map used here),
+`JschSession`, `JschSftp`, `SshTunnelManager` — then Phase 6, the terminal emulator.

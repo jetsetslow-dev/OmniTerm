@@ -34,7 +34,8 @@ void main() {
   group('parseProcesses', () {
     test('parses ps output', () {
       // Columns: pid user %cpu %mem vsz etime stat comm
-      const out = '1234 root      2.5  1.2 123456 01:02:03 S    nginx\n'
+      const out =
+          '1234 root      2.5  1.2 123456 01:02:03 S    nginx\n'
           '5678 deploy   10.0  4.0 654321 10-00:00 Rl   node';
       final procs = parseProcesses(out);
       expect(procs, hasLength(2));
@@ -47,7 +48,8 @@ void main() {
     });
 
     test('reads etime and skips the header row', () {
-      const out = 'PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
+      const out =
+          'PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
           '101 root 12.5 3.2 204800 01:23:45 R nginx\n'
           '202 www 1.0 0.5 102400 2-03:04:05 S php-fpm';
       final procs = parseProcesses(out);
@@ -73,7 +75,8 @@ void main() {
 
   group('parseServices', () {
     test('parses systemctl units', () {
-      const out = 'ssh.service     loaded active running OpenBSD Secure Shell server\n'
+      const out =
+          'ssh.service     loaded active running OpenBSD Secure Shell server\n'
           'cron.service    loaded active running Regular background program processing daemon\n'
           'broke.service   loaded failed failed  A broken unit';
       final svcs = parseServices(out);
@@ -97,7 +100,8 @@ void main() {
     });
 
     test('reads enabled state from the ---ENABLED--- section', () {
-      const out = 'ssh.service loaded active running Secure Shell\n'
+      const out =
+          'ssh.service loaded active running Secure Shell\n'
           'cron.service loaded active running Cron\n'
           '---ENABLED---\n'
           'ssh.service enabled\n'
@@ -108,7 +112,8 @@ void main() {
     });
 
     test('parses OpenRC rc-status output', () {
-      const out = '---OPENRC---\n'
+      const out =
+          '---OPENRC---\n'
           ' sshd   [  started  ]\n'
           ' crond  [  crashed  ]\n'
           ' nfs    [  stopped  ]\n'
@@ -118,8 +123,11 @@ void main() {
       expect(svcs[0].status, 'running');
       expect(svcs[1].status, 'failed');
       expect(svcs[2].status, 'dead');
-      expect(svcs.every((s) => s.enabled), isTrue,
-          reason: 'runlevel attachment is OpenRC\'s closest notion of "enabled"');
+      expect(
+        svcs.every((s) => s.enabled),
+        isTrue,
+        reason: 'runlevel attachment is OpenRC\'s closest notion of "enabled"',
+      );
     });
   });
 
@@ -160,17 +168,30 @@ void main() {
       }
     });
 
-    test('"deprecated" does NOT raise WARN — a faithful port of an upstream bug', () {
-      // The Kotlin pattern is \b(warn|warning|deprecat|timeout|retry)\b. The trailing \b makes the
-      // "deprecat" stem dead: it can only ever match the bare word "deprecat", never "deprecated"
-      // or "deprecation", because the boundary fails between 't' and 'e'. ("warn" is likewise dead
-      // for "warned", though the separate "warning" alternative covers the common case.)
-      //
-      // This is reproduced deliberately rather than fixed: the migration must not change observable
-      // behaviour, or a real behavioural difference found during testing becomes indistinguishable
-      // from an intentional change. Tracked in MIGRATION.md §7.8 to fix after parity is reached.
-      final logs = parseJournal('2026-05-30T10:41:22+0000 host app[1]: deprecated option in use');
-      expect(logs.single.level, 'INFO');
+    test('severity stems match whole words, fixing the upstream boundary bug', () {
+      // The Kotlin patterns were \b(...)\b, and the trailing \b disabled every stem: "fail" could
+      // not match "failure", "error" could not match "errors", and "deprecat" — plainly written as
+      // a stem — matched only the literal string "deprecat". These lines were all INFO in the
+      // shipped app. See MIGRATION.md §7.8.
+      String levelOf(String message) =>
+          parseJournal('2026-05-30T10:41:22+0000 host app[1]: $message').single.level;
+
+      expect(levelOf('connection failure'), 'ERROR');
+      expect(levelOf('disk errors detected'), 'ERROR');
+      expect(levelOf('task is failing'), 'ERROR');
+      expect(levelOf('deprecated option in use'), 'WARN');
+      expect(levelOf('deprecation notice'), 'WARN');
+      expect(levelOf('warned twice'), 'WARN');
+      expect(levelOf('retrying now'), 'WARN');
+      expect(levelOf('timeouts observed'), 'WARN');
+    });
+
+    test('a stem still has to start a word, so it cannot match mid-token', () {
+      String levelOf(String message) =>
+          parseJournal('2026-05-30T10:41:22+0000 host app[1]: $message').single.level;
+      // The leading \b is retained: these must not be dragged up to ERROR/WARN.
+      expect(levelOf('shutdown complete'), 'INFO');
+      expect(levelOf('unswarned'), 'INFO');
     });
 
     test('fleet entries prefix a non-system source', () {
@@ -191,10 +212,9 @@ void main() {
       expect(parseRuntimeList('  podman  \n'), {'podman'});
       expect(parseRuntimeList(''), isEmpty);
       // Noise (motd banners, errors) must not register as a runtime.
-      expect(
-        parseRuntimeList('Welcome to host\ndocker\nbash: podman: command not found'),
-        {'docker'},
-      );
+      expect(parseRuntimeList('Welcome to host\ndocker\nbash: podman: command not found'), {
+        'docker',
+      });
     });
   });
 
@@ -229,7 +249,8 @@ void main() {
 
     test('recognises paused and restarting states', () {
       // A paused container reports e.g. "Up 3 hours (Paused)" — "Up" must not win over "Paused".
-      const out = 'a\tone\timg\tUp 3 hours (Paused)\t\t\t\t\t\t\n'
+      const out =
+          'a\tone\timg\tUp 3 hours (Paused)\t\t\t\t\t\t\n'
           'b\ttwo\timg\tRestarting (1) 5 seconds ago\t\t\t\t\t\t';
       final containers = parseDockerPs(out);
       expect(containers[0].status, 'paused');
@@ -265,8 +286,9 @@ void main() {
   });
 
   test('container resources carry their runtime prefix', () {
-    final images =
-        parseDockerImages('podman\tsha256:abc1234567890\tnginx\tlatest\t187MB\t2 days ago');
+    final images = parseDockerImages(
+      'podman\tsha256:abc1234567890\tnginx\tlatest\t187MB\t2 days ago',
+    );
     expect(images.single.runtime, 'podman');
     expect(images.single.id, 'abc123456789', reason: 'sha256: prefix stripped, then 12 chars');
 
@@ -287,7 +309,8 @@ void main() {
 
   group('parseMetrics — Linux', () {
     test('parses a GNU top / free / df probe', () {
-      const out = '@CPU\n'
+      const out =
+          '@CPU\n'
           '%Cpu(s):  3.4 us,  1.0 sy,  0.0 ni, 95.6 id,  0.0 wa\n'
           '@MEM\n'
           'Mem:  8000000000 2000000000 1000000000 0 5000000000 6000000000\n'
@@ -317,7 +340,8 @@ void main() {
       // BusyBox `top` uses "CPU: ... 98% idle" (no GNU "id"), and `free -b` may be absent so the
       // MEM section is empty — parseMetrics must fall back to /proc/meminfo (kB) rather than
       // silently reporting 0% memory.
-      const out = '@CPU\n'
+      const out =
+          '@CPU\n'
           'CPU:   1% usr   0% sys   0% nic  98% idle   0% io   0% irq   0% sirq\n'
           '@MEM\n'
           '@MEMINFO\n'
@@ -366,7 +390,8 @@ void main() {
     });
 
     test('SMART health is matched to a mount by whole-disk device', () {
-      const out = '@DISKS\n'
+      const out =
+          '@DISKS\n'
           '/dev/sda1 100000000000 40000000000 60000000000 40% /\n'
           '/dev/nvme0n1p2 500000000000 100000000000 400000000000 20% /data\n'
           '@SMART\n'
@@ -374,8 +399,11 @@ void main() {
           'nvme0n1\tFAILED';
       final disks = parseMetrics(out).disks;
       expect(disks.firstWhere((d) => d.mount == '/').health, 'PASSED');
-      expect(disks.firstWhere((d) => d.mount == '/data').health, 'FAILED',
-          reason: 'the p2 partition suffix must be stripped to reach nvme0n1');
+      expect(
+        disks.firstWhere((d) => d.mount == '/data').health,
+        'FAILED',
+        reason: 'the p2 partition suffix must be stripped to reach nvme0n1',
+      );
     });
 
     test('proc count falls back to the LOAD section when @PROC is absent', () {
@@ -385,7 +413,8 @@ void main() {
   });
 
   test('parseMetrics — Windows populates cpu, mem, disk, uptime and procs', () {
-    const out = '@OS\nWindows\n@WINCPU\n23\n@WINMEM\n8589934592 4294967296\n'
+    const out =
+        '@OS\nWindows\n@WINCPU\n23\n@WINMEM\n8589934592 4294967296\n'
         '@WINDISK\nC: 107374182400 53687091200\n@WINUP\n3600\n@WINPROC\n140';
     final m = parseMetrics(out);
     expect(m.os, 'Windows');
@@ -399,7 +428,8 @@ void main() {
   });
 
   test('parseMetrics — Darwin derives uptime from boot time and now', () {
-    const out = '@OS\nDarwin\n@MEMSIZE\n17179869184\n'
+    const out =
+        '@OS\nDarwin\n@MEMSIZE\n17179869184\n'
         '@VMSTAT\nMach Virtual Memory Statistics: (page size of 4096 bytes)\n'
         'Pages free:                          100000.\n'
         'Pages inactive:                      100000.\n'
@@ -417,7 +447,8 @@ void main() {
 
   group('parseDisks', () {
     test('filters pseudo filesystems and keeps real mounts', () {
-      const df = '/dev/sda1 100000000000 40000000000 60000000000 40% /\n'
+      const df =
+          '/dev/sda1 100000000000 40000000000 60000000000 40% /\n'
           'tmpfs 8000000000 0 8000000000 0% /dev/shm\n'
           '/dev/sdb1 500000000000 100000000000 400000000000 20% /data\n'
           'overlay 100000000000 50000000000 50000000000 50% /var/lib/docker/overlay2/x';
@@ -458,7 +489,8 @@ void main() {
 
   group('/proc parsing', () {
     test('parseDiskIo covers whole disks only', () {
-      const ds = '8 0 sda 1000 0 2000 0 500 0 4000 0 0 0 0\n'
+      const ds =
+          '8 0 sda 1000 0 2000 0 500 0 4000 0 0 0 0\n'
           '8 1 sda1 100 0 200 0 50 0 400 0 0 0 0\n'
           '259 0 nvme0n1 10 0 80 0 5 0 16 0 0 0 0';
       final io = parseDiskIo(ds);
@@ -469,7 +501,8 @@ void main() {
     });
 
     test('parseProcStat extracts idle and total per core', () {
-      const stat = 'cpu  100 0 100 700 100 0 0 0 0 0\n'
+      const stat =
+          'cpu  100 0 100 700 100 0 0 0 0 0\n'
           'cpu0 50 0 50 350 50 0 0 0 0 0\n'
           'cpu1 50 0 50 350 50 0 0 0 0 0';
       final m = parseProcStat(stat);
@@ -506,12 +539,16 @@ void main() {
         stat.writeln('cpu$i 0 0 0 0 0');
       }
       final prev = parseProcStat(stat.toString());
-      expect(computePerCoreCpuDeltas(prev, prev), hasLength(12),
-          reason: 'cpu10 must not sort between cpu1 and cpu2 and drop cores');
+      expect(
+        computePerCoreCpuDeltas(prev, prev),
+        hasLength(12),
+        reason: 'cpu10 must not sort between cpu1 and cpu2 and drop cores',
+      );
     });
 
     test('parseNetDev skips loopback and reads rx/tx', () {
-      const dev = 'Inter-|   Receive                                |  Transmit\n'
+      const dev =
+          'Inter-|   Receive                                |  Transmit\n'
           ' face |bytes    packets errs drop fifo frame compressed multicast|bytes    packets\n'
           '    lo:  1000      10    0    0    0     0          0         0    1000      10\n'
           '  eth0: 5000000   5000  0    0    0     0          0         0   2000000    3000';
@@ -524,7 +561,8 @@ void main() {
 
   group('parseTransferConflicts', () {
     test('classifies verdicts and defaults the safe way round', () {
-      const out = 'same.txt\tIDENTICAL\t100\t100\t1000\t2000\n'
+      const out =
+          'same.txt\tIDENTICAL\t100\t100\t1000\t2000\n'
           'diff.txt\tDIFFERENT\t100\t200\t1000\t2000\n'
           'folder\tDIR\t0\t0\t1000\t2000\n'
           'mystery.txt\tWHO_KNOWS\t100\t100\t1000\t2000';
@@ -532,8 +570,11 @@ void main() {
       expect(conflicts, hasLength(4));
 
       expect(conflicts[0].verdict, ConflictVerdict.identical);
-      expect(conflicts[0].action, ConflictAction.overwrite,
-          reason: 'overwriting proven-identical bytes destroys nothing');
+      expect(
+        conflicts[0].action,
+        ConflictAction.overwrite,
+        reason: 'overwriting proven-identical bytes destroys nothing',
+      );
 
       expect(conflicts[1].verdict, ConflictVerdict.different);
       expect(conflicts[1].action, ConflictAction.keepBoth);
@@ -541,8 +582,11 @@ void main() {
       expect(conflicts[2].verdict, ConflictVerdict.directory);
       expect(conflicts[2].action, ConflictAction.keepBoth);
 
-      expect(conflicts[3].verdict, ConflictVerdict.unknown,
-          reason: 'an unclassifiable clash must never be treated as identical');
+      expect(
+        conflicts[3].verdict,
+        ConflictVerdict.unknown,
+        reason: 'an unclassifiable clash must never be treated as identical',
+      );
       expect(conflicts[3].action, ConflictAction.keepBoth);
     });
 
@@ -566,7 +610,10 @@ void main() {
       expect(composeStackWorkingDir('/srv/app', '/elsewhere/docker-compose.yml'), '/srv/app');
       // podman-compose case: config_files label set, working_dir absent.
       expect(
-        composeStackWorkingDir('', '/srv/stacks/app/docker-compose.yml,/srv/stacks/app/override.yml'),
+        composeStackWorkingDir(
+          '',
+          '/srv/stacks/app/docker-compose.yml,/srv/stacks/app/override.yml',
+        ),
         '/srv/stacks/app',
       );
       // A relative config file gives no usable directory.
@@ -589,9 +636,6 @@ void main() {
   });
 
   test('parseSmart maps device to health', () {
-    expect(parseSmart('sda\tPASSED\nsdb\tFAILED\nbroken-line'), {
-      'sda': 'PASSED',
-      'sdb': 'FAILED',
-    });
+    expect(parseSmart('sda\tPASSED\nsdb\tFAILED\nbroken-line'), {'sda': 'PASSED', 'sdb': 'FAILED'});
   });
 }

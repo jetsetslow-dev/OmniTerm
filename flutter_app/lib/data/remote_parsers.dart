@@ -836,17 +836,18 @@ String _extractTime(String ts) {
   return m?.group(1) ?? afterT.takeChars(8);
 }
 
-final _errorRe = RegExp(r'\b(error|fail|failed|fatal|critical|denied|refused|panic|segfault)\b');
-
-/// Ported verbatim from Kotlin, **including a latent bug**: the trailing `\b` makes the `deprecat`
-/// stem dead, since the boundary fails between the 't' and the 'e' of "deprecated". It can only
-/// match the bare word "deprecat". ("warn" is similarly dead for "warned", though the separate
-/// "warning" alternative covers the common case.)
+/// Severity vocabulary, matched as **word-initial stems** rather than whole words.
 ///
-/// Kept as-is on purpose. Changing it here would make the Flutter app classify log levels
-/// differently from the shipped app, so a behavioural difference found while testing the migration
-/// could no longer be assumed to be a porting error. Fix after parity — MIGRATION.md §7.8.
-final _warnRe = RegExp(r'\b(warn|warning|deprecat|timeout|retry)\b');
+/// The Kotlin originals were `\b(...)\b`, and the trailing `\b` silently disabled every stem in
+/// both lists: "fail" could not match "failure" or "failing", "error" could not match "errors", and
+/// "deprecat" — obviously written as a stem — could only ever match the bare string "deprecat". In
+/// the shipped app "connection failure", "disk errors detected" and "deprecated option in use" are
+/// therefore all classified INFO, which is exactly backwards for log triage.
+///
+/// Dropping the trailing boundary fixes all of them at once. The leading `\b` is kept, so a stem
+/// still has to start a word and cannot match mid-token. See MIGRATION.md §7.8.
+final _errorRe = RegExp(r'\b(error|fail|fatal|critical|denied|refused|panic|segfault)');
+final _warnRe = RegExp(r'\b(warn|deprecat|timeout|retry)');
 
 String _inferLevel(String text) {
   final l = text.toLowerCase();
