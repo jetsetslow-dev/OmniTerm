@@ -12,6 +12,52 @@ These rules apply to every contributor and automation tool working in this repos
   build, test, lint, migration, SBOM, signing-input, or dependency-verification behavior changes.
 - Run `git diff --check` and `git diff --cached --check` before committing.
 
+## Open every screen you touched on a real device
+
+JVM unit tests are not evidence that a screen still opens. They run on the desktop JDK, which does
+not share Android's framework, resources, or regex engine. A change can hold a full green JVM suite
+and still crash on first navigation. This section is mandatory for any change to UI, parsing, or
+state that a screen reads.
+
+- Before the final commit, install the debug APK on an API 34+ device or emulator and open **every
+  screen the change can reach**, not only the one named in the ticket. Class-initializer failures
+  surface on first navigation, so a screen that merely composes the changed file is impacted.
+- Use `scripts/test-hosts.sh up` for the disposable SSH fleet and `E2eLabHostProvisioner` to seed
+  the `E2E Foreground Demo` host. Never validate against a personal or production host.
+- `E2eAppSurfaceStressTest` is the required sweep: it walks every route, subtab, theme, and rotation.
+  Run it with `-e omniterm_e2e_surfaces yes`. Add `-e omniterm_e2e_sftp_home <path>` when the fixture
+  home is not `/home/<user>` (the Docker fleet uses `/config`).
+- Every `E2e*` suite is opt-in behind `assumeTrue(...)` on an instrumentation argument. A plain
+  `connectedAndroidTest` **skips them and still reports BUILD SUCCESSFUL**. Never cite a connected
+  run as screen coverage without naming the arguments you passed and the test count that executed.
+- Gradle reinstalls the APK per `connectedAndroidTest` invocation, which wipes app data and destroys
+  the seeded host. Provision and exercise in the same invocation, or install both APKs once and
+  drive `adb shell am instrument` directly so state survives between steps.
+- A green on-device test proves nothing until you have seen it fail. When a device-only defect is
+  fixed, re-run the guard against the unfixed code and confirm it fails for the expected reason.
+- Tests must be host independent wherever that is achievable. Every fact a test asserts should come
+  from a fixture this repository controls, not from whatever the developer machine happens to be
+  running. The Network Tools port scan used to assert port 22 was open, which was really an
+  assertion that the workstation runs sshd — it passed or failed for reasons unrelated to the app.
+  It now scans only ports the disposable fleet publishes. When a suite genuinely needs something
+  external, make it explicit and overridable rather than implicit.
+- Device suites must run against the fixtures in this repository, and the repository's own fleet is
+  the DEFAULT — a personal lab is the override, never the other way round. Do not hardcode a path,
+  account, or open port that exists only on one contributor's machine; parameterize it through an
+  instrumentation argument whose default is what a clean checkout provides.
+- Large test inputs are generated and committed, never hand-written. The 400-service Compose stack
+  lives at `scripts/test-hosts/fixtures/large-stack/compose.yml`, is produced by
+  `ComposeLargeStackFixture`, and is mounted read-only into the disposable fleet so a test cannot
+  mutate its own input. `ComposeLargeStackFixtureTest` regenerates it and fails on any drift; change
+  it by editing the generator and rerunning with `-Domniterm.regenerateFixture=true`, then commit
+  the result. Generate through the app's own renderer, not an independent writer, whenever a test
+  asserts a render round-trip — otherwise the fixture drifts the first time formatting changes and
+  the failure impersonates a parser bug.
+- `scripts/local-pr-check.sh` runs the whole instrumentation package; the hosted PR job stays
+  data-layer-only on purpose. It is pinned to API 29, which predates the ICU regex engine, so it
+  cannot gate modern-device defects. Screen coverage is a local API 34+ responsibility until hosted
+  CI can boot API >= 36. Do not "align" the two by narrowing the local run.
+
 ## Keep tests platform-safe
 
 - Put platform-neutral logic in ordinary JVM tests. Do not place pure coroutine, parser, ordering,
@@ -30,6 +76,12 @@ These rules apply to every contributor and automation tool working in this repos
 - An emulator satisfies the migration matrix; no physical device is required. A crash-looping
   emulator misreports as an app bug (`am start` says the launcher activity does not exist even
   though `adb install` succeeded) — confirm against a system app before blaming the APK.
+- Android's `java.util.regex` is backed by ICU, not the JDK implementation, and ICU is stricter.
+  A bare `}` or `]` outside a character class is a literal on desktop but a `PatternSyntaxException`
+  on device. A top-level `val Regex(...)` that throws becomes an `ExceptionInInitializerError` that
+  kills the whole screen on first touch, so JVM tests over that regex all pass while the feature is
+  unopenable. Escape every literal brace and bracket, and treat any regex reachable from UI as
+  device-verified only.
 - Do not use `kotlinx.coroutines.test.runTest` around production work dispatched to real
   `Dispatchers.IO`/`Default`; virtual timeout advancement can race real threads. Inject a test
   dispatcher or use a plain JVM `runBlocking` integration test with bounded real-time waits.

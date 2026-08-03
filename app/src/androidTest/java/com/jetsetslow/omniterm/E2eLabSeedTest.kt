@@ -32,6 +32,11 @@ class E2eLabSeedTest {
         }
 
         val host = requireArg(args.getString("host"), "host")
+        // The disposable Docker fleet publishes SSH on 2201, not 22 -- and on a developer machine
+        // port 22 is usually that machine's own sshd, so defaulting silently would seed a lab that
+        // points at the workstation instead of the container. Explicit, with the physical-lab
+        // default preserved.
+        val port = args.getString("port")?.toIntOrNull() ?: 22
         val username = requireArg(args.getString("username"), "username")
         val password = requireArg(args.getString("password"), "password")
         val labPassword = requireArg(args.getString("lab_password"), "lab_password")
@@ -56,6 +61,7 @@ class E2eLabSeedTest {
             ServerEntity(
                 name = "$PREFIX $suffix",
                 host = host,
+                port = port,
                 username = username,
                 groupName = "E2E Lab",
                 authPassword = password,
