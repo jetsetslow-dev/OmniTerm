@@ -2,24 +2,23 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Port `AppRepository.kt` (191 LOC) → `lib/data/app_repository.dart`.** The DAOs
-> (`lib/data/dao/`) and `SecretStore` are done.
+> **The data-access layer is complete** (tables, migrations, DAOs, repository, SecretStore).
+> **Phase 7 — the UI, ~36k LOC, the largest remaining body of work.**
 >
-> The repository is the **only** place secrets are encrypted or decrypted — see its 22
-> `SecretStore.encrypt/decrypt` call sites covering server/sudo/proxy passwords, private keys,
-> profile passwords and share passwords. Two things must happen there:
-> 1. mirror that encrypt-on-write / decrypt-on-read boundary exactly, so no plaintext ever reaches
->    the database and no ciphertext ever reaches the UI;
-> 2. wire `SecretStore.onUpgraded` to write the re-encrypted value back — that is what makes the
->    §7.10 legacy migration actually persist rather than re-running on every read.
+> Start with `ui/AppViewModel.kt` (12,310 lines) per §5.2: split into per-feature ViewModels
+> (`ServersViewModel`, `ShellViewModel`, `SftpViewModel`, `MonitorViewModel`, `InfraViewModel`,
+> `FleetViewModel`, `ToolsViewModel`) over a shared `AppState`, **keeping every public member name**
+> so the screen ports stay mechanical. They talk to `AppRepository` and never to `SecretStore`.
 >
-> ⚠️ **§7.10 is still an open blocker:** without a small Android method channel decrypting
-> `enc:v1:` under the Keystore alias `omniterm_local_secret_key`, every existing user's saved
-> passwords and keys read as blank after the update.
+> Then screens in the §9 order: Servers → Monitor → Infra → Fleet → SFTP → Tools. §4 is the exact
+> layout contract (7 bottom-nav items, the compact-terminal-IME rule, global overlays).
 >
-> **Then Phase 7** (§3.6, ~36k LOC): split `ui/AppViewModel.kt` per §5.2, then screens in the §9
-> order. Give every interactive widget a stable `Key` **as it is written** — retrofitting them for
-> the Patrol suite later is far more expensive.
+> Give every interactive widget a stable `Key` **as it is written** — retrofitting them across 36k
+> LOC for the Patrol suite later is far more expensive.
+>
+> ⚠️ **Two open blockers, neither of which blocks Phase 7:** §7.10 (Android bridge for legacy
+> credential decryption — without it every existing user's saved passwords read blank) and §7.1
+> (SMB implementation choice).
 >
 > Working rules that are easy to lose: never `git add -A` (`shared/` must stay untracked, stage
 > explicit paths); `export PATH="/home/sbvino/sdks/flutter/bin:$PATH"`; run `flutter analyze` and
@@ -32,7 +31,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** Finishing the data-access layer (SecretStore + DAOs done; repository next) — see [Progress log](#14-progress-log)
+- **Status:** Data-access layer complete. **Phase 7 (UI, ~36k LOC) next** — see [Progress log](#14-progress-log)
 
 ---
 
@@ -120,7 +119,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | `data/Entities.kt` | 271 | `lib/data/tables.dart` (**14** tables) | ✅ |
 | `data/CrashLog.kt` | 206 | `lib/data/crash_log.dart` | ⬜ |
 | `data/RemoteModels.kt` | 203 | `lib/data/remote_models.dart` | ✅ |
-| `data/AppRepository.kt` | 191 | `lib/data/app_repository.dart` | ⬜ |
+| `data/AppRepository.kt` | 191 | `lib/data/app_repository.dart` | ✅ |
 | `data/BiometricCryptoGate.kt` | 167 | `lib/platform/biometric_gate.dart` (local_auth) | ⬜ |
 | `data/HealthScoring.kt` | 119 | `lib/domain/health_scoring.dart` | ✅ |
 | `data/SecretStore.kt` | 71 | `lib/platform/secret_store.dart` | ✅ (⚠️ needs the §7.10 Android bridge) |
@@ -1247,3 +1246,47 @@ is a lie until re-probed), auth state tracked independently of TCP reachability,
 
 **Next:** `AppRepository.kt`, which owns the encrypt/decrypt boundary and is where the §7.10 legacy
 upgrade must be persisted.
+
+### 15.3 Insert of a new record overwrote the previous one (defect introduced by the port)
+
+Drift's `toCompanion(false)` carries the primary key through even when it is 0, and SQLite accepts 0
+as a literal rowid. Room, by contrast, omits an `autoGenerate` key when it is 0. Combined with
+`InsertMode.replace`, the first cut of `AppRepository` therefore wrote **rowid 0 for every new
+record and silently replaced the previous one** — adding a second host would have deleted the first,
+and the same for keys, credential profiles and shares.
+
+Caught by a repository test asserting that two inserted hosts both survive. Fixed with
+`_newOrExisting`, which makes the id absent when it is 0. Pinned by tests in all four tables.
+
+
+### 2026-08-04 — Session 17: the repository — data-access layer complete
+
+Ported `AppRepository.kt`. With it the whole data-access layer is done: tables, the v22 migration
+chain, DAOs, the repository, and `SecretStore`.
+
+The repository's real job is **credential hygiene**, and the port keeps that concentrated in exactly
+one place: every secret is encrypted on the way in and decrypted on the way out, so no plaintext
+reaches the database and no ciphertext reaches the UI. The ViewModels deliberately get no access to
+`SecretStore` at all — scattering that boundary is how a password eventually gets written in the
+clear. Tests assert it from both directions: they read the raw columns to prove no plaintext is
+stored, and read through the repository to prove the UI sees plaintext.
+
+**A defect I introduced, caught by those tests (§15.3).** Drift's `toCompanion(false)` carries the
+primary key through even when it is 0, and SQLite accepts 0 as a literal rowid — where Room omits an
+`autoGenerate` key when it is 0. With `InsertMode.replace` that meant **every new record was written
+as rowid 0 and silently replaced the previous one**: adding a second host would have deleted the
+first, and likewise for keys, profiles and shares. Fixed and pinned in all four tables.
+
+Behaviours preserved deliberately:
+- `deleteServerAndDependents` is **transactional** — a half-deleted host leaves orphaned alert rules
+  firing against an id that resolves to nothing.
+- `keepOnlyServers` keeps its `Int.MIN_VALUE` sentinel, because an empty `IN ()` is handled
+  inconsistently across SQLite versions; fleet-wide rows (serverId 0) survive via the DAO guard.
+- Alert-history limits are **clamped at the repository**, not trusted from callers: a 0 would wipe
+  the history on the next prune.
+- Only `app_pin` is an encrypted setting; encrypting the theme name would make it unreadable to no
+  benefit.
+
+**Verified — 502 tests pass, `flutter analyze` clean.**
+
+**Next:** Phase 7 — the ~36k LOC of UI, starting with the `AppViewModel` split.
