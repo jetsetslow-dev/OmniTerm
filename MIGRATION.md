@@ -2,23 +2,24 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **The data-access layer is complete** (tables, migrations, DAOs, repository, SecretStore).
-> **Phase 7 — the UI, ~36k LOC, the largest remaining body of work.**
+> **Phase 7, continuing the `AppViewModel` split (§5.2).** Done:
+> `lib/ui/view_model/app_state.dart` (shared host list, selection, settings) and
+> `servers_view_model.dart`.
 >
-> Start with `ui/AppViewModel.kt` (12,310 lines) per §5.2: split into per-feature ViewModels
-> (`ServersViewModel`, `ShellViewModel`, `SftpViewModel`, `MonitorViewModel`, `InfraViewModel`,
-> `FleetViewModel`, `ToolsViewModel`) over a shared `AppState`, **keeping every public member name**
-> so the screen ports stay mechanical. They talk to `AppRepository` and never to `SecretStore`.
+> Next ViewModels, each reading from `AppState` rather than holding its own copy of the host list:
+> `MonitorViewModel`, `InfraViewModel`, `FleetViewModel`, `SftpViewModel`, `ShellViewModel`,
+> `ToolsViewModel`. Keep every public member name from `ui/AppViewModel.kt` so the screen ports stay
+> mechanical. ViewModels use `AppRepository` and must **never** touch `SecretStore`.
 >
-> Then screens in the §9 order: Servers → Monitor → Infra → Fleet → SFTP → Tools. §4 is the exact
-> layout contract (7 bottom-nav items, the compact-terminal-IME rule, global overlays).
+> Then the screens themselves, in the §9 order (Servers → Monitor → Infra → Fleet → SFTP → Tools).
+> §4 is the exact layout contract. Replace the placeholders in `lib/ui/app_scaffold.dart` as each
+> lands.
 >
 > Give every interactive widget a stable `Key` **as it is written** — retrofitting them across 36k
 > LOC for the Patrol suite later is far more expensive.
 >
-> ⚠️ **Two open blockers, neither of which blocks Phase 7:** §7.10 (Android bridge for legacy
-> credential decryption — without it every existing user's saved passwords read blank) and §7.1
-> (SMB implementation choice).
+> ⚠️ **Two open blockers, neither blocking Phase 7:** §7.10 (Android bridge for legacy credential
+> decryption — without it every existing user's saved passwords read blank) and §7.1 (SMB choice).
 >
 > Working rules that are easy to lose: never `git add -A` (`shared/` must stay untracked, stage
 > explicit paths); `export PATH="/home/sbvino/sdks/flutter/bin:$PATH"`; run `flutter analyze` and
@@ -31,7 +32,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** Data-access layer complete. **Phase 7 (UI, ~36k LOC) next** — see [Progress log](#14-progress-log)
+- **Status:** Phase 7 begun — `AppState` + `ServersViewModel` done; remaining ViewModels + screens next — see [Progress log](#14-progress-log)
 
 ---
 
@@ -154,7 +155,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 ### 3.6 UI (36,033 LOC — the bulk)
 | File | LOC | Flutter destination | Status |
 |---|---|---|---|
-| `ui/AppViewModel.kt` | **12310** | `lib/ui/view_model/` (split by feature, see §5.2) | ⬜ |
+| `ui/AppViewModel.kt` | **12310** | `lib/ui/view_model/` (split by feature, §5.2) | 🟨 `AppState` + `ServersViewModel` done |
 | `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | ⬜ |
 | `ui/SftpScreen.kt` | 3474 | `lib/ui/screens/sftp/` | ⬜ |
 | `ui/ShellScreen.kt` | 3175 | `lib/ui/screens/shell/` | ⬜ |
@@ -1290,3 +1291,34 @@ Behaviours preserved deliberately:
 **Verified — 502 tests pass, `flutter analyze` clean.**
 
 **Next:** Phase 7 — the ~36k LOC of UI, starting with the `AppViewModel` split.
+
+### 2026-08-04 — Session 18: Phase 7 begins — AppState and the first ViewModel
+
+Started the §5.2 split of `AppViewModel.kt` (12,310 lines) with the two pieces everything else
+hangs off: `AppState` (the shared host list, selection and persisted settings) and
+`ServersViewModel`.
+
+The shape matters more than the volume here. Each feature ViewModel reads the host list **from
+`AppState`** rather than keeping its own copy — two copies of the fleet is how a screen ends up
+acting on a host the user already deleted. And no ViewModel gets access to `SecretStore`: the
+encrypt/decrypt boundary stays entirely inside `AppRepository`, because widening it to the
+presentation layer is how a password eventually gets logged.
+
+Three behaviours carried across deliberately, each with a test:
+- **`selectedServer` falls back to the first host** when nothing is chosen, so screens are usable on
+  a cold start — but an id that no longer resolves yields **null, not a substitute**. Silently
+  falling back there would run a command against the wrong machine.
+- **A concrete id is bound as soon as the list loads.** The Kotlin comment explains why: per-tab
+  loaders guard with `server.id != selectedServerId`, so leaving the id null leaves their spinner
+  stuck until a host is picked by hand.
+- **Changing the selection notifies host-scoped draft owners** (the Compose Builder), while
+  re-selecting the same host does not — otherwise a stray tap discards an in-progress edit.
+
+Also pinned: leaving multi-select clears the ticks (a stale tick would let a later bulk action hit a
+host the user can no longer see selected); search matches name **and** address case-insensitively;
+and a malformed `metrics_retention_days` falls back to 7 rather than 0, which would delete all
+history on the next prune.
+
+**Verified — 527 tests pass, `flutter analyze` clean.**
+
+**Next:** the remaining feature ViewModels, then the screens themselves.
