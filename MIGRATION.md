@@ -2,18 +2,20 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 6, the big one:** port
-> `app/src/main/java/com/jetsetslow/omniterm/data/term/TerminalEmulator.kt` (1,177 LOC) →
-> `flutter_app/lib/data/term/`. The tmux control layer and `Utf8StreamDecoder` are already done.
+> **Phase 6 — the emulator state machine.** `terminal_unicode.dart` (width rules) and
+> `terminal_snapshot.dart` (TermSpan/TermRow/TerminalSnapshot) are **done**. What remains from
+> `app/src/main/java/com/jetsetslow/omniterm/data/term/TerminalEmulator.kt` is the class itself
+> (~1,000 LOC), which should land in `flutter_app/lib/data/term/` as **separate files** (§16):
 >
-> Read `docs/TERMINAL_COMPATIBILITY.md` first — it is the spec for the implemented xterm/VT subset.
-> Rendering will use `xterm` 4.0.0's `TerminalView`, but the app's own emulator semantics must be
-> ported where they diverge (§7.2). The existing Kotlin tests are the acceptance criteria:
-> `app/src/test/java/com/jetsetslow/omniterm/Terminal*Test.kt` (advanced resilience, alt-screen exit,
-> and others) — port them alongside.
+> 1. `terminal_cell.dart` — the mutable `Cell` + row helpers (Kotlin lines 22–46).
+> 2. `terminal_parser.dart` — the ground/ESC/CSI/OSC state machine (lines 438–564).
+> 3. `terminal_emulator.dart` — screen buffer, scrollback, cursor, scroll regions, alt screen,
+>    SGR pen, resize/reflow (the rest).
 >
-> Split it by responsibility (§16): parser/state machine, screen buffer, scrollback, and
-> attribute/colour handling belong in separate files rather than one 1,177-line class.
+> Acceptance criteria are the existing Kotlin tests — port them alongside:
+> `app/src/test/java/com/jetsetslow/omniterm/Terminal*Test.kt` plus `BracketedPastePayloadTest`
+> and `CleanShellExitTest`. `docs/TERMINAL_COMPATIBILITY.md` is the contract (defensive subset;
+> unknown sequences are *ignored*, never rendered as text).
 >
 > Working rules that are easy to lose: never `git add -A` (`shared/` must stay untracked, stage
 > explicit paths); `export PATH="/home/sbvino/sdks/flutter/bin:$PATH"`; run `flutter analyze` and
@@ -26,7 +28,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** Phase 6 in progress (tmux control done; `TerminalEmulator` next) — see [Progress log](#14-progress-log)
+- **Status:** Phase 6 in progress (tmux control + terminal width/snapshot types done; emulator state machine next) — see [Progress log](#14-progress-log)
 
 ---
 
@@ -142,7 +144,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 ### 3.5 Terminal (1,486 LOC)
 | File | LOC | Flutter destination | Status |
 |---|---|---|---|
-| `data/term/TerminalEmulator.kt` | 1177 | `lib/data/term/terminal_emulator.dart` — see §7.2 | ⬜ |
+| `data/term/TerminalEmulator.kt` | 1177 | `terminal_unicode.dart` + `terminal_snapshot.dart` ✅; state machine ⬜ | 🟨 |
 | `data/term/TmuxControl.kt` | 232 | `tmux_control_event.dart` + `tmux_control_parser.dart` + `tmux_control_commands.dart` | ✅ |
 | `data/term/Utf8StreamDecoder.kt` | 77 | `lib/data/term/utf8_stream_decoder.dart` | ✅ |
 
@@ -1043,3 +1045,36 @@ injection. A test drives `%0; kill-server` through all four command builders.
 **Verified — 338 tests pass, `flutter analyze` clean.**
 
 **Next:** `TerminalEmulator.kt` (1,177 LOC), the largest single file left in the non-UI layers.
+
+### 2026-08-04 — Session 12: terminal width rules and snapshot types
+
+Started the emulator by taking the two pieces everything else depends on, so the 1,177-line class
+lands in tested slices rather than one unverifiable dump: `terminal_snapshot.dart` (TermSpan,
+TermRow, TerminalSnapshot) and `terminal_unicode.dart` (display-width rules).
+
+**One thing could not be ported directly.** The Kotlin asked the JVM for a code point's Unicode
+general category — `Character.getType` ⇒ `NON_SPACING_MARK` / `COMBINING_SPACING_MARK` /
+`ENCLOSING_MARK` — to decide that a mark occupies zero columns. **Dart ships no Unicode category
+database.** That lookup is replaced by an explicit combining-mark range table, which is what wcwidth
+implementations have always done.
+
+The table is a bounded subset, and that is consistent with the stated contract:
+`docs/TERMINAL_COMPATIBILITY.md` already says "Unicode width remains a bounded terminal subset rather
+than a shaping engine for every complex script". It covers the ranges that actually appear in
+terminal output — Latin/Greek/Cyrillic marks, Hebrew/Arabic points, Indic and South-East Asian
+scripts, CJK/Kana marks, and the emoji modifier machinery. It is deliberately conservative: a code
+point wrongly *included* would be swallowed into the previous cell, which is far more visible than
+one wrongly omitted, which merely takes a column of its own.
+
+Width is not cosmetic — the emulator lays out cells by these numbers, so an error shifts every
+following glyph on the row. Hence 26 tests covering marks from several scripts, the presentation
+selectors (U+FE0E forces one column, U+FE0F two), keycaps, regional-indicator flags, ZWJ sequences,
+skin-tone modifiers, and Hangul jamo (wide lead, zero-width tail).
+
+`terminal_snapshot.dart` keeps colours as packed ARGB ints and imports nothing from Flutter, exactly
+as the Kotlin kept them free of Compose — that is what lets the emulator live in `lib/data/` with the
+dependency arrow pointing away from the UI.
+
+**Verified — 364 tests pass, `flutter analyze` clean.**
+
+**Next:** the emulator state machine, split into cell/parser/emulator files per §16.
