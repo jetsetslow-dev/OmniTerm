@@ -2,21 +2,24 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 7, continuing.** The stack is proven end-to-end: the **Servers screen renders live data**
-> from Drift through `AppState`/`ServersViewModel`, wired into `lib/main.dart` and covered by widget
-> tests. `omni_components.dart` holds the shared surfaces every other screen needs.
+> **Phase 7. Immediate task: the add/edit/duplicate sheet *widget*.**
+> `lib/ui/screens/servers/server_form_state.dart` already holds all of its logic — validation, the
+> secret-resolution rules and the connection-test gate — fully tested. What is missing is the UI:
+> a modal sheet with the Kotlin's three tabs (Connect / Auth / Advanced, `ui/AppUi.kt` line 2213),
+> a Test Connection button calling `SshTransport.testConnection` then `markConnectionTested()`, and
+> save wired to `ServersViewModel.saveServer` / `updateServer`.
+> **Until it exists the app cannot create a host at all**, so the Servers screen is read-only.
 >
-> Next, in the §9 order — for each: a feature ViewModel reading from `AppState`, then the screen,
-> replacing its placeholder in `lib/ui/app_scaffold.dart`:
-> Monitor → Infra → Fleet → SFTP → Tools, plus the Servers **add/edit/duplicate sheets**
-> (`AddServerSheet`, `ui/AppUi.kt` line 2213) which are not yet ported.
+> Then, in the §9 order — for each: a feature ViewModel reading from `AppState`, then the screen,
+> replacing its placeholder in `lib/ui/app_scaffold.dart`: Monitor → Infra → Fleet → SFTP → Tools.
 >
-> **Two conventions established by the Servers screen — follow both:**
-> 1. Every interactive widget gets a stable `ValueKey('<screen>.<element>')`. The Patrol suite has
->    no native view tree to fall back on.
-> 2. Anything reading an observable singleton (`HostDisplay`) must **listen** to it via
->    `ListenableBuilder`. Compose recomposed every reader automatically; a Flutter widget that only
->    reads a `ChangeNotifier` never rebuilds, so the feature silently does nothing.
+> **Three conventions established so far — follow all:**
+> 1. Every interactive widget gets a stable `ValueKey('<screen>.<element>')` (Patrol has no native
+>    view tree to fall back on).
+> 2. Anything reading an observable singleton (`HostDisplay`) must **listen** via
+>    `ListenableBuilder` — Compose recomposed readers automatically, Flutter does not.
+> 3. Logic that is a security control or easy to get wrong goes in a plain testable class beside the
+>    widget, not inside `build()`.
 >
 > ⚠️ **Two open blockers, neither blocking Phase 7:** §7.10 (Android bridge for legacy credential
 > decryption) and §7.1 (SMB choice).
@@ -159,7 +162,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | ⬜ |
 | `ui/SftpScreen.kt` | 3474 | `lib/ui/screens/sftp/` | ⬜ |
 | `ui/ShellScreen.kt` | 3175 | `lib/ui/screens/shell/` | ⬜ |
-| `ui/AppUi.kt` | 2806 | `lib/ui/app_scaffold.dart` + `lib/ui/screens/servers/` | 🟨 scaffold, nav + Servers list done; add/edit sheets pending |
+| `ui/AppUi.kt` | 2806 | `lib/ui/app_scaffold.dart` + `lib/ui/screens/servers/` | 🟨 scaffold, nav, Servers list + form logic done; form **widget** pending |
 | `ui/ComposeBuilder.kt` | 2100 | `lib/ui/screens/infra/compose_builder.dart` | ⬜ |
 | `ui/MonitorScreen.kt` | 1185 | `lib/ui/screens/monitor/` | ⬜ |
 | `ui/InfraScreen.kt` | 1020 | `lib/ui/screens/infra/` | ⬜ |
@@ -1353,3 +1356,37 @@ wrong fault.
 **Verified — 539 tests pass, `flutter analyze` clean, debug APK builds.** Still not run on a device.
 
 **Next:** Monitor, then Infra/Fleet/SFTP/Tools, plus the Servers add/edit sheets.
+
+### 2026-08-04 — Session 20: the server form's logic (two security controls)
+
+Extracted `AddServerSheet`'s logic into `server_form_state.dart`, a plain `ChangeNotifier` with no
+widget dependencies, because two of its rules are **security controls rather than presentation** and
+both deserve direct tests:
+
+1. **Stored secrets never reach the form.** On an edit the password fields start empty; an empty
+   field means "keep the saved value", and only an explicit `forget…` flag clears one. A saved
+   password is therefore never rendered into a text field where it could be shoulder-surfed,
+   screenshotted, or read out by an accessibility service. Typed text wins over the forget flag,
+   since typing a replacement is the more explicit intent.
+2. **Saving requires a passing connection test for the *current* configuration.**
+   `connectionSignature` fingerprints every connection-relevant field, so changing a host,
+   credential or proxy invalidates a previous pass — which is what stops the first-connect host-key
+   approval from being skipped by editing an already-tested host. Cosmetic edits (name, group,
+   colour, notes) deliberately do not force a retest, and a saved host counts as already tested. A
+   test iterates all twelve connection fields and asserts each one invalidates the pass.
+
+**Caught while writing it:** I documented the signature as NUL-joined and then wrote a *space*
+separator. A space is exactly the forgery the comment warns about — `("a", "b c")` and
+`("a b", "c")` would produce the same fingerprint, so a crafted username could make a changed host
+look already-tested. Fixed to the NUL separator the Kotlin used, with a test that the two cannot
+collide.
+
+Duplicate semantics preserved: it seeds the source's secrets (the point of "reuse credentials") but
+saves through the add path with id 0, faces the host-key gate afresh, and does **not** inherit the
+source's health or status — a copy shares no live state with its source.
+
+**Verified — 564 tests pass, `flutter analyze` clean.**
+
+**Honest status:** this is the form's *logic* only. The sheet **widget** is not written, so the app
+still cannot add a host — the Servers screen remains read-only. That is the next task.
+
