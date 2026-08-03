@@ -2,22 +2,17 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 6 — the screen model, the last piece of `TerminalEmulator.kt`.** Already done:
-> `terminal_unicode.dart` (widths), `terminal_snapshot.dart` (TermSpan/TermRow/TerminalSnapshot),
-> `terminal_parser.dart` (the ESC/CSI/OSC state machine, emitting to a `TerminalSink`),
-> `terminal_cell.dart` (the mutable grid cell).
+> **Phase 6 is complete** — the terminal emulator is ported and covered by 109 tests. Two follow-ups
+> are tracked in §18 rather than being silently skipped: **resize reflow** (the biggest, and listed
+> as Supported in the compatibility matrix) and the Unicode combining-mark table.
 >
-> What remains is `terminal_emulator.dart`: a class implementing `TerminalSink` that owns the screen
-> grid, scrollback, cursor, scroll regions, alternate screen, SGR pen, and resize/reflow. Map the
-> Kotlin as follows —
-> `putCodePoint`/`appendCombining`/`appendJoined`/`repairClusterWidth` (lines 638–795),
-> cursor + erase + insert/delete + scroll (831–994), `applySgr` (995–1048),
-> `rowToSpans`/`rowAt`/`snapshot` (1049–1140), `resize`/reflow (145–341), alt screen (605–637).
+> **Phase 7 — feature screens (§3.6), the largest remaining body of work: ~36k LOC.** Start with
+> the split of `ui/AppViewModel.kt` (12,310 lines) per §5.2 — per-feature ViewModels over a shared
+> `AppState`, keeping every public member name so the screen ports stay mechanical. Then screens in
+> the order given in §9: Servers → Monitor → Infra → Fleet → SFTP → Tools.
 >
-> Acceptance criteria are the existing Kotlin tests — port them alongside:
-> `app/src/test/java/com/jetsetslow/omniterm/Terminal*Test.kt`, plus `BracketedPastePayloadTest`.
-> `docs/TERMINAL_COMPATIBILITY.md` is the contract: a defensive subset where unknown sequences are
-> *ignored*, never rendered as text.
+> Add a stable `Key`/semantics id to **every** interactive widget as it is written (§11 requirement
+> for the Patrol suite) — retrofitting keys across 36k LOC later is far more expensive.
 >
 > Working rules that are easy to lose: never `git add -A` (`shared/` must stay untracked, stage
 > explicit paths); `export PATH="/home/sbvino/sdks/flutter/bin:$PATH"`; run `flutter analyze` and
@@ -30,7 +25,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** Phase 6 in progress (parser + cell + width + snapshot done; screen/scrollback next) — see [Progress log](#14-progress-log)
+- **Status:** **Phase 6 complete** (emulator done; resize reflow tracked in §18). Phase 7 (feature screens) next — see [Progress log](#14-progress-log)
 
 ---
 
@@ -146,7 +141,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 ### 3.5 Terminal (1,486 LOC)
 | File | LOC | Flutter destination | Status |
 |---|---|---|---|
-| `data/term/TerminalEmulator.kt` | 1177 | `terminal_unicode` + `terminal_snapshot` + `terminal_parser` + `terminal_cell` ✅; screen/scrollback ⬜ | 🟨 |
+| `data/term/TerminalEmulator.kt` | 1177 | `terminal_unicode` + `terminal_snapshot` + `terminal_parser` + `terminal_cell` + `terminal_palette` + `terminal_emulator` | ✅ (reflow pending — §18) |
 | `data/term/TmuxControl.kt` | 232 | `tmux_control_event.dart` + `tmux_control_parser.dart` + `tmux_control_commands.dart` | ✅ |
 | `data/term/Utf8StreamDecoder.kt` | 77 | `lib/data/term/utf8_stream_decoder.dart` | ✅ |
 
@@ -1017,6 +1012,8 @@ Capabilities where the Dart port does not yet match the Kotlin. Each needs a dec
 | Dynamic forward protocol | SOCKS4, SOCKS4a **and** SOCKS5 | **SOCKS5 only** (dartssh2 native) | A client that speaks only SOCKS4 stops working. Rare — modern clients use SOCKS5. Fixing it means re-adding a hand-written SOCKS4 front end, which is what §17 just removed. |
 | Encrypted jump-host keys | Not supported (Kotlin passed a null passphrase) | Not supported | No regression; documented so it is not mistaken for one. |
 | SMB browsing | smbj (SMB 2/3) | **Not implemented** — see §7.1 | Blocks a headline feature. Must be resolved before cut-over. |
+| Resize reflow | Soft-wrapped runs are re-joined and re-wrapped at the new width | Grid resize only: content preserved top-left, cursor clamped | A narrowed window truncates wrapped lines instead of re-wrapping them. `docs/TERMINAL_COMPATIBILITY.md` lists reflow as Supported, so this must be closed before cut-over. The `softWrapped` bookkeeping the algorithm needs is already ported and maintained. |
+| Unicode combining marks | JVM `Character.getType` (full Unicode database) | Explicit range table | An exotic script's marks could render one column wide instead of zero. Conservative by design; the compatibility matrix already scopes width to a bounded subset. |
 
 
 ### 2026-08-04 — Session 11: tmux control mode
@@ -1117,3 +1114,43 @@ would make that path allocation-bound. The immutable view is `TermSpan`, built o
 
 **Next:** `terminal_emulator.dart` — the screen grid, scrollback, scroll regions, alt screen, SGR
 pen and reflow.
+
+### 2026-08-04 — Session 14: the terminal emulator — Phase 6 complete
+
+Ported the screen model, finishing `TerminalEmulator.kt`. The 1,177-line class is now six files
+(§16): width rules, snapshot types, parser, cell, palette, and the emulator itself.
+
+Covered: printing with soft-wrap tracking, wide-glyph and combining/ZWJ cluster handling, cursor
+movement, erase/insert/delete, scroll regions, scrollback with trimming, the alternate screen
+(47/1047/1048/1049 with their different cursor semantics), SGR including 256-colour and truecolor,
+and windowed snapshots.
+
+Details worth keeping visible:
+- **The palette's blue is deliberately non-standard.** Indices 4 and 12 are lifted well above the
+  ANSI values because pure blue is very low luminance and unreadable on the near-black background.
+  A test pins the exact value so it is not "corrected" later.
+- **The Kitty-keyboard guard survives.** `CSI u` restores the cursor only in its *bare* form;
+  modern clients send `CSI >1u` etc., and treating those as SCORC is what made a TUI's exit paint
+  over stale rows.
+- **`_softWrapped` and the span cache are keyed by row identity.** Dart's `List` does not override
+  `==`, so a plain `Map` already behaves as an identity map — the Kotlin needed an explicit
+  `IdentityHashMap` to say the same thing.
+- **The cluster/wide-cell repair logic is ported intact**, including the case where a variation
+  selector widens a glyph already sitting in the last column and it must be moved to the next row.
+
+**Two parity gaps recorded in §18 rather than glossed over:**
+1. **Resize reflow is not implemented.** The Kotlin re-joins soft-wrapped runs and re-wraps them at
+   the new width; this port preserves content top-left and clamps the cursor. A narrowed window
+   therefore truncates wrapped lines. The compatibility matrix lists reflow as *Supported*, so this
+   must close before cut-over — the `softWrapped` bookkeeping the algorithm needs is already ported
+   and maintained, so it is additive work rather than a redesign.
+2. The Unicode combining-mark table (from session 12) is a bounded substitute for the JVM category
+   database.
+
+**A test of mine was ambiguous, not wrong-headed:** the combining-mark case used a literal `é`,
+and the two literals in the file differed in normalisation form. Rewritten to state explicitly that
+it exercises the decomposed sequence, and to assert the glyph/width split rather than just the text.
+
+**Verified — 447 tests pass, `flutter analyze` clean.** Phase 6 done.
+
+**Next:** Phase 7 — the ~36k LOC of feature screens, starting with the `AppViewModel` split.
