@@ -28,6 +28,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 
 import '../remote_models.dart';
+import 'async_lock.dart';
 
 
 /// The outcome of checking a presented host key against the trust store.
@@ -88,36 +89,18 @@ class InMemoryHostKeyStore implements HostKeyStore {
   Future<void> deleteAll() async => _entries.clear();
 }
 
-/// Serialises the read-then-write of a first pin.
-///
-/// **This lock is genuinely required, unlike the `@Synchronized` annotations elsewhere in the
-/// migration.** Those guarded purely synchronous methods, which cannot interleave on a
-/// single-threaded isolate. Here the store read is `await`ed, so a second connection to the same
-/// host can run between this one's read and its write — exactly the race the Kotlin
-/// `synchronized(firstPinCommitLock)` block existed to close.
-class _AsyncLock {
-  Future<void> _tail = Future.value();
-
-  Future<T> synchronized<T>(Future<T> Function() action) {
-    final completer = Completer<T>();
-    final previous = _tail;
-    _tail = completer.future.then((_) {}, onError: (_) {});
-    previous.whenComplete(() async {
-      try {
-        completer.complete(await action());
-      } catch (e, s) {
-        completer.completeError(e, s);
-      }
-    });
-    return completer.future;
-  }
-}
-
 class SshHostKeyTrust {
   SshHostKeyTrust(this._store);
 
   final HostKeyStore _store;
-  final _AsyncLock _firstPinLock = _AsyncLock();
+  /// Serialises the read-then-write of a first pin.
+  ///
+  /// **Genuinely required, unlike the `@Synchronized` annotations elsewhere in the migration.**
+  /// Those guarded purely synchronous methods, which cannot interleave on a single-threaded isolate.
+  /// Here the store read is `await`ed, so a second connection to the same host can run between this
+  /// one's read and its write — exactly the race the Kotlin `synchronized(firstPinCommitLock)`
+  /// block existed to close.
+  final AsyncLock _firstPinLock = AsyncLock();
 
   static const approvalTimeout = Duration(seconds: 120);
 

@@ -25,6 +25,7 @@ import 'package:flutter/foundation.dart';
 import '../term/utf8_stream_decoder.dart';
 import 'capped_text_buffer.dart';
 import 'ssh_host_key_trust.dart';
+import 'ssh_session_pool.dart';
 import 'ssh_transport.dart';
 import 'terminal_close.dart';
 
@@ -54,7 +55,11 @@ class DartSshTransport implements SshTransport {
 
   /// Pooled clients for one-shot exec/execStream calls (never for interactive shells, which own
   /// their connection for its whole lifetime).
-  final Map<String, SSHClient> _pool = {};
+  late final SshSessionPool<SSHClient> _pool = SshSessionPool<SSHClient>(
+    connect: _connect,
+    isAlive: (client) => !client.isClosed,
+    disconnect: (client) => client.close(),
+  );
 
   bool _isJump(SshCredentials creds) =>
       creds.proxyType == 'ssh' && creds.proxyHost.trim().isNotEmpty && creds.proxyPort > 0;
@@ -130,20 +135,16 @@ class DartSshTransport implements SshTransport {
     }
   }
 
-  Future<SSHClient> _acquire(SshCredentials creds) async {
-    // Jump-host connections are never pooled: the pool has nowhere to hold the paired bastion.
-    if (_isJump(creds)) return _connect(creds);
-    final existing = _pool[creds.endpointKey];
-    if (existing != null && !existing.isClosed) return existing;
-    _pool.remove(existing == null ? '' : creds.endpointKey);
-    final client = await _connect(creds);
-    _pool[creds.endpointKey] = client;
-    return client;
-  }
-
-  void _evict(SshCredentials creds) {
-    final client = _pool.remove(creds.endpointKey);
-    client?.close();
+  /// Borrow a connection for a one-shot command.
+  ///
+  /// Jump-host connections are never pooled: the pool has nowhere to hold the paired bastion, so
+  /// those get a dedicated connection torn down by the caller.
+  Future<SshLease<SSHClient>> _acquire(SshCredentials creds) async {
+    if (_isJump(creds)) {
+      final client = await _connect(creds);
+      return SshLease.unpooled(client, () => client.close());
+    }
+    return _pool.acquire(creds);
   }
 
   // ── exec ───────────────────────────────────────────────────────────────────
@@ -155,19 +156,18 @@ class DartSshTransport implements SshTransport {
     } on TimeoutException {
       return 'SSH Error: command timed out';
     } catch (e) {
-      // The request may already have reached the server. Evict the suspect transport for the next
-      // call, but never retry an arbitrary command and risk executing a mutation twice.
-      _evict(creds);
+      // The request may already have reached the server. The suspect connection was already
+      // evicted at the point of failure; never retry an arbitrary command and risk executing a
+      // mutation twice.
       return 'SSH Error: ${_describe(e)}';
     }
   }
 
   Future<String> _execOnce(SshCredentials creds, String command, String? stdin) async {
-    final jumped = _isJump(creds);
-    final client = await _acquire(creds);
+    final lease = await _acquire(creds);
     SSHSession? session;
     try {
-      session = await client.execute(command);
+      session = await lease.client.execute(command);
       _writeStdin(session, stdin);
 
       final out = CappedTextBuffer(_execOutputMaxChars);
@@ -185,9 +185,14 @@ class DartSshTransport implements SshTransport {
         combined.write(errText);
       }
       return _withExitStatus(combined.toString(), session.exitCode);
+    } catch (_) {
+      // Only this connection is suspect; passing it as the suspect stops a slow failure from
+      // evicting a healthy replacement that has already taken its place.
+      _pool.evict(creds, lease.client);
+      rethrow;
     } finally {
       session?.close();
-      if (jumped) client.close();
+      lease.close();
     }
   }
 
@@ -207,7 +212,6 @@ class DartSshTransport implements SshTransport {
     } catch (e) {
       // Zero output does not mean the remote command did not run. Preserve at-most-once semantics
       // for destructive streaming actions too.
-      _evict(creds);
       final message = 'SSH Error: ${_describe(e)}';
       await onChunk(message);
       return message;
@@ -220,11 +224,10 @@ class DartSshTransport implements SshTransport {
     String? stdin,
     Future<void> Function(String chunk) onChunk,
   ) async {
-    final jumped = _isJump(creds);
-    final client = await _acquire(creds);
+    final lease = await _acquire(creds);
     SSHSession? session;
     try {
-      session = await client.execute(command);
+      session = await lease.client.execute(command);
       _writeStdin(session, stdin);
 
       final accumulated = CappedTextBuffer(_execOutputMaxChars);
@@ -237,9 +240,12 @@ class DartSshTransport implements SshTransport {
       await session.done;
 
       return _withExitStatus(accumulated.text(), session.exitCode);
+    } catch (_) {
+      _pool.evict(creds, lease.client);
+      rethrow;
     } finally {
       session?.close();
-      if (jumped) client.close();
+      lease.close();
     }
   }
 
@@ -356,15 +362,10 @@ class DartSshTransport implements SshTransport {
   }
 
   @override
-  void shutdown() {
-    for (final client in _pool.values) {
-      client.close();
-    }
-    _pool.clear();
-  }
+  void shutdown() => _pool.closeAll();
 
   @override
-  void forgetCredentials(SshCredentials creds) => _evict(creds);
+  void forgetCredentials(SshCredentials creds) => _pool.evict(creds);
 }
 
 /// One persistent PTY shell over a dartssh2 session.

@@ -6,7 +6,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** Phase 5 in progress (transport + trust done; pool/SFTP/tunnels next) — see [Progress log](#14-progress-log)
+- **Status:** Phase 5 in progress (transport, trust, pool done; SFTP + tunnels next) — see [Progress log](#14-progress-log)
 
 ---
 
@@ -105,7 +105,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | `data/ssh/SshHostKeyTrust.kt` | 315 | `lib/data/ssh/ssh_host_key_trust.dart` | ✅ |
 | `data/ssh/JschSftp.kt` | 294 | `lib/data/ssh/dartssh_sftp.dart` | ⬜ |
 | `data/ssh/JschSession.kt` | 219 | `lib/data/ssh/dartssh_session.dart` | ⬜ |
-| `data/ssh/SshSessionPool.kt` | 144 | `lib/data/ssh/ssh_session_pool.dart` | ⬜ |
+| `data/ssh/SshSessionPool.kt` | 144 | `lib/data/ssh/ssh_session_pool.dart` (+ `async_lock.dart`) | ✅ |
 | `data/ssh/SshTransport.kt` | 123 | `lib/data/ssh/ssh_transport.dart` (interface) | ✅ |
 | `data/ssh/CappedTextBuffer.kt` | 23 | `lib/data/ssh/capped_text_buffer.dart` | ✅ |
 
@@ -732,3 +732,48 @@ mid-token, and pinned it with tests in both directions.
 
 **Next:** the remaining SSH files — `SshSessionPool` (a richer pool than the map used here),
 `JschSession`, `JschSftp`, `SshTunnelManager` — then Phase 6, the terminal emulator.
+
+### 15.2 Pool key omitted credentials (defect introduced by the port, caught before commit)
+
+The first cut of `DartSshTransport` keyed its connection pool on `SshCredentials.endpointKey`
+(`user@host:port`) — the Kotlin `SshSessionPool.key()` deliberately fingerprints the password,
+private key, passphrase, proxy settings, keepalive and compression as well.
+
+Consequence had it shipped: editing a host's password, or switching it from password to key auth,
+would keep handing back the connection **already authenticated with the old credentials**. Commands
+would keep succeeding, hiding both that the new credentials were wrong and that an authorisation
+the user meant to revoke was still in use.
+
+Fixed by porting the real pool and keying on the full fingerprinted identity. The key holds
+*fingerprints*, never plaintext, so no secret is ever a map key. Pinned by tests: a changed password
+and a password→key switch each force a new connection, and the key is asserted to contain none of
+the secrets.
+
+
+### 2026-08-03 — Session 7: the session pool, and a self-inflicted bug caught
+
+Ported `SshSessionPool.kt` → `lib/data/ssh/ssh_session_pool.dart`, generic over the client type so
+its lifecycle logic is testable without a socket, and extracted the shared `AsyncLock` into
+`async_lock.dart` (the host-key trust and the pool both need it).
+
+**Reading the Kotlin exposed a defect I had introduced last session (§15.2).** My first transport
+keyed its pool on `user@host:port`, while the Kotlin fingerprints every secret into the key. Editing
+a host's password would have kept reusing the connection authenticated with the *old* one — masking
+both a wrong new credential and a revocation the user intended. Fixed by using the real pool.
+
+Concurrency mapping, continuing the theme:
+- The Kotlin's `AtomicInteger` lease counter and `AtomicBoolean` retired flag become **plain fields**
+  — every read-modify-write on them is synchronous and cannot interleave on one isolate.
+- The per-key `Mutex` **is** kept as an `AsyncLock`, because `acquire` awaits the connect. Without
+  it, two concurrent callers for the same host each dial out. A test proves one connection results.
+- The generation counter is kept verbatim: `closeAll` bumps it and removes only older-generation
+  entries rather than clearing the map, so an acquire that publishes late fails its recheck and
+  retires its own connection instead of leaking it. A test drives exactly that interleaving.
+
+The lease model is preserved too: `evict` during an in-flight command retires the entry but defers
+the actual disconnect until the last lease closes, and passing the *suspect* connection stops a slow
+failure from evicting the healthy replacement that already took its place.
+
+**Verified — 271 tests pass, `flutter analyze` clean.**
+
+**Next:** `JschSession` and `JschSftp`, then `SshTunnelManager`, then Phase 6 (terminal emulator).
