@@ -28,6 +28,11 @@ without re-deriving anything.
    corrected in the port and recorded here so the change is traceable. See §15.
 10. **Modularise as far as is reasonable.** One responsibility per file, dependencies pointing
     inward (UI → domain → data), and no module reaching around its neighbour's abstraction. See §16.
+11. **Reuse and centralise; never duplicate where it is avoidable.** A helper gets one home. See §16.
+12. **Security takes priority over everything else** — over convenience, over schedule, over
+    elegance. Where a choice trades security for anything, security wins. See §17.
+13. **Feature parity with the Kotlin app is non-negotiable.** No shipped capability may be dropped
+    to make the migration easier. This is what forces the SMB decision in §7.1.
 
 ### Consequence of constraint 3 (important, drives everything)
 
@@ -280,19 +285,31 @@ structure improves; **external behaviour is unchanged**.
 
 ## 7. Open risks / blockers
 
-### 7.1 ⚠️ SMB has no viable pure-Dart client (BLOCKER for the Shares tab)
-`smb_connect` is the only real candidate and it **cannot be used**: it pins `pointycastle ^3.9.1`
-while `dartssh2 >= 2.15.0` requires `pointycastle ^4.0.0` — a hard, unresolvable version conflict
-(verified by `flutter pub add`, output recorded below). It is also 18 months stale, published by an
-unverified uploader, and caps at **SMB 2.1** — the app advertises SMB 2/3.
+### 7.1 ⚠️ SMB — **decision forced by requirements 12 + 13**
+`smb_connect` is the only real pure-Dart candidate and it **cannot be used**: it pins
+`pointycastle ^3.9.1` while `dartssh2 >= 2.15.0` requires `^4.0.0`, an unresolvable conflict
+(verified by `flutter pub add`). It is also 18 months stale, published by an unverified uploader,
+and caps at **SMB 2.1**.
 
-Options (decide before the Shares port):
-1. **Write a minimal SMB2/3 client in Dart** (largest effort, full control, works on iOS).
-2. Fork `smb_connect` and bump it to pointycastle 4 (medium effort, inherits stale code).
-3. Platform-channel to smbj on Android + SMBClient on iOS (splits the codebase; contradicts "entire project to Flutter").
+Requirement 13 makes "defer SMB" unavailable: browsing SMB shares is a shipped, advertised feature
+and cannot be dropped. Requirement 12 then rules out the cheapest route, because the SMB 2.1 cap is
+a **security** limitation, not merely a functional one — SMB 3.x is the dialect that adds
+per-message **encryption** (and 3.1.1 adds pre-auth integrity). Shipping a client that can only
+negotiate ≤2.1 would silently downgrade every share to an unencrypted transport that the Kotlin app,
+via smbj, does not.
 
-**Nothing is decided yet — the rest of the migration proceeds around it.** SMB is 173 LOC of the
-app's client code but gates a headline feature.
+**Therefore the options collapse to two, and both are real work:**
+1. **Implement SMB2/3 in Dart** (largest effort; full control; works on iOS; keeps the app pure
+   Dart). Must include SMB 3.x encryption to hold parity with smbj.
+2. **Platform-native SMB behind the existing `RemoteFsClient` seam** — smbj on Android, a native
+   client on iOS. Cheaper and inherits a mature, audited implementation, at the cost of two native
+   implementations and a partial retreat from "entire project to Flutter".
+
+Option 2 is the pragmatic reading of "security first": it reuses smbj, which the app already trusts,
+rather than staking share confidentiality on a from-scratch crypto implementation written under
+migration time pressure. The `RemoteFsClient` abstraction (already ported) is exactly the seam that
+makes either choice swappable, so **this decision does not block anything else** — but it must be
+made before Phase 8, and it is no longer deferrable past the cut-over.
 
 ### 7.2 Terminal emulator: port vs. adopt `xterm`
 The app has its **own** 1,177-LOC `TerminalEmulator` plus a documented compatibility matrix
@@ -838,6 +855,11 @@ The legacy app concentrates enormous responsibility in a few files — `AppViewM
    becomes a standalone function: `classifyTerminalClose`, the SFTP retry rules, `entryPredatesReset`.
 5. **Generic over the transport where it buys testability.** `SshSessionPool<C>` is generic purely so
    its lifecycle can be tested without a socket.
+6. **One home per helper (requirement 11).** Three private copies of `firstOrNull` had already
+   appeared across `remote_commands`, `remote_parsers` and `remote_fs_client`; they are now a single
+   `KotlinIterableOps` extension. Divergent copies of a "safe accessor" are how an unsafe one
+   eventually slips in. `TransferProgressThrottle` is likewise shared by SFTP and every share client
+   rather than each re-deriving the 64 KiB / 150 ms cadence.
 
 **Still to do:** the big one is §5.2 — splitting `AppViewModel.kt` (12,310 lines) into per-feature
 ViewModels over a shared `AppState`, keeping every public member name so the screen ports stay
@@ -881,3 +903,53 @@ dartssh2. The outstanding item is the big one: splitting the 12,310-line `AppVie
 **Verified — 298 tests pass, `flutter analyze` clean.**
 
 **Next:** `SshTunnelManager` (333 LOC) finishes Phase 5, then Phase 6 — the terminal emulator.
+
+---
+
+## 17. Security precedence (requirement 12)
+
+Where a choice trades security against convenience, schedule or elegance, security wins. Decisions
+already taken under this rule, so they are not silently revisited:
+
+- **Host keys fail closed.** No approval UI (background worker, early init) ⇒ an unknown host is
+  rejected, never trusted unattended. A corrupt trust entry is treated as absent rather than as a
+  match. A changed key is *never* auto-accepted, even with an approving handler registered.
+- **Backup restore cannot become an interception vector.** Imported pins never overwrite a key this
+  device already verified.
+- **Legacy pins convert rather than re-prompt.** Re-prompting a whole fleet trains users to click
+  through the one dialog meant to stop an interception.
+- **Secrets never enter a command string** — they travel via channel stdin, so they cannot appear in
+  `ps`, shell history or sshd debug logs. `SshCredentials.toString()` prints only the endpoint.
+- **The connection pool keys on secret *fingerprints*.** No plaintext secret is a map key, and a
+  changed credential cannot reuse a connection authenticated with the old one (§15.2).
+- **Overlong UTF-8, surrogates and out-of-range code points are rejected** by the decoder, not
+  passed through — these are filter-bypass primitives, not merely untidy input.
+- **SMB will not ship on a ≤2.1-only client** (§7.1), because that silently removes SMB 3.x
+  encryption the current app has.
+
+
+### 2026-08-03 — Session 9b: three further requirements, and the SMB decision
+
+Recorded requirements 11 (reuse/centralise), 12 (security first) and 13 (feature parity
+non-negotiable), with §16 extended and a new §17 listing the security decisions already taken so
+they are not silently revisited later.
+
+**Acted on requirement 11 immediately:** three private copies of `firstOrNull` had accumulated
+across `remote_commands`, `remote_parsers` and `remote_fs_client`. They are now one
+`KotlinIterableOps` extension in `kotlin_strings.dart`. Divergent copies of a "safe accessor" are
+exactly how an unsafe one eventually slips in.
+
+**Requirements 12 and 13 together force the SMB decision that §7.1 had been deferring.**
+Parity means SMB browsing cannot be dropped. Security means it cannot ship on `smb_connect` even if
+the dependency conflict were solved, because its **SMB 2.1 cap is a security limitation**: SMB 3.x
+is the dialect that adds per-message encryption, so a ≤2.1 client would silently downgrade every
+share to an unencrypted transport that the Kotlin app (via smbj) does not use. That leaves two real
+options — implement SMB2/3 in Dart including 3.x encryption, or put platform-native SMB behind the
+already-ported `RemoteFsClient` seam. §7.1 records the reasoning and leans to the latter, on the
+grounds that "security first" argues against staking share confidentiality on a from-scratch crypto
+implementation written under migration pressure.
+
+The `RemoteFsClient` abstraction makes either choice swappable, so this blocks nothing today — but
+it is no longer deferrable past the cut-over.
+
+**Verified — 298 tests pass, `flutter analyze` clean.**

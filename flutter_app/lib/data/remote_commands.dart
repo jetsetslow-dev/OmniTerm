@@ -32,7 +32,3 @@ String normaliseOs(String raw) {
   // Empty (missing @OS section) or unknown Unix-like → Linux, the safest superset.
   return 'Linux';
 }
-
-extension _FirstOrNull<T> on Iterable<T> {
-  T? get firstOrNull => isEmpty ? null : first;
-}

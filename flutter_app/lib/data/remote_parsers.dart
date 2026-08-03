@@ -869,8 +869,3 @@ String humanBytes(int bytes) {
   }
   return i == 0 ? '$bytes B' : '${v.toStringAsFixed(1)} ${units[i]}';
 }
-
-extension _FirstLastOrNull<T> on Iterable<T> {
-  T? get firstOrNull => isEmpty ? null : first;
-  T? get lastOrNull => isEmpty ? null : last;
-}

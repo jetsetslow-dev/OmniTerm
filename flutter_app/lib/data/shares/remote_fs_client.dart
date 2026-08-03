@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:intl/intl.dart';
 
 import '../app_database.dart';
+import '../kotlin_strings.dart';
 import '../remote_models.dart';
 
 /// Protocol-agnostic remote filesystem operations, ported from `data/shares/RemoteFsClient.kt`.
@@ -155,10 +156,6 @@ Future<int> copyWithProgress(
   }
   progress.finish();
   return progress.copied;
-}
-
-extension _FirstOrNull<T> on Iterable<T> {
-  T? get firstOrNull => isEmpty ? null : first;
 }
 
 /// Convenience for implementations that build listings from raw byte counts.

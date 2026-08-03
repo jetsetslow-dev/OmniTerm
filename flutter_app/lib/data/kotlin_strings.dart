@@ -73,6 +73,16 @@ extension KotlinStringOps on String {
   List<String> get lines => split(RegExp(r'\r\n|\n|\r'));
 }
 
+extension KotlinIterableOps<T> on Iterable<T> {
+  /// Kotlin's `firstOrNull` / `lastOrNull`, without throwing on an empty collection.
+  ///
+  /// Centralised here rather than redeclared per file: three private copies had already appeared,
+  /// and divergent copies of a "safe accessor" are how an unsafe one eventually slips in.
+  T? get firstOrNull => isEmpty ? null : first;
+
+  T? get lastOrNull => isEmpty ? null : last;
+}
+
 extension KotlinListOps<T> on List<T> {
   /// Kotlin's `getOrNull(index)`.
   T? getOrNull(int index) => (index >= 0 && index < length) ? this[index] : null;
