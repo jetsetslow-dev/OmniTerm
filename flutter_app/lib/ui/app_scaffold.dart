@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import 'navigation.dart';
 import 'screens/placeholder_screen.dart';
+import 'screens/servers/servers_screen.dart';
 import 'shell_state.dart';
 import 'theme/colors.dart';
 import 'widgets/omni_chrome.dart';
@@ -172,7 +173,7 @@ class _ScreenBody extends StatelessWidget {
   Widget build(BuildContext context) {
     // TODO(migration): replace each placeholder as the screen is ported (MIGRATION.md §3.6).
     return switch (screen) {
-      Screen.servers => const PlaceholderScreen(title: 'Servers', source: 'ui/AppUi.kt → ServersMainView'),
+      Screen.servers => const ServersScreen(),
       Screen.fleet => const PlaceholderScreen(title: 'Fleet', source: 'ui/FleetScreen.kt'),
       Screen.monitor => const PlaceholderScreen(title: 'Monitor', source: 'ui/MonitorScreen.kt'),
       Screen.shell => const PlaceholderScreen(title: 'Term', source: 'ui/ShellScreen.kt'),

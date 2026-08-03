@@ -2,24 +2,24 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 7, continuing the `AppViewModel` split (§5.2).** Done:
-> `lib/ui/view_model/app_state.dart` (shared host list, selection, settings) and
-> `servers_view_model.dart`.
+> **Phase 7, continuing.** The stack is proven end-to-end: the **Servers screen renders live data**
+> from Drift through `AppState`/`ServersViewModel`, wired into `lib/main.dart` and covered by widget
+> tests. `omni_components.dart` holds the shared surfaces every other screen needs.
 >
-> Next ViewModels, each reading from `AppState` rather than holding its own copy of the host list:
-> `MonitorViewModel`, `InfraViewModel`, `FleetViewModel`, `SftpViewModel`, `ShellViewModel`,
-> `ToolsViewModel`. Keep every public member name from `ui/AppViewModel.kt` so the screen ports stay
-> mechanical. ViewModels use `AppRepository` and must **never** touch `SecretStore`.
+> Next, in the §9 order — for each: a feature ViewModel reading from `AppState`, then the screen,
+> replacing its placeholder in `lib/ui/app_scaffold.dart`:
+> Monitor → Infra → Fleet → SFTP → Tools, plus the Servers **add/edit/duplicate sheets**
+> (`AddServerSheet`, `ui/AppUi.kt` line 2213) which are not yet ported.
 >
-> Then the screens themselves, in the §9 order (Servers → Monitor → Infra → Fleet → SFTP → Tools).
-> §4 is the exact layout contract. Replace the placeholders in `lib/ui/app_scaffold.dart` as each
-> lands.
->
-> Give every interactive widget a stable `Key` **as it is written** — retrofitting them across 36k
-> LOC for the Patrol suite later is far more expensive.
+> **Two conventions established by the Servers screen — follow both:**
+> 1. Every interactive widget gets a stable `ValueKey('<screen>.<element>')`. The Patrol suite has
+>    no native view tree to fall back on.
+> 2. Anything reading an observable singleton (`HostDisplay`) must **listen** to it via
+>    `ListenableBuilder`. Compose recomposed every reader automatically; a Flutter widget that only
+>    reads a `ChangeNotifier` never rebuilds, so the feature silently does nothing.
 >
 > ⚠️ **Two open blockers, neither blocking Phase 7:** §7.10 (Android bridge for legacy credential
-> decryption — without it every existing user's saved passwords read blank) and §7.1 (SMB choice).
+> decryption) and §7.1 (SMB choice).
 >
 > Working rules that are easy to lose: never `git add -A` (`shared/` must stay untracked, stage
 > explicit paths); `export PATH="/home/sbvino/sdks/flutter/bin:$PATH"`; run `flutter analyze` and
@@ -32,7 +32,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** Phase 7 begun — `AppState` + `ServersViewModel` done; remaining ViewModels + screens next — see [Progress log](#14-progress-log)
+- **Status:** Phase 7 — first screen rendering end-to-end; remaining ViewModels + screens next — see [Progress log](#14-progress-log)
 
 ---
 
@@ -159,13 +159,13 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | ⬜ |
 | `ui/SftpScreen.kt` | 3474 | `lib/ui/screens/sftp/` | ⬜ |
 | `ui/ShellScreen.kt` | 3175 | `lib/ui/screens/shell/` | ⬜ |
-| `ui/AppUi.kt` | 2806 | `lib/ui/app_scaffold.dart` + `lib/ui/screens/servers/` | 🟨 scaffold+nav done; screens pending |
+| `ui/AppUi.kt` | 2806 | `lib/ui/app_scaffold.dart` + `lib/ui/screens/servers/` | 🟨 scaffold, nav + Servers list done; add/edit sheets pending |
 | `ui/ComposeBuilder.kt` | 2100 | `lib/ui/screens/infra/compose_builder.dart` | ⬜ |
 | `ui/MonitorScreen.kt` | 1185 | `lib/ui/screens/monitor/` | ⬜ |
 | `ui/InfraScreen.kt` | 1020 | `lib/ui/screens/infra/` | ⬜ |
 | `ui/FleetScreen.kt` | 878 | `lib/ui/screens/fleet/` | ⬜ |
 | `ui/CodeEditor.kt` | 850 | `lib/ui/widgets/code_editor.dart` | ⬜ |
-| `ui/OmniComponents.kt` | 779 | `lib/ui/widgets/omni_components.dart` | 🟨 app bar + bottom nav done (`omni_chrome.dart`) |
+| `ui/OmniComponents.kt` | 779 | `omni_chrome.dart` + `omni_components.dart` | 🟨 chrome, card, stat box, section header, formatters done |
 | `ui/LanHostnameResolver.kt` | 295 | `lib/domain/lan_hostname_resolver.dart` | ⬜ |
 | `ui/ShellSession.kt` | 252 | `lib/domain/shell_session.dart` | ⬜ |
 | `ui/ScriptEditorDialog.kt` | 230 | `lib/ui/widgets/script_editor_dialog.dart` | ⬜ |
@@ -1322,3 +1322,34 @@ history on the next prune.
 **Verified — 527 tests pass, `flutter analyze` clean.**
 
 **Next:** the remaining feature ViewModels, then the screens themselves.
+
+### 2026-08-04 — Session 19: the first real screen, end to end
+
+Ported the shared components (`OmniCard`, `OmniStatBox`, `SectionHeader`, the field styling and the
+byte/uptime formatters) and the **Servers screen**, then wired the database → repository →
+`AppState` → ViewModel → widget chain into `lib/main.dart`. The first placeholder is gone and the
+app now renders live data from Drift.
+
+This was worth doing before the remaining ViewModels: it proves the whole stack rather than another
+layer in isolation, and it establishes two conventions the other 14 screens inherit.
+
+**Convention 1 — every interactive widget carries a stable `ValueKey('<screen>.<element>')`.**
+Flutter paints its own pixels, so the Patrol suite has no native view tree to fall back on. Adding
+keys while a screen is written costs nothing; retrofitting them across 36k LOC does not.
+
+**Convention 2 — observable singletons must be *listened* to, not merely read.** A widget test
+caught this: "Hide sensitive info" appeared to do nothing. In Compose `HostDisplay` was a
+`mutableStateOf`, so every reader recomposed on change; a Flutter widget that reads a
+`ChangeNotifier` without subscribing simply never rebuilds. Fixed with `ListenableBuilder`, and the
+test now asserts the address actually disappears — which is the entire point of the feature.
+
+Smaller decisions preserved from the Kotlin: the offline stat is red **only when non-zero** (a
+permanent red zero is noise the eye learns to ignore); the empty state distinguishes "no hosts" from
+"no matches" (the same blank screen for both leaves the user thinking their fleet vanished); the
+group chip bar is hidden when only "All" exists; and a card reports **authentication failed**
+separately from offline, because calling a credential rejection "online" sends the user hunting the
+wrong fault.
+
+**Verified — 539 tests pass, `flutter analyze` clean, debug APK builds.** Still not run on a device.
+
+**Next:** Monitor, then Infra/Fleet/SFTP/Tools, plus the Servers add/edit sheets.

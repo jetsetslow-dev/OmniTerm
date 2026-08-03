@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import 'data/app_database.dart';
+import 'data/app_repository.dart';
 import 'ui/app_scaffold.dart';
 import 'ui/navigation.dart';
 import 'ui/shell_state.dart';
+import 'ui/view_model/app_state.dart';
+import 'ui/view_model/servers_view_model.dart';
 import 'ui/theme/theme.dart';
 
 void main() {
@@ -20,6 +24,15 @@ class OmniTermApp extends StatelessWidget {
       providers: [
         ChangeNotifierProvider(create: (_) => NavigationController()),
         ChangeNotifierProvider(create: (_) => ShellState()),
+        // One database and repository for the app's lifetime; the ViewModels layer on top.
+        Provider<AppDatabase>(create: (_) => AppDatabase(), dispose: (_, db) => db.close()),
+        ChangeNotifierProvider<AppState>(
+          create: (context) => AppState(AppRepository(context.read<AppDatabase>(), null))..start(),
+        ),
+        ChangeNotifierProxyProvider<AppState, ServersViewModel>(
+          create: (context) => ServersViewModel(context.read<AppState>()),
+          update: (_, app, previous) => previous ?? ServersViewModel(app),
+        ),
       ],
       child: Builder(
         builder: (context) {
