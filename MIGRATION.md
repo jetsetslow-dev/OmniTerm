@@ -2,18 +2,16 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 5, last file:** port `app/src/main/java/com/jetsetslow/omniterm/data/ssh/SshTunnelManager.kt`
-> (333 LOC) → `flutter_app/lib/data/ssh/ssh_tunnel_manager.dart`.
+> **Phase 6 — terminal emulator (§3.5).** Start with
+> `app/src/main/java/com/jetsetslow/omniterm/data/term/TmuxControl.kt` (232 LOC) →
+> `flutter_app/lib/data/term/tmux_control.dart`, then the big one,
+> `data/term/TerminalEmulator.kt` (1,177 LOC). `Utf8StreamDecoder` is already ported.
 >
-> It manages user-defined SSH port forwards: **local (-L)**, **remote (-R)** and **dynamic SOCKS
-> (-D)**, started/stopped per tunnel and kept up until stopped or the app exits. dartssh2 provides
-> `forwardLocal`, `forwardRemote` and `SSHClient.forwardDynamic` (see
-> `~/.pub-cache/hosted/pub.dev/dartssh2-2.22.5/lib/src/ssh_client.dart`). Reuse the existing
-> `SshSessionPool` for the owning connection — do **not** add a second pool (requirement 11).
-> Port rows live in the `port_forwards` Drift table, already migrated.
->
-> Then Phase 5 is complete and Phase 6 (terminal emulator, §3.5) begins with
-> `data/term/TmuxControl.kt`; `Utf8StreamDecoder` is already done.
+> Read `docs/TERMINAL_COMPATIBILITY.md` first — it is the spec for the implemented xterm/VT subset
+> and tmux control-mode status. Rendering will use `xterm` 4.0.0's `TerminalView`, but the app's own
+> emulator semantics must be ported where they diverge (§7.2); its existing Kotlin tests
+> (`TerminalAdvancedResilienceTest`, `TerminalAltScreenExitTest`, and others in `app/src/test/`) are
+> the acceptance criteria.
 >
 > Working rules that are easy to lose: never `git add -A` (`shared/` must stay untracked, stage
 > explicit paths); `export PATH="/home/sbvino/sdks/flutter/bin:$PATH"`; run `flutter analyze` and
@@ -26,7 +24,7 @@ without re-deriving anything.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** Phase 5 nearly done (only `SshTunnelManager` left) — see [Progress log](#14-progress-log)
+- **Status:** **Phase 5 complete.** Phase 6 (terminal emulator) next — see [Progress log](#14-progress-log)
 
 ---
 
@@ -49,10 +47,13 @@ without re-deriving anything.
 10. **Modularise as far as is reasonable.** One responsibility per file, dependencies pointing
     inward (UI → domain → data), and no module reaching around its neighbour's abstraction. See §16.
 11. **Reuse and centralise; never duplicate where it is avoidable.** A helper gets one home. See §16.
-12. **Security takes priority over everything else** — over convenience, over schedule, over
-    elegance. Where a choice trades security for anything, security wins. See §17.
-13. **Feature parity with the Kotlin app is non-negotiable.** No shipped capability may be dropped
-    to make the migration easier. This is what forces the SMB decision in §7.1.
+12. **Security takes priority over everything else — meaning *code* security.** Memory/parsing
+    safety, injection, secret handling, unmaintained or unaudited dependencies. It does **not** mean
+    refusing to talk to a weak endpoint: users define their own hosts and know an old SMB server or
+    a plaintext FTP share is not encrypted. The app's job there is to **warn**, not to block. See §17.
+13. **Feature parity, not code parity.** Every shipped *capability* must survive; the *structure* is
+    free to change (indeed §16 requires it to). A restructure that preserves behaviour is correct;
+    dropping a capability to make the migration easier is not.
 
 ### Consequence of constraint 3 (important, drives everything)
 
@@ -128,7 +129,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | File | LOC | Flutter destination | Status |
 |---|---|---|---|
 | `data/ssh/JschSshTransport.kt` | 533 | `lib/data/ssh/dartssh_transport.dart` + `terminal_close.dart` | ✅ |
-| `data/ssh/SshTunnelManager.kt` | 333 | `lib/data/ssh/ssh_tunnel_manager.dart` | ⬜ |
+| `data/ssh/SshTunnelManager.kt` | 333 | `lib/data/ssh/ssh_tunnel_manager.dart` (+ `tunnel_generation.dart`) | ✅ |
 | `data/ssh/SshHostKeyTrust.kt` | 315 | `lib/data/ssh/ssh_host_key_trust.dart` | ✅ |
 | `data/ssh/JschSftp.kt` | 294 | `lib/data/ssh/dartssh_sftp.dart` | ✅ |
 | `data/ssh/JschSession.kt` | 219 | `lib/data/ssh/ssh_private_key.dart` (key validation); connection setup absorbed into `dartssh_transport.dart` | ✅ |
@@ -305,31 +306,34 @@ structure improves; **external behaviour is unchanged**.
 
 ## 7. Open risks / blockers
 
-### 7.1 ⚠️ SMB — **decision forced by requirements 12 + 13**
-`smb_connect` is the only real pure-Dart candidate and it **cannot be used**: it pins
-`pointycastle ^3.9.1` while `dartssh2 >= 2.15.0` requires `^4.0.0`, an unresolvable conflict
-(verified by `flutter pub add`). It is also 18 months stale, published by an unverified uploader,
-and caps at **SMB 2.1**.
+### 7.1 ⚠️ SMB — options, under the *corrected* reading of requirement 12
+**An earlier version of this section argued SMB 2.1 was disqualifying because it lacks SMB 3.x
+encryption. That reasoning is withdrawn.** Requirement 12 is about *code* security, and the user has
+been explicit: a homelab user pointing the app at their own old NAS knows it is not encrypted. The
+right response is a **warning in the UI**, not a refusal to connect. Blocking there would have
+removed a working feature to protect users from a choice that is theirs to make.
 
-Requirement 13 makes "defer SMB" unavailable: browsing SMB shares is a shipped, advertised feature
-and cannot be dropped. Requirement 12 then rules out the cheapest route, because the SMB 2.1 cap is
-a **security** limitation, not merely a functional one — SMB 3.x is the dialect that adds
-per-message **encryption** (and 3.1.1 adds pre-auth integrity). Shipping a client that can only
-negotiate ≤2.1 would silently downgrade every share to an unencrypted transport that the Kotlin app,
-via smbj, does not.
+What actually remains against `smb_connect`, and it is still decisive:
+1. **A hard dependency conflict.** It pins `pointycastle ^3.9.1`; `dartssh2 >= 2.15.0` requires
+   `^4.0.0`. Verified unresolvable by `flutter pub add`. SSH is the app's core, so dartssh2 wins.
+2. **It is a code-security concern in its own right** — 18 months stale, unverified publisher, and
+   an SMB implementation is a large attacker-reachable parser. That is exactly the kind of
+   dependency requirement 12 is about.
 
-**Therefore the options collapse to two, and both are real work:**
-1. **Implement SMB2/3 in Dart** (largest effort; full control; works on iOS; keeps the app pure
-   Dart). Must include SMB 3.x encryption to hold parity with smbj.
-2. **Platform-native SMB behind the existing `RemoteFsClient` seam** — smbj on Android, a native
-   client on iOS. Cheaper and inherits a mature, audited implementation, at the cost of two native
-   implementations and a partial retreat from "entire project to Flutter".
+**Remaining options:**
+1. **Platform-native SMB behind the ported `RemoteFsClient` seam** — smbj on Android (already
+   trusted and shipping), a native client on iOS. Best on code security: a mature, maintained,
+   widely-audited implementation instead of an unmaintained one or a from-scratch parser. Cost: two
+   native implementations, and a partial retreat from "entire project to Flutter" — acceptable under
+   requirement 13, which asks for feature parity, not implementation purity.
+2. **Fork `smb_connect` and bump it to pointycastle 4.** Cheapest to reach working SMB, but inherits
+   an unmaintained parser the project would then own.
+3. **Write SMB2/3 in Dart.** Largest effort, and the *worst* option on requirement 12: a
+   from-scratch implementation of an attacker-reachable wire protocol, written under migration
+   pressure, is precisely what should not be hand-rolled.
 
-Option 2 is the pragmatic reading of "security first": it reuses smbj, which the app already trusts,
-rather than staking share confidentiality on a from-scratch crypto implementation written under
-migration time pressure. The `RemoteFsClient` abstraction (already ported) is exactly the seam that
-makes either choice swappable, so **this decision does not block anything else** — but it must be
-made before Phase 8, and it is no longer deferrable past the cut-over.
+**Leaning: option 1.** Recorded, not yet decided — it is the user's call and blocks nothing until
+Phase 8, because `RemoteFsClient` makes the choice swappable.
 
 ### 7.2 Terminal emulator: port vs. adopt `xterm`
 The app has its **own** 1,177-LOC `TerminalEmulator` plus a documented compatibility matrix
@@ -928,8 +932,11 @@ dartssh2. The outstanding item is the big one: splitting the 12,310-line `AppVie
 
 ## 17. Security precedence (requirement 12)
 
-Where a choice trades security against convenience, schedule or elegance, security wins. Decisions
-already taken under this rule, so they are not silently revisited:
+**Scope, as clarified by the user:** this is about *code* security — parsing safety, injection,
+secret handling, and the provenance of dependencies. It is **not** about refusing to connect to
+endpoints the user has deliberately configured. A weak endpoint gets a **warning**; the user decides.
+
+Decisions taken under the code-security reading, so they are not silently revisited:
 
 - **Host keys fail closed.** No approval UI (background worker, early init) ⇒ an unknown host is
   rejected, never trusted unattended. A corrupt trust entry is treated as absent rather than as a
@@ -944,32 +951,64 @@ already taken under this rule, so they are not silently revisited:
   changed credential cannot reuse a connection authenticated with the old one (§15.2).
 - **Overlong UTF-8, surrogates and out-of-range code points are rejected** by the decoder, not
   passed through — these are filter-bypass primitives, not merely untidy input.
-- **SMB will not ship on a ≤2.1-only client** (§7.1), because that silently removes SMB 3.x
-  encryption the current app has.
+- **~150 lines of hand-rolled SOCKS parsing deleted** (§18). dartssh2 forwards dynamically itself, so
+  the app no longer owns a byte-level parser for an attacker-reachable protocol.
+- **Unmaintained dependencies are treated as a security concern**, which is what actually rules out
+  `smb_connect` (§7.1) — not its protocol version.
 
+### Warnings owed to the user (to implement with the Shares/Settings screens)
+Under the corrected reading, these are **warnings, not blocks**:
+- SMB shares negotiating < 3.x → note that the transport is unencrypted.
+- FTP and WebDAV-over-plain-HTTP → note that credentials and data are in the clear.
 
-### 2026-08-03 — Session 9b: three further requirements, and the SMB decision
+### 2026-08-04 — Session 10: Phase 5 complete, and two corrections from the user
 
-Recorded requirements 11 (reuse/centralise), 12 (security first) and 13 (feature parity
-non-negotiable), with §16 extended and a new §17 listing the security decisions already taken so
-they are not silently revisited later.
+Ported `SshTunnelManager.kt` → `ssh_tunnel_manager.dart` + `tunnel_generation.dart`. **Phase 5 is
+done**: the whole SSH layer (1,984 LOC) is across.
 
-**Acted on requirement 11 immediately:** three private copies of `firstOrNull` had accumulated
-across `remote_commands`, `remote_parsers` and `remote_fs_client`. They are now one
-`KotlinIterableOps` extension in `kotlin_strings.dart`. Divergent copies of a "safe accessor" are
-exactly how an unsafe one eventually slips in.
+**The headline is a deletion.** JSch does not implement `ssh -D` — its string overload parses an
+OpenSSH *local-forward* spec, so a dynamic request always threw. The Kotlin therefore hand-wrote a
+complete SOCKS4 / SOCKS4a / SOCKS5 proxy: ~150 lines of byte-level parsing of an attacker-reachable
+wire protocol. dartssh2 forwards dynamically itself, so **all of it is gone**. `-L` still needs a
+local accept loop (dartssh2's `forwardLocal` opens one channel, it does not bind a listener), but
+that only pipes bytes and parses nothing.
 
-**Requirements 12 and 13 together force the SMB decision that §7.1 had been deferring.**
-Parity means SMB browsing cannot be dropped. Security means it cannot ship on `smb_connect` even if
-the dependency conflict were solved, because its **SMB 2.1 cap is a security limitation**: SMB 3.x
-is the dialect that adds per-message encryption, so a ≤2.1 client would silently downgrade every
-share to an unencrypted transport that the Kotlin app (via smbj) does not use. That leaves two real
-options — implement SMB2/3 in Dart including 3.x encryption, or put platform-native SMB behind the
-already-ported `RemoteFsClient` seam. §7.1 records the reasoning and leans to the latter, on the
-grounds that "security first" argues against staking share confidentiality on a from-scratch crypto
-implementation written under migration pressure.
+`stop()` deliberately does not take the per-tunnel lock — stopping must never queue behind a start
+hung dialling an unreachable host — so `TunnelGeneration` is what stops a tunnel surviving its own
+stop. Extracted as a pure token and tested directly.
 
-The `RemoteFsClient` abstraction makes either choice swappable, so this blocks nothing today — but
-it is no longer deferrable past the cut-over.
+#### Two corrections to earlier reasoning, both from the user
 
-**Verified — 298 tests pass, `flutter analyze` clean.**
+1. **Security means *code* security, not protocol-version security.** My §7.1 argued SMB 2.1 was
+   disqualifying for lacking SMB 3.x encryption. **Withdrawn.** A homelab user pointing the app at
+   their own old NAS knows it is unencrypted; the right response is a **warning**, not a refusal.
+   Blocking would have removed a working feature to protect users from their own informed choice.
+   `smb_connect` is still ruled out — but for the *right* reasons: an unresolvable dependency
+   conflict with dartssh2, and an unmaintained, unverified-publisher parser, which is itself a
+   code-security concern. §7.1 and §17 rewritten; §17 now also lists the warnings owed to the user
+   (sub-3.x SMB, plaintext FTP/WebDAV) rather than treating those as blockers.
+
+2. **Feature parity, not code parity.** Every shipped capability must survive; the structure is free
+   to change — which is what §16 asks for anyway. This resolves the tension I flagged earlier
+   between "parity is non-negotiable" and the §15.1 bug fix: fixing a defect preserves the
+   capability, so the two requirements never actually conflicted.
+
+**Parity gap to decide (§18):** dartssh2's dynamic forward is **SOCKS5 only** (NO AUTH, CONNECT);
+the Kotlin also accepted SOCKS4 and SOCKS4a. Under "feature parity", this is a real if narrow gap —
+a client that only speaks SOCKS4 would stop working. Almost everything modern uses SOCKS5. Flagged
+rather than silently dropped.
+
+**Verified — 304 tests pass, `flutter analyze` clean.**
+
+---
+
+## 18. Known parity gaps (requirement 13)
+
+Capabilities where the Dart port does not yet match the Kotlin. Each needs a decision, not silence.
+
+| Gap | Kotlin | Dart port | Impact |
+|---|---|---|---|
+| Dynamic forward protocol | SOCKS4, SOCKS4a **and** SOCKS5 | **SOCKS5 only** (dartssh2 native) | A client that speaks only SOCKS4 stops working. Rare — modern clients use SOCKS5. Fixing it means re-adding a hand-written SOCKS4 front end, which is what §17 just removed. |
+| Encrypted jump-host keys | Not supported (Kotlin passed a null passphrase) | Not supported | No regression; documented so it is not mistaken for one. |
+| SMB browsing | smbj (SMB 2/3) | **Not implemented** — see §7.1 | Blocks a headline feature. Must be resolved before cut-over. |
+
