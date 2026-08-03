@@ -7,6 +7,8 @@ import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/servers_view_model.dart';
 import '../../widgets/omni_components.dart';
+import 'server_form_sheet.dart';
+import 'server_form_state.dart';
 
 /// The Servers screen, ported from `ServersMainView` in `ui/AppUi.kt`.
 ///
@@ -22,25 +24,64 @@ class ServersScreen extends StatelessWidget {
     final vm = context.watch<ServersViewModel>();
     final filtered = vm.filteredServers;
 
-    return Column(
+    return Stack(
       children: [
-        _SummaryBanner(servers: vm.servers),
-        _SearchRow(vm: vm),
-        _GroupChips(vm: vm),
-        Expanded(
-          child: filtered.isEmpty
-              ? _EmptyState(hasServers: vm.servers.isNotEmpty)
-              : ListView.builder(
-                  key: const ValueKey('servers.list'),
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  itemCount: filtered.length,
-                  itemBuilder: (context, index) =>
-                      _ServerCard(server: filtered[index], vm: vm),
-                ),
+        Column(
+          children: [
+            _SummaryBanner(servers: vm.servers),
+            _SearchRow(vm: vm),
+            _GroupChips(vm: vm),
+            Expanded(
+              child: filtered.isEmpty
+                  ? _EmptyState(hasServers: vm.servers.isNotEmpty)
+                  : ListView.builder(
+                      key: const ValueKey('servers.list'),
+                      padding: const EdgeInsets.fromLTRB(10, 0, 10, 88),
+                      itemCount: filtered.length,
+                      itemBuilder: (context, index) =>
+                          _ServerCard(server: filtered[index], vm: vm),
+                    ),
+            ),
+          ],
+        ),
+        Positioned(
+          right: 16,
+          bottom: 16,
+          child: FloatingActionButton(
+            key: const ValueKey('servers.add'),
+            tooltip: 'Add host',
+            onPressed: () => openServerForm(context, vm, mode: ServerFormMode.add),
+            child: const Icon(Icons.add),
+          ),
         ),
       ],
     );
   }
+}
+
+/// Opens the add/edit/duplicate sheet.
+///
+/// Exposed so the card's edit action and the FAB share one entry point rather than each wiring the
+/// repository call themselves.
+Future<void> openServerForm(
+  BuildContext context,
+  ServersViewModel vm, {
+  required ServerFormMode mode,
+  Server? source,
+}) {
+  return showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (_) => ServerFormSheet(
+      mode: mode,
+      source: source,
+      existingServers: vm.servers,
+      onSave: (server) =>
+          mode == ServerFormMode.edit ? vm.updateServer(server) : vm.saveServer(server),
+      onTestConnection: vm.canTestConnections ? vm.testConnection : null,
+    ),
+  );
 }
 
 /// Total / online / offline / groups, the at-a-glance fleet summary.
@@ -214,6 +255,10 @@ class _ServerCard extends StatelessWidget {
         onTap: () => vm.isMultiSelectMode
             ? vm.toggleBulkSelection(server.id)
             : vm.selectedServerId = server.id,
+        onLongPress: vm.isMultiSelectMode
+            ? null
+            : () => openServerForm(context, vm,
+                mode: ServerFormMode.edit, source: server),
         child: Row(
           children: [
             if (vm.isMultiSelectMode)

@@ -2,6 +2,8 @@ import 'package:drift/drift.dart' show Value;
 import 'package:flutter/foundation.dart';
 
 import '../../data/app_database.dart';
+import '../../data/ssh/ssh_transport.dart';
+import '../../domain/server_credentials.dart';
 import 'app_state.dart';
 
 /// The Servers screen's state and actions, split out of `ui/AppViewModel.kt` per §5.2.
@@ -9,11 +11,17 @@ import 'app_state.dart';
 /// Owns only what the Servers screen needs — search text, the group filter, multi-select — and reads
 /// the host list from the shared [AppState] rather than holding a second copy that could drift.
 class ServersViewModel extends ChangeNotifier {
-  ServersViewModel(this._app) {
+  ServersViewModel(this._app, {this.transport}) {
     _app.addListener(notifyListeners);
   }
 
   final AppState _app;
+
+  /// Null in tests and in any build without a transport wired; Test Connection is then unavailable
+  /// rather than silently reporting success.
+  final SshTransport? transport;
+
+  bool get canTestConnections => transport != null;
 
   /// The Play Store free tier allows one saved host; the source-available build is unlimited.
   static const freePlayStoreLimit = 1;
@@ -56,6 +64,28 @@ class ServersViewModel extends ChangeNotifier {
   }
 
   List<int> get selectedServerIdsForBulk => List.unmodifiable(_selectedServerIdsForBulk);
+
+  /// Attempts a connection with [candidate]'s settings. Returns null on success, otherwise a
+  /// message to show the user.
+  ///
+  /// The candidate is the *unsaved* form row, so the test exercises exactly what is about to be
+  /// written rather than what is currently stored.
+  Future<String?> testConnection(Server candidate) async {
+    final transport = this.transport;
+    if (transport == null) return 'Connection testing is unavailable in this build.';
+    try {
+      final creds = resolveCredentials(
+        candidate,
+        keys: await _app.repository.getAllKeys(),
+        profiles: await _app.repository.getAllProfiles(),
+      );
+      return await transport.testConnection(creds);
+    } on CredentialResolutionException catch (e) {
+      return e.message;
+    } catch (e) {
+      return e.toString();
+    }
+  }
 
   void toggleBulkSelection(int serverId) {
     if (!_selectedServerIdsForBulk.remove(serverId)) {

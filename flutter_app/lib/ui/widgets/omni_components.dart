@@ -18,6 +18,7 @@ class OmniCard extends StatelessWidget {
     required this.child,
     this.leftAccent,
     this.onTap,
+    this.onLongPress,
     this.semanticLabel,
     this.margin,
   });
@@ -25,6 +26,7 @@ class OmniCard extends StatelessWidget {
   final Widget child;
   final Color? leftAccent;
   final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
   final String? semanticLabel;
   final EdgeInsetsGeometry? margin;
 
@@ -55,10 +57,15 @@ class OmniCard extends StatelessWidget {
       ),
     );
 
-    if (onTap != null) {
+    if (onTap != null || onLongPress != null) {
       card = Material(
         color: Colors.transparent,
-        child: InkWell(onTap: onTap, borderRadius: radius, child: card),
+        child: InkWell(
+          onTap: onTap,
+          onLongPress: onLongPress,
+          borderRadius: radius,
+          child: card,
+        ),
       );
     }
     if (semanticLabel != null) {

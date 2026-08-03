@@ -2,24 +2,26 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 7. Immediate task: the add/edit/duplicate sheet *widget*.**
-> `lib/ui/screens/servers/server_form_state.dart` already holds all of its logic — validation, the
-> secret-resolution rules and the connection-test gate — fully tested. What is missing is the UI:
-> a modal sheet with the Kotlin's three tabs (Connect / Auth / Advanced, `ui/AppUi.kt` line 2213),
-> a Test Connection button calling `SshTransport.testConnection` then `markConnectionTested()`, and
-> save wired to `ServersViewModel.saveServer` / `updateServer`.
-> **Until it exists the app cannot create a host at all**, so the Servers screen is read-only.
+> **Phase 7. Immediate task: the Monitor ViewModel + screen.**
+> The Servers screen is now complete and the app can create, edit and duplicate a host: the sheet
+> widget (`lib/ui/screens/servers/server_form_sheet.dart`), the shared credential resolver
+> (`lib/domain/server_credentials.dart`) and `ServersViewModel.testConnection` are all in and tested.
+> Next is Monitor — the ViewModel reading from `AppState`, then the screen, replacing its
+> placeholder in `lib/ui/app_scaffold.dart`.
 >
 > Then, in the §9 order — for each: a feature ViewModel reading from `AppState`, then the screen,
 > replacing its placeholder in `lib/ui/app_scaffold.dart`: Monitor → Infra → Fleet → SFTP → Tools.
 >
-> **Three conventions established so far — follow all:**
+> **Four conventions established so far — follow all:**
 > 1. Every interactive widget gets a stable `ValueKey('<screen>.<element>')` (Patrol has no native
 >    view tree to fall back on).
 > 2. Anything reading an observable singleton (`HostDisplay`) must **listen** via
 >    `ListenableBuilder` — Compose recomposed readers automatically, Flutter does not.
 > 3. Logic that is a security control or easy to get wrong goes in a plain testable class beside the
 >    widget, not inside `build()`.
+> 4. Anything a screen needs from the SSH layer arrives through an **injected, nullable** dependency
+>    (`ServersViewModel({SshTransport? transport})`). Absent means the feature is disabled and says
+>    so — never a stub that reports success.
 >
 > ⚠️ **Two open blockers, neither blocking Phase 7:** §7.10 (Android bridge for legacy credential
 > decryption) and §7.1 (SMB choice).
@@ -1390,3 +1392,51 @@ source's health or status — a copy shares no live state with its source.
 **Honest status:** this is the form's *logic* only. The sheet **widget** is not written, so the app
 still cannot add a host — the Servers screen remains read-only. That is the next task.
 
+
+---
+
+### Session 21 — the server form sheet: the app can now create a host
+
+`lib/ui/screens/servers/server_form_sheet.dart` (~460 lines) — the add / edit / duplicate modal,
+ported from `AddServerSheet` (`ui/AppUi.kt` line 2213). Three tabs in the Kotlin's order — Connect
+(name, host, port, user, group, colour), Auth (password / key / profile), Advanced (notes,
+keepalive, compression, persistent session, agent forwarding, sudo password, proxy) — so a user's
+muscle memory survives the migration. The widget is presentation only; every rule it enforces lives
+in the already-tested `ServerFormState`.
+
+**The Servers screen is now writable.** A FAB (`servers.add`) opens the add sheet; a long press on a
+card opens it in edit mode. Both go through one `openServerForm` entry point rather than each
+wiring the repository call themselves.
+
+**New: `lib/domain/server_credentials.dart` — one credential resolver for the whole app.**
+Turning a stored `Server` row into `SshCredentials` was about to be needed by Test Connection, the
+terminal, the monitor poller, SFTP and the fleet runner. Written once (§16, requirement 11), because
+duplicating it per screen is how a host ends up connecting with different credentials depending on
+which button was pressed. Its refusals are the interesting part — all four raise
+`CredentialResolutionException` rather than falling back:
+
+| Situation | Behaviour |
+|---|---|
+| `authType == 'key'`, alias no longer saved | Error. A silent fall back to the stored password would send a credential somewhere the user never agreed to send it, and would hide the real fault. |
+| `authType == 'key'` | The stored password is dropped from the credential set entirely, so a server that rejects the key cannot then harvest the password. |
+| Credential profile deleted or unset | Error, rather than connecting as the host row's own user. |
+| Jump-host key missing | Error, rather than attempting the jump with the target's key. |
+
+A profile is treated as an indirection, not a third mechanism: it supplies the identity, then the
+ordinary password/key rules apply to what it supplied — including the key rules above.
+
+`ServersViewModel` gained an **injected, nullable** `SshTransport`. Null means Test Connection is
+unavailable and the button is disabled; it is never stubbed to report success. That is now
+convention 4 in the NEXT ACTION block. The test runs against the *unsaved* form row, so it
+exercises exactly what is about to be written rather than what is currently stored.
+
+**Verified — 592 tests pass (28 new), `flutter analyze` clean.** The 14 widget tests drive the sheet
+the way a user does: fill three fields, test, save, and assert the row that came out. They cover the
+end-to-end create path, an edit updating in place, a duplicate, both save refusals (untested
+configuration, failed test), a retest forced by changing the host after a pass, and — through the
+rendered widget, not just the state class — that a saved password never reaches the text field, that
+leaving it blank keeps the stored value, and that only the explicit Forget tick clears it.
+
+**Still not done on this screen:** the key picker lists aliases passed in by the caller, and the
+Servers screen does not yet pass them (Auth keys live in Tools, not yet ported), so a key-auth host
+cannot be created from the UI until Tools lands. Password and profile hosts work today.
