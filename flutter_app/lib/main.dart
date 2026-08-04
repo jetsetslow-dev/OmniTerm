@@ -11,6 +11,10 @@ import 'data/ssh/secure_host_key_store.dart';
 import 'data/ssh/ssh_host_key_trust.dart';
 import 'data/ssh/ssh_transport.dart';
 import 'domain/server_credentials.dart';
+import 'platform/biometric_auth.dart';
+import 'platform/screen_security.dart';
+import 'ui/view_model/app_lock_controller.dart';
+import 'ui/widgets/app_lock_gate.dart';
 import 'ui/widgets/host_key_approval_host.dart';
 import 'ui/app_scaffold.dart';
 import 'ui/navigation.dart';
@@ -99,8 +103,17 @@ class OmniTermApp extends StatelessWidget {
           dispose: (_, transport) => transport.shutdown(),
         ),
         ProxyProvider<DartSshTransport, SshTransport>(update: (_, transport, _) => transport),
+        Provider<ScreenSecurity>(create: (_) => ScreenSecurity()),
         ChangeNotifierProvider<AppState>(
           create: (context) => AppState(_buildRepository(context.read<AppDatabase>()))..start(),
+        ),
+        // Declared after AppState because it reads the same repository, and loaded eagerly: the
+        // lock has to be up before the first frame, not after it.
+        ChangeNotifierProvider<AppLockController>(
+          create: (context) => AppLockController(
+            context.read<AppState>().repository,
+            biometricPrompt: BiometricAuth().prompt,
+          )..load(),
         ),
         ChangeNotifierProxyProvider<AppState, ServersViewModel>(
           create: (context) => ServersViewModel(context.read<AppState>(), transport: context.read<SshTransport>()),
@@ -165,17 +178,55 @@ class OmniTermApp extends StatelessWidget {
             title: 'OmniTerm',
             debugShowCheckedModeBanner: false,
             theme: omniTheme(mode, brightness),
-            // Above every screen: a first-contact host can be met from the terminal, the monitor
-            // poller, SFTP or a connection test, and each one needs somewhere to ask.
-            home: HostKeyApprovalHost(
-              trust: context.read<SshHostKeyTrust>(),
-              child: const _BackHandler(child: AppCoreScaffold()),
+            // The lock is the outermost wrapper: a gate with a route, tab or dialog reachable
+            // around it is decoration. The host-key prompt sits inside it, so a locked app can
+            // never be made to show one.
+            home: AppLockGate(
+              controller: context.read<AppLockController>(),
+              // The host-key prompt sits inside the lock and above every screen: a first-contact
+              // host can be met from the terminal, the monitor poller, SFTP or a connection test.
+              child: HostKeyApprovalHost(
+                trust: context.read<SshHostKeyTrust>(),
+                child: const _ScreenSecurityBinding(
+                  child: _BackHandler(child: AppCoreScaffold()),
+                ),
+              ),
             ),
           );
         },
       ),
     );
   }
+}
+
+/// Applies (or lifts) the screenshot block whenever the preference changes.
+///
+/// A widget rather than a one-off call at startup, so toggling the setting takes effect at once —
+/// a protection that only applies after a restart is one the user will believe they have when they
+/// do not.
+class _ScreenSecurityBinding extends StatefulWidget {
+  const _ScreenSecurityBinding({required this.child});
+
+  final Widget child;
+
+  @override
+  State<_ScreenSecurityBinding> createState() => _ScreenSecurityBindingState();
+}
+
+class _ScreenSecurityBindingState extends State<_ScreenSecurityBinding> {
+  bool? _applied;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final wanted = context.watch<AppState>().flagSecure;
+    if (wanted == _applied) return;
+    _applied = wanted;
+    unawaited(context.read<ScreenSecurity>().setSecure(secure: wanted));
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 /// Routes the system back gesture through [NavigationController.navigateBack] so the screen

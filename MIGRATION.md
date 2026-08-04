@@ -2,19 +2,22 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **The app can now actually connect.** Session 35 wired `DartSshTransport` and the host-key
-> approval prompt into `main.dart`. Before it, every view model received `transport: null`, so the
-> shipped build could not open a single SSH connection — the screens were complete and inert.
+> **Task #8 is under way.** Session 36 landed the app lock (PIN + biometrics), `FLAG_SECURE`, and
+> link opening in About. Session 35 wired the SSH transport and the host-key prompt.
 >
-> **Immediate task: the rest of #8, platform integrations.** Still outstanding and each blocking
-> something already built: the backup file picker and link opening (§18), the platform-native SMB
-> client (§7.1), notifications, biometric app lock, and `FLAG_SECURE`.
+> **Immediate task: the rest of #8** — backup file save/load (§18), the platform-native SMB client
+> (§7.1), notifications, and the iOS `willResignActive` screen cover (`FLAG_SECURE` is Android-only;
+> `ScreenSecurity.isSupported()` reports false on iOS rather than pretending).
 >
 > **Shell parity gaps (§18) are a second Shell iteration:** split panes, quick connect, tmux
-> persistent sessions, the tunnel manager UI, text selection. The host-key dialog is **done**.
+> persistent sessions, the tunnel manager UI, text selection.
 >
-> ⚠️ **Nothing here has been exercised against a real host yet.** Per the standing rule, the
-> transport wiring needs an on-device run against a live server before it is called finished.
+> ⚠️ **Nothing since session 34 has been exercised on a device.** The transport wiring, the host-key
+> prompt and the app lock all need an on-device run before they are called finished.
+>
+> ⚠️ **PBKDF2 costs ~680 ms per verification in pure Dart** on this machine (Kotlin used the platform
+> provider). Acceptable on the unlock screen, but if it feels slow on real hardware the fix is
+> `cryptography_flutter`, not fewer iterations.
 >
 > Then #9 (Patrol/Maestro E2E) and #10 (CI/CD).
 >
@@ -2302,3 +2305,57 @@ same treatment.
 
 **Verified — 1337 tests pass (13 new), `flutter analyze` clean. Not yet exercised against a real
 host**, which per the standing rule is what "finished" requires.
+
+---
+
+### Session 36 — the app lock, FLAG_SECURE, and link opening
+
+`lib/domain/app_pin.dart`, `lib/ui/view_model/app_lock_controller.dart`,
+`lib/ui/widgets/app_lock_gate.dart`, `lib/platform/biometric_auth.dart`,
+`lib/platform/screen_security.dart`, `android/.../ScreenSecurityBridge.kt`, plus the PIN setup flow
+in Settings and `url_launcher` in About.
+
+**The Settings screen already had these switches; none of them did anything.** "Lock the app",
+"Unlock with biometrics" and "Block screenshots" wrote settings rows nothing read. A switch that
+reports a protection it is not applying is worse than no switch, so this session made all three real.
+
+**The PIN format is unchanged from the Kotlin** (`pin:v2:<iterations>:<salt>:<hash>:<length>`,
+PBKDF2-HMAC-SHA256 at 210 000 rounds) — the same data-compatibility constraint as §7.10 and the
+backup envelope. A migration that invalidated everyone's PIN would lock them out of their own hosts.
+
+| Decision | Why |
+|---|---|
+| A cold start is always locked | Force-stopping an app is the easiest thing in the world to do to a phone you have just picked up; anything else is a way straight past the lock. |
+| An enabled lock with no PIN stays **open** | "Locked with no way to unlock" is not a security feature, it is a brick. |
+| The stored iteration count is range-checked on read | A record is not trusted to name its own work factor: `1` makes an offline attack free, a billion hangs the unlock screen. |
+| Every malformed record verifies as *false* | This is the one screen between someone holding the phone and the host list. It fails closed on nonsense rather than throwing its way open. |
+| The throttle counter is persisted | A throttle a force-stop resets is worth nothing against anyone willing to swipe the app away. |
+| A failed biometric read costs no attempt | A wet finger is not an intrusion; burning attempts on it pushes the user to the PIN and then locks them out of that too. |
+| The device PIN/pattern is accepted alongside biometrics | Refusing it locks out anyone whose sensor is worn out, and it is the same secret the device lock screen already trusts. |
+| A zero timeout locks immediately (`>=`, not `>`) | Otherwise the setting asking for the most protection is the only one that never fires. |
+| A configuration change does not start the timer | Reusing the already-ported `shouldRecordAppBackground`: rotating the phone is not leaving the app. |
+| An old plaintext or v1 PIN is upgraded on successful entry | The only moment the PIN exists in the clear is when the user has just typed it. |
+| The app below the lock is `ExcludeSemantics` + `ExcludeFocus` | Hiding it is not enough — a screen reader must not be able to walk the host list either. |
+| The screen says there is no recovery | Nothing it could offer would help a user that an attacker holding the phone could not also use. A dead-end "forgot your PIN?" would be worse than the truth. |
+| Setting a PIN requires confirming it | There is no recovery, so a typo is permanent. |
+
+**`FLAG_SECURE` has no Flutter-side equivalent** — it is a window flag the platform enforces, and
+nothing Dart draws substitutes for it. On a terminal app the task-switcher thumbnail is the real
+exposure: captured automatically, persisting after backgrounding, and routinely containing a live
+root shell. `ScreenSecurity.isSupported()` asks the platform rather than assuming, so **iOS reports
+false** instead of implying a protection it is not applying; the iOS equivalent (covering the window
+on `willResignActive`) is tracked, not faked. The binding is a widget rather than a startup call, so
+toggling the setting takes effect at once — a protection that needs a restart is one users believe
+they have when they do not.
+
+**About now opens the project link** and keeps Copy alongside it, because a launch the platform
+refuses must still leave a way to get the address off the screen. A refusal says so rather than
+looking like a dead button.
+
+**Testing note.** PBKDF2 costs ~680 ms per call in pure Dart here, so the lock-screen widget tests
+deliberately use a legacy plaintext fixture — five real verifications in a throttle test is a
+ten-minute `pumpAndSettle` timeout. The hashed path has its own tests. Also: once throttled the
+screen runs a one-second ticker, so those tests pump explicitly rather than settling on a timer that
+is meant to repeat.
+
+**Verified — 1376 tests pass (39 new), `flutter analyze` clean. Not yet exercised on a device.**

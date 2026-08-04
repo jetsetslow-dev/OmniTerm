@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../../domain/app_preferences.dart';
 import '../../theme/colors.dart';
+import '../../view_model/app_lock_controller.dart';
 import '../../view_model/settings_view_model.dart';
 import '../../widgets/omni_components.dart';
 
@@ -290,7 +292,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Expanded(
                 child: FilledButton(
                   key: const ValueKey('settings.save'),
-                  onPressed: vm.isDirty ? () => vm.save() : null,
+                  onPressed: vm.isDirty ? () => _save(context, vm) : null,
                   child: const Text('Save'),
                 ),
               ),
@@ -300,6 +302,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
       ],
     );
   }
+
+  /// Saves, and makes the app-lock switch mean something.
+  ///
+  /// Turning the lock on has to collect a PIN: an "app lock" with nothing to unlock it is a switch
+  /// that reports protection it is not providing, which is worse than no switch. Turning it off
+  /// forgets the PIN rather than leaving a stale hash behind for the next time it is enabled.
+  Future<void> _save(BuildContext context, SettingsViewModel vm) async {
+    final lock = context.read<AppLockController?>();
+    final wantsLock = vm.draft.appLockEnabled;
+    final hadLock = vm.saved.appLockEnabled;
+
+    if (lock != null && wantsLock && !lock.isConfigured) {
+      final pin = await _askForPin(context);
+      if (pin == null) {
+        // Cancelling must not leave the switch on and unbacked; put it back where it was.
+        vm.update((p) => p.copyWith(appLockEnabled: false, useBiometrics: false));
+        return;
+      }
+      await lock.setPin(pin);
+    }
+
+    await vm.save();
+    if (lock == null) return;
+    if (!wantsLock && hadLock) {
+      await lock.clearPin();
+    } else {
+      await lock.refresh();
+    }
+  }
+
+  Future<String?> _askForPin(BuildContext context) => showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const _PinDialog(),
+      );
 
   Future<void> _confirmReset(BuildContext context, SettingsViewModel vm) async {
     final confirmed = await showDialog<bool>(
@@ -502,4 +539,95 @@ class _Choice<T> extends StatelessWidget {
       ),
     );
   }
+}
+
+
+/// Collects and confirms a new app-lock PIN.
+class _PinDialog extends StatefulWidget {
+  const _PinDialog();
+
+  /// Four is the shortest length that is not trivially shoulder-surfed in one glance, and matches
+  /// what the Kotlin app accepted so an upgrading user is not forced to change theirs.
+  static const minLength = 4;
+
+  @override
+  State<_PinDialog> createState() => _PinDialogState();
+}
+
+class _PinDialogState extends State<_PinDialog> {
+  final TextEditingController _first = TextEditingController();
+  final TextEditingController _second = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _first.dispose();
+    _second.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final pin = _first.text;
+    setState(() {
+      // Confirmed rather than taken on the first entry: there is no PIN recovery, so a typo here
+      // locks the user out of their own hosts permanently.
+      _error = pin.length < _PinDialog.minLength
+          ? 'Use at least ${_PinDialog.minLength} digits'
+          : (pin != _second.text ? 'The two entries do not match' : null);
+    });
+    if (_error == null) Navigator.of(context).pop(pin);
+  }
+
+  @override
+  Widget build(BuildContext context) => AlertDialog(
+        key: const ValueKey('settings.pin.dialog'),
+        title: const Text('Set an app PIN'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'There is no PIN recovery. If you forget it, the only way back in is to reinstall, '
+              'which clears your saved hosts.',
+              style: TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 12),
+            _pinField(_first, 'PIN', const ValueKey('settings.pin.first')),
+            const SizedBox(height: 8),
+            _pinField(_second, 'Confirm PIN', const ValueKey('settings.pin.second')),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: Text(
+                  _error!,
+                  key: const ValueKey('settings.pin.error'),
+                  style: const TextStyle(fontSize: 12, color: OmniColors.red),
+                ),
+              ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('settings.pin.cancel'),
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('settings.pin.confirm'),
+            onPressed: _submit,
+            child: const Text('Set PIN'),
+          ),
+        ],
+      );
+
+  Widget _pinField(TextEditingController controller, String label, Key key) => TextField(
+        key: key,
+        controller: controller,
+        obscureText: true,
+        enableSuggestions: false,
+        autocorrect: false,
+        keyboardType: TextInputType.number,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        maxLength: 12,
+        decoration: InputDecoration(labelText: label, counterText: ''),
+      );
 }

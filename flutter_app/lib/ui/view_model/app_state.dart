@@ -73,6 +73,11 @@ class AppState extends ChangeNotifier {
   int sftpLargeBatchBytesThreshold = 1000000000;
   bool hideSensitiveInfo = false;
 
+  /// Whether the app asks the platform to keep its contents out of screenshots, recordings and the
+  /// task-switcher thumbnail. Read here rather than by the Settings screen alone, because it has to
+  /// be applied for the whole app, not while one screen happens to be open.
+  bool flagSecure = false;
+
   /// Begin observing the database and load persisted settings.
   Future<void> start() async {
     await loadSettings();
@@ -106,6 +111,7 @@ class AppState extends ChangeNotifier {
     sftpLargeBatchBytesThreshold =
         int.tryParse(await read('sftp_large_batch_bytes') ?? '') ?? 1000000000;
     hideSensitiveInfo = (await read('hide_sensitive_info')) == 'true';
+    flagSecure = (await read('flag_secure')) == 'true';
     notifyListeners();
   }
 

@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
@@ -57,6 +58,27 @@ class _AboutScreenState extends State<AboutScreen> {
   String _platformLabel() {
     if (kIsWeb) return 'Web';
     return '${Platform.operatingSystem} ${Platform.operatingSystemVersion}';
+  }
+
+  /// Hands the project URL to the platform browser.
+  ///
+  /// A refusal is reported rather than swallowed. A button that appears to work and does nothing is
+  /// how a user concludes the app is broken, and here the fallback — copy the link — is right there.
+  Future<void> _openProject() async {
+    var launched = false;
+    try {
+      launched = await launchUrl(
+        Uri.parse(AboutScreen.projectUrl),
+        mode: LaunchMode.externalApplication,
+      );
+    } catch (_) {
+      launched = false;
+    }
+    if (!mounted || launched) return;
+    setState(() => _copied = null);
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(content: Text('No app could open that link — use Copy link instead.')),
+    );
   }
 
   Future<void> _copy(String label, String text) async {
@@ -152,13 +174,25 @@ class _AboutScreenState extends State<AboutScreen> {
                 ),
               ),
               const SizedBox(height: 6),
-              // Copy rather than launch: opening a browser needs a platform integration that has
-              // not landed, and a link that silently does nothing is worse than one you can paste.
-              OutlinedButton.icon(
-                key: const ValueKey('about.copyUrl'),
-                icon: const Icon(Icons.copy, size: 16),
-                label: const Text('Copy link', style: TextStyle(fontSize: 12)),
-                onPressed: () => _copy('Link', AboutScreen.projectUrl),
+              Row(
+                children: [
+                  OutlinedButton.icon(
+                    key: const ValueKey('about.openUrl'),
+                    icon: const Icon(Icons.open_in_new, size: 16),
+                    label: const Text('Open', style: TextStyle(fontSize: 12)),
+                    onPressed: _openProject,
+                  ),
+                  const SizedBox(width: 8),
+                  // Copy stays alongside Open rather than being replaced by it: a device with no
+                  // browser, or a launch the platform refuses, must still leave a way to get the
+                  // address off the screen.
+                  OutlinedButton.icon(
+                    key: const ValueKey('about.copyUrl'),
+                    icon: const Icon(Icons.copy, size: 16),
+                    label: const Text('Copy link', style: TextStyle(fontSize: 12)),
+                    onPressed: () => _copy('Link', AboutScreen.projectUrl),
+                  ),
+                ],
               ),
             ],
           ),
