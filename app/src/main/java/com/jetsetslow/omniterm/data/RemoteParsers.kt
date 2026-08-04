@@ -383,11 +383,22 @@ object RemoteCommands {
             "log show --last 1h --style syslog 2>/dev/null | tail -n $lines || " +
                 "echo '---NOLOGS---'"
         else ->
-            "if command -v journalctl >/dev/null 2>&1; then journalctl -n $lines --no-pager -o short-iso 2>/dev/null; " +
-                "elif command -v logread >/dev/null 2>&1; then logread 2>/dev/null | tail -n $lines; " +
-                "elif [ -r /var/log/messages ]; then tail -n $lines /var/log/messages 2>/dev/null; " +
-                "elif [ -r /var/log/syslog ]; then tail -n $lines /var/log/syslog 2>/dev/null; " +
-                "else echo '---NOLOGS---'; fi"
+            // Each source is tried until one actually PRODUCES output, rather than stopping at the
+            // first one that merely exists. A BusyBox host ships `logread` whether or not syslogd is
+            // running, and when it is not, `logread` fails to stderr -- swallowed by 2>/dev/null --
+            // and exits. The old `elif` chain stopped there, printed nothing, and never reached the
+            // ---NOLOGS--- marker, so the Logs tab showed an empty pane with no explanation on most
+            // containers. Found by running the Flutter port against a real Alpine host.
+            "L=\"\"; " +
+                "if command -v journalctl >/dev/null 2>&1; then " +
+                "L=\$(journalctl -n $lines --no-pager -o short-iso 2>/dev/null); fi; " +
+                "if [ -z \"\$L\" ] && command -v logread >/dev/null 2>&1; then " +
+                "L=\$(logread 2>/dev/null | tail -n $lines); fi; " +
+                "if [ -z \"\$L\" ] && [ -r /var/log/messages ]; then " +
+                "L=\$(tail -n $lines /var/log/messages 2>/dev/null); fi; " +
+                "if [ -z \"\$L\" ] && [ -r /var/log/syslog ]; then " +
+                "L=\$(tail -n $lines /var/log/syslog 2>/dev/null); fi; " +
+                "if [ -z \"\$L\" ]; then echo '---NOLOGS---'; else printf '%s\\n' \"\$L\"; fi"
     }
 
     private fun journalWindows(lines: Int) =
