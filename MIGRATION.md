@@ -2,23 +2,22 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Task #8 is under way.** Sessions 35–37 landed the SSH transport wiring, the host-key prompt,
-> the app lock (PIN + biometrics), `FLAG_SECURE`, link opening, and backup file save/restore.
+> **Task #8 is under way.** Sessions 35–38 landed the SSH transport wiring, the host-key prompt,
+> the app lock (PIN + biometrics), `FLAG_SECURE`, link opening, backup file save/restore, and alert
+> notifications.
 >
-> **Immediate task: the rest of #8** — the platform-native SMB client (§7.1), notifications, and the
-> iOS `willResignActive` screen cover (`FLAG_SECURE` is Android-only; `ScreenSecurity.isSupported()`
-> reports false on iOS rather than pretending).
+> **Immediate task: the rest of #8** — the platform-native SMB client (§7.1), the iOS
+> `willResignActive` screen cover (`FLAG_SECURE` is Android-only), and the background/foreground
+> service that keeps a session alive with the app closed (`SessionService.kt`).
 >
-> **The Kotlin app is being maintained in parallel.** Branch `fix/kotlin-parity-defects` (from
-> `origin/main`) carries the §15 defects found while porting, back-ported with tests — see §15.6.
-> **Anything new found in §15 from here on must be raised there as well**, since the Flutter release
-> is not imminent and the Kotlin app still ships.
+> **The Kotlin app is maintained in parallel** on `fix/kotlin-parity-defects` — see §15.6. A §15
+> entry is not finished until it is fixed on both branches.
 >
 > **Shell parity gaps (§18) are a second Shell iteration:** split panes, quick connect, tmux
 > persistent sessions, the tunnel manager UI, text selection.
 >
-> ⚠️ **Nothing since session 34 has been exercised on a device.** The transport wiring, the host-key
-> prompt, the app lock and the file dialogs all need an on-device run before they are called
+> ⚠️ **Nothing since session 34 has been exercised on a device.** The transport wiring, host-key
+> prompt, app lock, file dialogs and notifications all need an on-device run before they count as
 > finished.
 >
 > Then #9 (Patrol/Maestro E2E) and #10 (CI/CD).
@@ -2422,3 +2421,45 @@ the port introduced and caught before commit, and neither exists in the Kotlin.
 **From here on a §15 entry is not finished until it is fixed on both branches.**
 
 **Verified — Flutter: 1383 tests pass, `flutter analyze` clean. Kotlin: 484 unit tests pass.**
+
+---
+
+### Session 38 — alert notifications
+
+`lib/domain/alert_notification.dart`, `lib/platform/alert_notifier.dart`, wired into
+`AlertsViewModel`, with a warning card on the Alerts screen and `POST_NOTIFICATIONS` in the manifest.
+
+**Until now the Alerts screen was a dashboard.** Rules evaluated, incidents were recorded, the list
+updated — and none of it reached the user unless they happened to open the app. A rule that only
+changes a colour on a screen nobody is looking at has not alerted anybody, which is the whole point
+of the feature.
+
+**The wording is pure and tested** (convention 3). A user is being interrupted, possibly while
+asleep, so what the banner says is the substance rather than the plumbing:
+
+- **The host leads the title** after the severity, because the first question on seeing an alert is
+  always "which machine?".
+- **The threshold is in the body, not just the value.** "94%" means nothing without knowing whether
+  the line was drawn at 90 or at 50.
+- **A disk rule names its mount point.** "Disk Usage at 95%" does not say which disk to go and clear.
+- **Temperature is converted to the user's units** so the notification agrees with every screen.
+- **The host's real name is used, never the masked one.** "Hide addresses" is for a shared screen; a
+  notification you cannot attribute to a machine is useless at 3 a.m.
+
+**The notification id is computed here rather than with `String.hashCode`**, which the Dart VM is
+free to seed differently between runs. The id has to survive a restart — it is how a resolved alert's
+banner gets cancelled — and an unstable one would leave "CPU at 97%" in the shade for a host that
+recovered hours ago.
+
+**Lifecycle decisions:**
+
+| | |
+|---|---|
+| One incident, one banner | Re-posting on every poll while a condition persists is how a user learns to swipe them all away unread. |
+| Resolving **and** dismissing clear the banner | Same reason, from the other end. |
+| A failed post never fails the evaluation | Guarded in the view model, not only inside the notifier: the incident is already recorded, and a notification service that throws must not abort the loop and take every *other* rule's result with it. |
+| Permission is requested when alerts are switched **on** | The system prompt arrives with the context that explains it, rather than at launch. Switching alerts off asks nothing. |
+| A blocked permission is surfaced on the screen | Alerts firing with nothing reaching the shade is the least obvious kind of broken: everything works, and the user finds out about their full disk the next time they happen to open the app. |
+| No notifier at all degrades to "no banner" | Convention 4 — the rule still fires and the incident is still recorded. |
+
+**Verified — 1393 tests pass (10 new), `flutter analyze` clean. Not yet exercised on a device.**

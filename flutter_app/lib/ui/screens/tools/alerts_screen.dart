@@ -37,6 +37,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _MasterSwitch(vm: vm),
+            _NotificationWarning(vm: vm),
             _TabBar(vm: vm),
             if (vm.status != null)
               Padding(
@@ -121,6 +122,49 @@ class _MasterSwitch extends StatelessWidget {
               key: const ValueKey('alerts.masterSwitch.toggle'),
               value: vm.alertsEnabled,
               onChanged: vm.setAlertsEnabled,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Says when alerts will fire but nothing will reach the notification shade.
+///
+/// This is the least obvious kind of broken: everything works, the incident is recorded, the screen
+/// updates — and the user finds out about their full disk the next time they happen to open the app.
+class _NotificationWarning extends StatelessWidget {
+  const _NotificationWarning({required this.vm});
+
+  final AlertsViewModel vm;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!vm.alertsEnabled) return const SizedBox.shrink();
+
+    final message = switch ((vm.canNotify, vm.notificationsAllowed)) {
+      (false, _) => 'Notifications are not available in this build. Rules still fire and incidents '
+          'are still recorded, but nothing will appear outside the app.',
+      (true, false) => 'Notifications are blocked for OmniTerm. Rules still fire and incidents are '
+          'still recorded, but you will only see them in here. Allow notifications in system '
+          'settings to be told while the app is closed.',
+      _ => null,
+    };
+    if (message == null) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+      child: OmniCard(
+        key: const ValueKey('alerts.notificationWarning'),
+        leftAccent: OmniColors.amber,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.notifications_off, size: 16, color: OmniColors.amber),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(message, style: const TextStyle(fontSize: 11, color: OmniColors.amber)),
             ),
           ],
         ),

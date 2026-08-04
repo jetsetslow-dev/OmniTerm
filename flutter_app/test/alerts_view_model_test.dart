@@ -3,11 +3,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/alert_presets.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
+import 'package:omniterm/data/remote_models.dart';
 import 'package:omniterm/domain/alert_evaluation.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/view_model/alerts_view_model.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
 
+import 'support/fake_alert_notifier.dart';
 import 'support/fake_secure_storage.dart';
 
 void main() {
@@ -52,9 +54,12 @@ void main() {
         authStatus: 'ok',
       );
 
+  late FakeAlertNotifier notifier;
+
   Future<AlertsViewModel> boot() async {
     await app.start();
-    final vm = AlertsViewModel(app);
+    notifier = FakeAlertNotifier();
+    final vm = AlertsViewModel(app, notifier: notifier);
     await vm.start();
     await Future<void>.delayed(Duration.zero);
     return vm;
@@ -645,5 +650,174 @@ void main() {
     await settle();
     expect(vm.history, isEmpty);
     vm.dispose();
+  });
+
+  group('notifications', () {
+    Future<(AlertsViewModel, Server)> firingRule({
+      String metric = 'CPU Usage',
+      double threshold = 80,
+      String severity = 'CRITICAL',
+      String mountPoint = '',
+      AlertSample sample = const AlertSample(cpuPercent: 95),
+    }) async {
+      final id = await repo.insertServer(server(name: 'nas'));
+      final vm = await boot();
+      await vm.saveRule(
+        metricName: metric,
+        thresholdValue: threshold,
+        severity: severity,
+        triggerWindow: '2m',
+        mountPoint: mountPoint,
+      );
+      await settle();
+      final host = (await repo.getServerById(id))!;
+      await sustain(vm, host, sample, to: 130000);
+      await settle();
+      return (vm, host);
+    }
+
+    test('a fired alert reaches the notification shade', () async {
+      // Without this the Alerts screen is a dashboard: a rule that only changes a colour on a
+      // screen nobody is looking at has not alerted anyone.
+      final (vm, _) = await firingRule();
+
+      expect(notifier.posted, hasLength(1));
+      expect(notifier.posted.single.title, 'CRITICAL: nas');
+      expect(notifier.posted.single.body, contains('CPU Usage'));
+      vm.dispose();
+    });
+
+    test('the body carries the threshold, not just the value', () async {
+      // "94%" means nothing without knowing whether the line was drawn at 90 or 50.
+      final (vm, _) = await firingRule(threshold: 80);
+
+      expect(notifier.posted.single.body, contains('95%'));
+      expect(notifier.posted.single.body, contains('threshold 80%'));
+      vm.dispose();
+    });
+
+    test('a disk rule names its mount point', () async {
+      // "Disk Usage at 95%" does not say which disk to go and clear.
+      final (vm, _) = await firingRule(
+        metric: 'Disk Usage',
+        mountPoint: '/var',
+        sample: const AlertSample(
+          mounts: [
+            DiskUsage(
+              mount: '/var',
+              filesystem: '/dev/sda2',
+              totalBytes: 100,
+              usedBytes: 95,
+            ),
+          ],
+        ),
+      );
+
+      expect(notifier.posted.single.body, contains('on /var'));
+      vm.dispose();
+    });
+
+    test('the same incident is not re-posted while it stays open', () async {
+      final (vm, host) = await firingRule();
+      await sustain(vm, host, const AlertSample(cpuPercent: 97), from: 160000, to: 300000);
+      await settle();
+
+      expect(notifier.posted, hasLength(1), reason: 'one incident, one banner');
+      vm.dispose();
+    });
+
+    test('resolving clears the banner', () async {
+      // A banner left in the shade for a host that recovered hours ago is how a user learns to
+      // swipe them all away unread.
+      final (vm, host) = await firingRule();
+      final posted = notifier.posted.single.id;
+
+      await sustain(vm, host, const AlertSample(cpuPercent: 5), from: 160000, to: 400000);
+      await settle();
+
+      expect(vm.activeAlerts, isEmpty);
+      expect(notifier.cleared, contains(posted));
+      vm.dispose();
+    });
+
+    test('dismissing clears the banner too', () async {
+      final (vm, _) = await firingRule();
+      final posted = notifier.posted.single.id;
+
+      await vm.dismiss(vm.activeAlerts.single);
+      await settle();
+
+      expect(notifier.cleared, contains(posted));
+      vm.dispose();
+    });
+
+    test('a refused notification does not lose the incident', () async {
+      // The incident is the record; the banner is a courtesy. Losing the first must never follow
+      // from losing the second.
+      final id = await repo.insertServer(server(name: 'nas'));
+      final vm = await boot();
+      notifier.postFailure = StateError('notification service unavailable');
+      await vm.saveRule(
+        metricName: 'CPU Usage',
+        thresholdValue: 80,
+        severity: 'WARNING',
+        triggerWindow: '2m',
+      );
+      await settle();
+      final host = (await repo.getServerById(id))!;
+
+      await sustain(vm, host, const AlertSample(cpuPercent: 95), to: 130000);
+      await settle();
+
+      expect(vm.activeAlerts, hasLength(1));
+      vm.dispose();
+    });
+
+    test('without a notifier the rule still fires', () async {
+      // Convention 4: the feature degrades to "no banner", not to a crash or a lost alert.
+      final id = await repo.insertServer(server(name: 'nas'));
+      await app.start();
+      final vm = AlertsViewModel(app);
+      await vm.start();
+      await Future<void>.delayed(Duration.zero);
+      await vm.saveRule(
+        metricName: 'CPU Usage',
+        thresholdValue: 80,
+        severity: 'WARNING',
+        triggerWindow: '2m',
+      );
+      await settle();
+      final host = (await repo.getServerById(id))!;
+
+      await sustain(vm, host, const AlertSample(cpuPercent: 95), to: 130000);
+      await settle();
+
+      expect(vm.canNotify, isFalse);
+      expect(vm.activeAlerts, hasLength(1));
+      vm.dispose();
+    });
+
+    test('permission is asked for when alerts are switched on, never when off', () async {
+      // The system prompt arrives with the context that explains it, rather than at launch.
+      final vm = await boot();
+
+      await vm.setAlertsEnabled(false);
+      expect(notifier.permissionRequests, 0);
+
+      await vm.setAlertsEnabled(true);
+      expect(notifier.permissionRequests, 1);
+      expect(vm.notificationsAllowed, isTrue);
+      vm.dispose();
+    });
+
+    test('a refused permission is remembered so the screen can say so', () async {
+      final vm = await boot();
+      notifier.permission = false;
+
+      await vm.setAlertsEnabled(true);
+
+      expect(vm.notificationsAllowed, isFalse);
+      vm.dispose();
+    });
   });
 }

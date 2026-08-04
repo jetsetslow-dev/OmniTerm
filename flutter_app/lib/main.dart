@@ -11,6 +11,7 @@ import 'data/ssh/secure_host_key_store.dart';
 import 'data/ssh/ssh_host_key_trust.dart';
 import 'data/ssh/ssh_transport.dart';
 import 'domain/server_credentials.dart';
+import 'platform/alert_notifier.dart';
 import 'platform/biometric_auth.dart';
 import 'platform/screen_security.dart';
 import 'ui/view_model/app_lock_controller.dart';
@@ -143,9 +144,13 @@ class OmniTermApp extends StatelessWidget {
           create: (context) => ScriptsViewModel(context.read<AppState>()),
           update: (_, app, previous) => previous ?? ScriptsViewModel(app),
         ),
+        Provider<AlertNotifier>(create: (_) => LocalAlertNotifier()),
         ChangeNotifierProxyProvider<AppState, AlertsViewModel>(
-          create: (context) => AlertsViewModel(context.read<AppState>()),
-          update: (_, app, previous) => previous ?? AlertsViewModel(app),
+          create: (context) => AlertsViewModel(
+            context.read<AppState>(),
+            notifier: context.read<AlertNotifier>(),
+          ),
+          update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, NetworkViewModel>(
           create: (context) => NetworkViewModel(context.read<AppState>()),
