@@ -2,13 +2,15 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 7. Immediate task: Tools, continued — Alerts next.**
-> **Scripts has landed** (`ScriptsViewModel` + `lib/ui/screens/tools/scripts_screen.dart`), and with
-> it **Fleet's broadcast preset picker now works** — the gap flagged in session 25.
+> **Phase 7. Immediate task: Tools, continued — Network next.**
+> **Alerts has landed** (`AlertsViewModel` + `lib/ui/screens/tools/alerts_screen.dart`), including
+> the evaluation path that raises and resolves incidents.
 >
-> Six tool views remain, each still a placeholder in `app_scaffold.dart`: **Alerts** (do this next —
-> it has the most logic left, and `alert_breach_tracker.dart` + `kLegacyRulePresets` are already
-> ported and waiting), Network, Backup, Health Scoring, Settings, About.
+> Five tool views remain, each still a placeholder in `app_scaffold.dart`: **Network**, Backup,
+> Health Scoring, Settings, About.
+>
+> ⚠️ **Read §16.4 before porting anything else** — port the feature set, not the code set. The
+> Kotlin's shape partly records how it grew; do not re-encode that history here.
 >
 > Then, in the §9 order — for each: a feature ViewModel reading from `AppState`, then the screen,
 > replacing its placeholder in `lib/ui/app_scaffold.dart`: Monitor → Infra → Fleet → SFTP → Tools.
@@ -164,7 +166,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | File | LOC | Flutter destination | Status |
 |---|---|---|---|
 | `ui/AppViewModel.kt` | **12310** | `lib/ui/view_model/` (split by feature, §5.2) | 🟨 `AppState` + `ServersViewModel` done |
-| `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | 🟡 Auth Keys + Scripts done; 6 pending |
+| `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | 🟡 Auth Keys, Scripts, Alerts done; 5 pending |
 | `ui/SftpScreen.kt` | 3474 | `lib/ui/screens/sftp/` | 🟡 3 of 4 tabs; Shares blocked on §7.1 |
 | `ui/ShellScreen.kt` | 3175 | `lib/ui/screens/shell/` | ⬜ |
 | `ui/AppUi.kt` | 2806 | `lib/ui/app_scaffold.dart` + `lib/ui/screens/servers/` | 🟨 scaffold, nav, Servers list + form logic done; form **widget** pending |
@@ -988,6 +990,35 @@ dartssh2. The outstanding item is the big one: splitting the 12,310-line `AppVie
 **Next:** `SshTunnelManager` (333 LOC) finishes Phase 5, then Phase 6 — the terminal emulator.
 
 ---
+
+### 16.4 Port the feature set, not the code set (user directive, 2026-08-04)
+
+> *"you're building from scratch so anything that was added on as a feature later in the app like
+> the temperature alert which needs backfill for others is not applicable to you — you should go by
+> the feature set not code set. architecture is brand new in destination when it comes to
+> implementation"*
+
+Much of the Kotlin's shape is a record of **how it grew**, not of what it does. A column added in
+v20 needed a back-stamp migration for rows already on devices; a preset added after that column
+existed did not. Those are facts about one codebase's history, and re-encoding them here would make
+the Flutter app carry scars it never earned — and, worse, make a *new* preset fail a test suite for
+a reason unrelated to whether it works.
+
+**The rule:** implement what the feature does. Reach for the Kotlin to learn the behaviour, the edge
+cases and the reasons — not to reproduce its internal seams.
+
+**Where this already bit, and was corrected (session 29):** two preset test suites asserted that the
+seed lists matched the Kotlin's `LEGACY_*_PRESETS` back-stamp lists *exactly*, in both directions.
+That is a code-shaped constraint. `alert.temperature` was added after the `presetKey` column, so it
+has no legacy entry — and under the old assertion, adding any new preset would have failed the
+build. Both suites now assert the **feature** contract (keys unique, well-formed, families
+disjoint), and treat the legacy lists as what they are: a one-way *data-compatibility* check for
+rows an older Android build actually wrote, skipped where no counterpart exists.
+
+**Still legitimate, and not affected:** §7.10's credential bridge and the Room-compatible schema.
+Those are not historical residue — they are the difference between an update and a data-loss event
+for a real user's device.
+
 
 ## 17. Security precedence (requirement 12)
 
@@ -1876,3 +1907,45 @@ the Save button.
 overwrite the previous one. A test covers it.
 
 **Verified — 960 tests pass (53 new), `flutter analyze` clean.**
+
+---
+
+### Session 29 — Tools, part 3: Alerts, and a correction to how presets are tested
+
+`lib/domain/alert_evaluation.dart`, `lib/data/alert_presets.dart`,
+`lib/ui/view_model/alerts_view_model.dart` and `lib/ui/screens/tools/alerts_screen.dart`, wired into
+`app_scaffold.dart`. Three tabs — what is firing, the rules behind it, and the archive — plus the
+evaluation path itself, which raises and resolves incidents from telemetry samples.
+
+**§16.4 is the important part of this session.** The user's directive — *port the feature set, not
+the code set* — is now recorded, and two test suites written earlier this week were corrected under
+it. They asserted the preset seed lists matched the Kotlin's legacy back-stamp lists exactly, which
+is a fact about how the Android app grew rather than about what the feature does; under it, adding
+any *new* preset would have failed the build. Both now assert the feature contract and treat the
+legacy lists as a one-way data-compatibility check.
+
+**Two defects found and fixed while building this:**
+
+1. **`evaluate` read its own writes through a lagging stream.** Active alerts and rules came from the
+   stream-backed caches, which trail their own writes by a microtask. Evaluating several hosts in one
+   poll — the normal case — meant a rule could raise the same incident twice, or fail to resolve one
+   raised moments earlier. It now reads from the repository, as the Kotlin did, and a freshly raised
+   incident is visible to the rest of the same pass.
+2. **The rule editor's preview did not update as you typed.** It restates the rule in words
+   ("CPU Usage above 75% for 5m"), which is the whole point of having it, but it only rebuilt when a
+   dropdown changed — so the number it showed was the previous one.
+
+Behaviour worth naming, all tested:
+
+| | |
+|---|---|
+| A temperature rule never fires on a host with no sensor | `currentValueFor` returns **null**, not 0. Substituting zero would make every VM look permanently cool — the same outcome by accident rather than design. |
+| A disk rule watches its own mount | The aggregate figure is a fallback for `/` only. Reporting root usage under a `/srv` rule would name the wrong filesystem. |
+| A fleet-wide rule fires **per host** | One rule id is shared across hosts, so the host is part of the incident match; otherwise one machine's incident would suppress every other machine's. |
+| A sampling gap restarts the window | An alert about a period nobody measured is not evidence of anything. |
+| Editing a rule's terms clears its incident | It was raised under a threshold the rule no longer has. Editing a *note* does not. |
+| A percentage threshold above 100 is refused | A rule that can never fire looks healthy, and nothing signals it is broken. |
+| Muting keeps the incident listed | It stops the re-alert, not the problem — the sheet says so, and the tab badge counts unmuted incidents only. |
+| History stores the host name, not a live lookup | An archived incident must stay readable on its own terms; a later rename does not rewrite what it said. |
+
+**Verified — 1025 tests pass (66 new), `flutter analyze` clean.**

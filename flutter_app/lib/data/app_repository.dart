@@ -262,6 +262,7 @@ class AppRepository {
   Future<int> insertAlert(ActiveAlertsCompanion alert) => _db.alertsDao.insertAlert(alert);
   Future<void> deleteAlert(int id) => _db.alertsDao.deleteAlert(id);
   Future<void> setAcknowledged(int id, bool ack) => _db.alertsDao.setAcknowledged(id, ack);
+  Future<void> acknowledgeAlert(int id) => _db.alertsDao.setAcknowledged(id, true);
   Future<void> acknowledgeAll() => _db.alertsDao.acknowledgeAll();
   Future<void> muteAlert(int id, int mutedUntil) => _db.alertsDao.muteAlert(id, mutedUntil);
 

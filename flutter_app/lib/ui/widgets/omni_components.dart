@@ -160,6 +160,10 @@ InputDecoration omniInputDecoration(
   BuildContext context, {
   String? hintText,
   String? labelText,
+
+  /// Persistent guidance under the field, for a choice whose consequence is not obvious from its
+  /// label — unlike [hintText], which disappears as soon as the field has a value.
+  String? helperText,
   Widget? prefixIcon,
   Widget? suffixIcon,
 }) {
@@ -167,6 +171,7 @@ InputDecoration omniInputDecoration(
   return InputDecoration(
     hintText: hintText,
     labelText: labelText,
+    helperText: helperText,
     prefixIcon: prefixIcon,
     suffixIcon: suffixIcon,
     filled: true,
