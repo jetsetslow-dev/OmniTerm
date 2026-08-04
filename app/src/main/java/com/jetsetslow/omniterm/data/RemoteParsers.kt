@@ -1587,8 +1587,15 @@ object RemoteParsers {
     private fun inferLevel(text: String): String {
         val l = text.lowercase()
         return when {
-            Regex("\\b(error|fail|failed|fatal|critical|denied|refused|panic|segfault)\\b").containsMatchIn(l) -> "ERROR"
-            Regex("\\b(warn|warning|deprecat|timeout|retry)\\b").containsMatchIn(l) -> "WARN"
+            // No trailing \b: these are word *stems*, and a closing boundary disabled every one
+            // of them. "fail" could not match "failure" or "failing", "error" could not match
+            // "errors", and "deprecat" — plainly written as a stem — could only ever match the
+            // literal string "deprecat". Real errors were being shown as INFO in Monitor → Logs and
+            // in Fleet broadcast output, which is exactly backwards for triage. The leading \b is
+            // kept so a stem must still start a word and cannot match mid-token ("shutdown" is
+            // still INFO).
+            Regex("\\b(error|fail|failed|fatal|critical|denied|refused|panic|segfault)").containsMatchIn(l) -> "ERROR"
+            Regex("\\b(warn|warning|deprecat|timeout|retry)").containsMatchIn(l) -> "WARN"
             else -> "INFO"
         }
     }
