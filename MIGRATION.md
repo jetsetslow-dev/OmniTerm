@@ -2,12 +2,11 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 7. Immediate task: finish Infra (containers).**
-> Session 23 landed Infra's foundations but **not its screen**: `lib/domain/stack_summary.dart`
-> (compose-project rollup) and the container command slice in `remote_commands.dart` are in and
-> tested. What is missing is `InfraViewModel` and `lib/ui/screens/infra/` — Infra is still a
-> placeholder in `app_scaffold.dart`. Tabs: Stacks, Builder, Images, Volumes, Networks; the
-> Compose **Builder** is a whole editor and deserves its own iteration.
+> **Phase 7. Immediate task: Fleet.**
+> Infra has landed: `InfraViewModel` + `lib/ui/screens/infra/` are wired into `app_scaffold.dart`.
+> Four of its five tabs work (Stacks, Images, Volumes, Networks); the visual **Compose Builder** is a
+> placeholder that says so and is a whole editor deserving its own iteration (§18).
+> Next is Fleet, in the same shape: a ViewModel reading from `AppState`, then the screen.
 >
 > Then, in the §9 order — for each: a feature ViewModel reading from `AppState`, then the screen,
 > replacing its placeholder in `lib/ui/app_scaffold.dart`: Monitor → Infra → Fleet → SFTP → Tools.
@@ -169,7 +168,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | `ui/AppUi.kt` | 2806 | `lib/ui/app_scaffold.dart` + `lib/ui/screens/servers/` | 🟨 scaffold, nav, Servers list + form logic done; form **widget** pending |
 | `ui/ComposeBuilder.kt` | 2100 | `lib/ui/screens/infra/compose_builder.dart` | ⬜ |
 | `ui/MonitorScreen.kt` | 1185 | `lib/ui/screens/monitor/` | 🟡 4 of 6 tabs; Scripts/CRON pending |
-| `ui/InfraScreen.kt` | 1020 | `lib/ui/screens/infra/` | ⬜ |
+| `ui/InfraScreen.kt` | 1020 | `lib/ui/screens/infra/` | 🟡 4 of 5 tabs; Builder pending |
 | `ui/FleetScreen.kt` | 878 | `lib/ui/screens/fleet/` | ⬜ |
 | `ui/CodeEditor.kt` | 850 | `lib/ui/widgets/code_editor.dart` | ⬜ |
 | `ui/OmniComponents.kt` | 779 | `omni_chrome.dart` + `omni_components.dart` | 🟨 chrome, card, stat box, section header, formatters done |
@@ -1062,6 +1061,14 @@ rather than silently dropped.
 
 ## 18. Known parity gaps (requirement 13)
 
+**Infra (session 24):**
+- **The visual Compose Builder** — not ported; the tab renders a note saying so. It is a whole YAML
+  editor (`ComposeBuilder`, plus `parseDockerComposeYaml` and the atomic deploy flow) and deserves
+  its own iteration.
+- **Stack scale, ports detail and logs dialogs** — the Kotlin has modal sheets for scaling a
+  service, listing published ports and streaming compose logs. The underlying commands are ported
+  (`dockerComposeAction` covers scale/serviceLogs/followLogs); the dialogs are not.
+
 **Monitor (session 22):**
 - **Scripts and CRON tabs** — not ported; both render a note saying so rather than a blank pane.
 - **Overview sparklines** (`MetricLineChart`) and the **health-breakdown dialog** — both need the
@@ -1593,3 +1600,47 @@ inspect field is `.Id` and Podman's is `.ID`. Using either engine's syntax on th
 
 **Honest status:** Infra is still a placeholder in `app_scaffold.dart`. `InfraViewModel` and the
 screen are the next task, and the Compose Builder inside it deserves its own iteration.
+
+---
+
+### Session 24 — Infra: containers, stacks and the downed-stack registry
+
+`lib/ui/view_model/infra_view_model.dart` and `lib/ui/screens/infra/` (`infra_screen.dart` +
+`infra_tabs.dart`), wired into `app_scaffold.dart` in place of the placeholder. Four of the five
+tabs work — Stacks, Images, Volumes, Networks. The Compose Builder renders a note saying it is not
+in this build yet.
+
+The compose command slice joined `remote_commands.dart`: `dockerComposeAction` (with the run-time
+entrypoint resolver that copes with all four of `docker compose`, `docker-compose`,
+`podman compose` and `podman-compose`) and `composeConfigPresent`.
+
+**Things the port had to get right, and why:**
+
+| | |
+|---|---|
+| Six probes issued **concurrently** | Serialising independent probes multiplies round-trip latency by six on exactly the screen a user opens to check something quickly. |
+| A transport failure **clears** every list | Keeping the previous rows would present one refresh's state as current; keeping the *registry* rows would report stacks as "down" on no evidence at all. |
+| Image "in use" matched **within a runtime** | A host running both engines pulls the same `repo:tag` into each. Crossing them would let the UI offer to delete an image that is actually running. |
+| Restart counts keyed `runtime:id` first | A Docker and a Podman container can share an id prefix. |
+| Every action **refetches** rather than patching locally | Guessing the post-action state is how a UI ends up quietly disagreeing with the host. |
+| Compose actions always `cd` into the working directory | Compose resolves relative bind mounts and `.env` against the working directory, so running from elsewhere can silently bring up a *different* stack from the same file. |
+
+**The downed-stack registry** is ported in full: a compose project brought down with `compose down`
+has no containers, so it would vanish from a `ps`-derived list entirely — but its file is still on
+disk and it can be brought back. Projects are remembered per host, and one with no resolvable
+working directory is deliberately *not* recorded: no compose action could ever run for it, including
+a later "up", so there is nothing actionable to remember. Bringing one back up probes that the
+compose file still exists first, because a file can be moved behind the app's back and compose's own
+missing-file error is confusing; the app says plainly that it is gone and offers to forget the stack.
+Forgetting is local only — a test asserts it sends nothing to the host.
+
+**Destructive actions are gated by what they actually destroy.** A container or image can be
+re-pulled, so removal is one tap. A volume *is* the data, so its dialog says the contents cannot be
+recovered, and the volume prune warns that it includes named volumes. Built-in networks (`bridge`,
+`host`, `none`, `podman`) get no delete button at all: removing them breaks container networking and
+they cannot be recreated identically.
+
+Compose output is shown **verbatim and selectable**. Compose failures are diagnosed from their exact
+wording and get pasted into issue trackers, so paraphrasing them is worse than useless.
+
+**Verified — 710 tests pass (34 new), `flutter analyze` clean.**

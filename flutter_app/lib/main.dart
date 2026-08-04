@@ -11,6 +11,7 @@ import 'ui/shell_state.dart';
 import 'ui/view_model/app_state.dart';
 import 'platform/legacy_secret_channel.dart';
 import 'platform/secret_store.dart';
+import 'ui/view_model/infra_view_model.dart';
 import 'ui/view_model/monitor_view_model.dart';
 import 'ui/view_model/servers_view_model.dart';
 import 'ui/theme/theme.dart';
@@ -56,6 +57,10 @@ class OmniTermApp extends StatelessWidget {
         ChangeNotifierProxyProvider<AppState, MonitorViewModel>(
           create: (context) => MonitorViewModel(context.read<AppState>()),
           update: (_, app, previous) => previous ?? MonitorViewModel(app),
+        ),
+        ChangeNotifierProxyProvider<AppState, InfraViewModel>(
+          create: (context) => InfraViewModel(context.read<AppState>()),
+          update: (_, app, previous) => previous ?? InfraViewModel(app),
         ),
       ],
       child: Builder(

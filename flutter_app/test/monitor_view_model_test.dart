@@ -17,8 +17,11 @@ import 'support/fake_secure_storage.dart';
 class RecordingTransport implements SshTransport {
   RecordingTransport({this.replies = const {}, this.fallback = ''});
 
-  final Map<Pattern, String> replies;
+  Map<Pattern, String> replies;
   final String fallback;
+
+  /// When set, every `exec` throws it — simulating a dropped connection.
+  Object? failure;
 
   final List<String> commands = [];
   final List<String?> stdins = [];
@@ -31,6 +34,7 @@ class RecordingTransport implements SshTransport {
     commands.add(command);
     stdins.add(stdin);
     if (gate != null) await gate!.future;
+    if (failure != null) throw failure!;
     for (final entry in replies.entries) {
       if (command.contains(entry.key)) return entry.value;
     }

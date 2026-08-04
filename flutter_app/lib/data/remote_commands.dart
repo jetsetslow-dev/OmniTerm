@@ -392,3 +392,130 @@ String dockerPruneImages() =>
 String dockerPruneVolumes() =>
     '{ command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1 && docker volume prune -a -f; true; } 2>&1; '
     '{ command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1 && podman volume prune -a -f; true; } 2>&1';
+
+// ── docker compose ─────────────────────────────────────────────────────────────
+
+/// Resolves the compose entrypoint at run time into `$OT_COMPOSE`.
+///
+/// There are four in the wild — `docker compose`, `docker-compose`, `podman compose`,
+/// `podman-compose` — and which one a host has is not predictable from which engine it runs.
+///
+/// Podman's `compose` subcommand is only a dispatcher to an external provider and may select Docker
+/// Compose even when native `podman-compose` is installed, so the explicit provider is preferred.
+/// A host with none exits non-zero with a message rather than running a half-formed command.
+String _composeResolve(String runtime) => switch (runtime.toLowerCase()) {
+      'docker' => 'OT_CR=docker; '
+          'if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then OT_COMPOSE="docker compose"; '
+          'elif command -v docker-compose >/dev/null 2>&1; then OT_COMPOSE="docker-compose"; '
+          "else echo 'No Docker Compose found on host' >&2; exit 1; fi",
+      'podman' => 'OT_CR=podman; '
+          'if command -v podman-compose >/dev/null 2>&1; then OT_COMPOSE="podman-compose"; '
+          'elif command -v podman >/dev/null 2>&1 && podman compose version >/dev/null 2>&1; then OT_COMPOSE="podman compose"; '
+          "else echo 'No Podman Compose provider found on host' >&2; exit 1; fi",
+      _ => 'OT_CR=$_cr; '
+          'if [ -n "\$OT_CR" ] && "\$OT_CR" --version 2>/dev/null | grep -qi podman; then '
+          'if command -v podman-compose >/dev/null 2>&1; then OT_COMPOSE="podman-compose"; '
+          'elif "\$OT_CR" compose version >/dev/null 2>&1; then OT_COMPOSE="\$OT_CR compose"; '
+          "else echo 'No Podman Compose provider found on host' >&2; exit 1; fi; "
+          'elif [ -n "\$OT_CR" ]; then '
+          'if "\$OT_CR" compose version >/dev/null 2>&1; then OT_COMPOSE="\$OT_CR compose"; '
+          'elif command -v docker-compose >/dev/null 2>&1; then OT_COMPOSE="docker-compose"; '
+          "else echo 'No Docker Compose found on host' >&2; exit 1; fi; "
+          'elif command -v docker-compose >/dev/null 2>&1; then OT_COMPOSE="docker-compose"; '
+          'elif command -v podman-compose >/dev/null 2>&1; then OT_COMPOSE="podman-compose"; '
+          "else echo 'No docker/podman compose found on host' >&2; exit 1; fi",
+    };
+
+/// `-f <file>… -p <project>`, every value shell-quoted.
+String _composeFlags(String project, String configFiles) {
+  final configFlags = configFiles
+      .split(',')
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .map((s) => '-f ${shellQuote(s)}')
+      .join(' ');
+  return [configFlags, '-p ${shellQuote(project)}'].where((s) => s.isNotEmpty).join(' ');
+}
+
+/// Runs a compose action against a stack.
+///
+/// Always `cd`s into the stack's working directory first: compose resolves relative bind-mount
+/// paths and `.env` against the working directory, so running from elsewhere can silently produce a
+/// *different* stack from the same file.
+String dockerComposeAction(
+  String project,
+  String workingDir,
+  String configFiles,
+  String action, {
+  String? service,
+  int? replicas,
+  bool removeOrphans = false,
+  String runtime = '',
+}) {
+  final flags = _composeFlags(project, configFiles);
+  final orphans = removeOrphans ? ' --remove-orphans' : '';
+  final resolver = _composeResolve(runtime);
+
+  // "update" is multi-step and stays guarded by the cd, so it builds its own tail rather than
+  // plugging one verb into the shared template. Pull registry images (non-fatal, so a registry
+  // login hiccup cannot block a build), then build --pull to refresh base images, then recreate.
+  if (action == 'update') {
+    const c = r'$OT_COMPOSE';
+    final tail = '{ $c $flags pull --ignore-buildable 2>/dev/null || $c $flags pull 2>/dev/null || true; } && '
+        '$c $flags build --pull && $c $flags up -d$orphans && $c $flags ps';
+    return '$resolver && cd ${shellQuote(workingDir)} && $tail 2>&1';
+  }
+
+  final quotedService = shellQuote(service ?? '');
+  final verb = switch (action) {
+    'build' => 'build --pull',
+    'pull' => 'pull',
+    'down' => 'down$orphans',
+    'up' => 'up -d$orphans',
+    'forceRecreate' => 'up -d --force-recreate$orphans',
+    'restart' => 'restart',
+    'logs' => 'logs --tail 200',
+    'followLogs' => 'logs -f --tail 100',
+    'config' => 'config',
+    'ps' => 'ps',
+    'serviceLogs' => 'logs --tail 200 $quotedService',
+    'serviceRestart' => 'restart $quotedService',
+    'serviceStop' => 'stop $quotedService',
+    'serviceRemove' => 'rm -sf $quotedService',
+    // A negative replica count is not a scale-down, it is a malformed command; clamp at zero.
+    'scale' => 'up -d --scale $quotedService=${(replicas ?? 1) < 0 ? 0 : (replicas ?? 1)}',
+    'removeOrphans' => 'up -d --remove-orphans',
+    _ => 'ps',
+  };
+  return '$resolver && cd ${shellQuote(workingDir)} && \$OT_COMPOSE $flags $verb 2>&1';
+}
+
+/// Checks that a remembered stack's compose file still exists before acting on it.
+///
+/// A file can be moved or deleted behind the app's back, and compose's own missing-file error is
+/// confusing; this lets the UI say plainly that the file is gone and offer to forget the stack.
+String composeConfigPresent(String workingDir, String configFiles) {
+  // `~` is the shell's, not a path component, so it must expand rather than be quoted away.
+  String expand(String p) =>
+      p.startsWith('~/') ? '"\$HOME"/${shellQuote(p.substring(2))}' : shellQuote(p);
+
+  final dir = workingDir.endsWith('/')
+      ? workingDir.substring(0, workingDir.length - 1)
+      : workingDir;
+  final recorded = configFiles
+      .split(',')
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .map((s) => (s.startsWith('/') || s.startsWith('~/')) ? s : '$dir/$s')
+      .toList();
+
+  final test = recorded.isNotEmpty
+      // Every recorded file must be present: compose merges them, and a missing overlay changes
+      // what comes up rather than failing outright.
+      ? recorded.map((p) => '[ -f ${expand(p)} ]').join(' && ')
+      : ['compose.yaml', 'compose.yml', 'docker-compose.yml', 'docker-compose.yaml']
+          .map((n) => '[ -f ${expand('$dir/$n')} ]')
+          .join(' || ');
+
+  return 'if { $test; } 2>/dev/null; then echo OMNITERM_COMPOSE_OK; else echo OMNITERM_COMPOSE_MISSING; fi';
+}

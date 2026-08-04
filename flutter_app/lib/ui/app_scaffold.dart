@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import 'navigation.dart';
 import 'screens/placeholder_screen.dart';
+import 'screens/infra/infra_screen.dart';
 import 'screens/monitor/monitor_screen.dart';
 import 'screens/servers/servers_screen.dart';
 import 'shell_state.dart';
@@ -179,7 +180,7 @@ class _ScreenBody extends StatelessWidget {
       Screen.monitor => const MonitorScreen(),
       Screen.shell => const PlaceholderScreen(title: 'Term', source: 'ui/ShellScreen.kt'),
       Screen.sftp => const PlaceholderScreen(title: 'Files', source: 'ui/SftpScreen.kt'),
-      Screen.infra => const PlaceholderScreen(title: 'Containers', source: 'ui/InfraScreen.kt'),
+      Screen.infra => const InfraScreen(),
       Screen.tools => const PlaceholderScreen(title: 'Tools', source: 'ui/ToolsScreen.kt'),
       Screen.alerts => const PlaceholderScreen(title: 'Alerts', source: 'ui/ToolsScreen.kt → AlertsToolView'),
       Screen.quickScripts => const PlaceholderScreen(title: 'Quick Scripts', source: 'ui/ToolsScreen.kt → QuickScriptsToolView'),
