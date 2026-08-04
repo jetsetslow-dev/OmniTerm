@@ -2,13 +2,17 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 7. Immediate task: Tools, continued — Settings, then About.**
-> **Health Scoring has landed** (`HealthScoringViewModel` +
-> `lib/ui/screens/tools/health_scoring_screen.dart`), with a live worked example.
+> **Phase 7 is nearly complete. Immediate task: the Shell (terminal) screen.**
+> **Tools is finished** — all eight views plus the hub are wired into `app_scaffold.dart`. Settings,
+> About and the Tools grid landed in session 33.
 >
-> Two tool views remain, each still a placeholder in `app_scaffold.dart`: **Settings** (the largest
-> of the three, `ui/ToolsScreen.kt` line 3144) and **About**. Finishing those completes Tools — and
-> with it, phase 7.
+> **One placeholder remains in the whole app: `Screen.shell`** (`ui/ShellScreen.kt`). Its engine is
+> already ported and tested — `terminal_emulator.dart`, the tmux control layer, `terminal_parser`,
+> `terminal_key_encoder`, `ssh_transport.shell()` — so this is the *view*: an `xterm`-backed
+> surface, the key row, session lifecycle and the tunnel manager UI. Plan it as its own iteration.
+>
+> After that, phase 7 is done and the remaining tasks are #8 (platform integrations, which also
+> unblocks the backup file picker and link opening), #9 (Patrol/Maestro E2E) and #10 (CI/CD).
 >
 > ⚠️ **Read §16.4 before porting anything else** — port the feature set, not the code set.
 >
@@ -166,7 +170,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | File | LOC | Flutter destination | Status |
 |---|---|---|---|
 | `ui/AppViewModel.kt` | **12310** | `lib/ui/view_model/` (split by feature, §5.2) | 🟨 `AppState` + `ServersViewModel` done |
-| `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | 🟡 6 of 8 tool views done; Settings + About pending |
+| `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | ✅ all 8 tool views + hub |
 | `ui/SftpScreen.kt` | 3474 | `lib/ui/screens/sftp/` | 🟡 3 of 4 tabs; Shares blocked on §7.1 |
 | `ui/ShellScreen.kt` | 3175 | `lib/ui/screens/shell/` | ⬜ |
 | `ui/AppUi.kt` | 2806 | `lib/ui/app_scaffold.dart` + `lib/ui/screens/servers/` | 🟨 scaffold, nav, Servers list + form logic done; form **widget** pending |
@@ -2095,3 +2099,54 @@ is unusable the preview is **withheld** rather than showing a score derived from
 thresholds.
 
 **Verified — 1208 tests pass (34 new), `flutter analyze` clean.**
+
+---
+
+### Session 33 — Tools, part 7: Settings, About, and the hub — Tools is complete
+
+`lib/domain/app_preferences.dart`, `lib/ui/view_model/settings_view_model.dart`,
+`lib/ui/screens/tools/settings_screen.dart`, `about_screen.dart` and `tools_hub_screen.dart`, all
+wired into `app_scaffold.dart`. **Every tool view is now ported**, and the only placeholder left in
+the app is the Shell screen.
+
+**Settings** is twenty-six preferences behind one typed value. Each maps to the `app_settings` key
+the Android app already writes, so an upgraded install keeps its choices instead of silently
+reverting — data compatibility, like §7.10 and the backup envelope.
+
+**The clamping is the substance, not the plumbing.** These values feed timers, buffers and retention
+windows, and nothing stored is trusted unbounded:
+
+| | |
+|---|---|
+| Telemetry interval floored at 5 s | Zero busy-loops the radio and hammers every host; the ceiling keeps "live" meaning something. |
+| Scrollback capped at 100 000 lines | A memory bound, not a preference — two million lines exhausts a phone. |
+| Every numeric read is bounded and every unparseable one falls back | One corrupt settings row must never stop the app starting. |
+| An unknown terminal theme falls back to a real one | Otherwise the terminal renders with a scheme that does not exist. |
+| A test asserts every default sits inside its own range | A default outside its bounds would be rewritten on first read. |
+
+**Behaviour decisions:**
+
+- **Edits are staged and applied on save.** Applying per keystroke would restart the telemetry
+  poller on the way from "1" to "15".
+- **Saving writes only the keys this screen owns**, so a bookmark list or a preset toggle is never
+  clobbered. A test pins that, listing the foreign keys explicitly.
+- **Contradictory combinations warn rather than block** — biometrics with no app lock, keep-alive
+  with battery saver, a 5-second poll. Each is legal and probably not intended; refusing outright
+  would be the app overruling the user.
+- **A dependent switch is disabled, not hidden**, so both the option and its precondition stay
+  visible.
+- **A stepper disables at its bounds**, because a button that does nothing when tapped is worse than
+  one plainly unavailable.
+- **`hide_sensitive_info` is pushed to `HostDisplay`** on load and on save; every screen rendering an
+  address observes that singleton directly.
+
+**About** does two things: state plainly where data goes, and give a support request enough detail to
+be actionable. The privacy text makes specific, checkable claims rather than a vague reassurance. The
+diagnostics block carries the version, platform and Dart version and **nothing identifying** — a test
+asserts there is no `@` in it — because a user is invited to paste it into a public issue. The
+version comes from the build rather than a constant, since a hand-edited version is the fastest way
+to make a bug report useless. The source link is **copied rather than launched**: opening a browser
+needs a platform integration that has not landed, and a link that silently does nothing is worse
+than one you can paste.
+
+**Verified — 1258 tests pass (50 new), `flutter analyze` clean.**

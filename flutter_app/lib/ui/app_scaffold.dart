@@ -7,12 +7,15 @@ import 'screens/fleet/fleet_screen.dart';
 import 'screens/infra/infra_screen.dart';
 import 'screens/monitor/monitor_screen.dart';
 import 'screens/sftp/sftp_screen.dart';
+import 'screens/tools/about_screen.dart';
 import 'screens/tools/alerts_screen.dart';
 import 'screens/tools/backup_screen.dart';
 import 'screens/tools/health_scoring_screen.dart';
 import 'screens/tools/auth_keys_screen.dart';
 import 'screens/tools/network_screen.dart';
 import 'screens/tools/scripts_screen.dart';
+import 'screens/tools/settings_screen.dart';
+import 'screens/tools/tools_hub_screen.dart';
 import 'screens/servers/servers_screen.dart';
 import 'shell_state.dart';
 import 'theme/colors.dart';
@@ -189,15 +192,15 @@ class _ScreenBody extends StatelessWidget {
       Screen.shell => const PlaceholderScreen(title: 'Term', source: 'ui/ShellScreen.kt'),
       Screen.sftp => const SftpScreen(),
       Screen.infra => const InfraScreen(),
-      Screen.tools => const PlaceholderScreen(title: 'Tools', source: 'ui/ToolsScreen.kt'),
+      Screen.tools => const ToolsHubScreen(),
       Screen.alerts => const AlertsScreen(),
       Screen.quickScripts => const ScriptsScreen(),
       Screen.network => const NetworkScreen(),
       Screen.authKeys => const AuthKeysScreen(),
       Screen.backup => const BackupScreen(),
       Screen.healthScoring => const HealthScoringScreen(),
-      Screen.settings => const PlaceholderScreen(title: 'Settings', source: 'ui/ToolsScreen.kt → SettingsToolView'),
-      Screen.about => const PlaceholderScreen(title: 'About', source: 'ui/ToolsScreen.kt → AboutToolView'),
+      Screen.settings => const SettingsScreen(),
+      Screen.about => const AboutScreen(),
     };
   }
 }
