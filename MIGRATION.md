@@ -2,22 +2,24 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Task #8 is under way.** Session 36 landed the app lock (PIN + biometrics), `FLAG_SECURE`, and
-> link opening in About. Session 35 wired the SSH transport and the host-key prompt.
+> **Task #8 is under way.** Sessions 35–37 landed the SSH transport wiring, the host-key prompt,
+> the app lock (PIN + biometrics), `FLAG_SECURE`, link opening, and backup file save/restore.
 >
-> **Immediate task: the rest of #8** — backup file save/load (§18), the platform-native SMB client
-> (§7.1), notifications, and the iOS `willResignActive` screen cover (`FLAG_SECURE` is Android-only;
-> `ScreenSecurity.isSupported()` reports false on iOS rather than pretending).
+> **Immediate task: the rest of #8** — the platform-native SMB client (§7.1), notifications, and the
+> iOS `willResignActive` screen cover (`FLAG_SECURE` is Android-only; `ScreenSecurity.isSupported()`
+> reports false on iOS rather than pretending).
+>
+> **The Kotlin app is being maintained in parallel.** Branch `fix/kotlin-parity-defects` (from
+> `origin/main`) carries the §15 defects found while porting, back-ported with tests — see §15.6.
+> **Anything new found in §15 from here on must be raised there as well**, since the Flutter release
+> is not imminent and the Kotlin app still ships.
 >
 > **Shell parity gaps (§18) are a second Shell iteration:** split panes, quick connect, tmux
 > persistent sessions, the tunnel manager UI, text selection.
 >
 > ⚠️ **Nothing since session 34 has been exercised on a device.** The transport wiring, the host-key
-> prompt and the app lock all need an on-device run before they are called finished.
->
-> ⚠️ **PBKDF2 costs ~680 ms per verification in pure Dart** on this machine (Kotlin used the platform
-> provider). Acceptable on the unlock screen, but if it feels slow on real hardware the fix is
-> `cryptography_flutter`, not fewer iterations.
+> prompt, the app lock and the file dialogs all need an on-device run before they are called
+> finished.
 >
 > Then #9 (Patrol/Maestro E2E) and #10 (CI/CD).
 >
@@ -1120,9 +1122,8 @@ rather than silently dropped.
 
 
 **Backup (session 31):**
-- **Reading and writing the file itself.** The view model produces and consumes the *text*; a save
-  dialog and a document picker are platform work and land with task #8. Until then, export shows the
-  result in a dialog and restore takes pasted text.
+- ~~**Reading and writing the file itself.**~~ **Done in session 37** — the system document picker,
+  via `BackupFileStore`.
 - **Sections not yet carried:** firing alerts, alert history, network shares, port forwards and
   crash logs. The selection model already knows them and their dependencies; the serialiser does
   not. Shares and port forwards are blocked on their own screens being ported.
@@ -1772,6 +1773,20 @@ This defect exists in the shipped Android app today.
 
 ---
 
+### 15.6 The Kotlin fixes are shipping too — branch `fix/kotlin-parity-defects`
+
+The Flutter release is not imminent and the Kotlin app still ships, so the defects above are fixed
+in **both** codebases. Branch `fix/kotlin-parity-defects` (cut from `origin/main`) carries §15.1,
+§15.4 and §15.5 back to Kotlin with 15 new unit tests — `LogSeverityStemsTest` and
+`CommandDangerHitsTest` — and 484 unit tests pass on it.
+
+§15.2 and §15.3 are **not** back-ported: both were defects the port introduced and caught before
+commit, and neither exists in the Kotlin.
+
+**From here on, a §15 entry is not finished until it is fixed on both branches.**
+
+---
+
 ### Session 25 — Fleet: dashboard, broadcast and merged logs
 
 `lib/ui/view_model/fleet_view_model.dart` and `lib/ui/screens/fleet/`, wired into
@@ -2359,3 +2374,51 @@ screen runs a one-second ticker, so those tests pump explicitly rather than sett
 is meant to repeat.
 
 **Verified — 1376 tests pass (39 new), `flutter analyze` clean. Not yet exercised on a device.**
+
+---
+
+### Session 37 — backup files, and the Kotlin app gets its fixes too
+
+Two things: `lib/platform/backup_file_store.dart` wired into the Backup screen, and a **parallel
+branch keeping the shipping Kotlin app fixed** (§15.6).
+
+**Backup export and restore now use real files.** Until now the view model produced the text and the
+screen showed it in a dialog saying saving "is not wired up in this build yet"; restoring took
+pasted text. Both now go through the platform's own document picker.
+
+- **The system picker, not a path the app chooses.** The user decides where a file holding their host
+  list and credentials lands, and the app never gains standing access to a directory it was not
+  handed.
+- **The bytes go straight to the picker, never through a temp file.** A staging copy in the cache
+  directory would outlive the save — including when the user cancels it — and a backup can contain
+  every credential they have.
+- **A size ceiling on read.** The file is read as one string, so a mis-picked video would be an
+  out-of-memory crash rather than a message. 64 MB is far above any real backup.
+- **Three outcomes, three behaviours.** A save **names where the file went** — a backup the user
+  cannot find is one they will assume did not happen. A cancel says *nothing*, because the user
+  cancelled and nothing was written. A failure says so rather than looking successful.
+- **The passphrase warning is repeated at save time**, when the file becomes a real portable thing
+  that can be lost — not only when the passphrase was chosen. An *unencrypted* backup says so just
+  as plainly: anyone who opens it can read it.
+- **`exportBackup` no longer reports "Backup ready."** It is half the job now, and that message left
+  standing after a cancelled save claimed a file that was never written.
+- **An unreadable file is named as unreadable**, not as a bad backup: "that file is not a text
+  backup" and "that backup is corrupt" send the user to different places.
+
+**§15.6 — the Kotlin app is now being fixed in parallel.** The Flutter release is not imminent and
+the Kotlin app still ships, so branch `fix/kotlin-parity-defects` (from `origin/main`) back-ports
+the three real defects found while porting:
+
+| | |
+|---|---|
+| §15.1 `inferLevel` stems | A trailing `\b` disabled every stem, so "connection failure", "disk errors detected" and "task is failing" were all INFO in Monitor → Logs and Fleet broadcast output. |
+| §15.5 `commandDangerHits` | `\S*` cannot cross a space, so `dd if=/dev/zero of=/dev/sda` — the canonical disk-destroyer — was the one form Fleet's last-chance warning did not catch. `iptables -t nat -F` likewise. |
+| §15.4 Monitor host selection | Matching on id alone left the body rendering a host the selector bar no longer listed, with no way to switch away. |
+
+Back-ported with two new test classes (`LogSeverityStemsTest`, `CommandDangerHitsTest`, 15 tests);
+**484 Kotlin unit tests pass**. §15.2 and §15.3 are deliberately not back-ported — both were defects
+the port introduced and caught before commit, and neither exists in the Kotlin.
+
+**From here on a §15 entry is not finished until it is fixed on both branches.**
+
+**Verified — Flutter: 1383 tests pass, `flutter analyze` clean. Kotlin: 484 unit tests pass.**

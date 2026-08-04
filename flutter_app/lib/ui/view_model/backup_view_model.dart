@@ -7,9 +7,10 @@ import 'app_state.dart';
 
 /// The Backup tool's state and actions, split out of `BackupToolView` in `ui/ToolsScreen.kt`.
 ///
-/// The file itself is the caller's business: choosing where a backup lands, and reading one back,
-/// is a platform concern (a save dialog, a share sheet, a document picker). This class produces and
-/// consumes the *text*.
+/// This class produces and consumes the backup *text*; the screen hands it to the platform's
+/// document picker. Keeping the two apart is what lets the whole export/restore path be tested
+/// without a file dialog, and it is why the reporting helpers below exist — the outcome of writing
+/// the file is something only the caller knows.
 class BackupViewModel extends ChangeNotifier {
   BackupViewModel(this._app);
 
@@ -98,9 +99,10 @@ class BackupViewModel extends ChangeNotifier {
       );
 
       // An unencrypted export is only reachable for a selection with nothing sensitive in it.
-      final contents = passphrase.isEmpty ? json : await encryptBackup(json, passphrase);
-      _status = 'Backup ready.';
-      return contents;
+      // No status here on purpose. The export is only half the job now that the file dialog
+      // follows it, and "Backup ready." left standing after a cancelled save would claim a file
+      // that was never written. The save reports the real outcome.
+      return passphrase.isEmpty ? json : await encryptBackup(json, passphrase);
     } on BackupException catch (e) {
       _error = e.message;
       return null;
@@ -119,6 +121,32 @@ class BackupViewModel extends ChangeNotifier {
     String two(int value) => value.toString().padLeft(2, '0');
     return 'omniterm-${now.year}${two(now.month)}${two(now.day)}-'
         '${two(now.hour)}${two(now.minute)}.omnibak';
+  }
+
+  /// Report a completed save.
+  ///
+  /// The location is named rather than a bare "done": a backup the user cannot find is one they
+  /// will assume did not happen. The passphrase reminder is repeated here, at the moment the file
+  /// becomes a real, portable thing that can be lost — which is when it matters, not when the
+  /// passphrase was chosen.
+  void reportSaved(String? location, {required bool encrypted}) {
+    _error = null;
+    _status = [
+      location == null ? 'Backup saved.' : 'Backup saved to $location',
+      if (encrypted)
+        'It is encrypted with the passphrase you chose. Without that passphrase it cannot be '
+            'opened, and nobody can reset it.'
+      else
+        'It is not encrypted, because nothing sensitive was selected. Anyone who opens the file can '
+            'read it.',
+    ].join(' ');
+    _safeNotify();
+  }
+
+  void reportSaveFailed(String? error) {
+    _status = null;
+    _error = error ?? 'The file could not be saved.';
+    _safeNotify();
   }
 
   // ── import ──────────────────────────────────────────────────────────────────

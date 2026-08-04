@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/domain/backup_selection.dart';
+import 'package:omniterm/platform/backup_file_store.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/tools/backup_screen.dart';
 import 'package:omniterm/ui/theme/theme.dart';
@@ -11,6 +12,7 @@ import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/backup_view_model.dart';
 import 'package:provider/provider.dart';
 
+import 'support/fake_backup_file_store.dart';
 import 'support/fake_secure_storage.dart';
 
 void main() {
@@ -18,8 +20,10 @@ void main() {
   late AppRepository repo;
   late AppState app;
   late BackupViewModel vm;
+  late FakeBackupFileStore files;
 
   setUp(() {
+    files = FakeBackupFileStore();
     db = AppDatabase(NativeDatabase.memory());
     repo = AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{})));
     app = AppState(repo);
@@ -74,7 +78,7 @@ void main() {
         ],
         child: MaterialApp(
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
-          home: const Scaffold(body: BackupScreen()),
+          home: Scaffold(body: BackupScreen(fileStore: files)),
         ),
       ),
     );
@@ -202,18 +206,15 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('restoring pasted plain JSON works without a passphrase prompt', (tester) async {
+  testWidgets('restoring a plain JSON file works without a passphrase prompt', (tester) async {
+    files.openContents =
+        '{"v":2,"wolTargets":[{"name":"nas","macAddress":"aa:bb:cc:dd:ee:ff"}]}';
     await pump(tester);
 
     await tester.tap(find.byKey(const ValueKey('backup.import')));
     await tester.pumpAndSettle();
-    await tester.enterText(
-      find.byKey(const ValueKey('backup.text.field')),
-      '{"v":2,"wolTargets":[{"name":"nas","macAddress":"aa:bb:cc:dd:ee:ff"}]}',
-    );
-    await tester.tap(find.byKey(const ValueKey('backup.text.confirm')));
-    await tester.pumpAndSettle();
 
+    expect(files.openCalls, 1);
     expect(find.byKey(const ValueKey('backup.passphrase.dialog')), findsNothing);
     expect((await repo.getAllWolTargets()).single.name, 'nas');
     expect(find.textContaining('Restored'), findsOneWidget);
@@ -221,17 +222,118 @@ void main() {
   });
 
   testWidgets('a bad restore is reported, not silently ignored', (tester) async {
+    files.openContents = 'not a backup at all';
     await pump(tester);
 
     await tester.tap(find.byKey(const ValueKey('backup.import')));
-    await tester.pumpAndSettle();
-    await tester.enterText(
-        find.byKey(const ValueKey('backup.text.field')), 'not a backup at all');
-    await tester.tap(find.byKey(const ValueKey('backup.text.confirm')));
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('backup.message')), findsOneWidget);
     expect(vm.error, isNotNull);
     await finish(tester);
+  });
+
+  group('saving to a file', () {
+    testWidgets('the backup text is what gets written', (tester) async {
+      await pump(tester);
+      await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tester.pumpAndSettle();
+
+      expect(files.saved, hasLength(1));
+      expect(files.saved.single.fileName, endsWith('.omnibak'));
+      expect(files.saved.single.contents, contains('wolTargets'));
+      await finish(tester);
+    });
+
+    testWidgets('a save names where the file went', (tester) async {
+      // A backup the user cannot find is one they will assume did not happen.
+      await pump(tester);
+      await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('/storage/Download/backup'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('an unencrypted backup says so plainly', (tester) async {
+      // Nothing sensitive was selected, so there is no passphrase — and the file is readable by
+      // anyone who opens it. That is worth saying at the moment it becomes a portable file.
+      await pump(tester);
+      await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('not encrypted'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('cancelling the picker says nothing at all', (tester) async {
+      // The user cancelled; announcing it is noise, and nothing was written anywhere.
+      files.saveResult = const BackupSaveResult(BackupSaveOutcome.cancelled);
+      await pump(tester);
+      await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tester.pumpAndSettle();
+
+      expect(vm.error, isNull);
+      expect(vm.status, isNull);
+      await finish(tester);
+    });
+
+    testWidgets('a failed save is reported rather than looking successful', (tester) async {
+      files.saveResult =
+          const BackupSaveResult(BackupSaveOutcome.failed, error: 'permission denied');
+      await pump(tester);
+      await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('permission denied'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('an unreadable file is named as such, not as a bad backup', (tester) async {
+      files.openError = const BackupReadException('That file is not a text backup.');
+      await pump(tester);
+
+      await tester.tap(find.byKey(const ValueKey('backup.import')));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('not a text backup'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('cancelling the open picker does nothing', (tester) async {
+      files.openContents = null;
+      await pump(tester);
+
+      await tester.tap(find.byKey(const ValueKey('backup.import')));
+      await tester.pumpAndSettle();
+
+      expect(vm.error, isNull);
+      await finish(tester);
+    });
   });
 }

@@ -2,16 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../domain/backup_selection.dart';
+import '../../../platform/backup_file_store.dart';
 import '../../theme/colors.dart';
 import '../../view_model/backup_view_model.dart';
 import '../../widgets/omni_components.dart';
 
 /// The Backup tool, ported from `BackupToolView` in `ui/ToolsScreen.kt`.
 ///
-/// Exporting produces the file's text and hands it to the caller; importing takes text back. Where
-/// the file lives is a platform concern, so this screen deliberately does not own it.
+/// The view model owns the *text*; where it lands is the platform's business, handled through an
+/// injected [BackupFileStore] so the flow can be exercised without a system file dialog.
 class BackupScreen extends StatefulWidget {
-  const BackupScreen({super.key});
+  const BackupScreen({super.key, this.fileStore = const BackupFileStore()});
+
+  final BackupFileStore fileStore;
 
   @override
   State<BackupScreen> createState() => _BackupScreenState();
@@ -145,34 +148,31 @@ class _BackupScreenState extends State<BackupScreen> {
     final contents = await vm.exportBackup(passphrase);
     if (contents == null || !context.mounted) return;
 
-    // Handing the text to the caller: writing it to a file is the platform's job (§18).
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const ValueKey('backup.export.result'),
-        title: const Text('Backup created'),
-        content: Text(
-          '${vm.suggestedFileName()}\n\n${contents.length} characters. Saving it to a file is not '
-          'wired up in this build yet.',
-          style: const TextStyle(fontSize: 12),
-        ),
-        actions: [
-          TextButton(
-            key: const ValueKey('backup.export.result.close'),
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
+    final result = await widget.fileStore.save(vm.suggestedFileName(), contents);
+    if (!context.mounted) return;
+
+    switch (result.outcome) {
+      case BackupSaveOutcome.saved:
+        // Naming where it went, rather than a bare "saved" the user has to take on trust — and
+        // repeating the passphrase warning at the moment the file becomes real and portable.
+        vm.reportSaved(result.location, encrypted: passphrase.isNotEmpty);
+      case BackupSaveOutcome.cancelled:
+        // Silent on purpose. The user cancelled; telling them so is noise, and the backup text was
+        // never written anywhere.
+        break;
+      case BackupSaveOutcome.failed:
+        vm.reportSaveFailed(result.error);
+    }
   }
 
   Future<void> _import(BuildContext context, BackupViewModel vm) async {
-    final contents = await _askText(
-      context,
-      title: 'Paste a backup',
-      hint: 'The contents of an .omnibak file',
-    );
+    String? contents;
+    try {
+      contents = await widget.fileStore.open();
+    } on BackupReadException catch (e) {
+      if (context.mounted) vm.reportSaveFailed(e.message);
+      return;
+    }
     if (contents == null || contents.trim().isEmpty || !context.mounted) return;
 
     var passphrase = '';
@@ -208,22 +208,6 @@ Future<String?> _askPassphrase(
       ),
     );
 
-Future<String?> _askText(
-  BuildContext context, {
-  required String title,
-  required String hint,
-}) =>
-    showDialog<String>(
-      context: context,
-      builder: (_) => _PromptDialog(
-        dialogKey: 'backup.text',
-        title: title,
-        hint: hint,
-        confirmLabel: 'Continue',
-        multiline: true,
-      ),
-    );
-
 /// Asks for one value. Owns its controller so it dies with the dialog.
 class _PromptDialog extends StatefulWidget {
   const _PromptDialog({
@@ -231,18 +215,14 @@ class _PromptDialog extends StatefulWidget {
     required this.title,
     required this.confirmLabel,
     this.note,
-    this.hint,
     this.obscure = false,
-    this.multiline = false,
   });
 
   final String dialogKey;
   final String title;
   final String confirmLabel;
   final String? note;
-  final String? hint;
   final bool obscure;
-  final bool multiline;
 
   @override
   State<_PromptDialog> createState() => _PromptDialogState();
@@ -275,8 +255,7 @@ class _PromptDialogState extends State<_PromptDialog> {
             controller: _controller,
             autofocus: true,
             obscureText: widget.obscure,
-            maxLines: widget.multiline ? 6 : 1,
-            decoration: omniInputDecoration(context, hintText: widget.hint),
+            decoration: omniInputDecoration(context),
           ),
         ],
       ),
