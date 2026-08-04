@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -10,6 +11,7 @@ import '../../data/term/terminal_emulator.dart';
 import '../../domain/app_preferences.dart';
 import '../../domain/server_credentials.dart';
 import '../../domain/terminal_key_encoder.dart';
+import '../../platform/session_service.dart';
 import 'app_state.dart';
 import 'shell_session.dart';
 
@@ -19,8 +21,12 @@ import 'shell_session.dart';
 /// keystroke takes to the remote. Splitting input through here rather than through the widgets is
 /// what makes the read-only guard and the modifier rules testable without a terminal on screen.
 class ShellViewModel extends ChangeNotifier {
-  ShellViewModel(this._app, {this.transport}) {
+  ShellViewModel(this._app, {this.transport, this.sessionService}) {
     _app.addListener(_onAppChanged);
+    final service = sessionService;
+    if (service != null) {
+      _actionsSub = service.actions.listen(_onServiceAction, onError: (Object _) {});
+    }
   }
 
   final AppState _app;
@@ -31,6 +37,42 @@ class ShellViewModel extends ChangeNotifier {
   final SshTransport? transport;
 
   bool get canConnect => transport != null;
+
+  /// Keeps the process alive while sessions are open in the background. Null in tests and on
+  /// platforms without one — sessions then simply do not survive the app being backgrounded, which
+  /// is the platform's behaviour rather than something the app can pretend away.
+  final SessionService? sessionService;
+
+  StreamSubscription<SessionServiceAction>? _actionsSub;
+
+  /// The shade acts on the sessions this view model owns, so its buttons come back here rather
+  /// than being handled natively — the service has no way to close a channel living in Dart.
+  void _onServiceAction(SessionServiceAction action) {
+    switch (action) {
+      case DisconnectSession(:final sessionId):
+        final session = _sessions.where((s) => s.id == sessionId).firstOrNull;
+        if (session != null) close(session);
+      case DisconnectAllSessions():
+        for (final session in _sessions.toList()) {
+          close(session);
+        }
+      case ResumeSession(:final sessionId):
+        if (_sessions.any((s) => s.id == sessionId)) select(sessionId);
+    }
+  }
+
+  /// Tell the platform which sessions are open.
+  ///
+  /// Called after every change to the list rather than only on backgrounding: the notification is
+  /// the user's view of what this app is holding open, and one that lags reality is worse than none.
+  void _syncBackgroundSessions() {
+    unawaited(
+      sessionService?.sync([
+        for (final session in _sessions)
+          if (session.isOpen) BackgroundSession(id: session.id, serverName: session.serverName),
+      ]),
+    );
+  }
 
   bool _disposed = false;
 
@@ -164,8 +206,10 @@ class ShellViewModel extends ChangeNotifier {
         emulator: emulator,
       )..setViewportRows(_preferredRows);
       session.addListener(_safeNotify);
+      session.addListener(_syncBackgroundSessions);
       _sessions.add(session);
       _currentId = session.id;
+      _syncBackgroundSessions();
     } on CredentialResolutionException catch (e) {
       _error = e.message;
     } on SshHostKeyException catch (e) {
@@ -195,9 +239,11 @@ class ShellViewModel extends ChangeNotifier {
   void close(ShellSession session) {
     session.closeByUser();
     session.removeListener(_safeNotify);
+    session.removeListener(_syncBackgroundSessions);
     _sessions.remove(session);
     if (_currentId == session.id) _currentId = _sessions.isEmpty ? null : _sessions.last.id;
     session.dispose();
+    _syncBackgroundSessions();
     _safeNotify();
   }
 
@@ -312,11 +358,16 @@ class ShellViewModel extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _app.removeListener(_onAppChanged);
+    unawaited(_actionsSub?.cancel());
     for (final session in _sessions) {
       session.removeListener(_safeNotify);
+      session.removeListener(_syncBackgroundSessions);
       session.dispose();
     }
     _sessions.clear();
+    // The service outlives this object, so it has to be told. A foreground notification left
+    // standing over nothing is exactly the kind of thing users uninstall an app for.
+    unawaited(sessionService?.stop());
     super.dispose();
   }
 }

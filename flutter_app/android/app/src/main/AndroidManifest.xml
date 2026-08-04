@@ -4,6 +4,13 @@
          which the app does when the user turns alerts on, not silently at launch. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Reaching hosts on the local network, and knowing whether there is a network at all. -->
+    <!-- The foreground service is what stops Android descheduling the process and killing every
+         open SSH session the moment the user switches app. DATA_SYNC is the honest type: the app is
+         maintaining network connections the user explicitly opened. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Taken with a timeout and renewed, never held open-endedly; see SessionService.kt. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <application
@@ -32,6 +39,10 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <service
+            android:name=".SessionService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

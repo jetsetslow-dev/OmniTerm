@@ -16,6 +16,7 @@ import 'domain/server_credentials.dart';
 import 'platform/alert_notifier.dart';
 import 'platform/biometric_auth.dart';
 import 'platform/screen_security.dart';
+import 'platform/session_service.dart';
 import 'ui/view_model/app_lock_controller.dart';
 import 'ui/widgets/app_lock_gate.dart';
 import 'ui/widgets/host_key_approval_host.dart';
@@ -212,7 +213,11 @@ class OmniTermApp extends StatelessWidget {
           update: (_, app, previous) => previous ?? HealthScoringViewModel(app),
         ),
         ChangeNotifierProxyProvider<AppState, ShellViewModel>(
-          create: (context) => ShellViewModel(context.read<AppState>(), transport: context.read<SshTransport>()),
+          create: (context) => ShellViewModel(
+            context.read<AppState>(),
+            transport: context.read<SshTransport>(),
+            sessionService: SessionService(),
+          ),
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, SettingsViewModel>(

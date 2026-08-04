@@ -13,5 +13,7 @@ class MainActivity : FlutterActivity() {
         // SMB2/3 over smbj (MIGRATION.md §7.1): native rather than Dart, because the only pub
         // package pins a pointycastle major dartssh2 cannot coexist with.
         SmbBridge.register(flutterEngine)
+        // Keeps the process — and with it the Dart isolate's SSH sessions — alive in the background.
+        SessionServiceBridge.register(flutterEngine, this)
     }
 }

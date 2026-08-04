@@ -2,14 +2,14 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Shares are browsable (session 43).** The Files tab now opens a saved SMB or SFTP share, not
-> only a host.
+> **The background session service is in (session 44).** Task #8's last Android piece.
 >
-> **Immediate task:** the foreground service that keeps a session alive with the app closed
-> (`SessionService.kt`), then **iOS SMB** (§18).
+> **Immediate task: validate the SSH path against the repo's own lab.** `./scripts/test-hosts.sh up`
+> starts a disposable SSH fleet reachable from the emulator at `10.0.2.2:2201` (see §19) — enough to
+> exercise the transport, the host-key prompt, the terminal and the foreground service for real.
+> **Then iOS SMB** (§18), which is the last #8 item.
 >
-> **Validate on device — it works.** §19 has the recipe. §15.7 is why: a screen that passes 1400
-> host tests can still be broken in a way only a real lifecycle reveals.
+> **Validate on device — it works.** §19 has the recipe. §15.7 is why.
 >
 > **The Kotlin app is maintained in parallel** on `fix/kotlin-parity-defects` — see §15.6. A §15
 > entry is not finished until it is fixed on both branches.
@@ -2528,8 +2528,12 @@ reliably move focus, so use `KEYCODE_TAB` between fields.
 `flutter build apk --debug` remains worth running on its own: it catches missing resources, manifest
 errors and Gradle/plugin breakage without needing a device.
 
-**Still not covered by the emulator:** a real SSH host, a real SMB share, enrolled biometrics, and
-iOS anything. Those remain unverified.
+**A real SSH host is available after all:** `./scripts/test-hosts.sh up` starts the repo's own
+disposable SSH fleet, reachable from the emulator at `10.0.2.2:2201` (password), `:2202` (key auth),
+`:2203` (bastion), plus SOCKS5/HTTP proxies and an internal-only host behind them. That covers the
+transport, host-key trust, the terminal and the foreground service.
+
+**Still not covered:** a real SMB share, enrolled biometrics, and iOS anything.
 
 
 ---
@@ -2725,3 +2729,40 @@ the guard "no browse target at all", and by re-keying the stale-response check: 
 correctly. It now compares an identity that names *what* was being browsed, host or share.
 
 **Verified — 1450 tests pass (5 new), `flutter analyze` clean, APK builds, and the Shares tab opens cleanly on the emulator.**
+
+---
+
+### Session 44 — the background session service
+
+`lib/platform/session_service.dart`, `android/.../SessionService.kt` and `SessionServiceBridge.kt`,
+wired into `ShellViewModel`, with the foreground-service and wake-lock permissions.
+
+**Without this, every open shell dies the moment the user checks a message.** Android stops
+scheduling a backgrounded process within seconds; a foreground service is the only sanctioned way to
+say "this process is doing something the user asked for". Ported from `SessionService.kt`.
+
+**The visible notification is the point, not a tax.** A process holding SSH connections open — and a
+wake lock — should be something the user can see and stop from where they see it. So the main row
+states *how many* sessions are running rather than a vague "sessions are active", and each session
+gets its own row with Resume and Disconnect.
+
+| Decision | Why |
+|---|---|
+| Dart owns the sessions; the service owns only the notification and the wake lock | The service has no way to close an SSH channel living in the Dart isolate. A "Disconnect" tap therefore travels **up** to Dart rather than being acted on natively — cancelling the row locally would show a disconnected-looking session that was still running. |
+| Shade actions that arrive before Dart attaches are **queued** | The service can be woken by a notification tap before the engine is up. Dropping those makes a button the user pressed deliberately do nothing, which is the worst outcome available. |
+| A null restart intent stops the service immediately | Android restarting it after killing the process means the Dart isolate — and every session — is gone. A notification claiming otherwise is simply false. |
+| An empty session list stops the service | A foreground notification with nothing behind it is a lie. `sync` and `stop` are one call for that reason. |
+| The wake lock is taken with a timeout and renewed | A crashed or wedged app must not pin the CPU awake until the phone is rebooted; renewing well inside the window means a long-running command is never cut off. |
+| Session rows are reconciled, not just added | A shade entry offering to resume a session that has closed is worse than no entry. Orphans from a previous process incarnation are cleaned off the channel too. |
+| The channel is `IMPORTANCE_LOW` | This is a status indicator, not an event worth a sound — and alerts have their own high-importance channel, so silencing one never silences the other. |
+| A refused foreground start is logged, not fatal | Background-start restrictions and a revoked notification permission both cause it. Sessions then do not survive backgrounding; taking the app down over a notification would be worse. |
+| `dispose` stops the service | It outlives the view model. A foreground notification standing over nothing is what gets an app uninstalled. |
+
+**Also found: the repo already ships the SSH lab this migration has been missing.**
+`./scripts/test-hosts.sh up` starts a disposable fleet — password auth, key auth, a bastion, SOCKS5
+and HTTP proxies, and an internal-only host reachable only through them — addressed from the emulator
+as `10.0.2.2:2201` and up. §19 now records it. That makes the transport, host-key trust, the
+terminal and this service all testable for real, and it is the next thing to do.
+
+**Verified — 1464 tests pass (14 new), `flutter analyze` clean, APK builds, and the app installs and
+runs. The service itself is not yet exercised**, because that needs a live SSH session.
