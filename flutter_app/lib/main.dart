@@ -15,6 +15,7 @@ import 'ui/view_model/alerts_view_model.dart';
 import 'ui/view_model/backup_view_model.dart';
 import 'ui/view_model/auth_keys_view_model.dart';
 import 'ui/view_model/fleet_view_model.dart';
+import 'ui/view_model/health_scoring_view_model.dart';
 import 'ui/view_model/infra_view_model.dart';
 import 'ui/view_model/monitor_view_model.dart';
 import 'ui/view_model/network_view_model.dart';
@@ -96,6 +97,10 @@ class OmniTermApp extends StatelessWidget {
         ChangeNotifierProxyProvider<AppState, BackupViewModel>(
           create: (context) => BackupViewModel(context.read<AppState>()),
           update: (_, app, previous) => previous ?? BackupViewModel(app),
+        ),
+        ChangeNotifierProxyProvider<AppState, HealthScoringViewModel>(
+          create: (context) => HealthScoringViewModel(context.read<AppState>()),
+          update: (_, app, previous) => previous ?? HealthScoringViewModel(app),
         ),
       ],
       child: Builder(

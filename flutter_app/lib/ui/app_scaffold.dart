@@ -9,6 +9,7 @@ import 'screens/monitor/monitor_screen.dart';
 import 'screens/sftp/sftp_screen.dart';
 import 'screens/tools/alerts_screen.dart';
 import 'screens/tools/backup_screen.dart';
+import 'screens/tools/health_scoring_screen.dart';
 import 'screens/tools/auth_keys_screen.dart';
 import 'screens/tools/network_screen.dart';
 import 'screens/tools/scripts_screen.dart';
@@ -194,7 +195,7 @@ class _ScreenBody extends StatelessWidget {
       Screen.network => const NetworkScreen(),
       Screen.authKeys => const AuthKeysScreen(),
       Screen.backup => const BackupScreen(),
-      Screen.healthScoring => const PlaceholderScreen(title: 'Health Scoring', source: 'ui/ToolsScreen.kt → HealthScoringToolView'),
+      Screen.healthScoring => const HealthScoringScreen(),
       Screen.settings => const PlaceholderScreen(title: 'Settings', source: 'ui/ToolsScreen.kt → SettingsToolView'),
       Screen.about => const PlaceholderScreen(title: 'About', source: 'ui/ToolsScreen.kt → AboutToolView'),
     };

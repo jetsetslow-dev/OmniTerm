@@ -2,12 +2,13 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 7. Immediate task: Tools, continued — Health Scoring next.**
-> **Backup has landed** (`BackupViewModel` + `lib/ui/screens/tools/backup_screen.dart`), including
-> the AES-256-GCM envelope and the restore path.
+> **Phase 7. Immediate task: Tools, continued — Settings, then About.**
+> **Health Scoring has landed** (`HealthScoringViewModel` +
+> `lib/ui/screens/tools/health_scoring_screen.dart`), with a live worked example.
 >
-> Three tool views remain, each still a placeholder in `app_scaffold.dart`: **Health Scoring**,
-> Settings, About.
+> Two tool views remain, each still a placeholder in `app_scaffold.dart`: **Settings** (the largest
+> of the three, `ui/ToolsScreen.kt` line 3144) and **About**. Finishing those completes Tools — and
+> with it, phase 7.
 >
 > ⚠️ **Read §16.4 before porting anything else** — port the feature set, not the code set.
 >
@@ -165,7 +166,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | File | LOC | Flutter destination | Status |
 |---|---|---|---|
 | `ui/AppViewModel.kt` | **12310** | `lib/ui/view_model/` (split by feature, §5.2) | 🟨 `AppState` + `ServersViewModel` done |
-| `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | 🟡 Auth Keys, Scripts, Alerts, Network, Backup done; 3 pending |
+| `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | 🟡 6 of 8 tool views done; Settings + About pending |
 | `ui/SftpScreen.kt` | 3474 | `lib/ui/screens/sftp/` | 🟡 3 of 4 tabs; Shares blocked on §7.1 |
 | `ui/ShellScreen.kt` | 3175 | `lib/ui/screens/shell/` | ⬜ |
 | `ui/AppUi.kt` | 2806 | `lib/ui/app_scaffold.dart` + `lib/ui/screens/servers/` | 🟨 scaffold, nav, Servers list + form logic done; form **widget** pending |
@@ -2056,3 +2057,41 @@ attacker. Every guard below exists for that, and each is tested:
 
 **Verified — 1174 tests pass (74 new), `flutter analyze` clean.** The suite now takes ~50 s, most of
 it PBKDF2 at the real work factor — which is the point of choosing that factor.
+
+---
+
+### Session 32 — Tools, part 6: Health Scoring
+
+`lib/domain/health_tier_form.dart`, `lib/ui/view_model/health_scoring_view_model.dart` and
+`lib/ui/screens/tools/health_scoring_screen.dart`, wired into `app_scaffold.dart`.
+
+The scoring arithmetic was already ported (`domain/health_scoring.dart`, session 4). What this adds
+is the editor around it — twenty-four numbers that decide every host's score — and the validation
+that keeps them meaningful.
+
+**The failure worth preventing is silent.** Thresholds that do not ascend make the middle tier
+unreachable, so that metric quietly stops deducting anything and a struggling host keeps reporting
+100. Nothing about the UI would look wrong. So the order check is a hard block on saving, flagged on
+the metric it belongs to rather than as one message at the bottom of a long form.
+
+**Decisions:**
+
+| | |
+|---|---|
+| Fields hold **text**, not numbers | A half-typed value ("9" on the way to "90") must not be rejected mid-keystroke, and clearing a field must not silently substitute a zero. |
+| The draft is separate from the saved config | Otherwise every host's score would shift under the user as they typed. |
+| An empty field says "required", not "must be a number" | The latter reads as though what was typed was wrong, when nothing was typed. |
+| One error at a time, in reading order | Six messages under a six-field form is noise rather than guidance. |
+| Equal thresholds are **allowed** | Collapsing two tiers is a legitimate choice: it means "go straight to critical". |
+| A zero penalty is allowed | It is how a user says "ignore this metric" without deleting anything. |
+| Latency may exceed 100 | It is milliseconds; the other three are percentages and cannot. |
+| A penalty above 100 is refused | The score starts at 100, so anything larger is meaningless. |
+| Saving re-seeds the fields from what was stored | Otherwise the form could disagree with the rule it just wrote. |
+
+**The live worked example is the point of the screen.** These numbers are abstract on their own —
+"warn at 50" means nothing next to "a host at 60% CPU now scores 95". Sliders set a hypothetical
+host's readings and the breakdown shows exactly which tiers fired and what each cost. When the draft
+is unusable the preview is **withheld** rather than showing a score derived from half-typed
+thresholds.
+
+**Verified — 1208 tests pass (34 new), `flutter analyze` clean.**
