@@ -204,3 +204,57 @@ String formatUptime(int seconds) {
   if (h > 0) return '${h}h ${m}m';
   return '${m}m';
 }
+
+/// A horizontal utilisation bar, ported from `GaugeBar` in `ui/OmniComponents.kt`.
+///
+/// [value] is a percentage. It is clamped rather than trusted: a remote host can report a CPU figure
+/// above 100 (multi-core `top` output does) and an unclamped bar would paint outside its track.
+class GaugeBar extends StatelessWidget {
+  const GaugeBar({
+    super.key,
+    required this.value,
+    required this.color,
+    this.height = 6,
+  });
+
+  final double value;
+  final Color color;
+  final double height;
+
+  @override
+  Widget build(BuildContext context) {
+    final fraction = (value / 100).clamp(0.0, 1.0);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(height / 2),
+      child: LinearProgressIndicator(
+        value: fraction,
+        minHeight: height,
+        backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+        valueColor: AlwaysStoppedAnimation(color),
+      ),
+    );
+  }
+}
+
+/// A small coloured status pill, ported from `OmniTag`.
+class OmniTag extends StatelessWidget {
+  const OmniTag({super.key, required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(4),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
+      ),
+    );
+  }
+}

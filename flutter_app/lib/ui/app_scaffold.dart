@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import 'navigation.dart';
 import 'screens/placeholder_screen.dart';
+import 'screens/monitor/monitor_screen.dart';
 import 'screens/servers/servers_screen.dart';
 import 'shell_state.dart';
 import 'theme/colors.dart';
@@ -175,7 +176,7 @@ class _ScreenBody extends StatelessWidget {
     return switch (screen) {
       Screen.servers => const ServersScreen(),
       Screen.fleet => const PlaceholderScreen(title: 'Fleet', source: 'ui/FleetScreen.kt'),
-      Screen.monitor => const PlaceholderScreen(title: 'Monitor', source: 'ui/MonitorScreen.kt'),
+      Screen.monitor => const MonitorScreen(),
       Screen.shell => const PlaceholderScreen(title: 'Term', source: 'ui/ShellScreen.kt'),
       Screen.sftp => const PlaceholderScreen(title: 'Files', source: 'ui/SftpScreen.kt'),
       Screen.infra => const PlaceholderScreen(title: 'Containers', source: 'ui/InfraScreen.kt'),

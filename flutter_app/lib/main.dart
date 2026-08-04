@@ -7,6 +7,7 @@ import 'ui/app_scaffold.dart';
 import 'ui/navigation.dart';
 import 'ui/shell_state.dart';
 import 'ui/view_model/app_state.dart';
+import 'ui/view_model/monitor_view_model.dart';
 import 'ui/view_model/servers_view_model.dart';
 import 'ui/theme/theme.dart';
 
@@ -32,6 +33,10 @@ class OmniTermApp extends StatelessWidget {
         ChangeNotifierProxyProvider<AppState, ServersViewModel>(
           create: (context) => ServersViewModel(context.read<AppState>()),
           update: (_, app, previous) => previous ?? ServersViewModel(app),
+        ),
+        ChangeNotifierProxyProvider<AppState, MonitorViewModel>(
+          create: (context) => MonitorViewModel(context.read<AppState>()),
+          update: (_, app, previous) => previous ?? MonitorViewModel(app),
         ),
       ],
       child: Builder(

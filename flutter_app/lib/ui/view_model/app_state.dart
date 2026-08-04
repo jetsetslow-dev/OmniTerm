@@ -113,6 +113,21 @@ class AppState extends ChangeNotifier {
   ///
   /// Written through the repository so a secret setting (`app_pin`) is encrypted on the way down
   /// without this class knowing which keys those are.
+  /// Remote OS family per host id ("Linux" | "FreeBSD" | "Darwin" | "Windows"), as detected by the
+  /// probe. Cached here rather than per screen so the Monitor, Infra and SFTP screens all pick the
+  /// same command variants for a host.
+  final Map<int, String> _osByServer = {};
+
+  /// The detected OS family for [serverId], or "" when nothing has probed it yet — which the
+  /// command builders resolve to Linux, the safest superset.
+  String osForServer(int serverId) => _osByServer[serverId] ?? '';
+
+  void recordOsForServer(int serverId, String os) {
+    if (_osByServer[serverId] == os) return;
+    _osByServer[serverId] = os;
+    notifyListeners();
+  }
+
   Future<void> saveSetting(String key, String value) async {
     await _repository.insertSetting(key, value);
     await loadSettings();

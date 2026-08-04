@@ -2,12 +2,11 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 7. Immediate task: the Monitor ViewModel + screen.**
-> The Servers screen is now complete and the app can create, edit and duplicate a host: the sheet
-> widget (`lib/ui/screens/servers/server_form_sheet.dart`), the shared credential resolver
-> (`lib/domain/server_credentials.dart`) and `ServersViewModel.testConnection` are all in and tested.
-> Next is Monitor — the ViewModel reading from `AppState`, then the screen, replacing its
-> placeholder in `lib/ui/app_scaffold.dart`.
+> **Phase 7. Immediate task: Infra (containers).**
+> Monitor has landed: `MonitorViewModel` + `lib/ui/screens/monitor/` are wired into
+> `app_scaffold.dart` and replace the placeholder. Four of its six tabs work (Overview, Processes,
+> Services, Logs); Scripts and CRON are still placeholders that say so — see §18.
+> Next is Infra, in the same shape: a ViewModel reading from `AppState`, then the screen.
 >
 > Then, in the §9 order — for each: a feature ViewModel reading from `AppState`, then the screen,
 > replacing its placeholder in `lib/ui/app_scaffold.dart`: Monitor → Infra → Fleet → SFTP → Tools.
@@ -166,7 +165,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | `ui/ShellScreen.kt` | 3175 | `lib/ui/screens/shell/` | ⬜ |
 | `ui/AppUi.kt` | 2806 | `lib/ui/app_scaffold.dart` + `lib/ui/screens/servers/` | 🟨 scaffold, nav, Servers list + form logic done; form **widget** pending |
 | `ui/ComposeBuilder.kt` | 2100 | `lib/ui/screens/infra/compose_builder.dart` | ⬜ |
-| `ui/MonitorScreen.kt` | 1185 | `lib/ui/screens/monitor/` | ⬜ |
+| `ui/MonitorScreen.kt` | 1185 | `lib/ui/screens/monitor/` | 🟡 4 of 6 tabs; Scripts/CRON pending |
 | `ui/InfraScreen.kt` | 1020 | `lib/ui/screens/infra/` | ⬜ |
 | `ui/FleetScreen.kt` | 878 | `lib/ui/screens/fleet/` | ⬜ |
 | `ui/CodeEditor.kt` | 850 | `lib/ui/widgets/code_editor.dart` | ⬜ |
@@ -1039,6 +1038,15 @@ rather than silently dropped.
 
 ## 18. Known parity gaps (requirement 13)
 
+**Monitor (session 22):**
+- **Scripts and CRON tabs** — not ported; both render a note saying so rather than a blank pane.
+- **Overview sparklines** (`MetricLineChart`) and the **health-breakdown dialog** — both need the
+  telemetry history poller, which is not ported. Overview shows current numbers only.
+- **The telemetry poller itself** — the Kotlin polls every host on a 15s cadence and feeds the
+  refresh countdown, the per-host metrics map and the alert evaluation. Monitor currently fetches
+  metrics on demand when its Overview tab opens, so there is no countdown ring and no background
+  refresh.
+
 Capabilities where the Dart port does not yet match the Kotlin. Each needs a decision, not silence.
 
 | Gap | Kotlin | Dart port | Impact |
@@ -1440,3 +1448,79 @@ leaving it blank keeps the stored value, and that only the explicit Forget tick 
 **Still not done on this screen:** the key picker lists aliases passed in by the caller, and the
 Servers screen does not yet pass them (Auth keys live in Tools, not yet ported), so a key-auth host
 cannot be created from the UI until Tools lands. Password and profile hosts work today.
+
+---
+
+### 15.4 Monitor kept showing a host that had gone offline
+
+`MonitorScreen` (`ui/MonitorScreen.kt` line 42) chose its host as:
+
+```kotlin
+val explicitlySelected = serversList.find { it.id == viewModel.selectedServerId }
+val srv = explicitlySelected ?: onlineServers.firstOrNull()
+```
+
+`explicitlySelected` matched on id alone, with no status check, while the selector bar directly
+above it is built with `onlineOnly = true`. So once the selected host dropped offline:
+
+| | Kotlin | Flutter |
+|---|---|---|
+| Body of the screen | keeps rendering the offline host | falls back to the first online host |
+| Selector bar | no longer lists that host | lists the host being shown |
+| Switching away | impossible from the bar — the current host is not in it | normal |
+| Tabs | keep issuing SSH commands at a host that is down | query a host that can answer |
+| "No online hosts" empty state | unreachable while a stale selection persists | shown when nothing is online |
+
+The header and the body disagreed about which machine was on screen, and the only escape was to go
+to Hosts and pick another. `MonitorViewModel.monitoredServer` now prefers the explicit selection
+**only while it is still online**. Tests cover the fallback, the return to the empty state when the
+last host drops, and that an online explicit selection still wins.
+
+---
+
+### Session 22 — Monitor: ViewModel, four working tabs, and the shell-quoting primitive
+
+**`lib/ui/view_model/monitor_view_model.dart`** — host selection, the six-tab state, per-tab
+loading, process sorting, the log filter and live tail, service actions and reboot. **`lib/ui/
+screens/monitor/`** (`monitor_screen.dart` + `monitor_tabs.dart`, ~900 lines) — the selector bar
+with health ring and reboot, the scrollable tab row, and Overview / Processes / Services / Logs.
+Wired into `app_scaffold.dart`, replacing the placeholder, and into `main.dart`'s providers.
+
+**`lib/data/remote_commands.dart` grew from a stub to the monitor slice**: `shellQuote`,
+`sudoWrap`/`sudoShWrap`/`sudoStdin`, the per-OS process, service, log and metrics probes, plus
+`serviceAction`, `rebootCommand` and `killProcessCommand`.
+
+`shellQuote` is the injection-prevention primitive and had not been ported at all. Its tests assert
+that `;`, `&&`, `|`, `$(…)`, backticks, newlines and globs all survive as literal text, that an
+embedded `'` cannot end the quoting, and that an empty value still yields `''` — unquoted, an empty
+argument vanishes and shifts every later argument by one position. Separately, the sudo password is
+asserted **absent** from every command string it could appear in and present only on stdin: a
+command line is visible in `ps`, auditd execve records and sshd debug logs on the remote.
+
+**Three defects fixed while porting:**
+
+1. **§15.4** (above) — Monitor rendered a host that had gone offline, with no way to switch away.
+2. **A sort toggle cost a network round trip.** The Kotlin re-ran `ps` over SSH when the user
+   switched CPU ⇄ MEM (`LaunchedEffect(srv.id, viewModel.processSortByCpu)`), so reordering a list
+   already in hand waited on the host. Now sorted locally; a test asserts no new command is issued.
+3. **A load completing after the screen closed would crash.** Caught by a test: leaving Monitor
+   mid-fetch notified a disposed `ChangeNotifier`, which throws. This is ordinary use, not an edge
+   case — every post-await notification now goes through a disposal guard, and a test disposes the
+   view model with a fetch in flight.
+
+**Stale replies are structurally prevented, not just guarded.** `_load` takes a callback that
+*returns* a commit closure rather than mutating state directly, and `_load` invokes it only if the
+user is still on the same host. Checking after the fact would have left the mutation already
+applied. A test gates a slow `ps` reply, switches host mid-flight, and asserts the first host's
+processes never appear under the second's name.
+
+**Verified — 647 tests pass (55 new), `flutter analyze` clean.**
+
+Also extracted `test/support/fake_secure_storage.dart`: three suites needed it, and a second
+divergent copy is how a test starts passing against behaviour the real store does not have (§16,
+requirement 11). `GaugeBar` and `OmniTag` joined `omni_components.dart` for the same reason.
+
+**Honest status on this screen:** Scripts and CRON render a "not available in this build yet" note
+rather than a blank pane — a blank pane reads as "this host has nothing", a different and misleading
+claim. Overview shows the numbers but **not** the sparkline charts (`MetricLineChart`) or the health
+breakdown dialog; both need the telemetry history poller, which is not ported. Added to §18.
