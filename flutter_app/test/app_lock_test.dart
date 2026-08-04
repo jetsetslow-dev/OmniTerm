@@ -201,6 +201,64 @@ void main() {
         lock.dispose();
       });
 
+      test('the real lifecycle sequence locks', () async {
+        // The platform does not send one clean "backgrounded" event. Leaving is
+        // `inactive` then `paused`, and *returning* is `inactive` then `resumed` — so the
+        // controller sees a second `onBackgrounded` immediately before `onForegrounded`.
+        // Assigning the timestamp there reset the clock microseconds before it was read, and the
+        // lock never engaged at all. Found on a device; no host test replayed the real order.
+        await configure(timeoutMs: 30000);
+        final lock = build();
+        await lock.load();
+        await lock.unlockWithPin('1234');
+
+        lock.onBackgrounded(); // inactive, on the way out
+        lock.onBackgrounded(); // paused
+        now += 60000;
+        lock.onBackgrounded(); // inactive, on the way back in
+        lock.onForegrounded(); // resumed
+
+        expect(lock.isLocked, isTrue);
+        lock.dispose();
+      });
+
+      test('a return well inside the timeout still does not lock', () async {
+        await configure(timeoutMs: 30000);
+        final lock = build();
+        await lock.load();
+        await lock.unlockWithPin('1234');
+
+        lock.onBackgrounded();
+        now += 5000;
+        lock.onBackgrounded();
+        lock.onForegrounded();
+
+        expect(lock.isLocked, isFalse);
+        lock.dispose();
+      });
+
+      test('a second absence is measured from its own start', () async {
+        // The timestamp has to be cleared on return, or a short second trip would inherit the
+        // first trip's age and lock immediately.
+        await configure(timeoutMs: 30000);
+        final lock = build();
+        await lock.load();
+        await lock.unlockWithPin('1234');
+
+        lock.onBackgrounded();
+        now += 60000;
+        lock.onForegrounded();
+        expect(lock.isLocked, isTrue);
+
+        await lock.unlockWithPin('1234');
+        lock.onBackgrounded();
+        now += 1000;
+        lock.onForegrounded();
+
+        expect(lock.isLocked, isFalse);
+        lock.dispose();
+      });
+
       test('a rotation is not the user leaving', () async {
         // Android re-creates the Activity on a configuration change; locking there would lock the
         // app when someone turned their phone sideways.

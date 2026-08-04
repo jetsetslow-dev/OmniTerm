@@ -105,7 +105,11 @@ class AppLockController extends ChangeNotifier {
   /// leaving; starting the timer there would lock the app when someone turned their phone sideways.
   void onBackgrounded({bool isChangingConfigurations = false}) {
     if (!shouldRecordAppBackground(isChangingConfigurations: isChangingConfigurations)) return;
-    _backgroundedAtMs = _now();
+    // `??=`, not `=`. The platform sends `inactive` **again on the way back in**, immediately
+    // before `resumed`, so assigning here reset the clock to "now" microseconds before it was read
+    // — and the lock silently never engaged, no matter how long the app had been away. The first
+    // transition out is the one that counts; `onForegrounded` clears it.
+    _backgroundedAtMs ??= _now();
   }
 
   /// The app came back to the foreground; lock if it was away long enough.

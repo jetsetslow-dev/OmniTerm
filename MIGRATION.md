@@ -2,23 +2,21 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Task #8 is nearly done.** Sessions 35–40 landed the SSH transport wiring, the host-key prompt,
-> the app lock, screen security on both platforms, link opening, backup file save/restore, alert
-> notifications, and **SMB2/3 over smbj (§7.1 — the last open blocker)**.
+> **Task #8 is nearly done, and the app now runs on a device.** Session 41 got the emulator working
+> under Xvfb (§19), ran the app, walked every screen — and found a defect that made the **app lock
+> never engage** (§15.7).
 >
-> **Immediate task:** the **Network Shares screen**, which §7.1 was blocking and which is now
-> unblocked, then the foreground service that keeps a session alive with the app closed
-> (`SessionService.kt`). **iOS SMB is not written** — `isSupported()` reports false there, so the
-> screen must say so rather than offering a share that fails on first tap (§18).
+> **Immediate task:** the **Network Shares screen**, unblocked now that §7.1 is done, then the
+> foreground service (`SessionService.kt`). **iOS SMB is not written** (§18).
+>
+> **Validate on device from now on — it works.** §19 has the recipe. A screen that passes 1400 host
+> tests can still be broken in a way only a real lifecycle reveals; §15.7 is exactly that.
 >
 > **The Kotlin app is maintained in parallel** on `fix/kotlin-parity-defects` — see §15.6. A §15
 > entry is not finished until it is fixed on both branches.
 >
 > **Shell parity gaps (§18) are a second Shell iteration:** split panes, quick connect, tmux
 > persistent sessions, the tunnel manager UI, text selection.
->
-> ⚠️ **On-device validation is blocked on this machine** — see §19. The APK builds and every host
-> test passes, but nothing has been *run*. Report anything needing a live app as unverified.
 >
 > Then #9 (Patrol/Maestro E2E) and #10 (CI/CD).
 >
@@ -1781,6 +1779,34 @@ This defect exists in the shipped Android app today.
 
 ---
 
+### 15.7 The app lock never engaged (found on a device, session 41)
+
+`AppLockGate` records the background time on `inactive`, `paused`, `hidden` and `detached`, and
+checks it on `resumed`. But **the platform sends `inactive` again on the way back in**, immediately
+before `resumed`:
+
+```
+leaving:   inactive → paused
+returning: inactive → resumed
+```
+
+`onBackgrounded` assigned `_backgroundedAtMs = _now()`, so that second `inactive` reset the clock to
+"now" microseconds before `onForegrounded` read it. `now - since` was therefore always ≈ 0, and the
+lock **never engaged, no matter how long the app had been away**.
+
+Every host test passed, because they called `onBackgrounded()` once and `onForegrounded()` once —
+nothing replayed the real order. It took backgrounding the app on an emulator for 36 seconds and
+watching it come back unlocked.
+
+Fixed with `??=` rather than `=`: the first transition out is the one that counts, and
+`onForegrounded` clears it so a second short absence is measured from its own start. Three
+regression tests now replay the real sequence, the inside-the-timeout case, and back-to-back trips.
+
+**This is a defect the port introduced**, so it is not back-ported — the Kotlin uses Android's
+`onStop`/`onStart`, which do not have this shape.
+
+---
+
 ### 15.6 The Kotlin fixes are shipping too — branch `fix/kotlin-parity-defects`
 
 The Flutter release is not imminent and the Kotlin app still ships, so the defects above are fixed
@@ -2476,39 +2502,32 @@ recovered hours ago.
 
 ---
 
-## 19. On-device validation is blocked on this machine
+## 19. On-device validation — how to run it here
 
-The standing rule is to validate on a device before reporting anything done. **That is currently
-impossible here**, and it should be stated rather than quietly skipped.
-
-The Android emulator will not start at all — not the API 35 image, not any of them:
+**Superseded 2026-08-04.** This section previously said device validation was impossible on this
+machine. It is not: the emulator's Qt launcher needs a display, and `xvfb` provides one.
 
 ```
-Could not load the Qt platform plugin "xcb" ... even though it was found.
-Fatal: This application failed to start because no Qt platform plugin could be initialized.
+sudo apt-get install -y xvfb libxcb-cursor0
+
+Xvfb :99 -screen 0 1080x1920x24 -nolisten tcp
+DISPLAY=:99 emulator -avd omniterm-api35 -no-snapshot -no-audio -no-boot-anim -gpu swiftshader_indirect
 ```
 
-`-no-window`, `-qt-hide-window`, `QT_QPA_PLATFORM=offscreen` and `QT_QPA_PLATFORM=minimal` all make
-no difference; the launcher still demands a display. `xvfb-run`/`Xvfb` are not installed. This is a
-*separate* problem from the known API ≥ 36 image instability — it blocks every API level.
+Both must run as **persistent** background processes — a `nohup … &` inside a single shell call is
+killed when that call ends. `omniterm-api35` boots to Android 15 in about two minutes.
 
-**The strongest verification available here is therefore:**
+Driving the UI: `adb shell input tap X Y`, `adb exec-out screencap -p > shot.png`, and
+`adb logcat -d | grep -iE "flutter.*(Exception|Error)|FATAL"` after each step. **`adb shell input
+text` appends to whatever field currently has focus** — tapping a second text field does not
+reliably move focus, so use `KEYCODE_TAB` between fields.
 
-1. `flutter build apk --debug` — which is not nothing: it compiles the Kotlin bridges, merges the
-   manifest, resolves every plugin's Gradle config and packages the resources. It caught a real bug
-   this session (below).
-2. The host test suites.
+`flutter build apk --debug` remains worth running on its own: it catches missing resources, manifest
+errors and Gradle/plugin breakage without needing a device.
 
-**Everything that needs a running app stays unverified**, and is listed as such:
+**Still not covered by the emulator:** a real SSH host, a real SMB share, enrolled biometrics, and
+iOS anything. Those remain unverified.
 
-| Needs a device | Why a host test cannot cover it |
-|---|---|
-| The SSH transport against a real host | No lab host reachable from here (§ see `e2e-suites-need-a-personal-lab`). |
-| The host-key approval prompt | Needs a real handshake with a server presenting a key. |
-| The app lock's biometric path | Needs enrolled biometrics. |
-| `FLAG_SECURE` / the iOS app-switcher cover | Both are window-level effects with no observable Dart state. |
-| Notification channel behaviour, the Android 13 permission dialog, the small-icon asset | The plugin's platform side is entirely stubbed in tests. |
-| The file dialogs | The system document picker is a platform UI. |
 
 ---
 
@@ -2589,3 +2608,48 @@ in §18 — this is a real gap against requirement 3, not a silent one.
 
 **Verified — 1407 tests pass (14 new), `flutter analyze` clean, `flutter build apk --debug` succeeds
 with smbj on the classpath. Not exercised against a real share** (§19).
+
+---
+
+### Session 41 — the app runs on a device, and the app lock was broken
+
+Two outcomes: **on-device validation works here now** (§19), and running it immediately found a
+defect that 1400 host tests could not (§15.7).
+
+**Getting there.** `xvfb` + `libxcb-cursor0` installed; the emulator's Qt launcher needs a display
+even with `-no-window`. `omniterm-api35` boots to Android 15 in about two minutes, and the recipe is
+in §19 so no future session has to rediscover it.
+
+**What was verified by actually running the app:**
+
+| | |
+|---|---|
+| The app launches and renders | Servers screen, nav bar, empty state — no crash, no red screen. |
+| All seven nav destinations | Tapped through Servers → Fleet → Monitor → Term → Files → Containers → Tools with `logcat` clean of exceptions each time. |
+| **About's version** | `PackageInfo.fromPlatform()` resolves to "Version 1.0.0 · build 1". Host tests only ever exercised the `catch` branch, where it shows "Version …" — the working path had **never** been executed. |
+| The diagnostics block | Real platform string and Dart 3.12.2, no host names or `@`. |
+| The dependent-switch rule | "Unlock with biometrics" is genuinely greyed while the lock is off, and enables the moment it is on. |
+| The PIN dialog | Appears on save, with the no-recovery warning, and a **numeric** keyboard (the `digitsOnly` formatter and keyboard type are platform behaviour). |
+| The mismatch guard | Two different entries produce "The two entries do not match" and the dialog stays open. |
+| PIN persistence | The PIN survived `adb install -r`, so it really is in the platform keystore. |
+| The lock screen | Cold start after reinstall is locked, shows the stored PIN length as its hint, and states there is no recovery. |
+| Unlock | The correct PIN unlocks and returns to where the user was. PBKDF2 at 210 000 rounds is not perceptibly slow on an emulator. |
+
+**§15.7 — the app lock never engaged.** Backgrounding the app for 36 seconds and returning left it
+**unlocked**. The platform sends `inactive` a second time on the way *back in*, immediately before
+`resumed`, and `onBackgrounded` was assigning the timestamp rather than only setting it once — so
+the clock reset microseconds before it was read and `now - since` was always ≈ 0.
+
+Every host test passed because each called `onBackgrounded()` once and `onForegrounded()` once.
+Nothing replayed the real order. Fixed with `??=`, plus three regression tests covering the real
+sequence, a return inside the timeout, and back-to-back trips. Re-verified on the device: the lock
+now engages, and the correct PIN opens it.
+
+**This is the case for the standing validate-on-device rule, made concretely.** The feature was
+complete, tested, reviewed and entirely non-functional.
+
+**Still not covered by an emulator:** a real SSH host, a real SMB share, enrolled biometrics, and
+iOS. Those stay unverified.
+
+**Verified — 1410 tests pass (3 new), `flutter analyze` clean, APK builds, and the app was driven by
+hand on Android 15.**
