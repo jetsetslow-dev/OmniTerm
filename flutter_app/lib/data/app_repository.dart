@@ -326,6 +326,10 @@ class AppRepository {
 
   // ── settings ───────────────────────────────────────────────────────────────
 
+  /// Every stored setting, raw. Used by the backup export, which decides for itself which keys are
+  /// safe to carry off the device.
+  Future<List<AppSetting>> getAllSettings() => _db.appDataDao.getAllSettings();
+
   Future<String?> getSetting(String key) async {
     final row = await _db.appDataDao.getSetting(key);
     if (row == null) return null;

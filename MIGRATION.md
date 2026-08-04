@@ -2,13 +2,12 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 7. Immediate task: Tools, continued — Backup next.**
-> **Network has landed** (`NetworkViewModel` + `lib/ui/screens/tools/network_screen.dart`) with five
-> of the Kotlin's nine tabs: Host scan, Wake-on-LAN, Ping, Port scan, DNS. Traceroute, WHOIS and
-> Speed test are not ported (§18).
+> **Phase 7. Immediate task: Tools, continued — Health Scoring next.**
+> **Backup has landed** (`BackupViewModel` + `lib/ui/screens/tools/backup_screen.dart`), including
+> the AES-256-GCM envelope and the restore path.
 >
-> Four tool views remain, each still a placeholder in `app_scaffold.dart`: **Backup**, Health
-> Scoring, Settings, About.
+> Three tool views remain, each still a placeholder in `app_scaffold.dart`: **Health Scoring**,
+> Settings, About.
 >
 > ⚠️ **Read §16.4 before porting anything else** — port the feature set, not the code set.
 >
@@ -166,7 +165,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | File | LOC | Flutter destination | Status |
 |---|---|---|---|
 | `ui/AppViewModel.kt` | **12310** | `lib/ui/view_model/` (split by feature, §5.2) | 🟨 `AppState` + `ServersViewModel` done |
-| `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | 🟡 Auth Keys, Scripts, Alerts, Network done; 4 pending |
+| `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | 🟡 Auth Keys, Scripts, Alerts, Network, Backup done; 3 pending |
 | `ui/SftpScreen.kt` | 3474 | `lib/ui/screens/sftp/` | 🟡 3 of 4 tabs; Shares blocked on §7.1 |
 | `ui/ShellScreen.kt` | 3175 | `lib/ui/screens/shell/` | ⬜ |
 | `ui/AppUi.kt` | 2806 | `lib/ui/app_scaffold.dart` + `lib/ui/screens/servers/` | 🟨 scaffold, nav, Servers list + form logic done; form **widget** pending |
@@ -1094,6 +1093,14 @@ rather than silently dropped.
 
 ## 18. Known parity gaps (requirement 13)
 
+**Backup (session 31):**
+- **Reading and writing the file itself.** The view model produces and consumes the *text*; a save
+  dialog and a document picker are platform work and land with task #8. Until then, export shows the
+  result in a dialog and restore takes pasted text.
+- **Sections not yet carried:** firing alerts, alert history, network shares, port forwards and
+  crash logs. The selection model already knows them and their dependencies; the serialiser does
+  not. Shares and port forwards are blocked on their own screens being ported.
+
 **Network (session 30):**
 - **Traceroute** — needs per-hop TTL control, which `dart:io`'s `Socket` does not expose. Options:
   a platform channel, or shelling out to `traceroute` over SSH from a chosen host (a different
@@ -2003,3 +2010,49 @@ then dereferenced `subnetPrefixOf(ipAddress)` — different expressions, so savi
 threw a null-check error instead of falling back.
 
 **Verified — 1100 tests pass (75 new), `flutter analyze` clean.**
+
+---
+
+### Session 31 — Tools, part 5: encrypted Backup and restore
+
+`lib/domain/backup_selection.dart`, `lib/data/backup/` (envelope + payload),
+`lib/ui/view_model/backup_view_model.dart` and `lib/ui/screens/tools/backup_screen.dart`, wired into
+`app_scaffold.dart`.
+
+**The envelope format is deliberately unchanged from the Android app**, so a backup taken there
+restores here: AES-256-GCM over gzipped JSON, keyed by PBKDF2-HMAC-SHA256 at 600 000 iterations.
+Like §7.10, that is data compatibility for a real user's file rather than historical residue (§16.4).
+
+**A backup file is untrusted input** — it arrives from a cloud drive, a chat message, or an
+attacker. Every guard below exists for that, and each is tested:
+
+| | |
+|---|---|
+| A wrong passphrase is reported **as a wrong passphrase** | The whole reason for an authenticated cipher. Without the GCM tag a bad key decrypts to garbage that then fails to parse, and the user is told their backup is corrupt. |
+| The declared KDF work factor is range-checked | A crafted file claiming one iteration makes an offline guess of the passphrase cheap; one claiming a billion wedges the device. |
+| Decompression is bounded by **ratio and absolute size** | A zip bomb is a small file that expands to gigabytes. The ratio catches it long before the absolute cap would. |
+| JSON nesting depth is checked **before parsing** | Deep nesting is the standard way to blow a recursive-descent parser's stack — by the time the parser has recursed that far, the damage is done. String contents are excluded, so a legitimate backup containing `awk '{{{…}}}'` still opens. |
+| Salt, IV and ciphertext lengths are validated | Including a floor of 16 bytes, below which there is not even a tag to authenticate. |
+
+**Behaviour decisions:**
+
+- **The referential closure is enforced in the model, not the UI.** Selecting alert rules pulls in
+  hosts; selecting firing alerts pulls in both their rule and its host; and *unticking* hosts
+  unticks everything that depends on them. Either direction, left alone, produces a backup whose
+  rows restore into dangling references.
+- **A restore is additive.** Nothing is deleted or overwritten, because there is no undo and
+  restoring the wrong file would otherwise be unrecoverable. The screen says so before the button.
+- **A rule whose host is not in the backup is skipped and reported**, not restored against an
+  arbitrary host — which would silently point it at the wrong machine. A fleet-wide rule
+  (`serverId == 0`) keeps its scope, since remapping it would narrow "every host" to one.
+- **A restored host starts unprobed** rather than carrying its old health score, which would be a
+  figure for a connection never made on this device.
+- **The app lock PIN is never exported.** It is a credential for *this* device, not a preference;
+  restoring it elsewhere would carry a lock the user never set there.
+- **Pristine presets are not exported**; a fresh install re-seeds them, so carrying them would
+  duplicate defaults. An *edited* preset is exported with its key, so the toggle can still remove it.
+- **An unknown section in the file is ignored**, so a backup from a newer build is not unreadable by
+  an older one.
+
+**Verified — 1174 tests pass (74 new), `flutter analyze` clean.** The suite now takes ~50 s, most of
+it PBKDF2 at the real work factor — which is the point of choosing that factor.
