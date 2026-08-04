@@ -508,6 +508,25 @@ void main() {
       lock.dispose();
     });
 
+    testWidgets('a refused PIN hands the field back instead of dropping the keyboard',
+        (tester) async {
+      // The field is disabled while an attempt is verified, and disabling a TextField takes its
+      // focus away. Without giving it back, every wrong PIN closes the keyboard and the user has
+      // to tap the field again before they can retype — on the one screen where they are already
+      // annoyed. (Found while automating the flow: `enterText` needs focus, so an unfocused field
+      // swallowed the retry silently.)
+      final lock = await locked(tester);
+
+      await tester.enterText(find.byKey(const ValueKey('lock.pin')), '9999');
+      await tester.tap(find.byKey(const ValueKey('lock.submit')));
+      await settle(tester);
+
+      expect(find.byKey(const ValueKey('lock.error')), findsOneWidget);
+      final field = tester.widget<TextField>(find.byKey(const ValueKey('lock.pin')));
+      expect(field.focusNode?.hasFocus, isTrue, reason: 'the user is about to type again');
+      lock.dispose();
+    });
+
     testWidgets('the app underneath is not reachable while locked', (tester) async {
       // Hidden is not enough: a screen reader must not be able to walk the host list either.
       final lock = await locked(tester);

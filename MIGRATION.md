@@ -2,12 +2,15 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Task #9 is running: 9 E2E flows, green on the emulator** (sessions 50-51). The key-import sheet
-> is done — the flow the manual walk could not drive at all.
+> **Task #9 is running: 11 E2E flows, green on the emulator** (sessions 50-52). The key-import sheet
+> and the app-lock cycle are both done — the two flows the manual walk could not drive at all.
 >
-> **Immediate task: keep growing the suite.** Still to add: **SFTP upload/download** and the
-> **app-lock cycle** (now that §15.12 makes the interval configurable, a flow can set it to
-> "Immediately" and drive background → foreground → wrong PIN → right PIN). Then the **native** half:
+> ⚠️ **Read §19.1 before writing another flow.** `pumpAndSettle` near a focused field, fixed frame
+> counts instead of observable outcomes, and `enterText` without focus each cost a ten-minute device
+> run and each looked like an app bug first.
+>
+> **Immediate task: keep growing the suite.** Still to add: **SFTP upload/download** against the
+> lab. Then the **native** half:
 > Patrol's Android instrumentation is wired (`MainActivityTest.java`, runner + orchestrator in
 > Gradle) but **not yet exercised**, and it is what reaches the notification permission dialog, the
 > biometric prompt and the system file picker. Then Maestro as the CI smoke suite, and #10 (CI/CD).
@@ -1796,6 +1799,25 @@ This defect exists in the shipped Android app today.
 
 ---
 
+### 15.13 A refused PIN dropped the keyboard (session 52)
+
+The lock screen disables its PIN field while an attempt is verified — 210k PBKDF2 rounds is not
+instant, and letting the user type into a field whose contents are already being checked would be
+worse. But disabling a `TextField` takes its focus away, and nothing gave it back, so every wrong
+PIN closed the keyboard and made the user tap the field again before they could retype.
+
+Found by automating the flow: `enterText` sends text through the engine's input connection, so an
+unfocused field swallows it silently. The flow submitted an empty PIN and read the resulting
+"Incorrect PIN" as the app rejecting a PIN it had just been given.
+
+The field now takes focus back whenever an attempt leaves the app still locked — except after a
+lockout, where the field is disabled for a reason and grabbing focus would only raise a keyboard
+over a control that refuses input.
+
+**Port-introduced.**
+
+---
+
 ### 15.12 The app lock could not be configured or its PIN changed (session 51)
 
 Three defects on one screen, all found by reading the Kotlin commit history (§20) rather than by
@@ -2708,6 +2730,39 @@ containers and would fail on any other checkout — see `tests-must-be-host-inde
 in the scratchpad, run them, delete them, and land a *host-independent* regression test instead:
 §15.11's proxy tests bind their own loopback server rather than talking to the lab.
 
+### 19.1 Writing E2E flows: three rules learned the hard way (session 52)
+
+Every one of these cost a ten-minute device run to find, and each looked like an app bug first.
+
+**1. `pumpAndSettle` is not usable near a focused text field.** A caret blinks, which schedules a
+frame forever, so the wait runs to its ten-minute ceiling and the test dies having asserted nothing
+— reported only as "did not complete". The app-lock flow meets two focused fields (the lock screen
+autofocuses its PIN; the set-PIN dialog is typed into) and uses bounded `pump` loops throughout.
+
+**2. Wait for the outcome, never for a frame count.** Hashing a PIN is 210k PBKDF2 rounds *by
+design*; on an emulator that outlasts any wait worth hard-coding. A fixed wait let the flow type
+the next PIN while the previous attempt was still verifying, and that attempt's completion then
+cleared the field — so the flow submitted an empty PIN and read "Incorrect PIN" as the app
+rejecting a PIN it had just been given. Poll for something observable instead: the dialog closing,
+the field clearing, "Change PIN" appearing, the saved-confirmation card. And pick the *last* signal
+in the chain — "Change PIN" appears when the PIN is stored, which is still before the settings
+(including the lock interval) have been written.
+
+**3. `enterText` needs the field to hold focus.** It sends text through the engine's input
+connection; an unfocused field swallows it silently and the flow carries on with stale contents.
+Tap the field first. This is also how §15.13 was found — the app was dropping focus for real.
+
+**Do not scroll to reach a control if you can lay the screen out instead.** A `ListView` only
+builds what is on screen, so `scrollUntilVisible` is the obvious tool — but it re-resolves its
+scrollable every iteration, and anything that puts a route on top (a dialog, a pushed screen) makes
+the list offstage, at which point the finder skips it and the scroll fails with a bare "No
+element". Setting `tester.view.physicalSize` tall enough to lay the whole screen out removes the
+problem, and is what the widget tests already do.
+
+**A flow must own the state it depends on.** The device keeps its settings between runs. Read a
+switch before tapping it, and treat a dialog that is correctly absent — because a previous run
+already set what it asks for — as a valid path rather than a failure.
+
 
 ---
 
@@ -3285,3 +3340,40 @@ Both domain modules that were ported and never called (`input_validation.dart`,
 does not have.
 
 **Verified — 1499 host tests pass, `flutter analyze` clean, key-import flows 3/3 on the emulator.**
+
+---
+
+### Session 52 — the app-lock cycle on a device (task #9)
+
+`integration_test/app_lock_test.dart`, two flows, green on Android 15. **11 E2E flows now pass.**
+
+This is the §15.7 defect's own regression test, finally automated. The lock never engaged in the
+port and no host test caught it, because the defect lived in the lifecycle sequence — a second
+`paused` callback overwrote the backgrounded timestamp before the resume could read it. Only a real
+background/foreground cycle on a real engine reproduces that.
+
+| Flow | What it pins |
+|---|---|
+| An absence locks the app, and only the right PIN opens it | interval set to "Immediately" from the screen (§15.12), leave → return → locked, wrong PIN refused with a reason, app underneath inert (out of the semantics tree, untappable), right PIN opens it, lock turned off again and the PIN forgotten with it |
+| A configuration change is not an absence | a surface change must not lock the user out mid-sentence — the rotation case `shouldRecordAppBackground` exists for |
+
+**It took eight device runs, and every failure looked like an app bug first.** The three that were
+not are now §19.1: `pumpAndSettle` cannot be used near a focused text field (a blinking caret
+schedules frames forever, so the wait runs to its ten-minute ceiling and reports only "did not
+complete"); a fixed frame count is never a substitute for waiting on an observable outcome, because
+hashing a PIN is 210k PBKDF2 rounds *by design* and outlasts any hard-coded wait; and `enterText`
+silently does nothing when the field does not hold focus.
+
+**One that was a real bug: §15.13.** The lock screen disables its PIN field while verifying, and
+disabling a `TextField` takes its focus away — so every wrong PIN dropped the keyboard and made the
+user tap the field again before retyping. The field now takes focus back whenever an attempt leaves
+the app still locked, except after a lockout, where the field is disabled deliberately and raising
+a keyboard over it would be a lie. Covered by a host test as well as the flow.
+
+Two smaller lessons went into §19.1 as well: prefer laying the whole screen out
+(`tester.view.physicalSize`) over `scrollUntilVisible`, which re-resolves its scrollable every
+iteration and fails with a bare "No element" the moment a route goes on top; and a flow must own
+the state it depends on — read a switch before tapping it, and treat a dialog that is correctly
+absent as a valid path.
+
+**Verified — 1500 host tests pass, 11 E2E flows pass on Android 15, `flutter analyze` clean.**

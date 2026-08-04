@@ -83,6 +83,13 @@ class AppLockScreen extends StatefulWidget {
 
 class _AppLockScreenState extends State<AppLockScreen> {
   final TextEditingController _pin = TextEditingController();
+
+  /// Kept so focus can be handed back after a refused attempt.
+  ///
+  /// The field is disabled while the PIN is being verified — 210k PBKDF2 rounds is not instant —
+  /// and disabling a `TextField` takes its focus away. Without this the keyboard drops on every
+  /// wrong PIN and the user has to tap the field again before they can retype.
+  final FocusNode _pinFocus = FocusNode();
   String? _message;
   bool _busy = false;
   Timer? _throttleTick;
@@ -101,6 +108,7 @@ class _AppLockScreenState extends State<AppLockScreen> {
   void dispose() {
     _throttleTick?.cancel();
     _pin.dispose();
+    _pinFocus.dispose();
     super.dispose();
   }
 
@@ -133,7 +141,13 @@ class _AppLockScreenState extends State<AppLockScreen> {
         UnlockOutcome.throttled => 'Too many attempts — wait 30 seconds',
       };
     });
-    if (outcome == UnlockOutcome.throttled) _startThrottleTick();
+    if (outcome == UnlockOutcome.throttled) {
+      _startThrottleTick();
+    } else {
+      // Still locked, so the user is about to type again — give the field back rather than making
+      // them reach for it.
+      _pinFocus.requestFocus();
+    }
   }
 
   /// Repaints once a second so the countdown moves rather than sitting at a stale number.
@@ -182,6 +196,7 @@ class _AppLockScreenState extends State<AppLockScreen> {
                   child: TextField(
                     key: const ValueKey('lock.pin'),
                     controller: _pin,
+                    focusNode: _pinFocus,
                     autofocus: !controller.canUseBiometrics,
                     // `obscureText` alone still exposes the PIN to autofill and keyboard learning;
                     // a numeric keyboard with suggestions off is the rest of it.
