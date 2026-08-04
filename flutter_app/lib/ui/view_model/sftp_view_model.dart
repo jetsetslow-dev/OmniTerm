@@ -46,17 +46,44 @@ class SftpTransfer {
 
 /// The SFTP screen's state and actions, split out of `ui/AppViewModel.kt` per §5.2.
 class SftpViewModel extends ChangeNotifier {
-  SftpViewModel(this._app, {this.fsClient}) {
+  SftpViewModel(this._app, {this.fsClientFor}) {
     _app.addListener(_onAppChanged);
   }
 
   final AppState _app;
 
+  /// Resolves the file client **for a given host**.
+  ///
+  /// A resolver rather than a single client because this screen switches hosts: an SFTP client is
+  /// bound to one set of credentials, so one shared instance would keep talking to whichever host
+  /// happened to be selected when the app started — listing the wrong machine's files under the
+  /// right machine's name, and deleting from it too.
+  ///
   /// Null in tests and in any build without a transport wired; browsing then reports that it is
   /// unavailable rather than showing an empty directory, which reads as "this host has no files".
-  final RemoteFsClient? fsClient;
+  /// Asynchronous because building a client needs the host's decrypted key or profile, which lives
+  /// in the repository rather than in memory.
+  final Future<RemoteFsClient?> Function(Server server)? fsClientFor;
 
-  bool get canBrowse => fsClient != null;
+  bool get canBrowse => fsClientFor != null;
+
+  /// Why there is no client, in the user's terms.
+  ///
+  /// "This build cannot browse files" and "this host's credentials could not be resolved" are
+  /// different problems with different fixes, and one message for both sends the user looking in
+  /// the wrong place.
+  String _unavailable(Server? server, String whenUnsupported) => canBrowse
+      ? 'Could not open a file connection to ${server?.name ?? 'this host'}. '
+          'Check its key or credential profile in the host settings.'
+      : whenUnsupported;
+
+  /// The client for the host currently being browsed, or null when there is none.
+  Future<RemoteFsClient?> get _client async {
+    final server = browsedServer;
+    final resolve = fsClientFor;
+    if (server == null || resolve == null) return null;
+    return resolve(server);
+  }
 
   bool _disposed = false;
 
@@ -206,11 +233,11 @@ class SftpViewModel extends ChangeNotifier {
 
   /// Opens [target], or the remote home when it is empty.
   Future<void> openPath(String target) async {
-    final client = fsClient;
+    final client = await _client;
     final server = browsedServer;
     if (server == null) return;
     if (client == null) {
-      _error = 'File browsing is unavailable in this build.';
+      _error = _unavailable(server, 'File browsing is unavailable in this build.');
       _safeNotify();
       return;
     }
@@ -338,9 +365,9 @@ class SftpViewModel extends ChangeNotifier {
     Future<void> Function(RemoteFsClient client) action, {
     required String success,
   }) async {
-    final client = fsClient;
+    final client = await _client;
     if (client == null) {
-      _error = 'File operations are unavailable in this build.';
+      _error = _unavailable(browsedServer, 'File operations are unavailable in this build.');
       _safeNotify();
       return;
     }
@@ -435,7 +462,7 @@ class SftpViewModel extends ChangeNotifier {
   /// The sink is the caller's: choosing where a file lands is a platform concern (a save dialog, a
   /// share sheet), and this class deliberately knows nothing about local storage.
   Future<void> download(SftpFile entry, StreamSink<List<int>> sink) async {
-    final client = fsClient;
+    final client = await _client;
     if (client == null) return;
     final transfer = SftpTransfer(
       id: '${DateTime.now().microsecondsSinceEpoch}-${entry.name}',
@@ -469,7 +496,7 @@ class SftpViewModel extends ChangeNotifier {
   /// A clashing name is given a `(2)` suffix rather than overwriting: an upload that silently
   /// replaces a file the user did not mean to touch is unrecoverable.
   Future<void> upload(String name, Stream<List<int>> bytes, int totalBytes) async {
-    final client = fsClient;
+    final client = await _client;
     if (client == null) return;
     final safe = uniqueName(name, _entries.map((e) => e.name).toSet());
     final transfer = SftpTransfer(

@@ -148,7 +148,7 @@ void main() {
   Future<SftpViewModel> boot({RemoteFsClient? client}) async {
     await app.start();
     await Future<void>.delayed(Duration.zero);
-    return SftpViewModel(app, fsClient: client);
+    return SftpViewModel(app, fsClientFor: client == null ? null : (_) async => client);
   }
 
   Future<SftpViewModel> booted(FakeFsClient client) async {

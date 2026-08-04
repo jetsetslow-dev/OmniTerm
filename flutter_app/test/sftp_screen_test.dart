@@ -74,7 +74,7 @@ void main() {
 
   Future<void> pump(WidgetTester tester, {FakeFsClient? client}) async {
     await app.start();
-    vm = SftpViewModel(app, fsClient: client);
+    vm = SftpViewModel(app, fsClientFor: (_) async => client);
     await tester.pumpWidget(
       MultiProvider(
         providers: [

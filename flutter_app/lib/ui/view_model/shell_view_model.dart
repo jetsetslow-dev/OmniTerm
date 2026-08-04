@@ -3,6 +3,8 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 
 import '../../data/app_database.dart';
+import '../../data/ssh/dartssh_transport.dart' show SshHostKeyException;
+import '../../data/ssh/ssh_host_key_trust.dart';
 import '../../data/ssh/ssh_transport.dart';
 import '../../data/term/terminal_emulator.dart';
 import '../../domain/app_preferences.dart';
@@ -166,6 +168,18 @@ class ShellViewModel extends ChangeNotifier {
       _currentId = session.id;
     } on CredentialResolutionException catch (e) {
       _error = e.message;
+    } on SshHostKeyException catch (e) {
+      // Named separately from an auth failure because the fix is different and the stakes are
+      // different: "wrong password" is a nuisance, "this host's key changed" is either a rebuilt
+      // server or someone standing between you and it, and the app must not blur the two.
+      _error = switch (e.verdict) {
+        HostKeyVerdict.changed =>
+          'The host key for ${server.name} has CHANGED. This is what a machine-in-the-middle looks '
+              'like. If you rebuilt or replaced this server, remove its pinned key under '
+              'Tools › Auth & keys and connect again — otherwise do not.',
+        _ => 'The host key for ${server.name} was not accepted, so the connection was refused. '
+            'Connect again to see the fingerprint prompt.',
+      };
     } on SshConnectException catch (e) {
       _error = e.message;
     } catch (e) {

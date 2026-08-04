@@ -2,18 +2,19 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 7 is complete. All fifteen screens are ported and there are no placeholders left.**
-> The Shell landed in session 34: `ShellSession`, `ShellViewModel`, the render surface, the key bar
-> and the screen, wired into `app_scaffold.dart`.
+> **The app can now actually connect.** Session 35 wired `DartSshTransport` and the host-key
+> approval prompt into `main.dart`. Before it, every view model received `transport: null`, so the
+> shipped build could not open a single SSH connection — the screens were complete and inert.
 >
-> **Immediate task: #8, platform integrations.** It is now the binding constraint on four separate
-> things already built and waiting: the backup file picker (§18), link opening in About, the
-> platform-native SMB client (§7.1), and the Shell's own deferred pieces below.
+> **Immediate task: the rest of #8, platform integrations.** Still outstanding and each blocking
+> something already built: the backup file picker and link opening (§18), the platform-native SMB
+> client (§7.1), notifications, biometric app lock, and `FLAG_SECURE`.
 >
-> **The Shell's remaining parity gaps are listed in §18 and are a second Shell iteration**, not part
-> of #8: split panes, the quick-connect sheet, the host-key approval dialog, tmux persistent
-> sessions with the session picker, and the tunnel manager UI. The single-session terminal is
-> complete and tested without them.
+> **Shell parity gaps (§18) are a second Shell iteration:** split panes, quick connect, tmux
+> persistent sessions, the tunnel manager UI, text selection. The host-key dialog is **done**.
+>
+> ⚠️ **Nothing here has been exercised against a real host yet.** Per the standing rule, the
+> transport wiring needs an on-device run against a live server before it is called finished.
 >
 > Then #9 (Patrol/Maestro E2E) and #10 (CI/CD).
 >
@@ -1106,10 +1107,6 @@ rather than silently dropped.
   and read-only precisely so this drops in: the screen shows one pane, not the model.
 - **Quick connect** — a connect-without-saving sheet. Needs the entitlement gate the Kotlin puts
   around it.
-- **The host-key approval dialog.** `ssh_host_key_trust.dart` holds the trust store and the decision
-  logic; what is missing is the prompt that shows a changed fingerprint and asks. **Until it lands,
-  a first-contact or changed key is decided by the transport's own policy** — this is the one gap
-  with a security dimension and it should be the first thing done in the next Shell iteration.
 - **tmux persistent sessions**, the session picker and the background-session list. The control-mode
   parser (`tmux_control_*.dart`) is ported and tested; the attach/reattach lifecycle is not.
 - **The tunnel manager UI.** `ssh_tunnel_manager.dart` is ported; nothing drives it yet.
@@ -2239,3 +2236,69 @@ reliably two cells and letting it flow shifts the rest of the line.
 host-key approval dialog, tmux persistent sessions, the tunnel manager UI, text selection.
 
 **Verified — 1324 tests pass (66 new), `flutter analyze` clean.**
+
+---
+
+### Session 35 — wiring the SSH transport, and the host-key approval prompt
+
+`lib/data/ssh/secure_host_key_store.dart`, `lib/ui/widgets/host_key_approval_host.dart`, the
+`main.dart` provider graph, and a host-binding fix in `SftpViewModel`.
+
+**The headline is not the dialog — it is that the app could not connect at all.** Every view model
+was being constructed with `transport: null`. Each one degraded honestly (Convention 4: "monitoring
+is unavailable in this build"), which is exactly why it was easy to miss: the screens looked
+finished and said something reasonable. `DartSshTransport`, `SshHostKeyTrust` and `SecureHostKeyStore`
+are now built once at the root and shared, so the connection pool, the host-key pins and the approval
+prompt are consistent across every screen — a per-screen transport would re-prompt for the same host
+on each tab.
+
+**The approval prompt is what makes trust-on-first-use possible at all.** `SshHostKeyTrust.check`
+fails closed when no handler is registered, so before this the *correct* outcome for a first-contact
+host was refusal, with no way to say yes. Decisions:
+
+- **Mounted above every screen, not on the Shell.** The monitor poller, SFTP, the fleet runner and a
+  connection test all reach a first-contact host; a Shell-only prompt would leave those failing
+  closed with nowhere to answer.
+- **One prompt at a time.** Several hosts can be probed at once, and stacked dialogs would let a user
+  approve one host's fingerprint while reading another's. Each queued request still times out on the
+  trust store's own deadline, so queueing cannot hold a connection open indefinitely.
+- **Tapping outside is a refusal**, not an accident to prevent. Making the dialog inescapable pushes
+  a user who does not understand it toward the accept button.
+- **Reject comes first and Trust is not the emphasised action.** This dialog appears exactly when
+  someone is impatient to get connected.
+- **The host is deliberately not masked** by `HostDisplay`. The user is authenticating this specific
+  machine against its fingerprint; hiding the identity would defeat the decision being asked.
+- **A changed key is never offered for approval** — `check` returns `changed` without prompting. A
+  prompt there would let a user click through the one warning that matters. A test pins this.
+- **The verification instructions are a command, not an exhortation.** `ssh-keygen -lf` against the
+  right key file for the presented type, with "on the server's own screen (not over SSH)" — checking
+  over the connection being attacked proves nothing.
+- **Unmounting answers a pending prompt as "no"**, rather than leaving a completer hanging until its
+  timeout.
+
+**The Shell now names a host-key failure for what it is.** A changed key gets its own message
+pointing at Tools › Auth & keys, separate from an ordinary auth failure: "wrong password" is a
+nuisance, "this host's key changed" is either a rebuilt server or someone standing between you and
+it, and blurring the two is how the warning gets ignored.
+
+**`SecureHostKeyStore` namespaces its entries** under `hostkey.` and never calls the platform
+`deleteAll()` — that would take the encryption key and every saved credential with it. "Forget every
+host key" must mean exactly that. Pins are integrity-critical rather than secret: anyone who can
+rewrite one can silently re-pin a host to their own key, and every later connection then succeeds
+with no warning at all.
+
+**Deliberate fix — SFTP was bound to one host (§15.6).** `SftpViewModel` held a single
+`RemoteFsClient`, but an SFTP client is bound to one set of credentials while the screen switches
+hosts. Wiring it as-was would have listed one machine's files under another's name — and deleted
+from it. It now takes a resolver keyed on the browsed server. The resolver is asynchronous because
+building a client needs the host's decrypted key or profile, and it is called per operation rather
+than cached so that editing a host's credentials takes effect immediately.
+
+**Testing note worth keeping.** The approval tests initially hung, then reported a null verdict. The
+cause: `AsyncLock` chains onto a `Future` created at construction time, so a trust store built in
+`setUp` belongs to the outer zone and its continuations never run under the widget tester's clock.
+Building it inside the test body fixes it. Any future test of a lock-bearing collaborator needs the
+same treatment.
+
+**Verified — 1337 tests pass (13 new), `flutter analyze` clean. Not yet exercised against a real
+host**, which per the standing rule is what "finished" requires.

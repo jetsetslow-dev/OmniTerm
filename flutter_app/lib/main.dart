@@ -5,6 +5,13 @@ import 'package:provider/provider.dart';
 
 import 'data/app_database.dart';
 import 'data/app_repository.dart';
+import 'data/shares/remote_fs_client.dart';
+import 'data/ssh/dartssh_transport.dart';
+import 'data/ssh/secure_host_key_store.dart';
+import 'data/ssh/ssh_host_key_trust.dart';
+import 'data/ssh/ssh_transport.dart';
+import 'domain/server_credentials.dart';
+import 'ui/widgets/host_key_approval_host.dart';
 import 'ui/app_scaffold.dart';
 import 'ui/navigation.dart';
 import 'ui/shell_state.dart';
@@ -46,6 +53,32 @@ AppRepository _buildRepository(AppDatabase db) {
   return repository;
 }
 
+/// Builds the SFTP client for one host.
+///
+/// Resolved per call rather than cached, because a host's key or credential profile can be changed
+/// from the Hosts screen while the SFTP screen is open, and a stale client would keep authenticating
+/// with the credentials the app happened to start with.
+Future<RemoteFsClient?> Function(Server) _sftpFor(
+  DartSshTransport transport,
+  AppRepository repository,
+) =>
+    (server) async {
+      try {
+        return transport.sftp(
+          resolveCredentials(
+            server,
+            keys: await repository.getAllKeys(),
+            profiles: await repository.getAllProfiles(),
+          ),
+        );
+      } on CredentialResolutionException {
+        // The view model reports "unavailable" for a null client, which is the honest outcome for a
+        // host whose key has been deleted. Throwing here would surface as an unhandled error
+        // instead of a message the user can act on.
+        return null;
+      }
+    };
+
 class OmniTermApp extends StatelessWidget {
   const OmniTermApp({super.key});
 
@@ -57,32 +90,41 @@ class OmniTermApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => ShellState()),
         // One database and repository for the app's lifetime; the ViewModels layer on top.
         Provider<AppDatabase>(create: (_) => AppDatabase(), dispose: (_, db) => db.close()),
+        // One trust store and one transport for the whole app. Sharing them is what makes the
+        // connection pool, the host-key pins and the approval prompt consistent across screens —
+        // a per-screen transport would re-prompt for the same host on every tab.
+        Provider<SshHostKeyTrust>(create: (_) => SshHostKeyTrust(SecureHostKeyStore())),
+        Provider<DartSshTransport>(
+          create: (context) => DartSshTransport(context.read<SshHostKeyTrust>()),
+          dispose: (_, transport) => transport.shutdown(),
+        ),
+        ProxyProvider<DartSshTransport, SshTransport>(update: (_, transport, _) => transport),
         ChangeNotifierProvider<AppState>(
           create: (context) => AppState(_buildRepository(context.read<AppDatabase>()))..start(),
         ),
         ChangeNotifierProxyProvider<AppState, ServersViewModel>(
-          create: (context) => ServersViewModel(context.read<AppState>()),
-          update: (_, app, previous) => previous ?? ServersViewModel(app),
+          create: (context) => ServersViewModel(context.read<AppState>(), transport: context.read<SshTransport>()),
+          update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, MonitorViewModel>(
-          create: (context) => MonitorViewModel(context.read<AppState>()),
-          update: (_, app, previous) => previous ?? MonitorViewModel(app),
+          create: (context) => MonitorViewModel(context.read<AppState>(), transport: context.read<SshTransport>()),
+          update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, InfraViewModel>(
-          create: (context) => InfraViewModel(context.read<AppState>()),
-          update: (_, app, previous) => previous ?? InfraViewModel(app),
+          create: (context) => InfraViewModel(context.read<AppState>(), transport: context.read<SshTransport>()),
+          update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, FleetViewModel>(
-          create: (context) => FleetViewModel(context.read<AppState>()),
-          update: (_, app, previous) => previous ?? FleetViewModel(app),
+          create: (context) => FleetViewModel(context.read<AppState>(), transport: context.read<SshTransport>()),
+          update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, SftpViewModel>(
-          create: (context) => SftpViewModel(context.read<AppState>()),
-          update: (_, app, previous) => previous ?? SftpViewModel(app),
+          create: (context) => SftpViewModel(context.read<AppState>(), fsClientFor: _sftpFor(context.read<DartSshTransport>(), context.read<AppState>().repository)),
+          update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, AuthKeysViewModel>(
-          create: (context) => AuthKeysViewModel(context.read<AppState>()),
-          update: (_, app, previous) => previous ?? AuthKeysViewModel(app),
+          create: (context) => AuthKeysViewModel(context.read<AppState>(), hostKeyTrust: context.read<SshHostKeyTrust>()),
+          update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, ScriptsViewModel>(
           create: (context) => ScriptsViewModel(context.read<AppState>()),
@@ -105,8 +147,8 @@ class OmniTermApp extends StatelessWidget {
           update: (_, app, previous) => previous ?? HealthScoringViewModel(app),
         ),
         ChangeNotifierProxyProvider<AppState, ShellViewModel>(
-          create: (context) => ShellViewModel(context.read<AppState>()),
-          update: (_, app, previous) => previous ?? ShellViewModel(app),
+          create: (context) => ShellViewModel(context.read<AppState>(), transport: context.read<SshTransport>()),
+          update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, SettingsViewModel>(
           create: (context) => SettingsViewModel(context.read<AppState>()),
@@ -123,7 +165,12 @@ class OmniTermApp extends StatelessWidget {
             title: 'OmniTerm',
             debugShowCheckedModeBanner: false,
             theme: omniTheme(mode, brightness),
-            home: const _BackHandler(child: AppCoreScaffold()),
+            // Above every screen: a first-contact host can be met from the terminal, the monitor
+            // poller, SFTP or a connection test, and each one needs somewhere to ask.
+            home: HostKeyApprovalHost(
+              trust: context.read<SshHostKeyTrust>(),
+              child: const _BackHandler(child: AppCoreScaffold()),
+            ),
           );
         },
       ),
