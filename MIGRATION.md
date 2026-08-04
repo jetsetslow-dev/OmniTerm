@@ -2,11 +2,16 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 7. Immediate task: SFTP.**
-> Fleet has landed: `FleetViewModel` + `lib/ui/screens/fleet/` are wired into `app_scaffold.dart`,
-> with all three tabs (Dashboard, Broadcast, Logs) working.
-> Next is SFTP, in the same shape: a ViewModel reading from `AppState`, then the screen. Then Tools,
-> the largest remaining screen (`ui/ToolsScreen.kt`, 5,005 lines) — plan it as several iterations.
+> **Phase 7. Immediate task: Tools — the last and largest screen.**
+> SFTP has landed: `SftpViewModel` + `lib/ui/screens/sftp/` are wired into `app_scaffold.dart`.
+> Three of its four tabs work (Bookmarks, the SFTP browser, Transfers); **Shares** is a placeholder
+> that says so, blocked on the §7.1 platform-native SMB work.
+>
+> `ui/ToolsScreen.kt` is 5,005 lines and hosts eight of the fifteen screens (Alerts, Quick Scripts,
+> Network, Auth Keys, Backup, Health Scoring, Settings, About), each currently a placeholder in
+> `app_scaffold.dart`. **Plan it as several iterations, one or two tool views at a time** — starting
+> with Auth Keys and Quick Scripts, since Fleet's preset picker and the server form's key picker are
+> both blocked on those stores.
 >
 > Then, in the §9 order — for each: a feature ViewModel reading from `AppState`, then the screen,
 > replacing its placeholder in `lib/ui/app_scaffold.dart`: Monitor → Infra → Fleet → SFTP → Tools.
@@ -163,7 +168,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 |---|---|---|---|
 | `ui/AppViewModel.kt` | **12310** | `lib/ui/view_model/` (split by feature, §5.2) | 🟨 `AppState` + `ServersViewModel` done |
 | `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | ⬜ |
-| `ui/SftpScreen.kt` | 3474 | `lib/ui/screens/sftp/` | ⬜ |
+| `ui/SftpScreen.kt` | 3474 | `lib/ui/screens/sftp/` | 🟡 3 of 4 tabs; Shares blocked on §7.1 |
 | `ui/ShellScreen.kt` | 3175 | `lib/ui/screens/shell/` | ⬜ |
 | `ui/AppUi.kt` | 2806 | `lib/ui/app_scaffold.dart` + `lib/ui/screens/servers/` | 🟨 scaffold, nav, Servers list + form logic done; form **widget** pending |
 | `ui/ComposeBuilder.kt` | 2100 | `lib/ui/screens/infra/compose_builder.dart` | ⬜ |
@@ -1061,6 +1066,13 @@ rather than silently dropped.
 
 ## 18. Known parity gaps (requirement 13)
 
+**SFTP (session 26):**
+- **Network Shares** — the whole tab, blocked on §7.1 (platform-native SMB). Renders a note saying so.
+- **The file editor** — the Kotlin opens text files in an in-app editor with save-and-verify. The
+  transport calls (`readText`/`writeText`) are ported; the editor UI is not.
+- **Copy/move between hosts** (the cross-clipboard bar), **folder sizes via `du`**, **sudo mode**,
+  and **remote search** — all present in the Kotlin browser, none ported.
+
 **Fleet (session 25):**
 - **Quick-script presets in Broadcast** — the Kotlin offers saved fleet-enabled quick scripts as
   pickable command presets, with a search box and an inline editor. Not ported; the command field is
@@ -1723,3 +1735,59 @@ current. Fleet logs merge across hosts newest-first with the host name leading e
 unreachable host does not empty the view.
 
 **Verified — 782 tests pass (72 new), `flutter analyze` clean.**
+
+---
+
+### Session 26 — SFTP: browser, bookmarks and transfers
+
+`lib/ui/view_model/sftp_view_model.dart` and `lib/ui/screens/sftp/`, wired into `app_scaffold.dart`.
+Three of the four tabs work. Shares renders a note pointing at §7.1.
+
+Two new domain files, both extracted because they are easy to get subtly wrong and worth testing
+directly (convention 3):
+
+**`lib/domain/remote_path.dart`.** These are always *remote* paths, so `dart:io`'s `path` package is
+deliberately not used — it follows the *host* platform's separator, and on Windows it would build
+`C:\srv\www` for a Linux server. The two rules worth naming:
+- `isWithin` compares **segment-wise, not as a string prefix**. `/srv/www-old`.startsWith(`/srv/www`)
+  is true, but it is a sibling — a prefix test would refuse a legal move, or permit one into a
+  directory the user never named.
+- `uniqueName` puts the counter **before** the extension (`notes (2).txt`) so the copy still opens in
+  the same application, and treats a leading dot as a whole name — `.bashrc` becomes `.bashrc (2)`,
+  never ` (2).bashrc`.
+
+**`lib/domain/sftp_sort.dart`.** Directories lead in every mode except "files first", including size
+and date. That is deliberate: a directory's reported size is its *inode's*, not its contents', so
+interleaving folders by size would order them by a number that means nothing to the user. Ties fall
+back to name so the order is stable between runs.
+
+**Two defects found and fixed while building this:**
+
+1. **An error raised by a file operation was wiped before it could be read.** `_mutate` set `_error`
+   and then called `refresh()`, whose first act is `_error = null`. A failed delete or mkdir would
+   have flashed and vanished. The order is now: run, refresh, *then* report — so a partly-succeeded
+   operation still leaves the listing current and the error still reaches the user.
+2. **The rename/new-folder dialogs disposed their `TextEditingController` too early.** Disposing it
+   as soon as `showDialog` returns leaves the still-running exit animation rebuilding a `TextField`
+   around a disposed controller, which throws. Caught by a widget test. The controller now lives in a
+   small `_NameDialog` widget so it dies with the dialog.
+
+Other behaviour worth recording:
+- A listing failure **clears the rows**. Leaving the previous directory's entries visible under a
+  path that failed to open invites acting on the wrong files.
+- Navigating **clears the selection** — carrying it into another directory would let a delete act on
+  names that happen to match there.
+- An upload **never silently overwrites**: a clashing name gets a `(2)` suffix. Replacing a file the
+  user did not mean to touch is unrecoverable.
+- A delete dialog says how many *folders* are included and that their contents go too, which is the
+  part users misjudge.
+- Bookmarks are stored **per host** in the Kotlin's exact `|||`-joined format, so an upgraded install
+  reads the bookmarks it already had. A host with none gets a useful default list.
+- A transfer with an unknown size gets an **indeterminate** progress bar rather than a made-up
+  fraction.
+
+`SftpViewModel.start()` is explicit rather than constructor-driven: the host list may already have
+been emitted by `AppState` before the view model subscribed, in which case no change notification is
+coming and nothing would ever load. That bug was caught by the first test run.
+
+**Verified — 856 tests pass (74 new), `flutter analyze` clean.**

@@ -14,6 +14,7 @@ import 'platform/secret_store.dart';
 import 'ui/view_model/fleet_view_model.dart';
 import 'ui/view_model/infra_view_model.dart';
 import 'ui/view_model/monitor_view_model.dart';
+import 'ui/view_model/sftp_view_model.dart';
 import 'ui/view_model/servers_view_model.dart';
 import 'ui/theme/theme.dart';
 
@@ -66,6 +67,10 @@ class OmniTermApp extends StatelessWidget {
         ChangeNotifierProxyProvider<AppState, FleetViewModel>(
           create: (context) => FleetViewModel(context.read<AppState>()),
           update: (_, app, previous) => previous ?? FleetViewModel(app),
+        ),
+        ChangeNotifierProxyProvider<AppState, SftpViewModel>(
+          create: (context) => SftpViewModel(context.read<AppState>()),
+          update: (_, app, previous) => previous ?? SftpViewModel(app),
         ),
       ],
       child: Builder(
