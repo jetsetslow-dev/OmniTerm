@@ -1809,8 +1809,10 @@ this host."
 explained. Now distinguished — no source at all, a source that returned nothing, and a *filter* that
 matched nothing ("No ERROR entries. Choose ALL to see everything.").
 
-**Port-introduced** — the Kotlin has the same `elif` shape, so this one **does** apply to the shipped
-app and belongs on `fix/kotlin-parity-defects`. Recorded as outstanding there.
+**Not port-introduced** — `RemoteParsers.kt:386` has the identical `elif` chain, so this one ships
+today. **Fixed on `fix/kotlin-parity-defects` in the same session** (commit `63835a0`), with five
+tests pinning that the chain falls through on empty *output* rather than a missing binary. 489
+Kotlin unit tests pass.
 
 ---
 
@@ -1894,8 +1896,8 @@ in **both** codebases. Branch `fix/kotlin-parity-defects` (cut from `origin/main
 §15.4 and §15.5 back to Kotlin with 15 new unit tests — `LogSeverityStemsTest` and
 `CommandDangerHitsTest` — and 484 unit tests pass on it.
 
-§15.2 and §15.3 are **not** back-ported: both were defects the port introduced and caught before
-commit, and neither exists in the Kotlin.
+§15.2, §15.3, §15.7, §15.8 and §15.9 are **not** back-ported: all were defects the port introduced,
+and none exists in the Kotlin. §15.10 **is** back-ported — it shipped.
 
 **From here on, a §15 entry is not finished until it is fixed on both branches.**
 
@@ -2919,8 +2921,9 @@ container: the pane reads "No readable log source on this host."
 nothing, and a *filter* that matched nothing, both rendered as the same blank pane. All three are
 now distinct — the last one says "No ERROR entries. Choose ALL to see everything."
 
-**This one is in the shipped Kotlin too** — `RemoteParsers.kt` has the identical `elif` chain — so
-per §15.6 it is fixed on `fix/kotlin-parity-defects` as well.
+**This one is in the shipped Kotlin too** — `RemoteParsers.kt:386` has the identical `elif` chain —
+so per §15.6 it is fixed on `fix/kotlin-parity-defects` in the same session (`63835a0`), with five
+tests. 489 Kotlin unit tests pass.
 
 **Verified — 1476 tests pass (3 new), `flutter analyze` clean, APK builds, and the fix was confirmed
 on the real host.**
