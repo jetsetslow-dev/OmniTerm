@@ -74,7 +74,7 @@ dev_dependencies:
   # cannot reach and which this app depends on.
   integration_test:
     sdk: flutter
-  patrol: ^3.20.0
+  patrol: ^4.0.0
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is

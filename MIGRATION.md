@@ -2,18 +2,21 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Task #9 is running: 11 E2E flows, green on the emulator** (sessions 50-52). The key-import sheet
+> **Task #9 is running: 11 Dart-only flows + 2 Patrol native flows, green on the emulator** (sessions 50-53). The key-import sheet
 > and the app-lock cycle are both done — the two flows the manual walk could not drive at all.
 >
 > ⚠️ **Read §19.1 before writing another flow.** `pumpAndSettle` near a focused field, fixed frame
 > counts instead of observable outcomes, and `enterText` without focus each cost a ten-minute device
 > run and each looked like an app bug first.
 >
-> **Immediate task: keep growing the suite.** Still to add: **SFTP upload/download** against the
-> lab. Then the **native** half:
-> Patrol's Android instrumentation is wired (`MainActivityTest.java`, runner + orchestrator in
-> Gradle) but **not yet exercised**, and it is what reaches the notification permission dialog, the
-> biometric prompt and the system file picker. Then Maestro as the CI smoke suite, and #10 (CI/CD).
+> **Patrol's native half now runs** (session 53) — 2 flows on the notification-permission dialog.
+> Layout and commands are in §11.1; the two runners cannot share a directory.
+>
+> **Immediate task: keep growing the suite.** Next native targets: the **system file picker**
+> (backup export/import, SFTP upload) and the **foreground-service notification** in the shade. The
+> biometric prompt needs an enrolled fingerprint the emulator does not have. **SFTP
+> upload/download** over a real transport needs the lab, so it is opt-in by nature — see §19.
+> Then Maestro as the CI smoke suite, and #10 (CI/CD).
 >
 > **Remaining #8 work:** iOS SMB (§18).
 >
@@ -518,6 +521,24 @@ keys after 36k LOC of UI is far more expensive than adding them during the port.
 Coverage target: every screen reachable, every control exercised, and every navigation path
 **entered and left** — including the guard-intercepted ones (unsaved Settings, leave-terminal
 transaction), which are exactly where the legacy app has had regressions.
+
+### 11.1 How the two halves are laid out (session 53)
+
+```
+integration_test/*_test.dart          Dart-only flows   → flutter test integration_test/*_test.dart -d <device>
+integration_test/native/*_test.dart   Patrol flows      → patrol test --target <file> -d <device>
+```
+
+**They cannot share a runner.** A `patrolTest` needs Patrol's binding and its native side; run under
+plain `flutter test` it fails before doing anything. Hence the subdirectory, and hence the glob —
+`flutter test integration_test/` recurses and would drag the native flows in. Requires
+`dart pub global activate patrol_cli` (4.6.1 here) and `patrol` ^4 in `pubspec.yaml`; the CLI and
+the package are versioned together and a 3.x/4.x mix fails at the Java harness.
+
+`android/app/src/androidTest/.../MainActivityTest.java` enumerates each Dart test into its own JUnit
+case (`@RunWith(Parameterized.class)` + `listDartTests()`). That is not cosmetic: combined with
+`clearPackageData`, it means every Patrol flow starts from a fresh install — the state-carry-over
+problem that cost session 52 several device runs does not arise here at all.
 
 ---
 
@@ -3377,3 +3398,45 @@ the state it depends on — read a switch before tapping it, and treat a dialog 
 absent as a valid path.
 
 **Verified — 1500 host tests pass, 11 E2E flows pass on Android 15, `flutter analyze` clean.**
+
+---
+
+### Session 53 — Patrol's native half runs (task #9)
+
+`integration_test/native/notification_permission_test.dart`, two flows, green on Android 15.
+**This is the first thing in the whole suite that reaches outside Flutter.**
+
+The notification-permission dialog is drawn by the system, not by Flutter, so it does not exist in
+the widget tree: a Dart-only flow cannot see it, tap it, or tell granted from denied. Patrol was
+chosen over plain `integration_test` for exactly this (§11) and, until now, none of it had been
+exercised — the wiring existed and nothing proved it worked.
+
+What the flows pin is **§17 made concrete**:
+
+| Flow | What it pins |
+|---|---|
+| Denying notifications leaves alerting working, and says so | the prompt actually appears (asserted, not assumed); after denial the warning is shown, it says *rules still fire and incidents are still recorded*, the master switch stays **on**, and rules are still creatable |
+| Granting notifications clears the warning | nothing blocked, nothing to warn about |
+
+An app that quietly does nothing after a denied permission is the failure this exists to catch, and
+it is invisible from the inside — every Dart-side assertion would pass with the feature dead.
+
+**Four things had to be fixed to get here.**
+
+- **The Java harness was written against Patrol 3 and the CLI is 4.** `PatrolJUnitRunner` is no
+  longer a JUnit `Runner`; the current template enumerates each Dart test into its own case with
+  `@RunWith(Parameterized.class)` + `listDartTests()`. Bumped `patrol` 3.20 → 4.8 to match, which
+  cost nothing because no Patrol Dart test existed yet.
+- **The two runners cannot share a directory** — see §11.1.
+- **Alerts default to *on*.** The first version tapped the master switch once, which turned alerts
+  *off*, which correctly asks for nothing — a flow that would have passed while proving nothing had
+  the assertion been weaker. This is §19.1's "own the state you depend on" again, and the reason
+  the prompt's appearance is now asserted rather than assumed.
+- **Patrol's bare string finder matches a `Text`'s whole value**, not a substring. Use
+  `find.textContaining` for a sentence.
+
+**Still not reachable:** the biometric prompt needs an enrolled fingerprint the emulator does not
+have, and the system file picker is next.
+
+**Verified — 1500 host tests pass, 11 Dart-only E2E flows and 2 Patrol native flows pass on
+Android 15, `flutter analyze` clean.**
