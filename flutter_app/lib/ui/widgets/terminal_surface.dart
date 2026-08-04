@@ -6,6 +6,7 @@ import 'package:flutter/scheduler.dart';
 import '../../data/term/terminal_snapshot.dart';
 import '../theme/typography.dart';
 import '../view_model/shell_session.dart';
+import 'terminal_transcript_sheet.dart';
 
 /// The size of one terminal cell for a given font size.
 ///
@@ -216,6 +217,9 @@ class _TerminalSurfaceState extends State<TerminalSurface> {
             behavior: HitTestBehavior.opaque,
             onVerticalDragStart: (_) => _dragRemainder = 0,
             onVerticalDragUpdate: (details) => _onDrag(details.delta.dy, metrics.cellHeight),
+            // A painted grid has nothing to select, which left copying output impossible. Long
+            // press opens the scrollback as selectable text instead — the Kotlin's answer too.
+            onLongPress: () => openTerminalTranscript(context, widget.session),
             child: CustomPaint(
               size: Size(constraints.maxWidth, constraints.maxHeight),
               painter: TerminalPainter(

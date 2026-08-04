@@ -1251,8 +1251,10 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
 - **tmux persistent sessions**, the session picker and the background-session list. The control-mode
   parser (`tmux_control_*.dart`) is ported and tested; the attach/reattach lifecycle is not.
 - **The tunnel manager UI.** `ssh_tunnel_manager.dart` is ported; nothing drives it yet.
-- **Text selection and the copy dialog.** The surface paints a snapshot rather than selectable text,
-  so copying output is not yet possible.
+- ~~**Text selection and the copy dialog.**~~ **Done in session 58.** The surface still paints a
+  grid — a canvas cannot be made to behave like a document — so a **long press opens the scrollback
+  as selectable text**, which is how the Kotlin answers it too (its PR #69). `domain/
+  terminal_transcript.dart` holds the rule that makes copied output paste back correctly.
 - **"Smart swipe" editor input mode.** Only the higher-fidelity stream mode is ported; swipe typing
   commits whole words through the same path.
 
@@ -3721,3 +3723,34 @@ which stays on §18's list with the rest of SFTP's sudo mode.
 
 **Verified — 10 new tests (6 view-model, 4 widget); 1511 host tests pass, `analyze --fatal-infos` clean,
 both workflow files parse.**
+
+---
+
+### Session 58b — copying terminal output (task #7)
+
+The terminal surface paints a grid, so there is nothing on it to select, and copying output — the
+single most common thing anyone does with a terminal — was impossible. §18 listed it as needing
+selectable text; it does not. The Kotlin reached the same conclusion (its PR #69): **long press
+opens the scrollback in the platform's own selectable text control** rather than trying to make a
+canvas behave like a document.
+
+**The interesting part is one line in `TermRow`'s doc comment**, written when the snapshot model was
+ported and never acted on:
+
+> Consumers turning rows back into text must join a soft-wrapped row with its successor instead of
+> inserting a line break, or copied output gains breaks the remote never sent.
+
+That is now `lib/domain/terminal_transcript.dart`, and it is the whole reason this is a domain
+function rather than `rows.map((r) => r.text).join('\n')`. A command longer than the terminal is
+stored as several rows with **no newline ever printed**; joining them naively produces text that
+does not run when it is pasted back, and paths that gain a break in the middle. Two more rules came
+out of writing the tests: grid padding must not reach the clipboard (rows are padded to the full
+width, so hundreds of invisible spaces per line), and trailing blank rows are not output — a
+terminal is mostly empty grid below the cursor — while a blank line *between* two commands is.
+
+The sheet shows the whole scrollback, not the viewport, because the reason to reach for it is
+usually an error that has already scrolled past. An empty terminal says so and disables Copy rather
+than offering a copy of nothing.
+
+**Verified — 11 new tests (8 transcript rules, 3 widget); 1522 host tests pass, `analyze
+--fatal-infos` clean.**

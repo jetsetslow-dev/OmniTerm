@@ -339,4 +339,78 @@ void main() {
       await finish(tester);
     });
   });
+
+  group('the transcript', () {
+    testWidgets('a long press opens the scrollback as selectable text', (tester) async {
+      // The surface paints a grid, so there is nothing on it to select — which left the one thing
+      // people do with terminal output, copy it, impossible.
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+
+      transport.opened.single.emit('uptime\r\n');
+      transport.opened.single.emit('load average: 0.14\r\n');
+      await tester.pump(const Duration(milliseconds: 30));
+
+      await tester.longPress(find.byKey(const ValueKey('shell.surface')));
+      await tester.pumpAndSettle();
+
+      final text = tester
+          .widget<SelectableText>(find.byKey(const ValueKey('transcript.text')))
+          .data!;
+      expect(text, contains('uptime'));
+      expect(text, contains('load average: 0.14'));
+      expect(
+        text.split('\n').length,
+        2,
+        reason: 'the empty grid below the cursor is not output and must not be copied',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('transcript.close')));
+      await tester.pumpAndSettle();
+      await finish(tester);
+    });
+
+    testWidgets('output that scrolled out of view is still in the transcript', (tester) async {
+      // The reason to reach for this is usually an error that has already scrolled past.
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+
+      for (var i = 0; i < 200; i++) {
+        transport.opened.single.emit('line $i\r\n');
+      }
+      await tester.pump(const Duration(milliseconds: 30));
+
+      await tester.longPress(find.byKey(const ValueKey('shell.surface')));
+      await tester.pumpAndSettle();
+
+      final text = tester
+          .widget<SelectableText>(find.byKey(const ValueKey('transcript.text')))
+          .data!;
+      expect(text, contains('line 0'), reason: 'the scrollback, not the viewport');
+      expect(text, contains('line 199'));
+
+      await tester.tap(find.byKey(const ValueKey('transcript.close')));
+      await tester.pumpAndSettle();
+      await finish(tester);
+    });
+
+    testWidgets('an empty terminal says so rather than offering a copy of nothing', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+
+      await tester.longPress(find.byKey(const ValueKey('shell.surface')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Nothing has been printed yet.'), findsOneWidget);
+      final copy = tester.widget<IconButton>(find.byKey(const ValueKey('transcript.copyAll')));
+      expect(copy.onPressed, isNull);
+
+      await tester.tap(find.byKey(const ValueKey('transcript.close')));
+      await tester.pumpAndSettle();
+      await finish(tester);
+    });
+  });
 }
