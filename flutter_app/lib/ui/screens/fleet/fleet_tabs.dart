@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 
+import 'package:provider/provider.dart';
+
 import '../../../data/app_database.dart';
 import '../../../domain/host_display.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/fleet_view_model.dart';
+import '../../view_model/scripts_view_model.dart';
 import '../../widgets/omni_components.dart';
 
 /// Every host at a glance, worst first.
@@ -155,6 +158,10 @@ class _FleetBroadcastTabState extends State<FleetBroadcastTab> {
               : _GroupTargets(vm: vm),
         ),
         const SizedBox(height: 8),
+        _PresetRow(onPick: (command) {
+          _controller.text = command;
+          vm.commandText = command;
+        }),
         TextField(
           key: const ValueKey('fleet.command'),
           controller: _controller,
@@ -624,6 +631,63 @@ class FleetLogsTab extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+
+/// Saved fleet commands, offered as one-tap presets.
+///
+/// Reads the scripts store directly rather than duplicating a command list here: the same rows the
+/// Scripts tool manages are what Fleet should offer, and a second copy would drift from it.
+class _PresetRow extends StatefulWidget {
+  const _PresetRow({required this.onPick});
+
+  final void Function(String command) onPick;
+
+  @override
+  State<_PresetRow> createState() => _PresetRowState();
+}
+
+class _PresetRowState extends State<_PresetRow> {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) context.read<ScriptsViewModel>().start();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scripts = context.watch<ScriptsViewModel>().fleetPresetScripts;
+    if (scripts.isEmpty) return const SizedBox.shrink();
+
+    return SizedBox(
+      height: 38,
+      child: ListView(
+        key: const ValueKey('fleet.presets'),
+        scrollDirection: Axis.horizontal,
+        children: [
+          for (final script in scripts)
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: Center(
+                child: ActionChip(
+                  key: ValueKey('fleet.preset.${script.id}'),
+                  avatar: Text(
+                    script.emoji,
+                    style: const TextStyle(fontSize: 10, fontFamily: OmniFonts.mono),
+                  ),
+                  label: Text(script.name, style: const TextStyle(fontSize: 11)),
+                  // Fills the field rather than running immediately: the confirmation dialog is
+                  // where a broadcast gets approved, and a preset must not skip it.
+                  onPressed: () => widget.onPick(script.command),
+                ),
+              ),
+            ),
+        ],
+      ),
     );
   }
 }

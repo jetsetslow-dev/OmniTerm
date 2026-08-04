@@ -9,6 +9,7 @@ import 'package:omniterm/ui/screens/fleet/fleet_screen.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/fleet_view_model.dart';
+import 'package:omniterm/ui/view_model/scripts_view_model.dart';
 import 'package:provider/provider.dart';
 
 import 'fleet_view_model_test.dart' show BroadcastTransport;
@@ -19,6 +20,7 @@ void main() {
   late AppRepository repo;
   late AppState app;
   late FleetViewModel vm;
+  late ScriptsViewModel scriptsVm;
 
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
@@ -70,11 +72,14 @@ void main() {
   Future<void> pump(WidgetTester tester, {BroadcastTransport? transport}) async {
     await app.start();
     vm = FleetViewModel(app, transport: transport);
+    scriptsVm = ScriptsViewModel(app);
     await tester.pumpWidget(
       MultiProvider(
         providers: [
           ChangeNotifierProvider<AppState>.value(value: app),
           ChangeNotifierProvider<FleetViewModel>.value(value: vm),
+          // Broadcast offers saved fleet commands as presets, so the scripts store is in scope.
+          ChangeNotifierProvider<ScriptsViewModel>.value(value: scriptsVm),
         ],
         child: MaterialApp(
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
@@ -99,6 +104,8 @@ void main() {
     expect(find.text('1 / 2 Online'), findsOneWidget);
     expect(find.text('Avg Score: 90'), findsOneWidget);
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
   testWidgets('all three tabs render', (tester) async {
@@ -115,6 +122,8 @@ void main() {
       expect(find.byKey(ValueKey(probe)), findsOneWidget, reason: '${tab.name} did not render');
     }
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
   testWidgets('the dashboard puts the worst host first', (tester) async {
@@ -132,6 +141,8 @@ void main() {
     expect(top('healthy'), lessThan(top('gone')),
         reason: 'an offline host has no live score to rank on, so it sorts last');
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
   testWidgets('an offline host shows a tag, not a stale score', (tester) async {
@@ -144,6 +155,8 @@ void main() {
     expect(find.text('88'), findsNothing,
         reason: 'a score for an unreachable host is a stale number pretending to be current');
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
   group('broadcast', () {
@@ -165,6 +178,8 @@ void main() {
       button = tester.widget<FilledButton>(find.byKey(const ValueKey('fleet.run')));
       expect(button.onPressed, isNotNull);
       vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
     });
 
     testWidgets('the dialog names every host that will be hit', (tester) async {
@@ -190,6 +205,8 @@ void main() {
       await tester.pumpAndSettle();
       expect(transport.commands, isEmpty, reason: 'cancelling must send nothing');
       vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
     });
 
     testWidgets('a destructive command is flagged in the field and the dialog', (tester) async {
@@ -212,6 +229,8 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('fleet.run.cancel')));
       await tester.pumpAndSettle();
       vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
     });
 
     testWidgets('confirming runs it and shows per-host output', (tester) async {
@@ -234,6 +253,8 @@ void main() {
       expect(find.text('OK'), findsNWidgets(2));
       expect(find.textContaining('up 3 days'), findsWidgets);
       vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
     });
 
     testWidgets('a failing host is marked failed with its real error', (tester) async {
@@ -255,6 +276,8 @@ void main() {
       expect(find.text('FAILED'), findsOneWidget);
       expect(find.textContaining('connection refused'), findsOneWidget);
       vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
     });
 
     testWidgets('group mode targets whole groups', (tester) async {
@@ -271,6 +294,8 @@ void main() {
 
       expect(find.text('2 targets'), findsOneWidget);
       vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
     });
 
     testWidgets('without a transport it says broadcasting is unavailable', (tester) async {
@@ -280,6 +305,8 @@ void main() {
 
       expect(find.textContaining('unavailable in this build'), findsOneWidget);
       vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
     });
   });
 
@@ -307,6 +334,8 @@ void main() {
       // The host name leads: in a merged view, which machine a line came from comes first.
       expect(find.text('alpha'), findsWidgets);
       vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
     });
 
     testWidgets('the level filter narrows the rendered lines', (tester) async {
@@ -332,6 +361,8 @@ void main() {
       expect(find.textContaining('accepted connection'), findsNothing);
       expect(find.textContaining('disk errors detected'), findsOneWidget);
       vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
     });
   });
 
@@ -344,5 +375,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('root@10.0.0.9'), findsNothing);
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 }

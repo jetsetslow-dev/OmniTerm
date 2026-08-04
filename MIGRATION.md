@@ -2,21 +2,13 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 7. Immediate task: Tools, continued — Quick Scripts next.**
-> **Auth Keys has landed** (`AuthKeysViewModel` + `lib/ui/screens/tools/auth_keys_screen.dart`),
-> wired into `app_scaffold.dart`. With it, the **server form's key picker now works** — a key-auth
-> host can be created from the UI for the first time.
+> **Phase 7. Immediate task: Tools, continued — Alerts next.**
+> **Scripts has landed** (`ScriptsViewModel` + `lib/ui/screens/tools/scripts_screen.dart`), and with
+> it **Fleet's broadcast preset picker now works** — the gap flagged in session 25.
 >
-> Seven tool views remain, each still a placeholder in `app_scaffold.dart`: **Quick Scripts** (do
-> this next — Fleet's broadcast preset picker is blocked on it), Alerts, Network, Backup, Health
-> Scoring, Settings, About. One or two per iteration.
->
-> **A fifth convention, learned the hard way this session:** a widget test whose view model
-> subscribes to a drift `watch` stream must dispose the view model *inside* the test and then
-> `pump()` twice — once plain, once with a small duration. Cancelling such a subscription schedules
-> zero-duration timers, and the framework's end-of-test check fails while any are queued. Symptom:
-> "A Timer is still pending even after the widget tree was disposed", followed by the whole file
-> wedging. See the `finish()` helper in `test/auth_keys_screen_test.dart`.
+> Six tool views remain, each still a placeholder in `app_scaffold.dart`: **Alerts** (do this next —
+> it has the most logic left, and `alert_breach_tracker.dart` + `kLegacyRulePresets` are already
+> ported and waiting), Network, Backup, Health Scoring, Settings, About.
 >
 > Then, in the §9 order — for each: a feature ViewModel reading from `AppState`, then the screen,
 > replacing its placeholder in `lib/ui/app_scaffold.dart`: Monitor → Infra → Fleet → SFTP → Tools.
@@ -172,7 +164,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | File | LOC | Flutter destination | Status |
 |---|---|---|---|
 | `ui/AppViewModel.kt` | **12310** | `lib/ui/view_model/` (split by feature, §5.2) | 🟨 `AppState` + `ServersViewModel` done |
-| `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | 🟡 Auth Keys done; 7 tool views pending |
+| `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | 🟡 Auth Keys + Scripts done; 6 pending |
 | `ui/SftpScreen.kt` | 3474 | `lib/ui/screens/sftp/` | 🟡 3 of 4 tabs; Shares blocked on §7.1 |
 | `ui/ShellScreen.kt` | 3175 | `lib/ui/screens/shell/` | ⬜ |
 | `ui/AppUi.kt` | 2806 | `lib/ui/app_scaffold.dart` + `lib/ui/screens/servers/` | 🟨 scaffold, nav, Servers list + form logic done; form **widget** pending |
@@ -1071,6 +1063,13 @@ rather than silently dropped.
 
 ## 18. Known parity gaps (requirement 13)
 
+**Scripts (session 28):**
+- **Per-OS / per-platform filtering of quick scripts** — the columns (`targetOs`, `targetSystem`) are
+  stored and round-trip through the editor, and `quickScriptMatchesHost` is ported, but the editor
+  has no pickers for them and the per-host Quick Scripts row that would apply the filter lives on
+  the Shell screen, which is not ported.
+- **Drag-to-reorder** within a category. `moveScript` exists; no UI drives it.
+
 **SFTP (session 26):**
 - **Network Shares** — the whole tab, blocked on §7.1 (platform-native SMB). Renders a note saying so.
 - **The file editor** — the Kotlin opens text files in an in-app editor with save-and-verify. The
@@ -1834,3 +1833,46 @@ silently failed. It now parses the bracketed form first, which also makes a bare
 (full of colons) resolve correctly instead of having its last group read as a port.
 
 **Verified — 907 tests pass (51 new), `flutter analyze` clean.**
+
+---
+
+### Session 28 — Tools, part 2: Scripts, and Fleet's preset picker
+
+`lib/data/script_presets.dart`, `lib/ui/view_model/scripts_view_model.dart` and
+`lib/ui/screens/tools/scripts_screen.dart`, wired into `app_scaffold.dart`. Two lists over one table:
+Quick scripts run on the selected host, Fleet commands are broadcast.
+
+**Fleet's broadcast preset picker now works** — the gap flagged in the session 25 commit. It reads
+the same scripts store the tool manages rather than carrying its own command list, so the two cannot
+drift apart. Tapping a preset **fills the command field rather than running it**: the confirmation
+dialog is where a broadcast gets approved, and a preset must not be a way around it.
+
+**The preset keys are the load-bearing part.** A seeded row is claimed as the app's by its
+`presetKey`, never by its name or command — matching on text would miss a renamed row and, worse,
+could delete a user's own script that happened to share a name. A test cross-checks the seed list
+against `kLegacyScriptPresets` (the 19 → 20 migration's back-stamp list) in both directions, so a key
+or name that drifts between them is caught rather than silently leaving rows unclaimed on an upgraded
+install.
+
+Preset lifecycle, all tested:
+- Enabling **re-seeds**, which resets edits — the confirmation says so, and the editor repeats it
+  when you open a preset.
+- Enabling twice does not duplicate: the existing row id is reused, so the family cannot accumulate
+  on each toggle.
+- Disabling removes only rows carrying that family's keys; the user's own scripts survive, and so
+  does a renamed preset's removal.
+- Both operations run in **one transaction** — a half-seeded family with the flag already flipped
+  would show an "on" toggle over a partial list, and re-toggling would not repair it.
+
+A row that is neither quick nor fleet is refused: it would be invisible everywhere. For the same
+reason a script cannot be toggled out of its *last* list.
+
+**A small UI fix made while testing:** the editor's validation error sat at the bottom of a scrolling
+list, so on a phone you had to scroll to find out why Save did nothing. It now sits directly above
+the Save button.
+
+`_companion` builds the row with an **absent** id for a new script rather than a literal 0 — the
+§15.3 defect in a different table, where `InsertMode.replace` would have made every new script
+overwrite the previous one. A test covers it.
+
+**Verified — 960 tests pass (53 new), `flutter analyze` clean.**

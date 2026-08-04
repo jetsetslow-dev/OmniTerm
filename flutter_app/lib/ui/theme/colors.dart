@@ -52,6 +52,18 @@ abstract final class OmniColors {
     ('Purple', purple),
   ];
 
+  /// Resolve a stored colour name (a script's `color`, a tag's accent) to a [Color].
+  ///
+  /// Matched case-insensitively because the values on disk are lowercase while the display names
+  /// here are capitalised. An unknown name falls back to cyan rather than throwing: a colour is
+  /// decoration, and a row with an odd value should still render.
+  static Color named(String colorName) {
+    for (final (name, color) in namedColors) {
+      if (name.toLowerCase() == colorName.toLowerCase()) return color;
+    }
+    return cyan;
+  }
+
   /// Resolve a server's stored `ServerEntity.serverColor` name to a [Color]. "Default" (or any
   /// unknown value) falls back to the deterministic per-name colour so existing rows still look
   /// sensible, while explicit user choices win.

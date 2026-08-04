@@ -8,6 +8,7 @@ import 'screens/infra/infra_screen.dart';
 import 'screens/monitor/monitor_screen.dart';
 import 'screens/sftp/sftp_screen.dart';
 import 'screens/tools/auth_keys_screen.dart';
+import 'screens/tools/scripts_screen.dart';
 import 'screens/servers/servers_screen.dart';
 import 'shell_state.dart';
 import 'theme/colors.dart';
@@ -186,7 +187,7 @@ class _ScreenBody extends StatelessWidget {
       Screen.infra => const InfraScreen(),
       Screen.tools => const PlaceholderScreen(title: 'Tools', source: 'ui/ToolsScreen.kt'),
       Screen.alerts => const PlaceholderScreen(title: 'Alerts', source: 'ui/ToolsScreen.kt → AlertsToolView'),
-      Screen.quickScripts => const PlaceholderScreen(title: 'Quick Scripts', source: 'ui/ToolsScreen.kt → QuickScriptsToolView'),
+      Screen.quickScripts => const ScriptsScreen(),
       Screen.network => const PlaceholderScreen(title: 'Network', source: 'ui/ToolsScreen.kt → NetworkToolView'),
       Screen.authKeys => const AuthKeysScreen(),
       Screen.backup => const PlaceholderScreen(title: 'Backup', source: 'ui/ToolsScreen.kt → BackupToolView'),
