@@ -2,25 +2,23 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Every auth mode and proxy path is now exercised against the lab** (session 48) — which turned up
-> that HTTP and SOCKS5 proxies were **never implemented** (§15.11).
+> **All seven screens have now been walked against a real host** (sessions 45–49). Fleet's broadcast
+> and Infra were the last two.
 >
-> **Immediate task: Fleet and Infra have still never touched a real host**, nor has SFTP's
-> upload/download (needs the file picker in the loop), nor the key **import** flow in the UI — the
-> transport-level key path is proven but the Auth & keys import sheet is not. Then iOS SMB (§18).
+> **Immediate task:** the paths a lab host cannot reach — SFTP upload/download (needs the file
+> picker in the loop), the Auth & keys **import sheet** (the transport-level key path is proven, the
+> UI that gets a key in is not), and **iOS SMB** (§18). Then #9 (Patrol/Maestro E2E) and #10
+> (CI/CD).
 >
 > The lab: `./scripts/test-hosts.sh up|fleet|keys|status`. §19 has the emulator recipe.
 >
-> ⚠️ **Lab probes must not be committed as tests** — see the note in §19. They depend on this box's
-> containers and would fail anywhere else.
+> ⚠️ **Lab probes must not be committed as tests** — §19. They depend on this box's containers.
 >
 > **The Kotlin app is maintained in parallel** on `fix/kotlin-parity-defects` — see §15.6. A §15
 > entry is not finished until it is fixed on both branches.
 >
 > **Shell parity gaps (§18) are a second Shell iteration:** split panes, quick connect, tmux
 > persistent sessions, the tunnel manager UI, text selection.
->
-> Then #9 (Patrol/Maestro E2E) and #10 (CI/CD).
 >
 > ⚠️ **Read §16.4 before porting anything else** — port the feature set, not the code set.
 >
@@ -3041,3 +3039,37 @@ type is refused rather than silently bypassed.
 
 **Verified — 1487 tests pass (11 new), `flutter analyze` clean, and all four connection paths
 confirmed against the lab.**
+
+---
+
+### Session 49 — Fleet and Infra against a real host
+
+The last two screens that had never touched one.
+
+**Fleet works end to end.** Dashboard read "1 / 1 Online" with the host's health ring. Broadcast
+selected the target, and the confirm dialog **named the host** — `lab-direct… (omniterm@10.0.2.2)` —
+rather than saying "1 host", which is the session-25 decision holding up in practice. Running
+`id -un` returned `omniterm` with an OK badge.
+
+**§15.5 confirmed on a device.** Typing `dd if=/dev/zero of=/dev/sda` — the canonical form the
+*shipped Kotlin app does not catch* — raised "This command looks destructive (raw write with dd) and
+will run on every host listed above." That is the fix from session 25, now seen working rather than
+inferred from a unit test.
+
+**Infra had the §15.10 problem in four places.** The Stacks tab reported "No compose stacks found on
+this host" — but that host has **no Docker and no Podman at all**. "No stacks" and "nothing here can
+run a stack" are different facts, and the second explains the first; reporting only the first sends
+the user hunting for containers on a machine that could not host one. The same applied to Images,
+Volumes and Networks.
+
+The view model already knew — `runtimes` holds the runtimes that actually answered `ps` — the empty
+states simply never asked. All four now say "No container runtime on this host. Docker or Podman has
+to be installed and running before OmniTerm can list …", and fall back to the plain message when a
+runtime *is* present. Confirmed on the real host.
+
+This is the third instance of one pattern, and worth stating as a rule: **an empty list is not a
+fact, it is the absence of one.** Every empty state in this app should distinguish "the tool is not
+there", "the tool found nothing", and "your filter matched nothing".
+
+**Verified — 1488 tests pass (1 net new), `flutter analyze` clean, APK builds, and both screens were
+driven by hand against the lab.**

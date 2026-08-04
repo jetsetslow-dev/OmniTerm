@@ -43,7 +43,7 @@ class StacksTab extends StatelessWidget {
       return _EmptyTab(
         key: const ValueKey('infra.stacks.empty'),
         icon: Icons.layers_clear,
-        message: 'No compose stacks found on this host',
+        message: _emptyMessage(vm, 'compose stacks'),
       );
     }
 
@@ -350,7 +350,7 @@ class ImagesTab extends StatelessWidget {
       return _EmptyTab(
         key: const ValueKey('infra.images.empty'),
         icon: Icons.photo_library_outlined,
-        message: 'No images on this host',
+        message: _emptyMessage(vm, 'images'),
       );
     }
 
@@ -432,7 +432,7 @@ class VolumesTab extends StatelessWidget {
       return _EmptyTab(
         key: const ValueKey('infra.volumes.empty'),
         icon: Icons.storage,
-        message: 'No volumes on this host',
+        message: _emptyMessage(vm, 'volumes'),
       );
     }
 
@@ -547,7 +547,7 @@ class NetworksTab extends StatelessWidget {
       return _EmptyTab(
         key: const ValueKey('infra.networks.empty'),
         icon: Icons.lan_outlined,
-        message: 'No networks on this host',
+        message: _emptyMessage(vm, 'networks'),
       );
     }
 
@@ -677,6 +677,16 @@ class _Stat extends StatelessWidget {
     );
   }
 }
+
+/// What an empty container tab should say.
+///
+/// "No images on this host" and "this host has no container runtime" are different facts, and the
+/// second is the one that explains the first. Reporting only the first sends the user looking for
+/// stacks on a machine that could not run one — the same confusion §15.10 fixed for logs.
+String _emptyMessage(InfraViewModel vm, String noun) => vm.runtimes.isEmpty
+    ? 'No container runtime on this host. Docker or Podman has to be installed and running before '
+        'OmniTerm can list $noun.'
+    : 'No $noun on this host';
 
 class _EmptyTab extends StatelessWidget {
   const _EmptyTab({super.key, required this.icon, required this.message});

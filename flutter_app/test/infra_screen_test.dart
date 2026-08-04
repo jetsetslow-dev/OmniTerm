@@ -253,12 +253,29 @@ void main() {
     vm.dispose();
   });
 
-  testWidgets('a host with no containers is distinguished from a failure', (tester) async {
+  testWidgets('a host with no container runtime says that, not "no stacks"', (tester) async {
+    // Different facts, and the second explains the first: reporting only "no stacks" sends the user
+    // looking for containers on a machine that could not run one. Found on a real Alpine host.
     await repo.insertServer(server(name: 'nas'));
     await pump(tester, transport: RecordingTransport());
 
     expect(find.byKey(const ValueKey('infra.stacks.empty')), findsOneWidget);
+    expect(find.textContaining('No container runtime on this host'), findsOneWidget);
     expect(find.byKey(const ValueKey('infra.error')), findsNothing);
+    vm.dispose();
+  });
+
+  testWidgets('a host that does run containers, but has none, says so', (tester) async {
+    await repo.insertServer(server(name: 'nas'));
+    // The runtimes probe answers, so Docker is present — there is simply nothing to show.
+    await pump(
+      tester,
+      transport: RecordingTransport(replies: {'command -v docker': 'docker'}),
+    );
+
+    expect(find.byKey(const ValueKey('infra.stacks.empty')), findsOneWidget);
+    expect(find.textContaining('No compose stacks on this host'), findsOneWidget);
+    expect(find.textContaining('No container runtime'), findsNothing);
     vm.dispose();
   });
 
