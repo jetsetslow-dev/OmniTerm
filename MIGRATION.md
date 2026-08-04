@@ -2,15 +2,15 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 7. Immediate task: Tools, continued — Network next.**
-> **Alerts has landed** (`AlertsViewModel` + `lib/ui/screens/tools/alerts_screen.dart`), including
-> the evaluation path that raises and resolves incidents.
+> **Phase 7. Immediate task: Tools, continued — Backup next.**
+> **Network has landed** (`NetworkViewModel` + `lib/ui/screens/tools/network_screen.dart`) with five
+> of the Kotlin's nine tabs: Host scan, Wake-on-LAN, Ping, Port scan, DNS. Traceroute, WHOIS and
+> Speed test are not ported (§18).
 >
-> Five tool views remain, each still a placeholder in `app_scaffold.dart`: **Network**, Backup,
-> Health Scoring, Settings, About.
+> Four tool views remain, each still a placeholder in `app_scaffold.dart`: **Backup**, Health
+> Scoring, Settings, About.
 >
-> ⚠️ **Read §16.4 before porting anything else** — port the feature set, not the code set. The
-> Kotlin's shape partly records how it grew; do not re-encode that history here.
+> ⚠️ **Read §16.4 before porting anything else** — port the feature set, not the code set.
 >
 > Then, in the §9 order — for each: a feature ViewModel reading from `AppState`, then the screen,
 > replacing its placeholder in `lib/ui/app_scaffold.dart`: Monitor → Infra → Fleet → SFTP → Tools.
@@ -166,7 +166,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | File | LOC | Flutter destination | Status |
 |---|---|---|---|
 | `ui/AppViewModel.kt` | **12310** | `lib/ui/view_model/` (split by feature, §5.2) | 🟨 `AppState` + `ServersViewModel` done |
-| `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | 🟡 Auth Keys, Scripts, Alerts done; 5 pending |
+| `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | 🟡 Auth Keys, Scripts, Alerts, Network done; 4 pending |
 | `ui/SftpScreen.kt` | 3474 | `lib/ui/screens/sftp/` | 🟡 3 of 4 tabs; Shares blocked on §7.1 |
 | `ui/ShellScreen.kt` | 3175 | `lib/ui/screens/shell/` | ⬜ |
 | `ui/AppUi.kt` | 2806 | `lib/ui/app_scaffold.dart` + `lib/ui/screens/servers/` | 🟨 scaffold, nav, Servers list + form logic done; form **widget** pending |
@@ -1094,6 +1094,16 @@ rather than silently dropped.
 
 ## 18. Known parity gaps (requirement 13)
 
+**Network (session 30):**
+- **Traceroute** — needs per-hop TTL control, which `dart:io`'s `Socket` does not expose. Options:
+  a platform channel, or shelling out to `traceroute` over SSH from a chosen host (a different
+  feature, arguably a better one — it traces from the server rather than the phone).
+- **WHOIS** — a plain TCP query to port 43 and a text response; straightforward, just not done.
+- **Speed test** — needs a bandwidth endpoint and a policy on how much data to pull on a metered
+  connection. Worth a product decision before implementing.
+- **Tunnels** — the Kotlin's ninth tab manages SSH port forwards. `ssh_tunnel_manager.dart` is
+  ported; the UI is not, and it belongs with the Shell screen's session lifecycle.
+
 **Scripts (session 28):**
 - **Per-OS / per-platform filtering of quick scripts** — the columns (`targetOs`, `targetSystem`) are
   stored and round-trip through the editor, and `quickScriptMatchesHost` is ported, but the editor
@@ -1949,3 +1959,47 @@ Behaviour worth naming, all tested:
 | History stores the host name, not a live lookup | An archived incident must stay readable on its own terms; a later rename does not rewrite what it said. |
 
 **Verified — 1025 tests pass (66 new), `flutter analyze` clean.**
+
+---
+
+### Session 30 — Tools, part 4: Network
+
+`lib/domain/network_tools.dart`, `lib/data/network/network_probe.dart`,
+`lib/ui/view_model/network_view_model.dart` and `lib/ui/screens/tools/network_screen.dart`, wired
+into `app_scaffold.dart`. Five tabs: Host scan, Wake-on-LAN, Ping, Port scan, DNS.
+
+**Everything here runs from the device, not over SSH** — these are the tools you reach for precisely
+when a host is *not* answering and you cannot get a shell on it.
+
+**Written against the protocols, not transcribed (§16.4).** The magic packet and the DNS wire format
+are standards; the Kotlin was consulted for behaviour choices (which record types, which ports,
+timeouts) rather than copied. `network_tools.dart` deliberately imports no `dart:io`, so every
+byte-level decision is testable without a socket — DNS is a format where an off-by-one in a length
+prefix produces a query the server silently ignores, which at the UI is indistinguishable from "no
+records".
+
+**The probe layer is an interface** so no test touches a real network. A test that depends on the
+dev machine's own LAN passes here and fails on a laptop in a café, which is exactly the
+host-dependence the memory notes warn about.
+
+**Decisions worth naming:**
+
+| | |
+|---|---|
+| Ping is a **TCP connect**, not ICMP | An echo request needs a raw socket — root on Android, unavailable to a sandboxed iOS app. The screen says so plainly, because a host that is up with nothing on the port reads as down and the user needs that to interpret the result. |
+| DNS falls back to a second resolver | One provider being blocked on a locked-down network is common; a single resolver would report that as "DNS is broken". |
+| …but **not** after a server *answers* | NXDOMAIN and REFUSED stop the fallback. Asking another resolver would turn a clear answer into a vague timeout. |
+| Each query carries a random transaction id | The echoed id is the only cheap check that a reply answers *this* question rather than a previous one. |
+| Name compression has a jump cap | A malformed or hostile response can point a name at itself; without the cap, parsing would spin forever inside the app. |
+| A sweep skips `.0` and `.255` | Neither is a host, and a reply from the broadcast address is an echo rather than a device. |
+| Results sort numerically | `.10` before `.9` reads as though addresses are missing. |
+| Port scans are capped and bounded | A fat-fingered `1-65535` would start a scan that never visibly finishes; unbounded fan-out exhausts a mobile process's descriptors and is slower, not faster. |
+| Only open ports are listed | Two dozen closed rows bury the answer. |
+| An invalid MAC is refused at **save** time | A saved target with a bad MAC looks fine in the list and silently does nothing every time it is tapped. |
+| The broadcast is derived from the host's own IP | A directed broadcast reaches a sleeping machine; many routers drop `255.255.255.255`. |
+
+**A bug caught by the tests:** the broadcast derivation guarded on `subnetPrefixOf('0.0.0.0')` but
+then dereferenced `subnetPrefixOf(ipAddress)` — different expressions, so saving a target with no IP
+threw a null-check error instead of falling back.
+
+**Verified — 1100 tests pass (75 new), `flutter analyze` clean.**
