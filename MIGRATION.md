@@ -2,13 +2,14 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Task #8 is under way.** Sessions 35–39 landed the SSH transport wiring, the host-key prompt,
-> the app lock, screen security on **both** platforms, link opening, backup file save/restore, and
-> alert notifications. **Session 39 also produced the first real build: `flutter build apk --debug`
-> succeeds.**
+> **Task #8 is nearly done.** Sessions 35–40 landed the SSH transport wiring, the host-key prompt,
+> the app lock, screen security on both platforms, link opening, backup file save/restore, alert
+> notifications, and **SMB2/3 over smbj (§7.1 — the last open blocker)**.
 >
-> **Immediate task: the rest of #8** — the platform-native SMB client (§7.1) and the foreground
-> service that keeps a session alive with the app closed (`SessionService.kt`).
+> **Immediate task:** the **Network Shares screen**, which §7.1 was blocking and which is now
+> unblocked, then the foreground service that keeps a session alive with the app closed
+> (`SessionService.kt`). **iOS SMB is not written** — `isSupported()` reports false there, so the
+> screen must say so rather than offering a share that fails on first tap (§18).
 >
 > **The Kotlin app is maintained in parallel** on `fix/kotlin-parity-defects` — see §15.6. A §15
 > entry is not finished until it is fixed on both branches.
@@ -364,6 +365,9 @@ What actually remains against `smb_connect`, and it is still decisive:
 **Leaning: option 1.** Recorded, not yet decided — it is the user's call and blocks nothing until
 Phase 8, because `RemoteFsClient` makes the choice swappable.
 
+
+**DONE (session 40).** Android is implemented: `SmbBridge.kt` over smbj, behind
+`PlatformSmbClient` on the Dart side. iOS is **not** written — `isSupported()` reports false there.
 
 **DECIDED (session 23), user: "go platform native".** SMB will be implemented natively behind the
 existing `RemoteFsClient` interface — SMBJ on Android, and on iOS the `NSFileProvider`/SMB stack —
@@ -1104,6 +1108,12 @@ rather than silently dropped.
 ---
 
 ## 18. Known parity gaps (requirement 13)
+
+**SMB on iOS (session 40).** Android is done — smbj behind `PlatformSmbClient`. iOS has no
+implementation, and `isSupported()` reports false so the Shares screen can say so rather than
+offering a share that fails on first tap. This is a real gap against requirement 3 (iOS
+first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFileProviderManager`.
+
 
 **Shell (session 34)** — the single-session terminal is complete; these are a second Shell iteration:
 - **Split panes (multi-SSH).** `ShellSession` is already per-session for geometry, scroll position
@@ -2539,3 +2549,43 @@ unverified, rather than assumed working.
 
 **Verified — 1393 tests pass, `flutter analyze` clean, `flutter build apk --debug` succeeds. Still
 not run on a device.**
+
+---
+
+### Session 40 — SMB2/3, the last open blocker (§7.1)
+
+`lib/data/shares/platform_smb_client.dart` and
+`android/.../SmbBridge.kt`, with smbj added to the Flutter app's Gradle build.
+
+**This closes §7.1, open since session 5.** The decision was the user's — "go platform native" — and
+the reasoning holds up: the only pub package for SMB pins a `pointycastle` major `dartssh2` cannot
+coexist with, *and* is an unmaintained implementation of a large, attacker-reachable wire protocol.
+Under requirement 12 the right answer is a mature, widely-audited client — smbj, the same one the
+Kotlin app already ships — not an unmaintained one, and certainly not a hand-rolled SMB2/3 parser
+written under migration pressure.
+
+**The whole SMB surface is confined to one Dart class and one Kotlin file.** The Shares browser and
+the cross-endpoint copy engine see only `RemoteFsClient` and cannot tell the difference — which is
+what made a native implementation acceptable in the first place.
+
+**Design decisions at the boundary:**
+
+| | |
+|---|---|
+| A session is a **handle the Dart side owns**, not a global | Two shares can be browsed at once, and a copy between them is the entire point of the cross-endpoint engine. |
+| The connection is opened once and kept warm | Negotiate, session setup and tree connect are several round-trips; reconnecting per call makes browsing a tree feel broken on any real network. |
+| Connect happens **eagerly** | A bad host, share name or credential is then reported by the action the user just took, not by whatever screen happens to list a directory first. |
+| `transport` is the only error code the Dart side acts on | It drops the cached session so the next call reconnects. An access-denied or not-found must **not** be classified that way, or a permissions problem silently tears down a working connection. |
+| Streaming transfers are **never** retried | The caller's sink already holds a partial file; re-running would duplicate downloaded bytes or upload only the leftover tail. Carried over verbatim from the Kotlin. |
+| Downloads stream over an `EventChannel` in 64 KB chunks | A large file is never materialised whole in memory on either side of the boundary, progress moves visibly, and cancelling takes effect within a chunk rather than at end-of-file. |
+| Cancelling interrupts the native reader thread | Otherwise a cancelled download runs to completion into a sink nobody is reading. |
+| A failed upload **aborts** the handle | An abandoned handle keeps a truncated file locked open on the share until the whole session drops. |
+| All SMB I/O runs off the platform thread | Every smbj call blocks. |
+| The endpoint's `label` carries no secret | It goes into error text and logs; a test pins that. |
+
+**iOS SMB is not implemented.** `isSupported()` returns false there, so the Shares screen can say so
+and name SFTP/FTP/WebDAV instead of offering a share that fails on first tap (Convention 4). Recorded
+in §18 — this is a real gap against requirement 3, not a silent one.
+
+**Verified — 1407 tests pass (14 new), `flutter analyze` clean, `flutter build apk --debug` succeeds
+with smbj on the classpath. Not exercised against a real share** (§19).

@@ -48,4 +48,13 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+
+    // SMB2/3 (MIGRATION.md §7.1). Native rather than Dart because the only pub package for SMB pins
+    // a pointycastle major dartssh2 cannot coexist with, and is an unmaintained implementation of a
+    // large attacker-reachable wire protocol. smbj is the same client the Kotlin app already ships.
+    implementation("com.hierynomus:smbj:0.14.0") {
+        // smbj declares its own Bouncy Castle artifact; excluded to keep one crypto provider on the
+        // classpath rather than two that can shadow each other.
+        exclude(group = "org.bouncycastle")
+    }
 }

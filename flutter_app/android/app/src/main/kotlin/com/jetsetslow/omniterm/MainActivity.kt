@@ -10,5 +10,8 @@ class MainActivity : FlutterActivity() {
         LegacySecretBridge.register(flutterEngine)
         // Lets Dart apply FLAG_SECURE; a window flag has no Flutter-side equivalent.
         ScreenSecurityBridge.register(flutterEngine, this)
+        // SMB2/3 over smbj (MIGRATION.md §7.1): native rather than Dart, because the only pub
+        // package pins a pointycastle major dartssh2 cannot coexist with.
+        SmbBridge.register(flutterEngine)
     }
 }
