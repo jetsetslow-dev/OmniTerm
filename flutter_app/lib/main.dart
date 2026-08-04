@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -7,6 +9,8 @@ import 'ui/app_scaffold.dart';
 import 'ui/navigation.dart';
 import 'ui/shell_state.dart';
 import 'ui/view_model/app_state.dart';
+import 'platform/legacy_secret_channel.dart';
+import 'platform/secret_store.dart';
 import 'ui/view_model/monitor_view_model.dart';
 import 'ui/view_model/servers_view_model.dart';
 import 'ui/theme/theme.dart';
@@ -16,6 +20,21 @@ void main() {
 }
 
 /// Root of the Flutter app, replacing `MainActivity` + `MyApplicationTheme`.
+/// Builds the repository with the Android bridge that reads Kotlin-era credentials attached.
+///
+/// Without it, every credential the old app saved would read back blank — see MIGRATION.md §7.10.
+/// The migration pass runs once here rather than lazily per read, so a user whose upgrade lands
+/// mid-session does not find some hosts working and others not.
+AppRepository _buildRepository(AppDatabase db) {
+  final legacy = LegacySecretChannel();
+  final repository = AppRepository(
+    db,
+    SecretStore(legacyDecryptor: legacy.decrypt),
+  );
+  unawaited(repository.migrateLegacySecrets());
+  return repository;
+}
+
 class OmniTermApp extends StatelessWidget {
   const OmniTermApp({super.key});
 
@@ -28,7 +47,7 @@ class OmniTermApp extends StatelessWidget {
         // One database and repository for the app's lifetime; the ViewModels layer on top.
         Provider<AppDatabase>(create: (_) => AppDatabase(), dispose: (_, db) => db.close()),
         ChangeNotifierProvider<AppState>(
-          create: (context) => AppState(AppRepository(context.read<AppDatabase>(), null))..start(),
+          create: (context) => AppState(_buildRepository(context.read<AppDatabase>()))..start(),
         ),
         ChangeNotifierProxyProvider<AppState, ServersViewModel>(
           create: (context) => ServersViewModel(context.read<AppState>()),

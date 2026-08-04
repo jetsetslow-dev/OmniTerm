@@ -36,6 +36,79 @@ class AppRepository {
 
   Future<T> inTransaction<T>(Future<T> Function() action) => _db.transaction(action);
 
+  // ── §7.10 legacy credential migration ──────────────────────────────────────
+
+  /// Re-encrypts every credential the Kotlin app wrote (`enc:v1:`) under the Dart key (`enc:v2:`).
+  ///
+  /// Returns the number of values upgraded, so a caller can log a one-line summary.
+  ///
+  /// Deliberately operates on the **raw, still-encrypted** rows rather than reading through the
+  /// decrypting accessors and writing back. Those accessors map an unreadable secret to null or the
+  /// empty string, so a read-then-write pass would overwrite exactly the values this migration
+  /// exists to save. Here a field that cannot be read is left byte-identical on disk: a later OS or
+  /// app version may still recover it, whereas an overwrite is final.
+  ///
+  /// Idempotent, and cheap to re-run: a value already tagged `enc:v2:` is skipped without touching
+  /// the platform channel. It is safe to call on every launch.
+  Future<int> migrateLegacySecrets() async {
+    var upgraded = 0;
+
+    /// Returns the upgraded ciphertext, or [current] unchanged when it cannot be read.
+    Future<String?> lift(String? current) async {
+      if (current == null || !SecretStore.isLegacyEncrypted(current)) return current;
+      final next = await _secrets.upgradeLegacy(current);
+      if (next == null) return current;
+      upgraded++;
+      return next;
+    }
+
+    for (final server in await _db.serverDao.getAllServers()) {
+      final authPassword = await lift(server.authPassword);
+      final sudoPassword = await lift(server.sudoPassword) ?? server.sudoPassword;
+      final proxyPassword = await lift(server.proxyPassword) ?? server.proxyPassword;
+      if (authPassword == server.authPassword &&
+          sudoPassword == server.sudoPassword &&
+          proxyPassword == server.proxyPassword) {
+        continue;
+      }
+      await _db.serverDao.updateServer(server.copyWith(
+        authPassword: Value(authPassword),
+        sudoPassword: sudoPassword,
+        proxyPassword: proxyPassword,
+      ));
+    }
+
+    for (final key in await _db.appDataDao.getAllKeys()) {
+      final privateKey = await lift(key.privateKey) ?? key.privateKey;
+      if (privateKey == key.privateKey) continue;
+      await _db.appDataDao.insertKey(key.copyWith(privateKey: privateKey).toCompanion(false));
+    }
+
+    for (final profile in await _db.appDataDao.getAllProfiles()) {
+      final password = await lift(profile.password);
+      if (password == profile.password) continue;
+      await _db.appDataDao
+          .insertProfile(profile.copyWith(password: Value(password)).toCompanion(false));
+    }
+
+    for (final share in await _db.appDataDao.getAllShares()) {
+      final password = await lift(share.password) ?? share.password;
+      if (password == share.password) continue;
+      await _db.appDataDao.insertShare(share.copyWith(password: password).toCompanion(false));
+    }
+
+    for (final key in secureSettingKeys) {
+      final row = await _db.appDataDao.getSetting(key);
+      final value = await lift(row?.value);
+      if (row == null || value == row.value) continue;
+      await _db.appDataDao.insertSetting(
+        AppSettingsCompanion.insert(key: key, value: value ?? ''),
+      );
+    }
+
+    return upgraded;
+  }
+
   // ── servers ────────────────────────────────────────────────────────────────
 
   Stream<List<Server>> get serversStream =>

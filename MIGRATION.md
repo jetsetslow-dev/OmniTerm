@@ -2,11 +2,12 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 7. Immediate task: Infra (containers).**
-> Monitor has landed: `MonitorViewModel` + `lib/ui/screens/monitor/` are wired into
-> `app_scaffold.dart` and replace the placeholder. Four of its six tabs work (Overview, Processes,
-> Services, Logs); Scripts and CRON are still placeholders that say so — see §18.
-> Next is Infra, in the same shape: a ViewModel reading from `AppState`, then the screen.
+> **Phase 7. Immediate task: finish Infra (containers).**
+> Session 23 landed Infra's foundations but **not its screen**: `lib/domain/stack_summary.dart`
+> (compose-project rollup) and the container command slice in `remote_commands.dart` are in and
+> tested. What is missing is `InfraViewModel` and `lib/ui/screens/infra/` — Infra is still a
+> placeholder in `app_scaffold.dart`. Tabs: Stacks, Builder, Images, Volumes, Networks; the
+> Compose **Builder** is a whole editor and deserves its own iteration.
 >
 > Then, in the §9 order — for each: a feature ViewModel reading from `AppState`, then the screen,
 > replacing its placeholder in `lib/ui/app_scaffold.dart`: Monitor → Infra → Fleet → SFTP → Tools.
@@ -22,8 +23,10 @@
 >    (`ServersViewModel({SshTransport? transport})`). Absent means the feature is disabled and says
 >    so — never a stub that reports success.
 >
-> ⚠️ **Two open blockers, neither blocking Phase 7:** §7.10 (Android bridge for legacy credential
-> decryption) and §7.1 (SMB choice).
+> ✅ **Both former blockers are decided (session 23).** §7.10 is **built and verified** — the Android
+> bridge, the Dart channel and the one-pass migration all exist and are tested; the only thing left
+> is a check on a real device carrying real `enc:v1:` data. §7.1 is decided in favour of
+> platform-native SMB behind `RemoteFsClient`, **not started**.
 >
 > Working rules that are easy to lose: never `git add -A` (`shared/` must stay untracked, stage
 > explicit paths); `export PATH="/home/sbvino/sdks/flutter/bin:$PATH"`; run `flutter analyze` and
@@ -347,27 +350,48 @@ What actually remains against `smb_connect`, and it is still decisive:
 **Leaning: option 1.** Recorded, not yet decided — it is the user's call and blocks nothing until
 Phase 8, because `RemoteFsClient` makes the choice swappable.
 
-### 7.10 ⚠️ **BLOCKER: existing credentials cannot be decrypted without an Android bridge**
-The most serious finding of the migration so far.
 
-`SecretStore` encrypts **every** credential the app stores — server passwords, sudo passwords, proxy
-passwords, imported private keys, credential-profile passwords, share passwords — with AES-GCM under
-a key generated **inside the Android Keystore**. That key is non-exportable by design, and no Flutter
-plugin can use it as a cipher.
+**DECIDED (session 23), user: "go platform native".** SMB will be implemented natively behind the
+existing `RemoteFsClient` interface — SMBJ on Android, and on iOS the `NSFileProvider`/SMB stack —
+rather than forking `smb_connect` or writing SMB2/3 in Dart. The Dart side sees one interface, so
+the choice stays confined to the platform folders and the Shares screen needs no knowledge of it.
+Not started; Network Shares stays unported until it is.
 
-So the Dart port necessarily uses its own key (in `flutter_secure_storage`) and tags its output
-`enc:v2:`. **Every `enc:v1:` value already on a user's device is therefore unreadable.** Shipped
-without a fix, an updating user opens the app and finds every saved password and private key blank —
-silently, since `decrypt` returns null on failure by contract.
+### 7.10 ~~**BLOCKER: existing credentials cannot be decrypted**~~ — RESOLVED (session 23)
+**User decision, 2026-08-04: "do it".** Built and verified.
 
-**Required before cut-over:** a small Android-native method channel that decrypts `enc:v1:` using the
-original Keystore alias `omniterm_local_secret_key`. The Dart side is already built for it:
-`SecretStore.legacyDecryptor` is the seam, and `onUpgraded` reports the re-encrypted value so the
-repository can write it back — the migration then happens once per value, transparently, on first
-read. iOS needs nothing (no legacy data). Tests cover the whole path including a failing decryptor.
+The Kotlin `SecretStore` encrypted **every** credential — server, sudo and proxy passwords, imported
+private keys, credential-profile and share passwords — with AES-GCM under a non-exportable Android
+Keystore key (alias `omniterm_local_secret_key`). The Dart port necessarily uses its own key and
+tags output `enc:v2:`, so shipped without a bridge an updating user would have opened the app to
+find every saved secret **silently blank** — `decrypt` returns null on failure by contract.
 
-This is Android-only, ~40 lines of Kotlin, and it is **not optional**: it is the difference between
-an update and a data-loss event.
+**Now implemented, three parts:**
+- `android/.../LegacySecretBridge.kt` — a method channel decrypting `enc:v1:` under the original
+  alias. Constants mirror `data/SecretStore.kt` exactly; they describe data already on disk, not
+  choices. Unlike the original it never *creates* a key: a fresh install has no legacy data, and
+  generating one there would only ever decrypt nothing.
+- `lib/platform/legacy_secret_channel.dart` — the Dart half. Android-only (`Platform.isAndroid`,
+  not `defaultTargetPlatform`, which reports the *design* platform and would try a missing channel
+  in a desktop preview). Caches the has-key probe so a fresh install pays one round trip rather than
+  one per secret. Every failure — no key, a key invalidated by the user dropping their device lock,
+  a failed GCM tag, a host build without the bridge — returns null.
+- `AppRepository.migrateLegacySecrets()` — one pass over every stored credential.
+
+**The design point that matters:** the pass works on the **raw, still-encrypted** rows, not through
+the decrypting accessors. Those map an unreadable secret to null or `""`, so a read-then-write pass
+would overwrite precisely the values this exists to save. A field that cannot be read is left
+byte-identical on disk — a later OS or app version may still recover it; an overwrite is final.
+`SecretStore.upgradeLegacy` returns *ciphertext*, so the migration never holds a plaintext password
+in a variable.
+
+Idempotent and cheap to re-run (an `enc:v2:` value never reaches the channel again), so it runs at
+startup in `main.dart` rather than lazily per read — a user whose upgrade lands mid-session must not
+find some hosts working and others not.
+
+**Verified:** 14 tests, and `flutter build apk --debug` compiles the Kotlin. **Not yet verified on a
+real device carrying real `enc:v1:` data** — that is the one check that cannot be done here, and it
+should be done before cut-over.
 
 ### 7.2 Terminal emulator: port vs. adopt `xterm`
 The app has its **own** 1,177-LOC `TerminalEmulator` plus a documented compatibility matrix
@@ -1524,3 +1548,48 @@ requirement 11). `GaugeBar` and `OmniTag` joined `omni_components.dart` for the 
 rather than a blank pane — a blank pane reads as "this host has nothing", a different and misleading
 claim. Overview shows the numbers but **not** the sparkline charts (`MetricLineChart`) or the health
 breakdown dialog; both need the telemetry history poller, which is not ported. Added to §18.
+
+---
+
+### Session 23 — the §7.10 blocker is closed, plus Infra foundations
+
+The user decided both open blockers this session: **"1. do it and 2. go platform native"**. §7.10 is
+built and verified; §7.1 is recorded as a decision and not yet started.
+
+**§7.10 — Kotlin-era credentials can now be read.** Three parts, described in full in §7.10 above:
+the Android `LegacySecretBridge` method channel, the Dart `LegacySecretChannel`, and
+`AppRepository.migrateLegacySecrets()`.
+
+The design decision worth restating: the migration walks the **raw, still-encrypted** rows rather
+than reading through the decrypting accessors and writing back. Those accessors map an unreadable
+secret to null or `""`, so the obvious read-then-write implementation would have overwritten exactly
+the values the bridge exists to rescue — turning a recoverable problem into a permanent one. A field
+that cannot be read is now left byte-identical on disk. `SecretStore.upgradeLegacy` returns
+ciphertext rather than plaintext, so a pass over every credential on the device never holds a
+password in a variable.
+
+14 tests cover it, including the properties that matter most: an unreadable secret keeps its exact
+bytes, one bad value does not block the rest, a device with no bridge changes nothing, the pass is
+idempotent, and a fresh install never touches the platform channel at all. `flutter build apk
+--debug` compiles the Kotlin.
+
+**Infra foundations** (the screen itself is *not* done):
+- `lib/domain/stack_summary.dart` — rolls a flat container list into one row per compose project.
+  Grouped by **(runtime, project)** rather than project alone: a host running both Docker and Podman
+  can have same-named projects under each, and merging them would produce one row whose buttons hit
+  whichever runtime happened to sort first.
+- The container command slice in `remote_commands.dart` — ps, images, volumes, networks, restart
+  counts, runtime detection, per-resource actions and prune.
+
+The container commands needed care that is easy to underrate: Dart's `$` interpolation collides with
+the shell's, and a mis-escaped `$` produces a command that still reads correctly in source but
+silently expands to nothing on the host. One such bug (`\$ids` instead of `$ids` in the restart-count
+probe) was introduced and caught by a test asserting the generated text contains no backslash-dollar.
+The tests also pin the per-engine template differences that are genuinely load-bearing: Docker has a
+`.Label "key"` method and a string `.Labels`; Podman has no `.Label` and a map `.Labels`; Docker's
+inspect field is `.Id` and Podman's is `.ID`. Using either engine's syntax on the other errors out.
+
+**Verified — 676 tests pass (30 new), `flutter analyze` clean, debug APK builds.**
+
+**Honest status:** Infra is still a placeholder in `app_scaffold.dart`. `InfraViewModel` and the
+screen are the next task, and the Compose Builder inside it deserves its own iteration.

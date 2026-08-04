@@ -260,3 +260,135 @@ String metricsFor(String os) => switch (normaliseOs(os)) {
       'Windows' => metricsWindows,
       _ => metricsLinux,
     };
+
+// ── container runtimes (Docker / Podman) ───────────────────────────────────────
+//
+// A host can run both. Every probe below therefore queries each runtime that answers and prefixes
+// its rows with the runtime name, because nothing else on a row says which engine owns it — the same
+// `repo:tag` can be pulled into each, and each has its own `bridge` network.
+
+/// Resolves the container binary at run time: whichever of docker/podman actually answers `ps`.
+///
+/// A binary whose daemon or socket the user cannot reach does not count — it would otherwise be
+/// selected and then fail on every call.
+const _cr = r'"$(if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then command -v docker; '
+    r'elif command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then command -v podman; '
+    r'elif command -v docker >/dev/null 2>&1; then command -v docker; else command -v podman; fi)"';
+
+/// The container binary for an explicit [runtime], falling back to the run-time probe.
+String _runtimeCommand(String runtime) => switch (runtime.toLowerCase()) {
+      'docker' => 'docker',
+      'podman' => 'podman',
+      _ => _cr,
+    };
+
+// Docker and Podman expose compose labels through *incompatible* template syntaxes, so the ps
+// format branches on the runtime:
+//   • Docker's psReporter has a `.Label "key"` method; its `.Labels` is a comma-joined string, so
+//     `index .Labels "key"` errors there ("cannot index slice/array with type string").
+//   • Podman's psReporter has no `.Label` method at all; its `.Labels` IS a map, reachable via
+//     `index .Labels "key"`.
+const _psFieldsDocker =
+    r'{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}\t{{.Label "com.docker.compose.project"}}\t{{.Label "com.docker.compose.service"}}\t{{.Label "com.docker.compose.project.working_dir"}}\t{{.Label "com.docker.compose.project.config_files"}}\t{{.CreatedAt}}';
+const _psFieldsPodman =
+    r'{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}\t{{index .Labels "com.docker.compose.project"}}\t{{index .Labels "com.docker.compose.service"}}\t{{index .Labels "com.docker.compose.project.working_dir"}}\t{{index .Labels "com.docker.compose.project.config_files"}}\t{{.CreatedAt}}';
+
+/// All containers including stopped ones, tab-separated and `--no-trunc` so parsing is unambiguous.
+const dockerPsCommand = 'found=0; '
+    "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; docker ps -a --no-trunc --format 'docker\\t$_psFieldsDocker'; fi; "
+    "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; podman ps -a --no-trunc --format 'podman\\t$_psFieldsPodman'; fi; "
+    'if [ "\$found" = 0 ]; then if $_cr --version | grep -qi podman; then '
+    "$_cr ps -a --no-trunc --format 'podman\\t$_psFieldsPodman'; else "
+    "$_cr ps -a --no-trunc --format 'docker\\t$_psFieldsDocker'; fi; fi";
+
+/// One line per usable runtime on the host, gated on `ps` actually answering.
+const dockerRuntimesCommand =
+    'if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then echo docker; fi; '
+    'if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then echo podman; fi';
+
+/// Per-container restart counts.
+///
+/// Docker's inspect template field is `.Id`; Podman's is `.ID` (its JSON prints "Id" but the Go
+/// struct field is `ID`, so `.Id` errors). `.RestartCount` is identical on both.
+const dockerRestartsCommand =
+    'if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then ids=\$(docker ps -aq); '
+    "[ -n \"\$ids\" ] && docker inspect --format 'docker\\t{{.Id}}\\t{{.RestartCount}}' \$ids 2>/dev/null || true; fi; "
+    'if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then ids=\$(podman ps -aq); '
+    "[ -n \"\$ids\" ] && podman inspect --format 'podman\\t{{.ID}}\\t{{.RestartCount}}' \$ids 2>/dev/null || true; fi";
+
+const _imageFields = r'{{.ID}}\t{{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}';
+
+const dockerImagesCommand = 'found=0; '
+    "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; docker images --no-trunc --format 'docker\\t$_imageFields'; fi; "
+    "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; podman images --no-trunc --format 'podman\\t$_imageFields'; fi; "
+    'if [ "\$found" = 0 ]; then if $_cr --version | grep -qi podman; then '
+    "$_cr images --no-trunc --format 'podman\\t$_imageFields'; else "
+    "$_cr images --no-trunc --format 'docker\\t$_imageFields'; fi; fi";
+
+/// Volumes, with sizes where the runtime can report them.
+///
+/// Three layered fallbacks, because the same information is exposed three different ways:
+///   1. `system df -v --format` — works on Docker and recent Podman; gives size and link count.
+///   2. Podman's *text* `system df -v` — column-parses the "Local Volumes" section. The awk state
+///      machine enters on the section heading, **arms on the column header**, then reads rows until
+///      a blank line or the next `Header:` line. Arming on the column header is what stops the blank
+///      line sitting between the heading and the header from ending the section immediately.
+///   3. `volume ls` — always available; no size or links, but the list is still correct.
+///
+/// Volume names containing spaces are out of scope for the text fallback.
+const dockerVolumesCommand =
+    r"""ot_vols() { rt="$1"; "$rt" system df -v --format '{{range .Volumes}}{{.Name}}\t{{.Driver}}\t{{.Mountpoint}}\t{{.Size}}\t{{.Links}}\n{{end}}' 2>/dev/null || "$rt" system df -v 2>/dev/null | awk '/^Local Volumes/ { f=1; seen=0; next } f && $1=="VOLUME" && $2=="NAME" { seen=1; next } f && seen && /^[[:space:]]*$/ { f=0; next } f && seen && /^[A-Za-z].*:/ { f=0 } f && seen && NF>=3 { print $1 "\tlocal\t\t" $3 "\t" $2 }' || "$rt" volume ls --format '{{.Name}}\t{{.Driver}}\t{{.Mountpoint}}\t\t'; }; found=0; if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; ot_vols docker | sed 's/^/docker\t/'; fi; if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; ot_vols podman | sed 's/^/podman\t/'; fi; if [ "$found" = 0 ]; then if """
+    '$_cr'
+    r""" --version | grep -qi podman; then ot_vols """
+    '$_cr'
+    r""" | sed 's/^/podman\t/'; else ot_vols """
+    '$_cr'
+    r""" | sed 's/^/docker\t/'; fi; fi""";
+
+const _networkFields = r'{{.ID}}\t{{.Name}}\t{{.Driver}}';
+
+const dockerNetworksCommand = 'found=0; '
+    "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; docker network ls --format 'docker\\t$_networkFields' 2>/dev/null; fi; "
+    "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; podman network ls --format 'podman\\t$_networkFields' 2>/dev/null; fi; "
+    'if [ "\$found" = 0 ]; then if $_cr --version | grep -qi podman; then '
+    "$_cr network ls --format 'podman\\t$_networkFields'; else "
+    "$_cr network ls --format 'docker\\t$_networkFields'; fi; fi";
+
+// ── container actions ──────────────────────────────────────────────────────────
+//
+// Every identifier is shell-quoted. Container and volume names come from remote output, and a host
+// that returns a crafted one must not be able to append a command (§17).
+
+/// start | stop | restart | pause | unpause | remove, against one container.
+String dockerAction(String id, String action, {String runtime = ''}) {
+  final verb = action == 'remove' ? 'rm -f' : action;
+  return '${_runtimeCommand(runtime)} $verb ${shellQuote(id)} 2>&1';
+}
+
+String dockerImageAction(String id, String action, {String runtime = ''}) {
+  final verb = action == 'remove' ? 'rmi -f' : action;
+  return '${_runtimeCommand(runtime)} $verb ${shellQuote(id)} 2>&1';
+}
+
+String dockerVolumeAction(String name, String action, {String runtime = ''}) {
+  final verb = action == 'remove' ? 'volume rm -f' : action;
+  return '${_runtimeCommand(runtime)} $verb ${shellQuote(name)} 2>&1';
+}
+
+String dockerNetworkAction(String id, String action, {String runtime = ''}) {
+  final verb = action == 'remove' ? 'network rm' : action;
+  return '${_runtimeCommand(runtime)} $verb ${shellQuote(id)} 2>&1';
+}
+
+/// Removes every unused image, on each runtime the host actually has.
+String dockerPruneImages() =>
+    '{ command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1 && docker image prune -a -f; true; } 2>&1; '
+    '{ command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1 && podman image prune -a -f; true; } 2>&1';
+
+/// Removes every unused volume.
+///
+/// `-a` is deliberate: plain `volume prune -f` removes only *anonymous* unused volumes on current
+/// Docker and Podman, which would not match the UI's "unused volumes" wording.
+String dockerPruneVolumes() =>
+    '{ command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1 && docker volume prune -a -f; true; } 2>&1; '
+    '{ command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1 && podman volume prune -a -f; true; } 2>&1';

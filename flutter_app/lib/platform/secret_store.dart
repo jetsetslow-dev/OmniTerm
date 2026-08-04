@@ -139,6 +139,28 @@ class SecretStore {
     }
   }
 
+  /// Re-encrypts a Kotlin-era value under the current key, returning the new `enc:v2:` ciphertext.
+  ///
+  /// Returns null when the value is not legacy, or when it cannot be read. Null must be treated as
+  /// "leave the stored value exactly as it is": overwriting an unreadable secret with a blank is
+  /// final, whereas leaving it lets a later OS or app version recover it.
+  ///
+  /// Deliberately returns *ciphertext* rather than plaintext. The migration pass runs over every
+  /// stored credential at once, and there is no reason for that pass to hold a single plaintext
+  /// password in a variable.
+  Future<String?> upgradeLegacy(String? value) async {
+    if (value == null || !isLegacyEncrypted(value)) return null;
+    final decryptor = legacyDecryptor;
+    if (decryptor == null) return null;
+    try {
+      final clear = await decryptor(value);
+      if (clear == null || clear.isEmpty) return null;
+      return encrypt(clear);
+    } catch (_) {
+      return null;
+    }
+  }
+
   /// Decrypts a Kotlin-era value and re-encrypts it under the current key.
   Future<String?> _decryptLegacy(String value) async {
     final decryptor = legacyDecryptor;
