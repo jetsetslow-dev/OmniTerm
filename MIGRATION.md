@@ -2,15 +2,14 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Task #8 is nearly done, and the app now runs on a device.** Session 41 got the emulator working
-> under Xvfb (§19), ran the app, walked every screen — and found a defect that made the **app lock
-> never engage** (§15.7).
+> **Network Shares is ported (session 42) — the last screen §7.1 was blocking.**
 >
-> **Immediate task:** the **Network Shares screen**, unblocked now that §7.1 is done, then the
-> foreground service (`SessionService.kt`). **iOS SMB is not written** (§18).
+> **Immediate task:** browsing a share (SMB and SFTP have clients; the file-browser view needs to be
+> reused for a share rather than a host), then the foreground service (`SessionService.kt`), then
+> **iOS SMB** (§18).
 >
-> **Validate on device from now on — it works.** §19 has the recipe. A screen that passes 1400 host
-> tests can still be broken in a way only a real lifecycle reveals; §15.7 is exactly that.
+> **Validate on device — it works.** §19 has the recipe. A screen that passes 1400 host tests can
+> still be broken in a way only a real lifecycle reveals; §15.7 is exactly that.
 >
 > **The Kotlin app is maintained in parallel** on `fix/kotlin-parity-defects` — see §15.6. A §15
 > entry is not finished until it is fixed on both branches.
@@ -1106,6 +1105,11 @@ rather than silently dropped.
 ---
 
 ## 18. Known parity gaps (requirement 13)
+
+**Share browsing (session 42).** Shares can be saved, edited, checked and deleted; **opening one in
+the file browser is not wired yet**. SMB and SFTP have clients, so this is a UI job — the browser
+view is currently bound to a host rather than to a `RemoteFsClient`. FTP and WebDAV have no client
+at all, and the cards say so per protocol rather than offering a Browse button that fails on tap.
 
 **SMB on iOS (session 40).** Android is done — smbj behind `PlatformSmbClient`. iOS has no
 implementation, and `isSupported()` reports false so the Shares screen can say so rather than
@@ -2653,3 +2657,42 @@ iOS. Those stay unverified.
 
 **Verified — 1410 tests pass (3 new), `flutter analyze` clean, APK builds, and the app was driven by
 hand on Android 15.**
+
+---
+
+### Session 42 — Network Shares
+
+`lib/domain/network_share_form.dart`, `lib/ui/view_model/shares_view_model.dart` and
+`lib/ui/screens/sftp/shares_tab.dart`, replacing the "not available in this build" placeholder.
+
+**§7.1 was blocking this screen, and §7.1 is done**, so the tab is now real: saved SMB, FTP, SFTP,
+NFS and WebDAV endpoints, with add/edit, reachability checking and delete.
+
+**Protocol facts live on the enum, not scattered across the form.** Three separate things are
+derived from the protocol — the default port, whether it can be browsed, and the URI scheme — and
+letting those drift apart is how a share ends up saved on the wrong port or offering a Browse button
+that cannot work.
+
+| Decision | Why |
+|---|---|
+| Switching protocol moves the port **only if it was the old default** | Silently overwriting a port the user typed is how a share stops reaching a NAS on a nonstandard port with no visible cause. |
+| SMB requires a share name | SMB connects to a *share*, not a host; without one there is nothing to open. |
+| Only CUSTOM demands an explicit port | Everything else has a default worth filling in for the user. |
+| Anonymous **clears** the credentials on save | Keeping them would leave a password stored for a share that never sends one. |
+| Warnings never block the save (§17) | FTP and plaintext WebDAV send the password in clear text — that is worth saying, and it is still the user's server and the user's call. The form says so explicitly. |
+| WebDAV's HTTPS switch is explicit, not inferred from the port | Basic auth over plain `http` on a nonstandard TLS port — Synology's 5006, say — would leak the password. |
+| Browsability is **narrower than the Kotlin's** | The Kotlin browsed SMB/FTP/SFTP/WebDAV; this port has clients for SMB and SFTP only. Each unbrowsable protocol says why, and the reasons differ: "not built yet" and "the OS mounts NFS, not OmniTerm" send the user to different places. Offering the button anyway would be worse (Convention 4). |
+| Reachability is a **TCP connect**, matching the Kotlin | Not a protocol handshake: the question is "is this on the network right now", answered in a second without prompting for credentials. |
+| The result is "unreachable", never "offline" | A host that is up but not listening on that port looks identical from here; calling the machine down sends the user hunting the wrong problem. |
+| "Check all" is bounded to 8 at a time | An unbounded sweep opens one socket per share at once — a self-inflicted connection storm on a phone, and on a slow link every socket waits out the full timeout together. |
+| Editing preserves the last known status | Changing a share's notes should not make a host that answered a moment ago read as unknown. |
+| The URI is masked by `HostDisplay` and never carries credentials | A share list is exactly the sort of screen that ends up in a screenshot. |
+| Deleting names the blast radius | "Delete" next to a file browser reads as destructive; the dialog says files on the share are not touched. |
+
+**Not done: opening a share in the file browser.** SMB and SFTP both have clients, so this is a UI
+job — the browser view is currently bound to a host rather than to a `RemoteFsClient`. Recorded in
+§18.
+
+**Verified — 1445 tests pass (35 new), `flutter analyze` clean, APK builds, and the tab was opened
+on the emulator**: the protocol chips render, SMB's port pre-fills to 445, the workgroup field
+appears only for SMB, Save stays disabled until the draft is valid, and logcat is clean.

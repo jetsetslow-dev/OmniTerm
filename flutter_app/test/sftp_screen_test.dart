@@ -8,6 +8,7 @@ import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/sftp/sftp_screen.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
+import 'package:omniterm/ui/view_model/shares_view_model.dart';
 import 'package:omniterm/ui/view_model/sftp_view_model.dart';
 import 'package:provider/provider.dart';
 
@@ -72,7 +73,7 @@ void main() {
         },
       );
 
-  Future<void> pump(WidgetTester tester, {FakeFsClient? client}) async {
+  Future<void> pump(WidgetTester tester, {FakeFsClient? client, SharesViewModel? shares}) async {
     await app.start();
     vm = SftpViewModel(app, fsClientFor: (_) async => client);
     await tester.pumpWidget(
@@ -80,6 +81,10 @@ void main() {
         providers: [
           ChangeNotifierProvider<AppState>.value(value: app),
           ChangeNotifierProvider<SftpViewModel>.value(value: vm),
+          // Built by the caller so the one test that needs it can dispose it inside the test body
+          // (convention 5): this view model subscribes to a drift `watch` stream, and cancelling
+          // that at teardown leaves zero-duration timers queued past the end-of-test check.
+          if (shares != null) ChangeNotifierProvider<SharesViewModel>.value(value: shares),
         ],
         child: MaterialApp(
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
@@ -330,13 +335,19 @@ void main() {
     vm.dispose();
   });
 
-  testWidgets('shares say they are not in this build yet', (tester) async {
+  testWidgets('the shares tab is the real one', (tester) async {
     await repo.insertServer(server(name: 'nas'));
-    await pump(tester, client: homeTree());
+    final shares = SharesViewModel(app);
+    await pump(tester, client: homeTree(), shares: shares);
 
     await tester.tap(find.byKey(const ValueKey('sftp.tab.shares')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('sftp.shares.notPorted')), findsOneWidget);
+
+    expect(find.byKey(const ValueKey('shares.add')), findsOneWidget);
+    expect(find.byKey(const ValueKey('shares.empty')), findsOneWidget);
     vm.dispose();
+    shares.dispose();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 }

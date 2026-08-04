@@ -5,6 +5,7 @@ import '../../../domain/host_display.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/sftp_view_model.dart';
+import 'shares_tab.dart';
 import 'sftp_tabs.dart';
 
 /// The SFTP screen, ported from `SftpScreen` in `ui/SftpScreen.kt`.
@@ -44,7 +45,7 @@ class _SftpScreenState extends State<SftpScreen> {
               SftpTab.bookmarks => SftpBookmarksTab(vm: vm),
               SftpTab.files =>
                 vm.browsedServer == null ? const _NoOnlineHost() : SftpFilesTab(vm: vm),
-              SftpTab.shares => const _SharesNotPorted(),
+              SftpTab.shares => const SharesTab(),
               SftpTab.transfers => SftpTransfersTab(vm: vm),
             },
           ),
@@ -193,29 +194,3 @@ class _NoOnlineHost extends StatelessWidget {
   }
 }
 
-class _SharesNotPorted extends StatelessWidget {
-  const _SharesNotPorted();
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Center(
-      key: const ValueKey('sftp.shares.notPorted'),
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.lan_outlined, size: 36, color: OmniColors.textMuted),
-            const SizedBox(height: 12),
-            Text(
-              'Network shares are not available in this build yet.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}

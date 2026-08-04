@@ -34,6 +34,7 @@ import 'ui/view_model/network_view_model.dart';
 import 'ui/view_model/scripts_view_model.dart';
 import 'ui/view_model/settings_view_model.dart';
 import 'ui/view_model/shell_view_model.dart';
+import 'ui/view_model/shares_view_model.dart';
 import 'ui/view_model/sftp_view_model.dart';
 import 'ui/view_model/servers_view_model.dart';
 import 'ui/theme/theme.dart';
@@ -134,6 +135,10 @@ class OmniTermApp extends StatelessWidget {
         ),
         ChangeNotifierProxyProvider<AppState, SftpViewModel>(
           create: (context) => SftpViewModel(context.read<AppState>(), fsClientFor: _sftpFor(context.read<DartSshTransport>(), context.read<AppState>().repository)),
+          update: (_, app, previous) => previous!,
+        ),
+        ChangeNotifierProxyProvider<AppState, SharesViewModel>(
+          create: (context) => SharesViewModel(context.read<AppState>()),
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, AuthKeysViewModel>(
