@@ -24,6 +24,7 @@ import 'package:flutter/foundation.dart';
 
 import '../term/utf8_stream_decoder.dart';
 import 'capped_text_buffer.dart';
+import 'proxy_socket.dart';
 import 'ssh_host_key_trust.dart';
 import 'dartssh_sftp.dart';
 import 'ssh_private_key.dart';
@@ -65,6 +66,13 @@ class DartSshTransport implements SshTransport {
 
   bool _isJump(SshCredentials creds) =>
       creds.proxyType == 'ssh' && creds.proxyHost.trim().isNotEmpty && creds.proxyPort > 0;
+
+  static const _proxyTypes = {'http', 'socks5'};
+
+  bool _isProxied(SshCredentials creds) =>
+      _proxyTypes.contains(creds.proxyType.toLowerCase()) &&
+      creds.proxyHost.trim().isNotEmpty &&
+      creds.proxyPort > 0;
 
   // ── connection construction ────────────────────────────────────────────────
 
@@ -112,6 +120,22 @@ class DartSshTransport implements SshTransport {
         // Tunnel the target connection through the bastion, exactly as `ssh -J` does: the target's
         // own host key is still verified end-to-end below.
         socket = await jump.forwardLocal(creds.host, creds.port);
+      } else if (_isProxied(creds)) {
+        // Previously missing entirely: an `http` or `socks5` proxy was silently ignored and the app
+        // connected straight to the target. That fails on exactly the hosts a proxy exists to
+        // reach, and where it *does* succeed it has quietly bypassed a route the user chose
+        // deliberately (§15.11).
+        onPhaseChange?.call('Connecting through proxy…');
+        socket = await connectThroughProxy(
+          type: creds.proxyType,
+          proxyHost: creds.proxyHost,
+          proxyPort: creds.proxyPort,
+          host: creds.host,
+          port: creds.port,
+          username: creds.proxyUser,
+          password: creds.proxyPassword,
+          timeout: _connectTimeout,
+        );
       } else {
         socket = await SSHSocket.connect(creds.host, creds.port, timeout: _connectTimeout);
       }

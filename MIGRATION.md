@@ -2,16 +2,17 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Monitor and SFTP are both verified against a real host** (sessions 46–47). SFTP's full CRUD path
-> was confirmed server-side.
+> **Every auth mode and proxy path is now exercised against the lab** (session 48) — which turned up
+> that HTTP and SOCKS5 proxies were **never implemented** (§15.11).
 >
 > **Immediate task: Fleet and Infra have still never touched a real host**, nor has SFTP's
-> upload/download (both need the platform file picker in the loop). Then the other lab machines:
-> `10.0.2.2:2202` (key auth), `:2204` (key + passphrase), `:2203` (bastion), and `internal-a` behind
-> the SSH-jump, SOCKS5 and HTTP proxy paths — **the port has never exercised key auth or any proxy
-> at all.** Then iOS SMB (§18).
+> upload/download (needs the file picker in the loop), nor the key **import** flow in the UI — the
+> transport-level key path is proven but the Auth & keys import sheet is not. Then iOS SMB (§18).
 >
 > The lab: `./scripts/test-hosts.sh up|fleet|keys|status`. §19 has the emulator recipe.
+>
+> ⚠️ **Lab probes must not be committed as tests** — see the note in §19. They depend on this box's
+> containers and would fail anywhere else.
 >
 > **The Kotlin app is maintained in parallel** on `fix/kotlin-parity-defects` — see §15.6. A §15
 > entry is not finished until it is fixed on both branches.
@@ -1784,6 +1785,47 @@ This defect exists in the shipped Android app today.
 
 ---
 
+### 15.11 HTTP and SOCKS5 proxies were never implemented (session 48)
+
+`DartSshTransport._connect` handled `proxyType == 'ssh'` (the jump host) and otherwise connected
+**straight to the target**. A host configured with an `http` or `socks5` proxy therefore had its
+proxy setting *silently ignored*.
+
+Two consequences, and the second is the serious one:
+
+1. A host reachable only through the proxy — the entire reason to configure one — fails with a
+   confusing DNS error, because the name is resolved on the device where it means nothing.
+2. Where the target *is* directly reachable, the connection **quietly goes direct**, bypassing a
+   network route the user chose deliberately. The app does not say it did this.
+
+Implemented in `lib/data/ssh/proxy_socket.dart`: SOCKS5 (RFC 1928/1929) and HTTP CONNECT.
+
+**The target's hostname is sent unresolved, deliberately.** SOCKS5's domain-name address type and
+HTTP CONNECT's host string both exist so the *proxy* resolves. Resolving locally first fails on
+exactly the hosts a proxy is for, and on a split-horizon network can resolve to the wrong machine.
+
+Details that matter and are each pinned by a test:
+
+- **Bytes arriving with the handshake reply are not swallowed.** The proxy's reply and the first
+  bytes of the SSH banner routinely land in one packet. `Socket` is single-subscription, so the
+  handshake reader keeps its subscription and hands the live stream on with the surplus replayed —
+  cancelling would leave dartssh2 with a stream it cannot listen to.
+- **The SOCKS5 bound-address reply is consumed in full**, including the variable-length forms, or
+  its bytes would be read as the start of the banner.
+- **Credentials are offered only when there are some**, so a proxy that needs none is not invited
+  to challenge for them.
+- **HTTP credentials go in `Proxy-Authorization: Basic`**, never in the request line.
+- **An unknown proxy type is refused**, never silently bypassed.
+- Failures are reported in the proxy's own terms — "not allowed", "requires credentials", the HTTP
+  status line — rather than a generic connect error.
+
+**Verified against the lab:** `internal-a` has *no published port* and is reachable only through the
+bastion or a proxy. All three routes now return its hostname; before this, both proxy routes failed.
+
+**Port-introduced**, so not back-ported: the Kotlin used JSch's `ProxyHTTP`/`ProxySOCKS5`.
+
+---
+
 ### 15.10 The log pane was silently blank on most containers (session 46)
 
 `journalCommand` walked its fallback sources with `elif`, branching on whether each **binary
@@ -2615,6 +2657,11 @@ transport, host-key trust, the terminal and the foreground service.
 
 **Still not covered:** a real SMB share, enrolled biometrics, and iOS anything.
 
+⚠️ **Probes against the lab must not be committed as tests.** They depend on this machine's
+containers and would fail on any other checkout — see `tests-must-be-host-independent`. Write them
+in the scratchpad, run them, delete them, and land a *host-independent* regression test instead:
+§15.11's proxy tests bind their own loopback server rather than talking to the lab.
+
 
 ---
 
@@ -2961,3 +3008,36 @@ and matches the Kotlin.
 
 **Verified — 1476 tests pass, `flutter analyze` clean, and every SFTP operation above was confirmed
 server-side.**
+
+---
+
+### Session 48 — every auth mode and proxy path, against the lab
+
+The lab's whole topology exercised for the first time: password auth, key auth, an SSH jump host,
+and both proxy types. Probed at the transport level (a scratchpad script, deleted afterwards —
+§19), because typing a PEM through `adb shell input text` mangles it and Android 15 has no
+`cmd clipboard`.
+
+| Path | Result |
+|---|---|
+| **Key auth** (`:2202`) | Works. `resolveCredentials` produced the key **and `password: null`** — the rule that a key-authenticated host must not also offer its stored password, holding on a real connection. Host-key fingerprint matched `./scripts/test-hosts.sh keys` exactly. `exec` returned `omniterm \| Linux`. |
+| **SSH jump** (`:2203` → `internal-a`) | Works. Reached a container with no published port. |
+| **SOCKS5** (`:1080`) | **Broken — never implemented.** |
+| **HTTP CONNECT** (`:8888`) | **Broken — never implemented.** |
+
+**§15.11 is the find of the session.** `proxyType` of `http` or `socks5` was *silently ignored*: the
+transport handled the SSH jump and otherwise connected straight to the target. So a host that can
+only be reached through the proxy fails with a DNS error, and a host that *can* be reached directly
+is connected to directly — **bypassing a network route the user chose deliberately, without saying
+so.** The second is the one that matters.
+
+Both are now implemented, with the target's hostname sent to the proxy **unresolved** so the proxy
+does the lookup. All three routes to `internal-a` now work.
+
+**Eleven host-independent tests** cover the handshakes with a loopback fake proxy — including that
+bytes arriving in the same packet as the reply are not swallowed, that the SOCKS5 bound-address
+reply is fully consumed, that credentials are offered only when present, and that an unknown proxy
+type is refused rather than silently bypassed.
+
+**Verified — 1487 tests pass (11 new), `flutter analyze` clean, and all four connection paths
+confirmed against the lab.**
