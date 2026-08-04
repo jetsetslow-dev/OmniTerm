@@ -43,6 +43,8 @@ jobs:
       attestations: write
       contents: write
       id-token: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -246,3 +248,85 @@ jobs:
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v3.0.0
         with:
           subject-path: artifacts/*
+
+      # Staged as a **draft**, deliberately. The draft state is the transaction boundary: it means
+      # "artifacts exist, Play has not accepted them yet". Only the finalize job below is allowed to
+      # publish it, so a run that dies between here and Play can be retried without a half-announced
+      # release standing.
+      - name: Stage GitHub Release as draft
+        if: github.event_name == 'push' || inputs.publish_artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # A SemVer pre-release suffix (v1.0.0-Alpha, v2.0.0-rc1) marks the release prerelease.
+          case "$TAG" in *-*) PRERELEASE=true ;; *) PRERELEASE=false ;; esac
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" artifacts/* --clobber
+            gh release edit "$TAG" --draft=true --prerelease="$PRERELEASE"
+          else
+            # Every commit subject since the previous v* release. Commits land on main directly, so
+            # GitHub's --generate-notes would come up empty here.
+            PREV_TAG=$(gh release list --limit 50 --json tagName \
+              --jq '[.[] | select(.tagName | test("^v[0-9]"))][0].tagName' 2>/dev/null || true)
+            {
+              echo "Signed Flutter release build."
+              echo
+              echo "## Changes${PREV_TAG:+ since $PREV_TAG}"
+              if [ -n "$PREV_TAG" ] && git rev-parse "$PREV_TAG" >/dev/null 2>&1; then
+                git log --no-merges --pretty='- %s' "$PREV_TAG"..HEAD
+              else
+                git log --no-merges --pretty='- %s' -15
+              fi
+            } > release-notes.md
+            gh release create "$TAG" artifacts/* \
+              --draft \
+              --prerelease="$PRERELEASE" \
+              --target "$GITHUB_SHA" \
+              --title "OmniTerm $TAG" \
+              --notes-file release-notes.md
+          fi
+
+      # The `internal` track, always. Promotion to a wider audience is a human decision made in the
+      # Play console, not something a green pipeline should be able to do on its own.
+      #
+      # The mapping goes to Play directly and nowhere else: it deobfuscates the shipped binary, and
+      # ordinary workflow artifacts are public in a public repository.
+      - name: Upload to Google Play
+        if: github.event_name == 'push' || inputs.publish_artifacts
+        uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.jetsetslow.omniterm.app
+          releaseFiles: artifacts/*.aab
+          mappingFile: flutter_app/build/app/outputs/mapping/release/mapping.txt
+          tracks: internal
+
+  # Kept as its own job for the same reason the Android pipeline does it: if publication fails after
+  # Play has already accepted the bundle, "rerun failed jobs" retries only this idempotent step and
+  # never rebuilds — which would otherwise burn a versionCode Play will never accept twice.
+  finalize-release:
+    name: Finalize GitHub Release
+    needs: release
+    if: github.event_name == 'push' || inputs.publish_artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Publish the staged release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" >/dev/null
+          gh release edit "$TAG" --draft=false
+          echo "Published $TAG"

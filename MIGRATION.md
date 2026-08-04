@@ -631,8 +631,20 @@ every other suite runs a *debug* build through Flutter's own test binding, so no
 notice a bad R8 rule, a missing native library or a manifest mistake that only affects the release
 package.
 
-**Deliberately not included: Play publication.** That needs a service-account secret and a track
-decision, and the Flutter build is nowhere near ready to be uploaded to a store.
+**Play publication is wired, using the same secrets and the same shape as the Android pipeline**
+(`GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`, `r0adkll/upload-google-play` at the SHA already trusted here).
+Two details are load-bearing and were kept rather than simplified:
+
+- **The GitHub Release is staged as a *draft*.** The draft state is the transaction boundary — it
+  means "artifacts exist, Play has not accepted them yet". A separate `finalize-release` job is the
+  only thing allowed to publish it, so a run that dies between the two can be rerun without a
+  half-announced release standing, and without rebuilding — which would burn a `versionCode` Play
+  will never accept twice.
+- **The `internal` track, always.** Promoting to a wider audience is a decision made by a person in
+  the Play console, not something a green pipeline can do on its own.
+
+The R8 mapping goes to Play directly and nowhere else: it deobfuscates the shipped binary, and
+ordinary workflow artifacts are public in a public repository.
 
 ---
 
@@ -1271,8 +1283,10 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
 
 **SFTP (session 26):**
 - **Network Shares** — the whole tab, blocked on §7.1 (platform-native SMB). Renders a note saying so.
-- **The file editor** — the Kotlin opens text files in an in-app editor with save-and-verify. The
-  transport calls (`readText`/`writeText`) are ported; the editor UI is not.
+- ~~**The file editor**~~ — **done in session 58.** Read-only on open with a pencil to unlock, and
+  save-and-verify: the size is read back and compared, and only a match reports success. The **sudo**
+  write path is still absent (below), so a file the login cannot write is refused by the server
+  rather than escalated.
 - **Copy/move between hosts** (the cross-clipboard bar), **folder sizes via `du`**, **sudo mode**,
   and **remote search** — all present in the Kotlin browser, none ported.
 
@@ -3664,3 +3678,46 @@ is one node.
 **Verified — the smoke flow passes against the release APK (versionCode 10200399) on Android 15,
 both with and without an accessibility service enabled; the emulator was restored to its original
 state afterwards; both workflow files parse.**
+
+---
+
+### Session 58 — Play publication, and the remote file editor (tasks #10, #7)
+
+**Play publication is wired** (§12.1), on the user's instruction to keep the flow as generic as the
+Kotlin `main` branch had it: the same `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` secret, the same SHA-pinned
+`r0adkll/upload-google-play`, the `internal` track, and the same two-phase shape — the GitHub
+Release is staged as a **draft**, Play gets the bundle, and a separate `finalize-release` job
+un-drafts it. That split is not ceremony: if publication fails after Play has accepted the bundle,
+rerunning only the idempotent step avoids rebuilding, and a rebuild would burn a `versionCode` Play
+will never accept twice.
+
+**The SFTP file editor is ported** — §18's largest remaining Files gap, and one the transport was
+already ready for.
+
+The behaviour worth having is the Kotlin's, and it is kept exactly:
+
+- **It opens read-only; a pencil unlocks it.** Most visits to a config file on a server are to read
+  it, and an editor armed by default turns a stray tap on a phone into an edit to something live.
+  Read-only rather than disabled, so the text stays selectable and copyable.
+- **Save is verified, not assumed.** `lib/domain/file_edit.dart` holds the rule: a write that
+  returns without throwing is *not* proof the file was written — SFTP reports success against a full
+  disk, a quota, or a path that silently resolved elsewhere. The size is read back and compared, and
+  only a match reports "N bytes confirmed on the server".
+- **An unconfirmed save keeps the editor open, with the edits in it.** A mismatch says what the
+  server reported versus what was sent and invites another attempt. Closing there would throw away
+  the only remaining copy of the user's work.
+- Saving is gated on edit mode *and* on the text having changed: rewriting a file byte-for-byte
+  still moves its mtime, which is a real change to anything watching it.
+
+**Two smaller things fell out of it.** `RemoteFsClient` now *declares* whether it can edit text
+(`supportsTextEditing`, false by default), so a share that cannot must say so rather than offering a
+pencil that fails — and the message for that case deliberately does **not** blame the host's
+credentials, which would send someone to fix a setting that was never wrong. And tapping a file in
+the browser now opens it: tap used to toggle selection, which made it identical to long-press and
+left no gesture that opened anything at all.
+
+**Still not ported here:** the sudo write path (write to `/tmp`, `sudo cp` into place, `wc -c` back),
+which stays on §18's list with the rest of SFTP's sudo mode.
+
+**Verified — 10 new tests (6 view-model, 4 widget); 1511 host tests pass, `analyze --fatal-infos` clean,
+both workflow files parse.**

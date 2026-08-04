@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
@@ -6,6 +7,7 @@ import '../../data/app_database.dart';
 import '../../data/remote_models.dart';
 import '../../data/shares/remote_fs_client.dart';
 import '../../data/ssh/ssh_transport.dart';
+import '../../domain/file_edit.dart';
 import '../../domain/remote_path.dart';
 import '../../domain/server_credentials.dart';
 import '../../domain/sftp_sort.dart';
@@ -357,6 +359,96 @@ class SftpViewModel extends ChangeNotifier {
   Future<void> goUp() async {
     if (_path.isEmpty || _path == '/') return;
     await openPath(parentPath(_path));
+  }
+
+  // ── the text editor ─────────────────────────────────────────────────────────
+
+  /// Whether the current connection can read and write file contents at all.
+  ///
+  /// A share whose client cannot do this must say so rather than offering an editor that fails on
+  /// first tap (convention 4).
+  bool get canEditText => _editingClient?.supportsTextEditing ?? false;
+
+  RemoteFsClient? _editingClient;
+
+  /// Reads [entry] for editing, or returns null with [error] set.
+  ///
+  /// Refuses nothing outright except a file too large to be worth editing on a phone: a binary is
+  /// *reported* as one and still opened if the caller insists, because an operator who knows what
+  /// a file is should not be argued with (§17).
+  Future<String?> readForEditing(SftpFile entry) async {
+    final client = await _client;
+    _editingClient = client;
+    if (client == null) {
+      _error = _unavailable(browsedServer, 'File browsing is unavailable in this build.');
+      _safeNotify();
+      return null;
+    }
+    if (!client.supportsTextEditing) {
+      // Not `_unavailable`: the connection is fine, the *capability* is missing. Blaming the host's
+      // credentials for something a share protocol simply cannot do sends the user to fix a setting
+      // that was never wrong.
+      _error = 'Editing files is not supported on this connection.';
+      _safeNotify();
+      return null;
+    }
+    if (!isEditableSize(entry.size)) {
+      final mb = (entry.size / (1024 * 1024)).toStringAsFixed(1);
+      _error = '"${entry.name}" is $mb MB, too large to open in the editor.';
+      _safeNotify();
+      return null;
+    }
+
+    _loading = true;
+    _error = null;
+    _safeNotify();
+    try {
+      return await client.readText(joinPath(_path, entry.name), maxBytes: maxEditableBytes);
+    } catch (e) {
+      _error = 'Could not open "${entry.name}": $e';
+      return null;
+    } finally {
+      _loading = false;
+      _safeNotify();
+    }
+  }
+
+  /// Writes [content] to [entry] and **confirms it landed**.
+  ///
+  /// The confirmation is the point. A write that returns without throwing is not proof the file was
+  /// written — a full disk, a quota, or a path that resolved somewhere else all look like success
+  /// from here. The size is read back and compared, and only a match is reported as saved.
+  Future<FileSaveResult> saveText(SftpFile entry, String content) async {
+    final client = _editingClient ?? await _client;
+    if (client == null || !client.supportsTextEditing) {
+      return saveFailed('this connection cannot write file contents');
+    }
+
+    _loading = true;
+    _error = null;
+    _safeNotify();
+    FileSaveResult result;
+    try {
+      final expected = utf8.encode(content).length;
+      final reported = await client.writeText(joinPath(_path, entry.name), content);
+      result = judgeSave(name: entry.name, expected: expected, reported: reported);
+    } catch (e) {
+      result = saveFailed(e);
+    }
+    _loading = false;
+
+    // Refreshed either way so the listing's size and date stop describing the old contents — but
+    // after the outcome is decided, so a refresh failure cannot masquerade as a save failure.
+    await refresh();
+    if (result.isError) {
+      _error = result.message;
+      _status = null;
+    } else {
+      _status = result.message;
+      _error = null;
+    }
+    _safeNotify();
+    return result;
   }
 
   // ── selection ───────────────────────────────────────────────────────────────

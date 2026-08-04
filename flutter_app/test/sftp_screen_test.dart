@@ -350,4 +350,126 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 10));
   });
+
+  group('the file editor', () {
+    FakeFsClient editableTree() {
+      final client = homeTree();
+      client.files['/home/root/notes.txt'] = 'listen 8080\n';
+      return client;
+    }
+
+    testWidgets('tapping a file opens it read-only, and the pencil unlocks it', (tester) async {
+      // Most visits to a config file on a server are to read it. An editor armed by default turns
+      // a stray tap on a phone into an edit to something live.
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, client: editableTree());
+      await goToFiles(tester);
+
+      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('fileEditor.text')), findsOneWidget);
+      expect(find.textContaining('Read-only'), findsOneWidget);
+
+      var field = tester.widget<TextField>(find.byKey(const ValueKey('fileEditor.text')));
+      expect(field.readOnly, isTrue);
+      expect(field.controller!.text, 'listen 8080\n');
+
+      var save = tester.widget<FilledButton>(find.byKey(const ValueKey('fileEditor.save')));
+      expect(save.onPressed, isNull, reason: 'nothing to save, and not in edit mode');
+
+      await tester.tap(find.byKey(const ValueKey('fileEditor.editToggle')));
+      await tester.pumpAndSettle();
+
+      field = tester.widget<TextField>(find.byKey(const ValueKey('fileEditor.text')));
+      expect(field.readOnly, isFalse);
+      expect(find.text('Editing'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('fileEditor.close')));
+      await tester.pumpAndSettle();
+      vm.dispose();
+    });
+
+    testWidgets('an unchanged file cannot be saved', (tester) async {
+      // Rewriting a file byte-for-byte still moves its mtime, which is a real change to anything
+      // watching it.
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, client: editableTree());
+      await goToFiles(tester);
+
+      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('fileEditor.editToggle')));
+      await tester.pumpAndSettle();
+
+      final save = tester.widget<FilledButton>(find.byKey(const ValueKey('fileEditor.save')));
+      expect(save.onPressed, isNull);
+
+      await tester.tap(find.byKey(const ValueKey('fileEditor.close')));
+      await tester.pumpAndSettle();
+      vm.dispose();
+    });
+
+    testWidgets('a save the server contradicts keeps the editor open with the edits', (
+      tester,
+    ) async {
+      final client = editableTree()..reportedSizeOverride = 3;
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, client: client);
+      await goToFiles(tester);
+
+      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('fileEditor.editToggle')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const ValueKey('fileEditor.text')), 'listen 9090\n');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('fileEditor.save')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('fileEditor.text')),
+        findsOneWidget,
+        reason: 'an unconfirmed save must not close over the only copy of the edits',
+      );
+      expect(find.byKey(const ValueKey('fileEditor.error')), findsOneWidget);
+      final field = tester.widget<TextField>(find.byKey(const ValueKey('fileEditor.text')));
+      expect(field.controller!.text, 'listen 9090\n');
+
+      await tester.tap(find.byKey(const ValueKey('fileEditor.close')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('fileEditor.discard.confirm')));
+      await tester.pumpAndSettle();
+      vm.dispose();
+    });
+
+    testWidgets('closing with unsaved edits asks first', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, client: editableTree());
+      await goToFiles(tester);
+
+      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('fileEditor.editToggle')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('fileEditor.text')), 'changed\n');
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('fileEditor.close')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('fileEditor.discard.dialog')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('fileEditor.discard.cancel')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('fileEditor.text')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('fileEditor.close')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('fileEditor.discard.confirm')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('fileEditor.text')), findsNothing);
+      vm.dispose();
+    });
+  });
 }

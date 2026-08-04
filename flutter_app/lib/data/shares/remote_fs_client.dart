@@ -45,6 +45,27 @@ abstract class RemoteFsClient {
     void Function(int copied, int total)? onProgress,
   });
 
+  /// Whether this client can read and write a file's contents as text.
+  ///
+  /// Declared rather than assumed, and false by default. A client that cannot do this must make the
+  /// editor say so, not offer a pencil that fails on tap (convention 4).
+  bool get supportsTextEditing => false;
+
+  /// Reads at most [maxBytes] of [path] as UTF-8, replacing malformed bytes.
+  ///
+  /// Only callable when [supportsTextEditing]; the default throws rather than returning empty,
+  /// because an empty file and an unsupported operation must never look alike.
+  Future<String> readText(String path, {int maxBytes = 512 * 1024}) =>
+      throw UnsupportedError('This connection cannot read file contents.');
+
+  /// Overwrites [path] with [content], returning the size the remote reports afterwards, or -1
+  /// when it could not be read back.
+  ///
+  /// That return value is the whole point: it is what lets a save be *confirmed* rather than
+  /// assumed. See `domain/file_edit.dart`.
+  Future<int> writeText(String path, String content) =>
+      throw UnsupportedError('This connection cannot write file contents.');
+
   /// Interrupt in-flight transfer I/O promptly; metadata-only clients may fall back to [close].
   void cancelActiveTransfers() => close();
 

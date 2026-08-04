@@ -6,6 +6,7 @@ import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/data/remote_models.dart';
 import 'package:omniterm/data/shares/remote_fs_client.dart';
+import 'package:omniterm/domain/file_edit.dart';
 import 'package:omniterm/domain/sftp_sort.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
@@ -27,11 +28,41 @@ class FakeFsClient extends RemoteFsClient {
   final List<(String, String)> renamed = [];
   final List<String> uploaded = [];
 
+  /// Path to contents, for the editor.
+  final Map<String, String> files = {};
+
+  /// What `writeText` reports the remote size to be. Null means "the real byte count", which is
+  /// what a healthy server does; anything else lets a test stage a save that did not land.
+  int? reportedSizeOverride;
+
+  bool textEditingSupported = true;
+  final List<(String, String)> written = [];
+
   /// Paths whose operation throws.
   Set<String> failFor = {};
 
   @override
   Future<String> home() async => homePath;
+
+  @override
+  @override
+  bool get supportsTextEditing => textEditingSupported;
+
+  @override
+  Future<String> readText(String path, {int maxBytes = 512 * 1024}) async {
+    if (failFor.contains(path)) throw Exception('read refused');
+    final content = files[path];
+    if (content == null) throw Exception('no such file');
+    return content.length <= maxBytes ? content : content.substring(0, maxBytes);
+  }
+
+  @override
+  Future<int> writeText(String path, String content) async {
+    if (failFor.contains(path)) throw Exception('write refused');
+    written.add((path, content));
+    files[path] = content;
+    return reportedSizeOverride ?? content.length;
+  }
 
   @override
   Future<List<SftpFile>> list(String path) async {
@@ -528,6 +559,109 @@ void main() {
 
       vm.activeTab = SftpTab.transfers;
       expect(vm.activeTab, SftpTab.transfers);
+      vm.dispose();
+    });
+  });
+
+  group('the text editor', () {
+    FakeFsClient editableTree() {
+      final client = homeTree();
+      client.files['/home/root/notes.txt'] = 'listen 8080\n';
+      return client;
+    }
+
+    test('a file is read for editing', () async {
+      final vm = await booted(editableTree());
+
+      expect(await vm.readForEditing(entry('notes.txt', size: 120)), 'listen 8080\n');
+      expect(vm.canEditText, isTrue);
+      vm.dispose();
+    });
+
+    test('a connection that cannot edit says so instead of opening an empty editor', () async {
+      // Convention 4: absent means the feature is off and the screen says why. An editor that
+      // opened blank over a share it cannot write would invite someone to retype a file into a
+      // void.
+      final client = editableTree()..textEditingSupported = false;
+      final vm = await booted(client);
+
+      expect(await vm.readForEditing(entry('notes.txt')), isNull);
+      expect(vm.canEditText, isFalse);
+      expect(vm.error, contains('not supported on this connection'));
+      expect(
+        vm.error,
+        isNot(contains('credential')),
+        reason: 'the connection is fine; blaming its credentials sends the user to fix nothing',
+      );
+      vm.dispose();
+    });
+
+    test('a file too large to edit on a phone is refused with its size', () async {
+      final vm = await booted(editableTree());
+
+      expect(await vm.readForEditing(entry('huge.log', size: 40 * 1024 * 1024)), isNull);
+      expect(vm.error, contains('too large'));
+      expect(vm.error, contains('40.0 MB'), reason: 'the number is what makes the refusal useful');
+      vm.dispose();
+    });
+
+    test('a save the server confirms is reported as confirmed', () async {
+      final client = editableTree();
+      final vm = await booted(client);
+
+      final result = await vm.saveText(entry('notes.txt'), 'listen 9090\n');
+
+      expect(result.outcome, FileSaveOutcome.confirmed);
+      expect(result.canClose, isTrue);
+      expect(client.files['/home/root/notes.txt'], 'listen 9090\n');
+      expect(vm.status, contains('12 bytes confirmed'));
+      vm.dispose();
+    });
+
+    test('a save the server contradicts keeps the edits and refuses to close', () async {
+      // The whole reason the size is read back. SFTP reports success against a full disk, a quota,
+      // or a path that resolved somewhere else; closing the editor on that would throw away the
+      // only remaining copy of the user's work.
+      final client = editableTree()..reportedSizeOverride = 3;
+      final vm = await booted(client);
+
+      final result = await vm.saveText(entry('notes.txt'), 'listen 9090\n');
+
+      expect(result.outcome, FileSaveOutcome.mismatch);
+      expect(result.canClose, isFalse, reason: 'the editor must keep the unsaved text');
+      expect(vm.error, contains('server reports 3 bytes, expected 12'));
+      expect(vm.error, contains('try saving again'));
+      vm.dispose();
+    });
+
+    test(
+      'a save whose size cannot be read back says so rather than claiming confirmation',
+      () async {
+        final client = editableTree()..reportedSizeOverride = -1;
+        final vm = await booted(client);
+
+        final result = await vm.saveText(entry('notes.txt'), 'listen 9090\n');
+
+        expect(result.outcome, FileSaveOutcome.unconfirmed);
+        expect(
+          result.canClose,
+          isTrue,
+          reason: 'the write did not fail, so the edits are not lost',
+        );
+        expect(vm.status, contains('could not be read back'));
+        vm.dispose();
+      },
+    );
+
+    test('a failed write is an error, not a silent no-op', () async {
+      final client = editableTree()..failFor = {'/home/root/notes.txt'};
+      final vm = await booted(client);
+
+      final result = await vm.saveText(entry('notes.txt'), 'listen 9090\n');
+
+      expect(result.outcome, FileSaveOutcome.failed);
+      expect(result.canClose, isFalse);
+      expect(vm.error, contains('Save failed'));
       vm.dispose();
     });
   });

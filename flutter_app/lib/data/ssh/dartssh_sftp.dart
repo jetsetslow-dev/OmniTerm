@@ -128,6 +128,10 @@ class DartSshSftp extends RemoteFsClient {
   ///
   /// The cap is applied while streaming, not after: opening a multi-GB file for editing must cost
   /// at most [maxBytes] of memory rather than the file's size.
+  @override
+  bool get supportsTextEditing => true;
+
+  @override
   Future<String> readText(String path, {int maxBytes = 512 * 1024}) => _withSftp((sftp) async {
     final file = await sftp.open(path);
     try {
@@ -150,6 +154,7 @@ class DartSshSftp extends RemoteFsClient {
   ///
   /// Returns the size the remote reports after the write, so callers can prove the edit landed
   /// rather than assuming a silent success. Returns -1 when the size could not be re-read.
+  @override
   Future<int> writeText(String path, String content) => _withSftp((sftp) async {
     final bytes = Uint8List.fromList(utf8.encode(content));
     final file = await sftp.open(

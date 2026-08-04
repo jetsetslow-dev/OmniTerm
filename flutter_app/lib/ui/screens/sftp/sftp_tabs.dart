@@ -6,6 +6,7 @@ import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/sftp_view_model.dart';
 import '../../widgets/omni_components.dart';
+import 'file_editor_sheet.dart';
 
 /// Saved paths for the current host.
 class SftpBookmarksTab extends StatelessWidget {
@@ -426,7 +427,15 @@ class _EntryRow extends StatelessWidget {
 
     return OmniCard(
       key: ValueKey('sftp.entry.${entry.name}'),
-      onTap: () => entry.isDirectory ? vm.open(entry) : vm.toggleSelected(entry.name),
+      // Tap opens; long-press selects. Tapping used to toggle selection, which made it identical
+      // to long-press and left no gesture that *opened* anything — so a file could be browsed to
+      // and never looked at. Once a selection exists, tap joins it, because that is what every
+      // other multi-select list does.
+      onTap: () => entry.isDirectory
+          ? vm.open(entry)
+          : vm.hasSelection
+          ? vm.toggleSelected(entry.name)
+          : openFileEditor(context, vm, entry),
       onLongPress: () => vm.toggleSelected(entry.name),
       child: Row(
         children: [
