@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'navigation.dart';
-import 'screens/placeholder_screen.dart';
+import 'screens/shell/shell_screen.dart';
 import 'screens/fleet/fleet_screen.dart';
 import 'screens/infra/infra_screen.dart';
 import 'screens/monitor/monitor_screen.dart';
@@ -184,12 +184,11 @@ class _ScreenBody extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // TODO(migration): replace each placeholder as the screen is ported (MIGRATION.md §3.6).
     return switch (screen) {
       Screen.servers => const ServersScreen(),
       Screen.fleet => const FleetScreen(),
       Screen.monitor => const MonitorScreen(),
-      Screen.shell => const PlaceholderScreen(title: 'Term', source: 'ui/ShellScreen.kt'),
+      Screen.shell => const ShellScreen(),
       Screen.sftp => const SftpScreen(),
       Screen.infra => const InfraScreen(),
       Screen.tools => const ToolsHubScreen(),

@@ -129,6 +129,50 @@ abstract final class TerminalKeyEncoder {
   }
 }
 
+/// Encodes typed text under the sticky Ctrl/Alt/Shift modifiers, ported from `typeText` in
+/// `ui/AppViewModel.kt`.
+///
+/// Pure and separate from the widget because the modifier rules are the error-prone part: Ctrl only
+/// applies to the *first* code point, Alt is an ESC prefix rather than a bit, and text that Ctrl has
+/// no encoding for must survive intact rather than being masked into a different byte.
+Uint8List encodeTypedText(
+  String text, {
+  bool shift = false,
+  bool alt = false,
+  bool ctrl = false,
+}) {
+  if (text.isEmpty) return Uint8List(0);
+
+  // Shift upper-cases a single character only. Applying it to a longer run would rewrite a paste.
+  var t = shift && text.runes.length == 1 ? text.toUpperCase() : text;
+
+  if (!ctrl && !alt) return Uint8List.fromList(utf8.encode(t));
+
+  final out = <int>[];
+  if (alt) out.add(0x1B);
+
+  final first = t.runes.first;
+  final control = ctrl ? TerminalKeyEncoder.controlByte(first) : null;
+  if (control != null) {
+    out.add(control);
+    final rest = String.fromCharCodes(t.runes.skip(1));
+    if (rest.isNotEmpty) out.addAll(utf8.encode(rest));
+  } else {
+    // Ctrl has no portable byte for non-ASCII text. Preserve the whole scalar rather than splitting
+    // it or emitting an arbitrary mask — a mangled code point is worse than an ignored modifier.
+    out.addAll(utf8.encode(t));
+  }
+  return Uint8List.fromList(out);
+}
+
+/// Encodes a paste as one contiguous write.
+///
+/// Newlines normalise to CR, matching what Enter sends, so each pasted line is submitted the way the
+/// shell expects. Sticky modifiers are deliberately ignored: a Ctrl held for one keystroke must not
+/// silently rewrite the first byte of a hundred-line paste.
+Uint8List encodePastedText(String text) =>
+    Uint8List.fromList(utf8.encode(text.replaceAll('\r\n', '\r').replaceAll('\n', '\r')));
+
 /// Kotlin's `String.toByteArray()` defaults to UTF-8; every sequence here is pure ASCII, for which
 /// the two encodings are identical.
 Uint8List _ascii(String s) => Uint8List.fromList(utf8.encode(s));

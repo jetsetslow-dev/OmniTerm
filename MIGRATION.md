@@ -2,17 +2,20 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 7 is nearly complete. Immediate task: the Shell (terminal) screen.**
-> **Tools is finished** — all eight views plus the hub are wired into `app_scaffold.dart`. Settings,
-> About and the Tools grid landed in session 33.
+> **Phase 7 is complete. All fifteen screens are ported and there are no placeholders left.**
+> The Shell landed in session 34: `ShellSession`, `ShellViewModel`, the render surface, the key bar
+> and the screen, wired into `app_scaffold.dart`.
 >
-> **One placeholder remains in the whole app: `Screen.shell`** (`ui/ShellScreen.kt`). Its engine is
-> already ported and tested — `terminal_emulator.dart`, the tmux control layer, `terminal_parser`,
-> `terminal_key_encoder`, `ssh_transport.shell()` — so this is the *view*: an `xterm`-backed
-> surface, the key row, session lifecycle and the tunnel manager UI. Plan it as its own iteration.
+> **Immediate task: #8, platform integrations.** It is now the binding constraint on four separate
+> things already built and waiting: the backup file picker (§18), link opening in About, the
+> platform-native SMB client (§7.1), and the Shell's own deferred pieces below.
 >
-> After that, phase 7 is done and the remaining tasks are #8 (platform integrations, which also
-> unblocks the backup file picker and link opening), #9 (Patrol/Maestro E2E) and #10 (CI/CD).
+> **The Shell's remaining parity gaps are listed in §18 and are a second Shell iteration**, not part
+> of #8: split panes, the quick-connect sheet, the host-key approval dialog, tmux persistent
+> sessions with the session picker, and the tunnel manager UI. The single-session terminal is
+> complete and tested without them.
+>
+> Then #9 (Patrol/Maestro E2E) and #10 (CI/CD).
 >
 > ⚠️ **Read §16.4 before porting anything else** — port the feature set, not the code set.
 >
@@ -172,7 +175,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | `ui/AppViewModel.kt` | **12310** | `lib/ui/view_model/` (split by feature, §5.2) | 🟨 `AppState` + `ServersViewModel` done |
 | `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | ✅ all 8 tool views + hub |
 | `ui/SftpScreen.kt` | 3474 | `lib/ui/screens/sftp/` | 🟡 3 of 4 tabs; Shares blocked on §7.1 |
-| `ui/ShellScreen.kt` | 3175 | `lib/ui/screens/shell/` | ⬜ |
+| `ui/ShellScreen.kt` | 3175 | `lib/ui/screens/shell/` | 🟡 single-session terminal done; §18 lists the rest |
 | `ui/AppUi.kt` | 2806 | `lib/ui/app_scaffold.dart` + `lib/ui/screens/servers/` | 🟨 scaffold, nav, Servers list + form logic done; form **widget** pending |
 | `ui/ComposeBuilder.kt` | 2100 | `lib/ui/screens/infra/compose_builder.dart` | ⬜ |
 | `ui/MonitorScreen.kt` | 1185 | `lib/ui/screens/monitor/` | 🟡 4 of 6 tabs; Scripts/CRON pending |
@@ -1097,6 +1100,24 @@ rather than silently dropped.
 ---
 
 ## 18. Known parity gaps (requirement 13)
+
+**Shell (session 34)** — the single-session terminal is complete; these are a second Shell iteration:
+- **Split panes (multi-SSH).** `ShellSession` is already per-session for geometry, scroll position
+  and read-only precisely so this drops in: the screen shows one pane, not the model.
+- **Quick connect** — a connect-without-saving sheet. Needs the entitlement gate the Kotlin puts
+  around it.
+- **The host-key approval dialog.** `ssh_host_key_trust.dart` holds the trust store and the decision
+  logic; what is missing is the prompt that shows a changed fingerprint and asks. **Until it lands,
+  a first-contact or changed key is decided by the transport's own policy** — this is the one gap
+  with a security dimension and it should be the first thing done in the next Shell iteration.
+- **tmux persistent sessions**, the session picker and the background-session list. The control-mode
+  parser (`tmux_control_*.dart`) is ported and tested; the attach/reattach lifecycle is not.
+- **The tunnel manager UI.** `ssh_tunnel_manager.dart` is ported; nothing drives it yet.
+- **Text selection and the copy dialog.** The surface paints a snapshot rather than selectable text,
+  so copying output is not yet possible.
+- **"Smart swipe" editor input mode.** Only the higher-fidelity stream mode is ported; swipe typing
+  commits whole words through the same path.
+
 
 **Backup (session 31):**
 - **Reading and writing the file itself.** The view model produces and consumes the *text*; a save
@@ -2150,3 +2171,71 @@ needs a platform integration that has not landed, and a link that silently does 
 than one you can paste.
 
 **Verified — 1258 tests pass (50 new), `flutter analyze` clean.**
+
+---
+
+### Session 34 — the Shell (terminal) screen — phase 7 is complete
+
+`lib/ui/view_model/shell_session.dart`, `shell_view_model.dart`, `lib/ui/widgets/terminal_surface.dart`,
+`terminal_key_bar.dart`, `lib/ui/screens/shell/shell_screen.dart`, plus two pure input modules
+(`domain/terminal_soft_input.dart` and additions to `domain/terminal_key_encoder.dart`). Wired into
+`app_scaffold.dart`. **`Screen.shell` was the last placeholder; there are none left.**
+
+The engine was already ported and tested — emulator, tmux control parser, key encoder, `openShell`.
+This session was the parts between the engine and the glass, and that is where the substance is.
+
+**`ShellSession` — the model, and the four things a terminal must not get wrong:**
+
+| | |
+|---|---|
+| **Repaints are capped at one frame; the emulator still eats every byte.** | `yes` delivers hundreds of chunks a second. Notifying per chunk pegs the UI thread painting frames nobody can perceive. A test feeds 200 chunks and asserts under 20 publishes *and* that no rows were lost. |
+| **The scroll anchor is absolute, not buffer-relative.** | Once the scrollback limit is reached, every new line drops one off the head. A buffer-relative anchor would slide the text out from under the reader at exactly the rate the remote is talking. `trimmedRowCount` is the offset between the two spaces and exists for this. |
+| **Resize is newest-wins, not a queue.** | Rotating the device emits a burst of sizes; replaying each one against the remote PTY makes it reflow visibly for geometry nobody saw. A gated fake proves the burst collapses to first + last. |
+| **A remote exit and a dropped connection are different endings.** | Both end the read loop identically. `remoteExited` is the transport's judgement and the only honest signal. Calling a drop an "exit" is a lie the user acts on — it is the difference between reconnecting and starting over. |
+
+The scrollback survives either ending. Blanking on disconnect destroys the only record of why.
+
+**Input is one path, deliberately.** The hardware keyboard, the on-screen bar and paste are three
+entry points, and a read-only guard on some of them is not a guard — so the check lives in
+`ShellSession.write`. `write` returns whether anything was sent, because a key bar that reports
+success on a dead session teaches the user to distrust the screen.
+
+**The modifier rules are pure and tested**, because they are invisible when wrong:
+
+- **Ctrl applies to the first code point only** and the rest of the commit survives — a soft keyboard
+  can commit several characters at once.
+- **Alt is an ESC prefix, not a bit.**
+- **Text Ctrl cannot encode is passed through intact** rather than masked into some other byte, which
+  in a shell is a different command.
+- **Shift upper-cases one character**, never a run — that would rewrite a pasted line.
+- **Modifiers are one-shot.** A touch keyboard cannot hold a key; a latch you forget turns the next
+  `l` into a screen-clearing `^L`.
+- **A paste ignores them entirely** and goes as one contiguous write, newlines normalised to CR. LF
+  alone only moves the cursor, leaving the command sitting unsubmitted.
+- **A lone newline from the IME is the Enter *key*,** not a newline character. Multi-line commits keep
+  every line; an older Kotlin path submitted the first and silently dropped the rest.
+
+**Bounds are re-applied on read.** The scrollback limit is clamped again when a session opens, with
+the same range the Settings screen enforces — a corrupt or hand-edited row must not decide how much
+memory the terminal takes. A test stores `1` and asserts the floor won.
+
+**The screen states each say what they are**, never a black rectangle that resembles a working shell:
+"add a host" and "no host is online" are different problems with different fixes and get different
+sentences; the connecting view shows the transport's own phase so a ten-second hang names its step;
+a failed connect leaves the Connect button in place. The address goes through `HostDisplay`, since
+the terminal is the screen most likely to be on a shared display. Without a transport the button is
+disabled and says why (Convention 4).
+
+**Key-bar geometry is fixed across layers** — SYM and FN are always the last two caps. A cap that
+moves between layers gets pressed by mistake, and on a terminal a mis-pressed key is a command
+nobody meant to run. A test pins SYM's screen position across all three layers.
+
+**Rendering** measures the cell from the shipped font rather than assuming a ratio, so the grid
+matches what is painted. Spans of single-width glyphs are laid out once; a span containing a wide
+glyph falls back to per-glyph placement, because a fallback font's advance for CJK and emoji is not
+reliably two cells and letting it flow shifts the rest of the line.
+
+**Deferred to a second Shell iteration and recorded in §18**: split panes, quick connect, the
+host-key approval dialog, tmux persistent sessions, the tunnel manager UI, text selection.
+
+**Verified — 1324 tests pass (66 new), `flutter analyze` clean.**
