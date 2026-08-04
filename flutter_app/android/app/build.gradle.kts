@@ -25,6 +25,15 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // Patrol's instrumentation runner (§11). The app itself is unaffected: this only applies to
+        // androidTest builds.
+        testInstrumentationRunner = "pl.leancode.patrol.PatrolJUnitRunner"
+        testInstrumentationRunnerArguments["clearPackageData"] = "true"
+    }
+
+    testOptions {
+        execution = "ANDROIDX_TEST_ORCHESTRATOR"
     }
 
     buildTypes {
@@ -48,6 +57,8 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+
+    androidTestUtil("androidx.test:orchestrator:1.5.1")
 
     // SMB2/3 (MIGRATION.md §7.1). Native rather than Dart because the only pub package for SMB pins
     // a pointycastle major dartssh2 cannot coexist with, and is an unmaintained implementation of a

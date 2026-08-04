@@ -69,6 +69,12 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # End-to-end automation (requirement 6, §11). Patrol is `integration_test` plus real native
+  # interaction — permission dialogs, notifications, the biometric prompt — which the widget tests
+  # cannot reach and which this app depends on.
+  integration_test:
+    sdk: flutter
+  patrol: ^3.20.0
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is

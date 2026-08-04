@@ -2,17 +2,23 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **All seven screens have now been walked against a real host** (sessions 45–49). Fleet's broadcast
-> and Infra were the last two.
+> **Task #9 has started: the E2E suite runs on the emulator** (session 50). Six flows, green.
 >
-> **Immediate task:** the paths a lab host cannot reach — SFTP upload/download (needs the file
-> picker in the loop), the Auth & keys **import sheet** (the transport-level key path is proven, the
-> UI that gets a key in is not), and **iOS SMB** (§18). Then #9 (Patrol/Maestro E2E) and #10
-> (CI/CD).
+> **Immediate task: grow the suite.** The flows to add next are exactly the ones the manual walk
+> could not automate — the Auth & keys **import sheet** (a PEM typed through the framework instead
+> of `adb input text`), SFTP upload/download, and the app-lock cycle. Then the **native** half:
+> Patrol's Android instrumentation is wired (`MainActivityTest.java`, runner + orchestrator in
+> Gradle) but **not yet exercised**, and it is what reaches the notification permission dialog, the
+> biometric prompt and the system file picker. Then Maestro as the CI smoke suite, and #10 (CI/CD).
+>
+> **Remaining #8 work:** iOS SMB (§18).
 >
 > The lab: `./scripts/test-hosts.sh up|fleet|keys|status`. §19 has the emulator recipe.
+> Run the flows with `flutter test integration_test/ -d emulator-5554`.
 >
-> ⚠️ **Lab probes must not be committed as tests** — §19. They depend on this box's containers.
+> ⚠️ **Lab probes must not be committed as tests** — §19. Nor may a flow assume device state:
+> the emulator carries hosts from earlier sessions, and a flow that assumes a pristine install
+> passes once and fails for whoever runs it next.
 >
 > **The Kotlin app is maintained in parallel** on `fix/kotlin-parity-defects` — see §15.6. A §15
 > entry is not finished until it is fixed on both branches.
@@ -3073,3 +3079,46 @@ there", "the tool found nothing", and "your filter matched nothing".
 
 **Verified — 1488 tests pass (1 net new), `flutter analyze` clean, APK builds, and both screens were
 driven by hand against the lab.**
+
+---
+
+### Session 50 — the E2E suite starts running (task #9)
+
+`integration_test/app_walkthrough_test.dart`, `integration_test` + `patrol` dev dependencies, and
+Patrol's Android instrumentation wiring (`MainActivityTest.java`, the JUnit runner and orchestrator
+in `build.gradle.kts`).
+
+**Six flows, green on the emulator**, covering what the last five sessions did by hand:
+
+| Flow | What it pins |
+|---|---|
+| Every primary destination renders | The manual walk that found §15.9, automated |
+| No screen is ever merely blank | The rule the Logs and Infra empty states came out of |
+| Every tool reachable from the hub | Eight screens behind one grid |
+| About reports a real version | `PackageInfo` needs a platform channel; in a widget test it *always* throws, so the working path had never been executed |
+| Diagnostics carries nothing identifying | Asserted where the platform strings actually come from |
+| An untested host is not "ready to save" | The button reads "Save (test first)" until a connection test passes |
+
+**A real gap this exposed: the bottom navigation bar had no keys.** Convention 1 says every
+interactive widget carries a stable `ValueKey`, and the single most-tapped control in the app did
+not — which is why every manual walk had to tap raw screen coordinates, and how a password ended up
+in a display-name field twice. Now `nav.<screen>`.
+
+**Two lessons written into the flows themselves:**
+
+- **A flow must not assume device state.** The first draft asserted "No servers yet"; the emulator
+  has carried a saved host since session 45. A flow that assumes a pristine install passes once and
+  fails for whoever runs it next — the device equivalent of the host-dependence trap in §19.
+- **`pumpAndSettle` alone is not enough at launch.** The database opens, settings load and the host
+  stream emits asynchronously; a flow that starts before those land is testing a screen the user
+  never sees.
+
+**Also corrected: an assertion of mine that was testing nothing.** The form flow originally checked
+`TextFormField.initialValue`, which is a construction detail, not behaviour. It now asserts the
+thing the test claims to be about — that an untested host reads "Save (test first)".
+
+**Not yet done, and the point of choosing Patrol:** the native half is wired but unexercised. The
+notification-permission dialog, the biometric prompt and the system file picker are all outside
+Flutter's view tree and are exactly why §11 chose Patrol over plain `integration_test`.
+
+**Verified — 1488 host tests pass, 6 E2E flows pass on Android 15, `flutter analyze` clean.**

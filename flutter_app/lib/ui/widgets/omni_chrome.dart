@@ -158,6 +158,11 @@ class OmniBottomNav<K> extends StatelessWidget {
             for (final item in items)
               Expanded(
                 child: InkWell(
+                  // Convention 1. The bar is the most-tapped control in the app and was the one
+                  // thing the E2E suite could not target, so flows had to fall back to raw screen
+                  // coordinates — which is how a manual walk mis-tapped a password into a name
+                  // field. `item.key` is the `Screen` enum value, so this reads `nav.monitor`.
+                  key: ValueKey('nav.${item.key is Enum ? (item.key as Enum).name : item.key}'),
                   onTap: () => onNavigate(item.key),
                   child: Container(
                     // a11y touch-target floor
