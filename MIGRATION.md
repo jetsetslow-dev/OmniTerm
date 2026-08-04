@@ -2,11 +2,12 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Task #9 has started: the E2E suite runs on the emulator** (session 50). Six flows, green.
+> **Task #9 is running: 9 E2E flows, green on the emulator** (sessions 50-51). The key-import sheet
+> is done — the flow the manual walk could not drive at all.
 >
-> **Immediate task: grow the suite.** The flows to add next are exactly the ones the manual walk
-> could not automate — the Auth & keys **import sheet** (a PEM typed through the framework instead
-> of `adb input text`), SFTP upload/download, and the app-lock cycle. Then the **native** half:
+> **Immediate task: keep growing the suite.** Still to add: **SFTP upload/download** and the
+> **app-lock cycle** (now that §15.12 makes the interval configurable, a flow can set it to
+> "Immediately" and drive background → foreground → wrong PIN → right PIN). Then the **native** half:
 > Patrol's Android instrumentation is wired (`MainActivityTest.java`, runner + orchestrator in
 > Gradle) but **not yet exercised**, and it is what reaches the notification permission dialog, the
 > biometric prompt and the system file picker. Then Maestro as the CI smoke suite, and #10 (CI/CD).
@@ -27,6 +28,12 @@
 > persistent sessions, the tunnel manager UI, text selection.
 >
 > ⚠️ **Read §16.4 before porting anything else** — port the feature set, not the code set.
+>
+> ⚠️ **§20 is the lessons ledger from all 42 Kotlin commits.** Read it before writing a ViewModel or
+> touching an async path: it lists the failure shapes this codebase actually hits, with the verdict
+> for each. Two of its patterns are preconditions on work not yet started — **O on task #8** (no
+> widget, shortcut or notification may act before the app-lock state has loaded) and **L on task
+> #10** (CI must build the configuration that ships, not a debug approximation).
 >
 > Then, in the §9 order — for each: a feature ViewModel reading from `AppState`, then the screen,
 > replacing its placeholder in `lib/ui/app_scaffold.dart`: Monitor → Infra → Fleet → SFTP → Tools.
@@ -1789,6 +1796,41 @@ This defect exists in the shipped Android app today.
 
 ---
 
+### 15.12 The app lock could not be configured or its PIN changed (session 51)
+
+Three defects on one screen, all found by reading the Kotlin commit history (§20) rather than by
+running anything.
+
+**1. "Lock when returning after" had no control at all.** `lib/domain/app_lock_timeout_policy.dart`
+was ported in full — presets, custom durations, unit conversion, the 24-hour ceiling, the
+`AppLockTimeoutDraft` value type — and then nothing in the UI ever constructed it. The interval was
+fixed at its 30-second default with no way to reach it. The Android app has had the control since
+before the public history begins.
+
+**2. The interval was read from a key nothing writes.** The controller read `app_lock_timeout`;
+the shipped Android app writes **`app_lock_grace_ms`**, and its own source comments say the
+historical key is kept deliberately so an upgrade preserves the user's choice. So an install
+migrating from Kotlin would silently revert to 30 seconds while the screen showed the value the
+user had set. Now read *and written* under `app_lock_grace_ms`, with the preference carried in
+`AppPreferences` like every other setting.
+
+**3. A PIN could not be changed.** The PIN was only ever collected when the lock was first turned
+on. Changing it meant turning the lock off — which deletes it — and back on. "Change PIN" is now
+on the screen, and cancelling it leaves the existing PIN in place rather than clearing it.
+
+**The Kotlin's own bug in this control was not reproduced** (its PR #62): deleting the trailing `0`
+from the default custom value `10` momentarily gives `1`, which *is* a preset, so recomputing the
+mode from the value alone snapped to that preset and took the text field away mid-edit. The port
+holds the editing mode explicitly in `_SettingsScreenState`, and a test asserts the field survives
+a transient preset-matching value.
+
+Save is disabled while the duration is invalid and the field says why — the only setting on this
+screen that can be *invalid* rather than merely unusual.
+
+**Port-introduced** (1 and 3 are missing features, 2 is a wrong key), so nothing to back-port.
+
+---
+
 ### 15.11 HTTP and SOCKS5 proxies were never implemented (session 48)
 
 `DartSshTransport._connect` handled `proxyType == 'ssh'` (the jump host) and otherwise connected
@@ -3122,3 +3164,124 @@ notification-permission dialog, the biometric prompt and the system file picker 
 Flutter's view tree and are exactly why §11 chose Patrol over plain `integration_test`.
 
 **Verified — 1488 host tests pass, 6 E2E flows pass on Android 15, `flutter analyze` clean.**
+
+---
+
+## 20. Lessons from the Kotlin history (requirement 9, extended)
+
+Every commit on `main` (42 squashed PRs, `edcab96` → `c7af1d1`) was read and classified. This is
+not a changelog: it is the list of failure *shapes* the Android app actually hit, each with the
+verdict for the Flutter port. A pattern here is worth more than the individual bug it came from —
+the same shape recurs in different screens years apart.
+
+The audit that produced this list is `git log main --pretty=format:'===== %h %ad %s%n%b'`.
+
+### 20.1 The patterns, and where the port stands
+
+| # | Pattern | Where it bit the Kotlin | Flutter verdict |
+|---|---|---|---|
+| A | **A late completion overwrites a newer request.** The user switches host/selection mid-load and the older answer lands last. | #69 (operation generations), #67 (widget rows read across threads with no barrier — one host's metrics under another's name), #60 (stale share connections, alert windows), #36 (bookmark path raced away by the tab's own ensure-load), #29 (a pane that had already exited still counted as live) | **Mostly ported, one gap found and fixed.** `runBroadcast` carries generations. `loadLogs` did not: it published a merged view for whatever hosts were selected *when it started*. Now it captures the requested set and re-asks if the selection moved. |
+| B | **A busy flag is set outside the `try`, so a throw strands it.** | #50 found five at once (`logsLoading`, `metricsLoading`, `processesLoading`, `cronLoading`, `isFleetLogsLoading`) | **Two found and fixed** in `FleetViewModel`. `_logsLoading` also gates re-entry, so a throwing database read did not merely strand a spinner — it wedged the Logs tab for the rest of the session. `_executing` was worse: it disables Run. Both now `finally`. |
+| C | **Catch order swallows the outcome.** `TimeoutCancellationException` **is a** `CancellationException`, so the general branch matched first, the coroutine died silently, and the button stayed on "Saving…" forever. | #68 | **Not applicable as written** — Dart has no cancellation exception hierarchy. The transferable half is: *a UI state entered before an `await` must be left in a `finally`*, which is pattern B. |
+| D | **A guard written for a rare case breaks the common one.** `getAppWidgetInfo()` returns null during *initial* placement too, so the staleness guard aborted every first save. | #66 | **Rule, not a finding:** a guard must be able to tell "not yet" from "no longer". Where it cannot, prefer letting the rare case be a harmless no-op. |
+| E | **Typed text parsed as `toIntOrNull() ?: default`** — clearing a threshold silently saved `80`. | #67 (whole `InputValidation.kt` came out of it) | **Correct in the port, but duplicated.** Host form, alert rules and WoL each validate and each gate their own save. `lib/domain/input_validation.dart` was ported and then imported by nothing. Left as-is only where the screen's rule is genuinely different; see 20.3. |
+| F | **Empty output read as success.** `journalctl` on a BSD/macOS/Alpine host returned nothing and the Logs tab showed a blank page; a missing archive tool "succeeded". | #50, #36 | **Fixed in §15.10** and generalised into the standing rule: *an empty list is not a fact, it is the absence of one.* Distinguish "tool absent" / "tool found nothing" / "filter matched nothing". |
+| G | **A privacy toggle bypassed by whichever screen renders the raw value.** Four screens ignored `HostDisplay`. | #50 | **One re-introduced, now fixed.** The Trusted Host Keys list and its remove-confirm dialog rendered `host.host` raw — the same two surfaces the Kotlin had already fixed. Masked, with a regression test, and the fingerprint deliberately left visible. |
+| H | **A destructive action with no confirmation.** Disabling App Lock deleted the PIN silently; "Extract here" overwrote. | #50 | **Ported.** §17 is the standing rule, and the port's own deletes are gated. |
+| I | **A socket closed on the happy path only** (`DatagramSocket` leaked whenever `send` threw). | #50 | **Structurally avoided:** the Dart transports close in `finally`, and `ProxySocket` keeps a single subscription for the connection's whole life. |
+| J | **Blocking the UI thread.** `runBlocking` on the launcher's binder thread → ANR after 8s. | #67 | **Watch item.** Dart has no second thread to block *from*, but the same shape is heavy synchronous work on the UI isolate — which is exactly why `editorHighlightLimit` exists. Anything CPU-bound belongs in `compute()`. |
+| K | **A test that restates the implementation proves nothing.** A unit test asserted the same malformed tmux string the code produced; a biometric test asserted the *broken* contract. | #25, #50 | **Standing rule.** Assert the contract, and where a bug is subtle, reinstate it and watch the test fail (#68 did this and is the model). |
+| L | **The topology that ships is not the topology that was tested.** Only debug variants were built pre-merge, so the release classpath first failed post-merge; the release job ran tests at half the heap and flaked. | #48, #49, #42 | **Carried into task #10.** The Flutter pipeline must build and test the exact release configuration, not a debug approximation. |
+| M | **A table with no index.** `metric_history` unindexed made one widget load take 469s at 150k rows. | #68 | **Ported.** `@TableIndex` on `metric_history(serverId, timestamp)` and three others; verified present in the generated schema. |
+| N | **Null-checked then `!!`** on a field another callback can clear. | #50 | **Largely structural** — Dart promotes locals, not fields, so the analyzer refuses the unsafe form. |
+| O | **A cold-start external action running before settings load**, so a notification or shortcut could open a host before the app-lock state was known. | #60 | **Not yet applicable** — the port has no widgets or shortcuts. **When #8 adds them, they must await the lock state and be consumed exactly once.** |
+| P | **Alerting without hysteresis.** A metric hovering on a threshold produced a stream of incidents. | #47 | **Ported** — `AlertBreachTracker`, two clean samples to resolve, with the sampling-gap restart. |
+| Q | **Backup comparing only a subset of editable fields**, so a user's edits were dropped from the export. | #63 | **Ported** — `backup_selection.dart` compares the whole preset row; covered by tests. |
+
+### 20.2 What the history says about *how* to work here
+
+Three things recur in the commit bodies more often than any code defect:
+
+- **The reported cause is often not the cause.** #65 and #66 both fixed real defects on the widget
+  path and neither fixed the reported hang; #68 found it. #43/#44/#45 all retargeted `android:logo`
+  and none of them could have affected the biometric prompt — the one build that looked fixed was
+  fixed *incidentally*. Do not stop at the first plausible explanation that makes the symptom move.
+- **A negative control is the only proof a test pins a bug.** #68's `WidgetRenderOutcomeTest` fails
+  2/6 when the old catch order is put back. That is the standard to meet.
+- **Say what was not verified.** The most useful commit bodies here are the ones that state plainly
+  which gate did not run and why (#67: "unit tests never ran, and no APK was built"). §19's
+  device-validation mandate is the same instinct.
+
+### 20.3 What this audit changed, and what it leaves open
+
+Done in session 51:
+
+- **Pattern G** — the Trusted Host Keys list and its remove-confirm dialog now mask the address
+  through `HostDisplay`, subscribed via `ListenableBuilder` per convention 2. Two tests: one that
+  the address is masked and the fingerprint is not, one that the mask follows the toggle without
+  waiting for an unrelated repaint.
+- **Pattern B** — `FleetViewModel._loadLogs` and `runBroadcast` release their flags in `finally`.
+  A test closes the database mid-load and asserts the Logs tab is usable afterwards.
+- **Pattern A** — `MonitorViewModel._load` now takes an operation key and publishes through
+  `OperationGeneration`. The host-identity check it already had cannot see two loads of the *same*
+  tab on the *same* host, which is what the live timer and a manual refresh do constantly. A
+  superseded load neither publishes its result nor clears the newer load's spinner.
+- **Pattern E / requirement 11** — the host form's two hand-rolled port range checks now call the
+  shared `portError`. Both dead domain modules are therefore live.
+
+Still open:
+
+- Pattern O is a **precondition on task #8**: no widget, shortcut or notification action may act
+  before the app-lock state has loaded, and each must be consumed exactly once.
+- Pattern L is a **precondition on task #10**: the pipeline must build and test the configuration
+  that ships, not a debug approximation of it.
+- Pattern J is a **standing watch item**: CPU-bound work belongs in `compute()`, not the UI isolate.
+
+---
+
+### Session 51 — the key-import flow on a device, and an audit of every Kotlin commit
+
+**Task #9 grew: `integration_test/key_import_test.dart`, three flows, green on Android 15.**
+
+This is the screen the manual walk *could not* drive: a PEM cannot be typed with
+`adb shell input text` (it mangles spaces, drops `+` and `/`, and cannot send a newline into a
+multi-line field) and Android 15 has no `cmd clipboard`. So the one screen that gets a private key
+into the app had never been exercised on a device, even though key authentication itself was proven
+at the transport level in session 48.
+
+| Flow | What it pins |
+|---|---|
+| The sheet offers the fields a key needs | alias, private, public, save — and closes cleanly |
+| A real PEM is accepted, and the key it produces is the right one | a genuine throwaway ed25519 key typed through the framework; the type comes from the public line (`ED25519`) and the fingerprint is byte-for-byte what `ssh-keygen -lf` prints |
+| Rubbish is rejected with a reason, not silently stored | the parser's own message, the sheet stays open, nothing is written |
+
+The flow deletes its key on the way out **and on the way in** — a device carries its database
+between runs, so cleaning up only on the happy path passes once and then fails on "Key alias
+already exists" for whoever runs it next.
+
+The keys the first draft targeted did not exist; the screen already had a full set under a
+different prefix (`authKeys.import.*`). The flow was corrected to the real contract rather than the
+screen being changed to match a guess.
+
+**Then, on the user's instruction, every commit on `main` was read and classified — see §20.**
+
+42 squashed PRs. The result is a table of 17 recurring failure *shapes* with a verdict for the port
+against each. Four things came out of it as real defects, all fixed here:
+
+- **A privacy regression the Kotlin had already fixed** (§20 pattern G): the Trusted Host Keys list
+  and its remove-confirm dialog rendered the address raw, so "Hide addresses" silently did not
+  cover the one screen listing every machine the user has ever connected to.
+- **Two stranded flags** (pattern B) in `FleetViewModel`. `_logsLoading` also gates re-entry, so a
+  throwing database read did not merely leave a spinner — it wedged the Logs tab for the rest of
+  the session. `_executing` disables Run, which is worse.
+- **A stale-result race** (pattern A) in `MonitorViewModel`: its host-identity check cannot see two
+  loads of the *same* tab on the *same* host, which is exactly what the live timer and a manual
+  refresh do. Now keyed through `OperationGeneration`.
+- **§15.12** — the app-lock interval had no UI, was read from a key nothing writes, and the PIN
+  could not be changed.
+
+Both domain modules that were ported and never called (`input_validation.dart`,
+`operation_generation.dart`) are now wired. A helper nobody calls is a claim of coverage the code
+does not have.
+
+**Verified — 1499 host tests pass, `flutter analyze` clean, key-import flows 3/3 on the emulator.**

@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/data/ssh/ssh_host_key_trust.dart';
+import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/tools/auth_keys_screen.dart';
 import 'package:omniterm/ui/theme/theme.dart';
@@ -291,6 +292,56 @@ void main() {
 
       expect(await store.readAll(), isEmpty);
       expect(vm.knownHosts, isEmpty);
+      await finish(tester);
+    });
+
+    testWidgets('the address obeys Hide addresses, and the fingerprint does not', (tester) async {
+      // The Android app masks both the row and its remove-confirm dialog here. The port rendered
+      // them raw, so the toggle silently did not cover the one screen that lists every machine the
+      // user has ever connected to. The fingerprint stays visible on purpose: it identifies the
+      // key rather than the machine, and it is shown to be compared with what the server reports.
+      final store = InMemoryHostKeyStore();
+      await store.write(
+        '${SshHostKeyTrust.canonicalAlias('10.0.0.9', 2222)}|ssh-ed25519',
+        'SHA256:abc',
+      );
+      HostDisplay.instance.hideSensitiveInfo = true;
+      addTearDown(() => HostDisplay.instance.hideSensitiveInfo = false);
+      await pump(tester, trust: SshHostKeyTrust(store));
+
+      expect(find.textContaining('10.0.0.9'), findsNothing, reason: 'the address must be masked');
+      expect(find.textContaining('SHA256:abc'), findsOneWidget);
+
+      final host = vm.knownHosts.single;
+      await tester.tap(find.byKey(ValueKey('authKeys.trust.${host.host}.revoke')));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('10.0.0.9'),
+        findsNothing,
+        reason: 'the confirm dialog leaked the address in the Kotlin too, and was fixed there',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('authKeys.revoke.cancel')));
+      await tester.pumpAndSettle();
+      await finish(tester);
+    });
+
+    testWidgets('the mask follows the toggle without waiting for a repaint', (tester) async {
+      // A widget that reads HostDisplay without subscribing never rebuilds, so the toggle appears
+      // to do nothing until something unrelated happens to repaint the row.
+      final store = InMemoryHostKeyStore();
+      await store.write(
+        '${SshHostKeyTrust.canonicalAlias('10.0.0.9', 2222)}|ssh-ed25519',
+        'SHA256:abc',
+      );
+      await pump(tester, trust: SshHostKeyTrust(store));
+      expect(find.textContaining('10.0.0.9'), findsOneWidget);
+
+      HostDisplay.instance.hideSensitiveInfo = true;
+      addTearDown(() => HostDisplay.instance.hideSensitiveInfo = false);
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('10.0.0.9'), findsNothing);
       await finish(tester);
     });
 

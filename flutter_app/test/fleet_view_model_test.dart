@@ -501,6 +501,24 @@ void main() {
       vm.dispose();
     });
 
+    test('a failing read releases the tab instead of wedging it', () async {
+      // The Kotlin's recurring "stranded spinner" (its PR #50 found five at once). Here it is
+      // worse than a spinner: `logsLoading` also gates re-entry at the top of `loadLogs`, so a
+      // throwing database read left the Logs tab unable to load again for the rest of the session.
+      final id = await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
+      final transport = BroadcastTransport(replies: {'journalctl': journal});
+      final vm = await boot(transport: transport);
+      await Future<void>.delayed(Duration.zero);
+      vm.toggleLogServer(id);
+
+      // Closing the database is the honest way to make an ordinary repository call throw.
+      await db.close();
+      await expectLater(vm.loadLogs(), throwsA(anything));
+
+      expect(vm.logsLoading, isFalse, reason: 'the tab must be usable again after a failure');
+      vm.dispose();
+    });
+
     test('selecting no host clears the view rather than querying everything', () async {
       await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
       final transport = BroadcastTransport(replies: {'journalctl': journal});

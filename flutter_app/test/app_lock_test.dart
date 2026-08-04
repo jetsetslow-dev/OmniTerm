@@ -122,8 +122,27 @@ void main() {
       await repo.insertSetting('app_pin', await hashPinForStorage(pin));
       await repo.insertSetting('app_lock_enabled', '$enabled');
       await repo.insertSetting('biometrics_enabled', '$biometrics');
-      await repo.insertSetting('app_lock_timeout', '$timeoutMs');
+      // The key the Android app writes. Named here rather than in a constant so a rename in the
+      // controller cannot quietly take the tests with it — see the dedicated test below.
+      await repo.insertSetting('app_lock_grace_ms', '$timeoutMs');
     }
+
+    test('the interval is read from the key the Android app already wrote', () async {
+      // A migrating install carries `app_lock_grace_ms`; reading any other key would silently put
+      // every upgraded user back on the 30-second default while the screen still showed theirs.
+      await repo.insertSetting('app_pin', await hashPinForStorage('1234'));
+      await repo.insertSetting('app_lock_enabled', 'true');
+      await repo.insertSetting('app_lock_grace_ms', '0');
+      final lock = build();
+      await lock.load();
+      await lock.unlockWithPin('1234');
+
+      lock.onBackgrounded();
+      lock.onForegrounded();
+
+      expect(lock.isLocked, isTrue, reason: 'a zero interval must lock on the way back');
+      lock.dispose();
+    });
 
     test('a cold start is locked when the lock is configured', () async {
       // Otherwise force-stopping the app — the easiest thing in the world to do to a phone you have

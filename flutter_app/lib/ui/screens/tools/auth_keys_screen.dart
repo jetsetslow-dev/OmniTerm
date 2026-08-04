@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../../data/app_database.dart';
 import '../../../data/remote_models.dart';
+import '../../../domain/host_display.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/auth_keys_view_model.dart';
@@ -268,6 +269,15 @@ class _KnownHostsSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // Listened to, not merely read: "Hide addresses" must repaint this list the moment it changes,
+    // and a widget that reads a ChangeNotifier without subscribing never rebuilds.
+    return ListenableBuilder(
+      listenable: HostDisplay.instance,
+      builder: (context, _) => _buildList(context),
+    );
+  }
+
+  Widget _buildList(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
     if (!vm.canManageTrust) {
@@ -300,7 +310,10 @@ class _KnownHostsSection extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          host.host,
+                          // Masked with everything else the toggle covers. The fingerprint below
+                          // is deliberately *not* masked: it identifies the key, not the machine,
+                          // and it is here to be compared against what the server reports.
+                          HostDisplay.instance.sensitive(host.host),
                           overflow: TextOverflow.ellipsis,
                           style: const TextStyle(
                             fontWeight: FontWeight.bold,
@@ -579,7 +592,7 @@ Future<void> _confirmRevoke(
     context: context,
     builder: (dialogContext) => AlertDialog(
       key: const ValueKey('authKeys.revoke.dialog'),
-      title: Text('Forget the key for ${host.host}?'),
+      title: Text('Forget the key for ${HostDisplay.instance.sensitive(host.host)}?'),
       content: const Text(
         // Being explicit matters: forgetting a pin removes the protection that would otherwise
         // catch an interception, so the user should know the next connection asks again.

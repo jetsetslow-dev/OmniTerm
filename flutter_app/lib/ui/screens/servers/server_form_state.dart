@@ -2,6 +2,7 @@ import 'package:drift/drift.dart' show Value;
 import 'package:flutter/foundation.dart';
 
 import '../../../data/app_database.dart';
+import '../../../domain/input_validation.dart';
 
 /// How the add/edit sheet was opened.
 enum ServerFormMode {
@@ -189,19 +190,18 @@ class ServerFormState extends ChangeNotifier {
     if (host.trim().isEmpty) return 'Host is required';
     if (username.trim().isEmpty) return 'Username is required';
 
-    final portValue = int.tryParse(port.trim());
-    if (portValue == null || portValue < 1 || portValue > 65535) {
-      return 'Port must be 1-65535';
-    }
+    // The shared validator, not a second copy of the same range: two hand-rolled port checks that
+    // agree today are two that can disagree after one of them is edited.
+    final portFailure = portError(port);
+    if (portFailure != null) return 'Port: $portFailure';
+
     final keepAliveValue = int.tryParse(keepAlive.trim());
     if (keepAliveValue == null || keepAliveValue < 0) return 'Keepalive must be 0 or more';
 
     if (proxyType != 'none') {
       if (proxyHost.trim().isEmpty) return 'Proxy host is required';
-      final proxyPortValue = int.tryParse(proxyPort.trim());
-      if (proxyPortValue == null || proxyPortValue < 1 || proxyPortValue > 65535) {
-        return 'Proxy port must be 1-65535';
-      }
+      final proxyPortFailure = portError(proxyPort);
+      if (proxyPortFailure != null) return 'Proxy port: $proxyPortFailure';
     }
     return null;
   }

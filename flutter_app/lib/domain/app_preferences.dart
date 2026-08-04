@@ -9,6 +9,8 @@
 /// exhausts memory on a phone. Rather than trusting the stored text, every read is bounded.
 library;
 
+import 'app_lock_timeout_policy.dart';
+
 /// How distances and temperatures are shown.
 enum MeasurementSystem {
   metric('metric', 'Metric (°C)'),
@@ -102,6 +104,7 @@ class AppPreferences {
     this.tmuxControlMode = false,
     this.editorHighlightLimitKb = 256,
     this.appLockEnabled = false,
+    this.appLockTimeoutMs = defaultAppLockBackgroundTimeoutMs,
     this.useBiometrics = false,
     this.blockScreenshots = false,
     this.hideSensitiveInfo = false,
@@ -133,6 +136,13 @@ class AppPreferences {
   final int editorHighlightLimitKb;
 
   final bool appLockEnabled;
+
+  /// How long OmniTerm may be off screen before it locks again.
+  ///
+  /// Stored under the Android app's own `app_lock_grace_ms` key so a device upgrading from the
+  /// Kotlin build keeps the interval it was configured with, rather than silently reverting to the
+  /// 30-second default.
+  final int appLockTimeoutMs;
   final bool useBiometrics;
   final bool blockScreenshots;
   final bool hideSensitiveInfo;
@@ -165,6 +175,7 @@ class AppPreferences {
     'tmuxControlMode': 'tmux_control_mode',
     'editorHighlightLimit': 'editor_highlight_limit',
     'appLockEnabled': 'app_lock_enabled',
+    'appLockTimeout': 'app_lock_grace_ms',
     'biometrics': 'biometrics_enabled',
     'blockScreenshots': 'flag_secure',
     'hideSensitiveInfo': 'hide_sensitive_info',
@@ -223,6 +234,9 @@ class AppPreferences {
       editorHighlightLimitKb:
           PreferenceLimits.editorHighlightLimit.parse(settings[keys['editorHighlightLimit']]),
       appLockEnabled: flag('appLockEnabled', fallback: defaults.appLockEnabled),
+      appLockTimeoutMs: normalizeAppLockBackgroundTimeout(
+        int.tryParse(settings[keys['appLockTimeout']] ?? ''),
+      ),
       useBiometrics: flag('biometrics', fallback: defaults.useBiometrics),
       blockScreenshots: flag('blockScreenshots', fallback: defaults.blockScreenshots),
       hideSensitiveInfo: flag('hideSensitiveInfo', fallback: defaults.hideSensitiveInfo),
@@ -255,6 +269,7 @@ class AppPreferences {
         keys['tmuxControlMode']!: '$tmuxControlMode',
         keys['editorHighlightLimit']!: '$editorHighlightLimitKb',
         keys['appLockEnabled']!: '$appLockEnabled',
+        keys['appLockTimeout']!: '$appLockTimeoutMs',
         keys['biometrics']!: '$useBiometrics',
         keys['blockScreenshots']!: '$blockScreenshots',
         keys['hideSensitiveInfo']!: '$hideSensitiveInfo',
@@ -284,6 +299,7 @@ class AppPreferences {
     bool? tmuxControlMode,
     int? editorHighlightLimitKb,
     bool? appLockEnabled,
+    int? appLockTimeoutMs,
     bool? useBiometrics,
     bool? blockScreenshots,
     bool? hideSensitiveInfo,
@@ -314,6 +330,7 @@ class AppPreferences {
         tmuxControlMode: tmuxControlMode ?? this.tmuxControlMode,
         editorHighlightLimitKb: editorHighlightLimitKb ?? this.editorHighlightLimitKb,
         appLockEnabled: appLockEnabled ?? this.appLockEnabled,
+        appLockTimeoutMs: appLockTimeoutMs ?? this.appLockTimeoutMs,
         useBiometrics: useBiometrics ?? this.useBiometrics,
         blockScreenshots: blockScreenshots ?? this.blockScreenshots,
         hideSensitiveInfo: hideSensitiveInfo ?? this.hideSensitiveInfo,

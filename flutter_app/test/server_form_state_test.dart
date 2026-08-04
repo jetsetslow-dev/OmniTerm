@@ -212,9 +212,11 @@ void main() {
     });
 
     test('port must be in range', () {
-      expect((valid()..port = '0').validationError, 'Port must be 1-65535');
-      expect((valid()..port = '65536').validationError, 'Port must be 1-65535');
-      expect((valid()..port = 'abc').validationError, 'Port must be 1-65535');
+      // Through the shared `portError`, so the rule is stated once for every port in the app.
+      expect((valid()..port = '0').validationError, 'Port: Must be 1-65535');
+      expect((valid()..port = '65536').validationError, 'Port: Must be 1-65535');
+      expect((valid()..port = 'abc').validationError, 'Port: Must be a whole number');
+      expect((valid()..port = '').validationError, 'Port: Required');
       expect((valid()..port = '22').validationError, isNull);
     });
 
@@ -223,7 +225,9 @@ void main() {
       final withProxy = valid()..proxyType = 'socks5';
       expect(withProxy.validationError, 'Proxy host is required');
       withProxy.proxyHost = 'p';
-      expect(withProxy.validationError, 'Proxy port must be 1-65535');
+      expect(withProxy.validationError, 'Proxy port: Required');
+      withProxy.proxyPort = '99999';
+      expect(withProxy.validationError, 'Proxy port: Must be 1-65535');
       withProxy.proxyPort = '1080';
       expect(withProxy.validationError, isNull);
     });

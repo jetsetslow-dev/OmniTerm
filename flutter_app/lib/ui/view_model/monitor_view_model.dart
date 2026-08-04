@@ -8,6 +8,7 @@ import '../../data/remote_models.dart';
 import '../../data/remote_parsers.dart';
 import '../../data/ssh/ssh_transport.dart';
 import '../../domain/server_credentials.dart';
+import '../../domain/operation_generation.dart';
 import 'app_state.dart';
 
 /// The Monitor screen's six sub-tabs, in the Kotlin's order (`ui/MonitorScreen.kt` line 100).
@@ -138,6 +139,7 @@ class MonitorViewModel extends ChangeNotifier {
   /// tab probing `uname` for itself.
   Future<void> loadHostMetrics() async {
     await _load(
+      operation: 'hostMetrics',
       setLoading: (v) => _metricsLoading = v,
       run: (server, exec) async {
         final out = await exec(metricsFor(_osFor(server)));
@@ -224,6 +226,7 @@ class MonitorViewModel extends ChangeNotifier {
 
   Future<void> loadProcesses() async {
     await _load(
+      operation: 'processes',
       setLoading: (v) => _processesLoading = v,
       run: (server, exec) async {
         final out = await exec(processesFor(_osFor(server)));
@@ -235,6 +238,7 @@ class MonitorViewModel extends ChangeNotifier {
 
   Future<void> killProcess(int pid, {int signal = 15}) async {
     await _load(
+      operation: 'killProcess',
       setLoading: (_) {},
       run: (server, exec) async {
         final out = (await exec(killProcessCommand(pid, signal: signal))).trim();
@@ -248,6 +252,7 @@ class MonitorViewModel extends ChangeNotifier {
 
   Future<void> loadServices() async {
     await _load(
+      operation: 'services',
       setLoading: (v) => _servicesLoading = v,
       run: (server, exec) async {
         final out = await exec(servicesCommand);
@@ -265,7 +270,10 @@ class MonitorViewModel extends ChangeNotifier {
   ///
   /// The sudo password travels via stdin, never in the command string — see [sudoStdin].
   Future<void> runServiceAction(SimService service, String action) async {
+    // Keyed per service and action: two actions on different services are genuinely independent,
+    // and keying them together would let one silently discard the other's result.
     await _load(
+      operation: 'serviceAction:${service.name}:$action',
       setLoading: (v) => _servicesLoading = v,
       run: (server, exec) async {
         final password = server.sudoPassword;
@@ -321,6 +329,7 @@ class MonitorViewModel extends ChangeNotifier {
 
   Future<void> loadLogs() async {
     await _load(
+      operation: 'logs',
       setLoading: (v) => _logsLoading = v,
       run: (server, exec) async {
         final out = await exec(journalCommand(os: _osFor(server)));
@@ -339,6 +348,7 @@ class MonitorViewModel extends ChangeNotifier {
   /// Reboots the monitored host. The caller is responsible for confirming first — this does not ask.
   Future<void> rebootMonitoredHost() async {
     await _load(
+      operation: 'reboot',
       setLoading: (_) {},
       run: (server, exec) async {
         final password = server.sudoPassword;
@@ -358,7 +368,16 @@ class MonitorViewModel extends ChangeNotifier {
   /// [run] must not mutate state directly: it returns a closure that applies the result, which
   /// [_load] calls only if the user is still looking at the same host. A reply that arrives after
   /// the user switched hosts would otherwise attribute one machine's processes to another.
+  /// Latest-wins per load, so a slow refresh cannot land after the one that replaced it.
+  ///
+  /// The host check below is not enough on its own: two loads of the *same* tab on the *same* host
+  /// interleave routinely — the live timer fires while a manual refresh is still in flight — and
+  /// both pass an identity check. This is the Kotlin's own `OperationGeneration`, which the port
+  /// carried across and, until now, never called.
+  final _generations = OperationGeneration<String>();
+
   Future<void> _load({
+    required String operation,
     required void Function(bool) setLoading,
     required Future<void Function()> Function(
       Server server,
@@ -379,6 +398,7 @@ class MonitorViewModel extends ChangeNotifier {
     _safeNotify();
 
     final startedFor = server.id;
+    final generation = _generations.begin([operation])[operation]!;
     try {
       final creds = resolveCredentials(
         server,
@@ -389,14 +409,20 @@ class MonitorViewModel extends ChangeNotifier {
         server,
         (command, {String? stdin}) => ssh.exec(creds, command, stdin: stdin),
       );
-      if (monitoredServer?.id == startedFor) commit();
+      if (monitoredServer?.id == startedFor) {
+        _generations.publishIfCurrent(operation, generation, commit);
+      }
     } on CredentialResolutionException catch (e) {
-      _error = e.message;
+      if (_generations.isCurrent(operation, generation)) _error = e.message;
     } catch (e) {
-      _error = e.toString();
+      if (_generations.isCurrent(operation, generation)) _error = e.toString();
     } finally {
-      setLoading(false);
-      _safeNotify();
+      // A superseded run must not clear the spinner belonging to the one that replaced it, or the
+      // screen reports "done" while work is still running.
+      if (_generations.isCurrent(operation, generation)) {
+        setLoading(false);
+        _safeNotify();
+      }
     }
   }
 

@@ -73,8 +73,12 @@ class AppLockController extends ChangeNotifier {
     _enabled = (await _repository.getSetting('app_lock_enabled')) == 'true';
     _useBiometrics = (await _repository.getSetting('biometrics_enabled')) == 'true';
     _storedPin = await _repository.getSetting('app_pin');
+    // `app_lock_grace_ms` is the key the Android app writes, kept there deliberately across its own
+    // renames so an upgrade preserves the configured interval. Reading anything else would silently
+    // put every migrating user back on the 30-second default — the setting would still be shown as
+    // theirs while no longer being the one in force.
     _timeoutMs = normalizeAppLockBackgroundTimeout(
-      int.tryParse(await _repository.getSetting('app_lock_timeout') ?? ''),
+      int.tryParse(await _repository.getSetting('app_lock_grace_ms') ?? ''),
     );
     _failedAttempts =
         (int.tryParse(await _repository.getSetting('pin_failed_attempts') ?? '') ?? 0)

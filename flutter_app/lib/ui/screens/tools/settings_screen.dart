@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
+import '../../../domain/app_lock_timeout_policy.dart';
 import '../../../domain/app_preferences.dart';
 import '../../theme/colors.dart';
 import '../../view_model/app_lock_controller.dart';
@@ -21,6 +22,40 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  /// The in-progress edit of the lock timeout, or null to derive it from the saved value.
+  ///
+  /// Held here rather than computed from the preference because a half-typed custom duration has no
+  /// representation as a number. Deleting the `0` from `10` momentarily gives `1`, which *is* a
+  /// preset — recomputing from the value alone would snap to that preset and take the text field
+  /// away mid-edit, which is the Kotlin bug fixed in its PR #62.
+  AppLockTimeoutDraft? _lockTimeout;
+
+  /// Owned by the State, not rebuilt per frame: a controller created inside `build` throws away the
+  /// selection on every keystroke, so the caret jumps to the start as you type.
+  final _lockCustomValue = TextEditingController();
+
+  AppLockTimeoutDraft _lockTimeoutFor(int savedMs) {
+    final local = _lockTimeout;
+    // A local edit is only still the user's if it agrees with the draft it produced. Once Discard
+    // or Reset moves the saved value elsewhere, the edit is stale and the value wins.
+    if (local != null && local.timeoutMs == savedMs) return local;
+    return AppLockTimeoutDraft.fromTimeout(savedMs);
+  }
+
+  bool _lockTimeoutValid(AppPreferences draft) =>
+      !draft.appLockEnabled || _lockTimeoutFor(draft.appLockTimeoutMs).isValid;
+
+  void _applyLockTimeout(SettingsViewModel vm, AppLockTimeoutDraft updated) {
+    setState(() => _lockTimeout = updated);
+    vm.update((p) => p.copyWith(appLockTimeoutMs: updated.timeoutMs));
+  }
+
+  @override
+  void dispose() {
+    _lockCustomValue.dispose();
+    super.dispose();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -229,6 +264,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               enabled: draft.appLockEnabled,
               onChanged: (v) => vm.update((p) => p.copyWith(useBiometrics: v)),
             ),
+            _lockTimeoutSection(context, vm, draft),
             _Switch(
               settingKey: 'blockScreenshots',
               title: 'Block screenshots',
@@ -295,7 +331,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Expanded(
                 child: FilledButton(
                   key: const ValueKey('settings.save'),
-                  onPressed: vm.isDirty ? () => _save(context, vm) : null,
+                  // A half-typed custom duration is the one thing here that can be *invalid*
+                  // rather than merely unusual, and saving it would silently keep the previous
+                  // interval while the screen showed the new one.
+                  onPressed: vm.isDirty && _lockTimeoutValid(draft)
+                      ? () => _save(context, vm)
+                      : null,
                   child: const Text('Save'),
                 ),
               ),
@@ -304,6 +345,117 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ],
     );
+  }
+
+  /// How long OmniTerm may be off screen before it asks for the PIN again, plus changing that PIN.
+  ///
+  /// Without this the interval was fixed at its 30-second default with no way to reach it, and a
+  /// PIN once set could only be changed by turning the lock off — which deletes it. Both are
+  /// available in the Android app, so both belong here.
+  Widget _lockTimeoutSection(
+    BuildContext context,
+    SettingsViewModel vm,
+    AppPreferences draft,
+  ) {
+    if (!draft.appLockEnabled) return const SizedBox.shrink();
+
+    final scheme = Theme.of(context).colorScheme;
+    final timeout = _lockTimeoutFor(draft.appLockTimeoutMs);
+    final lock = context.watch<AppLockController?>();
+
+    // The field shows what the draft holds, which is not always what was typed: `editCustomValue`
+    // strips anything that is not a digit, and that filtering has to be visible in the field or the
+    // rejected characters appear to have been accepted.
+    if (_lockCustomValue.text != timeout.customValue) {
+      _lockCustomValue.value = TextEditingValue(
+        text: timeout.customValue,
+        selection: TextSelection.collapsed(offset: timeout.customValue.length),
+      );
+    }
+
+    return Padding(
+      key: const ValueKey('settings.lockTimeout'),
+      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Lock when returning after', style: TextStyle(fontSize: 13)),
+          Text(
+            // Saying exactly when the countdown starts, because "after" alone invites the guess
+            // that it means idle time inside the app.
+            'The countdown starts once OmniTerm is no longer visible. Rotating the screen does not '
+            'start it; a full restart always locks.',
+            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 4,
+            children: [
+              for (final (label, ms) in appLockTimeoutPresets)
+                ChoiceChip(
+                  key: ValueKey('settings.lockTimeout.$ms'),
+                  label: Text(label, style: const TextStyle(fontSize: 12)),
+                  selected: !timeout.customSelected && timeout.timeoutMs == ms,
+                  onSelected: (_) => _applyLockTimeout(vm, timeout.selectPreset(ms)),
+                ),
+              ChoiceChip(
+                key: const ValueKey('settings.lockTimeout.custom'),
+                label: const Text('Custom', style: TextStyle(fontSize: 12)),
+                selected: timeout.customSelected,
+                onSelected: (_) => _applyLockTimeout(vm, timeout.selectCustom()),
+              ),
+            ],
+          ),
+          if (timeout.customSelected) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    key: const ValueKey('settings.lockTimeout.value'),
+                    controller: _lockCustomValue,
+                    keyboardType: TextInputType.number,
+                    decoration: omniInputDecoration(
+                      context,
+                      labelText: 'Custom duration',
+                      errorText: timeout.isValid ? null : 'Choose a duration up to 24 hours',
+                    ),
+                    onChanged: (input) =>
+                        _applyLockTimeout(vm, timeout.editCustomValue(input)),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                DropdownButton<String>(
+                  key: const ValueKey('settings.lockTimeout.unit'),
+                  value: timeout.customUnit,
+                  items: [
+                    for (final unit in appLockTimeoutUnits)
+                      DropdownMenuItem(value: unit, child: Text(unit)),
+                  ],
+                  onChanged: (unit) => unit == null
+                      ? null
+                      : _applyLockTimeout(vm, timeout.selectCustomUnit(unit)),
+                ),
+              ],
+            ),
+          ],
+          if (lock != null && lock.isConfigured)
+            TextButton(
+              key: const ValueKey('settings.changePin'),
+              onPressed: () => _changePin(context, lock),
+              child: const Text('Change PIN', style: TextStyle(fontSize: 12)),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _changePin(BuildContext context, AppLockController lock) async {
+    final pin = await _askForPin(context);
+    // Cancelling leaves the existing PIN in place: a change that is abandoned half way must not be
+    // a way to end up with no PIN behind a lock that still says it is on.
+    if (pin != null) await lock.setPin(pin);
   }
 
   /// Saves, and makes the app-lock switch mean something.

@@ -250,12 +250,9 @@ class FleetViewModel extends ChangeNotifier {
     ];
     _safeNotify();
 
-    final keys = await _app.repository.getAllKeys();
-    final profiles = await _app.repository.getAllProfiles();
-
     // A simple semaphore: at most [broadcastConcurrency] hosts are in flight at once.
     final queue = List<Server>.from(targets);
-    Future<void> worker() async {
+    Future<void> worker(List<SshKey> keys, List<CredentialProfile> profiles) async {
       while (queue.isNotEmpty) {
         if (generation != _runGeneration) return;
         final server = queue.removeAt(0);
@@ -294,11 +291,21 @@ class FleetViewModel extends ChangeNotifier {
     }
 
     try {
+      // Read inside the `try`, not before it. These are ordinary database calls, but a throw here
+      // used to escape before `_executing` was ever cleared — and unlike a stranded spinner, a
+      // stranded `_executing` disables Run for the rest of the session. This is the Kotlin's
+      // "five stranded spinners" (§20 pattern B) in its worst form.
+      final keys = await _app.repository.getAllKeys();
+      final profiles = await _app.repository.getAllProfiles();
       await Future.wait([
-        for (var i = 0; i < broadcastConcurrency; i++) worker(),
+        for (var i = 0; i < broadcastConcurrency; i++) worker(keys, profiles),
       ]).timeout(broadcastTimeout);
     } on TimeoutException {
       _markUnfinished('Timed out after ${broadcastTimeout.inMinutes} minutes.');
+    } catch (e) {
+      // Reported on the rows rather than swallowed: a run that never started must not look like a
+      // run that finished with nothing to say.
+      _markUnfinished('Could not start the run: $e');
     } finally {
       // Anything still pending or running after the workers returned never completed — leaving it
       // showing a spinner would misreport an abandoned run as one still in progress.
@@ -359,34 +366,51 @@ class FleetViewModel extends ChangeNotifier {
       return;
     }
 
+    // The selection this run answers. `_logServerIds` is mutable and the user can keep tapping
+    // hosts while the fetch is in flight, so the run that finishes must be able to tell whether it
+    // is still answering the question that was asked.
+    final requested = Set<int>.from(_logServerIds);
+
     _logsLoading = true;
     _safeNotify();
 
-    final keys = await _app.repository.getAllKeys();
-    final profiles = await _app.repository.getAllProfiles();
-    final collected = <FleetLogEntry>[];
+    try {
+      final keys = await _app.repository.getAllKeys();
+      final profiles = await _app.repository.getAllProfiles();
+      final collected = <FleetLogEntry>[];
 
-    await Future.wait([
-      for (final server in targets)
-        () async {
-          try {
-            final creds = resolveCredentials(server, keys: keys, profiles: profiles);
-            final out = await ssh.exec(
-              creds,
-              journalCommand(lines: 100, os: _app.osForServer(server.id)),
-            );
-            collected.addAll(parseFleetJournal(out, server.name, server.id));
-          } catch (_) {
-            // One unreachable host must not empty the whole merged view — the point of reading a
-            // fleet's logs together is the hosts that *did* answer.
-          }
-        }(),
-    ]);
+      await Future.wait([
+        for (final server in targets)
+          () async {
+            try {
+              final creds = resolveCredentials(server, keys: keys, profiles: profiles);
+              final out = await ssh.exec(
+                creds,
+                journalCommand(lines: 100, os: _app.osForServer(server.id)),
+              );
+              collected.addAll(parseFleetJournal(out, server.name, server.id));
+            } catch (_) {
+              // One unreachable host must not empty the whole merged view — the point of reading a
+              // fleet's logs together is the hosts that *did* answer.
+            }
+          }(),
+      ]);
 
-    collected.sort((a, b) => b.timestamp.compareTo(a.timestamp));
-    _logs = collected;
-    _logsLoading = false;
-    _safeNotify();
+      collected.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+      _logs = collected;
+    } finally {
+      // `finally`, because this flag also gates re-entry at the top. Left set by a throwing
+      // database read it would not merely strand a spinner — it would wedge the Logs tab for the
+      // rest of the session, with no way back but restarting the app.
+      _logsLoading = false;
+      _safeNotify();
+    }
+
+    // Answering the selection as it stands now, not as it stood when the fetch began. Publishing a
+    // merged view for hosts the user has since deselected is the stale-result class that recurs
+    // throughout the Kotlin history (§20 pattern A); here the honest response is simply to ask
+    // again. Bounded by the user's own tapping — each pass starts from the current selection.
+    if (!_disposed && !setEquals(requested, _logServerIds)) await loadLogs();
   }
 
   @override

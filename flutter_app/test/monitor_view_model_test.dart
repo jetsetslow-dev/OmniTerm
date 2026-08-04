@@ -377,6 +377,47 @@ void main() {
       vm.dispose();
     });
 
+    test('an overlapping refresh of the same tab does not land after the newer one', () async {
+      // The host check is not enough: the live timer fires while a manual refresh is in flight, so
+      // two loads of the *same* tab on the *same* host race, and both pass an identity check. This
+      // is what `OperationGeneration` is for — the Kotlin helper the port carried across and, for a
+      // while, never called.
+      await repo.insertServer(server(name: 'a'));
+      final transport = RecordingTransport();
+      final vm = await boot(transport: transport);
+      await Future<void>.delayed(Duration.zero);
+
+      final first = Completer<void>();
+      transport.gate = first;
+      final stale = vm.loadProcesses();
+
+      final second = Completer<void>();
+      transport.gate = second;
+      final fresh = vm.loadProcesses();
+
+      // The newer request answers first.
+      transport.replies = {
+        'ps -eo': '  PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
+            '  2 root 1.0 1.0 100 01:00:00 S fresh-proc\n',
+      };
+      second.complete();
+      await fresh;
+      expect(vm.processes.single.name, 'fresh-proc');
+
+      // …and the one it superseded answers afterwards.
+      transport.replies = {
+        'ps -eo': '  PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
+            '  1 root 9.0 1.0 100 01:00:00 S stale-proc\n',
+      };
+      first.complete();
+      await stale;
+
+      expect(vm.processes.single.name, 'fresh-proc',
+          reason: 'the superseded load must not overwrite the newer result');
+      expect(vm.processesLoading, isFalse);
+      vm.dispose();
+    });
+
     test('a load completing after the screen is closed does not throw', () async {
       // Leaving Monitor while a fetch is in flight is ordinary use; notifying a disposed
       // ChangeNotifier throws, which would crash the app on the way out.

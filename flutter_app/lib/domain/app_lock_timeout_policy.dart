@@ -4,14 +4,28 @@ library;
 const defaultAppLockBackgroundTimeoutMs = 30 * 1000;
 const maxAppLockBackgroundTimeoutMs = 24 * 60 * 60 * 1000;
 
-/// The durations offered as one-tap presets; anything else counts as a custom value.
-const _appLockTimeoutPresetValuesMs = <int>{0, 30 * 1000, 60 * 1000, 300 * 1000};
+/// The durations offered as one-tap presets; anything else counts as a custom value. Derived from
+/// [appLockTimeoutPresets] so a chip can never be offered that this set does not recognise —
+/// which would show the chip selected and the custom field open at the same time.
+final _appLockTimeoutPresetValuesMs = {for (final (_, ms) in appLockTimeoutPresets) ms};
 
 const _appLockUnits = <String, int>{
   'Seconds': 1000,
   'Minutes': 60 * 1000,
   'Hours': 3600 * 1000,
 };
+
+/// The units the screen offers, taken from the same map that parses them so a unit can never be
+/// offered that [parseAppLockCustomDuration] would then reject.
+List<String> get appLockTimeoutUnits => List.unmodifiable(_appLockUnits.keys);
+
+/// The preset durations, as (label, milliseconds), in the Android app's own wording.
+const appLockTimeoutPresets = <(String, int)>[
+  ('Immediately', 0),
+  ('30s', 30 * 1000),
+  ('1 min', 60 * 1000),
+  ('5 min', 300 * 1000),
+];
 
 int normalizeAppLockBackgroundTimeout(int? value) =>
     value?.clamp(0, maxAppLockBackgroundTimeoutMs) ?? defaultAppLockBackgroundTimeoutMs;

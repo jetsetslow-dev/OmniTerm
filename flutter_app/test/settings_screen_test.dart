@@ -260,4 +260,112 @@ void main() {
     expect(await repo.getSetting('sftp_bookmarks_1'), '/srv|||/etc');
     await finish(tester);
   });
+
+  group('the app-lock interval', () {
+    // The Android app has always been able to configure this; the port shipped the policy without
+    // the control, which left every install on the 30-second default with no way to reach it.
+
+    testWidgets('appears only once the lock is on', (tester) async {
+      await pump(tester);
+      expect(find.byKey(const ValueKey('settings.lockTimeout')), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('settings.appLockEnabled')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('settings.lockTimeout')), findsOneWidget);
+      expect(find.text('Immediately'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('a preset is saved under the key the Android app already writes', (tester) async {
+      // `app_lock_grace_ms` is not a spelling choice: an install upgrading from the Kotlin build
+      // must keep the interval it configured, and reading anything else silently reverts it.
+      await pump(tester);
+      await tester.tap(find.byKey(const ValueKey('settings.appLockEnabled')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('settings.lockTimeout.300000')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('settings.save')));
+      await tester.pumpAndSettle();
+
+      expect(await repo.getSetting('app_lock_grace_ms'), '300000');
+      await finish(tester);
+    });
+
+    testWidgets('a stored interval is read back into the chips', (tester) async {
+      await repo.insertSetting('app_lock_enabled', 'true');
+      await repo.insertSetting('app_lock_grace_ms', '60000');
+      await pump(tester);
+
+      final chip = tester.widget<ChoiceChip>(
+        find.byKey(const ValueKey('settings.lockTimeout.60000')),
+      );
+      expect(chip.selected, isTrue, reason: 'the saved interval must be the selected chip');
+      await finish(tester);
+    });
+
+    testWidgets('editing a custom duration down to nothing does not snap to a preset',
+        (tester) async {
+      // The Kotlin bug (its PR #62): deleting the trailing zero from `10` momentarily gives `1`,
+      // which matches the "1 min" preset. Recomputing the mode from the value alone took the text
+      // field away mid-edit, so the value could not be finished.
+      await pump(tester);
+      await tester.tap(find.byKey(const ValueKey('settings.appLockEnabled')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('settings.lockTimeout.custom')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const ValueKey('settings.lockTimeout.value')), '1');
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('settings.lockTimeout.value')),
+        findsOneWidget,
+        reason: 'the field must survive a transient value that happens to match a preset',
+      );
+
+      await tester.enterText(find.byKey(const ValueKey('settings.lockTimeout.value')), '15');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('settings.save')));
+      await tester.pumpAndSettle();
+
+      expect(await repo.getSetting('app_lock_grace_ms'), '${15 * 60 * 1000}');
+      await finish(tester);
+    });
+
+    testWidgets('an empty custom duration blocks Save and says why', (tester) async {
+      // Saving here would keep the previous interval while the screen showed the new one.
+      await pump(tester);
+      await tester.tap(find.byKey(const ValueKey('settings.appLockEnabled')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('settings.lockTimeout.custom')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const ValueKey('settings.lockTimeout.value')), '');
+      await tester.pumpAndSettle();
+
+      final save = tester.widget<FilledButton>(find.byKey(const ValueKey('settings.save')));
+      expect(save.onPressed, isNull);
+      expect(find.textContaining('up to 24 hours'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('non-digits are rejected in the field, not silently dropped later',
+        (tester) async {
+      await pump(tester);
+      await tester.tap(find.byKey(const ValueKey('settings.appLockEnabled')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('settings.lockTimeout.custom')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const ValueKey('settings.lockTimeout.value')), '1o');
+      await tester.pumpAndSettle();
+
+      final field = tester.widget<TextField>(
+        find.byKey(const ValueKey('settings.lockTimeout.value')),
+      );
+      expect(field.controller!.text, '1', reason: 'the filtering must be visible in the field');
+      await finish(tester);
+    });
+  });
 }

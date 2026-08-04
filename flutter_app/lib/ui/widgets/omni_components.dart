@@ -164,6 +164,10 @@ InputDecoration omniInputDecoration(
   /// Persistent guidance under the field, for a choice whose consequence is not obvious from its
   /// label — unlike [hintText], which disappears as soon as the field has a value.
   String? helperText,
+
+  /// Why the current contents cannot be used. Shown in place of [helperText] and turns the border
+  /// red, so an invalid field says so where the value is rather than somewhere else on the screen.
+  String? errorText,
   Widget? prefixIcon,
   Widget? suffixIcon,
 }) {
@@ -172,6 +176,7 @@ InputDecoration omniInputDecoration(
     hintText: hintText,
     labelText: labelText,
     helperText: helperText,
+    errorText: errorText,
     prefixIcon: prefixIcon,
     suffixIcon: suffixIcon,
     filled: true,
