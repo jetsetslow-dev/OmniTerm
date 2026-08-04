@@ -1,0 +1,228 @@
+name: Flutter build & publish
+
+env:
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+  FLUTTER_VERSION: 3.44.8
+  KEYSTORE_PATH: ${{ github.workspace }}/flutter_app/android/release.keystore
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag vMAJOR.MINOR.PATCH[-SuffixN]. Defaults to the current ref's tag."
+        required: false
+        type: string
+      publish_artifacts:
+        description: >-
+          Sign with the real release key and attach the artifacts to a GitHub Release.
+          Off = dry run: an ephemeral key, nothing published.
+        required: true
+        type: boolean
+        default: false
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+# Serialized, not cancelled. Two tags pushed together would otherwise race to publish and the
+# second would find the first's Release already there.
+concurrency:
+  group: flutter-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build signed release artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      attestations: write
+      contents: write
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The version identity is **reused, not reimplemented**. `scripts/release-version.sh` is the
+      # same library the Android release workflow and the local release command already use, so a
+      # tag means one versionCode across every pipeline in this repository rather than two
+      # implementations that agree until one of them is edited.
+      #
+      #   versionCode = major*10_000_000 + minor*100_000 + patch*100 + build
+      #   prerelease  = build 1..98 (its trailing number, or 1)   ·   release = build 99
+      #
+      # Flutter takes exactly those two numbers as --build-name / --build-number.
+      - name: Resolve version identity
+        id: version
+        env:
+          INPUT_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          source scripts/release-version.sh
+
+          if [ -n "${INPUT_TAG:-}" ]; then
+            TAG="$INPUT_TAG"
+          elif [ "${GITHUB_REF_TYPE:-}" = "tag" ]; then
+            TAG="$GITHUB_REF_NAME"
+          else
+            echo "No release tag: push a v* tag or pass release_tag." >&2
+            exit 1
+          fi
+
+          version_validate "$TAG" || { echo "Not a valid release tag: $TAG" >&2; exit 1; }
+
+          # A versionCode is permanent once Play has seen it, so two different tags must never pack
+          # to the same number. The shared library knows how to detect that; ask it.
+          COLLISIONS="$(git tag --list 'v*' | version_collisions "$TAG")"
+          if [ -n "$COLLISIONS" ]; then
+            echo "$TAG shares its versionCode with: $COLLISIONS" >&2
+            exit 1
+          fi
+
+          CODE="$(version_pack "$TAG")"
+          {
+            echo "tag=$TAG"
+            echo "name=${TAG#v}"
+            echo "code=$CODE"
+          } >> "$GITHUB_OUTPUT"
+          echo "Resolved $TAG -> versionName=${TAG#v}, versionCode=$CODE"
+
+      # The packing library has its own tests. Run them against this checkout rather than trusting
+      # that the copy here behaves like the one the tests were written for.
+      - name: Validate the version tooling
+        run: ./scripts/test-release-version.sh
+
+      - name: Check out Flutter SDK
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: flutter/flutter
+          ref: ${{ env.FLUTTER_VERSION }}
+          path: _flutter
+          persist-credentials: false
+      - name: Put Flutter on PATH
+        run: echo "$GITHUB_WORKSPACE/_flutter/bin" >> "$GITHUB_PATH"
+
+      - name: Set up JDK
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.0.0
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Resolve dependencies
+        run: flutter pub get
+        working-directory: flutter_app
+
+      # A release is not the place to discover a red test. The PR gate ran these, but a tag can
+      # point anywhere, so they run again against exactly what is about to be signed.
+      - name: Run tests
+        run: flutter test
+        working-directory: flutter_app
+
+      - name: Decode signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          PUBLISH: ${{ github.event_name == 'push' || inputs.publish_artifacts }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if [ "$PUBLISH" = "true" ]; then
+            test -n "$ANDROID_KEYSTORE_BASE64" || { echo "Missing ANDROID_KEYSTORE_BASE64"; exit 1; }
+            test -n "$STORE_PASSWORD" || { echo "Missing ANDROID_KEYSTORE_PASSWORD"; exit 1; }
+            test -n "$KEY_ALIAS" || { echo "Missing ANDROID_KEY_ALIAS"; exit 1; }
+            test -n "$KEY_PASSWORD" || { echo "Missing ANDROID_KEY_PASSWORD"; exit 1; }
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          else
+            # A dry run signs with a throwaway key generated here. Deliberately *not* the debug key:
+            # an artifact that is signed by something every Android SDK holds is one somebody can
+            # mistake for a real build, and a key valid for a day cannot be.
+            keytool -genkeypair -keystore "$KEYSTORE_PATH" -storepass dryrun -keypass dryrun \
+              -alias dryrun -dname CN=OmniTerm-Dry-Run -keyalg RSA -keysize 2048 -validity 1
+          fi
+
+      - name: Build signed App Bundle and APK
+        env:
+          PUBLISH: ${{ github.event_name == 'push' || inputs.publish_artifacts }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD || 'dryrun' }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || 'dryrun' }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || 'dryrun' }}
+          BUILD_NAME: ${{ steps.version.outputs.name }}
+          BUILD_NUMBER: ${{ steps.version.outputs.code }}
+        run: |
+          set -euo pipefail
+          flutter build appbundle --release \
+            --build-name="$BUILD_NAME" --build-number="$BUILD_NUMBER"
+          flutter build apk --release \
+            --build-name="$BUILD_NAME" --build-number="$BUILD_NUMBER"
+        working-directory: flutter_app
+
+      # Signing is done. Remove the key before any later step — artifact upload, third-party
+      # actions — can see it, even though the runner is ephemeral.
+      - name: Delete signing key
+        if: always()
+        run: rm -f "$KEYSTORE_PATH"
+
+      # What was actually produced, not what was asked for. A build that silently kept the pubspec's
+      # placeholder version would still upload happily and then be rejected by Play, days later.
+      - name: Verify artifact identity
+        env:
+          EXPECTED_NAME: ${{ steps.version.outputs.name }}
+          EXPECTED_CODE: ${{ steps.version.outputs.code }}
+        run: |
+          set -euo pipefail
+          AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort -V | tail -1)"
+          BADGING="$("$AAPT" dump badging build/app/outputs/flutter-apk/app-release.apk)"
+          echo "$BADGING" | head -3
+
+          grep -q "package: name='com.jetsetslow.omniterm.app'" <<<"$BADGING" || {
+            echo "Unexpected applicationId" >&2; exit 1; }
+          grep -q "versionCode='$EXPECTED_CODE'" <<<"$BADGING" || {
+            echo "versionCode is not $EXPECTED_CODE" >&2; exit 1; }
+          grep -q "versionName='$EXPECTED_NAME'" <<<"$BADGING" || {
+            echo "versionName is not $EXPECTED_NAME" >&2; exit 1; }
+          grep -q "application-debuggable" <<<"$BADGING" && {
+            echo "Release artifact is debuggable" >&2; exit 1; }
+
+          # R8 must have run. An unminified release build is a different artifact from the one the
+          # PR gate proved, and its absence is exactly how a shrinker misconfiguration ships.
+          test -s build/app/outputs/mapping/release/mapping.txt || {
+            echo "No R8 mapping — the release build was not minified" >&2; exit 1; }
+        working-directory: flutter_app
+
+      - name: Collect artifacts
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          cp flutter_app/build/app/outputs/bundle/release/app-release.aab \
+            "artifacts/OmniTerm-${TAG}.aab"
+          cp flutter_app/build/app/outputs/flutter-apk/app-release.apk \
+            "artifacts/OmniTerm-${TAG}.apk"
+          (cd artifacts && sha256sum -- ./* > SHA256SUMS.txt)
+          cat artifacts/SHA256SUMS.txt
+
+      # The R8 mapping is deliberately NOT uploaded as a workflow artifact: in a public repository
+      # those are public, and a mapping file is the deobfuscation key for the shipped binary.
+      - name: Upload artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v5.0.0
+        with:
+          name: omniterm-flutter-${{ steps.version.outputs.tag }}-attempt-${{ github.run_attempt }}
+          path: artifacts/*
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Attest build provenance
+        if: github.event_name == 'push' || inputs.publish_artifacts
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v3.0.0
+        with:
+          subject-path: artifacts/*

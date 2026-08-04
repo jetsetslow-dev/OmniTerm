@@ -19,10 +19,11 @@
 > upload/download** over a real transport needs the lab too, so it is opt-in by nature — see §19.
 > Then Maestro as the CI smoke suite.
 >
-> **Task #10 has started** (session 55): `.github/workflows/flutter-pr-check.yml` gates format,
-> analyze, tests, the **release** APK/AAB, an unsigned iOS build, and both device suites — see
-> §12.1. **Next: the release/publish workflow**, whose version identity must reuse
-> `scripts/release-version.sh` rather than reimplement the packing.
+> **Task #10 is largely done** (sessions 55-56): `flutter-pr-check.yml` gates format, analyze,
+> tests, the **release** APK/AAB, an unsigned iOS build and both device suites;
+> `flutter-release.yml` builds signed, version-identified artifacts from a tag, reusing
+> `scripts/release-version.sh`. Both are in §12.1. **Left in #10:** Maestro as the CI smoke suite,
+> and Play publication (needs a service-account secret and a track decision).
 >
 > **Remaining #8 work:** iOS SMB (§18).
 >
@@ -582,10 +583,36 @@ policy allows a specific SHA-pinned set, and `actions/checkout` against `flutter
 pinned tag needs nothing outside it. The version is pinned rather than `stable`: a toolchain that
 moves on its own turns an unrelated PR red.
 
-**Not built yet:** the release/publish workflow. The version identity it needs already exists and
-must be *reused, not reimplemented* — `scripts/release-version.sh` packs a tag into an Android
-`versionCode` (`major*10⁷ + minor*10⁵ + patch*100 + build`, bare release = build 99) and Flutter
-takes exactly that as `--build-name`/`--build-number`.
+`.github/workflows/flutter-release.yml` — tag-driven (`v*`), plus a `workflow_dispatch` whose
+`publish_artifacts` defaults to **off** so the whole pipeline can be exercised without secrets and
+without publishing anything.
+
+**The version identity is reused, not reimplemented.** The workflow sources
+`scripts/release-version.sh`, the same library the Android release workflow and the local release
+command already use, so one tag means one `versionCode` everywhere:
+
+```
+versionCode = major*10_000_000 + minor*100_000 + patch*100 + build
+prerelease  = build 1..98 (its trailing number, or 1)     release = build 99
+```
+
+Flutter takes exactly those numbers as `--build-name` / `--build-number`. The workflow also runs
+`version_collisions` against every existing tag — a `versionCode` is permanent once Play has seen
+it, so two tags packing to the same number has to be caught before the build, not after.
+
+What it verifies about what it actually produced, rather than what it asked for:
+
+- the APK's `package`, `versionCode` and `versionName` match the resolved tag (`aapt2 dump badging`)
+- it is **not** debuggable
+- an R8 mapping exists — an unminified release build is a different artifact from the one the PR
+  gate proved, and its absence is how a shrinker misconfiguration ships
+
+The decoded key is deleted immediately after signing, before any later step can see it, and the R8
+mapping is deliberately **not** uploaded as a workflow artifact: in a public repository those are
+public, and a mapping is the deobfuscation key for the shipped binary.
+
+**Deliberately not included: Play publication.** That needs a service-account secret and a track
+decision, and the Flutter build is nowhere near ready to be uploaded to a store.
 
 ---
 
@@ -3544,3 +3571,40 @@ by it.
 
 **Verified — release APK built, installed and opened on Android 15; `dart format`, `flutter analyze
 --fatal-infos` and the host suite all clean; workflow YAML parses.**
+
+---
+
+### Session 56 — the release workflow, run for real before shipping it (task #10)
+
+`.github/workflows/flutter-release.yml`. Tag-driven, with a dispatch whose `publish_artifacts`
+defaults to **off** so the pipeline can be exercised end to end without secrets. §12.1 has the
+detail.
+
+**The version identity is reused, not reimplemented** — the workflow sources
+`scripts/release-version.sh`, the same library the Android release workflow and the local release
+command already use. Two implementations of a packing scheme agree right up until one of them is
+edited, and a `versionCode` is permanent once Play has seen it. The workflow also asks that library
+for collisions against every existing tag before it builds anything.
+
+**Everything that could be run locally was run, because a pipeline nobody has executed is exactly
+what §20 pattern L is about.** Not "the YAML parses":
+
+| Checked | Result |
+|---|---|
+| `version_validate` / `version_pack` on real and malformed tags | `v1.2.3` → 10200399, `v1.2.3-Beta2` → 10200302, `v0.9.247` → 924799; `vNOPE` and `v1.2.3.4` rejected |
+| `version_collisions` against the repo's 36 existing tags | none |
+| `./scripts/test-release-version.sh` | passes |
+| `flutter build apk --release --build-name=1.2.3 --build-number=10200399` with a generated key | built |
+| The identity check the workflow runs (`aapt2 dump badging`) | package, versionCode **10200399**, versionName **1.2.3**, not debuggable — all as resolved |
+| R8 mapping present | 145,534 lines |
+| **Which key actually signed it** (`apksigner --print-certs`) | `CN=OmniTerm-Dry-Run` — the supplied key, *not* Android's debug key, which is the §55 signing fix proven rather than assumed |
+| `flutter build appbundle --release` | built |
+
+That last row is the one worth having. The signing change looked right when it was written; what
+makes it true is a certificate DN read back out of the artifact.
+
+**Deliberately not included: Play publication.** It needs a service-account secret and a track
+decision, and the Flutter build is nowhere near ready for a store.
+
+**Verified — the version tooling, the signed release build, the artifact-identity check and the
+App Bundle build all exercised locally; both workflow files parse.**
