@@ -39,12 +39,12 @@ class TierFields {
   });
 
   TierFields.fromTiers(MetricTiers tiers)
-      : warnAt = _number(tiers.warnAt),
-        highAt = _number(tiers.highAt),
-        criticalAt = _number(tiers.criticalAt),
-        warnPenalty = '${tiers.warnPenalty}',
-        highPenalty = '${tiers.highPenalty}',
-        criticalPenalty = '${tiers.criticalPenalty}';
+    : warnAt = _number(tiers.warnAt),
+      highAt = _number(tiers.highAt),
+      criticalAt = _number(tiers.criticalAt),
+      warnPenalty = '${tiers.warnPenalty}',
+      highPenalty = '${tiers.highPenalty}',
+      criticalPenalty = '${tiers.criticalPenalty}';
 
   String warnAt;
   String highAt;
@@ -142,11 +142,11 @@ HealthScoringConfig? configFrom(Map<HealthMetric, TierFields> fields) {
 
 /// Splits a config back into editable fields.
 Map<HealthMetric, TierFields> fieldsFrom(HealthScoringConfig config) => {
-      HealthMetric.cpu: TierFields.fromTiers(config.cpu),
-      HealthMetric.memory: TierFields.fromTiers(config.mem),
-      HealthMetric.disk: TierFields.fromTiers(config.disk),
-      HealthMetric.latency: TierFields.fromTiers(config.latency),
-    };
+  HealthMetric.cpu: TierFields.fromTiers(config.cpu),
+  HealthMetric.memory: TierFields.fromTiers(config.mem),
+  HealthMetric.disk: TierFields.fromTiers(config.disk),
+  HealthMetric.latency: TierFields.fromTiers(config.latency),
+};
 
 String? _percentError(String text) => _countError(text, min: 0, max: 100);
 

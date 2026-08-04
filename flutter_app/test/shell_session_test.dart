@@ -93,8 +93,11 @@ void main() {
       channel.emit('later\r\n');
       await settle();
 
-      expect(session.snapshot.rows.first.text, reading,
-          reason: 'the line being read stays put while output arrives below');
+      expect(
+        session.snapshot.rows.first.text,
+        reading,
+        reason: 'the line being read stays put while output arrives below',
+      );
     });
 
     test('trimming the scrollback does not slide the content being read', () async {
@@ -116,7 +119,11 @@ void main() {
       }
       await settle();
 
-      expect(session.emulator.trimmedRowCount, greaterThan(0), reason: 'the head really was trimmed');
+      expect(
+        session.emulator.trimmedRowCount,
+        greaterThan(0),
+        reason: 'the head really was trimmed',
+      );
       expect(session.snapshot.rows.first.text, reading);
     });
 
@@ -130,8 +137,7 @@ void main() {
 
       session.write(Uint8List.fromList('x'.codeUnits));
 
-      expect(session.followTail, isTrue,
-          reason: 'keystrokes landing off-screen is disorienting');
+      expect(session.followTail, isTrue, reason: 'keystrokes landing off-screen is disorienting');
     });
   });
 

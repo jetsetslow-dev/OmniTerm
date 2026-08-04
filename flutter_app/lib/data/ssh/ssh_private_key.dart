@@ -73,8 +73,7 @@ bool privateKeyNeedsPassphrase(String privateKey) {
   }
 }
 
-String? _blankToNull(String? value) =>
-    (value == null || value.trim().isEmpty) ? null : value;
+String? _blankToNull(String? value) => (value == null || value.trim().isEmpty) ? null : value;
 
 /// Suppresses parser messages that would leak an internal representation instead of explaining
 /// anything — the Kotlin filtered JSch's `[B@…` byte-array dump for exactly this reason.

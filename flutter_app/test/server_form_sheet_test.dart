@@ -9,31 +9,31 @@ import 'package:omniterm/ui/theme/theme.dart';
 /// primary job at all — plus that the two security controls survive the trip through the widget.
 void main() {
   Server saved() => Server(
-        id: 3,
-        name: 'nas',
-        host: '10.0.0.2',
-        port: 2222,
-        username: 'root',
-        serverColor: 'Default',
-        authType: 'password',
-        authPassword: 'stored-secret',
-        sudoPassword: '',
-        notes: '',
-        keepAlive: 30,
-        sshCompression: false,
-        persistentSession: false,
-        proxyCommand: '',
-        proxyType: 'none',
-        proxyHost: '',
-        proxyPort: 0,
-        proxyUser: '',
-        proxyPassword: '',
-        agentForwarding: false,
-        healthScore: 100,
-        lastLatency: 0,
-        status: 'offline',
-        authStatus: 'unknown',
-      );
+    id: 3,
+    name: 'nas',
+    host: '10.0.0.2',
+    port: 2222,
+    username: 'root',
+    serverColor: 'Default',
+    authType: 'password',
+    authPassword: 'stored-secret',
+    sudoPassword: '',
+    notes: '',
+    keepAlive: 30,
+    sshCompression: false,
+    persistentSession: false,
+    proxyCommand: '',
+    proxyType: 'none',
+    proxyHost: '',
+    proxyPort: 0,
+    proxyUser: '',
+    proxyPassword: '',
+    agentForwarding: false,
+    healthScore: 100,
+    lastLatency: 0,
+    status: 'offline',
+    authStatus: 'unknown',
+  );
 
   late List<Server> savedRows;
   late List<Server> tested;
@@ -130,8 +130,11 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('serverForm.save')));
     await tester.pumpAndSettle();
-    expect(savedRows, isEmpty,
-        reason: 'the new host presents a different key, which was never approved');
+    expect(
+      savedRows,
+      isEmpty,
+      reason: 'the new host presents a different key, which was never approved',
+    );
   });
 
   testWidgets('validation blocks an incomplete form and names the missing field', (tester) async {
@@ -166,8 +169,11 @@ void main() {
           matching: find.byType(EditableText),
         ),
       );
-      expect(field.controller.text, isEmpty,
-          reason: 'a saved password must never be rendered into a text field');
+      expect(
+        field.controller.text,
+        isEmpty,
+        reason: 'a saved password must never be rendered into a text field',
+      );
       expect(field.obscureText, isTrue);
       expect(find.text('Saved — leave blank to keep'), findsOneWidget);
     });
@@ -226,10 +232,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('serverForm.proxyHost')), findsNothing);
 
-    await tester.drag(
-      find.byKey(const ValueKey('serverForm.tab.advanced')),
-      const Offset(0, -400),
-    );
+    await tester.drag(find.byKey(const ValueKey('serverForm.tab.advanced')), const Offset(0, -400));
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('serverForm.proxyType')));
     await tester.pumpAndSettle();
@@ -257,12 +260,11 @@ void main() {
     expect(savedRows.single.authPassword, 'stored-secret');
   });
 
-  testWidgets('without a tester wired the button is disabled rather than assuming success',
-      (tester) async {
+  testWidgets('without a tester wired the button is disabled rather than assuming success', (
+    tester,
+  ) async {
     await pump(tester, withTester: false);
-    final button = tester.widget<OutlinedButton>(
-      find.byKey(const ValueKey('serverForm.test')),
-    );
+    final button = tester.widget<OutlinedButton>(find.byKey(const ValueKey('serverForm.test')));
     expect(button.onPressed, isNull);
   });
 }

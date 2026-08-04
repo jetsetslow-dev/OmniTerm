@@ -20,13 +20,23 @@ void main() {
     });
 
     test('unescapes three-digit octal escapes', () {
-      final events = TmuxControlParser().feed(b(r'%output %0 line\015\012next' '\n'));
+      final events = TmuxControlParser().feed(
+        b(
+          r'%output %0 line\015\012next'
+          '\n',
+        ),
+      );
       final out = events.single as TmuxOutput;
       expect(out.data, raw([...utf8.encode('line'), 0x0D, 0x0A, ...utf8.encode('next')]));
     });
 
     test('decodes an escaped ESC and backslash', () {
-      final events = TmuxControlParser().feed(b(r'%output %0 \033[31m\134' '\n'));
+      final events = TmuxControlParser().feed(
+        b(
+          r'%output %0 \033[31m\134'
+          '\n',
+        ),
+      );
       final out = events.single as TmuxOutput;
       expect(out.data, raw([0x1B, 0x5B, 0x33, 0x31, 0x6D, 0x5C]));
     });
@@ -41,7 +51,16 @@ void main() {
     });
 
     test('a backslash not followed by three octal digits is literal', () {
-      final out = TmuxControlParser().feed(b(r'%output %0 a\09b' '\n')).single as TmuxOutput;
+      final out =
+          TmuxControlParser()
+                  .feed(
+                    b(
+                      r'%output %0 a\09b'
+                      '\n',
+                    ),
+                  )
+                  .single
+              as TmuxOutput;
       // \09 is not three octal digits (9 is out of range), so it stays verbatim.
       expect(utf8.decode(out.data), r'a\09b');
     });
@@ -53,9 +72,8 @@ void main() {
     });
 
     test('%extended-output skips reserved args up to a standalone colon', () {
-      final out = TmuxControlParser()
-          .feed(b('%extended-output %1 12345 : payload\n'))
-          .single as TmuxOutput;
+      final out =
+          TmuxControlParser().feed(b('%extended-output %1 12345 : payload\n')).single as TmuxOutput;
       expect(out.paneId, '%1');
       expect(utf8.decode(out.data), 'payload');
     });
@@ -90,9 +108,7 @@ void main() {
 
   group('TmuxControlParser — replies', () {
     test('collects a %begin/%end block body', () {
-      final events = TmuxControlParser().feed(
-        b('%begin 1 1 0\nline one\nline two\n%end 1 1 0\n'),
-      );
+      final events = TmuxControlParser().feed(b('%begin 1 1 0\nline one\nline two\n%end 1 1 0\n'));
       expect(events.single, const TmuxReply('line one\nline two', isError: false));
     });
 
@@ -103,9 +119,7 @@ void main() {
 
     test('a body line starting with % is body, not a notification', () {
       // list-panes prints pane ids, so this is the normal case rather than an edge case.
-      final events = TmuxControlParser().feed(
-        b('%begin 1 1 0\n%0\n%1\n%end 1 1 0\n'),
-      );
+      final events = TmuxControlParser().feed(b('%begin 1 1 0\n%0\n%1\n%end 1 1 0\n'));
       expect(events, hasLength(1), reason: 'no stray notifications may escape the block');
       expect(events.single, const TmuxReply('%0\n%1', isError: false));
     });
@@ -125,12 +139,22 @@ void main() {
 
   group('TmuxControlParser — notifications', () {
     test('parses %session-changed', () {
-      final events = TmuxControlParser().feed(b(r'%session-changed $2 work' '\n'));
+      final events = TmuxControlParser().feed(
+        b(
+          r'%session-changed $2 work'
+          '\n',
+        ),
+      );
       expect(events.single, const TmuxSessionChanged(r'$2', 'work'));
     });
 
     test('a session-changed with no name yields an empty name', () {
-      final events = TmuxControlParser().feed(b(r'%session-changed $2' '\n'));
+      final events = TmuxControlParser().feed(
+        b(
+          r'%session-changed $2'
+          '\n',
+        ),
+      );
       expect(events.single, const TmuxSessionChanged(r'$2', ''));
     });
 
@@ -187,8 +211,7 @@ void main() {
     });
 
     test('sendKeysHex chunks a large paste', () {
-      final commands =
-          TmuxControlCommands.sendKeysHex('%0', Uint8List(300), chunkSize: 128);
+      final commands = TmuxControlCommands.sendKeysHex('%0', Uint8List(300), chunkSize: 128);
       expect(commands, hasLength(3), reason: '128 + 128 + 44');
     });
 
@@ -236,10 +259,7 @@ void main() {
     });
 
     test('capturePane clamps a negative history depth', () {
-      expect(
-        TmuxControlCommands.capturePane('%0', -10, includeScreen: true),
-        contains('-S -0'),
-      );
+      expect(TmuxControlCommands.capturePane('%0', -10, includeScreen: true), contains('-S -0'));
     });
   });
 }

@@ -508,8 +508,9 @@ void main() {
       lock.dispose();
     });
 
-    testWidgets('a refused PIN hands the field back instead of dropping the keyboard',
-        (tester) async {
+    testWidgets('a refused PIN hands the field back instead of dropping the keyboard', (
+      tester,
+    ) async {
       // The field is disabled while an attempt is verified, and disabling a TextField takes its
       // focus away. Without giving it back, every wrong PIN closes the keyboard and the user has
       // to tap the field again before they can retype — on the one screen where they are already
@@ -558,10 +559,13 @@ void main() {
     testWidgets('biometrics are offered without being asked for', (tester) async {
       // Not having to type is the whole reason the option exists.
       var asked = 0;
-      final lock = await locked(tester, biometrics: (_) async {
-        asked++;
-        return true;
-      });
+      final lock = await locked(
+        tester,
+        biometrics: (_) async {
+          asked++;
+          return true;
+        },
+      );
       await settle(tester);
 
       expect(asked, 1);

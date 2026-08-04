@@ -19,29 +19,32 @@ void main() {
   late Map<String, Object? Function(MethodCall)> handlers;
   late MethodChannel channel;
 
-  void respond(String method, Object? Function(MethodCall) handler) =>
-      handlers[method] = handler;
+  void respond(String method, Object? Function(MethodCall) handler) => handlers[method] = handler;
 
   setUp(() {
     calls = [];
     handlers = {};
     channel = const MethodChannel(PlatformSmbClient.methodChannelName);
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, (call) async {
-      calls.add(call);
-      final handler = handlers[call.method];
-      if (handler != null) return handler(call);
-      return switch (call.method) {
-        'connect' => 'session-1',
-        'list' => <Object?>[],
-        _ => true,
-      };
-    });
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      channel,
+      (call) async {
+        calls.add(call);
+        final handler = handlers[call.method];
+        if (handler != null) return handler(call);
+        return switch (call.method) {
+          'connect' => 'session-1',
+          'list' => <Object?>[],
+          _ => true,
+        };
+      },
+    );
   });
 
   tearDown(() {
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      channel,
+      null,
+    );
   });
 
   Map<Object?, Object?> argsOf(String method) =>
@@ -75,8 +78,10 @@ void main() {
 
     test('a missing platform implementation says so, and names an alternative', () async {
       // Convention 4: a share that fails on first tap with a channel error tells the user nothing.
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, null);
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        null,
+      );
       final client = PlatformSmbClient(endpoint);
 
       expect(await client.isSupported(), isFalse);
@@ -90,10 +95,13 @@ void main() {
   group('listing', () {
     test('rows become files, with directories sized zero', () async {
       // A directory's "size" on SMB is an implementation detail, not a byte count.
-      respond('list', (_) => [
-            {'name': 'movies', 'isDirectory': true, 'size': 4096, 'modTimeSeconds': 1700000000},
-            {'name': 'clip.mkv', 'isDirectory': false, 'size': 12345, 'modTimeSeconds': 1700000000},
-          ]);
+      respond(
+        'list',
+        (_) => [
+          {'name': 'movies', 'isDirectory': true, 'size': 4096, 'modTimeSeconds': 1700000000},
+          {'name': 'clip.mkv', 'isDirectory': false, 'size': 12345, 'modTimeSeconds': 1700000000},
+        ],
+      );
       final client = PlatformSmbClient(endpoint);
 
       final files = await client.list('/');
@@ -107,10 +115,13 @@ void main() {
     });
 
     test('a malformed row does not take the listing down', () async {
-      respond('list', (_) => [
-            'not a row',
-            {'name': 'ok.txt', 'isDirectory': false, 'size': 1, 'modTimeSeconds': 0},
-          ]);
+      respond(
+        'list',
+        (_) => [
+          'not a row',
+          {'name': 'ok.txt', 'isDirectory': false, 'size': 1, 'modTimeSeconds': 0},
+        ],
+      );
       final client = PlatformSmbClient(endpoint);
 
       expect((await client.list('/')).single.name, 'ok.txt');
@@ -171,7 +182,10 @@ void main() {
       final chunks = calls.where((c) => c.method == 'uploadChunk').toList();
       expect(chunks, hasLength(2));
       expect((chunks.first.arguments as Map)['bytes'], Uint8List.fromList([1, 2, 3]));
-      expect(calls.map((c) => c.method), containsAllInOrder(['uploadBegin', 'uploadChunk', 'uploadEnd']));
+      expect(
+        calls.map((c) => c.method),
+        containsAllInOrder(['uploadBegin', 'uploadChunk', 'uploadEnd']),
+      );
       client.close();
     });
 
@@ -199,7 +213,13 @@ void main() {
       final client = PlatformSmbClient(endpoint);
 
       await expectLater(
-        client.uploadStream('/f', Stream.fromIterable([[1]]), 1),
+        client.uploadStream(
+          '/f',
+          Stream.fromIterable([
+            [1],
+          ]),
+          1,
+        ),
         throwsA(isA<SmbException>()),
       );
 

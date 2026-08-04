@@ -164,10 +164,7 @@ class _StackCardState extends State<_StackCard> {
                 OutlinedButton(
                   key: ValueKey('infra.stack.${stack.name}.down'),
                   onPressed: () => _confirmDown(context, stack),
-                  child: const Text(
-                    'Down',
-                    style: TextStyle(fontSize: 12, color: OmniColors.red),
-                  ),
+                  child: const Text('Down', style: TextStyle(fontSize: 12, color: OmniColors.red)),
                 ),
               ],
             ),
@@ -241,8 +238,8 @@ class _ServiceRow extends StatelessWidget {
               color: service.unhealthy > 0
                   ? OmniColors.red
                   : service.running == service.total
-                      ? OmniColors.green
-                      : OmniColors.textMuted,
+                  ? OmniColors.green
+                  : OmniColors.textMuted,
               shape: BoxShape.circle,
             ),
           ),
@@ -261,8 +258,7 @@ class _ServiceRow extends StatelessWidget {
           if (stack.canRunComposeActions)
             PopupMenuButton<String>(
               key: ValueKey('infra.service.${stack.name}.${service.name}.menu'),
-              onSelected: (action) =>
-                  vm.stackAction(stack, action, service: service.name),
+              onSelected: (action) => vm.stackAction(stack, action, service: service.name),
               itemBuilder: (_) => const [
                 PopupMenuItem(value: 'serviceRestart', child: Text('Restart')),
                 PopupMenuItem(value: 'serviceStop', child: Text('Stop')),
@@ -383,10 +379,7 @@ class ImagesTab extends StatelessWidget {
                                 child: Text(
                                   '${image.repository}:${image.tag}',
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontFamily: OmniFonts.mono,
-                                    fontSize: 13,
-                                  ),
+                                  style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13),
                                 ),
                               ),
                               const SizedBox(width: 6),
@@ -442,7 +435,8 @@ class VolumesTab extends StatelessWidget {
           keyName: 'infra.volumes.prune',
           label: 'Prune unused volumes',
           // Volumes hold data, so this warning is stronger than the images one on purpose.
-          detail: 'Removes every volume no container is using, including named ones. '
+          detail:
+              'Removes every volume no container is using, including named ones. '
               'Any data in them is deleted and cannot be recovered.',
           onConfirm: vm.pruneVolumes,
         ),
@@ -467,10 +461,7 @@ class VolumesTab extends StatelessWidget {
                                 child: Text(
                                   volume.name,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontFamily: OmniFonts.mono,
-                                    fontSize: 13,
-                                  ),
+                                  style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13),
                                 ),
                               ),
                               const SizedBox(width: 6),
@@ -514,9 +505,7 @@ class VolumesTab extends StatelessWidget {
       builder: (dialogContext) => AlertDialog(
         key: const ValueKey('infra.volume.remove.dialog'),
         title: Text('Delete volume ${volume.name}?'),
-        content: const Text(
-          'Everything stored in this volume is deleted and cannot be recovered.',
-        ),
+        content: const Text('Everything stored in this volume is deleted and cannot be recovered.'),
         actions: [
           TextButton(
             key: const ValueKey('infra.volume.remove.cancel'),
@@ -582,10 +571,7 @@ class NetworksTab extends StatelessWidget {
                       ],
                     ),
                     Text(
-                      [
-                        network.driver,
-                        if (network.subnet.isNotEmpty) network.subnet,
-                      ].join(' · '),
+                      [network.driver, if (network.subnet.isNotEmpty) network.subnet].join(' · '),
                       style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
                     ),
                   ],
@@ -685,7 +671,7 @@ class _Stat extends StatelessWidget {
 /// stacks on a machine that could not run one — the same confusion §15.10 fixed for logs.
 String _emptyMessage(InfraViewModel vm, String noun) => vm.runtimes.isEmpty
     ? 'No container runtime on this host. Docker or Podman has to be installed and running before '
-        'OmniTerm can list $noun.'
+          'OmniTerm can list $noun.'
     : 'No $noun on this host';
 
 class _EmptyTab extends StatelessWidget {

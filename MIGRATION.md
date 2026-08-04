@@ -17,7 +17,12 @@
 > **foreground-service notification** in the shade, which needs a live session and therefore the
 > lab. The biometric prompt needs an enrolled fingerprint the emulator does not have. **SFTP
 > upload/download** over a real transport needs the lab too, so it is opt-in by nature — see §19.
-> Then Maestro as the CI smoke suite, and **#10 (CI/CD), which is now the largest unstarted item**.
+> Then Maestro as the CI smoke suite.
+>
+> **Task #10 has started** (session 55): `.github/workflows/flutter-pr-check.yml` gates format,
+> analyze, tests, the **release** APK/AAB, an unsigned iOS build, and both device suites — see
+> §12.1. **Next: the release/publish workflow**, whose version identity must reuse
+> `scripts/release-version.sh` rather than reimplement the packing.
 >
 > **Remaining #8 work:** iOS SMB (§18).
 >
@@ -557,6 +562,30 @@ Flutter pipeline to build:
 - **iOS: `build ipa`** — requires a macOS runner, which the current pipeline has never needed
 - Patrol E2E on an Android emulator; Maestro smoke on both
 - Version identity derived from the tag exactly as today
+
+### 12.1 What exists (session 55)
+
+`.github/workflows/flutter-pr-check.yml` — five gates, shaped like the Kotlin PR check so the
+lessons in it survive: a path-filter job, a companion no-op for every **required** check (a required
+check that does not report leaves a PR unmergeable), SHA-pinned actions only, `permissions:
+contents: read`, per-job timeouts, and `persist-credentials: false`.
+
+| Job | What it catches |
+|---|---|
+| Analyze & Test | `dart format --output=none --set-exit-if-changed`, `flutter analyze --fatal-infos`, `flutter test --coverage` |
+| Build release artifacts | **release** APK and AAB — R8, the shrinker, the release resource pipeline. §20 pattern L: the Kotlin gate built only debug, so the release classpath first failed *after* merge |
+| Build iOS | `flutter build ios --release --no-codesign` on macOS — nothing else in the pipeline would notice iOS breaking (requirement 3) |
+| End-to-end on an emulator | both halves — `flutter test integration_test/*_test.dart` and `patrol test --target integration_test/native` — on API 35, because emulator 37.x crash-loops on API ≥ 36 (§19) |
+
+**The Flutter SDK is checked out, not installed by a third-party action.** The repository's Actions
+policy allows a specific SHA-pinned set, and `actions/checkout` against `flutter/flutter` at a
+pinned tag needs nothing outside it. The version is pinned rather than `stable`: a toolchain that
+moves on its own turns an unrelated PR red.
+
+**Not built yet:** the release/publish workflow. The version identity it needs already exists and
+must be *reused, not reimplemented* — `scripts/release-version.sh` packs a tag into an Android
+`versionCode` (`major*10⁷ + minor*10⁵ + patch*100 + build`, bare release = build 99) and Flutter
+takes exactly that as `--build-name`/`--build-number`.
 
 ---
 
@@ -3475,3 +3504,43 @@ the native side is looking at a real screen.
 
 **Verified — 5 Patrol native flows pass on Android 15, `flutter analyze` clean. No production code
 changed this iteration**, so the host suite and the Dart-only flows stand as verified in session 53.
+
+---
+
+### Session 55 — the pipeline, and what building for release found (task #10)
+
+**Task #10 starts: `.github/workflows/flutter-pr-check.yml`.** Five gates, laid out in §12.1 and
+deliberately shaped like the Kotlin PR check — the path filter, the companion no-op for every
+required check, SHA-pinned actions, `contents: read`, per-job timeouts. Those are not stylistic:
+each one is a lesson §20 recorded from a commit where its absence cost something.
+
+**Writing the gate found two things, both of the same kind: nobody had ever built this app the way
+it ships.**
+
+**1. The release build did not build.** `flutter build apk --release` failed in R8 with 30-odd
+unresolvable references. Every one traces to smbj (§7.1): its Bouncy Castle backend (excluded on
+purpose, so two crypto providers cannot shadow each other), mbassy's optional Jakarta EL filters
+(`javax.el` is not on Android), and its Kerberos authenticator (`org.ietf.jgss`, likewise absent —
+`SmbBridge` authenticates NTLM). `android/app/proguard-rules.pro` now says so, rule by rule, with
+the reason each class is legitimately missing. **This is §20 pattern L exactly** — the topology that
+ships was never the topology that was tested, and every build to date had been debug, where R8 never
+runs. The release APK now builds (70 MB universal), installs, and opens on Android 15.
+
+**2. The release build was signed with the debug key.** The Flutter template does this so
+`flutter run --release` works, which is fine on a workstation and dangerous in a pipeline: the
+artifact installs, looks shippable, and is signed by a key every Android SDK on earth holds. Signing
+now reads `KEYSTORE_PATH`/`STORE_PASSWORD`/`KEY_ALIAS`/`KEY_PASSWORD` from the environment exactly
+as the Android app's own build does, **fails loudly** when a keystore is named but its credentials
+are not, and falls back to debug signing only when no distribution key was supplied at all.
+
+**And one thing the gate would have failed on immediately: the codebase had never been formatted.**
+`dart format` rewrote 173 of 213 files. Done now, in this commit, so the gate is green on arrival
+rather than red for whoever opens the next PR. The reformat is mechanical and the suite is unchanged
+by it.
+
+**Still to build:** the release/publish workflow. Its version identity must *reuse*
+`scripts/release-version.sh` rather than reimplement the packing — Flutter takes the same numbers as
+`--build-name`/`--build-number`.
+
+**Verified — release APK built, installed and opened on Android 15; `dart format`, `flutter analyze
+--fatal-infos` and the host suite all clean; workflow YAML parses.**

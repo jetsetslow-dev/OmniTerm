@@ -46,13 +46,7 @@ class OmniCard extends StatelessWidget {
         children: [
           Padding(padding: const EdgeInsets.all(12), child: child),
           if (leftAccent != null)
-            Positioned(
-              left: 0,
-              top: 0,
-              bottom: 0,
-              width: 3,
-              child: ColoredBox(color: leftAccent!),
-            ),
+            Positioned(left: 0, top: 0, bottom: 0, width: 3, child: ColoredBox(color: leftAccent!)),
         ],
       ),
     );
@@ -60,12 +54,7 @@ class OmniCard extends StatelessWidget {
     if (onTap != null || onLongPress != null) {
       card = Material(
         color: Colors.transparent,
-        child: InkWell(
-          onTap: onTap,
-          onLongPress: onLongPress,
-          borderRadius: radius,
-          child: card,
-        ),
+        child: InkWell(onTap: onTap, onLongPress: onLongPress, borderRadius: radius, child: card),
       );
     }
     if (semanticLabel != null) {
@@ -220,12 +209,7 @@ String formatUptime(int seconds) {
 /// [value] is a percentage. It is clamped rather than trusted: a remote host can report a CPU figure
 /// above 100 (multi-core `top` output does) and an unclamped bar would paint outside its track.
 class GaugeBar extends StatelessWidget {
-  const GaugeBar({
-    super.key,
-    required this.value,
-    required this.color,
-    this.height = 6,
-  });
+  const GaugeBar({super.key, required this.value, required this.color, this.height = 6});
 
   final double value;
   final Color color;

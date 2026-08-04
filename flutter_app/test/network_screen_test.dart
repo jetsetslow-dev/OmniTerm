@@ -108,10 +108,7 @@ void main() {
 
     testWidgets('a result offers the tools that take an address', (tester) async {
       // A scan result is not yet bound to a tool — the user has just found a device.
-      await pump(
-        tester,
-        FakeProbe(open: {'192.168.1.5:22'}, local: '192.168.1.42'),
-      );
+      await pump(tester, FakeProbe(open: {'192.168.1.5:22'}, local: '192.168.1.42'));
       await tester.tap(find.byKey(const ValueKey('network.scan.run')));
       await tester.pumpAndSettle();
 
@@ -145,8 +142,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('network.wol.add')));
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(const ValueKey('network.wol.name')), 'nas');
-      await tester.enterText(
-          find.byKey(const ValueKey('network.wol.mac')), 'aa:bb:cc:dd:ee:ff');
+      await tester.enterText(find.byKey(const ValueKey('network.wol.mac')), 'aa:bb:cc:dd:ee:ff');
       await tester.enterText(find.byKey(const ValueKey('network.wol.ip')), '192.168.4.20');
       await tester.tap(find.byKey(const ValueKey('network.wol.save')));
       await tester.pumpAndSettle();
@@ -252,8 +248,7 @@ void main() {
 
   group('DNS', () {
     testWidgets('lists the records it resolved', (tester) async {
-      final probe = FakeProbe()
-        ..dnsResponses = {fallbackResolvers.first: aRecordResponse()};
+      final probe = FakeProbe()..dnsResponses = {fallbackResolvers.first: aRecordResponse()};
       await pump(tester, probe);
       await goTo(tester, NetworkTab.dnsLookup);
 

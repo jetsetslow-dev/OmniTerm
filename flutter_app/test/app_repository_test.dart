@@ -21,8 +21,7 @@ class FakeSecureStorage extends FlutterSecureStorage {
     WebOptions? webOptions,
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
-  }) async =>
-      _values[key];
+  }) async => _values[key];
 
   @override
   Future<void> write({
@@ -60,50 +59,53 @@ void main() {
     String? authPassword,
     String sudoPassword = '',
     String proxyPassword = '',
-  }) =>
-      Server(
-        id: 0,
-        name: name,
-        host: '10.0.0.2',
-        port: 22,
-        username: 'root',
-        serverColor: 'Default',
-        authType: 'password',
-        authPassword: authPassword,
-        sudoPassword: sudoPassword,
-        proxyPassword: proxyPassword,
-        notes: '',
-        keepAlive: 30,
-        sshCompression: false,
-        persistentSession: false,
-        proxyCommand: '',
-        proxyType: 'none',
-        proxyHost: '',
-        proxyPort: 0,
-        proxyUser: '',
-        agentForwarding: false,
-        healthScore: 100,
-        lastLatency: 0,
-        status: 'offline',
-        authStatus: 'unknown',
-      );
+  }) => Server(
+    id: 0,
+    name: name,
+    host: '10.0.0.2',
+    port: 22,
+    username: 'root',
+    serverColor: 'Default',
+    authType: 'password',
+    authPassword: authPassword,
+    sudoPassword: sudoPassword,
+    proxyPassword: proxyPassword,
+    notes: '',
+    keepAlive: 30,
+    sshCompression: false,
+    persistentSession: false,
+    proxyCommand: '',
+    proxyType: 'none',
+    proxyHost: '',
+    proxyPort: 0,
+    proxyUser: '',
+    agentForwarding: false,
+    healthScore: 100,
+    lastLatency: 0,
+    status: 'offline',
+    authStatus: 'unknown',
+  );
 
   /// Reads a column straight from the table, bypassing the repository's decryption.
   Future<String?> rawServerColumn(int id, String column) async {
     final row = await db
-        .customSelect('SELECT $column AS v FROM servers WHERE id = ?',
-            variables: [Variable.withInt(id)])
+        .customSelect(
+          'SELECT $column AS v FROM servers WHERE id = ?',
+          variables: [Variable.withInt(id)],
+        )
         .getSingle();
     return row.data['v'] as String?;
   }
 
   group('credentials never reach the database in the clear', () {
     test('server passwords are encrypted at rest and decrypted on read', () async {
-      final id = await repo.insertServer(server(
-        authPassword: 'auth-secret',
-        sudoPassword: 'sudo-secret',
-        proxyPassword: 'proxy-secret',
-      ));
+      final id = await repo.insertServer(
+        server(
+          authPassword: 'auth-secret',
+          sudoPassword: 'sudo-secret',
+          proxyPassword: 'proxy-secret',
+        ),
+      );
 
       // The stored bytes must not contain any plaintext.
       for (final column in ['authPassword', 'sudoPassword', 'proxyPassword']) {
@@ -121,14 +123,16 @@ void main() {
 
     test('private keys are encrypted at rest', () async {
       const pem = '-----BEGIN OPENSSH PRIVATE KEY-----\nsecret\n-----END OPENSSH PRIVATE KEY-----';
-      await repo.insertKey(SshKey(
-        id: 0,
-        alias: 'laptop',
-        keyType: 'Ed25519',
-        privateKey: pem,
-        publicKey: 'ssh-ed25519 AAAA',
-        fingerprint: 'SHA256:x',
-      ));
+      await repo.insertKey(
+        SshKey(
+          id: 0,
+          alias: 'laptop',
+          keyType: 'Ed25519',
+          privateKey: pem,
+          publicKey: 'ssh-ed25519 AAAA',
+          fingerprint: 'SHA256:x',
+        ),
+      );
 
       final raw = await db.customSelect('SELECT privateKey AS v FROM ssh_keys').getSingle();
       expect(raw.data['v'] as String, isNot(contains('PRIVATE KEY')));
@@ -138,35 +142,41 @@ void main() {
     });
 
     test('credential-profile and share passwords are encrypted at rest', () async {
-      await repo.insertProfile(CredentialProfile(
-        id: 0,
-        profileName: 'admin',
-        username: 'root',
-        authType: 'password',
-        password: 'profile-secret',
-        groupName: 'General',
-      ));
-      await repo.insertNetworkShare(NetworkShare(
-        id: 0,
-        name: 'media',
-        protocol: 'SMB',
-        address: '10.0.0.5',
-        port: 445,
-        sharePath: 'Public',
-        workgroup: '',
-        username: 'guest',
-        password: 'share-secret',
-        anonymous: false,
-        useHttps: false,
-        notes: '',
-        lastChecked: 0,
-        lastStatus: 'unknown',
-      ));
+      await repo.insertProfile(
+        CredentialProfile(
+          id: 0,
+          profileName: 'admin',
+          username: 'root',
+          authType: 'password',
+          password: 'profile-secret',
+          groupName: 'General',
+        ),
+      );
+      await repo.insertNetworkShare(
+        NetworkShare(
+          id: 0,
+          name: 'media',
+          protocol: 'SMB',
+          address: '10.0.0.5',
+          port: 445,
+          sharePath: 'Public',
+          workgroup: '',
+          username: 'guest',
+          password: 'share-secret',
+          anonymous: false,
+          useHttps: false,
+          notes: '',
+          lastChecked: 0,
+          lastStatus: 'unknown',
+        ),
+      );
 
-      final profileRaw =
-          await db.customSelect('SELECT password AS v FROM credential_profiles').getSingle();
-      final shareRaw =
-          await db.customSelect('SELECT password AS v FROM network_shares').getSingle();
+      final profileRaw = await db
+          .customSelect('SELECT password AS v FROM credential_profiles')
+          .getSingle();
+      final shareRaw = await db
+          .customSelect('SELECT password AS v FROM network_shares')
+          .getSingle();
       expect(profileRaw.data['v'] as String, isNot(contains('secret')));
       expect(shareRaw.data['v'] as String, isNot(contains('secret')));
 
@@ -200,8 +210,11 @@ void main() {
       final pin = await db.appDataDao.getSetting('app_pin');
       final theme = await db.appDataDao.getSetting('theme');
       expect(pin!.value, startsWith(SecretStore.prefix));
-      expect(theme!.value, 'amoled',
-          reason: 'encrypting the theme name would only make it unreadable to no benefit');
+      expect(
+        theme!.value,
+        'amoled',
+        reason: 'encrypting the theme name would only make it unreadable to no benefit',
+      );
 
       expect(await repo.getSetting('app_pin'), '1234');
       expect(await repo.getSetting('theme'), 'amoled');
@@ -215,25 +228,30 @@ void main() {
   group('deleteServerAndDependents', () {
     test('removes the host and everything referencing it', () async {
       final id = await repo.insertServer(server());
-      await repo.insertRule(AlertRulesCompanion.insert(
-        serverId: id,
-        metricName: 'CPU Usage',
-        thresholdValue: 90,
-        severity: 'CRITICAL',
-      ));
+      await repo.insertRule(
+        AlertRulesCompanion.insert(
+          serverId: id,
+          metricName: 'CPU Usage',
+          thresholdValue: 90,
+          severity: 'CRITICAL',
+        ),
+      );
       await repo.insertPortForward(
-          PortForwardsCompanion.insert(serverId: id, name: 'tunnel', bindPort: 8080));
+        PortForwardsCompanion.insert(serverId: id, name: 'tunnel', bindPort: 8080),
+      );
       await repo.insertSetting('sftp_bookmarks_$id', '/var/log');
-      await db.serverDao.insertMetric(MetricHistoryCompanion.insert(
-        serverId: id,
-        timestamp: 1,
-        cpuUsage: 1,
-        ramUsage: 1,
-        diskUsage: 1,
-        latency: 1,
-        networkIn: 1,
-        networkOut: 1,
-      ));
+      await db.serverDao.insertMetric(
+        MetricHistoryCompanion.insert(
+          serverId: id,
+          timestamp: 1,
+          cpuUsage: 1,
+          ramUsage: 1,
+          diskUsage: 1,
+          latency: 1,
+          networkIn: 1,
+          networkOut: 1,
+        ),
+      );
 
       await repo.deleteServerAndDependents(id);
 
@@ -261,9 +279,11 @@ void main() {
       final keep = await repo.insertServer(server(name: 'keep'));
       final drop = await repo.insertServer(server(name: 'drop'));
       await repo.insertPortForward(
-          PortForwardsCompanion.insert(serverId: drop, name: 'gone', bindPort: 1));
+        PortForwardsCompanion.insert(serverId: drop, name: 'gone', bindPort: 1),
+      );
       await repo.insertPortForward(
-          PortForwardsCompanion.insert(serverId: keep, name: 'stays', bindPort: 2));
+        PortForwardsCompanion.insert(serverId: keep, name: 'stays', bindPort: 2),
+      );
 
       await repo.keepOnlyServers({keep});
 
@@ -284,34 +304,41 @@ void main() {
     test('fleet-wide alert rules survive a partial restore', () async {
       final keep = await repo.insertServer(server(name: 'keep'));
       await repo.insertServer(server(name: 'drop'));
-      await repo.insertRule(AlertRulesCompanion.insert(
-        serverId: 0, // fleet-wide
-        metricName: 'CPU Usage',
-        thresholdValue: 90,
-        severity: 'CRITICAL',
-      ));
+      await repo.insertRule(
+        AlertRulesCompanion.insert(
+          serverId: 0, // fleet-wide
+          metricName: 'CPU Usage',
+          thresholdValue: 90,
+          severity: 'CRITICAL',
+        ),
+      );
 
       await repo.keepOnlyServers({keep});
 
-      expect((await repo.getAllRules()).map((r) => r.serverId), [0],
-          reason: 'dropping rule 0 would silently disable fleet-wide alerting');
+      expect(
+        (await repo.getAllRules()).map((r) => r.serverId),
+        [0],
+        reason: 'dropping rule 0 would silently disable fleet-wide alerting',
+      );
     });
   });
 
   group('retention clamping', () {
     test('an out-of-range history limit is clamped, not obeyed', () async {
-      Future<void> addHistory(int time) => repo.insertAlertHistory(AlertHistoryCompanion.insert(
-            activeAlertId: time,
-            serverId: 1,
-            serverName: 'h',
-            metricName: 'CPU Usage',
-            currentValue: 95,
-            thresholdValue: 90,
-            severity: 'CRITICAL',
-            triggeredTime: time,
-            historyTime: time,
-            status: 'RESOLVED',
-          ));
+      Future<void> addHistory(int time) => repo.insertAlertHistory(
+        AlertHistoryCompanion.insert(
+          activeAlertId: time,
+          serverId: 1,
+          serverName: 'h',
+          metricName: 'CPU Usage',
+          currentValue: 95,
+          thresholdValue: 90,
+          severity: 'CRITICAL',
+          triggeredTime: time,
+          historyTime: time,
+          status: 'RESOLVED',
+        ),
+      );
 
       for (var i = 1; i <= 12; i++) {
         await addHistory(i * 10);

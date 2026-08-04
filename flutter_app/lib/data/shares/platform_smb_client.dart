@@ -26,14 +26,14 @@ class SmbEndpoint {
   final bool anonymous;
 
   Map<String, Object?> toArguments() => {
-        'host': host,
-        'port': port,
-        'share': shareName,
-        'domain': domain,
-        'username': username,
-        'password': password,
-        'anonymous': anonymous,
-      };
+    'host': host,
+    'port': port,
+    'share': shareName,
+    'domain': domain,
+    'username': username,
+    'password': password,
+    'anonymous': anonymous,
+  };
 
   /// Identifies the connection without carrying the secret, for logs and error text.
   String get label => '\\\\$host\\$shareName';
@@ -50,12 +50,9 @@ class SmbEndpoint {
 /// The whole SMB surface is confined to this class and the platform folders. The Shares browser and
 /// the cross-endpoint copy engine see only [RemoteFsClient] and cannot tell the difference.
 class PlatformSmbClient extends RemoteFsClient {
-  PlatformSmbClient(
-    this.endpoint, {
-    MethodChannel? channel,
-    EventChannel? transfers,
-  })  : _channel = channel ?? const MethodChannel(methodChannelName),
-        _transfers = transfers ?? const EventChannel(eventChannelName);
+  PlatformSmbClient(this.endpoint, {MethodChannel? channel, EventChannel? transfers})
+    : _channel = channel ?? const MethodChannel(methodChannelName),
+      _transfers = transfers ?? const EventChannel(eventChannelName);
 
   static const methodChannelName = 'omniterm/smb';
   static const eventChannelName = 'omniterm/smb/transfers';
@@ -172,43 +169,47 @@ class PlatformSmbClient extends RemoteFsClient {
     // never materialised whole in memory on either side of the boundary.
     final completer = Completer<int>();
     late StreamSubscription<dynamic> subscription;
-    subscription = _transfers.receiveBroadcastStream({
-      'session': session,
-      'transfer': transferId,
-      'op': 'download',
-      'path': path,
-    }).listen(
-      (event) {
-        final message = event as Map<Object?, Object?>;
-        if (message['transfer'] != transferId) return;
-        final bytes = message['bytes'];
-        if (bytes is Uint8List) {
-          output.add(bytes);
-          copied += bytes.length;
-          total = (message['total'] as num?)?.toInt() ?? total;
-          onProgress?.call(copied, total);
-        }
-        if (message['done'] == true && !completer.isCompleted) completer.complete(copied);
-      },
-      onError: (Object error) {
-        if (completer.isCompleted) return;
-        // A dropped transport mid-download is never retried: the caller's sink already holds a
-        // partial file, and re-running would silently duplicate the bytes already written.
-        _sessionId = null;
-        completer.completeError(
-          SmbException(error is PlatformException
-              ? error.message ?? 'The download failed.'
-              : 'The download failed: $error'),
+    subscription = _transfers
+        .receiveBroadcastStream({
+          'session': session,
+          'transfer': transferId,
+          'op': 'download',
+          'path': path,
+        })
+        .listen(
+          (event) {
+            final message = event as Map<Object?, Object?>;
+            if (message['transfer'] != transferId) return;
+            final bytes = message['bytes'];
+            if (bytes is Uint8List) {
+              output.add(bytes);
+              copied += bytes.length;
+              total = (message['total'] as num?)?.toInt() ?? total;
+              onProgress?.call(copied, total);
+            }
+            if (message['done'] == true && !completer.isCompleted) completer.complete(copied);
+          },
+          onError: (Object error) {
+            if (completer.isCompleted) return;
+            // A dropped transport mid-download is never retried: the caller's sink already holds a
+            // partial file, and re-running would silently duplicate the bytes already written.
+            _sessionId = null;
+            completer.completeError(
+              SmbException(
+                error is PlatformException
+                    ? error.message ?? 'The download failed.'
+                    : 'The download failed: $error',
+              ),
+            );
+          },
+          onDone: () {
+            if (!completer.isCompleted) {
+              completer.completeError(
+                SmbException('The download ended before the file was complete.'),
+              );
+            }
+          },
         );
-      },
-      onDone: () {
-        if (!completer.isCompleted) {
-          completer.completeError(
-            SmbException('The download ended before the file was complete.'),
-          );
-        }
-      },
-    );
 
     _active.add(subscription);
     try {
@@ -292,7 +293,9 @@ class PlatformSmbClient extends RemoteFsClient {
     // Fire-and-forget: `close` is synchronous by contract, and a share that fails to disconnect
     // cleanly is not something the caller can act on.
     unawaited(
-      _channel.invokeMethod<bool>('disconnect', {'session': session}).catchError((Object _) => false),
+      _channel
+          .invokeMethod<bool>('disconnect', {'session': session})
+          .catchError((Object _) => false),
     );
   }
 }

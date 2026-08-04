@@ -44,8 +44,7 @@ class DisconnectSession extends SessionServiceAction {
   final String sessionId;
 
   @override
-  bool operator ==(Object other) =>
-      other is DisconnectSession && other.sessionId == sessionId;
+  bool operator ==(Object other) => other is DisconnectSession && other.sessionId == sessionId;
 
   @override
   int get hashCode => sessionId.hashCode;
@@ -84,8 +83,8 @@ class ResumeSession extends SessionServiceAction {
 /// [isSupported] reports false there rather than pretending (Convention 4).
 class SessionService {
   SessionService({MethodChannel? channel, EventChannel? actions})
-      : _channel = channel ?? const MethodChannel(methodChannelName),
-        _actions = actions ?? const EventChannel(eventChannelName);
+    : _channel = channel ?? const MethodChannel(methodChannelName),
+      _actions = actions ?? const EventChannel(eventChannelName);
 
   static const methodChannelName = 'omniterm/session_service';
   static const eventChannelName = 'omniterm/session_service/actions';
@@ -118,9 +117,7 @@ class SessionService {
   Future<bool> sync(List<BackgroundSession> sessions) async {
     try {
       if (sessions.isEmpty) return await _invoke('stop');
-      return await _invoke('sync', {
-        'sessions': sessions.map((s) => s.toArguments()).toList(),
-      });
+      return await _invoke('sync', {'sessions': sessions.map((s) => s.toArguments()).toList()});
     } catch (_) {
       return false;
     }

@@ -16,7 +16,7 @@ import 'support/fake_secure_storage.dart';
 /// An in-memory remote filesystem: a map of directory path to its entries.
 class FakeFsClient extends RemoteFsClient {
   FakeFsClient({this.homePath = '/home/root', Map<String, List<SftpFile>>? tree})
-      : tree = tree ?? {};
+    : tree = tree ?? {};
 
   final String homePath;
   final Map<String, List<SftpFile>> tree;
@@ -99,51 +99,45 @@ void main() {
   });
 
   Server server({required String name, String status = 'online'}) => Server(
-        id: 0,
-        name: name,
-        host: '10.0.0.1',
-        port: 22,
-        username: 'root',
-        serverColor: 'Default',
-        authType: 'password',
-        authPassword: 'pw',
-        sudoPassword: '',
-        notes: '',
-        keepAlive: 30,
-        sshCompression: false,
-        persistentSession: false,
-        proxyCommand: '',
-        proxyType: 'none',
-        proxyHost: '',
-        proxyPort: 0,
-        proxyUser: '',
-        proxyPassword: '',
-        agentForwarding: false,
-        healthScore: 100,
-        lastLatency: 0,
-        status: status,
-        authStatus: 'ok',
-      );
+    id: 0,
+    name: name,
+    host: '10.0.0.1',
+    port: 22,
+    username: 'root',
+    serverColor: 'Default',
+    authType: 'password',
+    authPassword: 'pw',
+    sudoPassword: '',
+    notes: '',
+    keepAlive: 30,
+    sshCompression: false,
+    persistentSession: false,
+    proxyCommand: '',
+    proxyType: 'none',
+    proxyHost: '',
+    proxyPort: 0,
+    proxyUser: '',
+    proxyPassword: '',
+    agentForwarding: false,
+    healthScore: 100,
+    lastLatency: 0,
+    status: status,
+    authStatus: 'ok',
+  );
 
   SftpFile entry(String name, {bool dir = false, int size = 10, int modified = 0}) =>
-      SftpFile(
-        name: name,
-        isDirectory: dir,
-        size: size,
-        modDate: '',
-        modTimeSeconds: modified,
-      );
+      SftpFile(name: name, isDirectory: dir, size: size, modDate: '', modTimeSeconds: modified);
 
   FakeFsClient homeTree() => FakeFsClient(
-        tree: {
-          '/home/root': [
-            entry('docs', dir: true),
-            entry('notes.txt', size: 120),
-            entry('.hidden', size: 5),
-          ],
-          '/home/root/docs': [entry('report.pdf', size: 900)],
-        },
-      );
+    tree: {
+      '/home/root': [
+        entry('docs', dir: true),
+        entry('notes.txt', size: 120),
+        entry('.hidden', size: 5),
+      ],
+      '/home/root/docs': [entry('report.pdf', size: 900)],
+    },
+  );
 
   Future<SftpViewModel> boot({RemoteFsClient? client}) async {
     await app.start();
@@ -217,7 +211,10 @@ void main() {
     });
 
     test('going up walks the tree and stops at the root', () async {
-      final client = FakeFsClient(homePath: '/a/b/c', tree: {'/a/b/c': [], '/a/b': [], '/a': [], '/': []});
+      final client = FakeFsClient(
+        homePath: '/a/b/c',
+        tree: {'/a/b/c': [], '/a/b': [], '/a': [], '/': []},
+      );
       final vm = await booted(client);
 
       await vm.goUp();
@@ -289,8 +286,10 @@ void main() {
       expect(vm.hasSelection, isFalse);
 
       vm.selectAllVisible();
-      expect(vm.selectedNames, {'docs', 'notes.txt'},
-          reason: 'the hidden file is not on screen, so it is not selected');
+      expect(vm.selectedNames, {
+        'docs',
+        'notes.txt',
+      }, reason: 'the hidden file is not on screen, so it is not selected');
       vm.dispose();
     });
 
@@ -334,8 +333,11 @@ void main() {
 
       expect(await vm.createDirectory('new'), isNull);
       expect(client.created, ['/home/root/new']);
-      expect(client.listed.length, greaterThan(listings),
-          reason: 'the listing must reflect what the server did, not what was asked');
+      expect(
+        client.listed.length,
+        greaterThan(listings),
+        reason: 'the listing must reflect what the server did, not what was asked',
+      );
       vm.dispose();
     });
 

@@ -24,9 +24,19 @@ String psRow({
   String workdir = '/srv/web',
   String configs = 'docker-compose.yml',
   String created = '2026-08-01 10:00:00 +0000 UTC',
-}) =>
-    [runtime, id, name, image, status, ports, project, service, workdir, configs, created]
-        .join('\t');
+}) => [
+  runtime,
+  id,
+  name,
+  image,
+  status,
+  ports,
+  project,
+  service,
+  workdir,
+  configs,
+  created,
+].join('\t');
 
 void main() {
   late AppDatabase db;
@@ -45,31 +55,31 @@ void main() {
   });
 
   Server server({required String name, String status = 'online'}) => Server(
-        id: 0,
-        name: name,
-        host: '10.0.0.1',
-        port: 22,
-        username: 'root',
-        serverColor: 'Default',
-        authType: 'password',
-        authPassword: 'pw',
-        sudoPassword: '',
-        notes: '',
-        keepAlive: 30,
-        sshCompression: false,
-        persistentSession: false,
-        proxyCommand: '',
-        proxyType: 'none',
-        proxyHost: '',
-        proxyPort: 0,
-        proxyUser: '',
-        proxyPassword: '',
-        agentForwarding: false,
-        healthScore: 100,
-        lastLatency: 0,
-        status: status,
-        authStatus: 'ok',
-      );
+    id: 0,
+    name: name,
+    host: '10.0.0.1',
+    port: 22,
+    username: 'root',
+    serverColor: 'Default',
+    authType: 'password',
+    authPassword: 'pw',
+    sudoPassword: '',
+    notes: '',
+    keepAlive: 30,
+    sshCompression: false,
+    persistentSession: false,
+    proxyCommand: '',
+    proxyType: 'none',
+    proxyHost: '',
+    proxyPort: 0,
+    proxyUser: '',
+    proxyPassword: '',
+    agentForwarding: false,
+    healthScore: 100,
+    lastLatency: 0,
+    status: status,
+    authStatus: 'ok',
+  );
 
   Future<InfraViewModel> boot({RecordingTransport? transport}) async {
     await app.start();
@@ -94,12 +104,14 @@ void main() {
     test('containers are parsed and rolled up into stacks', () async {
       await repo.insertServer(server(name: 'nas'));
       final vm = await boot(
-        transport: RecordingTransport(replies: {
-          'ps -a --no-trunc': [
-            psRow(id: 'a1', name: 'web_front_1', service: 'front'),
-            psRow(id: 'a2', name: 'web_db_1', service: 'db', ports: '—'),
-          ].join('\n'),
-        }),
+        transport: RecordingTransport(
+          replies: {
+            'ps -a --no-trunc': [
+              psRow(id: 'a1', name: 'web_front_1', service: 'front'),
+              psRow(id: 'a2', name: 'web_db_1', service: 'db', ports: '—'),
+            ].join('\n'),
+          },
+        ),
       );
       await Future<void>.delayed(Duration.zero);
       await vm.load();
@@ -117,28 +129,36 @@ void main() {
     test('restart counts are attached, keyed by runtime and id', () async {
       await repo.insertServer(server(name: 'nas'));
       final vm = await boot(
-        transport: RecordingTransport(replies: {
-          'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1'),
-          'inspect': 'docker\ta1\t7',
-        }),
+        transport: RecordingTransport(
+          replies: {
+            'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1'),
+            'inspect': 'docker\ta1\t7',
+          },
+        ),
       );
       await Future<void>.delayed(Duration.zero);
       await vm.load();
 
       expect(vm.containers.single.restartCount, 7);
-      expect(vm.stacks.single.restartCount, 7,
-          reason: 'a stack that is "running" but restarted repeatedly is not healthy');
+      expect(
+        vm.stacks.single.restartCount,
+        7,
+        reason: 'a stack that is "running" but restarted repeatedly is not healthy',
+      );
       vm.dispose();
     });
 
     test('an image used by a container is marked in use', () async {
       await repo.insertServer(server(name: 'nas'));
       final vm = await boot(
-        transport: RecordingTransport(replies: {
-          'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1', image: 'nginx:latest'),
-          'images --no-trunc': 'docker\tsha256:abc\tnginx\tlatest\t50MB\t2 days ago\n'
-              'docker\tsha256:def\tredis\t7\t30MB\t3 days ago',
-        }),
+        transport: RecordingTransport(
+          replies: {
+            'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1', image: 'nginx:latest'),
+            'images --no-trunc':
+                'docker\tsha256:abc\tnginx\tlatest\t50MB\t2 days ago\n'
+                'docker\tsha256:def\tredis\t7\t30MB\t3 days ago',
+          },
+        ),
       );
       await Future<void>.delayed(Duration.zero);
       await vm.load();
@@ -153,10 +173,12 @@ void main() {
       // offer to delete an image that is actually running.
       await repo.insertServer(server(name: 'nas'));
       final vm = await boot(
-        transport: RecordingTransport(replies: {
-          'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1', image: 'nginx:latest'),
-          'images --no-trunc': 'podman\tsha256:abc\tnginx\tlatest\t50MB\t2 days ago',
-        }),
+        transport: RecordingTransport(
+          replies: {
+            'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1', image: 'nginx:latest'),
+            'images --no-trunc': 'podman\tsha256:abc\tnginx\tlatest\t50MB\t2 days ago',
+          },
+        ),
       );
       await Future<void>.delayed(Duration.zero);
       await vm.load();
@@ -169,9 +191,9 @@ void main() {
   group('failures', () {
     test('a transport failure clears the lists rather than showing stale rows', () async {
       await repo.insertServer(server(name: 'nas'));
-      final transport = RecordingTransport(replies: {
-        'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1'),
-      });
+      final transport = RecordingTransport(
+        replies: {'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1')},
+      );
       final vm = await boot(transport: transport);
       await Future<void>.delayed(Duration.zero);
       await vm.load();
@@ -182,8 +204,11 @@ void main() {
 
       expect(vm.error, contains('connection reset'));
       expect(vm.containers, isEmpty, reason: 'stale rows presented as current state mislead');
-      expect(vm.downedStacks, isEmpty,
-          reason: 'a transport failure is no evidence that a stack is down');
+      expect(
+        vm.downedStacks,
+        isEmpty,
+        reason: 'a transport failure is no evidence that a stack is down',
+      );
       vm.dispose();
     });
 
@@ -215,9 +240,9 @@ void main() {
     test('a live stack is remembered', () async {
       final id = await repo.insertServer(server(name: 'nas'));
       final vm = await boot(
-        transport: RecordingTransport(replies: {
-          'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1'),
-        }),
+        transport: RecordingTransport(
+          replies: {'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1')},
+        ),
       );
       await Future<void>.delayed(Duration.zero);
       await vm.load();
@@ -231,9 +256,9 @@ void main() {
 
     test('a stack that disappears is reported as down, not forgotten', () async {
       await repo.insertServer(server(name: 'nas'));
-      final transport = RecordingTransport(replies: {
-        'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1'),
-      });
+      final transport = RecordingTransport(
+        replies: {'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1')},
+      );
       final vm = await boot(transport: transport);
       await Future<void>.delayed(Duration.zero);
       await vm.load();
@@ -243,8 +268,11 @@ void main() {
       await vm.load();
 
       expect(vm.stacks, isEmpty);
-      expect(vm.downedStacks.single.project, 'web',
-          reason: 'it can be brought back up, so it must stay visible');
+      expect(
+        vm.downedStacks.single.project,
+        'web',
+        reason: 'it can be brought back up, so it must stay visible',
+      );
       vm.dispose();
     });
 
@@ -253,9 +281,11 @@ void main() {
       // so there is nothing actionable to record.
       final id = await repo.insertServer(server(name: 'nas'));
       final vm = await boot(
-        transport: RecordingTransport(replies: {
-          'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1', workdir: '', configs: ''),
-        }),
+        transport: RecordingTransport(
+          replies: {
+            'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1', workdir: '', configs: ''),
+          },
+        ),
       );
       await Future<void>.delayed(Duration.zero);
       await vm.load();
@@ -267,10 +297,17 @@ void main() {
     test('standalone containers are never recorded as a stack', () async {
       final id = await repo.insertServer(server(name: 'nas'));
       final vm = await boot(
-        transport: RecordingTransport(replies: {
-          'ps -a --no-trunc':
-              psRow(id: 'a1', name: 'loose', project: '', service: '', workdir: ''),
-        }),
+        transport: RecordingTransport(
+          replies: {
+            'ps -a --no-trunc': psRow(
+              id: 'a1',
+              name: 'loose',
+              project: '',
+              service: '',
+              workdir: '',
+            ),
+          },
+        ),
       );
       await Future<void>.delayed(Duration.zero);
       await vm.load();
@@ -281,9 +318,9 @@ void main() {
 
     test('forgetting a downed stack removes it locally only', () async {
       final id = await repo.insertServer(server(name: 'nas'));
-      final transport = RecordingTransport(replies: {
-        'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1'),
-      });
+      final transport = RecordingTransport(
+        replies: {'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1')},
+      );
       final vm = await boot(transport: transport);
       await Future<void>.delayed(Duration.zero);
       await vm.load();
@@ -295,16 +332,19 @@ void main() {
 
       expect(vm.downedStacks, isEmpty);
       expect(await repo.getStacksForServer(id), isEmpty);
-      expect(transport.commands.length, commandsBefore,
-          reason: 'forgetting must not touch the host');
+      expect(
+        transport.commands.length,
+        commandsBefore,
+        reason: 'forgetting must not touch the host',
+      );
       vm.dispose();
     });
 
     test('bringing up a stack whose file has vanished explains why', () async {
       await repo.insertServer(server(name: 'nas'));
-      final transport = RecordingTransport(replies: {
-        'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1'),
-      });
+      final transport = RecordingTransport(
+        replies: {'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1')},
+      );
       final vm = await boot(transport: transport);
       await Future<void>.delayed(Duration.zero);
       await vm.load();
@@ -319,26 +359,26 @@ void main() {
       await vm.bringUpDownedStack(vm.downedStacks.single);
 
       expect(vm.actionOutput, contains('no longer at /srv/web'));
-      expect(transport.commands.any((c) => c.contains('up -d')), isFalse,
-          reason: 'nothing should be launched when the file is gone');
+      expect(
+        transport.commands.any((c) => c.contains('up -d')),
+        isFalse,
+        reason: 'nothing should be launched when the file is gone',
+      );
       vm.dispose();
     });
 
     test('bringing up a stack whose file is present runs compose up', () async {
       await repo.insertServer(server(name: 'nas'));
-      final transport = RecordingTransport(replies: {
-        'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1'),
-      });
+      final transport = RecordingTransport(
+        replies: {'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1')},
+      );
       final vm = await boot(transport: transport);
       await Future<void>.delayed(Duration.zero);
       await vm.load();
       transport.replies = {'ps -a --no-trunc': ''};
       await vm.load();
 
-      transport.replies = {
-        'ps -a --no-trunc': '',
-        'OMNITERM_COMPOSE_OK': 'OMNITERM_COMPOSE_OK',
-      };
+      transport.replies = {'ps -a --no-trunc': '', 'OMNITERM_COMPOSE_OK': 'OMNITERM_COMPOSE_OK'};
       await vm.bringUpDownedStack(vm.downedStacks.single);
 
       final up = transport.commands.firstWhere((c) => c.contains(r'$OT_COMPOSE'));
@@ -352,9 +392,9 @@ void main() {
   group('actions', () {
     test('a container action targets that container on its own runtime', () async {
       await repo.insertServer(server(name: 'nas'));
-      final transport = RecordingTransport(replies: {
-        'ps -a --no-trunc': psRow(runtime: 'podman', id: 'a1', name: 'web_front_1'),
-      });
+      final transport = RecordingTransport(
+        replies: {'ps -a --no-trunc': psRow(runtime: 'podman', id: 'a1', name: 'web_front_1')},
+      );
       final vm = await boot(transport: transport);
       await Future<void>.delayed(Duration.zero);
       await vm.load();
@@ -366,9 +406,9 @@ void main() {
 
     test('an action refetches rather than guessing the new state', () async {
       await repo.insertServer(server(name: 'nas'));
-      final transport = RecordingTransport(replies: {
-        'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1'),
-      });
+      final transport = RecordingTransport(
+        replies: {'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1')},
+      );
       final vm = await boot(transport: transport);
       await Future<void>.delayed(Duration.zero);
       await vm.load();
@@ -376,8 +416,11 @@ void main() {
 
       await vm.containerAction(vm.containers.single, 'stop');
 
-      expect(transport.commands.length, before + 7,
-          reason: 'one action plus a full six-probe refresh');
+      expect(
+        transport.commands.length,
+        before + 7,
+        reason: 'one action plus a full six-probe refresh',
+      );
       vm.dispose();
     });
 
@@ -385,9 +428,9 @@ void main() {
       // Compose resolves relative bind mounts and .env against the working directory, so running
       // from elsewhere can silently bring up a different stack from the same file.
       await repo.insertServer(server(name: 'nas'));
-      final transport = RecordingTransport(replies: {
-        'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1'),
-      });
+      final transport = RecordingTransport(
+        replies: {'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1')},
+      );
       final vm = await boot(transport: transport);
       await Future<void>.delayed(Duration.zero);
       await vm.load();
@@ -403,10 +446,12 @@ void main() {
       // Compose failures are diagnosed from their exact wording.
       await repo.insertServer(server(name: 'nas'));
       final vm = await boot(
-        transport: RecordingTransport(replies: {
-          'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1'),
-          'restart': 'Error response from daemon: no such container',
-        }),
+        transport: RecordingTransport(
+          replies: {
+            'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1'),
+            'restart': 'Error response from daemon: no such container',
+          },
+        ),
       );
       await Future<void>.delayed(Duration.zero);
       await vm.load();

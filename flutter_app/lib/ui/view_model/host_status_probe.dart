@@ -115,9 +115,7 @@ class HostStatusProbe extends ChangeNotifier {
       if (_disposed) return;
       // Any failure means "not reachable"; a host stuck at "connecting" forever would be worse than
       // one honestly marked offline.
-      await _repository
-          .updateConnectionState(server.id, 'offline', 0, 0)
-          .catchError((Object _) {});
+      await _repository.updateConnectionState(server.id, 'offline', 0, 0).catchError((Object _) {});
     }
   }
 

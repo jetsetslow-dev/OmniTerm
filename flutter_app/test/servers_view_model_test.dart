@@ -21,8 +21,7 @@ class FakeSecureStorage extends FlutterSecureStorage {
     WebOptions? webOptions,
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
-  }) async =>
-      _values[key];
+  }) async => _values[key];
 
   @override
   Future<void> write({
@@ -64,31 +63,31 @@ void main() {
   });
 
   Server server({required String name, String host = '10.0.0.1', String? group}) => Server(
-        id: 0,
-        name: name,
-        host: host,
-        port: 22,
-        username: 'root',
-        groupName: group,
-        serverColor: 'Default',
-        authType: 'password',
-        sudoPassword: '',
-        notes: '',
-        keepAlive: 30,
-        sshCompression: false,
-        persistentSession: false,
-        proxyCommand: '',
-        proxyType: 'none',
-        proxyHost: '',
-        proxyPort: 0,
-        proxyUser: '',
-        proxyPassword: '',
-        agentForwarding: false,
-        healthScore: 100,
-        lastLatency: 0,
-        status: 'offline',
-        authStatus: 'unknown',
-      );
+    id: 0,
+    name: name,
+    host: host,
+    port: 22,
+    username: 'root',
+    groupName: group,
+    serverColor: 'Default',
+    authType: 'password',
+    sudoPassword: '',
+    notes: '',
+    keepAlive: 30,
+    sshCompression: false,
+    persistentSession: false,
+    proxyCommand: '',
+    proxyType: 'none',
+    proxyHost: '',
+    proxyPort: 0,
+    proxyUser: '',
+    proxyPassword: '',
+    agentForwarding: false,
+    healthScore: 100,
+    lastLatency: 0,
+    status: 'offline',
+    authStatus: 'unknown',
+  );
 
   /// Waits for the servers stream to deliver, since AppState observes it asynchronously.
   Future<void> settle() => Future<void>.delayed(Duration.zero);
@@ -130,8 +129,11 @@ void main() {
       await settle();
 
       app.selectedServerId = 9999;
-      expect(app.selectedServer, isNull,
-          reason: 'silently substituting another host would act on the wrong machine');
+      expect(
+        app.selectedServer,
+        isNull,
+        reason: 'silently substituting another host would act on the wrong machine',
+      );
     });
 
     test('changing the selection notifies host-scoped draft owners', () async {
@@ -176,8 +178,11 @@ void main() {
     test('a malformed numeric setting falls back to its default', () async {
       await app.saveSetting('metrics_retention_days', 'not-a-number');
       await app.start();
-      expect(app.metricsRetentionDays, 7,
-          reason: 'a corrupt row must not leave retention at zero and delete all history');
+      expect(
+        app.metricsRetentionDays,
+        7,
+        reason: 'a corrupt row must not leave retention at zero and delete all history',
+      );
     });
 
     test('the app pin is stored encrypted but read back in the clear', () async {
@@ -261,8 +266,11 @@ void main() {
       vm.isMultiSelectMode = true;
       vm.toggleBulkSelection(vm.servers.first.id);
       vm.isMultiSelectMode = false;
-      expect(vm.selectedServerIdsForBulk, isEmpty,
-          reason: 'a stale tick would let a later bulk action hit a host the user cannot see');
+      expect(
+        vm.selectedServerIdsForBulk,
+        isEmpty,
+        reason: 'a stale tick would let a later bulk action hit a host the user cannot see',
+      );
     });
 
     test('bulk delete removes every selected host and exits the mode', () async {
@@ -300,8 +308,11 @@ void main() {
       await vm.deleteServer(id);
       await settle();
 
-      expect(app.selectedServerId, isNull,
-          reason: 'screens must not keep operating against an id that no longer resolves');
+      expect(
+        app.selectedServerId,
+        isNull,
+        reason: 'screens must not keep operating against an id that no longer resolves',
+      );
     });
   });
 
@@ -313,8 +324,11 @@ void main() {
 
       expect(vm.hostLimitReached(playStoreBuild: true, unlocked: false), isTrue);
       expect(vm.hostLimitReached(playStoreBuild: true, unlocked: true), isFalse);
-      expect(vm.hostLimitReached(playStoreBuild: false, unlocked: false), isFalse,
-          reason: 'the source-available build has no limit');
+      expect(
+        vm.hostLimitReached(playStoreBuild: false, unlocked: false),
+        isFalse,
+        reason: 'the source-available build has no limit',
+      );
     });
 
     test('an empty fleet is under the limit', () async {

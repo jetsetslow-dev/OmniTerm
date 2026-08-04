@@ -23,7 +23,10 @@ class ServerDao extends DatabaseAccessor<AppDatabase> with _$ServerDaoMixin {
       (select(servers)..where((s) => s.id.equals(id))).getSingleOrNull();
 
   Future<Server?> getServerByName(String name) =>
-      (select(servers)..where((s) => s.name.equals(name))..limit(1)).getSingleOrNull();
+      (select(servers)
+            ..where((s) => s.name.equals(name))
+            ..limit(1))
+          .getSingleOrNull();
 
   Future<int> insertServer(ServersCompanion server) =>
       into(servers).insert(server, mode: InsertMode.replace);
@@ -35,14 +38,14 @@ class ServerDao extends DatabaseAccessor<AppDatabase> with _$ServerDaoMixin {
   /// Run at startup: a status persisted from the previous run is a lie until re-probed, and showing
   /// a stale "online" invites the user to act on a host that may be unreachable.
   Future<void> resetAllConnectionStates() => (update(servers)).write(
-        const ServersCompanion(
-          status: Value('offline'),
-          healthScore: Value(0),
-          lastLatency: Value(0),
-          authStatus: Value('unknown'),
-          authError: Value(null),
-        ),
-      );
+    const ServersCompanion(
+      status: Value('offline'),
+      healthScore: Value(0),
+      lastLatency: Value(0),
+      authStatus: Value('unknown'),
+      authError: Value(null),
+    ),
+  );
 
   Future<void> updateConnectionState(int id, String status, int health, int latency) =>
       (update(servers)..where((s) => s.id.equals(id))).write(

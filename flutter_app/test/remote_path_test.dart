@@ -132,13 +132,7 @@ void main() {
 
   group('sortEntries', () {
     SftpFile file(String name, {bool dir = false, int size = 0, int modified = 0}) =>
-        SftpFile(
-          name: name,
-          isDirectory: dir,
-          size: size,
-          modDate: '',
-          modTimeSeconds: modified,
-        );
+        SftpFile(name: name, isDirectory: dir, size: size, modDate: '', modTimeSeconds: modified);
 
     final entries = [
       file('zebra.txt', size: 10, modified: 300),
@@ -154,11 +148,7 @@ void main() {
       for (final option in SftpSortOption.values) {
         final sorted = sortEntries(entries, option);
         final leadIsDirectory = sorted.first.isDirectory;
-        expect(
-          leadIsDirectory,
-          option != SftpSortOption.typeFilesFirst,
-          reason: option.name,
-        );
+        expect(leadIsDirectory, option != SftpSortOption.typeFilesFirst, reason: option.name);
       }
     });
 
@@ -180,15 +170,12 @@ void main() {
     });
 
     test('equal keys fall back to name, so the order is stable', () {
-      final tied = [
-        file('b.txt', size: 100),
-        file('a.txt', size: 100),
-        file('c.txt', size: 100),
-      ];
-      expect(
-        sortEntries(tied, SftpSortOption.sizeDesc).map((f) => f.name),
-        ['a.txt', 'b.txt', 'c.txt'],
-      );
+      final tied = [file('b.txt', size: 100), file('a.txt', size: 100), file('c.txt', size: 100)];
+      expect(sortEntries(tied, SftpSortOption.sizeDesc).map((f) => f.name), [
+        'a.txt',
+        'b.txt',
+        'c.txt',
+      ]);
     });
 
     test('sorting does not mutate the input', () {

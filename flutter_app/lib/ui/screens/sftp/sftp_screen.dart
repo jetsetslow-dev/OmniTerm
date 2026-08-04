@@ -47,8 +47,7 @@ class _SftpScreenState extends State<SftpScreen> {
             padding: const EdgeInsets.all(12),
             child: switch (vm.activeTab) {
               SftpTab.bookmarks => SftpBookmarksTab(vm: vm),
-              SftpTab.files =>
-                vm.hasBrowseTarget ? SftpFilesTab(vm: vm) : const _NoOnlineHost(),
+              SftpTab.files => vm.hasBrowseTarget ? SftpFilesTab(vm: vm) : const _NoOnlineHost(),
               SftpTab.shares => const SharesTab(),
               SftpTab.transfers => SftpTransfersTab(vm: vm),
             },
@@ -141,10 +140,7 @@ class _ShareBar extends StatelessWidget {
                 ListenableBuilder(
                   listenable: HostDisplay.instance,
                   builder: (context, _) => Text(
-                    shareUri(
-                      share,
-                      maskedAddress: HostDisplay.instance.sensitive(share.address),
-                    ),
+                    shareUri(share, maskedAddress: HostDisplay.instance.sensitive(share.address)),
                     style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
                   ),
                 ),
@@ -204,9 +200,7 @@ class _TabBar extends StatelessWidget {
                     ],
                   ),
                   // Browsing needs a reachable host; the other three do not.
-                  onSelected: (tab == SftpTab.files && !hasHost)
-                      ? null
-                      : (_) => vm.activeTab = tab,
+                  onSelected: (tab == SftpTab.files && !hasHost) ? null : (_) => vm.activeTab = tab,
                   selected: vm.activeTab == tab,
                 ),
               ),
@@ -230,10 +224,7 @@ class _CountBadge extends StatelessWidget {
       height: 16,
       alignment: Alignment.center,
       decoration: BoxDecoration(color: scheme.primary, shape: BoxShape.circle),
-      child: Text(
-        '$count',
-        style: TextStyle(fontSize: 9, color: scheme.onPrimary),
-      ),
+      child: Text('$count', style: TextStyle(fontSize: 9, color: scheme.onPrimary)),
     );
   }
 }
@@ -253,4 +244,3 @@ class _NoOnlineHost extends StatelessWidget {
     );
   }
 }
-

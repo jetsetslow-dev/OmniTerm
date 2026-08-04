@@ -37,8 +37,7 @@ enum TermKey {
 ///
 /// Only paging is allowed while a session is read-only: it moves the viewport without sending
 /// anything to the remote host.
-bool terminalKeyAllowedInReadOnly(TermKey key) =>
-    key == TermKey.pageUp || key == TermKey.pageDown;
+bool terminalKeyAllowedInReadOnly(TermKey key) => key == TermKey.pageUp || key == TermKey.pageDown;
 
 /// Pure xterm-compatible encoder shared by hardware and on-screen terminal keys.
 ///
@@ -93,15 +92,15 @@ abstract final class TerminalKeyEncoder {
     Uint8List f1ToF4(String letter) => mod > 1 ? csi('1;$mod$letter') : ss3(letter);
 
     // Alt is sent as an ESC prefix on the keys that have no modifier parameter of their own.
-    Uint8List altPrefix(List<int> base) =>
-        Uint8List.fromList(alt ? [0x1B, ...base] : base);
+    Uint8List altPrefix(List<int> base) => Uint8List.fromList(alt ? [0x1B, ...base] : base);
 
     return switch (key) {
       TermKey.enter => altPrefix(const [0x0D]),
       TermKey.backspace => altPrefix(const [0x7F]),
-      TermKey.tab => shift
-          ? csi('Z')
-          : (alt ? Uint8List.fromList(const [0x1B, 0x09]) : Uint8List.fromList(const [0x09])),
+      TermKey.tab =>
+        shift
+            ? csi('Z')
+            : (alt ? Uint8List.fromList(const [0x1B, 0x09]) : Uint8List.fromList(const [0x09])),
       TermKey.esc => Uint8List.fromList(alt ? const [0x1B, 0x1B] : const [0x1B]),
       TermKey.up => cursor('A'),
       TermKey.down => cursor('B'),
@@ -135,12 +134,7 @@ abstract final class TerminalKeyEncoder {
 /// Pure and separate from the widget because the modifier rules are the error-prone part: Ctrl only
 /// applies to the *first* code point, Alt is an ESC prefix rather than a bit, and text that Ctrl has
 /// no encoding for must survive intact rather than being masked into a different byte.
-Uint8List encodeTypedText(
-  String text, {
-  bool shift = false,
-  bool alt = false,
-  bool ctrl = false,
-}) {
+Uint8List encodeTypedText(String text, {bool shift = false, bool alt = false, bool ctrl = false}) {
   if (text.isEmpty) return Uint8List(0);
 
   // Shift upper-cases a single character only. Applying it to a longer run would rewrite a paste.

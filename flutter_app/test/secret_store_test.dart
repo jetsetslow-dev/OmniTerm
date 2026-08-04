@@ -17,8 +17,7 @@ class FakeSecureStorage extends FlutterSecureStorage {
     WebOptions? webOptions,
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
-  }) async =>
-      _values[key];
+  }) async => _values[key];
 
   @override
   Future<void> write({
@@ -45,12 +44,11 @@ void main() {
   SecretStore store({
     Future<String?> Function(String)? legacyDecryptor,
     void Function(String, String)? onUpgraded,
-  }) =>
-      SecretStore(
-        storage: FakeSecureStorage(keychain),
-        legacyDecryptor: legacyDecryptor,
-        onUpgraded: onUpgraded,
-      );
+  }) => SecretStore(
+    storage: FakeSecureStorage(keychain),
+    legacyDecryptor: legacyDecryptor,
+    onUpgraded: onUpgraded,
+  );
 
   setUp(() => keychain = {});
 
@@ -91,8 +89,11 @@ void main() {
     test('a different keychain cannot decrypt', () async {
       final cipher = await store().encrypt('secret');
       keychain = {}; // simulate a wiped/reinstalled keystore
-      expect(await store().decrypt(cipher), isNull,
-          reason: 'must fail closed rather than returning garbage');
+      expect(
+        await store().decrypt(cipher),
+        isNull,
+        reason: 'must fail closed rather than returning garbage',
+      );
     });
   });
 
@@ -171,8 +172,11 @@ void main() {
 
       final upgraded = upgrades['enc:v1:whatever']!;
       expect(upgraded, startsWith(SecretStore.prefix));
-      expect(await s.decrypt(upgraded), 'recovered',
-          reason: 'the upgraded value must be readable without the legacy path');
+      expect(
+        await s.decrypt(upgraded),
+        'recovered',
+        reason: 'the upgraded value must be readable without the legacy path',
+      );
     });
 
     test('a failing decryptor degrades to null rather than throwing', () async {
@@ -182,10 +186,7 @@ void main() {
 
     test('a legacy value that decrypts to empty is not re-encrypted', () async {
       var upgrades = 0;
-      final s = store(
-        legacyDecryptor: (v) async => '',
-        onUpgraded: (_, _) => upgrades++,
-      );
+      final s = store(legacyDecryptor: (v) async => '', onUpgraded: (_, _) => upgrades++);
       expect(await s.decrypt('enc:v1:whatever'), '');
       expect(upgrades, 0);
     });

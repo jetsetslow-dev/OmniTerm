@@ -83,9 +83,7 @@ void main() {
       // A user is invited to paste this into a public issue, so it must be safe to paste there.
       await pump(tester, const AboutScreen());
 
-      final text = tester
-          .widget<Text>(find.byKey(const ValueKey('about.diagnostics.text')))
-          .data!;
+      final text = tester.widget<Text>(find.byKey(const ValueKey('about.diagnostics.text'))).data!;
       expect(text, contains('OmniTerm'));
       expect(text, contains('Platform:'));
       expect(text.toLowerCase(), isNot(contains('password')));
@@ -98,23 +96,24 @@ void main() {
       // The link cannot be opened until the platform integration lands, so copying has to be
       // visibly successful rather than appearing to do nothing.
       final copied = <MethodCall>[];
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(SystemChannels.platform, (call) async {
-        if (call.method == 'Clipboard.setData') copied.add(call);
-        return null;
-      });
-      addTearDown(() => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(SystemChannels.platform, null));
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async {
+          if (call.method == 'Clipboard.setData') copied.add(call);
+          return null;
+        },
+      );
+      addTearDown(
+        () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(SystemChannels.platform, null),
+      );
 
       await pump(tester, const AboutScreen());
       await tester.tap(find.byKey(const ValueKey('about.copyUrl')));
       await tester.pumpAndSettle();
 
       expect(copied, hasLength(1));
-      expect(
-        (copied.single.arguments as Map)['text'],
-        AboutScreen.projectUrl,
-      );
+      expect((copied.single.arguments as Map)['text'], AboutScreen.projectUrl);
       expect(find.byKey(const ValueKey('about.copied')), findsOneWidget);
       await tester.pump();
     });

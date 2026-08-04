@@ -8,9 +8,21 @@ void main() {
   group('Screen', () {
     test('has the 15 legacy destinations in declaration order', () {
       expect(Screen.values.map((s) => s.wireName).toList(), <String>[
-        'Servers', 'Fleet', 'Monitor', 'Shell', 'SFTP', 'Infra', 'Tools',
-        'Alerts', 'QuickScripts', 'Network', 'AuthKeys', 'Backup',
-        'HealthScoring', 'Settings', 'About',
+        'Servers',
+        'Fleet',
+        'Monitor',
+        'Shell',
+        'SFTP',
+        'Infra',
+        'Tools',
+        'Alerts',
+        'QuickScripts',
+        'Network',
+        'AuthKeys',
+        'Backup',
+        'HealthScoring',
+        'Settings',
+        'About',
       ]);
     });
 
@@ -165,8 +177,11 @@ void main() {
         ..setSubtab(Screen.infra, 0);
       nav.swipeNavigate(forward: false);
       expect(nav.currentScreen, Screen.sftp);
-      expect(nav.currentSubtab(Screen.sftp), 0,
-          reason: 'entering a tab resets it to its first subtab');
+      expect(
+        nav.currentSubtab(Screen.sftp),
+        0,
+        reason: 'entering a tab resets it to its first subtab',
+      );
     });
 
     test('does nothing at either end of the top-level order', () {

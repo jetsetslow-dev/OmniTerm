@@ -34,31 +34,31 @@ void main() {
   });
 
   Server server({required String name, String status = 'online'}) => Server(
-        id: 0,
-        name: name,
-        host: '10.0.0.1',
-        port: 22,
-        username: 'root',
-        serverColor: 'Default',
-        authType: 'password',
-        authPassword: 'pw',
-        sudoPassword: '',
-        notes: '',
-        keepAlive: 30,
-        sshCompression: false,
-        persistentSession: false,
-        proxyCommand: '',
-        proxyType: 'none',
-        proxyHost: '',
-        proxyPort: 0,
-        proxyUser: '',
-        proxyPassword: '',
-        agentForwarding: false,
-        healthScore: 100,
-        lastLatency: 0,
-        status: status,
-        authStatus: 'ok',
-      );
+    id: 0,
+    name: name,
+    host: '10.0.0.1',
+    port: 22,
+    username: 'root',
+    serverColor: 'Default',
+    authType: 'password',
+    authPassword: 'pw',
+    sudoPassword: '',
+    notes: '',
+    keepAlive: 30,
+    sshCompression: false,
+    persistentSession: false,
+    proxyCommand: '',
+    proxyType: 'none',
+    proxyHost: '',
+    proxyPort: 0,
+    proxyUser: '',
+    proxyPassword: '',
+    agentForwarding: false,
+    healthScore: 100,
+    lastLatency: 0,
+    status: status,
+    authStatus: 'ok',
+  );
 
   Future<void> pump(WidgetTester tester, {RecordingTransport? transport}) async {
     await app.start();
@@ -78,15 +78,17 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  RecordingTransport withStack() => RecordingTransport(replies: {
-        'ps -a --no-trunc': [
-          psRow(id: 'a1', name: 'web_front_1', service: 'front'),
-          psRow(id: 'a2', name: 'web_db_1', service: 'db', ports: '—'),
-        ].join('\n'),
-        'images --no-trunc': 'docker\tsha256:abc\tnginx\tlatest\t50MB\t2 days ago',
-        'ot_vols': 'docker\tdata\tlocal\t/var/lib/docker/volumes/data\t1.2GB\t0',
-        'network ls': 'docker\tn1\tbridge\tbridge\ndocker\tn2\tweb_default\tbridge',
-      });
+  RecordingTransport withStack() => RecordingTransport(
+    replies: {
+      'ps -a --no-trunc': [
+        psRow(id: 'a1', name: 'web_front_1', service: 'front'),
+        psRow(id: 'a2', name: 'web_db_1', service: 'db', ports: '—'),
+      ].join('\n'),
+      'images --no-trunc': 'docker\tsha256:abc\tnginx\tlatest\t50MB\t2 days ago',
+      'ot_vols': 'docker\tdata\tlocal\t/var/lib/docker/volumes/data\t1.2GB\t0',
+      'network ls': 'docker\tn1\tbridge\tbridge\ndocker\tn2\tweb_default\tbridge',
+    },
+  );
 
   testWidgets('with nothing online it says so', (tester) async {
     await repo.insertServer(server(name: 'a', status: 'offline'));
@@ -169,9 +171,11 @@ void main() {
     await repo.insertServer(server(name: 'nas'));
     await pump(
       tester,
-      transport: RecordingTransport(replies: {
-        'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1', workdir: '', configs: ''),
-      }),
+      transport: RecordingTransport(
+        replies: {
+          'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1', workdir: '', configs: ''),
+        },
+      ),
     );
 
     expect(find.text('No compose metadata for stack actions'), findsOneWidget);
@@ -268,10 +272,7 @@ void main() {
   testWidgets('a host that does run containers, but has none, says so', (tester) async {
     await repo.insertServer(server(name: 'nas'));
     // The runtimes probe answers, so Docker is present — there is simply nothing to show.
-    await pump(
-      tester,
-      transport: RecordingTransport(replies: {'command -v docker': 'docker'}),
-    );
+    await pump(tester, transport: RecordingTransport(replies: {'command -v docker': 'docker'}));
 
     expect(find.byKey(const ValueKey('infra.stacks.empty')), findsOneWidget);
     expect(find.textContaining('No compose stacks on this host'), findsOneWidget);

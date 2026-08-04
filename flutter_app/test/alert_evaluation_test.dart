@@ -18,31 +18,25 @@ void main() {
     int serverId = 0,
     bool enabled = true,
     String? presetKey,
-  }) =>
-      AlertRule(
-        id: 1,
-        serverId: serverId,
-        metricName: metric,
-        mountPoint: mountPoint,
-        thresholdValue: threshold,
-        severity: severity,
-        triggerWindow: window,
-        enabled: enabled,
-        notes: '',
-        presetKey: presetKey,
-      );
+  }) => AlertRule(
+    id: 1,
+    serverId: serverId,
+    metricName: metric,
+    mountPoint: mountPoint,
+    thresholdValue: threshold,
+    severity: severity,
+    triggerWindow: window,
+    enabled: enabled,
+    notes: '',
+    presetKey: presetKey,
+  );
 
   DiskUsage mount(String path, {required int total, required int used}) =>
       DiskUsage(mount: path, filesystem: '', totalBytes: total, usedBytes: used);
 
   group('currentValueFor', () {
     test('reads the matching metric', () {
-      const sample = AlertSample(
-        cpuPercent: 42,
-        memoryPercent: 71,
-        latencyMs: 130,
-        cpuTempC: 55,
-      );
+      const sample = AlertSample(cpuPercent: 42, memoryPercent: 71, latencyMs: 130, cpuTempC: 55);
       expect(currentValueFor(rule(metric: 'CPU Usage'), sample), 42);
       expect(currentValueFor(rule(metric: 'Memory Usage'), sample), 71);
       expect(currentValueFor(rule(metric: 'Latency'), sample), 130);
@@ -71,10 +65,7 @@ void main() {
     group('disk', () {
       final sample = AlertSample(
         diskPercent: 40,
-        mounts: [
-          mount('/', total: 100, used: 40),
-          mount('/srv', total: 100, used: 95),
-        ],
+        mounts: [mount('/', total: 100, used: 40), mount('/srv', total: 100, used: 95)],
       );
 
       test('a rule watches its own mount, not the aggregate', () {
@@ -95,10 +86,7 @@ void main() {
       });
 
       test('a mount that disappeared reports null rather than the root value', () {
-        expect(
-          currentValueFor(rule(metric: 'Disk Usage', mountPoint: '/gone'), sample),
-          isNull,
-        );
+        expect(currentValueFor(rule(metric: 'Disk Usage', mountPoint: '/gone'), sample), isNull);
       });
     });
   });
@@ -147,8 +135,11 @@ void main() {
         before.copyWith(serverId: 4),
         before.copyWith(enabled: false),
       ]) {
-        expect(ruleEditInvalidatesIncident(before, after), isTrue,
-            reason: 'the incident was raised under different terms');
+        expect(
+          ruleEditInvalidatesIncident(before, after),
+          isTrue,
+          reason: 'the incident was raised under different terms',
+        );
       }
     });
 
@@ -159,10 +150,7 @@ void main() {
         isFalse,
       );
       expect(
-        ruleEditInvalidatesIncident(
-          before,
-          before.copyWith(presetKey: const Value('alert.cpu')),
-        ),
+        ruleEditInvalidatesIncident(before, before.copyWith(presetKey: const Value('alert.cpu'))),
         isFalse,
       );
     });
@@ -181,10 +169,7 @@ void main() {
         describeRule(rule(metric: 'Disk Usage', mountPoint: '/srv', threshold: 80)),
         'Disk Usage on /srv above 80% for 5m',
       );
-      expect(
-        describeRule(rule(metric: 'Latency', threshold: 250)),
-        'Latency above 250ms for 5m',
-      );
+      expect(describeRule(rule(metric: 'Latency', threshold: 250)), 'Latency above 250ms for 5m');
     });
 
     test('a root disk rule does not repeat the mount', () {
@@ -242,10 +227,7 @@ void main() {
     final preset = kAlertPresets.first;
 
     test('an untuned rule is the app\'s', () {
-      expect(
-        isPristineAlertPreset(preset, preset.thresholdValue, preset.severity),
-        isTrue,
-      );
+      expect(isPristineAlertPreset(preset, preset.thresholdValue, preset.severity), isTrue);
     });
 
     test('a retuned threshold or severity makes it the user\'s', () {

@@ -85,9 +85,7 @@ class SftpFilesTab extends StatelessWidget {
               leftAccent: OmniColors.green,
               child: Row(
                 children: [
-                  Expanded(
-                    child: Text(vm.status!, style: const TextStyle(fontSize: 12)),
-                  ),
+                  Expanded(child: Text(vm.status!, style: const TextStyle(fontSize: 12))),
                   IconButton(
                     key: const ValueKey('sftp.status.dismiss'),
                     icon: const Icon(Icons.close, size: 16),
@@ -222,8 +220,7 @@ class _Toolbar extends StatefulWidget {
 }
 
 class _ToolbarState extends State<_Toolbar> {
-  late final TextEditingController _search =
-      TextEditingController(text: widget.vm.searchText);
+  late final TextEditingController _search = TextEditingController(text: widget.vm.searchText);
 
   @override
   void dispose() {
@@ -328,8 +325,7 @@ class _NameDialog extends StatefulWidget {
 }
 
 class _NameDialogState extends State<_NameDialog> {
-  late final TextEditingController _controller =
-      TextEditingController(text: widget.initial);
+  late final TextEditingController _controller = TextEditingController(text: widget.initial);
 
   @override
   void dispose() {
@@ -384,11 +380,7 @@ Future<void> _promptNewFolder(BuildContext context, SftpViewModel vm) async {
   }
 }
 
-Future<void> _confirmDelete(
-  BuildContext context,
-  SftpViewModel vm,
-  List<SftpFile> entries,
-) async {
+Future<void> _confirmDelete(BuildContext context, SftpViewModel vm, List<SftpFile> entries) async {
   if (entries.isEmpty) return;
   final directories = entries.where((e) => e.isDirectory).length;
 
@@ -401,7 +393,7 @@ Future<void> _confirmDelete(
         // A directory delete takes everything under it, which is the part users misjudge.
         directories > 0
             ? 'This includes $directories folder${directories == 1 ? '' : 's'} and everything '
-                'inside ${directories == 1 ? 'it' : 'them'}. Deleted files cannot be recovered.'
+                  'inside ${directories == 1 ? 'it' : 'them'}. Deleted files cannot be recovered.'
             : 'Deleted files cannot be recovered.',
       ),
       actions: [
@@ -494,11 +486,7 @@ class _EntryRow extends StatelessWidget {
   }
 }
 
-Future<void> _promptRename(
-  BuildContext context,
-  SftpViewModel vm,
-  SftpFile entry,
-) async {
+Future<void> _promptRename(BuildContext context, SftpViewModel vm, SftpFile entry) async {
   final name = await showDialog<String>(
     context: context,
     builder: (_) => _NameDialog(
@@ -579,10 +567,7 @@ class SftpTransfersTab extends StatelessWidget {
                           child: Text(
                             transfer.name,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontFamily: OmniFonts.mono,
-                              fontSize: 12,
-                            ),
+                            style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 12),
                           ),
                         ),
                         OmniTag(label: label, color: color),

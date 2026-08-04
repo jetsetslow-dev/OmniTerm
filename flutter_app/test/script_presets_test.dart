@@ -62,10 +62,7 @@ void main() {
     });
 
     test('fleet presets keep a stable display order', () {
-      expect(
-        kFleetPresets.map((p) => p.sortOrder),
-        List.generate(kFleetPresets.length, (i) => i),
-      );
+      expect(kFleetPresets.map((p) => p.sortOrder), List.generate(kFleetPresets.length, (i) => i));
     });
   });
 
@@ -77,18 +74,19 @@ void main() {
       for (final preset in kFleetPresets.where((p) => p.presetKey != 'fleet.containers')) {
         expect(preset.command, contains('powershell'), reason: preset.presetKey);
       }
-      final containers =
-          kFleetPresets.firstWhere((p) => p.presetKey == 'fleet.containers');
+      final containers = kFleetPresets.firstWhere((p) => p.presetKey == 'fleet.containers');
       expect(containers.command, contains('podman'));
     });
 
     test('the container preset keeps its literal tab escape', () {
       // `\t` must reach the runtime as two characters for the Go template to format columns.
-      final containers =
-          kFleetPresets.firstWhere((p) => p.presetKey == 'fleet.containers');
+      final containers = kFleetPresets.firstWhere((p) => p.presetKey == 'fleet.containers');
       expect(containers.command, contains(r'{{.Names}}\t{{.Status}}'));
-      expect(containers.command, isNot(contains('\t')),
-          reason: 'a real tab would break the template');
+      expect(
+        containers.command,
+        isNot(contains('\t')),
+        reason: 'a real tab would break the template',
+      );
     });
 
     test('shell variables survived Dart interpolation', () {
@@ -96,8 +94,7 @@ void main() {
       for (final preset in kAllScriptPresets) {
         expect(preset.command, isNot(contains(r'\$')), reason: preset.presetKey);
       }
-      final temperature =
-          kHomelabPresets.firstWhere((p) => p.presetKey == 'homelab.temperature');
+      final temperature = kHomelabPresets.firstWhere((p) => p.presetKey == 'homelab.temperature');
       expect(temperature.command, contains(r'$(uname -s 2>/dev/null)'));
       expect(temperature.command, contains(r'"$max"'));
       expect(temperature.command, contains(r'v=$(cat "$f" 2>/dev/null)'));
@@ -105,8 +102,7 @@ void main() {
 
     test('the temperature preset explains itself on a host with no sensor', () {
       // Printing nothing would be indistinguishable from a failed command.
-      final temperature =
-          kHomelabPresets.firstWhere((p) => p.presetKey == 'homelab.temperature');
+      final temperature = kHomelabPresets.firstWhere((p) => p.presetKey == 'homelab.temperature');
       expect(temperature.command, contains('No thermal sensor exposed'));
       expect(temperature.command, contains('vcgencmd'));
       expect(temperature.command, contains('supports Linux hosts'));

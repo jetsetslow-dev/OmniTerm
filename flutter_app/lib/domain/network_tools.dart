@@ -49,8 +49,30 @@ Uint8List buildMagicPacket(Uint8List mac) {
 
 /// The ports offered by default, chosen because finding one open tells you what a machine *is*.
 const commonPorts = [
-  21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 587, 993, 995,
-  1433, 3306, 3389, 5432, 5900, 6379, 8006, 8080, 8443, 9090, 27017,
+  21,
+  22,
+  23,
+  25,
+  53,
+  80,
+  110,
+  143,
+  443,
+  445,
+  587,
+  993,
+  995,
+  1433,
+  3306,
+  3389,
+  5432,
+  5900,
+  6379,
+  8006,
+  8080,
+  8443,
+  9090,
+  27017,
 ];
 
 /// A short label for a well-known port, or null.
@@ -58,32 +80,32 @@ const commonPorts = [
 /// Shown next to the number because "8006 open" means nothing to most people and "8006 (Proxmox)"
 /// immediately does.
 String? portLabel(int port) => switch (port) {
-      21 => 'FTP',
-      22 => 'SSH',
-      23 => 'Telnet',
-      25 => 'SMTP',
-      53 => 'DNS',
-      80 => 'HTTP',
-      110 => 'POP3',
-      143 => 'IMAP',
-      443 => 'HTTPS',
-      445 => 'SMB',
-      587 => 'SMTP submission',
-      993 => 'IMAPS',
-      995 => 'POP3S',
-      1433 => 'MSSQL',
-      3306 => 'MySQL',
-      3389 => 'RDP',
-      5432 => 'PostgreSQL',
-      5900 => 'VNC',
-      6379 => 'Redis',
-      8006 => 'Proxmox',
-      8080 => 'HTTP alt',
-      8443 => 'HTTPS alt',
-      9090 => 'Cockpit',
-      27017 => 'MongoDB',
-      _ => null,
-    };
+  21 => 'FTP',
+  22 => 'SSH',
+  23 => 'Telnet',
+  25 => 'SMTP',
+  53 => 'DNS',
+  80 => 'HTTP',
+  110 => 'POP3',
+  143 => 'IMAP',
+  443 => 'HTTPS',
+  445 => 'SMB',
+  587 => 'SMTP submission',
+  993 => 'IMAPS',
+  995 => 'POP3S',
+  1433 => 'MSSQL',
+  3306 => 'MySQL',
+  3389 => 'RDP',
+  5432 => 'PostgreSQL',
+  5900 => 'VNC',
+  6379 => 'Redis',
+  8006 => 'Proxmox',
+  8080 => 'HTTP alt',
+  8443 => 'HTTPS alt',
+  9090 => 'Cockpit',
+  27017 => 'MongoDB',
+  _ => null,
+};
 
 /// Parses a port specification: a comma-separated list of numbers and `from-to` ranges.
 ///
@@ -137,8 +159,9 @@ String? subnetPrefixOf(String address) {
 ///
 /// `.0` and `.255` are skipped because neither is a host — probing them wastes two round trips and
 /// a reply from `.255` would be a broadcast echo, not a device.
-List<String> hostsInSubnet(String prefix) =>
-    [for (var host = 1; host <= 254; host++) '$prefix.$host'];
+List<String> hostsInSubnet(String prefix) => [
+  for (var host = 1; host <= 254; host++) '$prefix.$host',
+];
 
 /// The broadcast address of a `/24`, which is where a magic packet has to go.
 String broadcastFor(String prefix) => '$prefix.255';
@@ -150,24 +173,24 @@ const dnsRecordTypes = ['A', 'AAAA', 'CNAME', 'MX', 'NS', 'TXT'];
 
 /// Wire values for [dnsRecordTypes].
 int dnsTypeCode(String type) => switch (type.toUpperCase()) {
-      'A' => 1,
-      'NS' => 2,
-      'CNAME' => 5,
-      'MX' => 15,
-      'TXT' => 16,
-      'AAAA' => 28,
-      _ => 1,
-    };
+  'A' => 1,
+  'NS' => 2,
+  'CNAME' => 5,
+  'MX' => 15,
+  'TXT' => 16,
+  'AAAA' => 28,
+  _ => 1,
+};
 
 String dnsTypeName(int code) => switch (code) {
-      1 => 'A',
-      2 => 'NS',
-      5 => 'CNAME',
-      15 => 'MX',
-      16 => 'TXT',
-      28 => 'AAAA',
-      _ => 'TYPE$code',
-    };
+  1 => 'A',
+  2 => 'NS',
+  5 => 'CNAME',
+  15 => 'MX',
+  16 => 'TXT',
+  28 => 'AAAA',
+  _ => 'TYPE$code',
+};
 
 /// One answer from a DNS response.
 class DnsRecord {
@@ -196,8 +219,7 @@ class DnsException implements Exception {
 Uint8List buildDnsQuery(String name, int type, {int transactionId = 0x1234}) {
   // Trimmed per label: a name pasted with stray spaces would otherwise be encoded with them, and
   // the server would answer about a name the user did not type.
-  final labels =
-      name.split('.').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
+  final labels = name.split('.').map((l) => l.trim()).where((l) => l.isNotEmpty).toList();
   if (labels.isEmpty) throw const DnsException('Enter a name to look up.');
   for (final label in labels) {
     // 63 is the wire limit for one label. Silently truncating would query a different name than the
@@ -232,10 +254,7 @@ Uint8List buildDnsQuery(String name, int type, {int transactionId = 0x1234}) {
 /// Rejects a response whose transaction id does not match the query when [expectTransactionId] is
 /// given, and reports the server's own error codes rather than presenting them as "no records" —
 /// NXDOMAIN and a timeout are different facts, and only one of them means the name is wrong.
-List<DnsRecord> parseDnsResponse(
-  Uint8List data, {
-  int? expectTransactionId,
-}) {
+List<DnsRecord> parseDnsResponse(Uint8List data, {int? expectTransactionId}) {
   if (data.length < 12) throw const DnsException('The DNS reply was truncated.');
   final view = ByteData.sublistView(data);
 
@@ -278,12 +297,14 @@ List<DnsRecord> parseDnsResponse(
     offset += 10;
     if (offset + length > data.length) break;
 
-    records.add(DnsRecord(
-      name: name,
-      type: dnsTypeName(type),
-      ttl: ttl,
-      value: _readRecordValue(data, offset, length, type),
-    ));
+    records.add(
+      DnsRecord(
+        name: name,
+        type: dnsTypeName(type),
+        ttl: ttl,
+        value: _readRecordValue(data, offset, length, type),
+      ),
+    );
     offset += length;
   }
   return records;

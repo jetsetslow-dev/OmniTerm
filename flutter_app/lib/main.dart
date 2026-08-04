@@ -55,10 +55,7 @@ void main() {
 /// mid-session does not find some hosts working and others not.
 AppRepository _buildRepository(AppDatabase db) {
   final legacy = LegacySecretChannel();
-  final repository = AppRepository(
-    db,
-    SecretStore(legacyDecryptor: legacy.decrypt),
-  );
+  final repository = AppRepository(db, SecretStore(legacyDecryptor: legacy.decrypt));
   unawaited(repository.migrateLegacySecrets());
   return repository;
 }
@@ -74,24 +71,24 @@ Future<RemoteFsClient?> Function(NetworkShare) _shareClientFor(DartSshTransport 
       final protocol = ShareProtocol.fromId(share.protocol);
       return switch (protocol) {
         ShareProtocol.smb => PlatformSmbClient(
-            SmbEndpoint(
-              host: share.address,
-              port: share.port,
-              shareName: share.sharePath,
-              domain: share.workgroup,
-              username: share.username,
-              password: share.password,
-              anonymous: share.anonymous,
-            ),
+          SmbEndpoint(
+            host: share.address,
+            port: share.port,
+            shareName: share.sharePath,
+            domain: share.workgroup,
+            username: share.username,
+            password: share.password,
+            anonymous: share.anonymous,
           ),
+        ),
         ShareProtocol.sftp => transport.sftp(
-            SshCredentials(
-              host: share.address,
-              port: share.port,
-              username: share.username,
-              password: share.password.isEmpty ? null : share.password,
-            ),
+          SshCredentials(
+            host: share.address,
+            port: share.port,
+            username: share.username,
+            password: share.password.isEmpty ? null : share.password,
           ),
+        ),
         _ => null,
       };
     };
@@ -104,23 +101,22 @@ Future<RemoteFsClient?> Function(NetworkShare) _shareClientFor(DartSshTransport 
 Future<RemoteFsClient?> Function(Server) _sftpFor(
   DartSshTransport transport,
   AppRepository repository,
-) =>
-    (server) async {
-      try {
-        return transport.sftp(
-          resolveCredentials(
-            server,
-            keys: await repository.getAllKeys(),
-            profiles: await repository.getAllProfiles(),
-          ),
-        );
-      } on CredentialResolutionException {
-        // The view model reports "unavailable" for a null client, which is the honest outcome for a
-        // host whose key has been deleted. Throwing here would surface as an unhandled error
-        // instead of a message the user can act on.
-        return null;
-      }
-    };
+) => (server) async {
+  try {
+    return transport.sftp(
+      resolveCredentials(
+        server,
+        keys: await repository.getAllKeys(),
+        profiles: await repository.getAllProfiles(),
+      ),
+    );
+  } on CredentialResolutionException {
+    // The view model reports "unavailable" for a null client, which is the honest outcome for a
+    // host whose key has been deleted. Throwing here would surface as an unhandled error
+    // instead of a message the user can act on.
+    return null;
+  }
+};
 
 class OmniTermApp extends StatelessWidget {
   const OmniTermApp({super.key});
@@ -164,19 +160,23 @@ class OmniTermApp extends StatelessWidget {
           )..load(),
         ),
         ChangeNotifierProxyProvider<AppState, ServersViewModel>(
-          create: (context) => ServersViewModel(context.read<AppState>(), transport: context.read<SshTransport>()),
+          create: (context) =>
+              ServersViewModel(context.read<AppState>(), transport: context.read<SshTransport>()),
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, MonitorViewModel>(
-          create: (context) => MonitorViewModel(context.read<AppState>(), transport: context.read<SshTransport>()),
+          create: (context) =>
+              MonitorViewModel(context.read<AppState>(), transport: context.read<SshTransport>()),
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, InfraViewModel>(
-          create: (context) => InfraViewModel(context.read<AppState>(), transport: context.read<SshTransport>()),
+          create: (context) =>
+              InfraViewModel(context.read<AppState>(), transport: context.read<SshTransport>()),
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, FleetViewModel>(
-          create: (context) => FleetViewModel(context.read<AppState>(), transport: context.read<SshTransport>()),
+          create: (context) =>
+              FleetViewModel(context.read<AppState>(), transport: context.read<SshTransport>()),
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, SftpViewModel>(
@@ -195,7 +195,10 @@ class OmniTermApp extends StatelessWidget {
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, AuthKeysViewModel>(
-          create: (context) => AuthKeysViewModel(context.read<AppState>(), hostKeyTrust: context.read<SshHostKeyTrust>()),
+          create: (context) => AuthKeysViewModel(
+            context.read<AppState>(),
+            hostKeyTrust: context.read<SshHostKeyTrust>(),
+          ),
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, ScriptsViewModel>(
@@ -204,10 +207,8 @@ class OmniTermApp extends StatelessWidget {
         ),
         Provider<AlertNotifier>(create: (_) => LocalAlertNotifier()),
         ChangeNotifierProxyProvider<AppState, AlertsViewModel>(
-          create: (context) => AlertsViewModel(
-            context.read<AppState>(),
-            notifier: context.read<AlertNotifier>(),
-          ),
+          create: (context) =>
+              AlertsViewModel(context.read<AppState>(), notifier: context.read<AlertNotifier>()),
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, NetworkViewModel>(
@@ -254,9 +255,7 @@ class OmniTermApp extends StatelessWidget {
               // host can be met from the terminal, the monitor poller, SFTP or a connection test.
               child: HostKeyApprovalHost(
                 trust: context.read<SshHostKeyTrust>(),
-                child: const _ScreenSecurityBinding(
-                  child: _BackHandler(child: AppCoreScaffold()),
-                ),
+                child: const _ScreenSecurityBinding(child: _BackHandler(child: AppCoreScaffold())),
               ),
             ),
           );

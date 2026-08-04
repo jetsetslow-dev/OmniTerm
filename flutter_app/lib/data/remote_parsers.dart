@@ -18,10 +18,8 @@ import 'remote_commands.dart';
 import 'remote_models.dart';
 
 /// Output of `RemoteCommands.DOCKER_RUNTIMES`: one runtime name per line, anything else ignored.
-Set<String> parseRuntimeList(String output) => output.lines
-    .map((l) => l.trim())
-    .where((l) => l == 'docker' || l == 'podman')
-    .toSet();
+Set<String> parseRuntimeList(String output) =>
+    output.lines.map((l) => l.trim()).where((l) => l == 'docker' || l == 'podman').toSet();
 
 /// The directory compose actions `cd` into for a stack.
 ///
@@ -30,12 +28,8 @@ Set<String> parseRuntimeList(String output) => output.lines
 /// — the directory compose would use anyway. Blank when neither yields a usable absolute directory.
 String composeStackWorkingDir(String workingDirLabel, String configFiles) {
   if (!workingDirLabel.isBlankString) return workingDirLabel;
-  final firstConfig = configFiles
-          .split(',')
-          .map((s) => s.trim())
-          .where((s) => s.isNotEmpty)
-          .firstOrNull ??
-      '';
+  final firstConfig =
+      configFiles.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).firstOrNull ?? '';
   if (!firstConfig.startsWith('/')) return '';
   return firstConfig.substringBeforeLast('/').ifEmpty('/');
 }
@@ -54,29 +48,33 @@ List<SimProcess> parseProcesses(String output) {
     if (pid == null) continue;
 
     if (t.length >= 8) {
-      out.add(SimProcess(
-        pid: pid,
-        owner: t[1],
-        cpu: double.tryParse(t[2]) ?? 0,
-        mem: double.tryParse(t[3]) ?? 0,
-        vms: humanBytes((int.tryParse(t[4]) ?? 0) * 1024),
-        uptime: t[5],
-        state: t[6].takeChars(1),
-        name: t[7],
-      ));
+      out.add(
+        SimProcess(
+          pid: pid,
+          owner: t[1],
+          cpu: double.tryParse(t[2]) ?? 0,
+          mem: double.tryParse(t[3]) ?? 0,
+          vms: humanBytes((int.tryParse(t[4]) ?? 0) * 1024),
+          uptime: t[5],
+          state: t[6].takeChars(1),
+          name: t[7],
+        ),
+      );
     } else if (t.length >= 4) {
       // BusyBox: no per-process cpu/mem/vsz; TIME stands in for uptime and the command may itself
       // contain spaces (re-join the split tail).
-      out.add(SimProcess(
-        pid: pid,
-        owner: t[1],
-        cpu: 0,
-        mem: 0,
-        vms: '—',
-        uptime: t[2],
-        state: '',
-        name: t.skip(3).join(' '),
-      ));
+      out.add(
+        SimProcess(
+          pid: pid,
+          owner: t[1],
+          cpu: 0,
+          mem: 0,
+          vms: '—',
+          uptime: t[2],
+          state: '',
+          name: t.skip(3).join(' '),
+        ),
+      );
     }
   }
   return out;
@@ -92,19 +90,21 @@ List<SimService> parseServices(String output) {
       final m = _openrcServiceRe.firstMatch(raw.trim());
       if (m == null) continue;
       final state = m.group(2)!.toLowerCase();
-      out.add(SimService(
-        name: m.group(1)!,
-        desc: 'OpenRC service',
-        status: switch (state) {
-          'started' => 'running',
-          'crashed' => 'failed',
-          _ => 'dead',
-        },
-        subState: state,
-        // rc-status -a lists services attached to runlevels, which is OpenRC's closest notion of
-        // "enabled".
-        enabled: true,
-      ));
+      out.add(
+        SimService(
+          name: m.group(1)!,
+          desc: 'OpenRC service',
+          status: switch (state) {
+            'started' => 'running',
+            'crashed' => 'failed',
+            _ => 'dead',
+          },
+          subState: state,
+          // rc-status -a lists services attached to runlevels, which is OpenRC's closest notion of
+          // "enabled".
+          enabled: true,
+        ),
+      );
     }
     return out;
   }
@@ -136,19 +136,21 @@ List<SimService> parseServices(String output) {
     final active = t[2];
     final sub = t[3];
     final enableState = enabledMap[unit] ?? '';
-    out.add(SimService(
-      name: unit.removeSuffix('.service'),
-      desc: t.getOrNull(4)?.trim() ?? '',
-      status: switch (active) {
-        'active' => 'running',
-        'failed' => 'failed',
-        _ => 'dead',
-      },
-      subState: (active == 'failed' || sub == 'failed')
-          ? 'failed'
-          : (active == 'active' ? 'active' : sub),
-      enabled: enableState.startsWith('enabled'),
-    ));
+    out.add(
+      SimService(
+        name: unit.removeSuffix('.service'),
+        desc: t.getOrNull(4)?.trim() ?? '',
+        status: switch (active) {
+          'active' => 'running',
+          'failed' => 'failed',
+          _ => 'dead',
+        },
+        subState: (active == 'failed' || sub == 'failed')
+            ? 'failed'
+            : (active == 'active' ? 'active' : sub),
+        enabled: enableState.startsWith('enabled'),
+      ),
+    );
   }
   return out;
 }
@@ -179,19 +181,21 @@ List<TransferConflict> parseTransferConflicts(String output) {
       'DIR' => ConflictVerdict.directory,
       _ => ConflictVerdict.unknown,
     };
-    out.add(TransferConflict(
-      name: name,
-      verdict: verdict,
-      sourceSize: int.tryParse(f[2]) ?? 0,
-      destSize: int.tryParse(f[3]) ?? 0,
-      sourceMtimeSeconds: int.tryParse(f[4]) ?? 0,
-      destMtimeSeconds: int.tryParse(f[5]) ?? 0,
-      // Default the safe way round: only a proven-identical pair is pre-set to overwrite (it
-      // destroys nothing). Everything else defaults to Keep both.
-      action: verdict == ConflictVerdict.identical
-          ? ConflictAction.overwrite
-          : ConflictAction.keepBoth,
-    ));
+    out.add(
+      TransferConflict(
+        name: name,
+        verdict: verdict,
+        sourceSize: int.tryParse(f[2]) ?? 0,
+        destSize: int.tryParse(f[3]) ?? 0,
+        sourceMtimeSeconds: int.tryParse(f[4]) ?? 0,
+        destMtimeSeconds: int.tryParse(f[5]) ?? 0,
+        // Default the safe way round: only a proven-identical pair is pre-set to overwrite (it
+        // destroys nothing). Everything else defaults to Keep both.
+        action: verdict == ConflictVerdict.identical
+            ? ConflictAction.overwrite
+            : ConflictAction.keepBoth,
+      ),
+    );
   }
   return out;
 }
@@ -209,27 +213,31 @@ List<SimLog> parseJournal(String output) {
     final msg = m != null ? m.group(4)! : line;
 
     final source = ident.substringBefore('[').trim().ifEmpty('system');
-    out.add(SimLog(
-      time: _extractTime(timeRaw),
-      level: _inferLevel('$ident $msg'),
-      source: source,
-      message: msg,
-    ));
+    out.add(
+      SimLog(
+        time: _extractTime(timeRaw),
+        level: _inferLevel('$ident $msg'),
+        source: source,
+        message: msg,
+      ),
+    );
   }
   return out;
 }
 
 List<FleetLogEntry> parseFleetJournal(String output, String serverName, int serverId) =>
     parseJournal(output)
-        .map((log) => FleetLogEntry(
-              serverName: serverName,
-              serverId: serverId,
-              timestamp: log.time,
-              level: log.level,
-              message: (!log.source.isBlankString && log.source != 'system')
-                  ? '[${log.source}] ${log.message}'
-                  : log.message,
-            ))
+        .map(
+          (log) => FleetLogEntry(
+            serverName: serverName,
+            serverId: serverId,
+            timestamp: log.time,
+            level: log.level,
+            message: (!log.source.isBlankString && log.source != 'system')
+                ? '[${log.source}] ${log.message}'
+                : log.message,
+          ),
+        )
         .toList();
 
 final _healthRe = RegExp(r'\((healthy|unhealthy|starting)\)', caseSensitive: false);
@@ -256,29 +264,31 @@ List<SimContainer> parseDockerPs(String output) {
     final health = _healthRe.firstMatch(statusRaw)?.group(1)?.toLowerCase() ?? 'none';
     final statusLower = statusRaw.toLowerCase();
 
-    out.add(SimContainer(
-      id: t[0].takeChars(12),
-      name: t.getOrElse(1, '').trim().removePrefix('/'),
-      image: t.getOrElse(2, ''),
-      status: switch (statusLower) {
-        // A paused container reports e.g. "Up 3 hours (Paused)".
-        _ when statusLower.contains('paused') => 'paused',
-        _ when statusLower == 'running' || statusLower.startsWith('up') => 'running',
-        _ when statusLower.startsWith('restarting') => 'restarting',
-        _ when statusLower.startsWith('exited') => 'exited',
-        _ => statusRaw.ifBlank('exited'),
-      },
-      health: health,
-      ports: t.getOrElse(4, '').ifBlank('—'),
-      group: _labelCell(t, 5).ifEmpty('standalone'),
-      host: '',
-      composeService: _labelCell(t, 6),
-      composeWorkingDir: _labelCell(t, 7),
-      composeConfigFiles: _labelCell(t, 8),
-      restartCount: 0,
-      createdAt: t.getOrElse(9, '').trim(),
-      runtime: runtime,
-    ));
+    out.add(
+      SimContainer(
+        id: t[0].takeChars(12),
+        name: t.getOrElse(1, '').trim().removePrefix('/'),
+        image: t.getOrElse(2, ''),
+        status: switch (statusLower) {
+          // A paused container reports e.g. "Up 3 hours (Paused)".
+          _ when statusLower.contains('paused') => 'paused',
+          _ when statusLower == 'running' || statusLower.startsWith('up') => 'running',
+          _ when statusLower.startsWith('restarting') => 'restarting',
+          _ when statusLower.startsWith('exited') => 'exited',
+          _ => statusRaw.ifBlank('exited'),
+        },
+        health: health,
+        ports: t.getOrElse(4, '').ifBlank('—'),
+        group: _labelCell(t, 5).ifEmpty('standalone'),
+        host: '',
+        composeService: _labelCell(t, 6),
+        composeWorkingDir: _labelCell(t, 7),
+        composeConfigFiles: _labelCell(t, 8),
+        restartCount: 0,
+        createdAt: t.getOrElse(9, '').trim(),
+        runtime: runtime,
+      ),
+    );
   }
   return out;
 }
@@ -309,14 +319,16 @@ List<SimDockerImage> parseDockerImages(String output) {
     final hasRuntimePrefix = raw.first == 'docker' || raw.first == 'podman';
     final runtime = hasRuntimePrefix ? raw.first : 'docker';
     final t = hasRuntimePrefix ? raw.sublist(1) : raw;
-    out.add(SimDockerImage(
-      id: t[0].removePrefix('sha256:').takeChars(12),
-      repository: t[1],
-      tag: t[2],
-      size: t[3],
-      created: t[4],
-      runtime: runtime,
-    ));
+    out.add(
+      SimDockerImage(
+        id: t[0].removePrefix('sha256:').takeChars(12),
+        repository: t[1],
+        tag: t[2],
+        size: t[3],
+        created: t[4],
+        runtime: runtime,
+      ),
+    );
   }
   return out;
 }
@@ -331,14 +343,16 @@ List<SimDockerVolume> parseDockerVolumes(String output) {
     final runtime = hasRuntimePrefix ? raw.first : 'docker';
     final t = hasRuntimePrefix ? raw.sublist(1) : raw;
     final links = int.tryParse(t.getOrElse(4, '0')) ?? 0;
-    out.add(SimDockerVolume(
-      name: t[0],
-      driver: t[1],
-      mountpoint: t.getOrElse(2, ''),
-      size: t.getOrElse(3, ''),
-      inUse: links > 0,
-      runtime: runtime,
-    ));
+    out.add(
+      SimDockerVolume(
+        name: t[0],
+        driver: t[1],
+        mountpoint: t.getOrElse(2, ''),
+        size: t.getOrElse(3, ''),
+        inUse: links > 0,
+        runtime: runtime,
+      ),
+    );
   }
   return out;
 }
@@ -353,12 +367,7 @@ List<SimDockerNetwork> parseDockerNetworks(String output) {
     final hasRuntimePrefix = cells.first == 'docker' || cells.first == 'podman';
     final runtime = hasRuntimePrefix ? cells.first : 'docker';
     final t = hasRuntimePrefix ? cells.sublist(1) : cells;
-    out.add(SimDockerNetwork(
-      id: t[0].takeChars(12),
-      name: t[1],
-      driver: t[2],
-      runtime: runtime,
-    ));
+    out.add(SimDockerNetwork(id: t[0].takeChars(12), name: t[1], driver: t[2], runtime: runtime));
   }
   return out;
 }
@@ -403,8 +412,8 @@ HostMetrics _parseMetricsLinux(Map<String, String> sections) {
   if (memTotal == 0) {
     final info = sections['MEMINFO'] ?? '';
     int? kb(String field) => int.tryParse(
-          RegExp('$field:\\s+(\\d+)\\s*kB', caseSensitive: false).firstMatch(info)?.group(1) ?? '',
-        );
+      RegExp('$field:\\s+(\\d+)\\s*kB', caseSensitive: false).firstMatch(info)?.group(1) ?? '',
+    );
     final totalKb = kb('MemTotal');
     if (totalKb != null) {
       memTotal = totalKb * 1024;
@@ -447,8 +456,7 @@ HostMetrics _parseMetricsLinux(Map<String, String> sections) {
 
   // CPU temperature: hottest thermal zone, reported in millidegrees Celsius.
   double? cpuTempC;
-  final temps = (sections['TEMP'] ?? '')
-      .lines
+  final temps = (sections['TEMP'] ?? '').lines
       .map((l) => int.tryParse(l.trim()))
       .whereType<int>()
       .toList();
@@ -469,19 +477,15 @@ HostMetrics _parseMetricsLinux(Map<String, String> sections) {
   }).toList();
 
   // Prefer the distro pretty-name (Raspberry Pi OS, Ubuntu 22.04, Alpine, …) over bare "Linux".
-  final distro = (sections['DISTRO']?.trim() ?? '')
-      .lines
+  final distro = (sections['DISTRO']?.trim() ?? '').lines
       .where((l) => !l.isBlankString)
       .firstOrNull
       ?.trim();
   final osLabel = (distro == null || distro.isEmpty) ? 'Linux' : distro;
 
-  final platforms = (sections['PLATFORM'] ?? '')
-      .lines
-      .map((l) => l.trim())
-      .where((l) => l.isNotEmpty)
-      .toSet()
-    ..add('linux');
+  final platforms =
+      (sections['PLATFORM'] ?? '').lines.map((l) => l.trim()).where((l) => l.isNotEmpty).toSet()
+        ..add('linux');
 
   return HostMetrics(
     cpuPercent: cpu,
@@ -588,10 +592,10 @@ HostMetrics _parseMetricsDarwin(Map<String, String> sections) {
 
 /// Windows (PowerShell) best-effort: CPU load %, memory, logical disks, uptime, proc count.
 HostMetrics _parseMetricsWindows(Map<String, String> sections) {
-  final cpu = (double.tryParse((sections['WINCPU']?.trim() ?? '').lines.firstOrNull?.trim() ?? '') ??
-          0)
-      .clamp(0, 100)
-      .toDouble();
+  final cpu =
+      (double.tryParse((sections['WINCPU']?.trim() ?? '').lines.firstOrNull?.trim() ?? '') ?? 0)
+          .clamp(0, 100)
+          .toDouble();
 
   var memTotal = 0;
   var memUsed = 0;
@@ -610,12 +614,14 @@ HostMetrics _parseMetricsWindows(Map<String, String> sections) {
     final total = int.tryParse(t[1]);
     if (total == null || total <= 0) continue;
     final free = int.tryParse(t[2]) ?? 0;
-    disks.add(DiskUsage(
-      mount: t[0],
-      filesystem: t[0],
-      totalBytes: total,
-      usedBytes: math.max(0, total - free),
-    ));
+    disks.add(
+      DiskUsage(
+        mount: t[0],
+        filesystem: t[0],
+        totalBytes: total,
+        usedBytes: math.max(0, total - free),
+      ),
+    );
   }
   final root = disks.firstOrNull;
 
@@ -629,9 +635,12 @@ HostMetrics _parseMetricsWindows(Map<String, String> sections) {
     load5: 0,
     load15: 0,
     uptimeSeconds:
-        double.tryParse((sections['WINUP']?.trim() ?? '').lines.firstOrNull?.trim() ?? '')?.toInt() ??
-            0,
-    procCount: int.tryParse((sections['WINPROC']?.trim() ?? '').lines.lastOrNull?.trim() ?? '') ?? 0,
+        double.tryParse(
+          (sections['WINUP']?.trim() ?? '').lines.firstOrNull?.trim() ?? '',
+        )?.toInt() ??
+        0,
+    procCount:
+        int.tryParse((sections['WINPROC']?.trim() ?? '').lines.lastOrNull?.trim() ?? '') ?? 0,
     disks: disks,
     os: 'Windows',
     platforms: const {'windows'},
@@ -643,8 +652,9 @@ List<double> _loadAverages(String section) =>
 
 /// Uptime as `now - kern.boottime`, both of which the BSD/macOS probe reports separately.
 int _bsdUptime(Map<String, String> sections) {
-  final boot =
-      int.tryParse(RegExp(r'sec\s*=\s*(\d+)').firstMatch(sections['BOOT'] ?? '')?.group(1) ?? '');
+  final boot = int.tryParse(
+    RegExp(r'sec\s*=\s*(\d+)').firstMatch(sections['BOOT'] ?? '')?.group(1) ?? '',
+  );
   final now = int.tryParse(sections['NOW']?.trim() ?? '');
   if (boot == null || now == null) return 0;
   final delta = now - boot;
@@ -682,8 +692,7 @@ Map<String, String> parseSmart(String output) {
   return map;
 }
 
-final _wholeDiskRe =
-    RegExp(r'^(sd[a-z]+|nvme\d+n\d+|vd[a-z]+|xvd[a-z]+|mmcblk\d+|hd[a-z]+)$');
+final _wholeDiskRe = RegExp(r'^(sd[a-z]+|nvme\d+n\d+|vd[a-z]+|xvd[a-z]+|mmcblk\d+|hd[a-z]+)$');
 
 /// Per-whole-disk cumulative read/write bytes from /proc/diskstats (sectors are 512 bytes).
 Map<String, DiskIo> parseDiskIo(String output) {
@@ -693,19 +702,30 @@ Map<String, DiskIo> parseDiskIo(String output) {
     if (t.length < 10) continue;
     final name = t[2];
     if (!_wholeDiskRe.hasMatch(name)) continue;
-    map[name] = DiskIo(
-      name,
-      (int.tryParse(t[5]) ?? 0) * 512,
-      (int.tryParse(t[9]) ?? 0) * 512,
-    );
+    map[name] = DiskIo(name, (int.tryParse(t[5]) ?? 0) * 512, (int.tryParse(t[9]) ?? 0) * 512);
   }
   return map;
 }
 
 /// Pseudo / virtual filesystems we don't want to show as "disks".
 const _pseudoFs = <String>{
-  'tmpfs', 'devtmpfs', 'overlay', 'squashfs', 'proc', 'sysfs', 'cgroup', 'cgroup2',
-  'devfs', 'fdescfs', 'procfs', 'none', 'udev', 'ramfs', 'efivarfs', 'shm', 'mqueue',
+  'tmpfs',
+  'devtmpfs',
+  'overlay',
+  'squashfs',
+  'proc',
+  'sysfs',
+  'cgroup',
+  'cgroup2',
+  'devfs',
+  'fdescfs',
+  'procfs',
+  'none',
+  'udev',
+  'ramfs',
+  'efivarfs',
+  'shm',
+  'mqueue',
 };
 
 /// Parse `df` (all mounts) into per-partition usage, excluding pseudo filesystems.
@@ -736,12 +756,14 @@ List<DiskUsage> parseDisks(String output, {int blockBytes = 1}) {
         mount.startsWith('/run')) {
       continue;
     }
-    out.add(DiskUsage(
-      mount: mount,
-      filesystem: fs,
-      totalBytes: total * blockBytes,
-      usedBytes: used * blockBytes,
-    ));
+    out.add(
+      DiskUsage(
+        mount: mount,
+        filesystem: fs,
+        totalBytes: total * blockBytes,
+        usedBytes: used * blockBytes,
+      ),
+    );
   }
   return out.distinctBy((d) => d.mount);
 }
@@ -783,8 +805,11 @@ List<double> computePerCoreCpuDeltas(
 ) {
   if (prev == null) return const [];
   final cores = cur.keys.where((k) => k != 'cpu' && k.startsWith('cpu')).toList()
-    ..sort((a, b) => (int.tryParse(a.removePrefix('cpu')) ?? 0)
-        .compareTo(int.tryParse(b.removePrefix('cpu')) ?? 0));
+    ..sort(
+      (a, b) => (int.tryParse(a.removePrefix('cpu')) ?? 0).compareTo(
+        int.tryParse(b.removePrefix('cpu')) ?? 0,
+      ),
+    );
   return cores.map((c) => computeCpuUsageDelta(prev, cur, c) ?? 0).toList();
 }
 
@@ -796,8 +821,9 @@ Map<String, (int rx, int tx)> parseNetDev(String output) {
     if (colon < 0) continue;
     final name = line.substring(0, colon).trim();
     if (name.isEmpty || name == 'lo') continue;
-    final nums =
-        splitWhitespace(line.substring(colon + 1).trim()).map(int.tryParse).whereType<int>().toList();
+    final nums = splitWhitespace(
+      line.substring(colon + 1).trim(),
+    ).map(int.tryParse).whereType<int>().toList();
     if (nums.length < 9) continue;
     map[name] = (nums[0], nums[8]); // rxBytes, txBytes
   }

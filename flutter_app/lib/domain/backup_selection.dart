@@ -48,18 +48,18 @@ class BackupSelection {
   /// additionally scoped to the rule that raised it. Restoring any of them without its parent would
   /// produce a row pointing at an id that no longer exists.
   static Set<BackupSection> dependenciesOf(BackupSection section) => switch (section) {
-        BackupSection.alertRules => {BackupSection.servers},
-        BackupSection.activeAlerts => {BackupSection.servers, BackupSection.alertRules},
-        BackupSection.alertHistory => {BackupSection.servers},
-        BackupSection.portForwards => {BackupSection.servers},
-        _ => const {},
-      };
+    BackupSection.alertRules => {BackupSection.servers},
+    BackupSection.activeAlerts => {BackupSection.servers, BackupSection.alertRules},
+    BackupSection.alertHistory => {BackupSection.servers},
+    BackupSection.portForwards => {BackupSection.servers},
+    _ => const {},
+  };
 
   /// Sections that cannot survive without [section].
   static Set<BackupSection> dependentsOf(BackupSection section) => {
-        for (final candidate in BackupSection.values)
-          if (dependenciesOf(candidate).contains(section)) candidate,
-      };
+    for (final candidate in BackupSection.values)
+      if (dependenciesOf(candidate).contains(section)) candidate,
+  };
 
   /// Adds every dependency the current selection implies.
   BackupSelection withReferentialClosure() {
@@ -105,19 +105,20 @@ class BackupSelection {
   /// Drives the requirement to encrypt: hosts carry passwords, keys carry private material, and
   /// even scripts and alert rules name machines and paths. Settings alone are the only selection
   /// with nothing worth protecting — and the UI still offers encryption there.
-  bool get hasSensitiveData => _selected.any((section) => switch (section) {
-        BackupSection.servers ||
-        BackupSection.sshKeys ||
-        BackupSection.credentialProfiles ||
-        BackupSection.scripts ||
-        BackupSection.alertRules ||
-        BackupSection.activeAlerts ||
-        BackupSection.alertHistory ||
-        BackupSection.networkShares ||
-        BackupSection.portForwards =>
-          true,
-        BackupSection.wolTargets || BackupSection.settings => false,
-      });
+  bool get hasSensitiveData => _selected.any(
+    (section) => switch (section) {
+      BackupSection.servers ||
+      BackupSection.sshKeys ||
+      BackupSection.credentialProfiles ||
+      BackupSection.scripts ||
+      BackupSection.alertRules ||
+      BackupSection.activeAlerts ||
+      BackupSection.alertHistory ||
+      BackupSection.networkShares ||
+      BackupSection.portForwards => true,
+      BackupSection.wolTargets || BackupSection.settings => false,
+    },
+  );
 
   @override
   bool operator ==(Object other) =>

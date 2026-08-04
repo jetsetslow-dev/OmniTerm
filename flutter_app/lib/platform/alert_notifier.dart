@@ -24,7 +24,7 @@ abstract interface class AlertNotifier {
 /// The real implementation, on `flutter_local_notifications`.
 class LocalAlertNotifier implements AlertNotifier {
   LocalAlertNotifier({FlutterLocalNotificationsPlugin? plugin})
-      : _plugin = plugin ?? FlutterLocalNotificationsPlugin();
+    : _plugin = plugin ?? FlutterLocalNotificationsPlugin();
 
   final FlutterLocalNotificationsPlugin _plugin;
 
@@ -56,8 +56,8 @@ class LocalAlertNotifier implements AlertNotifier {
   Future<bool> ensurePermission() async {
     await _init();
     try {
-      final android = _plugin.resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin>();
+      final android = _plugin
+          .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
       if (android != null) {
         return await android.requestNotificationsPermission() ?? false;
       }

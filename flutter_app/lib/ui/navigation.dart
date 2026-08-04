@@ -25,22 +25,22 @@ enum Screen {
   /// The legacy Kotlin enum-constant name, used wherever a screen is persisted or sent across a
   /// platform boundary (saved state, launcher shortcuts, home-screen widget intents).
   String get wireName => switch (this) {
-        Screen.servers => 'Servers',
-        Screen.fleet => 'Fleet',
-        Screen.monitor => 'Monitor',
-        Screen.shell => 'Shell',
-        Screen.sftp => 'SFTP',
-        Screen.infra => 'Infra',
-        Screen.tools => 'Tools',
-        Screen.alerts => 'Alerts',
-        Screen.quickScripts => 'QuickScripts',
-        Screen.network => 'Network',
-        Screen.authKeys => 'AuthKeys',
-        Screen.backup => 'Backup',
-        Screen.healthScoring => 'HealthScoring',
-        Screen.settings => 'Settings',
-        Screen.about => 'About',
-      };
+    Screen.servers => 'Servers',
+    Screen.fleet => 'Fleet',
+    Screen.monitor => 'Monitor',
+    Screen.shell => 'Shell',
+    Screen.sftp => 'SFTP',
+    Screen.infra => 'Infra',
+    Screen.tools => 'Tools',
+    Screen.alerts => 'Alerts',
+    Screen.quickScripts => 'QuickScripts',
+    Screen.network => 'Network',
+    Screen.authKeys => 'AuthKeys',
+    Screen.backup => 'Backup',
+    Screen.healthScoring => 'HealthScoring',
+    Screen.settings => 'Settings',
+    Screen.about => 'About',
+  };
 
   static Screen? fromWireName(String name) {
     for (final s in Screen.values) {
@@ -53,16 +53,16 @@ enum Screen {
 /// The nine screens that live under the Tools tab. While any of them is active the Tools bottom-nav
 /// item stays highlighted. Ported from `isToolSubScreen()` in `ui/AppUi.kt`.
 bool isToolSubScreen(Screen screen) => const {
-      Screen.tools,
-      Screen.alerts,
-      Screen.quickScripts,
-      Screen.network,
-      Screen.authKeys,
-      Screen.backup,
-      Screen.healthScoring,
-      Screen.settings,
-      Screen.about,
-    }.contains(screen);
+  Screen.tools,
+  Screen.alerts,
+  Screen.quickScripts,
+  Screen.network,
+  Screen.authKeys,
+  Screen.backup,
+  Screen.healthScoring,
+  Screen.settings,
+  Screen.about,
+}.contains(screen);
 
 /// Top-level tabs in horizontal-swipe order (`swipeNavOrder` in `ui/AppViewModel.kt`).
 const swipeNavOrder = <Screen>[
@@ -77,15 +77,15 @@ const swipeNavOrder = <Screen>[
 
 /// Number of inner subtabs for a screen that supports horizontal subtab paging (0 = none).
 int subtabCount(Screen screen) => switch (screen) {
-      Screen.monitor => 6,
-      Screen.infra => 5,
-      Screen.fleet => 3,
-      Screen.sftp => 4,
-      Screen.network => 9,
-      Screen.alerts => 3,
-      Screen.quickScripts => 2,
-      _ => 0,
-    };
+  Screen.monitor => 6,
+  Screen.infra => 5,
+  Screen.fleet => 3,
+  Screen.sftp => 4,
+  Screen.network => 9,
+  Screen.alerts => 3,
+  Screen.quickScripts => 2,
+  _ => 0,
+};
 
 /// A guard that can intercept a navigation before it commits, returning true when it has taken
 /// over (by showing a dialog, say) and navigation must not proceed.

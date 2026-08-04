@@ -53,22 +53,22 @@ class _AppLockGateState extends State<AppLockGate> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-        listenable: widget.controller,
-        builder: (context, child) {
-          if (!widget.controller.isLocked) return child!;
-          // The app stays built underneath rather than being torn down, so unlocking returns the
-          // user to exactly where they were — including a live terminal session.
-          return Stack(
-            children: [
-              // Excluded from semantics as well as hidden: a screen reader must not be able to walk
-              // the host list while the app is locked.
-              ExcludeSemantics(child: ExcludeFocus(child: child!)),
-              AppLockScreen(controller: widget.controller),
-            ],
-          );
-        },
-        child: widget.child,
+    listenable: widget.controller,
+    builder: (context, child) {
+      if (!widget.controller.isLocked) return child!;
+      // The app stays built underneath rather than being torn down, so unlocking returns the
+      // user to exactly where they were — including a live terminal session.
+      return Stack(
+        children: [
+          // Excluded from semantics as well as hidden: a screen reader must not be able to walk
+          // the host list while the app is locked.
+          ExcludeSemantics(child: ExcludeFocus(child: child!)),
+          AppLockScreen(controller: widget.controller),
+        ],
       );
+    },
+    child: widget.child,
+  );
 }
 
 /// The unlock screen.

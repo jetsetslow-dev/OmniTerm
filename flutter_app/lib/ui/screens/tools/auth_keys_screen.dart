@@ -44,7 +44,8 @@ class _AuthKeysScreenState extends State<AuthKeysScreen> {
             if (vm.profiles.isEmpty)
               const _EmptyNote(
                 keyName: 'authKeys.profiles.empty',
-                text: 'No profiles yet. A profile is a reusable username and credential, so several '
+                text:
+                    'No profiles yet. A profile is a reusable username and credential, so several '
                     'hosts can share one login.',
               )
             else
@@ -110,10 +111,7 @@ class _MessageCard extends StatelessWidget {
               child: SelectionArea(
                 child: Text(
                   vm.error ?? vm.status!,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isError ? OmniColors.red : null,
-                  ),
+                  style: TextStyle(fontSize: 12, color: isError ? OmniColors.red : null),
                 ),
               ),
             ),
@@ -142,10 +140,7 @@ class _EmptyNote extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Text(
         text,
-        style: TextStyle(
-          fontSize: 12,
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
+        style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
       ),
     );
   }
@@ -227,7 +222,10 @@ class _KeyCard extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
-                  Text(sshKey.keyType, style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
+                  Text(
+                    sshKey.keyType,
+                    style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                  ),
                   // Selectable because its whole purpose is comparison against what the host
                   // reports — and that means copying it.
                   SelectionArea(
@@ -289,7 +287,8 @@ class _KnownHostsSection extends StatelessWidget {
     if (vm.knownHosts.isEmpty) {
       return const _EmptyNote(
         keyName: 'authKeys.trust.empty',
-        text: 'No hosts pinned yet. The first time you connect to a host, its key is shown for '
+        text:
+            'No hosts pinned yet. The first time you connect to a host, its key is shown for '
             'approval and remembered here.',
       );
     }
@@ -415,8 +414,7 @@ class _KeyImportSheetState extends State<_KeyImportSheet> {
               child: Row(
                 children: [
                   Expanded(
-                    child: Text('Import SSH key',
-                        style: Theme.of(context).textTheme.titleLarge),
+                    child: Text('Import SSH key', style: Theme.of(context).textTheme.titleLarge),
                   ),
                   IconButton(
                     key: const ValueKey('authKeys.import.close'),
@@ -490,11 +488,7 @@ class _KeyImportSheetState extends State<_KeyImportSheet> {
   }
 }
 
-Future<void> _openKeyRename(
-  BuildContext context,
-  AuthKeysViewModel vm,
-  SshKey key,
-) async {
+Future<void> _openKeyRename(BuildContext context, AuthKeysViewModel vm, SshKey key) async {
   final name = await showDialog<String>(
     context: context,
     builder: (_) => _TextPromptDialog(
@@ -512,11 +506,7 @@ Future<void> _openKeyRename(
   }
 }
 
-Future<void> _confirmDeleteKey(
-  BuildContext context,
-  AuthKeysViewModel vm,
-  SshKey key,
-) async {
+Future<void> _confirmDeleteKey(BuildContext context, AuthKeysViewModel vm, SshKey key) async {
   final dependents = vm.hostsUsingKey(key);
   final confirmed = await showDialog<bool>(
     context: context,
@@ -529,8 +519,8 @@ Future<void> _confirmDeleteKey(
         dependents.isEmpty
             ? 'The private key is deleted and cannot be recovered.'
             : 'These hosts authenticate with it and will stop connecting:\n\n'
-                '${dependents.map((s) => '• ${s.name}').join('\n')}\n\n'
-                'The private key is deleted and cannot be recovered.',
+                  '${dependents.map((s) => '• ${s.name}').join('\n')}\n\n'
+                  'The private key is deleted and cannot be recovered.',
       ),
       actions: [
         TextButton(
@@ -564,7 +554,7 @@ Future<void> _confirmDeleteProfile(
         dependents.isEmpty
             ? 'The stored credentials are deleted.'
             : 'These hosts use it and will lose their credentials:\n\n'
-                '${dependents.map((s) => '• ${s.name}').join('\n')}',
+                  '${dependents.map((s) => '• ${s.name}').join('\n')}',
       ),
       actions: [
         TextButton(
@@ -583,11 +573,7 @@ Future<void> _confirmDeleteProfile(
   if (confirmed ?? false) await vm.deleteProfile(profile);
 }
 
-Future<void> _confirmRevoke(
-  BuildContext context,
-  AuthKeysViewModel vm,
-  KnownHost host,
-) async {
+Future<void> _confirmRevoke(BuildContext context, AuthKeysViewModel vm, KnownHost host) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
@@ -733,8 +719,7 @@ class _ProfileSheetState extends State<_ProfileSheet> {
                   initialValue: aliases.contains(_keyAlias) ? _keyAlias : null,
                   decoration: omniInputDecoration(context, labelText: 'Key'),
                   items: [
-                    for (final alias in aliases)
-                      DropdownMenuItem(value: alias, child: Text(alias)),
+                    for (final alias in aliases) DropdownMenuItem(value: alias, child: Text(alias)),
                   ],
                   onChanged: (v) => setState(() => _keyAlias = v ?? ''),
                 ),

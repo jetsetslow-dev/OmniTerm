@@ -15,34 +15,33 @@ void main() {
     String proxyPassword = 'stored-proxy',
     String proxyType = 'none',
     String? group = 'prod',
-  }) =>
-      Server(
-        id: id,
-        name: name,
-        host: host,
-        port: 2222,
-        username: 'root',
-        groupName: group,
-        serverColor: 'Purple',
-        authType: 'password',
-        authPassword: authPassword,
-        sudoPassword: sudoPassword,
-        notes: 'a note',
-        keepAlive: 45,
-        sshCompression: true,
-        persistentSession: true,
-        proxyCommand: '',
-        proxyType: proxyType,
-        proxyHost: proxyType == 'none' ? '' : 'bastion',
-        proxyPort: proxyType == 'none' ? 0 : 2200,
-        proxyUser: 'jump',
-        proxyPassword: proxyPassword,
-        agentForwarding: true,
-        healthScore: 80,
-        lastLatency: 12,
-        status: 'online',
-        authStatus: 'ok',
-      );
+  }) => Server(
+    id: id,
+    name: name,
+    host: host,
+    port: 2222,
+    username: 'root',
+    groupName: group,
+    serverColor: 'Purple',
+    authType: 'password',
+    authPassword: authPassword,
+    sudoPassword: sudoPassword,
+    notes: 'a note',
+    keepAlive: 45,
+    sshCompression: true,
+    persistentSession: true,
+    proxyCommand: '',
+    proxyType: proxyType,
+    proxyHost: proxyType == 'none' ? '' : 'bastion',
+    proxyPort: proxyType == 'none' ? 0 : 2200,
+    proxyUser: 'jump',
+    proxyPassword: proxyPassword,
+    agentForwarding: true,
+    healthScore: 80,
+    lastLatency: 12,
+    status: 'online',
+    authStatus: 'ok',
+  );
 
   group('stored secrets never reach the form', () {
     test('an edit starts with blank secret fields', () {
@@ -64,8 +63,11 @@ void main() {
     test('an empty field keeps the stored value', () {
       final form = ServerFormState(mode: ServerFormMode.edit, source: saved());
       expect(form.effectivePassword, 'stored-secret');
-      expect(form.toServer().authPassword, 'stored-secret',
-          reason: 'saving without touching the field must not wipe the password');
+      expect(
+        form.toServer().authPassword,
+        'stored-secret',
+        reason: 'saving without touching the field must not wipe the password',
+      );
     });
 
     test('typed text replaces the stored value', () {
@@ -125,8 +127,11 @@ void main() {
         ..group = 'other'
         ..serverColor = 'Green'
         ..notes = 'changed';
-      expect(form.requiresConnectionTest, isFalse,
-          reason: 'renaming a host must not demand a round trip to the server');
+      expect(
+        form.requiresConnectionTest,
+        isFalse,
+        reason: 'renaming a host must not demand a round trip to the server',
+      );
     });
 
     test('changing any connection field invalidates a previous pass', () {
@@ -147,8 +152,11 @@ void main() {
         final form = ServerFormState(mode: ServerFormMode.edit, source: saved());
         expect(form.requiresConnectionTest, isFalse);
         mutate(form);
-        expect(form.requiresConnectionTest, isTrue,
-            reason: 'a changed connection field must re-run the host-key gate');
+        expect(
+          form.requiresConnectionTest,
+          isTrue,
+          reason: 'a changed connection field must re-run the host-key gate',
+        );
       }
     });
 
@@ -186,8 +194,11 @@ void main() {
 
     test('still faces the host-key gate', () {
       final form = ServerFormState(mode: ServerFormMode.duplicate, source: saved());
-      expect(form.requiresConnectionTest, isTrue,
-          reason: 'a copy shares no trust state with its source');
+      expect(
+        form.requiresConnectionTest,
+        isTrue,
+        reason: 'a copy shares no trust state with its source',
+      );
     });
 
     test('does not inherit the source health or status', () {
@@ -248,16 +259,16 @@ void main() {
       final http = ServerFormState(mode: ServerFormMode.add)
         ..proxyType = 'http'
         ..proxyKeyAlias = 'bastion-key';
-      expect(http.toServer().proxyKeyAlias, isNull,
-          reason: 'a key means nothing to an HTTP proxy');
+      expect(http.toServer().proxyKeyAlias, isNull, reason: 'a key means nothing to an HTTP proxy');
     });
 
     test('fields are trimmed', () {
-      final row = (ServerFormState(mode: ServerFormMode.add)
-            ..name = '  nas  '
-            ..host = '  10.0.0.2 '
-            ..username = ' root ')
-          .toServer();
+      final row =
+          (ServerFormState(mode: ServerFormMode.add)
+                ..name = '  nas  '
+                ..host = '  10.0.0.2 '
+                ..username = ' root ')
+              .toServer();
       expect(row.name, 'nas');
       expect(row.host, '10.0.0.2');
       expect(row.username, 'root');
@@ -275,7 +286,10 @@ void main() {
       saved(id: 3, group: 'home'),
       saved(id: 4, group: null),
     ]);
-    expect(options, ['Default', 'prod', 'home'],
-        reason: 'offering existing labels stops a typo silently forking a near-duplicate group');
+    expect(options, [
+      'Default',
+      'prod',
+      'home',
+    ], reason: 'offering existing labels stops a typo silently forking a near-duplicate group');
   });
 }

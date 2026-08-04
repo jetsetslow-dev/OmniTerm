@@ -36,11 +36,46 @@ android {
         execution = "ANDROIDX_TEST_ORCHESTRATOR"
     }
 
+    // Release signing, taken from the environment exactly as the Android app's own build does.
+    //
+    // The Flutter template signs release with the *debug* key so `flutter run --release` works out
+    // of the box. That is fine on a workstation and dangerous in a pipeline: the artifact looks
+    // shippable, installs, and is signed by a key every Android SDK on earth holds. So a build that
+    // declares itself a distribution build must supply real credentials, and one that does not is
+    // signed debug *and says so in its own configuration name* rather than quietly passing for the
+    // real thing.
+    signingConfigs {
+        create("release") {
+            val keystorePath = System.getenv("KEYSTORE_PATH")
+            if (keystorePath != null) {
+                storeFile = file(keystorePath)
+                storePassword = System.getenv("STORE_PASSWORD")
+                    ?: error("STORE_PASSWORD is required when KEYSTORE_PATH is set")
+                keyAlias = System.getenv("KEY_ALIAS")
+                    ?: error("KEY_ALIAS is required when KEYSTORE_PATH is set")
+                keyPassword = System.getenv("KEY_PASSWORD")
+                    ?: error("KEY_PASSWORD is required when KEYSTORE_PATH is set")
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
-            signingConfig = signingConfigs.getByName("debug")
+            // R8 stops on a reference it cannot resolve, and the SMB client brings several that are
+            // absent by design. See `proguard-rules.pro` — every rule there says why.
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro",
+            )
+
+            // `KEYSTORE_PATH` absent means nobody supplied a distribution key, so this is a local
+            // or CI verification build: sign it debug so it still installs, and leave the
+            // distribution path to fail loudly above rather than silently downgrade.
+            signingConfig = if (System.getenv("KEYSTORE_PATH") != null) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
         }
     }
 }

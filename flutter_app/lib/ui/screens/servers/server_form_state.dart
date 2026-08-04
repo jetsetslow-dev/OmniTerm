@@ -39,8 +39,8 @@ class ServerFormState extends ChangeNotifier {
     String? prefillHost,
     int? prefillPort,
     String? suggestedName,
-  })  : _editing = mode == ServerFormMode.edit ? source : null,
-        _duplicateSource = mode == ServerFormMode.duplicate ? source : null {
+  }) : _editing = mode == ServerFormMode.edit ? source : null,
+       _duplicateSource = mode == ServerFormMode.duplicate ? source : null {
     final src = source;
     name = switch (mode) {
       ServerFormMode.duplicate => '${src?.name} copy',
@@ -155,20 +155,20 @@ class ServerFormState extends ChangeNotifier {
   ///
   /// NUL-joined so a value containing the separator cannot forge a different field's boundary.
   String get connectionSignature => [
-        host.trim(),
-        port,
-        username,
-        authType,
-        effectivePassword,
-        selectedKeyAlias,
-        selectedProfileId?.toString() ?? '',
-        proxyType,
-        proxyHost.trim(),
-        proxyPort,
-        proxyUser,
-        effectiveProxyPassword,
-        proxyKeyAlias,
-      ].join('\u0000');
+    host.trim(),
+    port,
+    username,
+    authType,
+    effectivePassword,
+    selectedKeyAlias,
+    selectedProfileId?.toString() ?? '',
+    proxyType,
+    proxyHost.trim(),
+    proxyPort,
+    proxyUser,
+    effectiveProxyPassword,
+    proxyKeyAlias,
+  ].join('\u0000');
 
   /// Records that Test Connection succeeded for the configuration as it stands right now.
   void markConnectionTested() {
@@ -240,8 +240,7 @@ class ServerFormState extends ChangeNotifier {
       proxyUser: proxyUser,
       proxyPassword: effectiveProxyPassword,
       // Only meaningful for a jump host; keeping it otherwise would apply a key to an HTTP proxy.
-      proxyKeyAlias:
-          (proxyKeyAlias.trim().isNotEmpty && proxyType == 'ssh') ? proxyKeyAlias : null,
+      proxyKeyAlias: (proxyKeyAlias.trim().isNotEmpty && proxyType == 'ssh') ? proxyKeyAlias : null,
       agentForwarding: agentForwarding,
       // A new or duplicated host starts unprobed rather than inheriting the source's health.
       healthScore: existing?.healthScore ?? 100,
@@ -264,6 +263,5 @@ class ServerFormState extends ChangeNotifier {
   }
 
   /// Convenience for callers updating a nullable column through Drift's [Value] wrapper.
-  static Value<T> valueOrAbsent<T>(T? value) =>
-      value == null ? const Value.absent() : Value(value);
+  static Value<T> valueOrAbsent<T>(T? value) => value == null ? const Value.absent() : Value(value);
 }

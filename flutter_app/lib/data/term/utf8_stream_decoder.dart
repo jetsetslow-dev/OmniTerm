@@ -52,8 +52,9 @@ class Utf8StreamDecoder {
       // An incomplete prefix is pending only while every byte received so far is a valid
       // continuation. If an ASCII/new lead byte already disproves the sequence, emit U+FFFD now and
       // reprocess that byte instead of hiding valid terminal output indefinitely.
-      final availableContinuations =
-          (len - 1) < (buf.length - i - 1) ? (len - 1) : (buf.length - i - 1);
+      final availableContinuations = (len - 1) < (buf.length - i - 1)
+          ? (len - 1)
+          : (buf.length - i - 1);
       var malformedPrefix = false;
       for (var k = 1; k <= availableContinuations; k++) {
         if ((buf[i + k] & 0xC0) != 0x80) {

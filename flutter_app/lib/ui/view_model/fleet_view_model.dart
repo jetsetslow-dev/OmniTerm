@@ -70,17 +70,13 @@ class FleetViewModel extends ChangeNotifier {
 
   List<Server> get servers => _app.servers;
 
-  List<Server> get onlineServers =>
-      _app.servers.where((s) => s.status == 'online').toList();
+  List<Server> get onlineServers => _app.servers.where((s) => s.status == 'online').toList();
 
   /// Distinct non-empty group names among online hosts, sorted.
   List<String> get groups {
-    final names = onlineServers
-        .map((s) => s.groupName ?? '')
-        .where((g) => g.isNotEmpty)
-        .toSet()
-        .toList()
-      ..sort();
+    final names =
+        onlineServers.map((s) => s.groupName ?? '').where((g) => g.isNotEmpty).toSet().toList()
+          ..sort();
     return names;
   }
 
@@ -90,8 +86,7 @@ class FleetViewModel extends ChangeNotifier {
   int get onlineCount => onlineServers.length;
 
   /// Online hosts scoring below 50 — the ones worth looking at first.
-  int get criticalCount =>
-      servers.where((s) => s.status == 'online' && s.healthScore < 50).length;
+  int get criticalCount => servers.where((s) => s.status == 'online' && s.healthScore < 50).length;
 
   int get averageScore {
     if (servers.isEmpty) return 100;
@@ -157,12 +152,10 @@ class FleetViewModel extends ChangeNotifier {
   /// Group mode resolves to *currently online* members, so a group is never a promise about hosts
   /// that cannot answer.
   List<Server> get resolvedTargets => switch (_targetMode) {
-        FleetTargetMode.servers =>
-          servers.where((s) => _targetServerIds.contains(s.id)).toList(),
-        FleetTargetMode.groups => onlineServers
-            .where((s) => _targetGroups.contains(s.groupName ?? ''))
-            .toList(),
-      };
+    FleetTargetMode.servers => servers.where((s) => _targetServerIds.contains(s.id)).toList(),
+    FleetTargetMode.groups =>
+      onlineServers.where((s) => _targetGroups.contains(s.groupName ?? '')).toList(),
+  };
 
   /// Drops selections for hosts and groups that are no longer online.
   ///
@@ -171,9 +164,7 @@ class FleetViewModel extends ChangeNotifier {
   void _pruneStaleTargets() {
     final onlineIds = onlineServers.map((s) => s.id).toSet();
     _targetServerIds.removeWhere((id) => !onlineIds.contains(id));
-    _targetGroups.removeWhere(
-      (group) => !onlineServers.any((s) => (s.groupName ?? '') == group),
-    );
+    _targetGroups.removeWhere((group) => !onlineServers.any((s) => (s.groupName ?? '') == group));
     _logServerIds.removeWhere((id) => !onlineIds.contains(id));
   }
 
@@ -201,10 +192,7 @@ class FleetViewModel extends ChangeNotifier {
   String? get dangerWarning => fleetCommandDangerWarning(_commandText.trim());
 
   bool get canRun =>
-      canBroadcast &&
-      !_executing &&
-      _commandText.trim().isNotEmpty &&
-      resolvedTargets.isNotEmpty;
+      canBroadcast && !_executing && _commandText.trim().isNotEmpty && resolvedTargets.isNotEmpty;
 
   // ── execution ───────────────────────────────────────────────────────────────
 
@@ -219,10 +207,8 @@ class FleetViewModel extends ChangeNotifier {
   bool get executing => _executing;
   List<BroadcastResult> get results => List.unmodifiable(_results);
 
-  int get successCount =>
-      _results.where((r) => r.status == BroadcastStatus.success).length;
-  int get failureCount =>
-      _results.where((r) => r.status == BroadcastStatus.failure).length;
+  int get successCount => _results.where((r) => r.status == BroadcastStatus.success).length;
+  int get failureCount => _results.where((r) => r.status == BroadcastStatus.failure).length;
 
   void clearResults() {
     if (_executing) return;
@@ -245,8 +231,7 @@ class FleetViewModel extends ChangeNotifier {
     final generation = ++_runGeneration;
     _executing = true;
     _results = [
-      for (final server in targets)
-        BroadcastResult(serverId: server.id, serverName: server.name),
+      for (final server in targets) BroadcastResult(serverId: server.id, serverName: server.name),
     ];
     _safeNotify();
 

@@ -103,7 +103,9 @@ class _OverviewTabState extends State<OverviewTab> {
                             ),
                           ),
                         ),
-                        Expanded(child: GaugeBar(value: v, color: accent, height: 5)),
+                        Expanded(
+                          child: GaugeBar(value: v, color: accent, height: 5),
+                        ),
                         SizedBox(
                           width: 36,
                           child: Text(
@@ -147,7 +149,9 @@ class _OverviewTabState extends State<OverviewTab> {
               Expanded(
                 child: OmniStatBox(value: formatUptime(m.uptimeSeconds), label: 'Uptime'),
               ),
-              Expanded(child: OmniStatBox(value: '${m.procCount}', label: 'Procs')),
+              Expanded(
+                child: OmniStatBox(value: '${m.procCount}', label: 'Procs'),
+              ),
               Expanded(
                 child: OmniStatBox(value: '${m.tcpConnections}', label: 'TCP'),
               ),
@@ -172,15 +176,15 @@ class _DiskCard extends StatelessWidget {
     final mounts = metrics.disks.isNotEmpty
         ? metrics.disks
         : metrics.diskTotalBytes > 0
-            ? [
-                DiskUsage(
-                  mount: '/',
-                  filesystem: '',
-                  totalBytes: metrics.diskTotalBytes,
-                  usedBytes: metrics.diskUsedBytes,
-                ),
-              ]
-            : const <DiskUsage>[];
+        ? [
+            DiskUsage(
+              mount: '/',
+              filesystem: '',
+              totalBytes: metrics.diskTotalBytes,
+              usedBytes: metrics.diskUsedBytes,
+            ),
+          ]
+        : const <DiskUsage>[];
 
     return OmniCard(
       key: const ValueKey('monitor.overview.disks'),
@@ -251,13 +255,13 @@ class _CardLabel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Text(
-        text,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.bold,
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
-      );
+    text,
+    style: TextStyle(
+      fontSize: 11,
+      fontWeight: FontWeight.bold,
+      color: Theme.of(context).colorScheme.onSurfaceVariant,
+    ),
+  );
 }
 
 /// The running process list, sortable by CPU or memory.
@@ -379,11 +383,7 @@ class _ProcessesTabState extends State<ProcessesTab> {
     );
   }
 
-  Future<void> _confirmKill(
-    BuildContext context,
-    MonitorViewModel vm,
-    SimProcess proc,
-  ) async {
+  Future<void> _confirmKill(BuildContext context, MonitorViewModel vm, SimProcess proc) async {
     // Killing the wrong pid can take a host offline, and the list is sorted live — a row can move
     // under the finger between reading and tapping. So the dialog names what will be killed.
     final confirmed = await showDialog<bool>(
@@ -454,9 +454,7 @@ class _ServicesTabState extends State<ServicesTab> {
               leftAccent: OmniColors.cyan,
               child: Row(
                 children: [
-                  Expanded(
-                    child: Text(vm.actionFeedback!, style: const TextStyle(fontSize: 12)),
-                  ),
+                  Expanded(child: Text(vm.actionFeedback!, style: const TextStyle(fontSize: 12))),
                   IconButton(
                     key: const ValueKey('monitor.services.feedback.dismiss'),
                     icon: const Icon(Icons.close, size: 16),
@@ -505,10 +503,7 @@ class _ServicesTabState extends State<ServicesTab> {
                       onSelected: (action) => vm.runServiceAction(svc, action),
                       itemBuilder: (_) => [
                         for (final action in ['start', 'stop', 'restart', 'enable', 'disable'])
-                          PopupMenuItem(
-                            value: action,
-                            child: Text(action),
-                          ),
+                          PopupMenuItem(value: action, child: Text(action)),
                       ],
                     ),
                   ],
@@ -522,10 +517,10 @@ class _ServicesTabState extends State<ServicesTab> {
   }
 
   Color _subStateColor(String subState) => switch (subState) {
-        'active' => OmniColors.green,
-        'failed' => OmniColors.red,
-        _ => OmniColors.textMuted,
-      };
+    'active' => OmniColors.green,
+    'failed' => OmniColors.red,
+    _ => OmniColors.textMuted,
+  };
 }
 
 /// Host logs, with a level filter and a live tail.
@@ -608,8 +603,8 @@ class _LogsTabState extends State<LogsTab> {
                         vm.logsUnsupported
                             ? 'No readable log source on this host.'
                             : vm.logFilter == 'ALL'
-                                ? 'No log entries on this host yet.'
-                                : 'No ${vm.logFilter} entries. Choose ALL to see everything.',
+                            ? 'No log entries on this host yet.'
+                            : 'No ${vm.logFilter} entries. Choose ALL to see everything.',
                         textAlign: TextAlign.center,
                         style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 12),
                       ),

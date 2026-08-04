@@ -11,8 +11,7 @@ class RecordingSink implements TerminalSink {
   void print(int codePoint) => events.add('print:${String.fromCharCode(codePoint)}');
 
   @override
-  void execute(int control) =>
-      events.add('exec:0x${control.toRadixString(16).padLeft(2, '0')}');
+  void execute(int control) => events.add('exec:0x${control.toRadixString(16).padLeft(2, '0')}');
 
   @override
   void csiDispatch(String params, {required bool private, required String finalByte}) =>
@@ -158,21 +157,11 @@ void main() {
 
   group('OSC', () {
     test('a BEL-terminated string is swallowed', () {
-      expect(parse('\x1B]0;my title\x07done'), [
-        'print:d',
-        'print:o',
-        'print:n',
-        'print:e',
-      ]);
+      expect(parse('\x1B]0;my title\x07done'), ['print:d', 'print:o', 'print:n', 'print:e']);
     });
 
     test('an ST-terminated string is swallowed', () {
-      expect(parse('\x1B]0;my title\x1B\\done'), [
-        'print:d',
-        'print:o',
-        'print:n',
-        'print:e',
-      ]);
+      expect(parse('\x1B]0;my title\x1B\\done'), ['print:d', 'print:o', 'print:n', 'print:e']);
     });
 
     test('an ESC inside the payload does not end it prematurely', () {

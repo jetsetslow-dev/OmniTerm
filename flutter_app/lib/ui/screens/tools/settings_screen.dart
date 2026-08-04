@@ -129,9 +129,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               settingKey: 'measurementSystem',
               title: 'Units',
               value: draft.measurementSystem,
-              options: {
-                for (final system in MeasurementSystem.values) system: system.label,
-              },
+              options: {for (final system in MeasurementSystem.values) system: system.label},
               onChanged: (v) => vm.update((p) => p.copyWith(measurementSystem: v)),
             ),
 
@@ -183,8 +181,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 value: draft.batterySaverThresholdPercent,
                 limits: PreferenceLimits.batterySaverThreshold,
                 step: 5,
-                onChanged: (v) =>
-                    vm.update((p) => p.copyWith(batterySaverThresholdPercent: v)),
+                onChanged: (v) => vm.update((p) => p.copyWith(batterySaverThresholdPercent: v)),
               ),
 
             const SectionHeader(title: 'Terminal'),
@@ -242,7 +239,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               settingKey: 'editorHighlightLimit',
               title: 'Highlight files up to',
               suffix: ' KB',
-              subtitle: 'Highlighting a large file blocks the frame long enough to look like a hang',
+              subtitle:
+                  'Highlighting a large file blocks the frame long enough to look like a hang',
               value: draft.editorHighlightLimitKb,
               limits: PreferenceLimits.editorHighlightLimit,
               step: 64,
@@ -270,7 +268,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: 'Block screenshots',
               // Accurate on both platforms rather than flattering on one: Android blocks
               // screenshots outright, iOS cannot and only covers the app-switcher preview.
-              subtitle: 'Hides the app in the recent-apps preview. Screenshots are blocked on '
+              subtitle:
+                  'Hides the app in the recent-apps preview. Screenshots are blocked on '
                   'Android; iOS does not allow that.',
               value: draft.blockScreenshots,
               onChanged: (v) => vm.update((p) => p.copyWith(blockScreenshots: v)),
@@ -352,11 +351,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// Without this the interval was fixed at its 30-second default with no way to reach it, and a
   /// PIN once set could only be changed by turning the lock off — which deletes it. Both are
   /// available in the Android app, so both belong here.
-  Widget _lockTimeoutSection(
-    BuildContext context,
-    SettingsViewModel vm,
-    AppPreferences draft,
-  ) {
+  Widget _lockTimeoutSection(BuildContext context, SettingsViewModel vm, AppPreferences draft) {
     if (!draft.appLockEnabled) return const SizedBox.shrink();
 
     final scheme = Theme.of(context).colorScheme;
@@ -421,8 +416,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       labelText: 'Custom duration',
                       errorText: timeout.isValid ? null : 'Choose a duration up to 24 hours',
                     ),
-                    onChanged: (input) =>
-                        _applyLockTimeout(vm, timeout.editCustomValue(input)),
+                    onChanged: (input) => _applyLockTimeout(vm, timeout.editCustomValue(input)),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -433,9 +427,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     for (final unit in appLockTimeoutUnits)
                       DropdownMenuItem(value: unit, child: Text(unit)),
                   ],
-                  onChanged: (unit) => unit == null
-                      ? null
-                      : _applyLockTimeout(vm, timeout.selectCustomUnit(unit)),
+                  onChanged: (unit) =>
+                      unit == null ? null : _applyLockTimeout(vm, timeout.selectCustomUnit(unit)),
                 ),
               ],
             ),
@@ -488,10 +481,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<String?> _askForPin(BuildContext context) => showDialog<String>(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => const _PinDialog(),
-      );
+    context: context,
+    barrierDismissible: false,
+    builder: (context) => const _PinDialog(),
+  );
 
   Future<void> _confirmReset(BuildContext context, SettingsViewModel vm) async {
     final confirmed = await showDialog<bool>(
@@ -577,10 +570,7 @@ class _Switch extends StatelessWidget {
           ? null
           : Text(
               subtitle!,
-              style: TextStyle(
-                fontSize: 11,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+              style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
       value: value,
       // A dependent switch is disabled rather than hidden, so its existence and its precondition
@@ -624,10 +614,7 @@ class _Stepper extends StatelessWidget {
               children: [
                 Text(title, style: const TextStyle(fontSize: 13)),
                 if (subtitle != null)
-                  Text(
-                    subtitle!,
-                    style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-                  ),
+                  Text(subtitle!, style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
               ],
             ),
           ),
@@ -696,7 +683,6 @@ class _Choice<T> extends StatelessWidget {
   }
 }
 
-
 /// Collects and confirms a new app-lock PIN.
 class _PinDialog extends StatefulWidget {
   const _PinDialog();
@@ -735,54 +721,54 @@ class _PinDialogState extends State<_PinDialog> {
 
   @override
   Widget build(BuildContext context) => AlertDialog(
-        key: const ValueKey('settings.pin.dialog'),
-        title: const Text('Set an app PIN'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'There is no PIN recovery. If you forget it, the only way back in is to reinstall, '
-              'which clears your saved hosts.',
-              style: TextStyle(fontSize: 12),
-            ),
-            const SizedBox(height: 12),
-            _pinField(_first, 'PIN', const ValueKey('settings.pin.first')),
-            const SizedBox(height: 8),
-            _pinField(_second, 'Confirm PIN', const ValueKey('settings.pin.second')),
-            if (_error != null)
-              Padding(
-                padding: const EdgeInsets.only(top: 10),
-                child: Text(
-                  _error!,
-                  key: const ValueKey('settings.pin.error'),
-                  style: const TextStyle(fontSize: 12, color: OmniColors.red),
-                ),
-              ),
-          ],
+    key: const ValueKey('settings.pin.dialog'),
+    title: const Text('Set an app PIN'),
+    content: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const Text(
+          'There is no PIN recovery. If you forget it, the only way back in is to reinstall, '
+          'which clears your saved hosts.',
+          style: TextStyle(fontSize: 12),
         ),
-        actions: [
-          TextButton(
-            key: const ValueKey('settings.pin.cancel'),
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
+        const SizedBox(height: 12),
+        _pinField(_first, 'PIN', const ValueKey('settings.pin.first')),
+        const SizedBox(height: 8),
+        _pinField(_second, 'Confirm PIN', const ValueKey('settings.pin.second')),
+        if (_error != null)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Text(
+              _error!,
+              key: const ValueKey('settings.pin.error'),
+              style: const TextStyle(fontSize: 12, color: OmniColors.red),
+            ),
           ),
-          FilledButton(
-            key: const ValueKey('settings.pin.confirm'),
-            onPressed: _submit,
-            child: const Text('Set PIN'),
-          ),
-        ],
-      );
+      ],
+    ),
+    actions: [
+      TextButton(
+        key: const ValueKey('settings.pin.cancel'),
+        onPressed: () => Navigator.of(context).pop(),
+        child: const Text('Cancel'),
+      ),
+      FilledButton(
+        key: const ValueKey('settings.pin.confirm'),
+        onPressed: _submit,
+        child: const Text('Set PIN'),
+      ),
+    ],
+  );
 
   Widget _pinField(TextEditingController controller, String label, Key key) => TextField(
-        key: key,
-        controller: controller,
-        obscureText: true,
-        enableSuggestions: false,
-        autocorrect: false,
-        keyboardType: TextInputType.number,
-        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-        maxLength: 12,
-        decoration: InputDecoration(labelText: label, counterText: ''),
-      );
+    key: key,
+    controller: controller,
+    obscureText: true,
+    enableSuggestions: false,
+    autocorrect: false,
+    keyboardType: TextInputType.number,
+    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+    maxLength: 12,
+    decoration: InputDecoration(labelText: label, counterText: ''),
+  );
 }

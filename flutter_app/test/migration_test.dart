@@ -33,7 +33,8 @@ void main() {
     for (final entity in entities.cast<Map<String, dynamic>>()) {
       final table = entity['tableName'] as String;
       raw.execute((entity['createSql'] as String).replaceAll(r'${TABLE_NAME}', table));
-      for (final index in (entity['indices'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>()) {
+      for (final index
+          in (entity['indices'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>()) {
         raw.execute((index['createSql'] as String).replaceAll(r'${TABLE_NAME}', table));
       }
     }
@@ -44,7 +45,9 @@ void main() {
 
   Future<Set<String>> tablesOf(AppDatabase db) async {
     final rows = await db
-        .customSelect("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+        .customSelect(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+        )
         .get();
     return rows.map((r) => r.read<String>('name')).toSet();
   }
@@ -65,26 +68,31 @@ void main() {
       expect(version.data.values.first, kRoomSchemaVersion);
 
       final tables = await tablesOf(db);
-      expect(tables, containsAll(<String>{
-        'servers',
-        'metric_history',
-        'ssh_keys',
-        'credential_profiles',
-        'alert_rules',
-        'active_alerts',
-        'alert_history',
-        'quick_scripts',
-        'wol_targets',
-        'network_shares',
-        'app_settings',
-        'persistent_sessions',
-        'port_forwards',
-        'stack_registry',
-      }));
+      expect(
+        tables,
+        containsAll(<String>{
+          'servers',
+          'metric_history',
+          'ssh_keys',
+          'credential_profiles',
+          'alert_rules',
+          'active_alerts',
+          'alert_history',
+          'quick_scripts',
+          'wol_targets',
+          'network_shares',
+          'app_settings',
+          'persistent_sessions',
+          'port_forwards',
+          'stack_registry',
+        }),
+      );
 
       // Columns each migration step was responsible for adding.
-      expect(await columnsOf(db, 'servers'),
-          containsAll(<String>{'proxyKeyAlias', 'persistentSession', 'agentForwarding'}));
+      expect(
+        await columnsOf(db, 'servers'),
+        containsAll(<String>{'proxyKeyAlias', 'persistentSession', 'agentForwarding'}),
+      );
       expect(await columnsOf(db, 'quick_scripts'), containsAll(<String>{'notes', 'presetKey'}));
       expect(await columnsOf(db, 'alert_rules'), containsAll(<String>{'notes', 'presetKey'}));
       expect(await columnsOf(db, 'wol_targets'), contains('ipAddress'));
@@ -113,7 +121,9 @@ void main() {
 
     final db = AppDatabase(NativeDatabase(file));
     addTearDown(db.close);
-    final rows = await db.customSelect('SELECT name, useHttps FROM network_shares ORDER BY id').get();
+    final rows = await db
+        .customSelect('SELECT name, useHttps FROM network_shares ORDER BY id')
+        .get();
     final byName = {for (final r in rows) r.read<String>('name'): r.read<int>('useHttps')};
 
     expect(byName['secure'], 1, reason: '443 was treated as https before the flag existed');

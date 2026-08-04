@@ -21,9 +21,9 @@ import 'utf8_stream_decoder.dart';
 /// on hostile output is a terminal that can be killed by `cat`ing a binary.
 class TerminalEmulator implements TerminalSink {
   TerminalEmulator({int cols = 80, int rows = 24, int scrollbackLimit = 2000})
-      : _cols = cols < 1 ? 1 : cols,
-        _rows = rows < 1 ? 1 : rows,
-        _scrollbackLimit = scrollbackLimit < 0 ? 0 : scrollbackLimit {
+    : _cols = cols < 1 ? 1 : cols,
+      _rows = rows < 1 ? 1 : rows,
+      _scrollbackLimit = scrollbackLimit < 0 ? 0 : scrollbackLimit {
     _parser = TerminalParser(this);
     _screen = List.generate(_rows, (_) => blankRow(_cols), growable: false);
     _scrollBottom = _rows - 1;
@@ -542,7 +542,8 @@ class TerminalEmulator implements TerminalSink {
     final last = runes.last;
     final first = runes.first;
     final joinsZwjSequence = last == 0x200D;
-    final joinsRegionalFlag = first >= 0x1F1E6 &&
+    final joinsRegionalFlag =
+        first >= 0x1F1E6 &&
         first <= 0x1F1FF &&
         codePoint >= 0x1F1E6 &&
         codePoint <= 0x1F1FF &&
@@ -766,16 +767,16 @@ class TerminalEmulator implements TerminalSink {
   }
 
   static void _copyCell(TerminalCell src, TerminalCell dst) => dst.set(
-        src.text,
-        src.fg,
-        src.bg,
-        bold: src.bold,
-        inverse: src.inverse,
-        italic: src.italic,
-        underline: src.underline,
-        dim: src.dim,
-        width: src.width,
-      );
+    src.text,
+    src.fg,
+    src.bg,
+    bold: src.bold,
+    inverse: src.inverse,
+    italic: src.italic,
+    underline: src.underline,
+    dim: src.dim,
+    width: src.width,
+  );
 
   void _eraseChars(int n) {
     final line = _screen[_curRow];
@@ -948,18 +949,20 @@ class TerminalEmulator implements TerminalSink {
     var style = row[0];
 
     void flush() {
-      spans.add(TermSpan(
-        buffer.toString(),
-        style.fg,
-        style.bg,
-        bold: style.bold,
-        inverse: style.inverse,
-        italic: style.italic,
-        underline: style.underline,
-        dim: style.dim,
-        glyphs: glyphs,
-        glyphWidths: glyphWidths,
-      ));
+      spans.add(
+        TermSpan(
+          buffer.toString(),
+          style.fg,
+          style.bg,
+          bold: style.bold,
+          inverse: style.inverse,
+          italic: style.italic,
+          underline: style.underline,
+          dim: style.dim,
+          glyphs: glyphs,
+          glyphWidths: glyphWidths,
+        ),
+      );
       buffer.clear();
       glyphs = <String>[];
       glyphWidths = <int>[];

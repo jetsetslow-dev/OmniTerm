@@ -68,15 +68,14 @@ class MetricTiers {
     int? warnPenalty,
     int? highPenalty,
     int? criticalPenalty,
-  }) =>
-      MetricTiers(
-        warnAt ?? this.warnAt,
-        highAt ?? this.highAt,
-        criticalAt ?? this.criticalAt,
-        warnPenalty ?? this.warnPenalty,
-        highPenalty ?? this.highPenalty,
-        criticalPenalty ?? this.criticalPenalty,
-      );
+  }) => MetricTiers(
+    warnAt ?? this.warnAt,
+    highAt ?? this.highAt,
+    criticalAt ?? this.criticalAt,
+    warnPenalty ?? this.warnPenalty,
+    highPenalty ?? this.highPenalty,
+    criticalPenalty ?? this.criticalPenalty,
+  );
 }
 
 /// A single contributing line in a host's score breakdown.
@@ -125,12 +124,13 @@ class HealthScoringConfig {
 
   static const defaults = HealthScoringConfig();
 
-  int score(double cpuPct, double ramPct, double diskPct, int rtt) => (100 -
-          cpu.penaltyFor(cpuPct) -
-          mem.penaltyFor(ramPct) -
-          disk.penaltyFor(diskPct) -
-          latency.penaltyFor(rtt.toDouble()))
-      .clamp(0, 100);
+  int score(double cpuPct, double ramPct, double diskPct, int rtt) =>
+      (100 -
+              cpu.penaltyFor(cpuPct) -
+              mem.penaltyFor(ramPct) -
+              disk.penaltyFor(diskPct) -
+              latency.penaltyFor(rtt.toDouble()))
+          .clamp(0, 100);
 
   /// Build a human-readable breakdown of the score for the given readings.
   HealthBreakdown breakdown(
@@ -170,28 +170,25 @@ class HealthScoringConfig {
   ///
   /// Kotlin renders a `Float` as "50.0", and Dart renders the equivalent `double` identically, so
   /// the strings written by the two implementations match byte for byte.
-  String encode() => [
-        ('cpu', cpu),
-        ('mem', mem),
-        ('disk', disk),
-        ('lat', latency),
-      ]
-          .map((e) => '${e.$1}:${e.$2.warnAt},${e.$2.highAt},${e.$2.criticalAt},'
-              '${e.$2.warnPenalty},${e.$2.highPenalty},${e.$2.criticalPenalty}')
-          .join(';');
+  String encode() => [('cpu', cpu), ('mem', mem), ('disk', disk), ('lat', latency)]
+      .map(
+        (e) =>
+            '${e.$1}:${e.$2.warnAt},${e.$2.highAt},${e.$2.criticalAt},'
+            '${e.$2.warnPenalty},${e.$2.highPenalty},${e.$2.criticalPenalty}',
+      )
+      .join(';');
 
   HealthScoringConfig copyWith({
     MetricTiers? cpu,
     MetricTiers? mem,
     MetricTiers? disk,
     MetricTiers? latency,
-  }) =>
-      HealthScoringConfig(
-        cpu: cpu ?? this.cpu,
-        mem: mem ?? this.mem,
-        disk: disk ?? this.disk,
-        latency: latency ?? this.latency,
-      );
+  }) => HealthScoringConfig(
+    cpu: cpu ?? this.cpu,
+    mem: mem ?? this.mem,
+    disk: disk ?? this.disk,
+    latency: latency ?? this.latency,
+  );
 
   @override
   bool operator ==(Object other) =>

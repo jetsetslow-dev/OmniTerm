@@ -62,8 +62,7 @@ class MonitorViewModel extends ChangeNotifier {
 
   /// The hosts the picker can offer. Only online ones: an SSH command to a host that is down can
   /// only ever time out, and offering it invites the user to blame the app.
-  List<Server> get onlineServers =>
-      _app.servers.where((s) => s.status == 'online').toList();
+  List<Server> get onlineServers => _app.servers.where((s) => s.status == 'online').toList();
 
   /// True when there is nothing to monitor, so the screen shows its empty state.
   bool get hasNoOnlineHosts => monitoredServer == null;
@@ -77,7 +76,7 @@ class MonitorViewModel extends ChangeNotifier {
   void _onAppChanged() {
     final current = monitoredServer?.id;
     if (current != _lastServerId) {
-        _lastServerId = current;
+      _lastServerId = current;
       // Another host's processes, services and logs are not this host's. Showing them while the new
       // fetch is in flight would attribute one machine's state to another.
       _clearHostScopedData();
@@ -116,13 +115,13 @@ class MonitorViewModel extends ChangeNotifier {
   /// This is also what pull-to-refresh calls: refreshing Monitor while the Services tab is open has
   /// to fetch services, not host metrics.
   Future<void> loadActiveTab() => switch (_activeTab) {
-        MonitorTab.overview => loadHostMetrics(),
-        MonitorTab.processes => loadProcesses(),
-        MonitorTab.services => loadServices(),
-        MonitorTab.logs => loadLogs(),
-        // Scripts and Cron are not ported yet (§18).
-        _ => Future<void>.value(),
-      };
+    MonitorTab.overview => loadHostMetrics(),
+    MonitorTab.processes => loadProcesses(),
+    MonitorTab.services => loadServices(),
+    MonitorTab.logs => loadLogs(),
+    // Scripts and Cron are not ported yet (§18).
+    _ => Future<void>.value(),
+  };
 
   // ── overview ────────────────────────────────────────────────────────────────
 
@@ -282,8 +281,7 @@ class MonitorViewModel extends ChangeNotifier {
           stdin: sudoStdin(password),
         );
         final trimmed = out.trim();
-        return () => _actionFeedback =
-            trimmed.isEmpty ? '$action ${service.name}: done' : trimmed;
+        return () => _actionFeedback = trimmed.isEmpty ? '$action ${service.name}: done' : trimmed;
       },
     );
     await loadServices();
@@ -382,7 +380,8 @@ class MonitorViewModel extends ChangeNotifier {
     required Future<void Function()> Function(
       Server server,
       Future<String> Function(String command, {String? stdin}) exec,
-    ) run,
+    )
+    run,
   }) async {
     final server = monitoredServer;
     final ssh = transport;

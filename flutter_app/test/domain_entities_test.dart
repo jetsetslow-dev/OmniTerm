@@ -15,22 +15,21 @@ void main() {
     String targetSystem = 'Any',
     String category = 'General',
     bool availableForQuick = true,
-  }) =>
-      QuickScript(
-        id: 1,
-        emoji: '⚡',
-        name: 'Test',
-        command: 'true',
-        color: 'cyan',
-        longRunning: false,
-        category: category,
-        sortOrder: 0,
-        availableForQuick: availableForQuick,
-        availableForFleet: false,
-        targetOs: targetOs,
-        targetSystem: targetSystem,
-        notes: '',
-      );
+  }) => QuickScript(
+    id: 1,
+    emoji: '⚡',
+    name: 'Test',
+    command: 'true',
+    color: 'cyan',
+    longRunning: false,
+    category: category,
+    sortOrder: 0,
+    availableForQuick: availableForQuick,
+    availableForFleet: false,
+    targetOs: targetOs,
+    targetSystem: targetSystem,
+    notes: '',
+  );
 
   HostMetrics metrics({String os = 'Linux', Set<String> platforms = const {'linux'}}) =>
       HostMetrics(
@@ -55,19 +54,21 @@ void main() {
 
     test('"Any" targets match every host', () {
       expect(quickScriptMatchesHost(script(), metrics()), isTrue);
-      expect(quickScriptMatchesHost(script(), metrics(os: 'Windows', platforms: {'windows'})),
-          isTrue);
-      expect(quickScriptMatchesHost(script(), null), isTrue,
-          reason: 'an unprobed host must not hide every script');
+      expect(
+        quickScriptMatchesHost(script(), metrics(os: 'Windows', platforms: {'windows'})),
+        isTrue,
+      );
+      expect(
+        quickScriptMatchesHost(script(), null),
+        isTrue,
+        reason: 'an unprobed host must not hide every script',
+      );
     });
 
     test('an OS target matches the detected OS case-insensitively', () {
       expect(quickScriptMatchesHost(script(targetOs: 'Linux'), metrics(os: 'Linux')), isTrue);
       expect(quickScriptMatchesHost(script(targetOs: 'linux'), metrics(os: 'Linux')), isTrue);
-      expect(
-        quickScriptMatchesHost(script(targetOs: 'Windows'), metrics(os: 'Linux')),
-        isFalse,
-      );
+      expect(quickScriptMatchesHost(script(targetOs: 'Windows'), metrics(os: 'Linux')), isFalse);
     });
 
     test('an OS target also matches via the platform set', () {
@@ -124,47 +125,47 @@ void main() {
     final display = HostDisplay.instance;
 
     Server server({String name = 'nas', String host = '10.0.0.2'}) => Server(
-          id: 1,
-          name: name,
-          host: host,
-          port: 22,
-          username: 'root',
-          serverColor: 'Default',
-          authType: 'password',
-          sudoPassword: '',
-          notes: '',
-          keepAlive: 30,
-          sshCompression: false,
-          persistentSession: false,
-          proxyCommand: '',
-          proxyType: 'none',
-          proxyHost: '',
-          proxyPort: 0,
-          proxyUser: '',
-          proxyPassword: '',
-          agentForwarding: false,
-          healthScore: 100,
-          lastLatency: 0,
-          status: 'offline',
-          authStatus: 'unknown',
-        );
+      id: 1,
+      name: name,
+      host: host,
+      port: 22,
+      username: 'root',
+      serverColor: 'Default',
+      authType: 'password',
+      sudoPassword: '',
+      notes: '',
+      keepAlive: 30,
+      sshCompression: false,
+      persistentSession: false,
+      proxyCommand: '',
+      proxyType: 'none',
+      proxyHost: '',
+      proxyPort: 0,
+      proxyUser: '',
+      proxyPassword: '',
+      agentForwarding: false,
+      healthScore: 100,
+      lastLatency: 0,
+      status: 'offline',
+      authStatus: 'unknown',
+    );
 
     NetworkShare share({String name = 'media', String address = '10.0.0.5'}) => NetworkShare(
-          id: 1,
-          name: name,
-          protocol: 'SMB',
-          address: address,
-          port: 445,
-          sharePath: '',
-          workgroup: '',
-          username: '',
-          password: '',
-          anonymous: true,
-          useHttps: false,
-          notes: '',
-          lastChecked: 0,
-          lastStatus: 'unknown',
-        );
+      id: 1,
+      name: name,
+      protocol: 'SMB',
+      address: address,
+      port: 445,
+      sharePath: '',
+      workgroup: '',
+      username: '',
+      password: '',
+      anonymous: true,
+      useHttps: false,
+      notes: '',
+      lastChecked: 0,
+      lastStatus: 'unknown',
+    );
 
     setUp(() => display.hideSensitiveInfo = false);
     tearDown(() => display.hideSensitiveInfo = false);
@@ -194,8 +195,11 @@ void main() {
     test('the name position falls back to the address only while unmasked', () {
       expect(display.name(server(name: '')), '10.0.0.2');
       display.hideSensitiveInfo = true;
-      expect(display.name(server(name: '')), 'host',
-          reason: 'leaking the address into the name position would defeat masking');
+      expect(
+        display.name(server(name: '')),
+        'host',
+        reason: 'leaking the address into the name position would defeat masking',
+      );
       expect(display.name(server()), 'nas');
     });
 
@@ -218,17 +222,17 @@ void main() {
     const hour = 3600000;
 
     MetricHistoryRow row(int ts, double cpu, double ram, [double? temp]) => MetricHistoryRow(
-          id: 0,
-          serverId: 1,
-          timestamp: ts,
-          cpuUsage: cpu,
-          ramUsage: ram,
-          diskUsage: 0,
-          latency: 0,
-          networkIn: 0,
-          networkOut: 0,
-          cpuTemperatureC: temp,
-        );
+      id: 0,
+      serverId: 1,
+      timestamp: ts,
+      cpuUsage: cpu,
+      ramUsage: ram,
+      diskUsage: 0,
+      latency: 0,
+      networkIn: 0,
+      networkOut: 0,
+      cpuTemperatureC: temp,
+    );
 
     test('averages samples within each clock hour', () {
       final series = buildHourlyMetricSeries([
@@ -254,13 +258,13 @@ void main() {
     });
 
     test('an hour with no sensor reading is omitted rather than zeroed', () {
-      final series = buildHourlyMetricSeries([
-        row(hour * 1, 10, 10, 40),
-        row(hour * 2, 10, 10),
-      ]);
+      final series = buildHourlyMetricSeries([row(hour * 1, 10, 10, 40), row(hour * 2, 10, 10)]);
       expect(series.cpu, hasLength(2));
-      expect(series.temperature, hasLength(1),
-          reason: 'a host with no thermal sensor must not appear to run at 0°C');
+      expect(
+        series.temperature,
+        hasLength(1),
+        reason: 'a host with no thermal sensor must not appear to run at 0°C',
+      );
       expect(series.temperature.single.timestamp, hour * 1);
     });
 
@@ -291,29 +295,17 @@ void main() {
     });
 
     test('a sub-hour range keeps seconds', () {
-      final labels = chartEndpointLabels(
-        [noon, noon + 90000],
-        locale: 'en_US',
-        utc: true,
-      );
+      final labels = chartEndpointLabels([noon, noon + 90000], locale: 'en_US', utc: true);
       expect(labels, ('12:00:00', '12:01:30'));
     });
 
     test('a same-day range beyond an hour drops seconds', () {
-      final labels = chartEndpointLabels(
-        [noon, noon + 3 * hour],
-        locale: 'en_US',
-        utc: true,
-      );
+      final labels = chartEndpointLabels([noon, noon + 3 * hour], locale: 'en_US', utc: true);
       expect(labels, ('12:00', '15:00'));
     });
 
     test('a range crossing midnight includes the date', () {
-      final labels = chartEndpointLabels(
-        [noon, noon + 18 * hour],
-        locale: 'en_US',
-        utc: true,
-      );
+      final labels = chartEndpointLabels([noon, noon + 18 * hour], locale: 'en_US', utc: true);
       expect(labels.$1, 'Jan 2 12:00');
       expect(labels.$2, 'Jan 3 06:00');
     });

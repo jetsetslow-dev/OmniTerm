@@ -48,10 +48,7 @@ void main() {
     });
 
     test('refuses a MAC of the wrong length rather than sending a dud', () {
-      expect(
-        () => buildMagicPacket(Uint8List.fromList([1, 2, 3])),
-        throwsA(isA<ArgumentError>()),
-      );
+      expect(() => buildMagicPacket(Uint8List.fromList([1, 2, 3])), throwsA(isA<ArgumentError>()));
     });
   });
 
@@ -203,12 +200,7 @@ void main() {
         ..add([0xC0, 0x0C])
         ..add([(type >> 8) & 0xFF, type & 0xFF])
         ..add([0x00, 0x01])
-        ..add([
-          (ttl >> 24) & 0xFF,
-          (ttl >> 16) & 0xFF,
-          (ttl >> 8) & 0xFF,
-          ttl & 0xFF,
-        ])
+        ..add([(ttl >> 24) & 0xFF, (ttl >> 16) & 0xFF, (ttl >> 8) & 0xFF, ttl & 0xFF])
         ..add([(rdata.length >> 8) & 0xFF, rdata.length & 0xFF])
         ..add(rdata);
       return out.toBytes();
@@ -223,10 +215,9 @@ void main() {
     });
 
     test('reads an AAAA record', () {
-      final records = parseDnsResponse(response(
-        type: 28,
-        rdata: [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1],
-      ));
+      final records = parseDnsResponse(
+        response(type: 28, rdata: [0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
+      );
       expect(records.single.type, 'AAAA');
       expect(records.single.value, '2001:db8:0:0:0:0:0:1');
     });
@@ -256,7 +247,9 @@ void main() {
         // "No records" and "no such name" are different facts and only one means the input is wrong.
         expect(
           () => parseDnsResponse(response(type: 1, rdata: [1, 2, 3, 4], responseCode: 3)),
-          throwsA(isA<DnsException>().having((e) => e.message, 'message', contains('No such name'))),
+          throwsA(
+            isA<DnsException>().having((e) => e.message, 'message', contains('No such name')),
+          ),
         );
       });
 
@@ -268,10 +261,7 @@ void main() {
       });
 
       test('a truncated reply is refused rather than half-read', () {
-        expect(
-          () => parseDnsResponse(Uint8List.fromList([1, 2, 3])),
-          throwsA(isA<DnsException>()),
-        );
+        expect(() => parseDnsResponse(Uint8List.fromList([1, 2, 3])), throwsA(isA<DnsException>()));
       });
 
       test('a reply for a different query is rejected', () {
@@ -281,7 +271,9 @@ void main() {
             response(type: 1, rdata: [1, 2, 3, 4], id: 0x1111),
             expectTransactionId: 0x2222,
           ),
-          throwsA(isA<DnsException>().having((e) => e.message, 'message', contains('did not match'))),
+          throwsA(
+            isA<DnsException>().having((e) => e.message, 'message', contains('did not match')),
+          ),
         );
       });
 

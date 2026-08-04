@@ -66,9 +66,9 @@ class _ScriptsScreenState extends State<ScriptsScreen> {
                 // difference on their own.
                 isQuick
                     ? 'Quick scripts run on the currently selected host and can be filtered by OS '
-                        'or platform.'
+                          'or platform.'
                     : 'Fleet commands are broadcast to several hosts or groups from the Fleet '
-                        'screen.',
+                          'screen.',
                 style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
               ),
             ),
@@ -85,9 +85,7 @@ class _ScriptsScreenState extends State<ScriptsScreen> {
                   leftAccent: OmniColors.green,
                   child: Row(
                     children: [
-                      Expanded(
-                        child: Text(vm.status!, style: const TextStyle(fontSize: 12)),
-                      ),
+                      Expanded(child: Text(vm.status!, style: const TextStyle(fontSize: 12))),
                       IconButton(
                         key: const ValueKey('scripts.status.dismiss'),
                         icon: const Icon(Icons.close, size: 16),
@@ -107,9 +105,9 @@ class _ScriptsScreenState extends State<ScriptsScreen> {
                         child: Text(
                           isQuick
                               ? 'No quick scripts yet. Add one, or turn on the homelab presets '
-                                  'above.'
+                                    'above.'
                               : 'No fleet commands yet. Add one, or turn on the default commands '
-                                  'above.',
+                                    'above.',
                           textAlign: TextAlign.center,
                           style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                         ),
@@ -121,8 +119,7 @@ class _ScriptsScreenState extends State<ScriptsScreen> {
                       children: [
                         for (final entry in grouped.entries) ...[
                           SectionHeader(title: entry.key),
-                          for (final script in entry.value)
-                            _ScriptCard(vm: vm, script: script),
+                          for (final script in entry.value) _ScriptCard(vm: vm, script: script),
                           const SizedBox(height: 12),
                         ],
                       ],
@@ -203,9 +200,9 @@ class _PresetToggle extends StatelessWidget {
           on
               // Enabling re-seeds, so it silently reverts edits unless that is said out loud.
               ? 'This adds the curated scripts and resets any edits you made to them. You can '
-                  'change or delete them afterwards.'
+                    'change or delete them afterwards.'
               : 'This removes the curated scripts, including any edits to them. Your own scripts '
-                  'are kept.',
+                    'are kept.',
         ),
         actions: [
           TextButton(
@@ -305,11 +302,7 @@ class _ScriptCard extends StatelessWidget {
   }
 }
 
-Future<void> _confirmDelete(
-  BuildContext context,
-  ScriptsViewModel vm,
-  QuickScript script,
-) async {
+Future<void> _confirmDelete(BuildContext context, ScriptsViewModel vm, QuickScript script) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
@@ -367,8 +360,7 @@ class _ScriptSheetState extends State<_ScriptSheet> {
   late final _name = TextEditingController(text: widget.existing?.name ?? '');
   late final _command = TextEditingController(text: widget.existing?.command ?? '');
   late final _emoji = TextEditingController(text: widget.existing?.emoji ?? '');
-  late final _category =
-      TextEditingController(text: widget.existing?.category ?? 'General');
+  late final _category = TextEditingController(text: widget.existing?.category ?? 'General');
   late final _notes = TextEditingController(text: widget.existing?.notes ?? '');
 
   late String _color = widget.existing?.color ?? 'cyan';

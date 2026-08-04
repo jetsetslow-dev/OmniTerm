@@ -183,8 +183,8 @@ class NetworkViewModel extends ChangeNotifier {
     final broadcast = explicitBroadcast.isNotEmpty
         ? explicitBroadcast
         : hostPrefix != null
-            ? broadcastFor(hostPrefix)
-            : '255.255.255.255';
+        ? broadcastFor(hostPrefix)
+        : '255.255.255.255';
 
     await _app.repository.insertWolTarget(
       WolTargetsCompanion.insert(
@@ -199,8 +199,7 @@ class NetworkViewModel extends ChangeNotifier {
     return null;
   }
 
-  Future<void> deleteWolTarget(WolTarget target) =>
-      _app.repository.deleteWolTargetById(target.id);
+  Future<void> deleteWolTarget(WolTarget target) => _app.repository.deleteWolTargetById(target.id);
 
   /// Sends the magic packet for [target].
   ///

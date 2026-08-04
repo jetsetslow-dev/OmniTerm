@@ -20,11 +20,8 @@ typedef BiometricPrompt = Future<bool> Function(String reason);
 /// every rule here is one that fails silently when wrong: a lock that never engages looks identical
 /// to a lock that works, right up until the phone is lost.
 class AppLockController extends ChangeNotifier {
-  AppLockController(
-    this._repository, {
-    this.biometricPrompt,
-    int Function()? clock,
-  }) : _now = clock ?? (() => DateTime.now().millisecondsSinceEpoch);
+  AppLockController(this._repository, {this.biometricPrompt, int Function()? clock})
+    : _now = clock ?? (() => DateTime.now().millisecondsSinceEpoch);
 
   final AppRepository _repository;
   final BiometricPrompt? biometricPrompt;
@@ -80,9 +77,8 @@ class AppLockController extends ChangeNotifier {
     _timeoutMs = normalizeAppLockBackgroundTimeout(
       int.tryParse(await _repository.getSetting('app_lock_grace_ms') ?? ''),
     );
-    _failedAttempts =
-        (int.tryParse(await _repository.getSetting('pin_failed_attempts') ?? '') ?? 0)
-            .clamp(0, pinMaxAttempts);
+    _failedAttempts = (int.tryParse(await _repository.getSetting('pin_failed_attempts') ?? '') ?? 0)
+        .clamp(0, pinMaxAttempts);
     // A cold start is always locked when the lock is configured. Anything else would let a
     // force-stop — the easiest thing in the world to do to a phone you have picked up — be a way
     // straight past it.

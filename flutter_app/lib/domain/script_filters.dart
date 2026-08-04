@@ -23,12 +23,14 @@ bool quickScriptMatchesHost(QuickScript script, HostMetrics? metrics) {
   final os = metrics?.os ?? '';
   final platforms = metrics?.platforms ?? const <String>{};
 
-  final osMatches = script.targetOs.toLowerCase() == 'any' ||
+  final osMatches =
+      script.targetOs.toLowerCase() == 'any' ||
       script.targetOs.trim().isEmpty ||
       os.toLowerCase() == script.targetOs.toLowerCase() ||
       platforms.contains(script.targetOs.toLowerCase());
 
-  final systemMatches = script.targetSystem.toLowerCase() == 'any' ||
+  final systemMatches =
+      script.targetSystem.toLowerCase() == 'any' ||
       script.targetSystem.trim().isEmpty ||
       platforms.contains(systemPlatformKey(script.targetSystem));
 
@@ -42,20 +44,20 @@ bool quickScriptMatchesHost(QuickScript script, HostMetrics? metrics) {
 /// The platform key implied by a pre-targeting category name, or null when the category says
 /// nothing about the host (a user-made "Backups" category must not filter anything out).
 String? legacyCategoryPlatformKey(String category) => switch (category) {
-      'Linux' => 'linux',
-      'FreeBSD' => 'freebsd',
-      'Darwin' => 'darwin',
-      'Windows' => 'windows',
-      'Proxmox' => 'proxmox',
-      'CasaOS' => 'casaos',
-      'Home Assistant' => 'homeassistant',
-      'Raspberry Pi' => 'raspberry',
-      _ => null,
-    };
+  'Linux' => 'linux',
+  'FreeBSD' => 'freebsd',
+  'Darwin' => 'darwin',
+  'Windows' => 'windows',
+  'Proxmox' => 'proxmox',
+  'CasaOS' => 'casaos',
+  'Home Assistant' => 'homeassistant',
+  'Raspberry Pi' => 'raspberry',
+  _ => null,
+};
 
 /// Maps a display name to the key the metrics probe emits in its `@PLATFORM` section.
 String systemPlatformKey(String system) => switch (system) {
-      'Home Assistant' => 'homeassistant',
-      'Raspberry Pi' => 'raspberry',
-      _ => system.toLowerCase().replaceAll(' ', ''),
-    };
+  'Home Assistant' => 'homeassistant',
+  'Raspberry Pi' => 'raspberry',
+  _ => system.toLowerCase().replaceAll(' ', ''),
+};

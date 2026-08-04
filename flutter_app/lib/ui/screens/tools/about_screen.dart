@@ -50,10 +50,10 @@ class _AboutScreenState extends State<AboutScreen> {
   /// Deliberately excludes anything identifying: no host names, no addresses, no usernames. A
   /// diagnostics block a user is invited to paste into a public issue must be safe to paste there.
   String get _diagnostics => [
-        'OmniTerm ${_package?.version ?? 'unknown'} (build ${_package?.buildNumber ?? '?'})',
-        'Platform: ${_platformLabel()}',
-        'Dart: ${Platform.version.split(' ').first}',
-      ].join('\n');
+    'OmniTerm ${_package?.version ?? 'unknown'} (build ${_package?.buildNumber ?? '?'})',
+    'Platform: ${_platformLabel()}',
+    'Dart: ${Platform.version.split(' ').first}',
+  ].join('\n');
 
   String _platformLabel() {
     if (kIsWeb) return 'Web';
@@ -100,10 +100,7 @@ class _AboutScreenState extends State<AboutScreen> {
             children: [
               Icon(Icons.hub, size: 56, color: scheme.primary),
               const SizedBox(height: 10),
-              const Text(
-                'OmniTerm',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
-              ),
+              const Text('OmniTerm', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
               Text(
                 'Terminal and homelab console',
                 style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),

@@ -1,4 +1,3 @@
-
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -26,14 +25,8 @@ class _FakeShareClient extends RemoteFsClient {
 
   @override
   Future<List<SftpFile>> list(String path) async => [
-        SftpFile(
-          name: 'movies',
-          isDirectory: true,
-          size: 0,
-          modDate: '2026-01-01',
-          modTimeSeconds: 0,
-        ),
-      ];
+    SftpFile(name: 'movies', isDirectory: true, size: 0, modDate: '2026-01-01', modTimeSeconds: 0),
+  ];
 
   @override
   noSuchMethod(Invocation invocation) => throw UnimplementedError();
@@ -49,7 +42,11 @@ class _FakeProbe implements NetworkProbe {
   int peakInFlight = 0;
 
   @override
-  Future<Duration?> tcpPing(String host, int port, {Duration timeout = const Duration(seconds: 1)}) async {
+  Future<Duration?> tcpPing(
+    String host,
+    int port, {
+    Duration timeout = const Duration(seconds: 1),
+  }) async {
     probed.add('$host:$port');
     inFlight++;
     if (inFlight > peakInFlight) peakInFlight = inFlight;
@@ -89,13 +86,13 @@ void main() {
 
     group('validation', () {
       NetworkShareDraft valid() => const NetworkShareDraft(
-            name: 'nas',
-            protocol: ShareProtocol.smb,
-            address: '10.0.0.5',
-            port: '445',
-            sharePath: 'media',
-            username: 'sam',
-          );
+        name: 'nas',
+        protocol: ShareProtocol.smb,
+        address: '10.0.0.5',
+        port: '445',
+        sharePath: 'media',
+        username: 'sam',
+      );
 
       test('a complete draft is valid', () => expect(valid().isValid, isTrue));
 
@@ -112,22 +109,28 @@ void main() {
       });
 
       test('a custom share must name its port, since it has no default', () {
-        expect(valid().withProtocol(ShareProtocol.custom).copyWith(port: '').errors,
-            contains('port'));
+        expect(
+          valid().withProtocol(ShareProtocol.custom).copyWith(port: '').errors,
+          contains('port'),
+        );
       });
 
       test('SMB needs a share name', () {
         // SMB connects to a share, not to a host; without one there is nothing to open.
         expect(valid().copyWith(sharePath: '').errors, contains('sharePath'));
-        expect(valid().withProtocol(ShareProtocol.sftp).copyWith(sharePath: '').errors,
-            isNot(contains('sharePath')));
+        expect(
+          valid().withProtocol(ShareProtocol.sftp).copyWith(sharePath: '').errors,
+          isNot(contains('sharePath')),
+        );
       });
 
       test('some way to authenticate is required', () {
         expect(valid().copyWith(username: '').errors, contains('username'));
         expect(valid().copyWith(username: '', anonymous: true).errors, isNot(contains('username')));
-        expect(valid().copyWith(username: '', authProfileId: 3).errors,
-            isNot(contains('username')));
+        expect(
+          valid().copyWith(username: '', authProfileId: 3).errors,
+          isNot(contains('username')),
+        );
       });
     });
 
@@ -214,23 +217,22 @@ void main() {
       int port = 445,
       String path = 'media',
       bool https = true,
-    }) =>
-        NetworkShare(
-          id: 1,
-          name: 'nas',
-          protocol: protocol,
-          address: 'nas.local',
-          port: port,
-          sharePath: path,
-          workgroup: '',
-          username: 'sam',
-          password: 'hunter2',
-          anonymous: false,
-          useHttps: https,
-          notes: '',
-          lastChecked: 0,
-          lastStatus: 'unknown',
-        );
+    }) => NetworkShare(
+      id: 1,
+      name: 'nas',
+      protocol: protocol,
+      address: 'nas.local',
+      port: port,
+      sharePath: path,
+      workgroup: '',
+      username: 'sam',
+      password: 'hunter2',
+      anonymous: false,
+      useHttps: https,
+      notes: '',
+      lastChecked: 0,
+      lastStatus: 'unknown',
+    );
 
     test('reads as the protocol it is', () {
       expect(shareUri(share()), 'smb://nas.local:445/media');
@@ -295,33 +297,29 @@ void main() {
       String address = '10.0.0.5',
       int port = 445,
       String status = 'unknown',
-    }) =>
-        NetworkShare(
-          id: 0,
-          name: name,
-          protocol: 'SMB',
-          address: address,
-          port: port,
-          sharePath: 'media',
-          workgroup: '',
-          username: 'sam',
-          password: 'pw',
-          anonymous: false,
-          useHttps: true,
-          notes: '',
-          lastChecked: 0,
-          lastStatus: status,
-        );
+    }) => NetworkShare(
+      id: 0,
+      name: name,
+      protocol: 'SMB',
+      address: address,
+      port: port,
+      sharePath: 'media',
+      workgroup: '',
+      username: 'sam',
+      password: 'pw',
+      anonymous: false,
+      useHttps: true,
+      notes: '',
+      lastChecked: 0,
+      lastStatus: status,
+    );
 
     test('saving a draft persists it', () async {
       await boot();
       vm.startAdd();
-      vm.updateDraft((d) => d.copyWith(
-            name: 'nas',
-            address: '10.0.0.5',
-            sharePath: 'media',
-            username: 'sam',
-          ));
+      vm.updateDraft(
+        (d) => d.copyWith(name: 'nas', address: '10.0.0.5', sharePath: 'media', username: 'sam'),
+      );
 
       expect(await vm.saveDraft(), isTrue);
       await settle();
@@ -466,21 +464,21 @@ void main() {
     }
 
     NetworkShare row({required String protocol}) => NetworkShare(
-          id: 0,
-          name: 'share',
-          protocol: protocol,
-          address: '10.0.0.5',
-          port: 445,
-          sharePath: 'media',
-          workgroup: '',
-          username: 'sam',
-          password: 'pw',
-          anonymous: false,
-          useHttps: true,
-          notes: '',
-          lastChecked: 0,
-          lastStatus: 'unknown',
-        );
+      id: 0,
+      name: 'share',
+      protocol: protocol,
+      address: '10.0.0.5',
+      port: 445,
+      sharePath: 'media',
+      workgroup: '',
+      username: 'sam',
+      password: 'pw',
+      anonymous: false,
+      useHttps: true,
+      notes: '',
+      lastChecked: 0,
+      lastStatus: 'unknown',
+    );
 
     testWidgets('with nothing saved it says so', (tester) async {
       await pump(tester);
@@ -607,21 +605,21 @@ void main() {
     });
 
     NetworkShare share() => NetworkShare(
-          id: 7,
-          name: 'media',
-          protocol: 'SMB',
-          address: '10.0.0.5',
-          port: 445,
-          sharePath: 'media',
-          workgroup: '',
-          username: 'sam',
-          password: 'pw',
-          anonymous: false,
-          useHttps: true,
-          notes: '',
-          lastChecked: 0,
-          lastStatus: 'online',
-        );
+      id: 7,
+      name: 'media',
+      protocol: 'SMB',
+      address: '10.0.0.5',
+      port: 445,
+      sharePath: 'media',
+      workgroup: '',
+      username: 'sam',
+      password: 'pw',
+      anonymous: false,
+      useHttps: true,
+      notes: '',
+      lastChecked: 0,
+      lastStatus: 'online',
+    );
 
     Future<SftpViewModel> boot({bool withClient = true}) async {
       await app.start();

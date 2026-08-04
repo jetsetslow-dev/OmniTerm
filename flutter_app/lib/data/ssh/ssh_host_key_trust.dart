@@ -30,7 +30,6 @@ import 'package:crypto/crypto.dart';
 import '../remote_models.dart';
 import 'async_lock.dart';
 
-
 /// The outcome of checking a presented host key against the trust store.
 enum HostKeyVerdict {
   /// Matches the pinned key: proceed.
@@ -93,6 +92,7 @@ class SshHostKeyTrust {
   SshHostKeyTrust(this._store);
 
   final HostKeyStore _store;
+
   /// Serialises the read-then-write of a first pin.
   ///
   /// **Genuinely required, unlike the `@Synchronized` annotations elsewhere in the migration.**
@@ -128,10 +128,10 @@ class SshHostKeyTrust {
   /// JSch wrote bare `host` for port 22 and `[host]:port` otherwise, and older builds also produced
   /// `host:port`. All three are still recognised so an existing trust store keeps working.
   static Set<String> storageAliases(String host, int port) => {
-        host,
-        '$host:$port',
-        '[$host]:$port',
-      };
+    host,
+    '$host:$port',
+    '[$host]:$port',
+  };
 
   /// The alias new pins are written under, matching JSch's own convention.
   static String canonicalAlias(String host, int port) => port == 22 ? host : '[$host]:$port';
@@ -252,15 +252,14 @@ class SshHostKeyTrust {
   Future<HostKeyVerdict> persistApprovedFirstPin({
     required String storageKey,
     required String fingerprint,
-  }) =>
-      _firstPinLock.synchronized(() async {
-        final current = _canonicalFingerprint(await _store.read(storageKey));
-        if (current == null) {
-          await _store.write(storageKey, fingerprint);
-          return HostKeyVerdict.ok;
-        }
-        return current == fingerprint ? HostKeyVerdict.ok : HostKeyVerdict.changed;
-      });
+  }) => _firstPinLock.synchronized(() async {
+    final current = _canonicalFingerprint(await _store.read(storageKey));
+    if (current == null) {
+      await _store.write(storageKey, fingerprint);
+      return HostKeyVerdict.ok;
+    }
+    return current == fingerprint ? HostKeyVerdict.ok : HostKeyVerdict.changed;
+  });
 
   // ── trust-store management ─────────────────────────────────────────────────
 
@@ -272,11 +271,7 @@ class SshHostKeyTrust {
       if (fingerprint == null) return;
       final sep = storageKey.indexOf('|');
       if (sep <= 0) return;
-      out.add(KnownHost(
-        storageKey.substring(0, sep),
-        storageKey.substring(sep + 1),
-        fingerprint,
-      ));
+      out.add(KnownHost(storageKey.substring(0, sep), storageKey.substring(sep + 1), fingerprint));
     });
     return out;
   }

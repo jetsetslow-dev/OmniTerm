@@ -60,28 +60,28 @@ class AppDatabase extends _$AppDatabase {
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
-        onCreate: (m) async {
-          await m.createAll();
-        },
-        onUpgrade: (m, from, to) async {
-          // Room's own chain, ported step for step. It normally never runs: a device coming from
-          // the native app is already at 22, and a fresh install starts there. It matters only for
-          // a user who installs the Flutter build directly over an older native build without
-          // taking the intermediate Android update.
-          //
-          // Versions <= 7 predate schema export (several v5 builds shipped with differing
-          // schemas), so Room fell back to a destructive wipe for those and so do we. From v8 on
-          // every step is non-destructive.
-          if (from <= 7) {
-            await _recreateEverything(m);
-            return;
-          }
-          await _runRoomMigrations(m, from);
-        },
-        beforeOpen: (details) async {
-          await customStatement('PRAGMA foreign_keys = ON');
-        },
-      );
+    onCreate: (m) async {
+      await m.createAll();
+    },
+    onUpgrade: (m, from, to) async {
+      // Room's own chain, ported step for step. It normally never runs: a device coming from
+      // the native app is already at 22, and a fresh install starts there. It matters only for
+      // a user who installs the Flutter build directly over an older native build without
+      // taking the intermediate Android update.
+      //
+      // Versions <= 7 predate schema export (several v5 builds shipped with differing
+      // schemas), so Room fell back to a destructive wipe for those and so do we. From v8 on
+      // every step is non-destructive.
+      if (from <= 7) {
+        await _recreateEverything(m);
+        return;
+      }
+      await _runRoomMigrations(m, from);
+    },
+    beforeOpen: (details) async {
+      await customStatement('PRAGMA foreign_keys = ON');
+    },
+  );
 
   Future<void> _recreateEverything(Migrator m) async {
     for (final table in allTables) {

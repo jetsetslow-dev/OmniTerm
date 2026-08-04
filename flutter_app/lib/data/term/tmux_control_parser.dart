@@ -163,9 +163,7 @@ class TmuxControlParser {
           _isOctal(buf[i + 1]) &&
           _isOctal(buf[i + 2]) &&
           _isOctal(buf[i + 3])) {
-        out[n++] = ((buf[i + 1] - _zero) << 6) |
-            ((buf[i + 2] - _zero) << 3) |
-            (buf[i + 3] - _zero);
+        out[n++] = ((buf[i + 1] - _zero) << 6) | ((buf[i + 2] - _zero) << 3) | (buf[i + 3] - _zero);
         i += 4;
       } else {
         out[n++] = b;

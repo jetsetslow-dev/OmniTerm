@@ -14,7 +14,6 @@ library;
 
 import 'package:flutter/foundation.dart';
 
-
 /// Resolved connection credentials.
 ///
 /// The view-model flattens a `Server` row (plus any referenced key/profile rows) into this, so the
@@ -98,22 +97,22 @@ class SshCredentials {
 
   @override
   int get hashCode => Object.hash(
-        host,
-        port,
-        username,
-        password,
-        privateKeyPem,
-        passphrase,
-        proxyType,
-        proxyHost,
-        proxyPort,
-        proxyUser,
-        proxyPassword,
-        proxyKeyPem,
-        keepAliveSeconds,
-        compression,
-        agentForwarding,
-      );
+    host,
+    port,
+    username,
+    password,
+    privateKeyPem,
+    passphrase,
+    proxyType,
+    proxyHost,
+    proxyPort,
+    proxyUser,
+    proxyPassword,
+    proxyKeyPem,
+    keepAliveSeconds,
+    compression,
+    agentForwarding,
+  );
 
   /// Never interpolate credentials into logs or crash reports.
   @override

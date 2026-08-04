@@ -159,5 +159,4 @@ Future<int> copyWithProgress(
 }
 
 /// Convenience for implementations that build listings from raw byte counts.
-Uint8List asBytes(List<int> data) =>
-    data is Uint8List ? data : Uint8List.fromList(data);
+Uint8List asBytes(List<int> data) => data is Uint8List ? data : Uint8List.fromList(data);

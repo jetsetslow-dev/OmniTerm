@@ -21,11 +21,7 @@ class TimedMetricPoint {
 }
 
 class HourlyMetricSeries {
-  const HourlyMetricSeries({
-    required this.cpu,
-    required this.ram,
-    required this.temperature,
-  });
+  const HourlyMetricSeries({required this.cpu, required this.ram, required this.temperature});
 
   final List<TimedMetricPoint> cpu;
   final List<TimedMetricPoint> ram;
@@ -80,11 +76,7 @@ HourlyMetricSeries buildHourlyMetricSeries(List<MetricHistoryRow> history) {
 /// The Kotlin took a `TimeZone`; Dart's [DateTime] only distinguishes local from UTC, so [utc]
 /// replaces that parameter. Tests use it to stay host-independent — asserting on formatted local
 /// times would otherwise depend on the machine's zone.
-(String, String) chartEndpointLabels(
-  List<int> timestamps, {
-  String? locale,
-  bool utc = false,
-}) {
+(String, String) chartEndpointLabels(List<int> timestamps, {String? locale, bool utc = false}) {
   if (timestamps.isEmpty) return ('—', '—');
 
   final first = timestamps.first;
@@ -100,12 +92,10 @@ HourlyMetricSeries buildHourlyMetricSeries(List<MetricHistoryRow> history) {
 
   // Compared on the calendar day, not on elapsed time: 23:59 → 00:01 is only two minutes apart but
   // still needs a date to be unambiguous.
-  final crossesDay = DateFormat('yyyyMMdd').format(firstDate) !=
-      DateFormat('yyyyMMdd').format(lastDate);
+  final crossesDay =
+      DateFormat('yyyyMMdd').format(firstDate) != DateFormat('yyyyMMdd').format(lastDate);
 
-  final pattern = crossesDay
-      ? 'MMM d HH:mm'
-      : (last - first < _hourMs ? 'HH:mm:ss' : 'HH:mm');
+  final pattern = crossesDay ? 'MMM d HH:mm' : (last - first < _hourMs ? 'HH:mm:ss' : 'HH:mm');
 
   final formatter = DateFormat(pattern, locale);
   return (formatter.format(firstDate), formatter.format(lastDate));

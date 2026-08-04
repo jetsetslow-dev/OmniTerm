@@ -18,7 +18,7 @@ import 'package:flutter/services.dart';
 /// the option does nothing rather than implying a protection nobody is applying.
 class ScreenSecurity {
   ScreenSecurity({MethodChannel? channel})
-      : _channel = channel ?? const MethodChannel('omniterm/screen_security');
+    : _channel = channel ?? const MethodChannel('omniterm/screen_security');
 
   final MethodChannel _channel;
 

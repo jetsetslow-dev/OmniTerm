@@ -54,8 +54,11 @@ void main() {
     });
 
     test('it travels via stdin instead', () {
-      expect(sudoStdin(password), 'hunter2\n',
-          reason: 'sudo -S reads the password and the newline it waits for from stdin');
+      expect(
+        sudoStdin(password),
+        'hunter2\n',
+        reason: 'sudo -S reads the password and the newline it waits for from stdin',
+      );
     });
 
     test('a NOPASSWD host sends no stdin at all', () {
@@ -92,8 +95,11 @@ void main() {
       final cmd = serviceAction('nginx', 'restart');
       expect(cmd, contains('systemctl restart'));
       expect(cmd, contains('rc-service'));
-      expect(cmd, contains('exit 1'),
-          reason: 'a host with no service manager must report that, not silently succeed');
+      expect(
+        cmd,
+        contains('exit 1'),
+        reason: 'a host with no service manager must report that, not silently succeed',
+      );
     });
 
     test('enable and disable use the right OpenRC verbs', () {
@@ -121,8 +127,11 @@ void main() {
       for (final source in ['journalctl', 'logread', '/var/log/messages', '/var/log/syslog']) {
         expect(linux, contains(source));
       }
-      expect(linux, contains('---NOLOGS---'),
-          reason: 'the UI needs to distinguish "no log source" from "no log lines"');
+      expect(
+        linux,
+        contains('---NOLOGS---'),
+        reason: 'the UI needs to distinguish "no log source" from "no log lines"',
+      );
     });
 
     test('each log source is tried until one produces output', () {

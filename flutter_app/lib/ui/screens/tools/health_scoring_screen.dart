@@ -54,9 +54,7 @@ class _HealthScoringScreenState extends State<HealthScoringScreen> {
                   leftAccent: OmniColors.green,
                   child: Row(
                     children: [
-                      Expanded(
-                        child: Text(vm.status!, style: const TextStyle(fontSize: 12)),
-                      ),
+                      Expanded(child: Text(vm.status!, style: const TextStyle(fontSize: 12))),
                       IconButton(
                         key: const ValueKey('healthScoring.status.dismiss'),
                         icon: const Icon(Icons.close, size: 16),
@@ -195,24 +193,27 @@ class _PreviewState extends State<_Preview> {
                     color: breakdown.score >= 70
                         ? OmniColors.green
                         : breakdown.score >= 40
-                            ? OmniColors.amber
-                            : OmniColors.red,
+                        ? OmniColors.amber
+                        : OmniColors.red,
                   ),
                 ),
             ],
           ),
-          for (final (label, value, max, onChanged) in <(String, double, double, ValueChanged<double>)>[
-            ('CPU ${_cpu.round()}%', _cpu, 100, (v) => setState(() => _cpu = v)),
-            ('Memory ${_memory.round()}%', _memory, 100, (v) => setState(() => _memory = v)),
-            ('Disk ${_disk.round()}%', _disk, 100, (v) => setState(() => _disk = v)),
-            ('Latency ${_latency.round()} ms', _latency, 500, (v) => setState(() => _latency = v)),
-          ])
+          for (final (label, value, max, onChanged)
+              in <(String, double, double, ValueChanged<double>)>[
+                ('CPU ${_cpu.round()}%', _cpu, 100, (v) => setState(() => _cpu = v)),
+                ('Memory ${_memory.round()}%', _memory, 100, (v) => setState(() => _memory = v)),
+                ('Disk ${_disk.round()}%', _disk, 100, (v) => setState(() => _disk = v)),
+                (
+                  'Latency ${_latency.round()} ms',
+                  _latency,
+                  500,
+                  (v) => setState(() => _latency = v),
+                ),
+              ])
             Row(
               children: [
-                SizedBox(
-                  width: 120,
-                  child: Text(label, style: const TextStyle(fontSize: 11)),
-                ),
+                SizedBox(width: 120, child: Text(label, style: const TextStyle(fontSize: 11))),
                 Expanded(
                   child: Slider(
                     key: ValueKey('healthScoring.preview.${label.split(' ').first}'),
@@ -273,10 +274,7 @@ class _MetricCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              metric.label,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-            ),
+            Text(metric.label, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
             Text(
               'Thresholds in ${metric.unit}, then the points each tier deducts.',
               style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
@@ -314,8 +312,7 @@ class _MetricCard extends StatelessWidget {
                     child: Padding(
                       padding: const EdgeInsets.only(right: 6),
                       child: _NumberField(
-                        fieldKey:
-                            'healthScoring.${metric.name}.${tier.toLowerCase()}Penalty',
+                        fieldKey: 'healthScoring.${metric.name}.${tier.toLowerCase()}Penalty',
                         label: '−$tier',
                         initial: read,
                         onChanged: (value) => vm.edit(metric, (_) => write(value)),

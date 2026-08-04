@@ -31,7 +31,8 @@ class FleetDashboardTab extends StatelessWidget {
 
     // Worst score first: the reason to open a fleet dashboard is to find what needs attention, and
     // a name-sorted list buries it.
-    final ordered = [...vm.servers]..sort((a, b) {
+    final ordered = [...vm.servers]
+      ..sort((a, b) {
         if (a.status != b.status) return a.status == 'online' ? -1 : 1;
         return a.healthScore.compareTo(b.healthScore);
       });
@@ -61,10 +62,10 @@ class _HostCard extends StatelessWidget {
     final scoreColor = !online
         ? OmniColors.textMuted
         : server.healthScore >= 70
-            ? OmniColors.green
-            : server.healthScore >= 50
-                ? OmniColors.amber
-                : OmniColors.red;
+        ? OmniColors.green
+        : server.healthScore >= 50
+        ? OmniColors.amber
+        : OmniColors.red;
 
     return OmniCard(
       key: ValueKey('fleet.host.${server.id}'),
@@ -123,8 +124,7 @@ class FleetBroadcastTab extends StatefulWidget {
 }
 
 class _FleetBroadcastTabState extends State<FleetBroadcastTab> {
-  late final TextEditingController _controller =
-      TextEditingController(text: widget.vm.commandText);
+  late final TextEditingController _controller = TextEditingController(text: widget.vm.commandText);
 
   @override
   void dispose() {
@@ -158,10 +158,12 @@ class _FleetBroadcastTabState extends State<FleetBroadcastTab> {
               : _GroupTargets(vm: vm),
         ),
         const SizedBox(height: 8),
-        _PresetRow(onPick: (command) {
-          _controller.text = command;
-          vm.commandText = command;
-        }),
+        _PresetRow(
+          onPick: (command) {
+            _controller.text = command;
+            vm.commandText = command;
+          },
+        ),
         TextField(
           key: const ValueKey('fleet.command'),
           controller: _controller,
@@ -298,10 +300,7 @@ class _FleetBroadcastTabState extends State<FleetBroadcastTab> {
           TextButton(
             key: const ValueKey('fleet.run.confirm'),
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text(
-              'Run',
-              style: TextStyle(color: danger != null ? OmniColors.red : null),
-            ),
+            child: Text('Run', style: TextStyle(color: danger != null ? OmniColors.red : null)),
           ),
         ],
       ),
@@ -323,10 +322,7 @@ class _HostTargets extends StatelessWidget {
         key: const ValueKey('fleet.targets.none'),
         child: Text(
           'No online hosts to target',
-          style: TextStyle(
-            fontSize: 12,
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
+          style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
       );
     }
@@ -374,10 +370,7 @@ class _GroupTargets extends StatelessWidget {
         key: const ValueKey('fleet.targets.noGroups'),
         child: Text(
           'No groups among online hosts',
-          style: TextStyle(
-            fontSize: 12,
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
+          style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
       );
     }
@@ -634,7 +627,6 @@ class FleetLogsTab extends StatelessWidget {
     );
   }
 }
-
 
 /// Saved fleet commands, offered as one-tap presets.
 ///

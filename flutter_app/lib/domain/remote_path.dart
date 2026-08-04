@@ -40,9 +40,7 @@ String normalisePath(String path) {
   if (path.isEmpty) return '/';
   final collapsed = path.replaceAll(RegExp('/+'), '/');
   if (collapsed == '/') return '/';
-  return collapsed.endsWith('/')
-      ? collapsed.substring(0, collapsed.length - 1)
-      : collapsed;
+  return collapsed.endsWith('/') ? collapsed.substring(0, collapsed.length - 1) : collapsed;
 }
 
 /// The breadcrumb trail for [path]: root first, then each ancestor, ending at [path] itself.

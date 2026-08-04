@@ -62,16 +62,14 @@ String sudoWrap(String cmd, String sudoPassword) =>
 ///
 /// [sudoWrap] only elevates the first command — in `sudo a && b`, `b` runs as the ordinary user.
 /// This runs the lot under one `sh -c`, so chained operations are all privileged.
-String sudoShWrap(String script, String sudoPassword) =>
-    sudoPassword.trim().isNotEmpty
-        ? "sudo -S -p '' sh -c ${shellQuote(script)} 2>&1"
-        : 'sudo -n sh -c ${shellQuote(script)} 2>&1';
+String sudoShWrap(String script, String sudoPassword) => sudoPassword.trim().isNotEmpty
+    ? "sudo -S -p '' sh -c ${shellQuote(script)} 2>&1"
+    : 'sudo -n sh -c ${shellQuote(script)} 2>&1';
 
 /// The stdin payload pairing with [sudoWrap]/[sudoShWrap]: the password and the newline `sudo -S`
 /// waits for, or null on a NOPASSWD host. None of the wrapped scripts read stdin themselves, so the
 /// line is consumed only by sudo.
-String? sudoStdin(String sudoPassword) =>
-    sudoPassword.trim().isNotEmpty ? '$sudoPassword\n' : null;
+String? sudoStdin(String sudoPassword) => sudoPassword.trim().isNotEmpty ? '$sudoPassword\n' : null;
 
 // ── processes ──────────────────────────────────────────────────────────────────
 
@@ -95,10 +93,10 @@ const processesWindows =
     "\$_.PercentProcessorTime + ' 0 ' + [int](\$_.WorkingSetPrivate/1024) + ' 00:00:00 R ' + \$_.Name }\"";
 
 String processesFor(String os) => switch (normaliseOs(os)) {
-      'Windows' => processesWindows,
-      'FreeBSD' || 'Darwin' => processesBsd,
-      _ => processesLinux,
-    };
+  'Windows' => processesWindows,
+  'FreeBSD' || 'Darwin' => processesBsd,
+  _ => processesLinux,
+};
 
 // ── services ───────────────────────────────────────────────────────────────────
 
@@ -125,7 +123,8 @@ String serviceAction(String name, String action, {String sudoPassword = ''}) {
     'disable' => 'rc-update delete $quoted -a',
     _ => 'rc-service $quoted $action',
   };
-  final script = 'if command -v systemctl >/dev/null 2>&1; then systemctl $action $quoted; '
+  final script =
+      'if command -v systemctl >/dev/null 2>&1; then systemctl $action $quoted; '
       'elif command -v rc-service >/dev/null 2>&1; then $openRc; '
       "else echo 'No supported service manager found' >&2; exit 1; fi";
   return sudoShWrap(script, sudoPassword);
@@ -138,26 +137,36 @@ String serviceAction(String name, String action, {String sudoPassword = ''}) {
 /// `journalctl` only exists on systemd, so Alpine/OpenWrt/BSD/macOS would otherwise return silently
 /// empty output. The `---NOLOGS---` marker lets the UI say *why* the pane is empty.
 String journalCommand({int lines = 300, String os = ''}) => switch (normaliseOs(os)) {
-      'Windows' => _journalWindows(lines),
-      'Darwin' => 'log show --last 1h --style syslog 2>/dev/null | tail -n $lines || '
-          "echo '---NOLOGS---'",
-      // Each source is tried until one actually *produces* something, rather than stopping at the
-      // first one that merely exists. A BusyBox host ships `logread` whether or not syslogd is
-      // running, and when it is not, `logread` fails to stderr and exits — so an `elif` chain
-      // stopped there, printed nothing, never emitted the marker, and left the pane silently blank
-      // on most containers (§15.10).
-      _ => r'L=""; '
-          'if command -v journalctl >/dev/null 2>&1; then '
-          r'L=$(journalctl -n ' '$lines' r' --no-pager -o short-iso 2>/dev/null); fi; '
-          r'if [ -z "$L" ] && command -v logread >/dev/null 2>&1; then '
-          r'L=$(logread 2>/dev/null | tail -n ' '$lines' r'); fi; '
-          r'if [ -z "$L" ] && [ -r /var/log/messages ]; then '
-          r'L=$(tail -n ' '$lines' r' /var/log/messages 2>/dev/null); fi; '
-          r'if [ -z "$L" ] && [ -r /var/log/syslog ]; then '
-          r'L=$(tail -n ' '$lines' r' /var/log/syslog 2>/dev/null); fi; '
-          r'''if [ -z "$L" ]; then echo '---NOLOGS---'; else printf '%s
+  'Windows' => _journalWindows(lines),
+  'Darwin' =>
+    'log show --last 1h --style syslog 2>/dev/null | tail -n $lines || '
+        "echo '---NOLOGS---'",
+  // Each source is tried until one actually *produces* something, rather than stopping at the
+  // first one that merely exists. A BusyBox host ships `logread` whether or not syslogd is
+  // running, and when it is not, `logread` fails to stderr and exits — so an `elif` chain
+  // stopped there, printed nothing, never emitted the marker, and left the pane silently blank
+  // on most containers (§15.10).
+  _ =>
+    r'L=""; '
+        'if command -v journalctl >/dev/null 2>&1; then '
+        r'L=$(journalctl -n '
+        '$lines'
+        r' --no-pager -o short-iso 2>/dev/null); fi; '
+        r'if [ -z "$L" ] && command -v logread >/dev/null 2>&1; then '
+        r'L=$(logread 2>/dev/null | tail -n '
+        '$lines'
+        r'); fi; '
+        r'if [ -z "$L" ] && [ -r /var/log/messages ]; then '
+        r'L=$(tail -n '
+        '$lines'
+        r' /var/log/messages 2>/dev/null); fi; '
+        r'if [ -z "$L" ] && [ -r /var/log/syslog ]; then '
+        r'L=$(tail -n '
+        '$lines'
+        r' /var/log/syslog 2>/dev/null); fi; '
+        r'''if [ -z "$L" ]; then echo '---NOLOGS---'; else printf '%s
 ' "$L"; fi''',
-    };
+};
 
 String _journalWindows(int lines) =>
     'powershell -NoProfile -Command "Get-WinEvent -LogName System -MaxEvents $lines | '
@@ -266,11 +275,11 @@ const metricsWindows =
 
 /// Per-OS host-metrics probe.
 String metricsFor(String os) => switch (normaliseOs(os)) {
-      'FreeBSD' => metricsBsd,
-      'Darwin' => metricsDarwin,
-      'Windows' => metricsWindows,
-      _ => metricsLinux,
-    };
+  'FreeBSD' => metricsBsd,
+  'Darwin' => metricsDarwin,
+  'Windows' => metricsWindows,
+  _ => metricsLinux,
+};
 
 // ── container runtimes (Docker / Podman) ───────────────────────────────────────
 //
@@ -282,16 +291,17 @@ String metricsFor(String os) => switch (normaliseOs(os)) {
 ///
 /// A binary whose daemon or socket the user cannot reach does not count — it would otherwise be
 /// selected and then fail on every call.
-const _cr = r'"$(if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then command -v docker; '
+const _cr =
+    r'"$(if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then command -v docker; '
     r'elif command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then command -v podman; '
     r'elif command -v docker >/dev/null 2>&1; then command -v docker; else command -v podman; fi)"';
 
 /// The container binary for an explicit [runtime], falling back to the run-time probe.
 String _runtimeCommand(String runtime) => switch (runtime.toLowerCase()) {
-      'docker' => 'docker',
-      'podman' => 'podman',
-      _ => _cr,
-    };
+  'docker' => 'docker',
+  'podman' => 'podman',
+  _ => _cr,
+};
 
 // Docker and Podman expose compose labels through *incompatible* template syntaxes, so the ps
 // format branches on the runtime:
@@ -305,7 +315,8 @@ const _psFieldsPodman =
     r'{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}\t{{index .Labels "com.docker.compose.project"}}\t{{index .Labels "com.docker.compose.service"}}\t{{index .Labels "com.docker.compose.project.working_dir"}}\t{{index .Labels "com.docker.compose.project.config_files"}}\t{{.CreatedAt}}';
 
 /// All containers including stopped ones, tab-separated and `--no-trunc` so parsing is unambiguous.
-const dockerPsCommand = 'found=0; '
+const dockerPsCommand =
+    'found=0; '
     "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; docker ps -a --no-trunc --format 'docker\\t$_psFieldsDocker'; fi; "
     "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; podman ps -a --no-trunc --format 'podman\\t$_psFieldsPodman'; fi; "
     'if [ "\$found" = 0 ]; then if $_cr --version | grep -qi podman; then '
@@ -329,7 +340,8 @@ const dockerRestartsCommand =
 
 const _imageFields = r'{{.ID}}\t{{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}';
 
-const dockerImagesCommand = 'found=0; '
+const dockerImagesCommand =
+    'found=0; '
     "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; docker images --no-trunc --format 'docker\\t$_imageFields'; fi; "
     "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; podman images --no-trunc --format 'podman\\t$_imageFields'; fi; "
     'if [ "\$found" = 0 ]; then if $_cr --version | grep -qi podman; then '
@@ -358,7 +370,8 @@ const dockerVolumesCommand =
 
 const _networkFields = r'{{.ID}}\t{{.Name}}\t{{.Driver}}';
 
-const dockerNetworksCommand = 'found=0; '
+const dockerNetworksCommand =
+    'found=0; '
     "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; docker network ls --format 'docker\\t$_networkFields' 2>/dev/null; fi; "
     "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; podman network ls --format 'podman\\t$_networkFields' 2>/dev/null; fi; "
     'if [ "\$found" = 0 ]; then if $_cr --version | grep -qi podman; then '
@@ -415,27 +428,30 @@ String dockerPruneVolumes() =>
 /// Compose even when native `podman-compose` is installed, so the explicit provider is preferred.
 /// A host with none exits non-zero with a message rather than running a half-formed command.
 String _composeResolve(String runtime) => switch (runtime.toLowerCase()) {
-      'docker' => 'OT_CR=docker; '
-          'if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then OT_COMPOSE="docker compose"; '
-          'elif command -v docker-compose >/dev/null 2>&1; then OT_COMPOSE="docker-compose"; '
-          "else echo 'No Docker Compose found on host' >&2; exit 1; fi",
-      'podman' => 'OT_CR=podman; '
-          'if command -v podman-compose >/dev/null 2>&1; then OT_COMPOSE="podman-compose"; '
-          'elif command -v podman >/dev/null 2>&1 && podman compose version >/dev/null 2>&1; then OT_COMPOSE="podman compose"; '
-          "else echo 'No Podman Compose provider found on host' >&2; exit 1; fi",
-      _ => 'OT_CR=$_cr; '
-          'if [ -n "\$OT_CR" ] && "\$OT_CR" --version 2>/dev/null | grep -qi podman; then '
-          'if command -v podman-compose >/dev/null 2>&1; then OT_COMPOSE="podman-compose"; '
-          'elif "\$OT_CR" compose version >/dev/null 2>&1; then OT_COMPOSE="\$OT_CR compose"; '
-          "else echo 'No Podman Compose provider found on host' >&2; exit 1; fi; "
-          'elif [ -n "\$OT_CR" ]; then '
-          'if "\$OT_CR" compose version >/dev/null 2>&1; then OT_COMPOSE="\$OT_CR compose"; '
-          'elif command -v docker-compose >/dev/null 2>&1; then OT_COMPOSE="docker-compose"; '
-          "else echo 'No Docker Compose found on host' >&2; exit 1; fi; "
-          'elif command -v docker-compose >/dev/null 2>&1; then OT_COMPOSE="docker-compose"; '
-          'elif command -v podman-compose >/dev/null 2>&1; then OT_COMPOSE="podman-compose"; '
-          "else echo 'No docker/podman compose found on host' >&2; exit 1; fi",
-    };
+  'docker' =>
+    'OT_CR=docker; '
+        'if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then OT_COMPOSE="docker compose"; '
+        'elif command -v docker-compose >/dev/null 2>&1; then OT_COMPOSE="docker-compose"; '
+        "else echo 'No Docker Compose found on host' >&2; exit 1; fi",
+  'podman' =>
+    'OT_CR=podman; '
+        'if command -v podman-compose >/dev/null 2>&1; then OT_COMPOSE="podman-compose"; '
+        'elif command -v podman >/dev/null 2>&1 && podman compose version >/dev/null 2>&1; then OT_COMPOSE="podman compose"; '
+        "else echo 'No Podman Compose provider found on host' >&2; exit 1; fi",
+  _ =>
+    'OT_CR=$_cr; '
+        'if [ -n "\$OT_CR" ] && "\$OT_CR" --version 2>/dev/null | grep -qi podman; then '
+        'if command -v podman-compose >/dev/null 2>&1; then OT_COMPOSE="podman-compose"; '
+        'elif "\$OT_CR" compose version >/dev/null 2>&1; then OT_COMPOSE="\$OT_CR compose"; '
+        "else echo 'No Podman Compose provider found on host' >&2; exit 1; fi; "
+        'elif [ -n "\$OT_CR" ]; then '
+        'if "\$OT_CR" compose version >/dev/null 2>&1; then OT_COMPOSE="\$OT_CR compose"; '
+        'elif command -v docker-compose >/dev/null 2>&1; then OT_COMPOSE="docker-compose"; '
+        "else echo 'No Docker Compose found on host' >&2; exit 1; fi; "
+        'elif command -v docker-compose >/dev/null 2>&1; then OT_COMPOSE="docker-compose"; '
+        'elif command -v podman-compose >/dev/null 2>&1; then OT_COMPOSE="podman-compose"; '
+        "else echo 'No docker/podman compose found on host' >&2; exit 1; fi",
+};
 
 /// `-f <file>… -p <project>`, every value shell-quoted.
 String _composeFlags(String project, String configFiles) {
@@ -472,7 +488,8 @@ String dockerComposeAction(
   // login hiccup cannot block a build), then build --pull to refresh base images, then recreate.
   if (action == 'update') {
     const c = r'$OT_COMPOSE';
-    final tail = '{ $c $flags pull --ignore-buildable 2>/dev/null || $c $flags pull 2>/dev/null || true; } && '
+    final tail =
+        '{ $c $flags pull --ignore-buildable 2>/dev/null || $c $flags pull 2>/dev/null || true; } && '
         '$c $flags build --pull && $c $flags up -d$orphans && $c $flags ps';
     return '$resolver && cd ${shellQuote(workingDir)} && $tail 2>&1';
   }
@@ -524,9 +541,12 @@ String composeConfigPresent(String workingDir, String configFiles) {
       // Every recorded file must be present: compose merges them, and a missing overlay changes
       // what comes up rather than failing outright.
       ? recorded.map((p) => '[ -f ${expand(p)} ]').join(' && ')
-      : ['compose.yaml', 'compose.yml', 'docker-compose.yml', 'docker-compose.yaml']
-          .map((n) => '[ -f ${expand('$dir/$n')} ]')
-          .join(' || ');
+      : [
+          'compose.yaml',
+          'compose.yml',
+          'docker-compose.yml',
+          'docker-compose.yaml',
+        ].map((n) => '[ -f ${expand('$dir/$n')} ]').join(' || ');
 
   return 'if { $test; } 2>/dev/null; then echo OMNITERM_COMPOSE_OK; else echo OMNITERM_COMPOSE_MISSING; fi';
 }

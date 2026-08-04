@@ -80,9 +80,7 @@ SshCredentials resolveCredentials(
   if (server.proxyType == 'ssh' && proxyAlias.isNotEmpty) {
     final proxyKey = keys.where((k) => k.alias == proxyAlias).firstOrNull;
     if (proxyKey == null) {
-      throw CredentialResolutionException(
-        'The jump-host key "$proxyAlias" is no longer saved.',
-      );
+      throw CredentialResolutionException('The jump-host key "$proxyAlias" is no longer saved.');
     }
     proxyKeyPem = proxyKey.privateKey;
   }

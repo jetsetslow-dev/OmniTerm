@@ -78,6 +78,5 @@ abstract final class TmuxControlCommands {
   }
 
   /// Active pane id + cursor for the initial repaint seed (reply body: `%N x y`).
-  static String activePaneQuery() =>
-      "display-message -p '#{pane_id} #{cursor_x} #{cursor_y}'";
+  static String activePaneQuery() => "display-message -p '#{pane_id} #{cursor_x} #{cursor_y}'";
 }

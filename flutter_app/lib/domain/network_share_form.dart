@@ -40,16 +40,15 @@ bool shareIsBrowsable(ShareProtocol protocol) =>
 
 /// Why a protocol cannot be browsed, in the user's terms.
 String? shareBrowseUnavailableReason(ShareProtocol protocol) => switch (protocol) {
-      ShareProtocol.smb || ShareProtocol.sftp => null,
-      ShareProtocol.ftp ||
-      ShareProtocol.webdav =>
-        'Browsing ${protocol.label} shares is not built yet. The share is saved and can still be '
-            'tested.',
-      // NFS mounting is a kernel operation, not something an unprivileged app can do — this was
-      // never browsable in the Kotlin either.
-      ShareProtocol.nfs => 'NFS shares are mounted by the operating system, not by OmniTerm.',
-      ShareProtocol.custom => 'A custom share has no protocol for OmniTerm to speak.',
-    };
+  ShareProtocol.smb || ShareProtocol.sftp => null,
+  ShareProtocol.ftp || ShareProtocol.webdav =>
+    'Browsing ${protocol.label} shares is not built yet. The share is saved and can still be '
+        'tested.',
+  // NFS mounting is a kernel operation, not something an unprivileged app can do — this was
+  // never browsable in the Kotlin either.
+  ShareProtocol.nfs => 'NFS shares are mounted by the operating system, not by OmniTerm.',
+  ShareProtocol.custom => 'A custom share has no protocol for OmniTerm to speak.',
+};
 
 /// A share as the form holds it: strings, because that is what text fields produce.
 class NetworkShareDraft {
@@ -70,20 +69,20 @@ class NetworkShareDraft {
   });
 
   factory NetworkShareDraft.fromShare(NetworkShare share) => NetworkShareDraft(
-        id: share.id,
-        name: share.name,
-        protocol: ShareProtocol.fromId(share.protocol),
-        address: share.address,
-        port: share.port > 0 ? '${share.port}' : '',
-        sharePath: share.sharePath,
-        workgroup: share.workgroup,
-        username: share.username,
-        password: share.password,
-        authProfileId: share.authProfileId,
-        anonymous: share.anonymous,
-        useHttps: share.useHttps,
-        notes: share.notes,
-      );
+    id: share.id,
+    name: share.name,
+    protocol: ShareProtocol.fromId(share.protocol),
+    address: share.address,
+    port: share.port > 0 ? '${share.port}' : '',
+    sharePath: share.sharePath,
+    workgroup: share.workgroup,
+    username: share.username,
+    password: share.password,
+    authProfileId: share.authProfileId,
+    anonymous: share.anonymous,
+    useHttps: share.useHttps,
+    notes: share.notes,
+  );
 
   final int id;
   final String name;
@@ -115,22 +114,21 @@ class NetworkShareDraft {
     bool? anonymous,
     bool? useHttps,
     String? notes,
-  }) =>
-      NetworkShareDraft(
-        id: id,
-        name: name ?? this.name,
-        protocol: protocol ?? this.protocol,
-        address: address ?? this.address,
-        port: port ?? this.port,
-        sharePath: sharePath ?? this.sharePath,
-        workgroup: workgroup ?? this.workgroup,
-        username: username ?? this.username,
-        password: password ?? this.password,
-        authProfileId: clearAuthProfile ? null : (authProfileId ?? this.authProfileId),
-        anonymous: anonymous ?? this.anonymous,
-        useHttps: useHttps ?? this.useHttps,
-        notes: notes ?? this.notes,
-      );
+  }) => NetworkShareDraft(
+    id: id,
+    name: name ?? this.name,
+    protocol: protocol ?? this.protocol,
+    address: address ?? this.address,
+    port: port ?? this.port,
+    sharePath: sharePath ?? this.sharePath,
+    workgroup: workgroup ?? this.workgroup,
+    username: username ?? this.username,
+    password: password ?? this.password,
+    authProfileId: clearAuthProfile ? null : (authProfileId ?? this.authProfileId),
+    anonymous: anonymous ?? this.anonymous,
+    useHttps: useHttps ?? this.useHttps,
+    notes: notes ?? this.notes,
+  );
 
   /// Switch protocol, moving the port with it when the old one was just the old default.
   ///
@@ -189,9 +187,7 @@ class NetworkShareDraft {
       );
     }
     if (protocol == ShareProtocol.webdav && !useHttps) {
-      notes.add(
-        'Without HTTPS, WebDAV sends the password in clear text on every request.',
-      );
+      notes.add('Without HTTPS, WebDAV sends the password in clear text on every request.');
     }
     if (protocol == ShareProtocol.smb && anonymous) {
       notes.add('Anonymous SMB only works where the server has guest access enabled.');
@@ -201,24 +197,24 @@ class NetworkShareDraft {
 
   /// The row to persist. The repository encrypts the password on the way down.
   NetworkShare toShare({int lastChecked = 0, String lastStatus = 'unknown'}) => NetworkShare(
-        id: id,
-        name: name.trim(),
-        protocol: protocol.id,
-        address: address.trim(),
-        port: effectivePort,
-        sharePath: sharePath.trim(),
-        workgroup: workgroup.trim(),
-        // Anonymous means anonymous: keeping the typed credentials on the row would leave a
-        // password stored for a share that never sends one.
-        username: anonymous ? '' : username.trim(),
-        password: anonymous ? '' : password,
-        authProfileId: anonymous ? null : authProfileId,
-        anonymous: anonymous,
-        useHttps: useHttps,
-        notes: notes.trim(),
-        lastChecked: lastChecked,
-        lastStatus: lastStatus,
-      );
+    id: id,
+    name: name.trim(),
+    protocol: protocol.id,
+    address: address.trim(),
+    port: effectivePort,
+    sharePath: sharePath.trim(),
+    workgroup: workgroup.trim(),
+    // Anonymous means anonymous: keeping the typed credentials on the row would leave a
+    // password stored for a share that never sends one.
+    username: anonymous ? '' : username.trim(),
+    password: anonymous ? '' : password,
+    authProfileId: anonymous ? null : authProfileId,
+    anonymous: anonymous,
+    useHttps: useHttps,
+    notes: notes.trim(),
+    lastChecked: lastChecked,
+    lastStatus: lastStatus,
+  );
 }
 
 /// A display URI for a saved share, e.g. `smb://nas.local:445/media`.

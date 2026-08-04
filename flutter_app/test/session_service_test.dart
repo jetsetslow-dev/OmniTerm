@@ -78,8 +78,7 @@ void main() {
       // A shade message the app cannot read must not be turned into a disconnect by accident.
       expect(SessionServiceAction.parse(null), isNull);
       expect(SessionServiceAction.parse('disconnect'), isNull);
-      expect(SessionServiceAction.parse({'action': 'disconnect'}), isNull,
-          reason: 'no session id');
+      expect(SessionServiceAction.parse({'action': 'disconnect'}), isNull, reason: 'no session id');
       expect(SessionServiceAction.parse({'action': 'explode', 'session': 'a'}), isNull);
     });
   });
@@ -92,17 +91,21 @@ void main() {
     setUp(() {
       calls = [];
       channel = const MethodChannel(SessionService.methodChannelName);
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, (call) async {
-        calls.add(call);
-        return true;
-      });
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (call) async {
+          calls.add(call);
+          return true;
+        },
+      );
       service = SessionService();
     });
 
     tearDown(() {
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, null);
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        null,
+      );
     });
 
     test('syncing sends every session', () async {
@@ -124,8 +127,10 @@ void main() {
     });
 
     test('a platform without the service reports unsupported rather than throwing', () async {
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, null);
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        null,
+      );
 
       expect(await service.isSupported(), isFalse);
       expect(await service.sync(const [BackgroundSession(id: 'a', serverName: 'n')]), isFalse);
@@ -158,31 +163,31 @@ void main() {
     });
 
     Server server({required String name}) => Server(
-          id: 0,
-          name: name,
-          host: '10.0.0.1',
-          port: 22,
-          username: 'root',
-          serverColor: 'Default',
-          authType: 'password',
-          authPassword: 'pw',
-          sudoPassword: '',
-          notes: '',
-          keepAlive: 30,
-          sshCompression: false,
-          persistentSession: false,
-          proxyCommand: '',
-          proxyType: 'none',
-          proxyHost: '',
-          proxyPort: 0,
-          proxyUser: '',
-          proxyPassword: '',
-          agentForwarding: false,
-          healthScore: 100,
-          lastLatency: 0,
-          status: 'online',
-          authStatus: 'ok',
-        );
+      id: 0,
+      name: name,
+      host: '10.0.0.1',
+      port: 22,
+      username: 'root',
+      serverColor: 'Default',
+      authType: 'password',
+      authPassword: 'pw',
+      sudoPassword: '',
+      notes: '',
+      keepAlive: 30,
+      sshCompression: false,
+      persistentSession: false,
+      proxyCommand: '',
+      proxyType: 'none',
+      proxyHost: '',
+      proxyPort: 0,
+      proxyUser: '',
+      proxyPassword: '',
+      agentForwarding: false,
+      healthScore: 100,
+      lastLatency: 0,
+      status: 'online',
+      authStatus: 'ok',
+    );
 
     Future<ShellViewModel> boot() async {
       await app.start();

@@ -30,10 +30,25 @@ import 'widgets/omni_chrome.dart';
 final _navItems = <OmniNavItem<Screen>>[
   const OmniNavItem(key: Screen.servers, label: 'Servers', icon: Icons.dns, color: OmniColors.cyan),
   const OmniNavItem(key: Screen.fleet, label: 'Fleet', icon: Icons.hub, color: OmniColors.green),
-  const OmniNavItem(key: Screen.monitor, label: 'Monitor', icon: Icons.speed, color: OmniColors.amber),
+  const OmniNavItem(
+    key: Screen.monitor,
+    label: 'Monitor',
+    icon: Icons.speed,
+    color: OmniColors.amber,
+  ),
   const OmniNavItem(key: Screen.shell, label: 'Term', icon: Icons.terminal, color: OmniColors.cyan),
-  const OmniNavItem(key: Screen.sftp, label: 'Files', icon: Icons.folder_zip, color: OmniColors.orange),
-  const OmniNavItem(key: Screen.infra, label: 'Containers', icon: Icons.layers, color: OmniColors.purple),
+  const OmniNavItem(
+    key: Screen.sftp,
+    label: 'Files',
+    icon: Icons.folder_zip,
+    color: OmniColors.orange,
+  ),
+  const OmniNavItem(
+    key: Screen.infra,
+    label: 'Containers',
+    icon: Icons.layers,
+    color: OmniColors.purple,
+  ),
   const OmniNavItem(key: Screen.tools, label: 'Tools', icon: Icons.build, color: OmniColors.red),
 ];
 
@@ -61,7 +76,8 @@ class AppCoreScaffold extends StatelessWidget {
     // global bars mounted in that state left the terminal with zero drawable rows (and made split
     // panes effectively unusable). Terminal-local controls remain available; the global chrome
     // returns as soon as the IME closes.
-    final compactTerminalIme = current == Screen.shell &&
+    final compactTerminalIme =
+        current == Screen.shell &&
         media.viewInsets.bottom > 0 &&
         media.orientation == Orientation.landscape;
 

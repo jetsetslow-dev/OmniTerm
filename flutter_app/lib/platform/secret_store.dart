@@ -32,17 +32,15 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 /// two native crypto implementations — is a larger code-security surface than the one it removes,
 /// and because the at-rest protection (a Keystore/Keychain-guarded key) is preserved.
 class SecretStore {
-  SecretStore({
-    FlutterSecureStorage? storage,
-    this.legacyDecryptor,
-    this.onUpgraded,
-  }) : _storage = storage ??
-            const FlutterSecureStorage(
-              // Android's default is now a custom cipher (Jetpack Security was deprecated by
-              // Google); iOS pins the key to this device and requires a first unlock, so a backup
-              // restored onto another handset cannot carry the key with it.
-              iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock_this_device),
-            );
+  SecretStore({FlutterSecureStorage? storage, this.legacyDecryptor, this.onUpgraded})
+    : _storage =
+          storage ??
+          const FlutterSecureStorage(
+            // Android's default is now a custom cipher (Jetpack Security was deprecated by
+            // Google); iOS pins the key to this device and requires a first unlock, so a backup
+            // restored onto another handset cannot carry the key with it.
+            iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock_this_device),
+          );
 
   /// Marks a value encrypted by the **Kotlin** app, under the Android Keystore key.
   static const legacyPrefix = 'enc:v1:';
@@ -71,8 +69,7 @@ class SecretStore {
       value != null && (value.startsWith(prefix) || value.startsWith(legacyPrefix));
 
   /// True specifically for a value written by the Kotlin app.
-  static bool isLegacyEncrypted(String? value) =>
-      value != null && value.startsWith(legacyPrefix);
+  static bool isLegacyEncrypted(String? value) => value != null && value.startsWith(legacyPrefix);
 
   Future<SecretKey> _key() async {
     final cached = _cachedKey;
@@ -96,10 +93,7 @@ class SecretStore {
   Future<String?> encrypt(String? value) async {
     if (value == null || value.isEmpty || isEncrypted(value)) return value;
 
-    final secretBox = await _algorithm.encrypt(
-      utf8.encode(value),
-      secretKey: await _key(),
-    );
+    final secretBox = await _algorithm.encrypt(utf8.encode(value), secretKey: await _key());
     // Same wire layout as the Kotlin: iv || ciphertext || tag, base64 with no wrapping.
     final payload = Uint8List.fromList([
       ...secretBox.nonce,

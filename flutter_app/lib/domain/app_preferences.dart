@@ -204,35 +204,38 @@ class AppPreferences {
     return AppPreferences(
       darkMode: flag('darkMode', fallback: defaults.darkMode),
       amoled: flag('amoled', fallback: defaults.amoled),
-      textScalePercent:
-          PreferenceLimits.textScalePercent.parse(settings[keys['textScale']]),
+      textScalePercent: PreferenceLimits.textScalePercent.parse(settings[keys['textScale']]),
       accessibility: flag('accessibility', fallback: defaults.accessibility),
-      measurementSystem:
-          MeasurementSystem.fromSetting(settings[keys['measurementSystem']]),
-      telemetryIntervalSeconds:
-          PreferenceLimits.telemetryInterval.parse(settings[keys['telemetryInterval']]),
-      metricsRetentionDays:
-          PreferenceLimits.metricsRetention.parse(settings[keys['metricsRetention']]),
-      alertHistoryLimit:
-          PreferenceLimits.alertHistoryLimit.parse(settings[keys['alertHistoryLimit']]),
+      measurementSystem: MeasurementSystem.fromSetting(settings[keys['measurementSystem']]),
+      telemetryIntervalSeconds: PreferenceLimits.telemetryInterval.parse(
+        settings[keys['telemetryInterval']],
+      ),
+      metricsRetentionDays: PreferenceLimits.metricsRetention.parse(
+        settings[keys['metricsRetention']],
+      ),
+      alertHistoryLimit: PreferenceLimits.alertHistoryLimit.parse(
+        settings[keys['alertHistoryLimit']],
+      ),
       keepScreenOn: flag('keepScreenOn', fallback: defaults.keepScreenOn),
       backgroundKeepAlive: flag('backgroundKeepAlive', fallback: defaults.backgroundKeepAlive),
       batterySaverEnabled: flag('batterySaverEnabled', fallback: defaults.batterySaverEnabled),
-      batterySaverThresholdPercent: PreferenceLimits.batterySaverThreshold
-          .parse(settings[keys['batterySaverThreshold']]),
-      terminalFontSize:
-          PreferenceLimits.terminalFontSize.parse(settings[keys['terminalFontSize']]),
+      batterySaverThresholdPercent: PreferenceLimits.batterySaverThreshold.parse(
+        settings[keys['batterySaverThreshold']],
+      ),
+      terminalFontSize: PreferenceLimits.terminalFontSize.parse(settings[keys['terminalFontSize']]),
       terminalTheme: terminalThemes.contains(settings[keys['terminalTheme']])
           ? settings[keys['terminalTheme']]!
           : defaults.terminalTheme,
-      terminalScrollbackLimit: PreferenceLimits.terminalScrollback
-          .parse(settings[keys['terminalScrollbackLimit']]),
+      terminalScrollbackLimit: PreferenceLimits.terminalScrollback.parse(
+        settings[keys['terminalScrollbackLimit']],
+      ),
       smartSwipeInput: flag('smartSwipe', fallback: defaults.smartSwipeInput),
       terminalLinkDetection: flag('linkDetection', fallback: defaults.terminalLinkDetection),
       linkOpenInApp: flag('linkOpenInApp', fallback: defaults.linkOpenInApp),
       tmuxControlMode: flag('tmuxControlMode', fallback: defaults.tmuxControlMode),
-      editorHighlightLimitKb:
-          PreferenceLimits.editorHighlightLimit.parse(settings[keys['editorHighlightLimit']]),
+      editorHighlightLimitKb: PreferenceLimits.editorHighlightLimit.parse(
+        settings[keys['editorHighlightLimit']],
+      ),
       appLockEnabled: flag('appLockEnabled', fallback: defaults.appLockEnabled),
       appLockTimeoutMs: normalizeAppLockBackgroundTimeout(
         int.tryParse(settings[keys['appLockTimeout']] ?? ''),
@@ -240,42 +243,43 @@ class AppPreferences {
       useBiometrics: flag('biometrics', fallback: defaults.useBiometrics),
       blockScreenshots: flag('blockScreenshots', fallback: defaults.blockScreenshots),
       hideSensitiveInfo: flag('hideSensitiveInfo', fallback: defaults.hideSensitiveInfo),
-      sftpWarnFileCount:
-          PreferenceLimits.sftpWarnFileCount.parse(settings[keys['sftpWarnFileCount']]),
+      sftpWarnFileCount: PreferenceLimits.sftpWarnFileCount.parse(
+        settings[keys['sftpWarnFileCount']],
+      ),
       sftpWarnGigabytes: warnGigabytes,
     );
   }
 
   /// The rows to write. Only what this screen owns — nothing else in `app_settings` is touched.
   Map<String, String> encode() => {
-        keys['darkMode']!: '$darkMode',
-        keys['amoled']!: '$amoled',
-        keys['textScale']!: '$textScalePercent',
-        keys['accessibility']!: '$accessibility',
-        keys['measurementSystem']!: measurementSystem.settingValue,
-        keys['telemetryInterval']!: '$telemetryIntervalSeconds',
-        keys['metricsRetention']!: '$metricsRetentionDays',
-        keys['alertHistoryLimit']!: '$alertHistoryLimit',
-        keys['keepScreenOn']!: '$keepScreenOn',
-        keys['backgroundKeepAlive']!: '$backgroundKeepAlive',
-        keys['batterySaverEnabled']!: '$batterySaverEnabled',
-        keys['batterySaverThreshold']!: '$batterySaverThresholdPercent',
-        keys['terminalFontSize']!: '$terminalFontSize',
-        keys['terminalTheme']!: terminalTheme,
-        keys['terminalScrollbackLimit']!: '$terminalScrollbackLimit',
-        keys['smartSwipe']!: '$smartSwipeInput',
-        keys['linkDetection']!: '$terminalLinkDetection',
-        keys['linkOpenInApp']!: '$linkOpenInApp',
-        keys['tmuxControlMode']!: '$tmuxControlMode',
-        keys['editorHighlightLimit']!: '$editorHighlightLimitKb',
-        keys['appLockEnabled']!: '$appLockEnabled',
-        keys['appLockTimeout']!: '$appLockTimeoutMs',
-        keys['biometrics']!: '$useBiometrics',
-        keys['blockScreenshots']!: '$blockScreenshots',
-        keys['hideSensitiveInfo']!: '$hideSensitiveInfo',
-        keys['sftpWarnFileCount']!: '$sftpWarnFileCount',
-        keys['sftpWarnBytes']!: '${sftpWarnGigabytes * 1000000000}',
-      };
+    keys['darkMode']!: '$darkMode',
+    keys['amoled']!: '$amoled',
+    keys['textScale']!: '$textScalePercent',
+    keys['accessibility']!: '$accessibility',
+    keys['measurementSystem']!: measurementSystem.settingValue,
+    keys['telemetryInterval']!: '$telemetryIntervalSeconds',
+    keys['metricsRetention']!: '$metricsRetentionDays',
+    keys['alertHistoryLimit']!: '$alertHistoryLimit',
+    keys['keepScreenOn']!: '$keepScreenOn',
+    keys['backgroundKeepAlive']!: '$backgroundKeepAlive',
+    keys['batterySaverEnabled']!: '$batterySaverEnabled',
+    keys['batterySaverThreshold']!: '$batterySaverThresholdPercent',
+    keys['terminalFontSize']!: '$terminalFontSize',
+    keys['terminalTheme']!: terminalTheme,
+    keys['terminalScrollbackLimit']!: '$terminalScrollbackLimit',
+    keys['smartSwipe']!: '$smartSwipeInput',
+    keys['linkDetection']!: '$terminalLinkDetection',
+    keys['linkOpenInApp']!: '$linkOpenInApp',
+    keys['tmuxControlMode']!: '$tmuxControlMode',
+    keys['editorHighlightLimit']!: '$editorHighlightLimitKb',
+    keys['appLockEnabled']!: '$appLockEnabled',
+    keys['appLockTimeout']!: '$appLockTimeoutMs',
+    keys['biometrics']!: '$useBiometrics',
+    keys['blockScreenshots']!: '$blockScreenshots',
+    keys['hideSensitiveInfo']!: '$hideSensitiveInfo',
+    keys['sftpWarnFileCount']!: '$sftpWarnFileCount',
+    keys['sftpWarnBytes']!: '${sftpWarnGigabytes * 1000000000}',
+  };
 
   AppPreferences copyWith({
     bool? darkMode,
@@ -305,57 +309,53 @@ class AppPreferences {
     bool? hideSensitiveInfo,
     int? sftpWarnFileCount,
     int? sftpWarnGigabytes,
-  }) =>
-      AppPreferences(
-        darkMode: darkMode ?? this.darkMode,
-        amoled: amoled ?? this.amoled,
-        textScalePercent: textScalePercent ?? this.textScalePercent,
-        accessibility: accessibility ?? this.accessibility,
-        measurementSystem: measurementSystem ?? this.measurementSystem,
-        telemetryIntervalSeconds:
-            telemetryIntervalSeconds ?? this.telemetryIntervalSeconds,
-        metricsRetentionDays: metricsRetentionDays ?? this.metricsRetentionDays,
-        alertHistoryLimit: alertHistoryLimit ?? this.alertHistoryLimit,
-        keepScreenOn: keepScreenOn ?? this.keepScreenOn,
-        backgroundKeepAlive: backgroundKeepAlive ?? this.backgroundKeepAlive,
-        batterySaverEnabled: batterySaverEnabled ?? this.batterySaverEnabled,
-        batterySaverThresholdPercent:
-            batterySaverThresholdPercent ?? this.batterySaverThresholdPercent,
-        terminalFontSize: terminalFontSize ?? this.terminalFontSize,
-        terminalTheme: terminalTheme ?? this.terminalTheme,
-        terminalScrollbackLimit: terminalScrollbackLimit ?? this.terminalScrollbackLimit,
-        smartSwipeInput: smartSwipeInput ?? this.smartSwipeInput,
-        terminalLinkDetection: terminalLinkDetection ?? this.terminalLinkDetection,
-        linkOpenInApp: linkOpenInApp ?? this.linkOpenInApp,
-        tmuxControlMode: tmuxControlMode ?? this.tmuxControlMode,
-        editorHighlightLimitKb: editorHighlightLimitKb ?? this.editorHighlightLimitKb,
-        appLockEnabled: appLockEnabled ?? this.appLockEnabled,
-        appLockTimeoutMs: appLockTimeoutMs ?? this.appLockTimeoutMs,
-        useBiometrics: useBiometrics ?? this.useBiometrics,
-        blockScreenshots: blockScreenshots ?? this.blockScreenshots,
-        hideSensitiveInfo: hideSensitiveInfo ?? this.hideSensitiveInfo,
-        sftpWarnFileCount: sftpWarnFileCount ?? this.sftpWarnFileCount,
-        sftpWarnGigabytes: sftpWarnGigabytes ?? this.sftpWarnGigabytes,
-      );
+  }) => AppPreferences(
+    darkMode: darkMode ?? this.darkMode,
+    amoled: amoled ?? this.amoled,
+    textScalePercent: textScalePercent ?? this.textScalePercent,
+    accessibility: accessibility ?? this.accessibility,
+    measurementSystem: measurementSystem ?? this.measurementSystem,
+    telemetryIntervalSeconds: telemetryIntervalSeconds ?? this.telemetryIntervalSeconds,
+    metricsRetentionDays: metricsRetentionDays ?? this.metricsRetentionDays,
+    alertHistoryLimit: alertHistoryLimit ?? this.alertHistoryLimit,
+    keepScreenOn: keepScreenOn ?? this.keepScreenOn,
+    backgroundKeepAlive: backgroundKeepAlive ?? this.backgroundKeepAlive,
+    batterySaverEnabled: batterySaverEnabled ?? this.batterySaverEnabled,
+    batterySaverThresholdPercent: batterySaverThresholdPercent ?? this.batterySaverThresholdPercent,
+    terminalFontSize: terminalFontSize ?? this.terminalFontSize,
+    terminalTheme: terminalTheme ?? this.terminalTheme,
+    terminalScrollbackLimit: terminalScrollbackLimit ?? this.terminalScrollbackLimit,
+    smartSwipeInput: smartSwipeInput ?? this.smartSwipeInput,
+    terminalLinkDetection: terminalLinkDetection ?? this.terminalLinkDetection,
+    linkOpenInApp: linkOpenInApp ?? this.linkOpenInApp,
+    tmuxControlMode: tmuxControlMode ?? this.tmuxControlMode,
+    editorHighlightLimitKb: editorHighlightLimitKb ?? this.editorHighlightLimitKb,
+    appLockEnabled: appLockEnabled ?? this.appLockEnabled,
+    appLockTimeoutMs: appLockTimeoutMs ?? this.appLockTimeoutMs,
+    useBiometrics: useBiometrics ?? this.useBiometrics,
+    blockScreenshots: blockScreenshots ?? this.blockScreenshots,
+    hideSensitiveInfo: hideSensitiveInfo ?? this.hideSensitiveInfo,
+    sftpWarnFileCount: sftpWarnFileCount ?? this.sftpWarnFileCount,
+    sftpWarnGigabytes: sftpWarnGigabytes ?? this.sftpWarnGigabytes,
+  );
 
   /// Rules that are not per-field bounds but relationships between fields.
   ///
   /// Returned as a warning rather than a block: each describes a combination that is legal but
   /// probably not what was meant, and refusing it outright would be the app overruling the user.
   List<String> get warnings => [
-        if (!appLockEnabled && useBiometrics)
-          'Biometric unlock does nothing while the app lock is off.',
-        if (batterySaverEnabled && batterySaverThresholdPercent >= 90)
-          'Battery saver at $batterySaverThresholdPercent% will be active almost all the time.',
-        if (telemetryIntervalSeconds <= 10)
-          'Polling every $telemetryIntervalSeconds seconds is hard on battery and on the hosts.',
-        if (backgroundKeepAlive && batterySaverEnabled)
-          'Battery saver pauses background polling, so keep-alive will stop below the threshold.',
-      ];
+    if (!appLockEnabled && useBiometrics)
+      'Biometric unlock does nothing while the app lock is off.',
+    if (batterySaverEnabled && batterySaverThresholdPercent >= 90)
+      'Battery saver at $batterySaverThresholdPercent% will be active almost all the time.',
+    if (telemetryIntervalSeconds <= 10)
+      'Polling every $telemetryIntervalSeconds seconds is hard on battery and on the hosts.',
+    if (backgroundKeepAlive && batterySaverEnabled)
+      'Battery saver pauses background polling, so keep-alive will stop below the threshold.',
+  ];
 
   @override
-  bool operator ==(Object other) =>
-      other is AppPreferences && _mapEquals(other.encode(), encode());
+  bool operator ==(Object other) => other is AppPreferences && _mapEquals(other.encode(), encode());
 
   @override
   int get hashCode => Object.hashAll(encode().entries.map((e) => '${e.key}=${e.value}'));

@@ -64,7 +64,7 @@ class _ConnectPane extends StatelessWidget {
             // is also the only place that warns before forcing SSH to a host believed to be down.
             ? 'Add a host first.'
             : 'No online hosts. To SSH into an offline host anyway, use its connect button on the '
-                'Hosts tab.',
+                  'Hosts tab.',
         error: vm.error,
       );
     }
@@ -81,33 +81,33 @@ class _EmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                message,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontFamily: OmniFonts.mono,
-                  fontSize: 13,
-                  color: Color(0xFF7C8AA5),
-                ),
-              ),
-              if (error != null) ...[
-                const SizedBox(height: 16),
-                Text(
-                  error!,
-                  key: const ValueKey('shell.error'),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 12, color: OmniColors.red),
-                ),
-              ],
-            ],
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontFamily: OmniFonts.mono,
+              fontSize: 13,
+              color: Color(0xFF7C8AA5),
+            ),
           ),
-        ),
-      );
+          if (error != null) ...[
+            const SizedBox(height: 16),
+            Text(
+              error!,
+              key: const ValueKey('shell.error'),
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, color: OmniColors.red),
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
 }
 
 class _ConnectPrompt extends StatelessWidget {
@@ -118,76 +118,76 @@ class _ConnectPrompt extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                '>_',
-                style: TextStyle(
-                  color: OmniColors.cyan,
-                  fontSize: 34,
-                  fontFamily: OmniFonts.mono,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                server.name,
-                style: const TextStyle(
-                  fontFamily: OmniFonts.mono,
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xFFC8D4E8),
-                ),
-              ),
-              // Routed through HostDisplay so "hide addresses" covers the terminal too. A screen the
-              // user is most likely to be sharing is the last place to leak a host name.
-              ListenableBuilder(
-                listenable: HostDisplay.instance,
-                builder: (context, _) => Text(
-                  '${HostDisplay.instance.userAtHost(server)}:${server.port}',
-                  key: const ValueKey('shell.connect.target'),
-                  style: const TextStyle(
-                    fontFamily: OmniFonts.mono,
-                    fontSize: 11,
-                    color: Color(0xFF7C8AA5),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 20),
-              FilledButton.icon(
-                key: const ValueKey('shell.connect'),
-                icon: const Icon(Icons.play_arrow, size: 18),
-                label: const Text('Connect'),
-                onPressed: vm.canConnect ? () => vm.connect(server) : null,
-              ),
-              if (!vm.canConnect)
-                const Padding(
-                  padding: EdgeInsets.only(top: 10),
-                  child: Text(
-                    // Convention 4: say the feature is off rather than opening a terminal that will
-                    // never receive a byte.
-                    'The terminal is unavailable in this build: no SSH transport is wired.',
-                    key: ValueKey('shell.unavailable'),
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 11, color: OmniColors.amber),
-                  ),
-                ),
-              if (vm.error != null) ...[
-                const SizedBox(height: 16),
-                Text(
-                  vm.error!,
-                  key: const ValueKey('shell.error'),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 12, color: OmniColors.red),
-                ),
-              ],
-            ],
+    child: Padding(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text(
+            '>_',
+            style: TextStyle(
+              color: OmniColors.cyan,
+              fontSize: 34,
+              fontFamily: OmniFonts.mono,
+              fontWeight: FontWeight.bold,
+            ),
           ),
-        ),
-      );
+          const SizedBox(height: 12),
+          Text(
+            server.name,
+            style: const TextStyle(
+              fontFamily: OmniFonts.mono,
+              fontSize: 15,
+              fontWeight: FontWeight.bold,
+              color: Color(0xFFC8D4E8),
+            ),
+          ),
+          // Routed through HostDisplay so "hide addresses" covers the terminal too. A screen the
+          // user is most likely to be sharing is the last place to leak a host name.
+          ListenableBuilder(
+            listenable: HostDisplay.instance,
+            builder: (context, _) => Text(
+              '${HostDisplay.instance.userAtHost(server)}:${server.port}',
+              key: const ValueKey('shell.connect.target'),
+              style: const TextStyle(
+                fontFamily: OmniFonts.mono,
+                fontSize: 11,
+                color: Color(0xFF7C8AA5),
+              ),
+            ),
+          ),
+          const SizedBox(height: 20),
+          FilledButton.icon(
+            key: const ValueKey('shell.connect'),
+            icon: const Icon(Icons.play_arrow, size: 18),
+            label: const Text('Connect'),
+            onPressed: vm.canConnect ? () => vm.connect(server) : null,
+          ),
+          if (!vm.canConnect)
+            const Padding(
+              padding: EdgeInsets.only(top: 10),
+              child: Text(
+                // Convention 4: say the feature is off rather than opening a terminal that will
+                // never receive a byte.
+                'The terminal is unavailable in this build: no SSH transport is wired.',
+                key: ValueKey('shell.unavailable'),
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11, color: OmniColors.amber),
+              ),
+            ),
+          if (vm.error != null) ...[
+            const SizedBox(height: 16),
+            Text(
+              vm.error!,
+              key: const ValueKey('shell.error'),
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, color: OmniColors.red),
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
 }
 
 class _ConnectingView extends StatelessWidget {
@@ -197,29 +197,29 @@ class _ConnectingView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(
-              width: 28,
-              height: 28,
-              child: CircularProgressIndicator(strokeWidth: 2, color: OmniColors.cyan),
-            ),
-            const SizedBox(height: 14),
-            Text(
-              // The transport's own phase, not a generic spinner label: "Authenticating…" that sits
-              // there for ten seconds tells the user which step is hanging.
-              phase ?? 'Connecting…',
-              key: const ValueKey('shell.phase'),
-              style: const TextStyle(
-                fontFamily: OmniFonts.mono,
-                fontSize: 12,
-                color: Color(0xFF7C8AA5),
-              ),
-            ),
-          ],
+    child: Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        const SizedBox(
+          width: 28,
+          height: 28,
+          child: CircularProgressIndicator(strokeWidth: 2, color: OmniColors.cyan),
         ),
-      );
+        const SizedBox(height: 14),
+        Text(
+          // The transport's own phase, not a generic spinner label: "Authenticating…" that sits
+          // there for ten seconds tells the user which step is hanging.
+          phase ?? 'Connecting…',
+          key: const ValueKey('shell.phase'),
+          style: const TextStyle(
+            fontFamily: OmniFonts.mono,
+            fontSize: 12,
+            color: Color(0xFF7C8AA5),
+          ),
+        ),
+      ],
+    ),
+  );
 }
 
 // ── session chips ─────────────────────────────────────────────────────────────
@@ -283,56 +283,54 @@ class _SessionChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => ListenableBuilder(
-        listenable: session,
-        builder: (context, _) {
-          // A dead session keeps its chip until it is dismissed: its scrollback is the only record
-          // of why it died, and closing it automatically would erase that at the worst moment.
-          final live = session.isOpen;
-          final colour = live ? OmniColors.green : OmniColors.red;
+    listenable: session,
+    builder: (context, _) {
+      // A dead session keeps its chip until it is dismissed: its scrollback is the only record
+      // of why it died, and closing it automatically would erase that at the worst moment.
+      final live = session.isOpen;
+      final colour = live ? OmniColors.green : OmniColors.red;
 
-          return Padding(
-            padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 3),
-            child: InkWell(
-              key: ValueKey('shell.session.${session.id}'),
-              onTap: onTap,
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8),
-                decoration: BoxDecoration(
-                  color: selected ? const Color(0xFF16202F) : Colors.transparent,
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(
-                    color: selected ? OmniColors.cyan : const Color(0xFF243044),
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 3),
+        child: InkWell(
+          key: ValueKey('shell.session.${session.id}'),
+          onTap: onTap,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: selected ? const Color(0xFF16202F) : Colors.transparent,
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: selected ? OmniColors.cyan : const Color(0xFF243044)),
+            ),
+            child: Row(
+              children: [
+                Container(
+                  width: 6,
+                  height: 6,
+                  decoration: BoxDecoration(color: colour, shape: BoxShape.circle),
+                ),
+                const SizedBox(width: 6),
+                Text(
+                  session.serverName,
+                  style: const TextStyle(
+                    fontFamily: OmniFonts.mono,
+                    fontSize: 11,
+                    color: Color(0xFFC8D4E8),
                   ),
                 ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 6,
-                      height: 6,
-                      decoration: BoxDecoration(color: colour, shape: BoxShape.circle),
-                    ),
-                    const SizedBox(width: 6),
-                    Text(
-                      session.serverName,
-                      style: const TextStyle(
-                        fontFamily: OmniFonts.mono,
-                        fontSize: 11,
-                        color: Color(0xFFC8D4E8),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    InkWell(
-                      key: ValueKey('shell.session.${session.id}.close'),
-                      onTap: onClose,
-                      child: const Icon(Icons.close, size: 13, color: Color(0xFF7C8AA5)),
-                    ),
-                  ],
+                const SizedBox(width: 4),
+                InkWell(
+                  key: ValueKey('shell.session.${session.id}.close'),
+                  onTap: onClose,
+                  child: const Icon(Icons.close, size: 13, color: Color(0xFF7C8AA5)),
                 ),
-              ),
+              ],
             ),
-          );
-        },
+          ),
+        ),
       );
+    },
+  );
 }
 
 // ── the live terminal ─────────────────────────────────────────────────────────
@@ -422,49 +420,49 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
               // shortcuts do. Anything it does not claim falls through to ordinary text entry.
               onKeyEvent: _onKey,
               child: Stack(
-              children: [
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onTap: () => _imeFocus.requestFocus(),
-                  child: TerminalSurface(
-                    session: session,
-                    focused: _imeFocus.hasFocus,
-                    onGridChanged: widget.vm.rememberGrid,
-                  ),
-                ),
-                // Sized to nothing and painted with nothing: it exists purely to own the platform
-                // IME connection so the software keyboard has somewhere to deliver text.
-                Positioned(
-                  width: 1,
-                  height: 1,
-                  child: Opacity(
-                    opacity: 0,
-                    child: TextField(
-                      key: const ValueKey('shell.input'),
-                      controller: _input,
-                      focusNode: _imeFocus,
-                      onChanged: _onCommit,
-                      // A terminal needs literal keystrokes. Sentence casing would capitalise the
-                      // first letter of every command, and autocorrect would rewrite flag names.
-                      autocorrect: false,
-                      enableSuggestions: false,
-                      textCapitalization: TextCapitalization.none,
-                      keyboardType: TextInputType.multiline,
-                      maxLines: null,
+                children: [
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () => _imeFocus.requestFocus(),
+                    child: TerminalSurface(
+                      session: session,
+                      focused: _imeFocus.hasFocus,
+                      onGridChanged: widget.vm.rememberGrid,
                     ),
                   ),
-                ),
-                if (!session.followTail)
+                  // Sized to nothing and painted with nothing: it exists purely to own the platform
+                  // IME connection so the software keyboard has somewhere to deliver text.
                   Positioned(
-                    right: 12,
-                    bottom: 12,
-                    child: FloatingActionButton.small(
-                      key: const ValueKey('shell.jumpToBottom'),
-                      backgroundColor: OmniColors.cyan,
-                      onPressed: session.scrollToTail,
-                      child: const Icon(Icons.arrow_downward, size: 18, color: Colors.black),
+                    width: 1,
+                    height: 1,
+                    child: Opacity(
+                      opacity: 0,
+                      child: TextField(
+                        key: const ValueKey('shell.input'),
+                        controller: _input,
+                        focusNode: _imeFocus,
+                        onChanged: _onCommit,
+                        // A terminal needs literal keystrokes. Sentence casing would capitalise the
+                        // first letter of every command, and autocorrect would rewrite flag names.
+                        autocorrect: false,
+                        enableSuggestions: false,
+                        textCapitalization: TextCapitalization.none,
+                        keyboardType: TextInputType.multiline,
+                        maxLines: null,
+                      ),
                     ),
                   ),
+                  if (!session.followTail)
+                    Positioned(
+                      right: 12,
+                      bottom: 12,
+                      child: FloatingActionButton.small(
+                        key: const ValueKey('shell.jumpToBottom'),
+                        backgroundColor: OmniColors.cyan,
+                        onPressed: session.scrollToTail,
+                        child: const Icon(Icons.arrow_downward, size: 18, color: Colors.black),
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -475,34 +473,34 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
   }
 
   static TermKey? _termKeyFor(LogicalKeyboardKey key) => switch (key) {
-        LogicalKeyboardKey.enter || LogicalKeyboardKey.numpadEnter => TermKey.enter,
-        LogicalKeyboardKey.backspace => TermKey.backspace,
-        LogicalKeyboardKey.tab => TermKey.tab,
-        LogicalKeyboardKey.escape => TermKey.esc,
-        LogicalKeyboardKey.arrowUp => TermKey.up,
-        LogicalKeyboardKey.arrowDown => TermKey.down,
-        LogicalKeyboardKey.arrowLeft => TermKey.left,
-        LogicalKeyboardKey.arrowRight => TermKey.right,
-        LogicalKeyboardKey.home => TermKey.home,
-        LogicalKeyboardKey.end => TermKey.end,
-        LogicalKeyboardKey.insert => TermKey.insert,
-        LogicalKeyboardKey.delete => TermKey.delete,
-        LogicalKeyboardKey.pageUp => TermKey.pageUp,
-        LogicalKeyboardKey.pageDown => TermKey.pageDown,
-        LogicalKeyboardKey.f1 => TermKey.f1,
-        LogicalKeyboardKey.f2 => TermKey.f2,
-        LogicalKeyboardKey.f3 => TermKey.f3,
-        LogicalKeyboardKey.f4 => TermKey.f4,
-        LogicalKeyboardKey.f5 => TermKey.f5,
-        LogicalKeyboardKey.f6 => TermKey.f6,
-        LogicalKeyboardKey.f7 => TermKey.f7,
-        LogicalKeyboardKey.f8 => TermKey.f8,
-        LogicalKeyboardKey.f9 => TermKey.f9,
-        LogicalKeyboardKey.f10 => TermKey.f10,
-        LogicalKeyboardKey.f11 => TermKey.f11,
-        LogicalKeyboardKey.f12 => TermKey.f12,
-        _ => null,
-      };
+    LogicalKeyboardKey.enter || LogicalKeyboardKey.numpadEnter => TermKey.enter,
+    LogicalKeyboardKey.backspace => TermKey.backspace,
+    LogicalKeyboardKey.tab => TermKey.tab,
+    LogicalKeyboardKey.escape => TermKey.esc,
+    LogicalKeyboardKey.arrowUp => TermKey.up,
+    LogicalKeyboardKey.arrowDown => TermKey.down,
+    LogicalKeyboardKey.arrowLeft => TermKey.left,
+    LogicalKeyboardKey.arrowRight => TermKey.right,
+    LogicalKeyboardKey.home => TermKey.home,
+    LogicalKeyboardKey.end => TermKey.end,
+    LogicalKeyboardKey.insert => TermKey.insert,
+    LogicalKeyboardKey.delete => TermKey.delete,
+    LogicalKeyboardKey.pageUp => TermKey.pageUp,
+    LogicalKeyboardKey.pageDown => TermKey.pageDown,
+    LogicalKeyboardKey.f1 => TermKey.f1,
+    LogicalKeyboardKey.f2 => TermKey.f2,
+    LogicalKeyboardKey.f3 => TermKey.f3,
+    LogicalKeyboardKey.f4 => TermKey.f4,
+    LogicalKeyboardKey.f5 => TermKey.f5,
+    LogicalKeyboardKey.f6 => TermKey.f6,
+    LogicalKeyboardKey.f7 => TermKey.f7,
+    LogicalKeyboardKey.f8 => TermKey.f8,
+    LogicalKeyboardKey.f9 => TermKey.f9,
+    LogicalKeyboardKey.f10 => TermKey.f10,
+    LogicalKeyboardKey.f11 => TermKey.f11,
+    LogicalKeyboardKey.f12 => TermKey.f12,
+    _ => null,
+  };
 }
 
 /// The strip above the grid: what state this session is in, and the two toggles that change it.
@@ -555,17 +553,18 @@ class _TerminalStatusRow extends StatelessWidget {
   }
 
   String _status() => switch (session.endReason) {
-        ShellSessionEnd.open => session.readOnly
-            ? 'READ ONLY · ${session.cols}×${session.rows} · drag to scroll'
-            : '${session.serverName} · ${session.cols}×${session.rows}',
-        // The exit status is the useful part of a clean exit, so it is shown rather than summarised.
-        ShellSessionEnd.remoteExited =>
-          'Session ended (exit ${session.exitStatus ?? 0}). Scrollback kept.',
-        // Named as a connection problem, not as an exit: the remote may well still be running, and
-        // telling the user their shell "ended" would be a lie they act on.
-        ShellSessionEnd.disconnected => 'Connection lost. Scrollback kept.',
-        ShellSessionEnd.closedByUser => 'Closed.',
-      };
+    ShellSessionEnd.open =>
+      session.readOnly
+          ? 'READ ONLY · ${session.cols}×${session.rows} · drag to scroll'
+          : '${session.serverName} · ${session.cols}×${session.rows}',
+    // The exit status is the useful part of a clean exit, so it is shown rather than summarised.
+    ShellSessionEnd.remoteExited =>
+      'Session ended (exit ${session.exitStatus ?? 0}). Scrollback kept.',
+    // Named as a connection problem, not as an exit: the remote may well still be running, and
+    // telling the user their shell "ended" would be a lie they act on.
+    ShellSessionEnd.disconnected => 'Connection lost. Scrollback kept.',
+    ShellSessionEnd.closedByUser => 'Closed.',
+  };
 }
 
 class _Toggle extends StatelessWidget {
@@ -585,26 +584,26 @@ class _Toggle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Tooltip(
-        message: tooltip,
-        child: InkWell(
-          key: ValueKey(keyName),
-          onTap: onTap,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-            decoration: BoxDecoration(
-              color: active ? OmniColors.amber.withValues(alpha: 0.2) : Colors.transparent,
-              borderRadius: BorderRadius.circular(3),
-              border: Border.all(color: active ? OmniColors.amber : const Color(0xFF243044)),
-            ),
-            child: Text(
-              label,
-              style: TextStyle(
-                fontFamily: OmniFonts.mono,
-                fontSize: 10,
-                color: active ? OmniColors.amber : const Color(0xFF7C8AA5),
-              ),
-            ),
+    message: tooltip,
+    child: InkWell(
+      key: ValueKey(keyName),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: active ? OmniColors.amber.withValues(alpha: 0.2) : Colors.transparent,
+          borderRadius: BorderRadius.circular(3),
+          border: Border.all(color: active ? OmniColors.amber : const Color(0xFF243044)),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontFamily: OmniFonts.mono,
+            fontSize: 10,
+            color: active ? OmniColors.amber : const Color(0xFF7C8AA5),
           ),
         ),
-      );
+      ),
+    ),
+  );
 }

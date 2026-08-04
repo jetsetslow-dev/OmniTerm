@@ -39,8 +39,11 @@ void main() {
     await openBackup($);
     await selectSettingsOnly($);
 
-    expect($(const ValueKey('backup.sensitiveNote')).exists, false,
-        reason: 'Settings alone carries no credentials, so no passphrase should be demanded');
+    expect(
+      $(const ValueKey('backup.sensitiveNote')).exists,
+      false,
+      reason: 'Settings alone carries no credentials, so no passphrase should be demanded',
+    );
 
     await $(const ValueKey('backup.export')).tap();
 
@@ -53,8 +56,11 @@ void main() {
     await $.platformAutomator.android.pressBack();
     await $.pumpAndSettle();
 
-    expect($(const ValueKey('backup.message')).exists, false,
-        reason: 'a cancelled save must not report a backup that does not exist');
+    expect(
+      $(const ValueKey('backup.message')).exists,
+      false,
+      reason: 'a cancelled save must not report a backup that does not exist',
+    );
     expect(
       $.tester.widget<FilledButton>($(const ValueKey('backup.export')).finder).onPressed,
       isNotNull,
@@ -88,8 +94,11 @@ void main() {
     }
 
     views.roots.forEach(walk);
-    expect(text.toString(), contains('omniterm'),
-        reason: 'the picker must open on a name that identifies the app, not an anonymous default');
+    expect(
+      text.toString(),
+      contains('omniterm'),
+      reason: 'the picker must open on a name that identifies the app, not an anonymous default',
+    );
 
     await $.platformAutomator.android.pressBack();
     await $.pumpAndSettle();
@@ -112,12 +121,13 @@ void main() {
     await $.platformAutomator.android.pressBack();
     await $.pumpAndSettle();
 
-    expect($(const ValueKey('backup.message')).exists, false,
-        reason: 'a cancelled restore must not report one that did not happen');
     expect(
-      $.tester
-          .widget<OutlinedButton>($(const ValueKey('backup.import')).finder)
-          .onPressed,
+      $(const ValueKey('backup.message')).exists,
+      false,
+      reason: 'a cancelled restore must not report one that did not happen',
+    );
+    expect(
+      $.tester.widget<OutlinedButton>($(const ValueKey('backup.import')).finder).onPressed,
       isNotNull,
       reason: 'the screen must be usable again after a cancelled restore',
     );

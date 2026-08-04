@@ -19,31 +19,31 @@ abstract final class OmniFonts {
 /// Compose expresses sizes in `sp` and Flutter in logical pixels, but both are scaled by the
 /// platform text-scale factor, so the numbers carry over unchanged.
 TextTheme omniTextTheme(TextTheme base) => base.copyWith(
-      bodyLarge: base.bodyLarge?.copyWith(
-        fontWeight: FontWeight.normal,
-        fontSize: 16,
-        height: 24 / 16,
-        letterSpacing: 0.5,
-      ),
-      titleLarge: base.titleLarge?.copyWith(
-        fontFamily: OmniFonts.display,
-        fontWeight: FontWeight.bold,
-        fontSize: 22,
-        height: 28 / 22,
-        letterSpacing: 0.5,
-      ),
-      titleMedium: base.titleMedium?.copyWith(
-        fontFamily: OmniFonts.display,
-        fontWeight: FontWeight.w600,
-        fontSize: 16,
-        height: 22 / 16,
-        letterSpacing: 0.5,
-      ),
-      labelSmall: base.labelSmall?.copyWith(
-        fontFamily: OmniFonts.mono,
-        fontWeight: FontWeight.w500,
-        fontSize: 11,
-        height: 16 / 11,
-        letterSpacing: 0.5,
-      ),
-    );
+  bodyLarge: base.bodyLarge?.copyWith(
+    fontWeight: FontWeight.normal,
+    fontSize: 16,
+    height: 24 / 16,
+    letterSpacing: 0.5,
+  ),
+  titleLarge: base.titleLarge?.copyWith(
+    fontFamily: OmniFonts.display,
+    fontWeight: FontWeight.bold,
+    fontSize: 22,
+    height: 28 / 22,
+    letterSpacing: 0.5,
+  ),
+  titleMedium: base.titleMedium?.copyWith(
+    fontFamily: OmniFonts.display,
+    fontWeight: FontWeight.w600,
+    fontSize: 16,
+    height: 22 / 16,
+    letterSpacing: 0.5,
+  ),
+  labelSmall: base.labelSmall?.copyWith(
+    fontFamily: OmniFonts.mono,
+    fontWeight: FontWeight.w500,
+    fontSize: 11,
+    height: 16 / 11,
+    letterSpacing: 0.5,
+  ),
+);

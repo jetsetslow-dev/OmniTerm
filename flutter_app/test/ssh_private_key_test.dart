@@ -20,11 +20,13 @@ void main() {
       ]) {
         expect(
           () => parsePrivateKey(pub),
-          throwsA(isA<InvalidPrivateKeyException>().having(
-            (e) => e.message,
-            'message',
-            allOf(contains('looks like a public key'), contains('.pub')),
-          )),
+          throwsA(
+            isA<InvalidPrivateKeyException>().having(
+              (e) => e.message,
+              'message',
+              allOf(contains('looks like a public key'), contains('.pub')),
+            ),
+          ),
           reason: pub.split(' ').first,
         );
       }
@@ -33,11 +35,13 @@ void main() {
     test('text with no PEM markers is rejected before parsing', () {
       expect(
         () => parsePrivateKey('just some random text'),
-        throwsA(isA<InvalidPrivateKeyException>().having(
-          (e) => e.message,
-          'message',
-          contains("doesn't look like a private key"),
-        )),
+        throwsA(
+          isA<InvalidPrivateKeyException>().having(
+            (e) => e.message,
+            'message',
+            contains("doesn't look like a private key"),
+          ),
+        ),
       );
     });
 
@@ -47,7 +51,8 @@ void main() {
     });
 
     test('a corrupt PEM body reports a usable message, never an object dump', () {
-      const corrupt = '-----BEGIN OPENSSH PRIVATE KEY-----\n'
+      const corrupt =
+          '-----BEGIN OPENSSH PRIVATE KEY-----\n'
           'not-actually-base64-key-material\n'
           '-----END OPENSSH PRIVATE KEY-----';
       try {
@@ -56,8 +61,7 @@ void main() {
       } on InvalidPrivateKeyException catch (e) {
         expect(e.message, startsWith('Invalid private key'));
         expect(e.message, isNot(contains('[B@')), reason: 'the JSch leak this guard exists for');
-        expect(e.message, isNot(contains('Instance of')),
-            reason: "Dart's equivalent leak");
+        expect(e.message, isNot(contains('Instance of')), reason: "Dart's equivalent leak");
       }
     });
 
@@ -79,21 +83,21 @@ void main() {
 
   group('ShareClients.startPath', () {
     NetworkShare share({required String protocol, String sharePath = ''}) => NetworkShare(
-          id: 1,
-          name: 'test',
-          protocol: protocol,
-          address: '10.0.0.5',
-          port: 445,
-          sharePath: sharePath,
-          workgroup: '',
-          username: '',
-          password: '',
-          anonymous: true,
-          useHttps: false,
-          notes: '',
-          lastChecked: 0,
-          lastStatus: 'unknown',
-        );
+      id: 1,
+      name: 'test',
+      protocol: protocol,
+      address: '10.0.0.5',
+      port: 445,
+      sharePath: sharePath,
+      workgroup: '',
+      username: '',
+      password: '',
+      anonymous: true,
+      useHttps: false,
+      notes: '',
+      lastChecked: 0,
+      lastStatus: 'unknown',
+    );
 
     test('SMB drops the first segment, which the connection already consumed', () async {
       final client = _StubFsClient('/home/stub');
@@ -101,7 +105,10 @@ void main() {
         await ShareClients.startPath(share(protocol: 'SMB', sharePath: 'Public/docs/2026'), client),
         '/docs/2026',
       );
-      expect(await ShareClients.startPath(share(protocol: 'SMB', sharePath: 'Public'), client), '/');
+      expect(
+        await ShareClients.startPath(share(protocol: 'SMB', sharePath: 'Public'), client),
+        '/',
+      );
     });
 
     test('other protocols use the configured path verbatim', () async {
@@ -118,7 +125,10 @@ void main() {
     });
 
     test('smbShareName takes the first segment only', () {
-      expect(ShareClients.smbShareName(share(protocol: 'SMB', sharePath: '/Public/docs')), 'Public');
+      expect(
+        ShareClients.smbShareName(share(protocol: 'SMB', sharePath: '/Public/docs')),
+        'Public',
+      );
       expect(ShareClients.smbShareName(share(protocol: 'SMB', sharePath: '')), isNull);
       expect(ShareClients.smbShareName(share(protocol: 'SMB', sharePath: '/')), isNull);
     });
@@ -157,7 +167,7 @@ void main() {
       final reports = <(int, int)>[];
       await copyWithProgress(
         Stream.fromIterable([
-          [1, 2, 3]
+          [1, 2, 3],
         ]),
         _CollectingSink(),
         0,
@@ -176,17 +186,18 @@ void main() {
         200,
         onProgress: (c, _) => reports.add(c),
       );
-      expect(reports.length, lessThan(10), reason: 'got ${reports.length} callbacks for 200 chunks');
+      expect(
+        reports.length,
+        lessThan(10),
+        reason: 'got ${reports.length} callbacks for 200 chunks',
+      );
       expect(reports.last, 200);
     });
 
     test('crossing the byte threshold does emit an interim report', () async {
       final reports = <int>[];
       await copyWithProgress(
-        Stream.fromIterable([
-          List.filled(70 * 1024, 0),
-          List.filled(10, 0),
-        ]),
+        Stream.fromIterable([List.filled(70 * 1024, 0), List.filled(10, 0)]),
         _CollectingSink(),
         70 * 1024 + 10,
         onProgress: (c, _) => reports.add(c),
@@ -244,8 +255,7 @@ class _StubFsClient extends RemoteFsClient {
     String path,
     StreamSink<List<int>> output, {
     void Function(int copied, int total)? onProgress,
-  }) async =>
-      0;
+  }) async => 0;
 
   @override
   Future<void> uploadStream(

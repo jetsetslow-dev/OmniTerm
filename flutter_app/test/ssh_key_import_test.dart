@@ -37,8 +37,7 @@ a8ow8oo+4wfCull+clkvAAAAEXRlc3RAb21uaXRlcm0udGVzdAECAwQ=
           existingAliases: {'laptop'},
         ),
         throwsA(
-          isA<KeyImportException>()
-              .having((e) => e.message, 'message', contains('already exists')),
+          isA<KeyImportException>().having((e) => e.message, 'message', contains('already exists')),
         ),
       );
     });
@@ -56,8 +55,7 @@ a8ow8oo+4wfCull+clkvAAAAEXRlc3RAb21uaXRlcm0udGVzdAECAwQ=
       expect(
         () => prepareKeyImport(alias: 'k', privateKey: ed25519Public),
         throwsA(
-          isA<KeyImportException>()
-              .having((e) => e.message, 'message', contains('public key')),
+          isA<KeyImportException>().having((e) => e.message, 'message', contains('public key')),
         ),
       );
     });
@@ -66,8 +64,7 @@ a8ow8oo+4wfCull+clkvAAAAEXRlc3RAb21uaXRlcm0udGVzdAECAwQ=
       expect(
         () => prepareKeyImport(alias: 'k', privateKey: 'hello world'),
         throwsA(
-          isA<KeyImportException>()
-              .having((e) => e.message, 'message', contains('PRIVATE KEY')),
+          isA<KeyImportException>().having((e) => e.message, 'message', contains('PRIVATE KEY')),
         ),
       );
     });

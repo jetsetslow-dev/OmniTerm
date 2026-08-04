@@ -179,8 +179,7 @@ void main() {
           host: 'forbidden.invalid',
           port: 22,
         ),
-        throwsA(isA<ProxyException>()
-            .having((e) => e.message, 'message', contains('not allowed'))),
+        throwsA(isA<ProxyException>().having((e) => e.message, 'message', contains('not allowed'))),
       );
     });
 
@@ -198,8 +197,13 @@ void main() {
           host: 'h.invalid',
           port: 22,
         ),
-        throwsA(isA<ProxyException>()
-            .having((e) => e.message, 'message', contains('did not answer as SOCKS5'))),
+        throwsA(
+          isA<ProxyException>().having(
+            (e) => e.message,
+            'message',
+            contains('did not answer as SOCKS5'),
+          ),
+        ),
       );
     });
   });
@@ -249,10 +253,7 @@ void main() {
       await firstChunk(socket.stream);
 
       expect(proxy.receivedText, contains('Proxy-Authorization: Basic '));
-      expect(
-        proxy.receivedText,
-        contains(base64.encode(utf8.encode('sam:hunter2'))),
-      );
+      expect(proxy.receivedText, contains(base64.encode(utf8.encode('sam:hunter2'))));
       // The password must not appear in the clear anywhere in the request.
       expect(proxy.receivedText, isNot(contains('hunter2')));
       await socket.close();
@@ -272,8 +273,13 @@ void main() {
           host: 'h.invalid',
           port: 22,
         ),
-        throwsA(isA<ProxyException>()
-            .having((e) => e.message, 'message', contains('requires credentials'))),
+        throwsA(
+          isA<ProxyException>().having(
+            (e) => e.message,
+            'message',
+            contains('requires credentials'),
+          ),
+        ),
       );
     });
 
@@ -291,8 +297,7 @@ void main() {
           host: 'h.invalid',
           port: 22,
         ),
-        throwsA(isA<ProxyException>()
-            .having((e) => e.message, 'message', contains('502'))),
+        throwsA(isA<ProxyException>().having((e) => e.message, 'message', contains('502'))),
       );
     });
   });

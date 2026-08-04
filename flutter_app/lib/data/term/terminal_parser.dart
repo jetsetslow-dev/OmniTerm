@@ -199,8 +199,7 @@ class TerminalParser {
 /// An omitted parameter is null rather than 0, because the two mean different things: `CSI ;5H`
 /// leaves the row defaulted while setting the column. Callers use [csiParam] / [csiParamOrOne] to
 /// apply the right default per sequence.
-List<int?> parseCsiParams(String body) =>
-    body.split(';').map((p) => int.tryParse(p)).toList();
+List<int?> parseCsiParams(String body) => body.split(';').map((p) => int.tryParse(p)).toList();
 
 /// Parameter [index] with a caller-supplied default for absent/unparseable values.
 int csiParam(List<int?> params, int index, {int fallback = 0}) =>

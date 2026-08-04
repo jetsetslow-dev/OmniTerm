@@ -254,10 +254,6 @@ void _assertJsonDepth(String text, {int maxDepth = BackupLimits.maxJsonDepth}) {
 }
 
 Future<SecretKey> _deriveKey(String passphrase, Uint8List salt, int iterations) async {
-  final pbkdf2 = Pbkdf2(
-    macAlgorithm: Hmac.sha256(),
-    iterations: iterations,
-    bits: 256,
-  );
+  final pbkdf2 = Pbkdf2(macAlgorithm: Hmac.sha256(), iterations: iterations, bits: 256);
   return pbkdf2.deriveKeyFromPassword(password: passphrase, nonce: salt);
 }

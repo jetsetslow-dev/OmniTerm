@@ -65,8 +65,10 @@ void main() {
       expect(HealthScoringConfig.decode(''), HealthScoringConfig.defaults);
       expect(HealthScoringConfig.decode('   '), HealthScoringConfig.defaults);
       expect(HealthScoringConfig.decode('nonsense'), HealthScoringConfig.defaults);
-      expect(HealthScoringConfig.decode('cpu:not,a,number,at,all,here'),
-          HealthScoringConfig.defaults);
+      expect(
+        HealthScoringConfig.decode('cpu:not,a,number,at,all,here'),
+        HealthScoringConfig.defaults,
+      );
     });
 
     test('a partial config keeps the defaults for the metrics it omits', () {

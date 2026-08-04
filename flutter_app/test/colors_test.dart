@@ -86,8 +86,14 @@ void main() {
     });
 
     test('exposes exactly the six user-selectable accents for the picker', () {
-      expect(OmniColors.namedColors.map((e) => e.$1).toList(),
-          ['Cyan', 'Green', 'Amber', 'Orange', 'Red', 'Purple']);
+      expect(OmniColors.namedColors.map((e) => e.$1).toList(), [
+        'Cyan',
+        'Green',
+        'Amber',
+        'Orange',
+        'Red',
+        'Purple',
+      ]);
     });
   });
 }

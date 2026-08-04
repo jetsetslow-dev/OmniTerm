@@ -16,9 +16,7 @@ void main() {
 
   setUpAll(() {
     // Located relative to the repo, not the machine — the suite must stay host-independent.
-    final file = File(
-      '../app/schemas/com.jetsetslow.omniterm.data.AppDatabase/22.json',
-    );
+    final file = File('../app/schemas/com.jetsetslow.omniterm.data.AppDatabase/22.json');
     expect(
       file.existsSync(),
       isTrue,
@@ -34,15 +32,19 @@ void main() {
     // Force creation.
     await db.customSelect('SELECT 1').get();
     final rows = await db
-        .customSelect("SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")
+        .customSelect(
+          "SELECT type, name, tbl_name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'",
+        )
         .get();
     return rows
-        .map((r) => (
-              type: r.read<String>('type'),
-              name: r.read<String>('name'),
-              tbl: r.read<String>('tbl_name'),
-              sql: r.data['sql'] as String?,
-            ))
+        .map(
+          (r) => (
+            type: r.read<String>('type'),
+            name: r.read<String>('name'),
+            tbl: r.read<String>('tbl_name'),
+            sql: r.data['sql'] as String?,
+          ),
+        )
         .toList();
   }
 
@@ -64,16 +66,15 @@ void main() {
     expect(
       kRoomSchemaVersion,
       database['version'],
-      reason: 'Drift must declare the version Room left in PRAGMA user_version, '
+      reason:
+          'Drift must declare the version Room left in PRAGMA user_version, '
           'or an existing database is either re-migrated or rejected',
     );
   });
 
   test('every Room table exists in the Drift schema with identical columns', () async {
     final live = await introspect();
-    final liveTables = {
-      for (final o in live.where((o) => o.type == 'table')) o.name: o.sql!,
-    };
+    final liveTables = {for (final o in live.where((o) => o.type == 'table')) o.name: o.sql!};
 
     final entities = (roomSchema['database'] as Map<String, dynamic>)['entities'] as List<dynamic>;
     expect(entities, hasLength(14));
@@ -89,7 +90,8 @@ void main() {
       expect(
         liveCols,
         roomCols,
-        reason: 'column set/order/type differs for `$table`\n'
+        reason:
+            'column set/order/type differs for `$table`\n'
             'Room:  $roomCols\n'
             'Drift: $liveCols',
       );
@@ -107,7 +109,8 @@ void main() {
     var checked = 0;
     for (final entity in entities.cast<Map<String, dynamic>>()) {
       final table = entity['tableName'] as String;
-      for (final index in (entity['indices'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>()) {
+      for (final index
+          in (entity['indices'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>()) {
         final name = index['name'] as String;
         expect(liveIndexes, contains(name), reason: 'missing index $name on $table');
 

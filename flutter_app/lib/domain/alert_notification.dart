@@ -67,8 +67,9 @@ AlertNotification buildAlertNotification({
 
   // A disk rule without its mount point is ambiguous on any host with more than one filesystem —
   // "Disk Usage at 95%" does not say which disk to go and clear.
-  final mountSuffix =
-      metricName == 'Disk Usage' && mountPoint.trim().isNotEmpty ? ' on ${mountPoint.trim()}' : '';
+  final mountSuffix = metricName == 'Disk Usage' && mountPoint.trim().isNotEmpty
+      ? ' on ${mountPoint.trim()}'
+      : '';
 
   return AlertNotification(
     id: alertNotificationId(ruleId, serverId),
@@ -77,7 +78,8 @@ AlertNotification buildAlertNotification({
     title: '$severity: $serverName',
     // The threshold is included, not just the value: "94%" means nothing without knowing whether
     // the line was 90 or 50.
-    body: '$metricName$mountSuffix at ${_round(shownValue)}$unit '
+    body:
+        '$metricName$mountSuffix at ${_round(shownValue)}$unit '
         '(threshold ${_round(shownThreshold)}$unit)',
   );
 }

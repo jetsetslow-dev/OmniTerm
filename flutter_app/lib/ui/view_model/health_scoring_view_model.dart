@@ -79,13 +79,7 @@ class HealthScoringViewModel extends ChangeNotifier {
   }) {
     final candidate = configFrom(_draft);
     if (candidate == null) return null;
-    return candidate.breakdown(
-      cpuPercent,
-      memoryPercent,
-      diskPercent,
-      latencyMs,
-      online: true,
-    );
+    return candidate.breakdown(cpuPercent, memoryPercent, diskPercent, latencyMs, online: true);
   }
 
   /// Persists the draft. Returns null on success, otherwise the reason.

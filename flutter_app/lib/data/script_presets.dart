@@ -67,7 +67,8 @@ const kFleetPresets = <ScriptPreset>[
     presetKey: 'fleet.disk',
     emoji: 'DSK',
     name: 'Disk',
-    command: 'df -h 2>/dev/null | head -6 || powershell -NoProfile -Command '
+    command:
+        'df -h 2>/dev/null | head -6 || powershell -NoProfile -Command '
         '"Get-CimInstance Win32_LogicalDisk -Filter \'DriveType=3\' | Select-Object DeviceID,Size,FreeSpace"',
     color: 'cyan',
     category: 'Fleet',
@@ -79,7 +80,8 @@ const kFleetPresets = <ScriptPreset>[
     presetKey: 'fleet.processes',
     emoji: 'PRC',
     name: 'Processes',
-    command: 'ps aux 2>/dev/null | sort -k3 -nr | head -8 || '
+    command:
+        'ps aux 2>/dev/null | sort -k3 -nr | head -8 || '
         'ps -axo pid,user,pcpu,pmem,comm 2>/dev/null | sort -k3 -nr | head -8 || '
         'powershell -NoProfile -Command "Get-Process | Sort-Object CPU -Descending | Select-Object -First 8 Id,ProcessName,CPU,WorkingSet"',
     color: 'cyan',
@@ -92,7 +94,8 @@ const kFleetPresets = <ScriptPreset>[
     presetKey: 'fleet.services',
     emoji: 'SVC',
     name: 'Failed services',
-    command: 'systemctl --failed 2>/dev/null || rc-status -c 2>/dev/null || '
+    command:
+        'systemctl --failed 2>/dev/null || rc-status -c 2>/dev/null || '
         'powershell -NoProfile -Command "Get-Service | Where-Object Status -eq Stopped | Select-Object -First 12 Name,Status"',
     color: 'cyan',
     category: 'Fleet',
@@ -104,7 +107,8 @@ const kFleetPresets = <ScriptPreset>[
     presetKey: 'fleet.syslog',
     emoji: 'LOG',
     name: 'Syslog errors',
-    command: 'journalctl -p err -n 8 2>/dev/null || '
+    command:
+        'journalctl -p err -n 8 2>/dev/null || '
         "logread 2>/dev/null | grep -iE 'error|fail|critical' | tail -8 || "
         "grep -iE 'error|fail|critical' /var/log/syslog /var/log/messages 2>/dev/null | tail -8 || "
         'powershell -NoProfile -Command "Get-WinEvent -FilterHashtable @{LogName=\'System\'; Level=2} -MaxEvents 8 | Select-Object TimeCreated,ProviderName,Message"',
@@ -118,7 +122,8 @@ const kFleetPresets = <ScriptPreset>[
     presetKey: 'fleet.containers',
     emoji: 'CTR',
     name: 'Containers',
-    command: r'docker ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null || '
+    command:
+        r'docker ps --format "table {{.Names}}\t{{.Status}}" 2>/dev/null || '
         r'podman ps --format "table {{.Names}}\t{{.Status}}"',
     color: 'cyan',
     category: 'Fleet',
@@ -130,7 +135,8 @@ const kFleetPresets = <ScriptPreset>[
     presetKey: 'fleet.ports',
     emoji: 'NET',
     name: 'Listening ports',
-    command: 'ss -tlnp 2>/dev/null | grep LISTEN || netstat -tlnp 2>/dev/null | grep LISTEN || '
+    command:
+        'ss -tlnp 2>/dev/null | grep LISTEN || netstat -tlnp 2>/dev/null | grep LISTEN || '
         'netstat -an 2>/dev/null | grep LISTEN || '
         'powershell -NoProfile -Command "Get-NetTCPConnection -State Listen | Select-Object -First 25 LocalAddress,LocalPort,OwningProcess"',
     color: 'cyan',
@@ -143,7 +149,8 @@ const kFleetPresets = <ScriptPreset>[
     presetKey: 'fleet.kernel',
     emoji: 'KRN',
     name: 'Kernel',
-    command: 'uname -sr 2>/dev/null || '
+    command:
+        'uname -sr 2>/dev/null || '
         'powershell -NoProfile -Command "[Environment]::OSVersion.VersionString"',
     color: 'cyan',
     category: 'Fleet',
@@ -272,7 +279,8 @@ const kHomelabPresets = <ScriptPreset>[
     // Reads every thermal zone and reports the hottest, falling back to the Raspberry Pi's own
     // `vcgencmd`. A host with no sensor says so rather than printing nothing, which would be
     // indistinguishable from a failed command.
-    command: r'''if [ "$(uname -s 2>/dev/null)" = Linux ]; then max=""; for f in /sys/class/thermal/thermal_zone*/temp; do [ -r "$f" ] || continue; v=$(cat "$f" 2>/dev/null); case "$v" in ''|*[!0-9]*) continue;; esac; [ -z "$max" ] || [ "$v" -gt "$max" ] && max="$v"; done; if [ -n "$max" ]; then awk -v t="$max" 'BEGIN { printf "CPU %.1f°C\n", t / 1000 }'; elif command -v vcgencmd >/dev/null 2>&1; then vcgencmd measure_temp; else echo "No thermal sensor exposed"; fi; else echo "Temperature preset supports Linux hosts"; fi''',
+    command:
+        r'''if [ "$(uname -s 2>/dev/null)" = Linux ]; then max=""; for f in /sys/class/thermal/thermal_zone*/temp; do [ -r "$f" ] || continue; v=$(cat "$f" 2>/dev/null); case "$v" in ''|*[!0-9]*) continue;; esac; [ -z "$max" ] || [ "$v" -gt "$max" ] && max="$v"; done; if [ -n "$max" ]; then awk -v t="$max" 'BEGIN { printf "CPU %.1f°C\n", t / 1000 }'; elif command -v vcgencmd >/dev/null 2>&1; then vcgencmd measure_temp; else echo "No thermal sensor exposed"; fi; else echo "Temperature preset supports Linux hosts"; fi''',
     color: 'red',
     category: 'Linux',
   ),
@@ -280,7 +288,8 @@ const kHomelabPresets = <ScriptPreset>[
     presetKey: 'homelab.updates',
     emoji: 'UPD',
     name: 'Updates available',
-    command: 'apt list --upgradable 2>/dev/null | tail -n +2 || '
+    command:
+        'apt list --upgradable 2>/dev/null | tail -n +2 || '
         '(command -v dnf >/dev/null && dnf check-update)',
     color: 'amber',
     category: 'Homelab',
@@ -289,7 +298,8 @@ const kHomelabPresets = <ScriptPreset>[
     presetKey: 'homelab.reboot_required',
     emoji: 'RBT',
     name: 'Reboot required?',
-    command: "test -f /var/run/reboot-required && echo 'reboot required' || echo 'no reboot needed'",
+    command:
+        "test -f /var/run/reboot-required && echo 'reboot required' || echo 'no reboot needed'",
     color: 'amber',
     category: 'Homelab',
   ),

@@ -29,30 +29,30 @@ void main() {
   });
 
   Server server({required String name}) => Server(
-        id: 0,
-        name: name,
-        host: '10.0.0.1',
-        port: 22,
-        username: 'root',
-        serverColor: 'Default',
-        authType: 'password',
-        sudoPassword: '',
-        notes: '',
-        keepAlive: 30,
-        sshCompression: false,
-        persistentSession: false,
-        proxyCommand: '',
-        proxyType: 'none',
-        proxyHost: '',
-        proxyPort: 0,
-        proxyUser: '',
-        proxyPassword: '',
-        agentForwarding: false,
-        healthScore: 100,
-        lastLatency: 0,
-        status: 'online',
-        authStatus: 'ok',
-      );
+    id: 0,
+    name: name,
+    host: '10.0.0.1',
+    port: 22,
+    username: 'root',
+    serverColor: 'Default',
+    authType: 'password',
+    sudoPassword: '',
+    notes: '',
+    keepAlive: 30,
+    sshCompression: false,
+    persistentSession: false,
+    proxyCommand: '',
+    proxyType: 'none',
+    proxyHost: '',
+    proxyPort: 0,
+    proxyUser: '',
+    proxyPassword: '',
+    agentForwarding: false,
+    healthScore: 100,
+    lastLatency: 0,
+    status: 'online',
+    authStatus: 'ok',
+  );
 
   late FakeAlertNotifier notifier;
 
@@ -77,8 +77,7 @@ void main() {
     Server host,
     AlertSample sample, {
     int? nowMs,
-  }) =>
-      vm.evaluate(host, sample, nowMs: nowMs);
+  }) => vm.evaluate(host, sample, nowMs: nowMs);
 
   /// Feeds samples at a realistic poll cadence from [from] to [to].
   ///
@@ -256,8 +255,11 @@ void main() {
       await settle();
 
       expect(vm.history.single.status, 'resolved');
-      expect(vm.history.single.serverName, 'nas',
-          reason: 'the archive must stay readable after the host is deleted');
+      expect(
+        vm.history.single.serverName,
+        'nas',
+        reason: 'the archive must stay readable after the host is deleted',
+      );
       vm.dispose();
     });
 
@@ -277,8 +279,11 @@ void main() {
       // The app was asleep for an hour. Wall-clock time passed, but nothing was measured.
       await fire(vm, host, const AlertSample(cpuPercent: 95), nowMs: 3600000);
       await settle();
-      expect(vm.activeAlerts, isEmpty,
-          reason: 'an alert about a period nobody measured is not evidence of anything');
+      expect(
+        vm.activeAlerts,
+        isEmpty,
+        reason: 'an alert about a period nobody measured is not evidence of anything',
+      );
       vm.dispose();
     });
 
@@ -462,12 +467,7 @@ void main() {
       await settle();
 
       final host = (await repo.getServerById(id))!;
-      await sustain(
-        vm,
-        host,
-        const AlertSample(cpuPercent: 95, memoryPercent: 95),
-        to: 130000,
-      );
+      await sustain(vm, host, const AlertSample(cpuPercent: 95, memoryPercent: 95), to: 130000);
       await settle();
 
       expect(vm.activeAlerts.first.severity, 'CRITICAL');
@@ -556,8 +556,11 @@ void main() {
       await settle();
 
       expect(vm.rules, hasLength(kAlertPresets.length));
-      expect(vm.rules.every((r) => r.serverId == 0), isTrue,
-          reason: 'a per-host copy would silently miss any host added later');
+      expect(
+        vm.rules.every((r) => r.serverId == 0),
+        isTrue,
+        reason: 'a per-host copy would silently miss any host added later',
+      );
       expect(await repo.getSetting(alertPresetsSetting), 'true');
       vm.dispose();
     });
@@ -599,8 +602,10 @@ void main() {
         severity: cpu.severity,
       );
       await settle();
-      expect(vm.isPristinePresetRule(vm.rules.firstWhere((r) => r.presetKey == 'alert.cpu')),
-          isFalse);
+      expect(
+        vm.isPristinePresetRule(vm.rules.firstWhere((r) => r.presetKey == 'alert.cpu')),
+        isFalse,
+      );
 
       await vm.setPresetsEnabled(false);
       await settle();
@@ -703,12 +708,7 @@ void main() {
         mountPoint: '/var',
         sample: const AlertSample(
           mounts: [
-            DiskUsage(
-              mount: '/var',
-              filesystem: '/dev/sda2',
-              totalBytes: 100,
-              usedBytes: 95,
-            ),
+            DiskUsage(mount: '/var', filesystem: '/dev/sda2', totalBytes: 100, usedBytes: 95),
           ],
         ),
       );

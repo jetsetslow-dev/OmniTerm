@@ -11,17 +11,19 @@ part 'app_data_dao.g.dart';
 /// `WolTargetDao`, `NetworkShareDao`, `StackRegistryDao`, `AppSettingDao` and
 /// `PersistentSessionDao` in `data/Daos.kt`. Grouped rather than split into nine files: each is a
 /// handful of plain CRUD methods, and nine one-screen files would obscure rather than clarify.
-@DriftAccessor(tables: [
-  SshKeys,
-  CredentialProfiles,
-  QuickScripts,
-  PortForwards,
-  WolTargets,
-  NetworkShares,
-  StackRegistry,
-  AppSettings,
-  PersistentSessions,
-])
+@DriftAccessor(
+  tables: [
+    SshKeys,
+    CredentialProfiles,
+    QuickScripts,
+    PortForwards,
+    WolTargets,
+    NetworkShares,
+    StackRegistry,
+    AppSettings,
+    PersistentSessions,
+  ],
+)
 class AppDataDao extends DatabaseAccessor<AppDatabase> with _$AppDataDaoMixin {
   AppDataDao(super.db);
 
@@ -47,7 +49,10 @@ class AppDataDao extends DatabaseAccessor<AppDatabase> with _$AppDataDaoMixin {
       (select(credentialProfiles)..orderBy([(p) => OrderingTerm.asc(p.profileName)])).get();
 
   Future<CredentialProfile?> getProfileById(int id) =>
-      (select(credentialProfiles)..where((p) => p.id.equals(id))..limit(1)).getSingleOrNull();
+      (select(credentialProfiles)
+            ..where((p) => p.id.equals(id))
+            ..limit(1))
+          .getSingleOrNull();
 
   Future<int> insertProfile(CredentialProfilesCompanion profile) =>
       into(credentialProfiles).insert(profile, mode: InsertMode.replace);
@@ -58,21 +63,21 @@ class AppDataDao extends DatabaseAccessor<AppDatabase> with _$AppDataDaoMixin {
   // ── quick scripts ──────────────────────────────────────────────────────────
 
   /// Ordered category → sortOrder → name, which is the order the picker renders.
-  Stream<List<QuickScript>> watchAllScripts() => (select(quickScripts)
-        ..orderBy([
-          (s) => OrderingTerm.asc(s.category),
-          (s) => OrderingTerm.asc(s.sortOrder),
-          (s) => OrderingTerm.asc(s.name),
-        ]))
-      .watch();
+  Stream<List<QuickScript>> watchAllScripts() =>
+      (select(quickScripts)..orderBy([
+            (s) => OrderingTerm.asc(s.category),
+            (s) => OrderingTerm.asc(s.sortOrder),
+            (s) => OrderingTerm.asc(s.name),
+          ]))
+          .watch();
 
-  Future<List<QuickScript>> getAllScripts() => (select(quickScripts)
-        ..orderBy([
-          (s) => OrderingTerm.asc(s.category),
-          (s) => OrderingTerm.asc(s.sortOrder),
-          (s) => OrderingTerm.asc(s.name),
-        ]))
-      .get();
+  Future<List<QuickScript>> getAllScripts() =>
+      (select(quickScripts)..orderBy([
+            (s) => OrderingTerm.asc(s.category),
+            (s) => OrderingTerm.asc(s.sortOrder),
+            (s) => OrderingTerm.asc(s.name),
+          ]))
+          .get();
 
   Future<int> insertScript(QuickScriptsCompanion script) =>
       into(quickScripts).insert(script, mode: InsertMode.replace);
@@ -125,7 +130,10 @@ class AppDataDao extends DatabaseAccessor<AppDatabase> with _$AppDataDaoMixin {
       (select(networkShares)..orderBy([(s) => OrderingTerm.asc(s.name)])).get();
 
   Future<NetworkShare?> getShareById(int id) =>
-      (select(networkShares)..where((s) => s.id.equals(id))..limit(1)).getSingleOrNull();
+      (select(networkShares)
+            ..where((s) => s.id.equals(id))
+            ..limit(1))
+          .getSingleOrNull();
 
   Future<int> insertShare(NetworkSharesCompanion share) =>
       into(networkShares).insert(share, mode: InsertMode.replace);
@@ -135,25 +143,25 @@ class AppDataDao extends DatabaseAccessor<AppDatabase> with _$AppDataDaoMixin {
 
   // ── compose stack registry ─────────────────────────────────────────────────
 
-  Future<List<StackRegistryRow>> getStacksForServer(int serverId) => (select(stackRegistry)
-        ..where((s) => s.serverId.equals(serverId))
-        ..orderBy([(s) => OrderingTerm.asc(s.project)]))
-      .get();
+  Future<List<StackRegistryRow>> getStacksForServer(int serverId) =>
+      (select(stackRegistry)
+            ..where((s) => s.serverId.equals(serverId))
+            ..orderBy([(s) => OrderingTerm.asc(s.project)]))
+          .get();
 
   /// Upsert on the (serverId, runtime, project) unique index, so re-seeing a stack refreshes its
   /// recorded working dir rather than duplicating it.
   Future<void> upsertStacks(List<StackRegistryCompanion> stacks) => batch((b) {
-        for (final stack in stacks) {
-          b.insert(stackRegistry, stack, mode: InsertMode.replace);
-        }
-      });
+    for (final stack in stacks) {
+      b.insert(stackRegistry, stack, mode: InsertMode.replace);
+    }
+  });
 
   Future<void> deleteStack(int serverId, String runtime, String project) =>
-      (delete(stackRegistry)
-            ..where((s) =>
-                s.serverId.equals(serverId) &
-                s.runtime.equals(runtime) &
-                s.project.equals(project)))
+      (delete(stackRegistry)..where(
+            (s) =>
+                s.serverId.equals(serverId) & s.runtime.equals(runtime) & s.project.equals(project),
+          ))
           .go();
 
   Future<void> deleteStacksForServer(int serverId) =>
@@ -162,7 +170,10 @@ class AppDataDao extends DatabaseAccessor<AppDatabase> with _$AppDataDaoMixin {
   // ── settings ───────────────────────────────────────────────────────────────
 
   Future<AppSetting?> getSetting(String key) =>
-      (select(appSettings)..where((s) => s.key.equals(key))..limit(1)).getSingleOrNull();
+      (select(appSettings)
+            ..where((s) => s.key.equals(key))
+            ..limit(1))
+          .getSingleOrNull();
 
   Stream<List<AppSetting>> watchAllSettings() => select(appSettings).watch();
 
@@ -176,9 +187,9 @@ class AppDataDao extends DatabaseAccessor<AppDatabase> with _$AppDataDaoMixin {
 
   /// SFTP bookmarks are stored as one settings row per endpoint; a restore that keeps a subset of
   /// hosts must drop the orphans without touching any other setting.
-  Future<void> deleteSftpBookmarksExcept(List<String> keepKeys) => (delete(appSettings)
-        ..where((s) => s.key.like('sftp_bookmarks_%') & s.key.isNotIn(keepKeys)))
-      .go();
+  Future<void> deleteSftpBookmarksExcept(List<String> keepKeys) => (delete(
+    appSettings,
+  )..where((s) => s.key.like('sftp_bookmarks_%') & s.key.isNotIn(keepKeys))).go();
 
   // ── persistent (tmux) sessions ─────────────────────────────────────────────
 

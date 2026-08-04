@@ -25,9 +25,12 @@ void main() {
       required String fingerprint,
     }) {
       HostKeyVerdict? result;
-      unawaited(trust
-          .check(host: host, port: 22, keyType: keyType, fingerprint: fingerprint)
-          .then((v) { debugPrint('DBG verdict=\$v'); result = v; }));
+      unawaited(
+        trust.check(host: host, port: 22, keyType: keyType, fingerprint: fingerprint).then((v) {
+          debugPrint('DBG verdict=\$v');
+          result = v;
+        }),
+      );
       return (verdict: () => result);
     }
 
@@ -66,7 +69,12 @@ void main() {
     testWidgets('an unknown host raises a prompt showing the fingerprint', (tester) async {
       await pump(tester);
 
-      final verdict = check(trust, host: 'nas.local', keyType: 'ssh-ed25519', fingerprint: 'SHA256:abcdef');
+      final verdict = check(
+        trust,
+        host: 'nas.local',
+        keyType: 'ssh-ed25519',
+        fingerprint: 'SHA256:abcdef',
+      );
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('hostKey.dialog')), findsOneWidget);
@@ -83,14 +91,22 @@ void main() {
     testWidgets('rejecting refuses the connection and pins nothing', (tester) async {
       await pump(tester);
 
-      final verdict = check(trust, host: 'nas.local', keyType: 'ssh-ed25519', fingerprint: 'SHA256:abcdef');
+      final verdict = check(
+        trust,
+        host: 'nas.local',
+        keyType: 'ssh-ed25519',
+        fingerprint: 'SHA256:abcdef',
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('hostKey.reject')));
       await tester.pumpAndSettle();
 
       expect(await settled(tester, verdict), HostKeyVerdict.notIncluded);
-      expect(await trust.hasPinnedKey('nas.local', 22), isFalse,
-          reason: 'a refused key must not be remembered as trusted');
+      expect(
+        await trust.hasPinnedKey('nas.local', 22),
+        isFalse,
+        reason: 'a refused key must not be remembered as trusted',
+      );
     });
 
     testWidgets('dismissing by tapping outside counts as a refusal', (tester) async {
@@ -98,7 +114,12 @@ void main() {
       // understand it toward the accept button.
       await pump(tester);
 
-      final verdict = check(trust, host: 'nas.local', keyType: 'ssh-ed25519', fingerprint: 'SHA256:abcdef');
+      final verdict = check(
+        trust,
+        host: 'nas.local',
+        keyType: 'ssh-ed25519',
+        fingerprint: 'SHA256:abcdef',
+      );
       await tester.pumpAndSettle();
       await tester.tapAt(const Offset(10, 10));
       await tester.pumpAndSettle();
@@ -110,8 +131,18 @@ void main() {
       // Stacked dialogs would let a user approve one host's fingerprint while reading another's.
       await pump(tester);
 
-      final first = check(trust, host: 'a.local', keyType: 'ssh-ed25519', fingerprint: 'SHA256:aaa');
-      final second = check(trust, host: 'b.local', keyType: 'ssh-ed25519', fingerprint: 'SHA256:bbb');
+      final first = check(
+        trust,
+        host: 'a.local',
+        keyType: 'ssh-ed25519',
+        fingerprint: 'SHA256:aaa',
+      );
+      final second = check(
+        trust,
+        host: 'b.local',
+        keyType: 'ssh-ed25519',
+        fingerprint: 'SHA256:bbb',
+      );
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('hostKey.dialog')), findsOneWidget);
@@ -132,13 +163,23 @@ void main() {
     testWidgets('an already-trusted host is never asked about again', (tester) async {
       await pump(tester);
 
-      final first = check(trust, host: 'nas.local', keyType: 'ssh-ed25519', fingerprint: 'SHA256:abcdef');
+      final first = check(
+        trust,
+        host: 'nas.local',
+        keyType: 'ssh-ed25519',
+        fingerprint: 'SHA256:abcdef',
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('hostKey.trust')));
       await tester.pumpAndSettle();
       expect(await settled(tester, first), HostKeyVerdict.ok);
 
-      final second = check(trust, host: 'nas.local', keyType: 'ssh-ed25519', fingerprint: 'SHA256:abcdef');
+      final second = check(
+        trust,
+        host: 'nas.local',
+        keyType: 'ssh-ed25519',
+        fingerprint: 'SHA256:abcdef',
+      );
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('hostKey.dialog')), findsNothing);
@@ -150,13 +191,23 @@ void main() {
       // through the one warning that matters.
       await pump(tester);
 
-      final first = check(trust, host: 'nas.local', keyType: 'ssh-ed25519', fingerprint: 'SHA256:original');
+      final first = check(
+        trust,
+        host: 'nas.local',
+        keyType: 'ssh-ed25519',
+        fingerprint: 'SHA256:original',
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('hostKey.trust')));
       await tester.pumpAndSettle();
       expect(await settled(tester, first), HostKeyVerdict.ok);
 
-      final changed = check(trust, host: 'nas.local', keyType: 'ssh-ed25519', fingerprint: 'SHA256:different');
+      final changed = check(
+        trust,
+        host: 'nas.local',
+        keyType: 'ssh-ed25519',
+        fingerprint: 'SHA256:different',
+      );
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('hostKey.dialog')), findsNothing);
@@ -167,7 +218,12 @@ void main() {
       // A completer left hanging would hold the connection attempt open until its timeout.
       await pump(tester);
 
-      final verdict = check(trust, host: 'nas.local', keyType: 'ssh-ed25519', fingerprint: 'SHA256:abcdef');
+      final verdict = check(
+        trust,
+        host: 'nas.local',
+        keyType: 'ssh-ed25519',
+        fingerprint: 'SHA256:abcdef',
+      );
       await tester.pumpAndSettle();
 
       await tester.pumpWidget(const MaterialApp(home: Scaffold(body: SizedBox.shrink())));
@@ -184,11 +240,13 @@ void main() {
       check(trust, host: 'nas.local', fingerprint: 'SHA256:abcdef');
       await tester.pumpAndSettle();
 
-      final howTo =
-          tester.widget<Text>(find.byKey(const ValueKey('hostKey.howTo'))).data!;
+      final howTo = tester.widget<Text>(find.byKey(const ValueKey('hostKey.howTo'))).data!;
       expect(howTo, contains('ssh_host_ed25519_key.pub'));
-      expect(howTo, contains('not over SSH'),
-          reason: 'checking over the connection being attacked proves nothing');
+      expect(
+        howTo,
+        contains('not over SSH'),
+        reason: 'checking over the connection being attacked proves nothing',
+      );
 
       await tester.tap(find.byKey(const ValueKey('hostKey.reject')));
       await tester.pumpAndSettle();

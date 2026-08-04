@@ -38,8 +38,7 @@ class ServersScreen extends StatelessWidget {
                       key: const ValueKey('servers.list'),
                       padding: const EdgeInsets.fromLTRB(10, 0, 10, 88),
                       itemCount: filtered.length,
-                      itemBuilder: (context, index) =>
-                          _ServerCard(server: filtered[index], vm: vm),
+                      itemBuilder: (context, index) => _ServerCard(server: filtered[index], vm: vm),
                     ),
             ),
           ],
@@ -107,7 +106,9 @@ class _SummaryBanner extends StatelessWidget {
       margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       child: Row(
         children: [
-          Expanded(child: OmniStatBox(value: '${servers.length}', label: 'Total')),
+          Expanded(
+            child: OmniStatBox(value: '${servers.length}', label: 'Total'),
+          ),
           Expanded(
             child: OmniStatBox(value: '$online', label: 'Online', color: OmniColors.green),
           ),
@@ -139,8 +140,9 @@ class _SearchRow extends StatefulWidget {
 }
 
 class _SearchRowState extends State<_SearchRow> {
-  late final TextEditingController _controller =
-      TextEditingController(text: widget.vm.serverSearchText);
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.vm.serverSearchText,
+  );
 
   @override
   void dispose() {
@@ -262,8 +264,7 @@ class _ServerCard extends StatelessWidget {
             : vm.selectedServerId = server.id,
         onLongPress: vm.isMultiSelectMode
             ? null
-            : () => openServerForm(context, vm,
-                mode: ServerFormMode.edit, source: server),
+            : () => openServerForm(context, vm, mode: ServerFormMode.edit, source: server),
         child: Row(
           children: [
             if (vm.isMultiSelectMode)

@@ -61,22 +61,21 @@ class TerminalCell {
   }
 
   /// Reset to a blank cell, optionally keeping a background so an erase paints the current pen.
-  void blank({int fg = kDefaultFg, int bg = kDefaultBg}) =>
-      set(' ', fg, bg);
+  void blank({int fg = kDefaultFg, int bg = kDefaultBg}) => set(' ', fg, bg);
 
   /// A copy, optionally overriding the text/width — used when a glyph has to be moved between
   /// columns (a widening cluster pushed to the next row, for instance).
   TerminalCell copy({String? text, int? width}) => TerminalCell(
-        text: text ?? this.text,
-        width: width ?? this.width,
-        fg: fg,
-        bg: bg,
-        bold: bold,
-        inverse: inverse,
-        italic: italic,
-        underline: underline,
-        dim: dim,
-      );
+    text: text ?? this.text,
+    width: width ?? this.width,
+    fg: fg,
+    bg: bg,
+    bold: bold,
+    inverse: inverse,
+    italic: italic,
+    underline: underline,
+    dim: dim,
+  );
 
   /// True when this cell carries no visible content and default styling, so trailing runs of them
   /// can be trimmed from a row without changing what the user sees.

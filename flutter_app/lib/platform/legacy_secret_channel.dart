@@ -16,7 +16,7 @@ import 'package:flutter/services.dart';
 /// `MissingPluginException` per secret.
 class LegacySecretChannel {
   LegacySecretChannel({MethodChannel? channel})
-      : _channel = channel ?? const MethodChannel(channelName);
+    : _channel = channel ?? const MethodChannel(channelName);
 
   static const channelName = 'com.jetsetslow.omniterm/legacy_secrets';
 

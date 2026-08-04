@@ -152,11 +152,7 @@ class _ToolFieldState extends State<_ToolField> {
       controller: _controller,
       onChanged: widget.onChanged,
       style: widget.mono ? const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13) : null,
-      decoration: omniInputDecoration(
-        context,
-        labelText: widget.label,
-        hintText: widget.hint,
-      ),
+      decoration: omniInputDecoration(context, labelText: widget.label, hintText: widget.hint),
     );
   }
 }
@@ -239,14 +235,9 @@ class _HostScanTab extends StatelessWidget {
                                 Text(
                                   [
                                     if (host.hostname != null) host.address,
-                                    host.openPorts
-                                        .map((p) => portLabel(p) ?? '$p')
-                                        .join(', '),
+                                    host.openPorts.map((p) => portLabel(p) ?? '$p').join(', '),
                                   ].join(' · '),
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: scheme.onSurfaceVariant,
-                                  ),
+                                  style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
                                 ),
                               ],
                             ),
@@ -271,11 +262,7 @@ class _HostScanTab extends StatelessWidget {
   }
 }
 
-Future<void> _openHostActions(
-  BuildContext context,
-  NetworkViewModel vm,
-  String address,
-) async {
+Future<void> _openHostActions(BuildContext context, NetworkViewModel vm, String address) async {
   // A scan result is not yet bound to any tool — the user has just found a device. So the sheet
   // offers the tools that take an address rather than guessing which one was meant.
   final tool = await showModalBottomSheet<NetworkTab>(
@@ -357,10 +344,7 @@ class _WolTab extends StatelessWidget {
                                 Text(
                                   target.name,
                                   overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 13,
-                                  ),
+                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                                 ),
                                 Text(
                                   '${target.macAddress} → ${target.broadcastIp}:${target.port}',
@@ -378,8 +362,9 @@ class _WolTab extends StatelessWidget {
                             onPressed: () async {
                               final message = await vm.wake(target);
                               if (context.mounted) {
-                                ScaffoldMessenger.of(context)
-                                    .showSnackBar(SnackBar(content: Text(message)));
+                                ScaffoldMessenger.of(
+                                  context,
+                                ).showSnackBar(SnackBar(content: Text(message)));
                               }
                             },
                             child: const Text('Wake', style: TextStyle(fontSize: 12)),
@@ -387,11 +372,7 @@ class _WolTab extends StatelessWidget {
                           IconButton(
                             key: ValueKey('network.wol.${target.id}.delete'),
                             tooltip: 'Delete target',
-                            icon: const Icon(
-                              Icons.delete_outline,
-                              size: 18,
-                              color: OmniColors.red,
-                            ),
+                            icon: const Icon(Icons.delete_outline, size: 18, color: OmniColors.red),
                             onPressed: () => vm.deleteWolTarget(target),
                           ),
                         ],
@@ -462,8 +443,7 @@ class _WolSheetState extends State<_WolSheet> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('New Wake-on-LAN target',
-                  style: Theme.of(context).textTheme.titleLarge),
+              Text('New Wake-on-LAN target', style: Theme.of(context).textTheme.titleLarge),
               const SizedBox(height: 12),
               TextField(
                 key: const ValueKey('network.wol.name'),
@@ -665,10 +645,7 @@ class _PortScanTab extends StatelessWidget {
                               result.label == null
                                   ? '${result.port}'
                                   : '${result.port} · ${result.label}',
-                              style: const TextStyle(
-                                fontFamily: OmniFonts.mono,
-                                fontSize: 13,
-                              ),
+                              style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13),
                             ),
                           ),
                           const OmniTag(label: 'OPEN', color: OmniColors.green),
@@ -750,19 +727,13 @@ class _DnsTab extends StatelessWidget {
                             child: SelectionArea(
                               child: Text(
                                 record.value,
-                                style: const TextStyle(
-                                  fontFamily: OmniFonts.mono,
-                                  fontSize: 13,
-                                ),
+                                style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13),
                               ),
                             ),
                           ),
                           Text(
                             'TTL ${record.ttl}',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: scheme.onSurfaceVariant,
-                            ),
+                            style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
                           ),
                           const SizedBox(width: 8),
                           OmniTag(label: record.type, color: OmniColors.cyan),

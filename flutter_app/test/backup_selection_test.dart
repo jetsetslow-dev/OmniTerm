@@ -7,15 +7,19 @@ import 'package:omniterm/domain/backup_selection.dart';
 void main() {
   group('referential closure', () {
     test('alert rules pull in hosts', () {
-      final selection = const BackupSelection.none()
-          .toggled(BackupSection.alertRules, enabled: true);
+      final selection = const BackupSelection.none().toggled(
+        BackupSection.alertRules,
+        enabled: true,
+      );
       expect(selection.contains(BackupSection.servers), isTrue);
     });
 
     test('firing alerts pull in both their rule and its host', () {
       // Two levels: the incident needs the rule, and the rule needs the host.
-      final selection = const BackupSelection.none()
-          .toggled(BackupSection.activeAlerts, enabled: true);
+      final selection = const BackupSelection.none().toggled(
+        BackupSection.activeAlerts,
+        enabled: true,
+      );
       expect(selection.contains(BackupSection.alertRules), isTrue);
       expect(selection.contains(BackupSection.servers), isTrue);
     });
@@ -70,8 +74,7 @@ void main() {
     test('dropping alert rules drops incidents but keeps hosts', () {
       final selection = BackupSelection.all().toggled(BackupSection.alertRules, enabled: false);
       expect(selection.contains(BackupSection.activeAlerts), isFalse);
-      expect(selection.contains(BackupSection.servers), isTrue,
-          reason: 'hosts stand on their own');
+      expect(selection.contains(BackupSection.servers), isTrue, reason: 'hosts stand on their own');
     });
 
     test('dropping a leaf affects nothing else', () {

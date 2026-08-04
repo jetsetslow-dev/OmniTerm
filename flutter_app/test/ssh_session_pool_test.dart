@@ -25,16 +25,16 @@ void main() {
   late Completer<void>? gate;
 
   SshSessionPool<FakeClient> makePool() => SshSessionPool<FakeClient>(
-        connect: (_) async {
-          connectCalls++;
-          if (gate != null) await gate!.future;
-          final client = FakeClient(nextId++);
-          created.add(client);
-          return client;
-        },
-        isAlive: (c) => c.alive && !c.closed,
-        disconnect: (c) => c.closed = true,
-      );
+    connect: (_) async {
+      connectCalls++;
+      if (gate != null) await gate!.future;
+      final client = FakeClient(nextId++);
+      created.add(client);
+      return client;
+    },
+    isAlive: (c) => c.alive && !c.closed,
+    disconnect: (c) => c.closed = true,
+  );
 
   setUp(() {
     nextId = 1;
@@ -90,9 +90,17 @@ void main() {
       // reusing the session authenticated with the OLD password.
       final pool = makePool();
       const withOldPassword = SshCredentials(
-          host: 'nas', port: 22, username: 'root', password: 'old');
+        host: 'nas',
+        port: 22,
+        username: 'root',
+        password: 'old',
+      );
       const withNewPassword = SshCredentials(
-          host: 'nas', port: 22, username: 'root', password: 'new');
+        host: 'nas',
+        port: 22,
+        username: 'root',
+        password: 'new',
+      );
 
       (await pool.acquire(withOldPassword)).close();
       (await pool.acquire(withNewPassword)).close();
@@ -102,10 +110,8 @@ void main() {
 
     test('switching from password to key auth does not reuse the connection', () async {
       final pool = makePool();
-      const byPassword =
-          SshCredentials(host: 'nas', port: 22, username: 'root', password: 'pw');
-      const byKey =
-          SshCredentials(host: 'nas', port: 22, username: 'root', privateKeyPem: 'KEY');
+      const byPassword = SshCredentials(host: 'nas', port: 22, username: 'root', password: 'pw');
+      const byKey = SshCredentials(host: 'nas', port: 22, username: 'root', privateKeyPem: 'KEY');
 
       (await pool.acquire(byPassword)).close();
       (await pool.acquire(byKey)).close();
@@ -134,12 +140,30 @@ void main() {
     test('proxy, keepalive and compression all participate in the key', () {
       const base = SshCredentials(host: 'nas', port: 22, username: 'root');
       String k(SshCredentials c) => SshSessionPool.poolKey(c);
-      expect(k(base), isNot(k(const SshCredentials(
-          host: 'nas', port: 22, username: 'root', keepAliveSeconds: 60))));
-      expect(k(base), isNot(k(const SshCredentials(
-          host: 'nas', port: 22, username: 'root', compression: true))));
-      expect(k(base), isNot(k(const SshCredentials(
-          host: 'nas', port: 22, username: 'root', proxyType: 'socks5', proxyHost: 'p'))));
+      expect(
+        k(base),
+        isNot(
+          k(const SshCredentials(host: 'nas', port: 22, username: 'root', keepAliveSeconds: 60)),
+        ),
+      );
+      expect(
+        k(base),
+        isNot(k(const SshCredentials(host: 'nas', port: 22, username: 'root', compression: true))),
+      );
+      expect(
+        k(base),
+        isNot(
+          k(
+            const SshCredentials(
+              host: 'nas',
+              port: 22,
+              username: 'root',
+              proxyType: 'socks5',
+              proxyHost: 'p',
+            ),
+          ),
+        ),
+      );
     });
 
     test('identical credentials produce a stable key', () {
@@ -155,8 +179,11 @@ void main() {
       final lease = await pool.acquire(creds);
 
       pool.evict(creds);
-      expect(lease.client.closed, isFalse,
-          reason: 'an in-flight command must be allowed to finish');
+      expect(
+        lease.client.closed,
+        isFalse,
+        reason: 'an in-flight command must be allowed to finish',
+      );
 
       lease.close();
       expect(lease.client.closed, isTrue, reason: 'the last lease closing tears it down');
@@ -190,7 +217,8 @@ void main() {
 
     test('closing a lease twice is a no-op, not an underflow', () async {
       final pool = makePool();
-      final lease = await pool.acquire(creds)..close();
+      final lease = await pool.acquire(creds)
+        ..close();
       expect(lease.close, returnsNormally);
     });
 
@@ -241,17 +269,20 @@ void main() {
       expect(pool.size, 1, reason: 'closeAll must not poison the pool for later callers');
     });
 
-    test('an acquire in flight across a reset is rejected rather than handing back a dead one', () async {
-      final pool = makePool();
-      gate = Completer<void>();
-      final pending = pool.acquire(creds);
-      // The reset lands while the connect is still awaiting.
-      pool.closeAll();
-      gate!.complete();
+    test(
+      'an acquire in flight across a reset is rejected rather than handing back a dead one',
+      () async {
+        final pool = makePool();
+        gate = Completer<void>();
+        final pending = pool.acquire(creds);
+        // The reset lands while the connect is still awaiting.
+        pool.closeAll();
+        gate!.complete();
 
-      await expectLater(pending, throwsA(isA<StateError>()));
-      expect(created.single.closed, isTrue, reason: 'the orphaned connection must be torn down');
-    });
+        await expectLater(pending, throwsA(isA<StateError>()));
+        expect(created.single.closed, isTrue, reason: 'the orphaned connection must be torn down');
+      },
+    );
   });
 
   test('entryPredatesReset compares generations', () {

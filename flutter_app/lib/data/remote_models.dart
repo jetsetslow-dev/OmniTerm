@@ -287,12 +287,12 @@ class DiskUsage {
   double get percent => totalBytes > 0 ? usedBytes * 100.0 / totalBytes : 0.0;
 
   DiskUsage copyWith({String? health}) => DiskUsage(
-        mount: mount,
-        filesystem: filesystem,
-        totalBytes: totalBytes,
-        usedBytes: usedBytes,
-        health: health ?? this.health,
-      );
+    mount: mount,
+    filesystem: filesystem,
+    totalBytes: totalBytes,
+    usedBytes: usedBytes,
+    health: health ?? this.health,
+  );
 }
 
 /// Per-block-device cumulative I/O counters (bytes), from /proc/diskstats; used to derive rates.

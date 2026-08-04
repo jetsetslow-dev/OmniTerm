@@ -23,15 +23,14 @@ class SshSessionPool<C> {
     required Future<C> Function(SshCredentials creds) connect,
     required bool Function(C client) isAlive,
     required void Function(C client) disconnect,
-  })  :
-        // Not initializing formals: Dart forbids a named parameter beginning with an underscore,
-        // and these callbacks are part of the public constructor API.
-        // ignore: prefer_initializing_formals
-        _connect = connect,
-        // ignore: prefer_initializing_formals
-        _isAlive = isAlive,
-        // ignore: prefer_initializing_formals
-        _disconnect = disconnect;
+  }) : // Not initializing formals: Dart forbids a named parameter beginning with an underscore,
+       // and these callbacks are part of the public constructor API.
+       // ignore: prefer_initializing_formals
+       _connect = connect,
+       // ignore: prefer_initializing_formals
+       _isAlive = isAlive,
+       // ignore: prefer_initializing_formals
+       _disconnect = disconnect;
 
   final Future<C> Function(SshCredentials) _connect;
   final bool Function(C) _isAlive;
@@ -46,7 +45,8 @@ class SshSessionPool<C> {
   /// It includes a **fingerprint of every secret**, not the secrets themselves, so that changing a
   /// host's password or key produces a different key and cannot reuse the connection authenticated
   /// with the old credentials — while no plaintext secret is ever held as a map key.
-  static String poolKey(SshCredentials c) => '${c.username}@${c.host}:${c.port}'
+  static String poolKey(SshCredentials c) =>
+      '${c.username}@${c.host}:${c.port}'
       '|pw=${_fingerprint(c.password)}'
       '|pk=${_fingerprint(c.privateKeyPem)}'
       '|pp=${_fingerprint(c.passphrase)}'
@@ -58,10 +58,7 @@ class SshSessionPool<C> {
   static String _fingerprint(String? secret) {
     if (secret == null || secret.isEmpty) return 'empty';
     final digest = sha256.convert(utf8.encode(secret));
-    return digest.bytes
-        .take(12)
-        .map((b) => b.toRadixString(16).padLeft(2, '0'))
-        .join();
+    return digest.bytes.take(12).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 
   /// Return a connected client for [creds], reusing a live cached one or building a new one.
@@ -73,7 +70,8 @@ class SshSessionPool<C> {
 
     return lock.synchronized(() async {
       var entry = _sessions[key];
-      final reusable = entry != null &&
+      final reusable =
+          entry != null &&
           entry.generation == expectedGeneration &&
           !entry.retired &&
           _isAlive(entry.client);
@@ -97,9 +95,7 @@ class SshSessionPool<C> {
       // after the increment it sees an outstanding lease and defers the disconnect until this
       // caller finishes.
       live.leases++;
-      if (live.retired ||
-          _lifecycleGeneration != expectedGeneration ||
-          !_isAlive(live.client)) {
+      if (live.retired || _lifecycleGeneration != expectedGeneration || !_isAlive(live.client)) {
         if (identical(_sessions[key], live)) _sessions.remove(key);
         _retire(live);
         _release(live);

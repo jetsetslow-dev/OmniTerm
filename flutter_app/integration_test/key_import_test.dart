@@ -39,23 +39,23 @@ yOef2tJzAB5K2Jd7ZK54AAAAFm9tbml0ZXJtLWUyZS10aHJvd2F3YXkBAgMEBQYH
 
   /// Matches the card a stored key is drawn in, without knowing the row id the database handed it.
   Finder keyCard(String forAlias) => find.ancestor(
-        of: find.text(forAlias),
-        matching: find.byWidgetPredicate((w) {
-          final key = w.key;
-          return key is ValueKey<String> &&
-              key.value.startsWith('authKeys.key.') &&
-              !key.value.endsWith('.delete') &&
-              !key.value.endsWith('.rename');
-        }),
-      );
+    of: find.text(forAlias),
+    matching: find.byWidgetPredicate((w) {
+      final key = w.key;
+      return key is ValueKey<String> &&
+          key.value.startsWith('authKeys.key.') &&
+          !key.value.endsWith('.delete') &&
+          !key.value.endsWith('.rename');
+    }),
+  );
 
   Finder deleteButtonFor(String forAlias) => find.descendant(
-        of: keyCard(forAlias),
-        matching: find.byWidgetPredicate((w) {
-          final key = w.key;
-          return key is ValueKey<String> && key.value.endsWith('.delete');
-        }),
-      );
+    of: keyCard(forAlias),
+    matching: find.byWidgetPredicate((w) {
+      final key = w.key;
+      return key is ValueKey<String> && key.value.endsWith('.delete');
+    }),
+  );
 
   Future<void> launch(WidgetTester tester) async {
     app.main();

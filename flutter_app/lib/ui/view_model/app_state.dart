@@ -106,8 +106,7 @@ class AppState extends ChangeNotifier {
     fleetPresetsEnabled = (await read('fleet_presets')) == 'true';
     batterySaverEnabled = (await read('battery_saver_enabled')) == 'true';
     batterySaverThresholdPct = int.tryParse(await read('battery_saver_threshold') ?? '') ?? 20;
-    sftpLargeBatchFileThreshold =
-        int.tryParse(await read('sftp_large_batch_files') ?? '') ?? 50;
+    sftpLargeBatchFileThreshold = int.tryParse(await read('sftp_large_batch_files') ?? '') ?? 50;
     sftpLargeBatchBytesThreshold =
         int.tryParse(await read('sftp_large_batch_bytes') ?? '') ?? 1000000000;
     hideSensitiveInfo = (await read('hide_sensitive_info')) == 'true';

@@ -194,10 +194,11 @@ void main() {
       vm.subnetPrefix = '192.168.1';
       await vm.scanSubnet();
 
-      expect(
-        vm.scanResults.map((h) => h.address),
-        ['192.168.1.9', '192.168.1.10', '192.168.1.100'],
-      );
+      expect(vm.scanResults.map((h) => h.address), [
+        '192.168.1.9',
+        '192.168.1.10',
+        '192.168.1.100',
+      ]);
       vm.dispose();
     });
 
@@ -216,10 +217,7 @@ void main() {
   group('wake on LAN', () {
     test('a target is saved with a normalised MAC', () async {
       final vm = await boot(FakeProbe());
-      expect(
-        await vm.saveWolTarget(name: 'nas', macAddress: 'AA-BB-CC-DD-EE-FF'),
-        isNull,
-      );
+      expect(await vm.saveWolTarget(name: 'nas', macAddress: 'AA-BB-CC-DD-EE-FF'), isNull);
       await settle();
       expect(vm.wolTargets.single.macAddress, 'aa:bb:cc:dd:ee:ff');
       vm.dispose();
@@ -229,8 +227,7 @@ void main() {
       // A saved target with a bad MAC looks fine in the list and silently does nothing forever.
       final vm = await boot(FakeProbe());
       expect(await vm.saveWolTarget(name: 'nas', macAddress: 'nope'), contains('MAC'));
-      expect(await vm.saveWolTarget(name: '  ', macAddress: 'aa:bb:cc:dd:ee:ff'),
-          contains('Name'));
+      expect(await vm.saveWolTarget(name: '  ', macAddress: 'aa:bb:cc:dd:ee:ff'), contains('Name'));
       await settle();
       expect(vm.wolTargets, isEmpty);
       vm.dispose();
@@ -385,8 +382,7 @@ void main() {
 
   group('DNS lookup', () {
     test('resolves and lists the records', () async {
-      final probe = FakeProbe()
-        ..dnsResponses = {fallbackResolvers.first: aRecordResponse()};
+      final probe = FakeProbe()..dnsResponses = {fallbackResolvers.first: aRecordResponse()};
       final vm = await boot(probe);
       vm.dnsTarget = 'example.com';
       await vm.runDnsLookup();
@@ -400,8 +396,7 @@ void main() {
     test('an unreachable resolver falls through to the next', () async {
       // One provider being blocked on a locked-down network is common, and reporting that as
       // "DNS is broken" would be wrong.
-      final probe = FakeProbe()
-        ..dnsResponses = {fallbackResolvers[1]: aRecordResponse()};
+      final probe = FakeProbe()..dnsResponses = {fallbackResolvers[1]: aRecordResponse()};
       final vm = await boot(probe);
       vm.dnsTarget = 'example.com';
       await vm.runDnsLookup();

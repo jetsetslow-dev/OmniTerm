@@ -12,45 +12,44 @@ void main() {
     int? authProfileId,
     String proxyType = 'none',
     String? proxyKeyAlias,
-  }) =>
-      Server(
-        id: 1,
-        name: 'nas',
-        host: '10.0.0.2',
-        port: 2222,
-        username: 'root',
-        serverColor: 'Default',
-        authType: authType,
-        authPassword: authPassword,
-        authKeyAlias: authKeyAlias,
-        authProfileId: authProfileId,
-        sudoPassword: '',
-        notes: '',
-        keepAlive: 45,
-        sshCompression: true,
-        persistentSession: false,
-        proxyCommand: '',
-        proxyType: proxyType,
-        proxyHost: proxyType == 'none' ? '' : 'bastion',
-        proxyPort: proxyType == 'none' ? 0 : 2200,
-        proxyUser: 'jump',
-        proxyPassword: 'jump-pw',
-        proxyKeyAlias: proxyKeyAlias,
-        agentForwarding: true,
-        healthScore: 100,
-        lastLatency: 0,
-        status: 'offline',
-        authStatus: 'unknown',
-      );
+  }) => Server(
+    id: 1,
+    name: 'nas',
+    host: '10.0.0.2',
+    port: 2222,
+    username: 'root',
+    serverColor: 'Default',
+    authType: authType,
+    authPassword: authPassword,
+    authKeyAlias: authKeyAlias,
+    authProfileId: authProfileId,
+    sudoPassword: '',
+    notes: '',
+    keepAlive: 45,
+    sshCompression: true,
+    persistentSession: false,
+    proxyCommand: '',
+    proxyType: proxyType,
+    proxyHost: proxyType == 'none' ? '' : 'bastion',
+    proxyPort: proxyType == 'none' ? 0 : 2200,
+    proxyUser: 'jump',
+    proxyPassword: 'jump-pw',
+    proxyKeyAlias: proxyKeyAlias,
+    agentForwarding: true,
+    healthScore: 100,
+    lastLatency: 0,
+    status: 'offline',
+    authStatus: 'unknown',
+  );
 
   SshKey key(String alias, String pem) => SshKey(
-        id: alias.hashCode,
-        alias: alias,
-        keyType: 'Ed25519',
-        privateKey: pem,
-        publicKey: 'ssh-ed25519 AAAA',
-        fingerprint: 'SHA256:x',
-      );
+    id: alias.hashCode,
+    alias: alias,
+    keyType: 'Ed25519',
+    privateKey: pem,
+    publicKey: 'ssh-ed25519 AAAA',
+    fingerprint: 'SHA256:x',
+  );
 
   test('a password host carries its password and no key', () {
     final creds = resolveCredentials(server());
@@ -114,16 +113,15 @@ void main() {
       String authType = 'password',
       String? password = 'profile-pw',
       String? keyAlias,
-    }) =>
-        CredentialProfile(
-          id: id,
-          profileName: 'shared',
-          username: 'deploy',
-          authType: authType,
-          password: password,
-          keyAlias: keyAlias,
-          groupName: 'General',
-        );
+    }) => CredentialProfile(
+      id: id,
+      profileName: 'shared',
+      username: 'deploy',
+      authType: authType,
+      password: password,
+      keyAlias: keyAlias,
+      groupName: 'General',
+    );
 
     test('the profile supplies the username and password', () {
       final creds = resolveCredentials(
@@ -162,12 +160,7 @@ void main() {
   group('jump host', () {
     test('resolves the jump key separately from the target key', () {
       final creds = resolveCredentials(
-        server(
-          authType: 'key',
-          authKeyAlias: 'target',
-          proxyType: 'ssh',
-          proxyKeyAlias: 'bastion',
-        ),
+        server(authType: 'key', authKeyAlias: 'target', proxyType: 'ssh', proxyKeyAlias: 'bastion'),
         keys: [key('target', 'PEM-TARGET'), key('bastion', 'PEM-BASTION')],
       );
       expect(creds.privateKeyPem, 'PEM-TARGET');
@@ -178,9 +171,7 @@ void main() {
 
     test('a missing jump key is an error', () {
       expect(
-        () => resolveCredentials(
-          server(proxyType: 'ssh', proxyKeyAlias: 'gone'),
-        ),
+        () => resolveCredentials(server(proxyType: 'ssh', proxyKeyAlias: 'gone')),
         throwsA(isA<CredentialResolutionException>()),
       );
     });

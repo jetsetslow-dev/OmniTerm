@@ -20,15 +20,14 @@ void main() {
     String warnPenalty = '5',
     String highPenalty = '15',
     String criticalPenalty = '30',
-  }) =>
-      TierFields(
-        warnAt: warn,
-        highAt: high,
-        criticalAt: critical,
-        warnPenalty: warnPenalty,
-        highPenalty: highPenalty,
-        criticalPenalty: criticalPenalty,
-      );
+  }) => TierFields(
+    warnAt: warn,
+    highAt: high,
+    criticalAt: critical,
+    warnPenalty: warnPenalty,
+    highPenalty: highPenalty,
+    criticalPenalty: criticalPenalty,
+  );
 
   group('validation', () {
     test('the defaults are valid', () {
@@ -56,20 +55,14 @@ void main() {
 
     test('latency may exceed 100, since milliseconds have no ceiling at 100', () {
       expect(
-        validateTier(
-          fields(warn: '50', high: '100', critical: '2000'),
-          HealthMetric.latency,
-        ),
+        validateTier(fields(warn: '50', high: '100', critical: '2000'), HealthMetric.latency),
         isNull,
       );
     });
 
     test('latency still has an upper bound', () {
       expect(
-        validateTier(
-          fields(warn: '50', high: '100', critical: '9999999'),
-          HealthMetric.latency,
-        ),
+        validateTier(fields(warn: '50', high: '100', critical: '9999999'), HealthMetric.latency),
         contains('between'),
       );
     });
@@ -253,9 +246,7 @@ void main() {
 
       expect(vm.saved, HealthScoringConfig.defaults);
       expect(
-        HealthScoringConfig.decode(
-          await repo.getSetting(HealthScoringViewModel.settingKey),
-        ),
+        HealthScoringConfig.decode(await repo.getSetting(HealthScoringViewModel.settingKey)),
         HealthScoringConfig.defaults,
       );
       vm.dispose();
@@ -273,12 +264,7 @@ void main() {
       expect(before!.score, 95, reason: 'CPU 60 is over the default warn tier of 50');
 
       vm.edit(HealthMetric.cpu, (f) => f.warnPenalty = '20');
-      final after = vm.previewFor(
-        cpuPercent: 60,
-        memoryPercent: 10,
-        diskPercent: 10,
-        latencyMs: 5,
-      );
+      final after = vm.previewFor(cpuPercent: 60, memoryPercent: 10, diskPercent: 10, latencyMs: 5);
       expect(after!.score, 80);
       expect(after.factors.single.label, contains('CPU 60%'));
       vm.dispose();

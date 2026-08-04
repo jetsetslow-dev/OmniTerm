@@ -49,33 +49,32 @@ void main() {
     String? authPassword,
     String sudoPassword = '',
     String proxyPassword = '',
-  }) =>
-      Server(
-        id: 0,
-        name: name,
-        host: '10.0.0.1',
-        port: 22,
-        username: 'root',
-        serverColor: 'Default',
-        authType: 'password',
-        authPassword: authPassword,
-        sudoPassword: sudoPassword,
-        notes: '',
-        keepAlive: 30,
-        sshCompression: false,
-        persistentSession: false,
-        proxyCommand: '',
-        proxyType: 'none',
-        proxyHost: '',
-        proxyPort: 0,
-        proxyUser: '',
-        proxyPassword: proxyPassword,
-        agentForwarding: false,
-        healthScore: 100,
-        lastLatency: 0,
-        status: 'offline',
-        authStatus: 'unknown',
-      );
+  }) => Server(
+    id: 0,
+    name: name,
+    host: '10.0.0.1',
+    port: 22,
+    username: 'root',
+    serverColor: 'Default',
+    authType: 'password',
+    authPassword: authPassword,
+    sudoPassword: sudoPassword,
+    notes: '',
+    keepAlive: 30,
+    sshCompression: false,
+    persistentSession: false,
+    proxyCommand: '',
+    proxyType: 'none',
+    proxyHost: '',
+    proxyPort: 0,
+    proxyUser: '',
+    proxyPassword: proxyPassword,
+    agentForwarding: false,
+    healthScore: 100,
+    lastLatency: 0,
+    status: 'offline',
+    authStatus: 'unknown',
+  );
 
   /// Writes a row with its secrets already in the Kotlin `enc:v1:` form, bypassing encryption.
   Future<int> insertLegacyServer(Server row) =>
@@ -89,8 +88,11 @@ void main() {
     expect(await repo.migrateLegacySecrets(), 1);
 
     final stored = await db.serverDao.getAllServers();
-    expect(stored.single.authPassword, startsWith(SecretStore.prefix),
-        reason: 'the value on disk is now encrypted under the Dart key');
+    expect(
+      stored.single.authPassword,
+      startsWith(SecretStore.prefix),
+      reason: 'the value on disk is now encrypted under the Dart key',
+    );
     expect((await repo.getAllServers()).single.authPassword, 'hunter2');
   });
 
@@ -98,12 +100,14 @@ void main() {
     vault['enc:v1:A'] = 'login';
     vault['enc:v1:B'] = 'sudo';
     vault['enc:v1:C'] = 'proxy';
-    await insertLegacyServer(server(
-      name: 'nas',
-      authPassword: 'enc:v1:A',
-      sudoPassword: 'enc:v1:B',
-      proxyPassword: 'enc:v1:C',
-    ));
+    await insertLegacyServer(
+      server(
+        name: 'nas',
+        authPassword: 'enc:v1:A',
+        sudoPassword: 'enc:v1:B',
+        proxyPassword: 'enc:v1:C',
+      ),
+    );
 
     final repo = repositoryWith();
     expect(await repo.migrateLegacySecrets(), 3);
@@ -141,8 +145,7 @@ void main() {
     final repo = repositoryWith();
     expect(await repo.migrateLegacySecrets(), 2);
 
-    expect((await repo.getAllKeys()).single.privateKey,
-        '-----BEGIN OPENSSH PRIVATE KEY-----');
+    expect((await repo.getAllKeys()).single.privateKey, '-----BEGIN OPENSSH PRIVATE KEY-----');
     expect((await repo.getAllProfiles()).single.password, 'profile-pw');
   });
 
@@ -190,8 +193,11 @@ void main() {
       final callsAfterFirst = decryptCalls.length;
 
       expect(await repo.migrateLegacySecrets(), 0);
-      expect(decryptCalls.length, callsAfterFirst,
-          reason: 'an enc:v2: value must not reach the platform channel again');
+      expect(
+        decryptCalls.length,
+        callsAfterFirst,
+        reason: 'an enc:v2: value must not reach the platform channel again',
+      );
     });
 
     test('a fresh install with no legacy data does nothing', () async {
@@ -215,20 +221,24 @@ void main() {
     const channel = MethodChannel(LegacySecretChannel.channelName);
 
     tearDown(() {
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, null);
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        null,
+      );
     });
 
     test('it asks the platform once whether a legacy key exists', () async {
       var keyChecks = 0;
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, (call) async {
-        if (call.method == 'hasLegacyKey') {
-          keyChecks++;
-          return true;
-        }
-        return 'plaintext';
-      });
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (call) async {
+          if (call.method == 'hasLegacyKey') {
+            keyChecks++;
+            return true;
+          }
+          return 'plaintext';
+        },
+      );
 
       final bridge = LegacySecretChannel(channel: channel);
       // The check is cached so a fresh install pays one round trip, not one per secret.
@@ -238,19 +248,23 @@ void main() {
     });
 
     test('a platform failure returns null rather than throwing into the read path', () async {
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, (call) async {
-        if (call.method == 'hasLegacyKey') return true;
-        throw PlatformException(code: 'KEY_INVALIDATED');
-      });
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (call) async {
+          if (call.method == 'hasLegacyKey') return true;
+          throw PlatformException(code: 'KEY_INVALIDATED');
+        },
+      );
 
       final bridge = LegacySecretChannel(channel: channel);
       expect(await bridge.decrypt('enc:v1:A'), isNull);
     });
 
     test('a host build without the bridge degrades instead of failing', () async {
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, null);
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        null,
+      );
 
       final bridge = LegacySecretChannel(channel: channel);
       expect(await bridge.hasLegacyKey(), isFalse);
@@ -259,12 +273,14 @@ void main() {
 
     test('no legacy key means no decrypt call at all', () async {
       var decryptCallsMade = 0;
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, (call) async {
-        if (call.method == 'hasLegacyKey') return false;
-        decryptCallsMade++;
-        return null;
-      });
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (call) async {
+          if (call.method == 'hasLegacyKey') return false;
+          decryptCallsMade++;
+          return null;
+        },
+      );
 
       final bridge = LegacySecretChannel(channel: channel);
       expect(await bridge.decrypt('enc:v1:A'), isNull);

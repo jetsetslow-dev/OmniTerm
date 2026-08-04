@@ -1,4 +1,3 @@
-
 /// Deciding whether an alert rule is breaching, ported from `evaluateAlertRules` in
 /// `ui/AppViewModel.kt`.
 ///
@@ -12,13 +11,7 @@ import '../data/app_database.dart';
 import '../data/remote_models.dart';
 
 /// The metric names a rule can watch. Stored as text, so the strings are the contract.
-const alertMetrics = [
-  'CPU Usage',
-  'Memory Usage',
-  'Disk Usage',
-  'Latency',
-  'Temperature',
-];
+const alertMetrics = ['CPU Usage', 'Memory Usage', 'Disk Usage', 'Latency', 'Temperature'];
 
 /// The sustained-breach windows a rule can require.
 const alertWindows = ['2m', '5m', '10m', '15m'];
@@ -107,10 +100,10 @@ int staleGapMs(int telemetryIntervalMs) {
 
 /// The unit a metric's value is displayed in.
 String unitFor(String metricName) => switch (metricName) {
-      'Latency' => 'ms',
-      'Temperature' => '°',
-      _ => '%',
-    };
+  'Latency' => 'ms',
+  'Temperature' => '°',
+  _ => '%',
+};
 
 /// A one-line description of what [rule] watches.
 String describeRule(AlertRule rule) {

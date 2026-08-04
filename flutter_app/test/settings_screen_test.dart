@@ -132,22 +132,21 @@ void main() {
   group('bounds are visible, not silent', () {
     testWidgets('a stepper disables at its floor and ceiling', (tester) async {
       // A button that does nothing when tapped is worse than one that is plainly unavailable.
-      await repo.insertSetting(
-        'telemetry_interval',
-        '${PreferenceLimits.telemetryInterval.min}',
-      );
+      await repo.insertSetting('telemetry_interval', '${PreferenceLimits.telemetryInterval.min}');
       await pump(tester);
 
-      final down =
-          tester.widget<IconButton>(find.byKey(const ValueKey('settings.telemetryInterval.down')));
+      final down = tester.widget<IconButton>(
+        find.byKey(const ValueKey('settings.telemetryInterval.down')),
+      );
       expect(down.onPressed, isNull);
 
-      vm.update((p) => p.copyWith(
-            telemetryIntervalSeconds: PreferenceLimits.telemetryInterval.max,
-          ));
+      vm.update(
+        (p) => p.copyWith(telemetryIntervalSeconds: PreferenceLimits.telemetryInterval.max),
+      );
       await tester.pumpAndSettle();
-      final up =
-          tester.widget<IconButton>(find.byKey(const ValueKey('settings.telemetryInterval.up')));
+      final up = tester.widget<IconButton>(
+        find.byKey(const ValueKey('settings.telemetryInterval.up')),
+      );
       expect(up.onPressed, isNull);
       await finish(tester);
     });
@@ -172,15 +171,17 @@ void main() {
       // Hiding it would erase both the option and its precondition from view.
       await pump(tester);
 
-      final biometrics =
-          tester.widget<SwitchListTile>(find.byKey(const ValueKey('settings.biometrics')));
+      final biometrics = tester.widget<SwitchListTile>(
+        find.byKey(const ValueKey('settings.biometrics')),
+      );
       expect(biometrics.onChanged, isNull, reason: 'the app lock is off');
 
       vm.update((p) => p.copyWith(appLockEnabled: true));
       await tester.pumpAndSettle();
 
-      final enabled =
-          tester.widget<SwitchListTile>(find.byKey(const ValueKey('settings.biometrics')));
+      final enabled = tester.widget<SwitchListTile>(
+        find.byKey(const ValueKey('settings.biometrics')),
+      );
       expect(enabled.onChanged, isNotNull);
       await finish(tester);
     });
@@ -212,8 +213,7 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('hide-addresses explains when it is for, and takes effect on save',
-      (tester) async {
+  testWidgets('hide-addresses explains when it is for, and takes effect on save', (tester) async {
     await pump(tester);
     expect(find.textContaining('sharing a screen'), findsOneWidget);
 
@@ -305,8 +305,9 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('editing a custom duration down to nothing does not snap to a preset',
-        (tester) async {
+    testWidgets('editing a custom duration down to nothing does not snap to a preset', (
+      tester,
+    ) async {
       // The Kotlin bug (its PR #62): deleting the trailing zero from `10` momentarily gives `1`,
       // which matches the "1 min" preset. Recomputing the mode from the value alone took the text
       // field away mid-edit, so the value could not be finished.
@@ -350,8 +351,7 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('non-digits are rejected in the field, not silently dropped later',
-        (tester) async {
+    testWidgets('non-digits are rejected in the field, not silently dropped later', (tester) async {
       await pump(tester);
       await tester.tap(find.byKey(const ValueKey('settings.appLockEnabled')));
       await tester.pumpAndSettle();

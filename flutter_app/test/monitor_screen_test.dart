@@ -32,37 +32,32 @@ void main() {
     await db.close();
   });
 
-  Server server({
-    required String name,
-    String status = 'online',
-    int healthScore = 100,
-  }) =>
-      Server(
-        id: 0,
-        name: name,
-        host: '10.0.0.1',
-        port: 22,
-        username: 'root',
-        serverColor: 'Default',
-        authType: 'password',
-        authPassword: 'pw',
-        sudoPassword: '',
-        notes: '',
-        keepAlive: 30,
-        sshCompression: false,
-        persistentSession: false,
-        proxyCommand: '',
-        proxyType: 'none',
-        proxyHost: '',
-        proxyPort: 0,
-        proxyUser: '',
-        proxyPassword: '',
-        agentForwarding: false,
-        healthScore: healthScore,
-        lastLatency: 0,
-        status: status,
-        authStatus: 'ok',
-      );
+  Server server({required String name, String status = 'online', int healthScore = 100}) => Server(
+    id: 0,
+    name: name,
+    host: '10.0.0.1',
+    port: 22,
+    username: 'root',
+    serverColor: 'Default',
+    authType: 'password',
+    authPassword: 'pw',
+    sudoPassword: '',
+    notes: '',
+    keepAlive: 30,
+    sshCompression: false,
+    persistentSession: false,
+    proxyCommand: '',
+    proxyType: 'none',
+    proxyHost: '',
+    proxyPort: 0,
+    proxyUser: '',
+    proxyPassword: '',
+    agentForwarding: false,
+    healthScore: healthScore,
+    lastLatency: 0,
+    status: status,
+    authStatus: 'ok',
+  );
 
   late MonitorViewModel vm;
 
@@ -124,8 +119,11 @@ void main() {
     ]) {
       await tester.tap(find.byKey(ValueKey('monitor.tab.${tab.name}')));
       await tester.pumpAndSettle();
-      expect(find.byKey(ValueKey(probe)), findsOneWidget,
-          reason: 'the ${tab.name} tab did not render');
+      expect(
+        find.byKey(ValueKey(probe)),
+        findsOneWidget,
+        reason: 'the ${tab.name} tab did not render',
+      );
     }
     vm.dispose();
   });
@@ -145,14 +143,17 @@ void main() {
     await repo.insertServer(server(name: 'nas'));
     await pump(
       tester,
-      transport: RecordingTransport(replies: {
-        "echo '@OS'": '@OS\nLinux\n'
-            '@CPU\n%Cpu(s):  4.0 us,  1.0 sy,  0.0 ni, 75.0 id\n'
-            '@MEM\nMem: 8589934592 4294967296 0 0 0 4294967296\n'
-            '@LOAD\n0.50 0.40 0.30 1/200 1234\n'
-            '@UP\n86400.00 100000.00\n'
-            '@PROC\n200\n',
-      }),
+      transport: RecordingTransport(
+        replies: {
+          "echo '@OS'":
+              '@OS\nLinux\n'
+              '@CPU\n%Cpu(s):  4.0 us,  1.0 sy,  0.0 ni, 75.0 id\n'
+              '@MEM\nMem: 8589934592 4294967296 0 0 0 4294967296\n'
+              '@LOAD\n0.50 0.40 0.30 1/200 1234\n'
+              '@UP\n86400.00 100000.00\n'
+              '@PROC\n200\n',
+        },
+      ),
     );
 
     expect(find.byKey(const ValueKey('monitor.overview.cpu')), findsOneWidget);
@@ -162,14 +163,16 @@ void main() {
     vm.dispose();
   });
 
-  testWidgets('processes list, and the sort chips switch order without refetching',
-      (tester) async {
+  testWidgets('processes list, and the sort chips switch order without refetching', (tester) async {
     await repo.insertServer(server(name: 'nas'));
-    final transport = RecordingTransport(replies: {
-      'ps -eo': '  PID USER     %CPU %MEM    VSZ     ELAPSED STAT COMMAND\n'
-          '  101 root      5.0 40.0 100000    01:00:00 S    lowcpu-highmem\n'
-          '  102 root     90.0  1.0 100000    01:00:00 S    highcpu-lowmem\n',
-    });
+    final transport = RecordingTransport(
+      replies: {
+        'ps -eo':
+            '  PID USER     %CPU %MEM    VSZ     ELAPSED STAT COMMAND\n'
+            '  101 root      5.0 40.0 100000    01:00:00 S    lowcpu-highmem\n'
+            '  102 root     90.0  1.0 100000    01:00:00 S    highcpu-lowmem\n',
+      },
+    );
     await pump(tester, transport: transport);
 
     await tester.tap(find.byKey(const ValueKey('monitor.tab.processes')));
@@ -187,10 +190,13 @@ void main() {
 
   testWidgets('killing a process asks first and names what it will kill', (tester) async {
     await repo.insertServer(server(name: 'nas'));
-    final transport = RecordingTransport(replies: {
-      'ps -eo': '  PID USER     %CPU %MEM    VSZ     ELAPSED STAT COMMAND\n'
-          '  102 root     90.0  1.0 100000    01:00:00 S    runaway\n',
-    });
+    final transport = RecordingTransport(
+      replies: {
+        'ps -eo':
+            '  PID USER     %CPU %MEM    VSZ     ELAPSED STAT COMMAND\n'
+            '  102 root     90.0  1.0 100000    01:00:00 S    runaway\n',
+      },
+    );
     await pump(tester, transport: transport);
     await tester.tap(find.byKey(const ValueKey('monitor.tab.processes')));
     await tester.pumpAndSettle();
@@ -228,8 +234,11 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('monitor.reboot.cancel')));
     await tester.pumpAndSettle();
-    expect(transport.commands.any((c) => c.contains('reboot')), isFalse,
-        reason: 'a cancelled reboot must not reach the host');
+    expect(
+      transport.commands.any((c) => c.contains('reboot')),
+      isFalse,
+      reason: 'a cancelled reboot must not reach the host',
+    );
 
     await tester.tap(find.byKey(const ValueKey('monitor.reboot')));
     await tester.pumpAndSettle();
@@ -302,10 +311,13 @@ void main() {
     await repo.insertServer(server(name: 'nas'));
     await pump(
       tester,
-      transport: RecordingTransport(replies: {
-        'journalctl': '2026-08-04T10:00:00+0000 host sshd: accepted connection\n'
-            '2026-08-04T10:00:01+0000 host kernel: disk errors detected\n',
-      }),
+      transport: RecordingTransport(
+        replies: {
+          'journalctl':
+              '2026-08-04T10:00:00+0000 host sshd: accepted connection\n'
+              '2026-08-04T10:00:01+0000 host kernel: disk errors detected\n',
+        },
+      ),
     );
 
     await tester.tap(find.byKey(const ValueKey('monitor.tab.logs')));
@@ -316,8 +328,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.textContaining('accepted connection'), findsNothing);
-    expect(find.textContaining('disk errors detected'), findsOneWidget,
-        reason: 'the §15.1 inferLevel fix makes this an ERROR rather than INFO');
+    expect(
+      find.textContaining('disk errors detected'),
+      findsOneWidget,
+      reason: 'the §15.1 inferLevel fix makes this an ERROR rather than INFO',
+    );
     vm.dispose();
   });
 
@@ -344,8 +359,11 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('monitor.reboot')));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('10.0.0.1'), findsNothing,
-        reason: 'a screenshot of this dialog must not leak the address');
+    expect(
+      find.textContaining('10.0.0.1'),
+      findsNothing,
+      reason: 'a screenshot of this dialog must not leak the address',
+    );
     await tester.tap(find.byKey(const ValueKey('monitor.reboot.cancel')));
     await tester.pumpAndSettle();
     vm.dispose();

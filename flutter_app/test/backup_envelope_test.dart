@@ -54,8 +54,11 @@ void main() {
       await expectLater(
         decryptBackup(envelope, 'wrong passphrase'),
         throwsA(
-          isA<BackupException>()
-              .having((e) => e.message, 'message', contains('passphrase does not match')),
+          isA<BackupException>().having(
+            (e) => e.message,
+            'message',
+            contains('passphrase does not match'),
+          ),
         ),
       );
     });
@@ -85,8 +88,11 @@ void main() {
       await expectLater(
         decryptBackup(jsonEncode(envelope), passphrase),
         throwsA(
-          isA<BackupException>()
-              .having((e) => e.message, 'message', contains('unsafe key-derivation')),
+          isA<BackupException>().having(
+            (e) => e.message,
+            'message',
+            contains('unsafe key-derivation'),
+          ),
         ),
       );
     });
@@ -128,15 +134,15 @@ void main() {
       await expectLater(
         decryptBackup(jsonEncode(envelope), passphrase),
         throwsA(
-          isA<BackupException>()
-              .having((e) => e.message, 'message', contains('compression')),
+          isA<BackupException>().having((e) => e.message, 'message', contains('compression')),
         ),
       );
     });
 
     test('a missing field is reported, not dereferenced', () async {
       for (final field in ['salt', 'iv', 'data']) {
-        final envelope = await validEnvelope()..remove(field);
+        final envelope = await validEnvelope()
+          ..remove(field);
         await expectLater(
           decryptBackup(jsonEncode(envelope), passphrase),
           throwsA(isA<BackupException>()),
@@ -149,8 +155,11 @@ void main() {
       await expectLater(
         decryptBackup('this is not a backup', passphrase),
         throwsA(
-          isA<BackupException>()
-              .having((e) => e.message, 'message', contains('does not look like')),
+          isA<BackupException>().having(
+            (e) => e.message,
+            'message',
+            contains('does not look like'),
+          ),
         ),
       );
     });
@@ -170,8 +179,7 @@ void main() {
       await expectLater(
         decryptBackup(nested, passphrase),
         throwsA(
-          isA<BackupException>()
-              .having((e) => e.message, 'message', contains('nested too deeply')),
+          isA<BackupException>().having((e) => e.message, 'message', contains('nested too deeply')),
         ),
       );
     });
@@ -186,9 +194,7 @@ void main() {
       final huge = 'a' * (BackupLimits.maxInputChars + 1);
       await expectLater(
         decryptBackup(huge, passphrase),
-        throwsA(
-          isA<BackupException>().having((e) => e.message, 'message', contains('too large')),
-        ),
+        throwsA(isA<BackupException>().having((e) => e.message, 'message', contains('too large'))),
       );
     });
   });

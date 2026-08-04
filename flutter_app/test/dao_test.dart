@@ -12,20 +12,21 @@ void main() {
   tearDown(() => db.close());
 
   Future<int> addServer(String name) => db.serverDao.insertServer(
-        ServersCompanion.insert(name: name, host: '10.0.0.1', username: 'root'),
-      );
+    ServersCompanion.insert(name: name, host: '10.0.0.1', username: 'root'),
+  );
 
-  Future<void> addMetric(int serverId, int timestamp, double cpu) =>
-      db.serverDao.insertMetric(MetricHistoryCompanion.insert(
-        serverId: serverId,
-        timestamp: timestamp,
-        cpuUsage: cpu,
-        ramUsage: 0,
-        diskUsage: 0,
-        latency: 0,
-        networkIn: 0,
-        networkOut: 0,
-      ));
+  Future<void> addMetric(int serverId, int timestamp, double cpu) => db.serverDao.insertMetric(
+    MetricHistoryCompanion.insert(
+      serverId: serverId,
+      timestamp: timestamp,
+      cpuUsage: cpu,
+      ramUsage: 0,
+      diskUsage: 0,
+      latency: 0,
+      networkIn: 0,
+      networkOut: 0,
+    ),
+  );
 
   group('ServerDao', () {
     test('servers come back ordered by name', () async {
@@ -131,24 +132,25 @@ void main() {
 
   group('AlertsDao', () {
     Future<int> addRule(int serverId) => db.alertsDao.insertRule(
-          AlertRulesCompanion.insert(
-            serverId: serverId,
-            metricName: 'CPU Usage',
-            thresholdValue: 90,
-            severity: 'CRITICAL',
-          ),
-        );
+      AlertRulesCompanion.insert(
+        serverId: serverId,
+        metricName: 'CPU Usage',
+        thresholdValue: 90,
+        severity: 'CRITICAL',
+      ),
+    );
 
-    Future<int> addAlert(int ruleId, int serverId, {int triggered = 0}) =>
-        db.alertsDao.insertAlert(ActiveAlertsCompanion.insert(
-          ruleId: ruleId,
-          serverId: serverId,
-          metricName: 'CPU Usage',
-          currentValue: 95,
-          thresholdValue: 90,
-          severity: 'CRITICAL',
-          triggeredTime: triggered,
-        ));
+    Future<int> addAlert(int ruleId, int serverId, {int triggered = 0}) => db.alertsDao.insertAlert(
+      ActiveAlertsCompanion.insert(
+        ruleId: ruleId,
+        serverId: serverId,
+        metricName: 'CPU Usage',
+        currentValue: 95,
+        thresholdValue: 90,
+        severity: 'CRITICAL',
+        triggeredTime: triggered,
+      ),
+    );
 
     test('the fleet-wide rule (serverId 0) survives a partial restore', () async {
       // This is the guard the `serverId != 0` clause exists for: dropping rule 0 would silently
@@ -205,19 +207,20 @@ void main() {
   });
 
   group('alert history pruning', () {
-    Future<void> addHistory(int serverId, int time) =>
-        db.alertsDao.insertHistory(AlertHistoryCompanion.insert(
-          activeAlertId: time,
-          serverId: serverId,
-          serverName: 'host$serverId',
-          metricName: 'CPU Usage',
-          currentValue: 95,
-          thresholdValue: 90,
-          severity: 'CRITICAL',
-          triggeredTime: time,
-          historyTime: time,
-          status: 'RESOLVED',
-        ));
+    Future<void> addHistory(int serverId, int time) => db.alertsDao.insertHistory(
+      AlertHistoryCompanion.insert(
+        activeAlertId: time,
+        serverId: serverId,
+        serverName: 'host$serverId',
+        metricName: 'CPU Usage',
+        currentValue: 95,
+        thresholdValue: 90,
+        severity: 'CRITICAL',
+        triggeredTime: time,
+        historyTime: time,
+        status: 'RESOLVED',
+      ),
+    );
 
     test('keeps the newest N for one host', () async {
       for (var i = 1; i <= 5; i++) {
@@ -228,28 +231,29 @@ void main() {
       expect(times, [500, 400]);
     });
 
-    test('the per-server cap is applied independently, so one noisy host cannot evict another',
-        () async {
-      for (var i = 1; i <= 4; i++) {
-        await addHistory(1, i * 100);
-      }
-      await addHistory(2, 50);
+    test(
+      'the per-server cap is applied independently, so one noisy host cannot evict another',
+      () async {
+        for (var i = 1; i <= 4; i++) {
+          await addHistory(1, i * 100);
+        }
+        await addHistory(2, 50);
 
-      await db.alertsDao.pruneHistoryPerServer(2);
+        await db.alertsDao.pruneHistoryPerServer(2);
 
-      final byServer = <int, int>{};
-      for (final h in await db.alertsDao.getAlertHistory()) {
-        byServer[h.serverId] = (byServer[h.serverId] ?? 0) + 1;
-      }
-      expect(byServer[1], 2);
-      expect(byServer[2], 1, reason: 'the quiet host keeps its single entry');
-    });
+        final byServer = <int, int>{};
+        for (final h in await db.alertsDao.getAlertHistory()) {
+          byServer[h.serverId] = (byServer[h.serverId] ?? 0) + 1;
+        }
+        expect(byServer[1], 2);
+        expect(byServer[2], 1, reason: 'the quiet host keeps its single entry');
+      },
+    );
   });
 
   group('AppDataDao', () {
     test('settings round-trip and delete', () async {
-      await db.appDataDao
-          .insertSetting(AppSettingsCompanion.insert(key: 'theme', value: 'amoled'));
+      await db.appDataDao.insertSetting(AppSettingsCompanion.insert(key: 'theme', value: 'amoled'));
       expect((await db.appDataDao.getSetting('theme'))?.value, 'amoled');
       await db.appDataDao.deleteSetting('theme');
       expect(await db.appDataDao.getSetting('theme'), isNull);
@@ -263,49 +267,57 @@ void main() {
     });
 
     test('deleteSftpBookmarksExcept touches only bookmark rows', () async {
-      await db.appDataDao
-          .insertSetting(AppSettingsCompanion.insert(key: 'sftp_bookmarks_1', value: 'a'));
-      await db.appDataDao
-          .insertSetting(AppSettingsCompanion.insert(key: 'sftp_bookmarks_2', value: 'b'));
+      await db.appDataDao.insertSetting(
+        AppSettingsCompanion.insert(key: 'sftp_bookmarks_1', value: 'a'),
+      );
+      await db.appDataDao.insertSetting(
+        AppSettingsCompanion.insert(key: 'sftp_bookmarks_2', value: 'b'),
+      );
       await db.appDataDao.insertSetting(AppSettingsCompanion.insert(key: 'theme', value: 'dark'));
 
       await db.appDataDao.deleteSftpBookmarksExcept(['sftp_bookmarks_1']);
 
       final keys = (await db.appDataDao.getAllSettings()).map((s) => s.key).toSet();
-      expect(keys, {'sftp_bookmarks_1', 'theme'},
-          reason: 'an unrelated setting must never be collateral damage');
+      expect(keys, {
+        'sftp_bookmarks_1',
+        'theme',
+      }, reason: 'an unrelated setting must never be collateral damage');
     });
 
     test('quick scripts order by category, sortOrder, then name', () async {
-      Future<void> add(String category, int order, String name) =>
-          db.appDataDao.insertScript(QuickScriptsCompanion.insert(
-            emoji: '*',
-            name: name,
-            command: 'true',
-            color: 'cyan',
-            category: Value(category),
-            sortOrder: Value(order),
-          ));
+      Future<void> add(String category, int order, String name) => db.appDataDao.insertScript(
+        QuickScriptsCompanion.insert(
+          emoji: '*',
+          name: name,
+          command: 'true',
+          color: 'cyan',
+          category: Value(category),
+          sortOrder: Value(order),
+        ),
+      );
 
       await add('B', 0, 'first');
       await add('A', 5, 'later');
       await add('A', 1, 'earlier');
 
-      expect((await db.appDataDao.getAllScripts()).map((s) => s.name),
-          ['earlier', 'later', 'first']);
+      expect((await db.appDataDao.getAllScripts()).map((s) => s.name), [
+        'earlier',
+        'later',
+        'first',
+      ]);
     });
 
     test('stack registry upserts on (server, runtime, project)', () async {
       Future<void> upsert(String workingDir) => db.appDataDao.upsertStacks([
-            StackRegistryCompanion.insert(
-              serverId: 1,
-              runtime: 'docker',
-              project: 'web',
-              workingDir: workingDir,
-              configFiles: 'compose.yml',
-              lastSeenAt: 0,
-            ),
-          ]);
+        StackRegistryCompanion.insert(
+          serverId: 1,
+          runtime: 'docker',
+          project: 'web',
+          workingDir: workingDir,
+          configFiles: 'compose.yml',
+          lastSeenAt: 0,
+        ),
+      ]);
 
       await upsert('/old');
       await upsert('/new');
@@ -316,14 +328,15 @@ void main() {
     });
 
     test('persistent sessions are keyed by tmux name', () async {
-      Future<void> upsert(String name, String server) =>
-          db.appDataDao.upsertPersistentSession(PersistentSessionsCompanion.insert(
-            tmuxName: name,
-            serverId: 1,
-            serverName: server,
-            createdAt: 0,
-            backgroundedAt: 0,
-          ));
+      Future<void> upsert(String name, String server) => db.appDataDao.upsertPersistentSession(
+        PersistentSessionsCompanion.insert(
+          tmuxName: name,
+          serverId: 1,
+          serverName: server,
+          createdAt: 0,
+          backgroundedAt: 0,
+        ),
+      );
 
       await upsert('omni-1', 'old');
       await upsert('omni-1', 'new');

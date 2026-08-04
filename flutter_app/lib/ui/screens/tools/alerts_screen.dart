@@ -47,9 +47,7 @@ class _AlertsScreenState extends State<AlertsScreen> {
                   leftAccent: OmniColors.green,
                   child: Row(
                     children: [
-                      Expanded(
-                        child: Text(vm.status!, style: const TextStyle(fontSize: 12)),
-                      ),
+                      Expanded(child: Text(vm.status!, style: const TextStyle(fontSize: 12))),
                       IconButton(
                         key: const ValueKey('alerts.status.dismiss'),
                         icon: const Icon(Icons.close, size: 16),
@@ -144,11 +142,13 @@ class _NotificationWarning extends StatelessWidget {
     if (!vm.alertsEnabled) return const SizedBox.shrink();
 
     final message = switch ((vm.canNotify, vm.notificationsAllowed)) {
-      (false, _) => 'Notifications are not available in this build. Rules still fire and incidents '
-          'are still recorded, but nothing will appear outside the app.',
-      (true, false) => 'Notifications are blocked for OmniTerm. Rules still fire and incidents are '
-          'still recorded, but you will only see them in here. Allow notifications in system '
-          'settings to be told while the app is closed.',
+      (false, _) =>
+        'Notifications are not available in this build. Rules still fire and incidents '
+            'are still recorded, but nothing will appear outside the app.',
+      (true, false) =>
+        'Notifications are blocked for OmniTerm. Rules still fire and incidents are '
+            'still recorded, but you will only see them in here. Allow notifications in system '
+            'settings to be told while the app is closed.',
       _ => null,
     };
     if (message == null) return const SizedBox.shrink();
@@ -194,14 +194,11 @@ class _TabBar extends StatelessWidget {
                 label: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      switch (tab) {
-                        AlertsTab.active => 'Firing',
-                        AlertsTab.rules => 'Rules',
-                        AlertsTab.history => 'History',
-                      },
-                      style: const TextStyle(fontSize: 12),
-                    ),
+                    Text(switch (tab) {
+                      AlertsTab.active => 'Firing',
+                      AlertsTab.rules => 'Rules',
+                      AlertsTab.history => 'History',
+                    }, style: const TextStyle(fontSize: 12)),
                     // The count leads with unmuted incidents: a muted one is something you already
                     // know about, so counting it would defeat the purpose of muting.
                     if (tab == AlertsTab.active && vm.unmutedCount > 0) ...[
@@ -327,10 +324,7 @@ class _ActiveTab extends StatelessWidget {
                   TextButton(
                     key: ValueKey('alerts.active.${alert.id}.mute'),
                     onPressed: () => _openMuteMenu(context, vm, alert),
-                    child: Text(
-                      muted ? 'Muted' : 'Mute',
-                      style: const TextStyle(fontSize: 12),
-                    ),
+                    child: Text(muted ? 'Muted' : 'Mute', style: const TextStyle(fontSize: 12)),
                   ),
                   const Spacer(),
                   TextButton(
@@ -351,11 +345,7 @@ class _ActiveTab extends StatelessWidget {
   }
 }
 
-Future<void> _openMuteMenu(
-  BuildContext context,
-  AlertsViewModel vm,
-  ActiveAlert alert,
-) async {
+Future<void> _openMuteMenu(BuildContext context, AlertsViewModel vm, ActiveAlert alert) async {
   final duration = await showModalBottomSheet<Duration>(
     context: context,
     builder: (sheetContext) => SafeArea(
@@ -446,11 +436,7 @@ class _RulesTab extends StatelessWidget {
     );
   }
 
-  Future<void> _confirmPresets(
-    BuildContext context,
-    AlertsViewModel vm,
-    bool on,
-  ) async {
+  Future<void> _confirmPresets(BuildContext context, AlertsViewModel vm, bool on) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -460,7 +446,7 @@ class _RulesTab extends StatelessWidget {
           on
               ? 'This adds the default rules and resets any thresholds you changed on them.'
               : 'This removes the default rules, including any you retuned. Your own rules are '
-                  'kept.',
+                    'kept.',
         ),
         actions: [
           TextButton(
@@ -548,11 +534,7 @@ class _RuleCard extends StatelessWidget {
   }
 }
 
-Future<void> _confirmDeleteRule(
-  BuildContext context,
-  AlertsViewModel vm,
-  AlertRule rule,
-) async {
+Future<void> _confirmDeleteRule(BuildContext context, AlertsViewModel vm, AlertRule rule) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
@@ -619,9 +601,7 @@ class _HistoryTab extends StatelessWidget {
               final entry = vm.history[index];
               return OmniCard(
                 key: ValueKey('alerts.history.${entry.id}'),
-                leftAccent: entry.status == 'resolved'
-                    ? OmniColors.green
-                    : OmniColors.textMuted,
+                leftAccent: entry.status == 'resolved' ? OmniColors.green : OmniColors.textMuted,
                 child: Row(
                   children: [
                     Expanded(
@@ -649,9 +629,7 @@ class _HistoryTab extends StatelessWidget {
                     ),
                     OmniTag(
                       label: entry.status.toUpperCase(),
-                      color: entry.status == 'resolved'
-                          ? OmniColors.green
-                          : OmniColors.textMuted,
+                      color: entry.status == 'resolved' ? OmniColors.green : OmniColors.textMuted,
                     ),
                   ],
                 ),

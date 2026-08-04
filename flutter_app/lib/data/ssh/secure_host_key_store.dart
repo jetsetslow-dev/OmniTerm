@@ -11,13 +11,14 @@ import 'ssh_host_key_trust.dart';
 /// file read is the point, not confidentiality.
 class SecureHostKeyStore implements HostKeyStore {
   SecureHostKeyStore({FlutterSecureStorage? storage})
-      : _storage = storage ??
-            const FlutterSecureStorage(
-              // Matches `SecretStore`: the key is pinned to this device and needs a first unlock, so
-              // a backup restored onto another handset cannot carry the trust store with it. A
-              // transplanted pin would authorise a host the new owner never verified.
-              iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock_this_device),
-            );
+    : _storage =
+          storage ??
+          const FlutterSecureStorage(
+            // Matches `SecretStore`: the key is pinned to this device and needs a first unlock, so
+            // a backup restored onto another handset cannot carry the trust store with it. A
+            // transplanted pin would authorise a host the new owner never verified.
+            iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock_this_device),
+          );
 
   final FlutterSecureStorage _storage;
 
@@ -38,8 +39,7 @@ class SecureHostKeyStore implements HostKeyStore {
   Future<String?> read(String key) => _storage.read(key: '$prefix$key');
 
   @override
-  Future<void> write(String key, String value) =>
-      _storage.write(key: '$prefix$key', value: value);
+  Future<void> write(String key, String value) => _storage.write(key: '$prefix$key', value: value);
 
   @override
   Future<void> delete(String key) => _storage.delete(key: '$prefix$key');

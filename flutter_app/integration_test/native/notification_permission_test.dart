@@ -46,8 +46,9 @@ void main() {
     // Asserted, not assumed. If no dialog appears the app is not asking, which on Android 13+ means
     // it can never notify — and every assertion below would still pass while the feature was dead.
     expect(
-      await $.platformAutomator.mobile
-          .isPermissionDialogVisible(timeout: const Duration(seconds: 10)),
+      await $.platformAutomator.mobile.isPermissionDialogVisible(
+        timeout: const Duration(seconds: 10),
+      ),
       true,
       reason: 'turning alerts on must ask for permission to notify',
     );
@@ -56,14 +57,20 @@ void main() {
     await $.pumpAndSettle();
 
     // The screen must not pretend everything is fine.
-    expect($(const ValueKey('alerts.notificationWarning')).exists, true,
-        reason: 'a blocked notification permission has to be visible somewhere');
+    expect(
+      $(const ValueKey('alerts.notificationWarning')).exists,
+      true,
+      reason: 'a blocked notification permission has to be visible somewhere',
+    );
 
     // And it must say the useful half, not just the bad news: alerting still works, the user will
     // simply only see it in here. "Notifications are blocked" on its own reads as "alerts are off".
     // `textContaining`, not Patrol's bare string finder, which matches a Text's whole value.
-    expect($(find.textContaining('Rules still fire')).exists, true,
-        reason: 'the warning must say alerting still works, not merely that it is blocked');
+    expect(
+      $(find.textContaining('Rules still fire')).exists,
+      true,
+      reason: 'the warning must say alerting still works, not merely that it is blocked',
+    );
 
     // …and alerting must still be on. Switching it off on the user's behalf because the OS said no
     // would be the app deciding that a feature it can still deliver is not worth delivering.
@@ -76,8 +83,11 @@ void main() {
 
     // Rules are still creatable — the add button lives on the Rules tab.
     await $(const ValueKey('alerts.tab.rules')).tap();
-    expect($(const ValueKey('alerts.addRule')).exists, true,
-        reason: 'rules must still be creatable with notifications denied');
+    expect(
+      $(const ValueKey('alerts.addRule')).exists,
+      true,
+      reason: 'rules must still be creatable with notifications denied',
+    );
   });
 
   patrolTest('granting notifications clears the warning', ($) async {
@@ -89,16 +99,20 @@ void main() {
     await turnAlertsOn($);
 
     expect(
-      await $.platformAutomator.mobile
-          .isPermissionDialogVisible(timeout: const Duration(seconds: 10)),
+      await $.platformAutomator.mobile.isPermissionDialogVisible(
+        timeout: const Duration(seconds: 10),
+      ),
       true,
       reason: 'turning alerts on must ask for permission to notify',
     );
     await $.platformAutomator.mobile.grantPermissionWhenInUse();
     await $.pumpAndSettle();
 
-    expect($(const ValueKey('alerts.notificationWarning')).exists, false,
-        reason: 'nothing is blocked, so there is nothing to warn about');
+    expect(
+      $(const ValueKey('alerts.notificationWarning')).exists,
+      false,
+      reason: 'nothing is blocked, so there is nothing to warn about',
+    );
     expect($(const ValueKey('alerts.tabs')).exists, true);
   });
 }

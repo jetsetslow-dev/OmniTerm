@@ -15,13 +15,14 @@ import 'app_database.dart';
 /// streams use `asyncMap` rather than `map`.
 class AppRepository {
   AppRepository(this._db, SecretStore? secrets)
-      : _secrets = secrets ??
-            SecretStore(
-              // Persisting the upgrade is what makes the §7.10 legacy migration happen *once* per
-              // value instead of on every read. Fire-and-forget: a failed write simply means the
-              // value is upgraded again next time, never that the secret is lost.
-              onUpgraded: (legacy, upgraded) {},
-            );
+    : _secrets =
+          secrets ??
+          SecretStore(
+            // Persisting the upgrade is what makes the §7.10 legacy migration happen *once* per
+            // value instead of on every read. Fire-and-forget: a failed write simply means the
+            // value is upgraded again next time, never that the secret is lost.
+            onUpgraded: (legacy, upgraded) {},
+          );
 
   final AppDatabase _db;
   SecretStore _secrets;
@@ -71,11 +72,13 @@ class AppRepository {
           proxyPassword == server.proxyPassword) {
         continue;
       }
-      await _db.serverDao.updateServer(server.copyWith(
-        authPassword: Value(authPassword),
-        sudoPassword: sudoPassword,
-        proxyPassword: proxyPassword,
-      ));
+      await _db.serverDao.updateServer(
+        server.copyWith(
+          authPassword: Value(authPassword),
+          sudoPassword: sudoPassword,
+          proxyPassword: proxyPassword,
+        ),
+      );
     }
 
     for (final key in await _db.appDataDao.getAllKeys()) {
@@ -87,8 +90,9 @@ class AppRepository {
     for (final profile in await _db.appDataDao.getAllProfiles()) {
       final password = await lift(profile.password);
       if (password == profile.password) continue;
-      await _db.appDataDao
-          .insertProfile(profile.copyWith(password: Value(password)).toCompanion(false));
+      await _db.appDataDao.insertProfile(
+        profile.copyWith(password: Value(password)).toCompanion(false),
+      );
     }
 
     for (final share in await _db.appDataDao.getAllShares()) {
@@ -101,9 +105,7 @@ class AppRepository {
       final row = await _db.appDataDao.getSetting(key);
       final value = await lift(row?.value);
       if (row == null || value == row.value) continue;
-      await _db.appDataDao.insertSetting(
-        AppSettingsCompanion.insert(key: key, value: value ?? ''),
-      );
+      await _db.appDataDao.insertSetting(AppSettingsCompanion.insert(key: key, value: value ?? ''));
     }
 
     return upgraded;
@@ -125,8 +127,9 @@ class AppRepository {
 
   Future<int> insertServer(Server server) async {
     final encrypted = await _encryptServer(server);
-    return _db.serverDao
-        .insertServer(encrypted.toCompanion(false).copyWith(id: _newOrExisting(server.id)));
+    return _db.serverDao.insertServer(
+      encrypted.toCompanion(false).copyWith(id: _newOrExisting(server.id)),
+    );
   }
 
   Future<void> updateServer(Server server) async =>
@@ -145,16 +148,16 @@ class AppRepository {
   /// Transactional because a half-deleted host is worse than either outcome: orphaned alert rules
   /// keep firing against an id that no longer resolves to anything.
   Future<void> deleteServerAndDependents(int serverId) => _db.transaction(() async {
-        await _db.serverDao.deleteMetricsForServer(serverId);
-        await _db.alertsDao.deleteRulesForServer(serverId);
-        await _db.alertsDao.deleteAlertsForServer(serverId);
-        await _db.alertsDao.deleteHistoryForServer(serverId);
-        await _db.appDataDao.deletePortForwardsForServer(serverId);
-        await _db.appDataDao.deleteStacksForServer(serverId);
-        await _db.appDataDao.deletePersistentSessionsForServer(serverId);
-        await _db.appDataDao.deleteSetting('sftp_bookmarks_$serverId');
-        await _db.serverDao.deleteServerById(serverId);
-      });
+    await _db.serverDao.deleteMetricsForServer(serverId);
+    await _db.alertsDao.deleteRulesForServer(serverId);
+    await _db.alertsDao.deleteAlertsForServer(serverId);
+    await _db.alertsDao.deleteHistoryForServer(serverId);
+    await _db.appDataDao.deletePortForwardsForServer(serverId);
+    await _db.appDataDao.deleteStacksForServer(serverId);
+    await _db.appDataDao.deletePersistentSessionsForServer(serverId);
+    await _db.appDataDao.deleteSetting('sftp_bookmarks_$serverId');
+    await _db.serverDao.deleteServerById(serverId);
+  });
 
   /// Keep only [keepServerIds] and drop every dependent row belonging to any other host.
   ///
@@ -170,8 +173,7 @@ class AppRepository {
       await _db.alertsDao.deleteHistoryExceptServers(ids);
       await _db.appDataDao.deletePortForwardsExceptServers(ids);
       await _db.appDataDao.deletePersistentSessionsExceptServers(ids);
-      await _db.appDataDao
-          .deleteSftpBookmarksExcept([for (final id in ids) 'sftp_bookmarks_$id']);
+      await _db.appDataDao.deleteSftpBookmarksExcept([for (final id in ids) 'sftp_bookmarks_$id']);
       await _db.serverDao.deleteServersExcept(ids);
     });
   }
@@ -185,8 +187,7 @@ class AppRepository {
   /// it through — and SQLite happily accepts 0 as a literal rowid. Left as-is, every insert of a new
   /// record would write rowid 0 and, under `InsertMode.replace`, silently overwrite the previous
   /// one: adding a second host would delete the first.
-  static Value<int> _newOrExisting(int id) =>
-      id == 0 ? const Value.absent() : Value(id);
+  static Value<int> _newOrExisting(int id) => id == 0 ? const Value.absent() : Value(id);
 
   // ── metrics ────────────────────────────────────────────────────────────────
 
@@ -202,8 +203,7 @@ class AppRepository {
   Future<List<MetricHistoryRow>> getLatestMetricsForAllServers() =>
       _db.serverDao.getLatestMetricsForAllServers();
 
-  Future<void> insertMetric(MetricHistoryCompanion metric) =>
-      _db.serverDao.insertMetric(metric);
+  Future<void> insertMetric(MetricHistoryCompanion metric) => _db.serverDao.insertMetric(metric);
 
   Future<void> pruneMetrics(int cutoff) => _db.serverDao.pruneMetrics(cutoff);
 
@@ -215,8 +215,9 @@ class AppRepository {
 
   Future<int> insertKey(SshKey key) async {
     final encrypted = await _encryptKey(key);
-    return _db.appDataDao
-        .insertKey(encrypted.toCompanion(false).copyWith(id: _newOrExisting(key.id)));
+    return _db.appDataDao.insertKey(
+      encrypted.toCompanion(false).copyWith(id: _newOrExisting(key.id)),
+    );
   }
 
   Future<void> deleteKeyById(int id) => _db.appDataDao.deleteKeyById(id);
@@ -242,8 +243,9 @@ class AppRepository {
 
   Future<int> insertProfile(CredentialProfile profile) async {
     final encrypted = await _encryptProfile(profile);
-    return _db.appDataDao
-        .insertProfile(encrypted.toCompanion(false).copyWith(id: _newOrExisting(profile.id)));
+    return _db.appDataDao.insertProfile(
+      encrypted.toCompanion(false).copyWith(id: _newOrExisting(profile.id)),
+    );
   }
 
   Future<void> deleteProfileById(int id) => _db.appDataDao.deleteProfileById(id);
@@ -290,14 +292,12 @@ class AppRepository {
 
   Stream<List<WolTarget>> get wolTargetsStream => _db.appDataDao.watchAllWolTargets();
   Future<List<WolTarget>> getAllWolTargets() => _db.appDataDao.getAllWolTargets();
-  Future<int> insertWolTarget(WolTargetsCompanion target) =>
-      _db.appDataDao.insertWolTarget(target);
+  Future<int> insertWolTarget(WolTargetsCompanion target) => _db.appDataDao.insertWolTarget(target);
   Future<void> deleteWolTargetById(int id) => _db.appDataDao.deleteWolTargetById(id);
 
   Stream<List<PortForward>> get portForwardsStream => _db.appDataDao.watchAllPortForwards();
   Future<List<PortForward>> getAllPortForwards() => _db.appDataDao.getAllPortForwards();
-  Future<int> insertPortForward(PortForwardsCompanion pf) =>
-      _db.appDataDao.insertPortForward(pf);
+  Future<int> insertPortForward(PortForwardsCompanion pf) => _db.appDataDao.insertPortForward(pf);
   Future<void> updatePortForward(PortForward pf) => _db.appDataDao.updatePortForward(pf);
   Future<void> deletePortForwardById(int id) => _db.appDataDao.deletePortForwardById(id);
 
@@ -318,8 +318,9 @@ class AppRepository {
 
   Future<int> insertNetworkShare(NetworkShare share) async {
     final encrypted = await _encryptShare(share);
-    return _db.appDataDao
-        .insertShare(encrypted.toCompanion(false).copyWith(id: _newOrExisting(share.id)));
+    return _db.appDataDao.insertShare(
+      encrypted.toCompanion(false).copyWith(id: _newOrExisting(share.id)),
+    );
   }
 
   Future<void> deleteNetworkShareById(int id) => _db.appDataDao.deleteShareById(id);
@@ -338,10 +339,8 @@ class AppRepository {
   }
 
   Future<void> insertSetting(String key, String value) async {
-    final stored =
-        secureSettingKeys.contains(key) ? (await _secrets.encrypt(value) ?? '') : value;
-    await _db.appDataDao
-        .insertSetting(AppSettingsCompanion.insert(key: key, value: stored));
+    final stored = secureSettingKeys.contains(key) ? (await _secrets.encrypt(value) ?? '') : value;
+    await _db.appDataDao.insertSetting(AppSettingsCompanion.insert(key: key, value: stored));
   }
 
   Future<void> deleteSetting(String key) => _db.appDataDao.deleteSetting(key);
@@ -363,44 +362,42 @@ class AppRepository {
   // below deliberately preserve: a field holding unrecognised content is surfaced as empty rather
   // than leaking whatever was stored there.
 
-  Future<List<Server>> _decryptServers(List<Server> servers) async =>
-      [for (final s in servers) await _decryptServer(s)];
+  Future<List<Server>> _decryptServers(List<Server> servers) async => [
+    for (final s in servers) await _decryptServer(s),
+  ];
 
   Future<Server?> _decryptServerOrNull(Server? server) async =>
       server == null ? null : _decryptServer(server);
 
   Future<Server> _decryptServer(Server server) async => server.copyWith(
-        authPassword: Value(await _secrets.decrypt(server.authPassword)),
-        sudoPassword: await _secrets.decrypt(server.sudoPassword) ?? '',
-        proxyPassword: await _secrets.decrypt(server.proxyPassword) ?? '',
-      );
+    authPassword: Value(await _secrets.decrypt(server.authPassword)),
+    sudoPassword: await _secrets.decrypt(server.sudoPassword) ?? '',
+    proxyPassword: await _secrets.decrypt(server.proxyPassword) ?? '',
+  );
 
   Future<Server> _encryptServer(Server server) async => server.copyWith(
-        authPassword: Value(await _secrets.encrypt(server.authPassword)),
-        sudoPassword: await _secrets.encrypt(server.sudoPassword) ?? '',
-        proxyPassword: await _secrets.encrypt(server.proxyPassword) ?? '',
-      );
+    authPassword: Value(await _secrets.encrypt(server.authPassword)),
+    sudoPassword: await _secrets.encrypt(server.sudoPassword) ?? '',
+    proxyPassword: await _secrets.encrypt(server.proxyPassword) ?? '',
+  );
 
   Future<List<SshKey>> _decryptKeys(List<SshKey> keys) async => [
-        for (final k in keys)
-          k.copyWith(privateKey: await _secrets.decrypt(k.privateKey) ?? ''),
-      ];
+    for (final k in keys) k.copyWith(privateKey: await _secrets.decrypt(k.privateKey) ?? ''),
+  ];
 
   Future<SshKey> _encryptKey(SshKey key) async =>
       key.copyWith(privateKey: await _secrets.encrypt(key.privateKey) ?? '');
 
   Future<List<CredentialProfile>> _decryptProfiles(List<CredentialProfile> profiles) async => [
-        for (final p in profiles)
-          p.copyWith(password: Value(await _secrets.decrypt(p.password))),
-      ];
+    for (final p in profiles) p.copyWith(password: Value(await _secrets.decrypt(p.password))),
+  ];
 
   Future<CredentialProfile> _encryptProfile(CredentialProfile profile) async =>
       profile.copyWith(password: Value(await _secrets.encrypt(profile.password)));
 
   Future<List<NetworkShare>> _decryptShares(List<NetworkShare> shares) async => [
-        for (final s in shares)
-          s.copyWith(password: await _secrets.decrypt(s.password) ?? ''),
-      ];
+    for (final s in shares) s.copyWith(password: await _secrets.decrypt(s.password) ?? ''),
+  ];
 
   Future<NetworkShare> _encryptShare(NetworkShare share) async =>
       share.copyWith(password: await _secrets.encrypt(share.password) ?? '');

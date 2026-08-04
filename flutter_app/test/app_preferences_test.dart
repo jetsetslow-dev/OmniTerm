@@ -61,13 +61,17 @@ void main() {
   group('bounds', () {
     test('a zero poll interval is raised to the floor', () {
       // Zero would busy-loop the radio and hammer every host.
-      expect(AppPreferences.decode({'telemetry_interval': '0'}).telemetryIntervalSeconds,
-          PreferenceLimits.telemetryInterval.min);
+      expect(
+        AppPreferences.decode({'telemetry_interval': '0'}).telemetryIntervalSeconds,
+        PreferenceLimits.telemetryInterval.min,
+      );
     });
 
     test('an absurd poll interval is capped, so "live" still means something', () {
-      expect(AppPreferences.decode({'telemetry_interval': '99999'}).telemetryIntervalSeconds,
-          PreferenceLimits.telemetryInterval.max);
+      expect(
+        AppPreferences.decode({'telemetry_interval': '99999'}).telemetryIntervalSeconds,
+        PreferenceLimits.telemetryInterval.max,
+      );
     });
 
     test('a huge scrollback is capped — it is a memory bound, not a preference', () {
@@ -99,7 +103,7 @@ void main() {
         (PreferenceLimits.editorHighlightLimit, AppPreferences.defaults.editorHighlightLimitKb),
         (
           PreferenceLimits.batterySaverThreshold,
-          AppPreferences.defaults.batterySaverThresholdPercent
+          AppPreferences.defaults.batterySaverThresholdPercent,
         ),
         (PreferenceLimits.sftpWarnFileCount, AppPreferences.defaults.sftpWarnFileCount),
         (PreferenceLimits.sftpWarnGigabytes, AppPreferences.defaults.sftpWarnGigabytes),

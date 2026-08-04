@@ -35,31 +35,31 @@ void main() {
   });
 
   Server server({required String name}) => Server(
-        id: 0,
-        name: name,
-        host: '10.0.0.1',
-        port: 22,
-        username: 'root',
-        serverColor: 'Default',
-        authType: 'password',
-        authPassword: 'hunter2',
-        sudoPassword: '',
-        notes: '',
-        keepAlive: 30,
-        sshCompression: false,
-        persistentSession: false,
-        proxyCommand: '',
-        proxyType: 'none',
-        proxyHost: '',
-        proxyPort: 0,
-        proxyUser: '',
-        proxyPassword: '',
-        agentForwarding: false,
-        healthScore: 100,
-        lastLatency: 0,
-        status: 'offline',
-        authStatus: 'unknown',
-      );
+    id: 0,
+    name: name,
+    host: '10.0.0.1',
+    port: 22,
+    username: 'root',
+    serverColor: 'Default',
+    authType: 'password',
+    authPassword: 'hunter2',
+    sudoPassword: '',
+    notes: '',
+    keepAlive: 30,
+    sshCompression: false,
+    persistentSession: false,
+    proxyCommand: '',
+    proxyType: 'none',
+    proxyHost: '',
+    proxyPort: 0,
+    proxyUser: '',
+    proxyPassword: '',
+    agentForwarding: false,
+    healthScore: 100,
+    lastLatency: 0,
+    status: 'offline',
+    authStatus: 'unknown',
+  );
 
   Future<void> pump(WidgetTester tester) async {
     // The screen is a long scrolling form; the default 800x600 surface leaves the lower half
@@ -118,8 +118,11 @@ void main() {
     expect(vm.selection.contains(BackupSection.servers), isFalse);
     expect(vm.selection.contains(BackupSection.alertRules), isFalse);
     expect(vm.selection.contains(BackupSection.portForwards), isFalse);
-    expect(vm.selection.contains(BackupSection.sshKeys), isTrue,
-        reason: 'keys do not depend on hosts');
+    expect(
+      vm.selection.contains(BackupSection.sshKeys),
+      isTrue,
+      reason: 'keys do not depend on hosts',
+    );
     await finish(tester);
   });
 
@@ -207,8 +210,7 @@ void main() {
   });
 
   testWidgets('restoring a plain JSON file works without a passphrase prompt', (tester) async {
-    files.openContents =
-        '{"v":2,"wolTargets":[{"name":"nas","macAddress":"aa:bb:cc:dd:ee:ff"}]}';
+    files.openContents = '{"v":2,"wolTargets":[{"name":"nas","macAddress":"aa:bb:cc:dd:ee:ff"}]}';
     await pump(tester);
 
     await tester.tap(find.byKey(const ValueKey('backup.import')));
@@ -299,8 +301,10 @@ void main() {
     });
 
     testWidgets('a failed save is reported rather than looking successful', (tester) async {
-      files.saveResult =
-          const BackupSaveResult(BackupSaveOutcome.failed, error: 'permission denied');
+      files.saveResult = const BackupSaveResult(
+        BackupSaveOutcome.failed,
+        error: 'permission denied',
+      );
       await pump(tester);
       await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
       await tester.pumpAndSettle();

@@ -38,31 +38,31 @@ void main() {
   });
 
   Server server({required String name, String status = 'online'}) => Server(
-        id: 0,
-        name: name,
-        host: '10.0.0.1',
-        port: 22,
-        username: 'root',
-        serverColor: 'Default',
-        authType: 'password',
-        authPassword: 'pw',
-        sudoPassword: '',
-        notes: '',
-        keepAlive: 30,
-        sshCompression: false,
-        persistentSession: false,
-        proxyCommand: '',
-        proxyType: 'none',
-        proxyHost: '',
-        proxyPort: 0,
-        proxyUser: '',
-        proxyPassword: '',
-        agentForwarding: false,
-        healthScore: 100,
-        lastLatency: 0,
-        status: status,
-        authStatus: 'ok',
-      );
+    id: 0,
+    name: name,
+    host: '10.0.0.1',
+    port: 22,
+    username: 'root',
+    serverColor: 'Default',
+    authType: 'password',
+    authPassword: 'pw',
+    sudoPassword: '',
+    notes: '',
+    keepAlive: 30,
+    sshCompression: false,
+    persistentSession: false,
+    proxyCommand: '',
+    proxyType: 'none',
+    proxyHost: '',
+    proxyPort: 0,
+    proxyUser: '',
+    proxyPassword: '',
+    agentForwarding: false,
+    healthScore: 100,
+    lastLatency: 0,
+    status: status,
+    authStatus: 'ok',
+  );
 
   Future<void> pump(WidgetTester tester, {bool withTransport = true}) async {
     tester.view.physicalSize = const Size(1000, 1400);
@@ -157,15 +157,17 @@ void main() {
       await connect(tester);
 
       expect(find.byKey(const ValueKey('shell.error')), findsOneWidget);
-      expect(find.byKey(const ValueKey('shell.connect')), findsOneWidget,
-          reason: 'the user can try again');
+      expect(
+        find.byKey(const ValueKey('shell.connect')),
+        findsOneWidget,
+        reason: 'the user can try again',
+      );
       await finish(tester);
     });
 
     testWidgets('the connecting view names the phase', (tester) async {
       await repo.insertServer(server(name: 'nas'));
-      transport = FakeShellTransport(phases: const ['Authenticating…'])
-        ..gate = Completer<void>();
+      transport = FakeShellTransport(phases: const ['Authenticating…'])..gate = Completer<void>();
       await pump(tester);
 
       await tester.tap(find.byKey(const ValueKey('shell.connect')));

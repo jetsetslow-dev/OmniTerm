@@ -379,7 +379,12 @@ void main() {
       test('re-locks once the configured interval has elapsed', () {
         final t = AppLockTimeoutTracker()..noteBackgrounded(1000);
         expect(
-          t.consumeShouldRelock(nowMs: 1000 + 30000, timeoutMs: 30000, lockEnabled: true, hasPin: true),
+          t.consumeShouldRelock(
+            nowMs: 1000 + 30000,
+            timeoutMs: 30000,
+            lockEnabled: true,
+            hasPin: true,
+          ),
           isTrue,
         );
       });
@@ -387,7 +392,12 @@ void main() {
       test('does not re-lock before the interval', () {
         final t = AppLockTimeoutTracker()..noteBackgrounded(1000);
         expect(
-          t.consumeShouldRelock(nowMs: 1000 + 29999, timeoutMs: 30000, lockEnabled: true, hasPin: true),
+          t.consumeShouldRelock(
+            nowMs: 1000 + 29999,
+            timeoutMs: 30000,
+            lockEnabled: true,
+            hasPin: true,
+          ),
           isFalse,
         );
       });
@@ -459,9 +469,19 @@ void main() {
   });
 
   group('TerminalKeyEncoder', () {
-    Uint8List enc(TermKey key, {bool app = false, bool shift = false, bool alt = false, bool ctrl = false}) =>
-        TerminalKeyEncoder.encode(key,
-            applicationCursorKeys: app, shift: shift, alt: alt, ctrl: ctrl);
+    Uint8List enc(
+      TermKey key, {
+      bool app = false,
+      bool shift = false,
+      bool alt = false,
+      bool ctrl = false,
+    }) => TerminalKeyEncoder.encode(
+      key,
+      applicationCursorKeys: app,
+      shift: shift,
+      alt: alt,
+      ctrl: ctrl,
+    );
 
     test('cursor keys use CSI normally and SS3 in application mode', () {
       expect(enc(TermKey.up), Uint8List.fromList([0x1B, 0x5B, 0x41])); // ESC [ A
@@ -477,10 +497,7 @@ void main() {
       expect(String.fromCharCodes(enc(TermKey.up, alt: true)), '[1;3A');
       expect(String.fromCharCodes(enc(TermKey.up, ctrl: true)), '[1;5A');
       expect(String.fromCharCodes(enc(TermKey.up, app: true, ctrl: true)), '[1;5A');
-      expect(
-        String.fromCharCodes(enc(TermKey.up, shift: true, alt: true, ctrl: true)),
-        '[1;8A',
-      );
+      expect(String.fromCharCodes(enc(TermKey.up, shift: true, alt: true, ctrl: true)), '[1;8A');
     });
 
     test('enter, backspace and esc gain an ESC prefix under Alt', () {

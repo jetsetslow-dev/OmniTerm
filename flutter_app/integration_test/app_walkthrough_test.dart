@@ -46,11 +46,7 @@ void main() {
         Screen.tools,
       ]) {
         await goTo(tester, screen);
-        expect(
-          tester.takeException(),
-          isNull,
-          reason: '${screen.name} threw while rendering',
-        );
+        expect(tester.takeException(), isNull, reason: '${screen.name} threw while rendering');
       }
     });
 
@@ -117,9 +113,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('tools.about')));
       await tester.pumpAndSettle();
 
-      final text = tester
-          .widget<Text>(find.byKey(const ValueKey('about.diagnostics.text')))
-          .data!;
+      final text = tester.widget<Text>(find.byKey(const ValueKey('about.diagnostics.text'))).data!;
       expect(text, contains('Platform:'));
       expect(text, isNot(contains('@')), reason: 'no user@host may appear');
     });

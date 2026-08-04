@@ -26,16 +26,15 @@ final List<_DangerRule> _rules = [
   (RegExp(r'>+\s*/dev/(sd|nvme|mmcblk|vd|hd)'), 'writing directly to a block device'),
   (RegExp(r'\b(shutdown|poweroff|halt)\b'), 'host shutdown'),
   (
-    RegExp(r'\breboot\b|\binit\s+[06]\b|\bsystemctl\s+(reboot|poweroff|halt|kexec|emergency|rescue)\b'),
+    RegExp(
+      r'\breboot\b|\binit\s+[06]\b|\bsystemctl\s+(reboot|poweroff|halt|kexec|emergency|rescue)\b',
+    ),
     'host reboot/shutdown',
   ),
   (RegExp(r'\b(userdel|groupdel)\b'), 'account deletion'),
   // Same fix as `dd`: the flag may appear after other arguments, so `iptables -t nat -F` — a flush
   // of the NAT table — counts. `(-\w+\s+)*` could not express that.
-  (
-    RegExp(r'\biptables\b[^;&|\n]*\s-F\b|\bnft\s+flush\b|\bufw\s+disable\b'),
-    'firewall teardown',
-  ),
+  (RegExp(r'\biptables\b[^;&|\n]*\s-F\b|\bnft\s+flush\b|\bufw\s+disable\b'), 'firewall teardown'),
   // Only when applied to an absolute path — `chmod 777 ./build` is careless, not catastrophic.
   (RegExp(r'\bchmod\s+(-\w+\s+)*[0-7]*777\s+/\S*'), 'world-writable permission change'),
   (RegExp(r':\s*\(\s*\)\s*\{'), 'fork bomb'),
@@ -44,9 +43,9 @@ final List<_DangerRule> _rules = [
 
 /// The danger labels matching [command], in severity order. Empty when nothing matched.
 List<String> commandDangerHits(String command) => [
-      for (final (pattern, label) in _rules)
-        if (pattern.hasMatch(command)) label,
-    ];
+  for (final (pattern, label) in _rules)
+    if (pattern.hasMatch(command)) label,
+];
 
 /// A sentence for the confirmation dialog, or null when [command] looks ordinary.
 ///

@@ -132,10 +132,7 @@ Future<List<int>> _derive(String pin, List<int> salt, int iterations) async {
     iterations: iterations,
     bits: pinHashBytes * 8,
   );
-  final key = await pbkdf2.deriveKey(
-    secretKey: SecretKey(utf8.encode(pin)),
-    nonce: salt,
-  );
+  final key = await pbkdf2.deriveKey(secretKey: SecretKey(utf8.encode(pin)), nonce: salt);
   return key.extractBytes();
 }
 

@@ -30,11 +30,7 @@ void main() {
     await db.close();
   });
 
-  Server server({
-    required String name,
-    String host = '10.0.0.1',
-    String? password = 'hunter2',
-  }) =>
+  Server server({required String name, String host = '10.0.0.1', String? password = 'hunter2'}) =>
       Server(
         id: 0,
         name: name,
@@ -123,9 +119,7 @@ void main() {
       final vm = await boot();
 
       final document = await exportedDocument(vm, passphrase: 'pass');
-      final keys = (document['settings'] as List)
-          .map((s) => (s as Map)['key'] as String)
-          .toList();
+      final keys = (document['settings'] as List).map((s) => (s as Map)['key'] as String).toList();
       expect(keys, contains('theme'));
       expect(keys, isNot(contains('app_pin')));
       vm.dispose();
@@ -208,8 +202,10 @@ void main() {
 
       // A different device: a fresh database with nothing in it.
       final freshDb = AppDatabase(NativeDatabase.memory());
-      final freshRepo =
-          AppRepository(freshDb, SecretStore(storage: FakeSecureStorage(<String, String>{})));
+      final freshRepo = AppRepository(
+        freshDb,
+        SecretStore(storage: FakeSecureStorage(<String, String>{})),
+      );
       final freshApp = AppState(freshRepo);
       await freshApp.start();
       final freshVm = BackupViewModel(freshApp);
@@ -235,8 +231,10 @@ void main() {
       final contents = await vm.exportBackup('pass');
 
       final freshDb = AppDatabase(NativeDatabase.memory());
-      final freshRepo =
-          AppRepository(freshDb, SecretStore(storage: FakeSecureStorage(<String, String>{})));
+      final freshRepo = AppRepository(
+        freshDb,
+        SecretStore(storage: FakeSecureStorage(<String, String>{})),
+      );
       final freshApp = AppState(freshRepo);
       await freshApp.start();
       final freshVm = BackupViewModel(freshApp);
@@ -244,8 +242,11 @@ void main() {
 
       final restored = (await freshRepo.getAllServers()).single;
       expect(restored.status, 'offline');
-      expect(restored.healthScore, 100,
-          reason: 'a health figure for a connection never made here would be a lie');
+      expect(
+        restored.healthScore,
+        100,
+        reason: 'a health figure for a connection never made here would be a lie',
+      );
 
       freshVm.dispose();
       freshApp.dispose();
@@ -281,8 +282,10 @@ void main() {
       final contents = await vm.exportBackup('pass');
 
       final freshDb = AppDatabase(NativeDatabase.memory());
-      final freshRepo =
-          AppRepository(freshDb, SecretStore(storage: FakeSecureStorage(<String, String>{})));
+      final freshRepo = AppRepository(
+        freshDb,
+        SecretStore(storage: FakeSecureStorage(<String, String>{})),
+      );
       final freshApp = AppState(freshRepo);
       await freshApp.start();
       // Something already occupies id 1, so the restored host cannot keep its old id.
@@ -292,8 +295,11 @@ void main() {
 
       final restoredHost = (await freshRepo.getAllServers()).firstWhere((s) => s.name == 'nas');
       final rule = (await freshRepo.getAllRules()).single;
-      expect(rule.serverId, restoredHost.id,
-          reason: 'the rule must watch the host it came with, not whichever id it used to have');
+      expect(
+        rule.serverId,
+        restoredHost.id,
+        reason: 'the rule must watch the host it came with, not whichever id it used to have',
+      );
 
       freshVm.dispose();
       freshApp.dispose();
@@ -314,15 +320,20 @@ void main() {
       final contents = await vm.exportBackup('pass');
 
       final freshDb = AppDatabase(NativeDatabase.memory());
-      final freshRepo =
-          AppRepository(freshDb, SecretStore(storage: FakeSecureStorage(<String, String>{})));
+      final freshRepo = AppRepository(
+        freshDb,
+        SecretStore(storage: FakeSecureStorage(<String, String>{})),
+      );
       final freshApp = AppState(freshRepo);
       await freshApp.start();
       final freshVm = BackupViewModel(freshApp);
       await freshVm.importBackup(contents!, 'pass');
 
-      expect((await freshRepo.getAllRules()).single.serverId, 0,
-          reason: 'remapping it would narrow a rule watching every host to just one');
+      expect(
+        (await freshRepo.getAllRules()).single.serverId,
+        0,
+        reason: 'remapping it would narrow a rule watching every host to just one',
+      );
 
       freshVm.dispose();
       freshApp.dispose();
@@ -332,7 +343,8 @@ void main() {
 
     test('a rule whose host is missing is skipped and reported', () async {
       // Restoring it against an arbitrary host would silently point it at the wrong machine.
-      const orphan = '{"v":2,"alertRules":[{"serverId":99,"metricName":"CPU Usage",'
+      const orphan =
+          '{"v":2,"alertRules":[{"serverId":99,"metricName":"CPU Usage",'
           '"thresholdValue":80,"severity":"WARNING"}]}';
       final vm = await boot();
       final counts = await vm.importBackup(orphan, '');
@@ -382,7 +394,8 @@ void main() {
     test('an unknown section in the file is ignored, not fatal', () async {
       // A backup from a newer build must not be unreadable by an older one.
       final vm = await boot();
-      const withExtra = '{"v":99,"somethingNew":[{"a":1}],'
+      const withExtra =
+          '{"v":99,"somethingNew":[{"a":1}],'
           '"wolTargets":[{"name":"nas","macAddress":"aa:bb:cc:dd:ee:ff"}]}';
       await vm.importBackup(withExtra, '');
 
@@ -401,8 +414,11 @@ void main() {
 
     final vm = await boot();
     final document = await exportedDocument(vm, passphrase: 'pass');
-    expect(document['scripts'], isEmpty,
-        reason: 'a fresh install re-seeds these, so exporting them would duplicate defaults');
+    expect(
+      document['scripts'],
+      isEmpty,
+      reason: 'a fresh install re-seeds these, so exporting them would duplicate defaults',
+    );
     expect(kHomelabPresets, isNotEmpty, reason: 'the presets really were seeded');
     vm.dispose();
   });

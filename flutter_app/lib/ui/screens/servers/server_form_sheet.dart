@@ -37,10 +37,7 @@ class ServerFormSheet extends StatefulWidget {
 }
 
 class _ServerFormSheetState extends State<ServerFormSheet> {
-  late final ServerFormState _form = ServerFormState(
-    mode: widget.mode,
-    source: widget.source,
-  );
+  late final ServerFormState _form = ServerFormState(mode: widget.mode, source: widget.source);
 
   bool _testing = false;
   String? _testResult;
@@ -54,10 +51,10 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
   }
 
   String get _title => switch (widget.mode) {
-        ServerFormMode.add => 'Add host',
-        ServerFormMode.edit => 'Edit host',
-        ServerFormMode.duplicate => 'Duplicate host',
-      };
+    ServerFormMode.add => 'Add host',
+    ServerFormMode.edit => 'Edit host',
+    ServerFormMode.duplicate => 'Duplicate host',
+  };
 
   Future<void> _test() async {
     final tester = widget.onTestConnection;
@@ -84,8 +81,9 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
       return;
     }
     if (_form.requiresConnectionTest) {
-      setState(() => _saveError =
-          'Test the connection before saving, so the host key can be verified.');
+      setState(
+        () => _saveError = 'Test the connection before saving, so the host key can be verified.',
+      );
       return;
     }
     await widget.onSave(_form.toServer());
@@ -108,9 +106,7 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
                 padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
                 child: Row(
                   children: [
-                    Expanded(
-                      child: Text(_title, style: Theme.of(context).textTheme.titleLarge),
-                    ),
+                    Expanded(child: Text(_title, style: Theme.of(context).textTheme.titleLarge)),
                     IconButton(
                       key: const ValueKey('serverForm.close'),
                       icon: const Icon(Icons.close),

@@ -89,8 +89,7 @@ class ShellViewModel extends ChangeNotifier {
   /// Online only, matching the other live tabs. Forcing SSH to a host the app believes is down is
   /// done from the Hosts tab's connect button, which warns first — offering it here as an ordinary
   /// choice would hide that warning.
-  List<Server> get connectableServers =>
-      _app.servers.where((s) => s.status == 'online').toList();
+  List<Server> get connectableServers => _app.servers.where((s) => s.status == 'online').toList();
 
   /// The host the screen is showing.
   ///
@@ -169,8 +168,9 @@ class ShellViewModel extends ChangeNotifier {
     try {
       // The same bound the Settings screen enforces, applied again on read: a hand-edited or
       // corrupt row must not be allowed to allocate a scrollback that exhausts the device.
-      final scrollbackLimit = PreferenceLimits.terminalScrollback
-          .parse(await _app.repository.getSetting('terminal_scrollback_limit'));
+      final scrollbackLimit = PreferenceLimits.terminalScrollback.parse(
+        await _app.repository.getSetting('terminal_scrollback_limit'),
+      );
       final creds = resolveCredentials(
         server,
         keys: await _app.repository.getAllKeys(),
@@ -221,8 +221,9 @@ class ShellViewModel extends ChangeNotifier {
           'The host key for ${server.name} has CHANGED. This is what a machine-in-the-middle looks '
               'like. If you rebuilt or replaced this server, remove its pinned key under '
               'Tools › Auth & keys and connect again — otherwise do not.',
-        _ => 'The host key for ${server.name} was not accepted, so the connection was refused. '
-            'Connect again to see the fingerprint prompt.',
+        _ =>
+          'The host key for ${server.name} was not accepted, so the connection was refused. '
+              'Connect again to see the fingerprint prompt.',
       };
     } on SshConnectException catch (e) {
       _error = e.message;

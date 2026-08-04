@@ -147,8 +147,9 @@ class DartSshTransport implements SshTransport {
         onPasswordRequest: () => creds.password,
         identities: _keyPairs(creds.privateKeyPem, creds.passphrase),
         onVerifyHostKey: _verifier(creds.host, creds.port),
-        keepAliveInterval:
-            creds.keepAliveSeconds > 0 ? Duration(seconds: creds.keepAliveSeconds) : null,
+        keepAliveInterval: creds.keepAliveSeconds > 0
+            ? Duration(seconds: creds.keepAliveSeconds)
+            : null,
       );
       await client.authenticated;
 
@@ -201,10 +202,7 @@ class DartSshTransport implements SshTransport {
 
       final out = CappedTextBuffer(_execOutputMaxChars);
       final err = CappedTextBuffer(_execOutputMaxChars);
-      await Future.wait([
-        _drain(session.stdout, out),
-        _drain(session.stderr, err),
-      ]);
+      await Future.wait([_drain(session.stdout, out), _drain(session.stderr, err)]);
       await session.done;
 
       final combined = StringBuffer(out.text());
@@ -319,8 +317,7 @@ class DartSshTransport implements SshTransport {
   /// carrying the status plus whatever the command managed to say on failure.
   static String _withExitStatus(String output, int? exitCode) {
     if (exitCode == 0) return output;
-    final detail =
-        output.trim().isEmpty ? 'Command exited with status $exitCode' : output;
+    final detail = output.trim().isEmpty ? 'Command exited with status $exitCode' : output;
     return 'SSH Error: command failed ($exitCode): $detail';
   }
 
@@ -389,10 +386,7 @@ class DartSshTransport implements SshTransport {
       // rejected optional request must never cost the user their shell (§15.9).
       SSHSession session;
       try {
-        session = await client.shell(
-          pty: pty,
-          environment: const {'COLORTERM': 'truecolor'},
-        );
+        session = await client.shell(pty: pty, environment: const {'COLORTERM': 'truecolor'});
       } on SSHChannelRequestError {
         session = await client.shell(pty: pty);
       }

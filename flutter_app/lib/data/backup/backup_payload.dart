@@ -178,10 +178,7 @@ class BackupPayload {
   /// there is no undo for that.
   ///
   /// Returns a per-section count of what was written.
-  static Future<Map<String, int>> restore(
-    AppRepositoryLike repository,
-    String json,
-  ) async {
+  static Future<Map<String, int>> restore(AppRepositoryLike repository, String json) async {
     final Map<String, dynamic> document;
     try {
       document = jsonDecode(json) as Map<String, dynamic>;
@@ -274,109 +271,109 @@ class RepositoryRestoreTarget implements AppRepositoryLike {
 
   @override
   Future<int> insertRestoredServer(Map<String, dynamic> row) => _repository.insertServer(
-        Server(
-          id: 0,
-          name: row['name'] as String? ?? 'Restored host',
-          host: row['host'] as String? ?? '',
-          port: row['port'] as int? ?? 22,
-          username: row['username'] as String? ?? '',
-          groupName: row['groupName'] as String?,
-          serverColor: row['serverColor'] as String? ?? 'Default',
-          authType: row['authType'] as String? ?? 'password',
-          authKeyAlias: row['authKeyAlias'] as String?,
-          authPassword: row['authPassword'] as String?,
-          sudoPassword: row['sudoPassword'] as String? ?? '',
-          authProfileId: row['authProfileId'] as int?,
-          notes: row['notes'] as String? ?? '',
-          keepAlive: row['keepAlive'] as int? ?? 30,
-          sshCompression: row['sshCompression'] as bool? ?? false,
-          persistentSession: row['persistentSession'] as bool? ?? false,
-          proxyCommand: '',
-          proxyType: row['proxyType'] as String? ?? 'none',
-          proxyHost: row['proxyHost'] as String? ?? '',
-          proxyPort: row['proxyPort'] as int? ?? 0,
-          proxyUser: row['proxyUser'] as String? ?? '',
-          proxyPassword: row['proxyPassword'] as String? ?? '',
-          proxyKeyAlias: row['proxyKeyAlias'] as String?,
-          agentForwarding: row['agentForwarding'] as bool? ?? false,
-          // A restored host has not been probed yet; carrying its old score would show a health
-          // figure for a connection that has never been made on this device.
-          healthScore: 100,
-          lastLatency: 0,
-          status: 'offline',
-          authStatus: 'unknown',
-        ),
-      );
+    Server(
+      id: 0,
+      name: row['name'] as String? ?? 'Restored host',
+      host: row['host'] as String? ?? '',
+      port: row['port'] as int? ?? 22,
+      username: row['username'] as String? ?? '',
+      groupName: row['groupName'] as String?,
+      serverColor: row['serverColor'] as String? ?? 'Default',
+      authType: row['authType'] as String? ?? 'password',
+      authKeyAlias: row['authKeyAlias'] as String?,
+      authPassword: row['authPassword'] as String?,
+      sudoPassword: row['sudoPassword'] as String? ?? '',
+      authProfileId: row['authProfileId'] as int?,
+      notes: row['notes'] as String? ?? '',
+      keepAlive: row['keepAlive'] as int? ?? 30,
+      sshCompression: row['sshCompression'] as bool? ?? false,
+      persistentSession: row['persistentSession'] as bool? ?? false,
+      proxyCommand: '',
+      proxyType: row['proxyType'] as String? ?? 'none',
+      proxyHost: row['proxyHost'] as String? ?? '',
+      proxyPort: row['proxyPort'] as int? ?? 0,
+      proxyUser: row['proxyUser'] as String? ?? '',
+      proxyPassword: row['proxyPassword'] as String? ?? '',
+      proxyKeyAlias: row['proxyKeyAlias'] as String?,
+      agentForwarding: row['agentForwarding'] as bool? ?? false,
+      // A restored host has not been probed yet; carrying its old score would show a health
+      // figure for a connection that has never been made on this device.
+      healthScore: 100,
+      lastLatency: 0,
+      status: 'offline',
+      authStatus: 'unknown',
+    ),
+  );
 
   @override
   Future<void> insertRestoredKey(Map<String, dynamic> row) => _repository.insertKey(
-        SshKey(
-          id: 0,
-          alias: row['alias'] as String? ?? 'restored',
-          keyType: row['keyType'] as String? ?? 'SSH Key',
-          privateKey: row['privateKey'] as String? ?? '',
-          publicKey: row['publicKey'] as String? ?? '',
-          fingerprint: row['fingerprint'] as String? ?? '',
-        ),
-      );
+    SshKey(
+      id: 0,
+      alias: row['alias'] as String? ?? 'restored',
+      keyType: row['keyType'] as String? ?? 'SSH Key',
+      privateKey: row['privateKey'] as String? ?? '',
+      publicKey: row['publicKey'] as String? ?? '',
+      fingerprint: row['fingerprint'] as String? ?? '',
+    ),
+  );
 
   @override
   Future<void> insertRestoredProfile(Map<String, dynamic> row) => _repository.insertProfile(
-        CredentialProfile(
-          id: 0,
-          profileName: row['profileName'] as String? ?? 'Restored profile',
-          username: row['username'] as String? ?? '',
-          authType: row['authType'] as String? ?? 'password',
-          password: row['password'] as String?,
-          keyAlias: row['keyAlias'] as String?,
-          groupName: row['groupName'] as String? ?? 'General',
-        ),
-      );
+    CredentialProfile(
+      id: 0,
+      profileName: row['profileName'] as String? ?? 'Restored profile',
+      username: row['username'] as String? ?? '',
+      authType: row['authType'] as String? ?? 'password',
+      password: row['password'] as String?,
+      keyAlias: row['keyAlias'] as String?,
+      groupName: row['groupName'] as String? ?? 'General',
+    ),
+  );
 
   @override
   Future<void> insertRestoredScript(Map<String, dynamic> row) => _repository.insertScript(
-        QuickScriptsCompanion.insert(
-          emoji: row['emoji'] as String? ?? '»',
-          name: row['name'] as String? ?? 'Restored script',
-          command: row['command'] as String? ?? '',
-          color: row['color'] as String? ?? 'cyan',
-          longRunning: Value(row['longRunning'] as bool? ?? false),
-          category: Value(row['category'] as String? ?? 'General'),
-          sortOrder: Value(row['sortOrder'] as int? ?? 0),
-          availableForQuick: Value(row['availableForQuick'] as bool? ?? true),
-          availableForFleet: Value(row['availableForFleet'] as bool? ?? false),
-          targetOs: Value(row['targetOs'] as String? ?? 'Any'),
-          targetSystem: Value(row['targetSystem'] as String? ?? 'Any'),
-          notes: Value(row['notes'] as String? ?? ''),
-          presetKey: Value(row['presetKey'] as String?),
-        ),
-      );
+    QuickScriptsCompanion.insert(
+      emoji: row['emoji'] as String? ?? '»',
+      name: row['name'] as String? ?? 'Restored script',
+      command: row['command'] as String? ?? '',
+      color: row['color'] as String? ?? 'cyan',
+      longRunning: Value(row['longRunning'] as bool? ?? false),
+      category: Value(row['category'] as String? ?? 'General'),
+      sortOrder: Value(row['sortOrder'] as int? ?? 0),
+      availableForQuick: Value(row['availableForQuick'] as bool? ?? true),
+      availableForFleet: Value(row['availableForFleet'] as bool? ?? false),
+      targetOs: Value(row['targetOs'] as String? ?? 'Any'),
+      targetSystem: Value(row['targetSystem'] as String? ?? 'Any'),
+      notes: Value(row['notes'] as String? ?? ''),
+      presetKey: Value(row['presetKey'] as String?),
+    ),
+  );
 
   @override
   Future<void> insertRestoredRule(Map<String, dynamic> row) => _repository.insertRule(
-        AlertRulesCompanion.insert(
-          serverId: row['serverId'] as int? ?? 0,
-          metricName: row['metricName'] as String? ?? 'CPU Usage',
-          mountPoint: Value(row['mountPoint'] as String? ?? '/'),
-          thresholdValue: (row['thresholdValue'] as num?)?.toDouble() ?? 90,
-          severity: row['severity'] as String? ?? 'WARNING',
-          triggerWindow: Value(row['triggerWindow'] as String? ?? '5m'),
-          enabled: Value(row['enabled'] as bool? ?? true),
-          notes: Value(row['notes'] as String? ?? ''),
-          presetKey: Value(row['presetKey'] as String?),
-        ),
-      );
+    AlertRulesCompanion.insert(
+      serverId: row['serverId'] as int? ?? 0,
+      metricName: row['metricName'] as String? ?? 'CPU Usage',
+      mountPoint: Value(row['mountPoint'] as String? ?? '/'),
+      thresholdValue: (row['thresholdValue'] as num?)?.toDouble() ?? 90,
+      severity: row['severity'] as String? ?? 'WARNING',
+      triggerWindow: Value(row['triggerWindow'] as String? ?? '5m'),
+      enabled: Value(row['enabled'] as bool? ?? true),
+      notes: Value(row['notes'] as String? ?? ''),
+      presetKey: Value(row['presetKey'] as String?),
+    ),
+  );
 
   @override
   Future<void> insertRestoredWolTarget(Map<String, dynamic> row) => _repository.insertWolTarget(
-        WolTargetsCompanion.insert(
-          name: row['name'] as String? ?? 'Restored target',
-          macAddress: row['macAddress'] as String? ?? '',
-          broadcastIp: Value(row['broadcastIp'] as String? ?? '255.255.255.255'),
-          ipAddress: Value(row['ipAddress'] as String? ?? ''),
-          port: Value(row['port'] as int? ?? 9),
-        ),
-      );
+    WolTargetsCompanion.insert(
+      name: row['name'] as String? ?? 'Restored target',
+      macAddress: row['macAddress'] as String? ?? '',
+      broadcastIp: Value(row['broadcastIp'] as String? ?? '255.255.255.255'),
+      ipAddress: Value(row['ipAddress'] as String? ?? ''),
+      port: Value(row['port'] as int? ?? 9),
+    ),
+  );
 
   @override
   Future<void> insertRestoredSetting(String key, String value) =>

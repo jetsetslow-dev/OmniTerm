@@ -246,10 +246,7 @@ class _RuntimeError extends StatelessWidget {
           const SizedBox(height: 8),
           Container(
             constraints: const BoxConstraints(maxHeight: 220),
-            decoration: BoxDecoration(
-              color: Colors.black,
-              borderRadius: BorderRadius.circular(6),
-            ),
+            decoration: BoxDecoration(color: Colors.black, borderRadius: BorderRadius.circular(6)),
             padding: const EdgeInsets.all(10),
             child: SingleChildScrollView(
               child: SelectionArea(

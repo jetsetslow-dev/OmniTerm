@@ -45,31 +45,31 @@ void main() {
   }
 
   Server server({required String name, String? keyAlias}) => Server(
-        id: 0,
-        name: name,
-        host: '10.0.0.1',
-        port: 22,
-        username: 'root',
-        serverColor: 'Default',
-        authType: keyAlias != null ? 'key' : 'password',
-        authKeyAlias: keyAlias,
-        sudoPassword: '',
-        notes: '',
-        keepAlive: 30,
-        sshCompression: false,
-        persistentSession: false,
-        proxyCommand: '',
-        proxyType: 'none',
-        proxyHost: '',
-        proxyPort: 0,
-        proxyUser: '',
-        proxyPassword: '',
-        agentForwarding: false,
-        healthScore: 100,
-        lastLatency: 0,
-        status: 'offline',
-        authStatus: 'unknown',
-      );
+    id: 0,
+    name: name,
+    host: '10.0.0.1',
+    port: 22,
+    username: 'root',
+    serverColor: 'Default',
+    authType: keyAlias != null ? 'key' : 'password',
+    authKeyAlias: keyAlias,
+    sudoPassword: '',
+    notes: '',
+    keepAlive: 30,
+    sshCompression: false,
+    persistentSession: false,
+    proxyCommand: '',
+    proxyType: 'none',
+    proxyHost: '',
+    proxyPort: 0,
+    proxyUser: '',
+    proxyPassword: '',
+    agentForwarding: false,
+    healthScore: 100,
+    lastLatency: 0,
+    status: 'offline',
+    authStatus: 'unknown',
+  );
 
   Future<void> pump(WidgetTester tester, {SshHostKeyTrust? trust}) async {
     await app.start();
@@ -106,10 +106,8 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('authKeys.importKey')));
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(const ValueKey('authKeys.import.alias')), 'laptop');
-      await tester.enterText(
-          find.byKey(const ValueKey('authKeys.import.private')), testPrivateKey);
-      await tester.enterText(
-          find.byKey(const ValueKey('authKeys.import.public')), testPublicKey);
+      await tester.enterText(find.byKey(const ValueKey('authKeys.import.private')), testPrivateKey);
+      await tester.enterText(find.byKey(const ValueKey('authKeys.import.public')), testPublicKey);
       await tester.tap(find.byKey(const ValueKey('authKeys.import.save')));
       await tester.pumpAndSettle();
 
@@ -126,15 +124,17 @@ void main() {
       await tester.pumpAndSettle();
       await tester.enterText(find.byKey(const ValueKey('authKeys.import.alias')), 'oops');
       // Pasting the public key into the private field is the most likely mistake.
-      await tester.enterText(
-          find.byKey(const ValueKey('authKeys.import.private')), testPublicKey);
+      await tester.enterText(find.byKey(const ValueKey('authKeys.import.private')), testPublicKey);
       await tester.tap(find.byKey(const ValueKey('authKeys.import.save')));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('authKeys.import.error')), findsOneWidget);
       expect(find.textContaining('public key'), findsWidgets);
-      expect(find.byKey(const ValueKey('authKeys.import.save')), findsOneWidget,
-          reason: 'the sheet stays open so the paste can be corrected');
+      expect(
+        find.byKey(const ValueKey('authKeys.import.save')),
+        findsOneWidget,
+        reason: 'the sheet stays open so the paste can be corrected',
+      );
       await finish(tester);
     });
   });
@@ -237,9 +237,7 @@ void main() {
       await vm.saveProfile(profileName: 'shared', username: 'deploy', authType: 'password');
       await tester.pumpAndSettle();
       final profile = vm.profiles.single;
-      await repo.insertServer(
-        server(name: 'web-prod').copyWith(authProfileId: Value(profile.id)),
-      );
+      await repo.insertServer(server(name: 'web-prod').copyWith(authProfileId: Value(profile.id)));
       await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(ValueKey('authKeys.profile.${profile.id}.delete')));

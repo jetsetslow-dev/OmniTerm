@@ -90,11 +90,10 @@ class TerminalSnapshot {
     this.firstRow = 0,
     int? totalRows,
     this.trimmedRows = 0,
-  })  :
-        // Not an initializing formal: the parameter is public (`totalRows`) while the field is
-        // private, so the names cannot match.
-        // ignore: prefer_initializing_formals
-        _totalRows = totalRows;
+  }) : // Not an initializing formal: the parameter is public (`totalRows`) while the field is
+       // private, so the names cannot match.
+       // ignore: prefer_initializing_formals
+       _totalRows = totalRows;
 
   final List<TermRow> rows;
   final int cursorRow;

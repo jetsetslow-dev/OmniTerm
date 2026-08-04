@@ -173,7 +173,11 @@ class AlertRules extends Table {
 /// One rule can have one live incident per concrete host, enforced by a unique index; older builds
 /// could race manual and periodic telemetry probes and produce duplicates.
 @DataClassName('ActiveAlert')
-@TableIndex(name: 'index_active_alerts_ruleId_serverId', columns: {#ruleId, #serverId}, unique: true)
+@TableIndex(
+  name: 'index_active_alerts_ruleId_serverId',
+  columns: {#ruleId, #serverId},
+  unique: true,
+)
 class ActiveAlerts extends Table {
   @override
   String get tableName => 'active_alerts';
@@ -357,7 +361,11 @@ class PortForwards extends Table {
 /// files. Rows leave only via the user's explicit Forget. A stack downed before OmniTerm ever saw
 /// it up cannot be listed — there was nothing to record.
 @DataClassName('StackRegistryRow')
-@TableIndex(name: 'index_stack_registry_serverId_runtime_project', columns: {#serverId, #runtime, #project}, unique: true)
+@TableIndex(
+  name: 'index_stack_registry_serverId_runtime_project',
+  columns: {#serverId, #runtime, #project},
+  unique: true,
+)
 class StackRegistry extends Table {
   @override
   String get tableName => 'stack_registry';

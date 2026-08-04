@@ -68,10 +68,7 @@ void main() {
       expect(find.byKey(ValueKey('healthScoring.metric.${metric.name}')), findsOneWidget);
       for (final tier in ['warn', 'high', 'critical']) {
         expect(find.byKey(ValueKey('healthScoring.${metric.name}.${tier}At')), findsOneWidget);
-        expect(
-          find.byKey(ValueKey('healthScoring.${metric.name}.${tier}Penalty')),
-          findsOneWidget,
-        );
+        expect(find.byKey(ValueKey('healthScoring.${metric.name}.${tier}Penalty')), findsOneWidget);
       }
     }
     await finish(tester);
@@ -93,10 +90,7 @@ void main() {
         .previewFor(cpuPercent: 60, memoryPercent: 75, diskPercent: 85, latencyMs: 60)!
         .score;
 
-    await tester.enterText(
-      find.byKey(const ValueKey('healthScoring.cpu.warnPenalty')),
-      '40',
-    );
+    await tester.enterText(find.byKey(const ValueKey('healthScoring.cpu.warnPenalty')), '40');
     await tester.pumpAndSettle();
 
     final after = vm

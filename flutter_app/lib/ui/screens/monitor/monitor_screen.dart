@@ -80,9 +80,7 @@ class _SelectorBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final online = context.select<MonitorViewModel, List<Server>>(
-      (m) => m.onlineServers,
-    );
+    final online = context.select<MonitorViewModel, List<Server>>((m) => m.onlineServers);
     final accent = OmniColors.serverAccent(server.serverColor, server.name);
 
     // HostDisplay is an observable singleton, so it must be listened to rather than merely read —
@@ -127,11 +125,7 @@ class _SelectorBar extends StatelessWidget {
     );
   }
 
-  Future<void> _confirmReboot(
-    BuildContext context,
-    MonitorViewModel vm,
-    Server server,
-  ) async {
+  Future<void> _confirmReboot(BuildContext context, MonitorViewModel vm, Server server) async {
     // Rebooting is destructive and irreversible from the app's side, so it is always confirmed and
     // the dialog says plainly what will run and what it needs.
     final confirmed = await showDialog<bool>(
@@ -184,8 +178,8 @@ class _ScoreRing extends StatelessWidget {
               score >= 70
                   ? OmniColors.green
                   : score >= 40
-                      ? OmniColors.amber
-                      : OmniColors.red,
+                  ? OmniColors.amber
+                  : OmniColors.red,
             ),
           ),
           Text(
@@ -252,10 +246,7 @@ class _ErrorBanner extends StatelessWidget {
       child: OmniCard(
         key: const ValueKey('monitor.error'),
         leftAccent: OmniColors.red,
-        child: Text(
-          message,
-          style: const TextStyle(fontSize: 12, fontFamily: OmniFonts.mono),
-        ),
+        child: Text(message, style: const TextStyle(fontSize: 12, fontFamily: OmniFonts.mono)),
       ),
     );
   }

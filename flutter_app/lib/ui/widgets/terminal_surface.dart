@@ -13,7 +13,11 @@ import '../view_model/shell_session.dart';
 /// file, and hard-coding a ratio makes the grid drift from what is actually painted — which shows up
 /// as a full-screen app whose right-hand border is one column off.
 class TerminalMetrics {
-  const TerminalMetrics({required this.cellWidth, required this.cellHeight, required this.fontSize});
+  const TerminalMetrics({
+    required this.cellWidth,
+    required this.cellHeight,
+    required this.fontSize,
+  });
 
   final double cellWidth;
   final double cellHeight;
@@ -22,9 +26,9 @@ class TerminalMetrics {
   /// How many whole cells fit in [size], floored — a partially visible column is not a column the
   /// remote may draw into.
   (int, int) gridFor(Size size) => (
-        math.max(1, (size.width / cellWidth).floor()),
-        math.max(1, (size.height / cellHeight).floor()),
-      );
+    math.max(1, (size.width / cellWidth).floor()),
+    math.max(1, (size.height / cellHeight).floor()),
+  );
 
   static final Map<double, TerminalMetrics> _cache = {};
 
@@ -36,11 +40,7 @@ class TerminalMetrics {
             // A wide-ish ASCII glyph: in a monospace font every advance is identical, so one is
             // enough, and 'M' is the conventional choice.
             text: 'M',
-            style: TextStyle(
-              fontFamily: OmniFonts.mono,
-              fontSize: fontSize,
-              height: lineHeight,
-            ),
+            style: TextStyle(fontFamily: OmniFonts.mono, fontSize: fontSize, height: lineHeight),
           ),
           textDirection: TextDirection.ltr,
         )..layout();
@@ -147,7 +147,10 @@ class TerminalPainter extends CustomPainter {
 
   void _paintText(Canvas canvas, String text, TextStyle style, double x, double y) {
     if (text.trim().isEmpty) return;
-    TextPainter(text: TextSpan(text: text, style: style), textDirection: TextDirection.ltr)
+    TextPainter(
+        text: TextSpan(text: text, style: style),
+        textDirection: TextDirection.ltr,
+      )
       ..layout()
       ..paint(canvas, Offset(x, y));
   }

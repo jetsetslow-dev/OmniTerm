@@ -257,8 +257,10 @@ void main() {
       final preset = vm.allScripts.firstWhere((s) => s.presetKey == 'fleet.disk');
       await vm.saveScript(existing: preset, name: preset.name, command: 'my own command');
       await settle();
-      expect(vm.allScripts.firstWhere((s) => s.presetKey == 'fleet.disk').command,
-          'my own command');
+      expect(
+        vm.allScripts.firstWhere((s) => s.presetKey == 'fleet.disk').command,
+        'my own command',
+      );
 
       await vm.setPresetsEnabled(fleet: true, enabled: true);
       await settle();

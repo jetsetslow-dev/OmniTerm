@@ -50,7 +50,11 @@ void main() {
       autoApprove(true);
       expect(
         await trust.check(
-            host: 'nas', port: 22, keyType: 'ssh-ed25519', fingerprint: fingerprintFor('a')),
+          host: 'nas',
+          port: 22,
+          keyType: 'ssh-ed25519',
+          fingerprint: fingerprintFor('a'),
+        ),
         HostKeyVerdict.ok,
       );
 
@@ -58,7 +62,11 @@ void main() {
       trust.clearApprovalHandler(Object());
       expect(
         await trust.check(
-            host: 'nas', port: 22, keyType: 'ssh-ed25519', fingerprint: fingerprintFor('a')),
+          host: 'nas',
+          port: 22,
+          keyType: 'ssh-ed25519',
+          fingerprint: fingerprintFor('a'),
+        ),
         HostKeyVerdict.ok,
       );
     });
@@ -67,7 +75,11 @@ void main() {
       autoApprove(false);
       expect(
         await trust.check(
-            host: 'nas', port: 22, keyType: 'ssh-ed25519', fingerprint: fingerprintFor('a')),
+          host: 'nas',
+          port: 22,
+          keyType: 'ssh-ed25519',
+          fingerprint: fingerprintFor('a'),
+        ),
         HostKeyVerdict.notIncluded,
       );
       expect(await store.readAll(), isEmpty);
@@ -75,8 +87,18 @@ void main() {
 
     test('new pins use the JSch alias convention', () async {
       autoApprove(true);
-      await trust.check(host: 'nas', port: 22, keyType: 'ssh-ed25519', fingerprint: fingerprintFor('a'));
-      await trust.check(host: 'box', port: 2222, keyType: 'ssh-rsa', fingerprint: fingerprintFor('b'));
+      await trust.check(
+        host: 'nas',
+        port: 22,
+        keyType: 'ssh-ed25519',
+        fingerprint: fingerprintFor('a'),
+      );
+      await trust.check(
+        host: 'box',
+        port: 2222,
+        keyType: 'ssh-rsa',
+        fingerprint: fingerprintFor('b'),
+      );
 
       final keys = (await store.readAll()).keys.toSet();
       expect(keys, contains('nas|ssh-ed25519'), reason: 'port 22 is written bare');
@@ -88,12 +110,20 @@ void main() {
     test('a different fingerprint for a pinned host reports changed', () async {
       autoApprove(true);
       await trust.check(
-          host: 'nas', port: 22, keyType: 'ssh-ed25519', fingerprint: fingerprintFor('a'));
+        host: 'nas',
+        port: 22,
+        keyType: 'ssh-ed25519',
+        fingerprint: fingerprintFor('a'),
+      );
 
       // An attacker's key arrives. Even with a handler that would approve anything, this must not
       // become an approval prompt — the pin already exists.
       final verdict = await trust.check(
-          host: 'nas', port: 22, keyType: 'ssh-ed25519', fingerprint: fingerprintFor('EVIL'));
+        host: 'nas',
+        port: 22,
+        keyType: 'ssh-ed25519',
+        fingerprint: fingerprintFor('EVIL'),
+      );
       expect(verdict, HostKeyVerdict.changed);
 
       // And the original pin must survive.
@@ -103,10 +133,19 @@ void main() {
     test('a different key type is a separate pin, not a change', () async {
       autoApprove(true);
       await trust.check(
-          host: 'nas', port: 22, keyType: 'ssh-ed25519', fingerprint: fingerprintFor('a'));
+        host: 'nas',
+        port: 22,
+        keyType: 'ssh-ed25519',
+        fingerprint: fingerprintFor('a'),
+      );
       // A host legitimately offers several host-key algorithms.
       expect(
-        await trust.check(host: 'nas', port: 22, keyType: 'ssh-rsa', fingerprint: fingerprintFor('b')),
+        await trust.check(
+          host: 'nas',
+          port: 22,
+          keyType: 'ssh-rsa',
+          fingerprint: fingerprintFor('b'),
+        ),
         HostKeyVerdict.ok,
       );
     });
@@ -121,7 +160,11 @@ void main() {
       // No approval handler at all — if the legacy pin were not understood this would fail closed.
       expect(
         await trust.check(
-            host: 'nas', port: 22, keyType: 'ssh-ed25519', fingerprint: fingerprintFor('a')),
+          host: 'nas',
+          port: 22,
+          keyType: 'ssh-ed25519',
+          fingerprint: fingerprintFor('a'),
+        ),
         HostKeyVerdict.ok,
       );
     });
@@ -130,7 +173,11 @@ void main() {
       await store.write('nas|ssh-ed25519', legacyStoredKey('a'));
       expect(
         await trust.check(
-            host: 'nas', port: 22, keyType: 'ssh-ed25519', fingerprint: fingerprintFor('EVIL')),
+          host: 'nas',
+          port: 22,
+          keyType: 'ssh-ed25519',
+          fingerprint: fingerprintFor('EVIL'),
+        ),
         HostKeyVerdict.changed,
       );
     });
@@ -140,7 +187,12 @@ void main() {
         final s = InMemoryHostKeyStore()..write('$alias|ssh-rsa', legacyStoredKey('a'));
         final t = SshHostKeyTrust(s);
         expect(
-          await t.check(host: 'box', port: 2222, keyType: 'ssh-rsa', fingerprint: fingerprintFor('a')),
+          await t.check(
+            host: 'box',
+            port: 2222,
+            keyType: 'ssh-rsa',
+            fingerprint: fingerprintFor('a'),
+          ),
           HostKeyVerdict.ok,
           reason: 'alias $alias must be honoured',
         );
@@ -152,7 +204,11 @@ void main() {
       // No handler, so an unrecognised pin must yield notIncluded, never ok.
       expect(
         await trust.check(
-            host: 'nas', port: 22, keyType: 'ssh-ed25519', fingerprint: fingerprintFor('a')),
+          host: 'nas',
+          port: 22,
+          keyType: 'ssh-ed25519',
+          fingerprint: fingerprintFor('a'),
+        ),
         HostKeyVerdict.notIncluded,
       );
     });
@@ -185,8 +241,11 @@ void main() {
 
       // The UI finally responds; completing an already-completed completer must not throw.
       expect(request.completer.isCompleted, isTrue);
-      expect(() => request.completer.complete(true), throwsStateError,
-          reason: 'documents that the request is already settled — callers must guard');
+      expect(
+        () => request.completer.complete(true),
+        throwsStateError,
+        reason: 'documents that the request is already settled — callers must guard',
+      );
     });
 
     test('a handler that throws fails closed', () async {
@@ -222,8 +281,18 @@ void main() {
     test('two approvals of the same key both succeed and pin once', () async {
       autoApprove(true);
       final results = await Future.wait([
-        trust.check(host: 'nas', port: 22, keyType: 'ssh-ed25519', fingerprint: fingerprintFor('a')),
-        trust.check(host: 'nas', port: 22, keyType: 'ssh-ed25519', fingerprint: fingerprintFor('a')),
+        trust.check(
+          host: 'nas',
+          port: 22,
+          keyType: 'ssh-ed25519',
+          fingerprint: fingerprintFor('a'),
+        ),
+        trust.check(
+          host: 'nas',
+          port: 22,
+          keyType: 'ssh-ed25519',
+          fingerprint: fingerprintFor('a'),
+        ),
       ]);
       expect(results, [HostKeyVerdict.ok, HostKeyVerdict.ok]);
       expect((await store.readAll()).length, 1);
@@ -234,8 +303,18 @@ void main() {
       // what stops the second from silently overwriting the first's pin.
       autoApprove(true);
       final results = await Future.wait([
-        trust.check(host: 'nas', port: 22, keyType: 'ssh-ed25519', fingerprint: fingerprintFor('a')),
-        trust.check(host: 'nas', port: 22, keyType: 'ssh-ed25519', fingerprint: fingerprintFor('b')),
+        trust.check(
+          host: 'nas',
+          port: 22,
+          keyType: 'ssh-ed25519',
+          fingerprint: fingerprintFor('a'),
+        ),
+        trust.check(
+          host: 'nas',
+          port: 22,
+          keyType: 'ssh-ed25519',
+          fingerprint: fingerprintFor('b'),
+        ),
       ]);
       expect(results, contains(HostKeyVerdict.ok));
       expect(results, contains(HostKeyVerdict.changed));
@@ -254,7 +333,11 @@ void main() {
 
       expect(
         await trust.check(
-            host: 'nas', port: 22, keyType: 'ssh-ed25519', fingerprint: fingerprintFor('a')),
+          host: 'nas',
+          port: 22,
+          keyType: 'ssh-ed25519',
+          fingerprint: fingerprintFor('a'),
+        ),
         HostKeyVerdict.ok,
         reason: "the newer ViewModel's handler must still be live",
       );
@@ -266,7 +349,11 @@ void main() {
       trust.clearApprovalHandler(owner);
       expect(
         await trust.check(
-            host: 'nas', port: 22, keyType: 'ssh-ed25519', fingerprint: fingerprintFor('a')),
+          host: 'nas',
+          port: 22,
+          keyType: 'ssh-ed25519',
+          fingerprint: fingerprintFor('a'),
+        ),
         HostKeyVerdict.notIncluded,
       );
     });
@@ -312,8 +399,11 @@ void main() {
         'new|ssh-rsa': fingerprintFor('b'),
       });
 
-      expect(await store.read('nas|ssh-ed25519'), fingerprintFor('a'),
-          reason: 'a restore must never become an interception vector');
+      expect(
+        await store.read('nas|ssh-ed25519'),
+        fingerprintFor('a'),
+        reason: 'a restore must never become an interception vector',
+      );
       expect(await store.read('new|ssh-rsa'), fingerprintFor('b'));
     });
 
@@ -382,7 +472,9 @@ void main() {
 
   group('CappedTextBuffer', () {
     test('keeps everything below the cap', () {
-      final buffer = CappedTextBuffer(100)..append('hello ')..append('world');
+      final buffer = CappedTextBuffer(100)
+        ..append('hello ')
+        ..append('world');
       expect(buffer.text(), 'hello world');
       expect(buffer.truncated, isFalse);
     });

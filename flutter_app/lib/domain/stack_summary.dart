@@ -113,11 +113,7 @@ List<StackSummary> summariseStacks(List<SimContainer> containers) {
 
     final portDetails = [
       for (final c in list.where((c) => c.ports != '—'))
-        ContainerPortDetail(
-          containerName: c.name,
-          serviceName: serviceNameOf(c),
-          ports: c.ports,
-        ),
+        ContainerPortDetail(containerName: c.name, serviceName: serviceNameOf(c), ports: c.ports),
     ];
 
     final byService = <String, List<SimContainer>>{};
@@ -134,10 +130,8 @@ List<StackSummary> summariseStacks(List<SimContainer> containers) {
         unhealthy: serviceContainers.where((c) => c.health == 'unhealthy').length,
         // A running container is the one worth acting on; an exited one is only a fallback so the
         // row still has a target.
-        containerId: serviceContainers
-                .where((c) => c.status == 'running')
-                .firstOrNull
-                ?.id ??
+        containerId:
+            serviceContainers.where((c) => c.status == 'running').firstOrNull?.id ??
             serviceContainers.firstOrNull?.id ??
             '',
         containers: [
@@ -145,8 +139,7 @@ List<StackSummary> summariseStacks(List<SimContainer> containers) {
             StackContainer(name: c.name, status: c.status, ports: c.ports),
         ],
       );
-    }).toList()
-      ..sort((a, b) => a.name.compareTo(b.name));
+    }).toList()..sort((a, b) => a.name.compareTo(b.name));
 
     final created = list.map((c) => c.createdAt).where((t) => t.isNotEmpty).toList()..sort();
 
@@ -168,7 +161,8 @@ List<StackSummary> summariseStacks(List<SimContainer> containers) {
           list.where((c) => c.composeConfigFiles.isNotEmpty).firstOrNull?.composeConfigFiles ?? '',
         ),
         configFiles:
-            list.where((c) => c.composeConfigFiles.isNotEmpty).firstOrNull?.composeConfigFiles ?? '',
+            list.where((c) => c.composeConfigFiles.isNotEmpty).firstOrNull?.composeConfigFiles ??
+            '',
         services: services,
       ),
     );
@@ -192,12 +186,8 @@ String serviceNameOf(SimContainer container) => container.composeService.isNotEm
 /// compose treats as primary. A stack with no label at all falls back to the conventional name in
 /// its working directory.
 String composeFilePathFor({required String workingDir, required String configFiles}) {
-  final first = configFiles
-      .split(',')
-      .map((s) => s.trim())
-      .where((s) => s.isNotEmpty)
-      .firstOrNull ??
-      '';
+  final first =
+      configFiles.split(',').map((s) => s.trim()).where((s) => s.isNotEmpty).firstOrNull ?? '';
   final base = workingDir.endsWith('/')
       ? workingDir.substring(0, workingDir.length - 1)
       : workingDir;

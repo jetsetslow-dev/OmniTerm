@@ -190,9 +190,7 @@ class ScriptsViewModel extends ChangeNotifier {
       } else {
         _homelabPresetsEnabled = enabled;
       }
-      _status = enabled
-          ? 'Added ${presets.length} preset scripts.'
-          : 'Removed the preset scripts.';
+      _status = enabled ? 'Added ${presets.length} preset scripts.' : 'Removed the preset scripts.';
     } finally {
       _busy = false;
       _safeNotify();
@@ -239,22 +237,23 @@ class ScriptsViewModel extends ChangeNotifier {
 
   /// Reorders [script] within its category.
   Future<void> moveScript(QuickScript script, int newSortOrder) async {
-    await _app.repository
-        .insertScript(script.copyWith(sortOrder: newSortOrder).toCompanion(false));
+    await _app.repository.insertScript(script.copyWith(sortOrder: newSortOrder).toCompanion(false));
   }
 
   /// Sets whether [script] appears in the Fleet broadcast picker.
   Future<void> setAvailableForFleet(QuickScript script, bool value) async {
     if (!value && !script.availableForQuick) return;
-    await _app.repository
-        .insertScript(script.copyWith(availableForFleet: value).toCompanion(false));
+    await _app.repository.insertScript(
+      script.copyWith(availableForFleet: value).toCompanion(false),
+    );
   }
 
   /// Sets whether [script] appears in the per-host Quick Scripts row.
   Future<void> setAvailableForQuick(QuickScript script, bool value) async {
     if (!value && !script.availableForFleet) return;
-    await _app.repository
-        .insertScript(script.copyWith(availableForQuick: value).toCompanion(false));
+    await _app.repository.insertScript(
+      script.copyWith(availableForQuick: value).toCompanion(false),
+    );
   }
 
   /// The scripts the Fleet screen offers as broadcast presets.
@@ -297,20 +296,19 @@ QuickScriptsCompanion _companion({
   String targetSystem = 'Any',
   String notes = '',
   String? presetKey,
-}) =>
-    QuickScriptsCompanion.insert(
-      id: id == null || id == 0 ? const Value.absent() : Value(id),
-      emoji: emoji,
-      name: name,
-      command: command,
-      color: color,
-      longRunning: Value(longRunning),
-      category: Value(category),
-      sortOrder: Value(sortOrder),
-      availableForQuick: Value(availableForQuick),
-      availableForFleet: Value(availableForFleet),
-      targetOs: Value(targetOs),
-      targetSystem: Value(targetSystem),
-      notes: Value(notes),
-      presetKey: Value(presetKey),
-    );
+}) => QuickScriptsCompanion.insert(
+  id: id == null || id == 0 ? const Value.absent() : Value(id),
+  emoji: emoji,
+  name: name,
+  command: command,
+  color: color,
+  longRunning: Value(longRunning),
+  category: Value(category),
+  sortOrder: Value(sortOrder),
+  availableForQuick: Value(availableForQuick),
+  availableForFleet: Value(availableForFleet),
+  targetOs: Value(targetOs),
+  targetSystem: Value(targetSystem),
+  notes: Value(notes),
+  presetKey: Value(presetKey),
+);

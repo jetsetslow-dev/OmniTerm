@@ -18,8 +18,7 @@ class FakeSecureStorage extends FlutterSecureStorage {
     WebOptions? webOptions,
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
-  }) async =>
-      _values[key];
+  }) async => _values[key];
 
   @override
   Future<Map<String, String>> readAll({
@@ -29,8 +28,7 @@ class FakeSecureStorage extends FlutterSecureStorage {
     WebOptions? webOptions,
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
-  }) async =>
-      Map.of(_values);
+  }) async => Map.of(_values);
 
   @override
   Future<void> delete({
@@ -41,8 +39,7 @@ class FakeSecureStorage extends FlutterSecureStorage {
     WebOptions? webOptions,
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
-  }) async =>
-      _values.remove(key);
+  }) async => _values.remove(key);
 
   @override
   Future<void> deleteAll({
@@ -52,8 +49,7 @@ class FakeSecureStorage extends FlutterSecureStorage {
     WebOptions? webOptions,
     AppleOptions? mOptions,
     WindowsOptions? wOptions,
-  }) async =>
-      _values.clear();
+  }) async => _values.clear();
 
   @override
   Future<void> write({

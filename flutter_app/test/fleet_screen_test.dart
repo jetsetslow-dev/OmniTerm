@@ -40,34 +40,33 @@ void main() {
     String status = 'online',
     String? group,
     int healthScore = 100,
-  }) =>
-      Server(
-        id: 0,
-        name: name,
-        host: host,
-        port: 22,
-        username: 'root',
-        groupName: group,
-        serverColor: 'Default',
-        authType: 'password',
-        authPassword: 'pw',
-        sudoPassword: '',
-        notes: '',
-        keepAlive: 30,
-        sshCompression: false,
-        persistentSession: false,
-        proxyCommand: '',
-        proxyType: 'none',
-        proxyHost: '',
-        proxyPort: 0,
-        proxyUser: '',
-        proxyPassword: '',
-        agentForwarding: false,
-        healthScore: healthScore,
-        lastLatency: 0,
-        status: status,
-        authStatus: 'ok',
-      );
+  }) => Server(
+    id: 0,
+    name: name,
+    host: host,
+    port: 22,
+    username: 'root',
+    groupName: group,
+    serverColor: 'Default',
+    authType: 'password',
+    authPassword: 'pw',
+    sudoPassword: '',
+    notes: '',
+    keepAlive: 30,
+    sshCompression: false,
+    persistentSession: false,
+    proxyCommand: '',
+    proxyType: 'none',
+    proxyHost: '',
+    proxyPort: 0,
+    proxyUser: '',
+    proxyPassword: '',
+    agentForwarding: false,
+    healthScore: healthScore,
+    lastLatency: 0,
+    status: status,
+    authStatus: 'ok',
+  );
 
   Future<void> pump(WidgetTester tester, {BroadcastTransport? transport}) async {
     await app.start();
@@ -138,8 +137,11 @@ void main() {
 
     double top(String name) => tester.getTopLeft(find.text(name)).dy;
     expect(top('sick'), lessThan(top('healthy')));
-    expect(top('healthy'), lessThan(top('gone')),
-        reason: 'an offline host has no live score to rank on, so it sorts last');
+    expect(
+      top('healthy'),
+      lessThan(top('gone')),
+      reason: 'an offline host has no live score to rank on, so it sorts last',
+    );
     vm.dispose();
     scriptsVm.dispose();
     await tester.pump(const Duration(milliseconds: 10));
@@ -152,8 +154,11 @@ void main() {
     await pump(tester);
 
     expect(find.text('OFFLINE'), findsOneWidget);
-    expect(find.text('88'), findsNothing,
-        reason: 'a score for an unreachable host is a stale number pretending to be current');
+    expect(
+      find.text('88'),
+      findsNothing,
+      reason: 'a score for an unreachable host is a stale number pretending to be current',
+    );
     vm.dispose();
     scriptsVm.dispose();
     await tester.pump(const Duration(milliseconds: 10));
@@ -315,9 +320,9 @@ void main() {
       final aId = await repo.insertServer(server(name: 'alpha', host: '10.0.0.1'));
       await pump(
         tester,
-        transport: BroadcastTransport(replies: {
-          'journalctl': '2026-08-04T10:00:00+0000 host kernel: disk errors detected\n',
-        }),
+        transport: BroadcastTransport(
+          replies: {'journalctl': '2026-08-04T10:00:00+0000 host kernel: disk errors detected\n'},
+        ),
       );
       await tester.tap(find.byKey(const ValueKey('fleet.tab.logs')));
       await tester.pumpAndSettle();
@@ -342,10 +347,13 @@ void main() {
       final aId = await repo.insertServer(server(name: 'alpha', host: '10.0.0.1'));
       await pump(
         tester,
-        transport: BroadcastTransport(replies: {
-          'journalctl': '2026-08-04T10:00:00+0000 host sshd: accepted connection\n'
-              '2026-08-04T10:00:01+0000 host kernel: disk errors detected\n',
-        }),
+        transport: BroadcastTransport(
+          replies: {
+            'journalctl':
+                '2026-08-04T10:00:00+0000 host sshd: accepted connection\n'
+                '2026-08-04T10:00:01+0000 host kernel: disk errors detected\n',
+          },
+        ),
       );
       await tester.tap(find.byKey(const ValueKey('fleet.tab.logs')));
       await tester.pumpAndSettle();

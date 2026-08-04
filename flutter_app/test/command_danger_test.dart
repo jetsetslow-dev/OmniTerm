@@ -90,8 +90,11 @@ void main() {
     });
 
     test('reading a device is not writing to one', () {
-      expect(commandDangerHits('dd if=/dev/sda of=/backup/disk.img'), isNotEmpty,
-          reason: 'of= is still a raw write, just to a file');
+      expect(
+        commandDangerHits('dd if=/dev/sda of=/backup/disk.img'),
+        isNotEmpty,
+        reason: 'of= is still a raw write, just to a file',
+      );
       expect(commandDangerHits('cat /dev/urandom | head -c 16'), isEmpty);
     });
 
@@ -110,10 +113,7 @@ void main() {
 
     test('a word that merely contains a keyword is not a match', () {
       // Word boundaries matter: these are not the commands they resemble.
-      for (final command in [
-        'grep reboot /var/log/syslog',
-        'echo "no shutdown configured"',
-      ]) {
+      for (final command in ['grep reboot /var/log/syslog', 'echo "no shutdown configured"']) {
         // These *do* legitimately contain the bare word, so they match — and that is the
         // intended trade: a false positive costs one extra glance.
         expect(commandDangerHits(command), isNotEmpty, reason: command);
@@ -128,8 +128,11 @@ void main() {
     test('names what was recognised, so the user can judge it', () {
       final warning = fleetCommandDangerWarning('rm -rf /');
       expect(warning, contains('recursive/forced delete'));
-      expect(warning, contains('every host listed above'),
-          reason: 'the multiplier is the point, not the command alone');
+      expect(
+        warning,
+        contains('every host listed above'),
+        reason: 'the multiplier is the point, not the command alone',
+      );
     });
 
     test('lists every distinct match once', () {

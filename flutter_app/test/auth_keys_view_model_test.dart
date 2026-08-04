@@ -38,12 +38,7 @@ void main() {
     await db.close();
   });
 
-  Server server({
-    required String name,
-    String? keyAlias,
-    String? proxyKeyAlias,
-    int? profileId,
-  }) =>
+  Server server({required String name, String? keyAlias, String? proxyKeyAlias, int? profileId}) =>
       Server(
         id: 0,
         name: name,
@@ -86,11 +81,7 @@ void main() {
       final vm = await boot();
 
       expect(
-        await vm.importKey(
-          alias: 'laptop',
-          privateKey: testPrivateKey,
-          publicKey: testPublicKey,
-        ),
+        await vm.importKey(alias: 'laptop', privateKey: testPrivateKey, publicKey: testPublicKey),
         isNull,
       );
       await Future<void>.delayed(Duration.zero);
@@ -244,12 +235,18 @@ void main() {
 
     test('validation refuses incomplete profiles', () async {
       final vm = await boot();
-      expect(await vm.saveProfile(profileName: '', username: 'u', authType: 'password'),
-          contains('required'));
-      expect(await vm.saveProfile(profileName: 'p', username: ' ', authType: 'password'),
-          contains('required'));
-      expect(await vm.saveProfile(profileName: 'p', username: 'u', authType: 'key'),
-          contains('Pick a key'));
+      expect(
+        await vm.saveProfile(profileName: '', username: 'u', authType: 'password'),
+        contains('required'),
+      );
+      expect(
+        await vm.saveProfile(profileName: 'p', username: ' ', authType: 'password'),
+        contains('required'),
+      );
+      expect(
+        await vm.saveProfile(profileName: 'p', username: 'u', authType: 'key'),
+        contains('Pick a key'),
+      );
       expect(await repo.getAllProfiles(), isEmpty);
       vm.dispose();
     });
@@ -298,8 +295,11 @@ void main() {
       );
       await Future<void>.delayed(Duration.zero);
 
-      expect((await repo.getAllProfiles()).single.password, 'hunter2',
-          reason: 'an empty field means unchanged, as on the host form');
+      expect(
+        (await repo.getAllProfiles()).single.password,
+        'hunter2',
+        reason: 'an empty field means unchanged, as on the host form',
+      );
       vm.dispose();
     });
   });

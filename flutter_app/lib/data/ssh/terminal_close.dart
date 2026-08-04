@@ -50,8 +50,7 @@ TerminalCloseClassification classifyTerminalClose({
 }) {
   final hasRealExitStatus = exitStatus != null && exitStatus >= 0;
   final cleanRemoteExit = remoteEof && channelIsEof && (hasRealExitStatus || sessionConnected);
-  final normalizedExitStatus =
-      (cleanRemoteExit && !hasRealExitStatus) ? 0 : exitStatus;
+  final normalizedExitStatus = (cleanRemoteExit && !hasRealExitStatus) ? 0 : exitStatus;
   return TerminalCloseClassification(
     remoteExited: cleanRemoteExit,
     exitStatus: normalizedExitStatus,

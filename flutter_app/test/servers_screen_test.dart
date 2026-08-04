@@ -39,33 +39,32 @@ void main() {
     String? group,
     String status = 'offline',
     String authStatus = 'unknown',
-  }) =>
-      Server(
-        id: 0,
-        name: name,
-        host: host,
-        port: 22,
-        username: 'root',
-        groupName: group,
-        serverColor: 'Default',
-        authType: 'password',
-        sudoPassword: '',
-        notes: '',
-        keepAlive: 30,
-        sshCompression: false,
-        persistentSession: false,
-        proxyCommand: '',
-        proxyType: 'none',
-        proxyHost: '',
-        proxyPort: 0,
-        proxyUser: '',
-        proxyPassword: '',
-        agentForwarding: false,
-        healthScore: 100,
-        lastLatency: 0,
-        status: status,
-        authStatus: authStatus,
-      );
+  }) => Server(
+    id: 0,
+    name: name,
+    host: host,
+    port: 22,
+    username: 'root',
+    groupName: group,
+    serverColor: 'Default',
+    authType: 'password',
+    sudoPassword: '',
+    notes: '',
+    keepAlive: 30,
+    sshCompression: false,
+    persistentSession: false,
+    proxyCommand: '',
+    proxyType: 'none',
+    proxyHost: '',
+    proxyPort: 0,
+    proxyUser: '',
+    proxyPassword: '',
+    agentForwarding: false,
+    healthScore: 100,
+    lastLatency: 0,
+    status: status,
+    authStatus: authStatus,
+  );
 
   Future<void> pump(WidgetTester tester) async {
     await app.start();
@@ -124,8 +123,9 @@ void main() {
     expect(find.text('nas'), findsNothing);
   });
 
-  testWidgets('a search matching nothing shows the filter empty state, not "no servers"',
-      (tester) async {
+  testWidgets('a search matching nothing shows the filter empty state, not "no servers"', (
+    tester,
+  ) async {
     // The same blank screen for both leaves the user thinking their fleet vanished.
     await repo.insertServer(server(name: 'nas'));
     await pump(tester);
@@ -180,8 +180,9 @@ void main() {
     expect(app.selectedServerId, bId);
   });
 
-  testWidgets('multi-select shows checkboxes and ticking does not change the selected host',
-      (tester) async {
+  testWidgets('multi-select shows checkboxes and ticking does not change the selected host', (
+    tester,
+  ) async {
     final id = await repo.insertServer(server(name: 'a'));
     await pump(tester);
     final selectedBefore = app.selectedServerId;
@@ -194,8 +195,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(vm.selectedServerIdsForBulk, [id]);
-    expect(app.selectedServerId, selectedBefore,
-        reason: 'ticking a row in multi-select must not also switch the active host');
+    expect(
+      app.selectedServerId,
+      selectedBefore,
+      reason: 'ticking a row in multi-select must not also switch the active host',
+    );
   });
 
   testWidgets('leaving multi-select hides the checkboxes and drops the ticks', (tester) async {
@@ -222,8 +226,11 @@ void main() {
     HostDisplay.instance.hideSensitiveInfo = true;
     await tester.pumpAndSettle();
 
-    expect(find.text('root@10.0.0.2'), findsNothing,
-        reason: 'the whole point is that a screenshot cannot leak the address');
+    expect(
+      find.text('root@10.0.0.2'),
+      findsNothing,
+      reason: 'the whole point is that a screenshot cannot leak the address',
+    );
     expect(find.text('root@nas'), findsOneWidget);
   });
 

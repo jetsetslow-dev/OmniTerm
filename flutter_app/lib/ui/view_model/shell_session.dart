@@ -134,9 +134,8 @@ class ShellSession extends ChangeNotifier {
 
   int get _maxFirstRow => math.max(0, emulator.rowCount() - _viewportRows);
 
-  int get _viewportFirstRow => _followTail
-      ? _maxFirstRow
-      : (_anchorRow - emulator.trimmedRowCount).clamp(0, _maxFirstRow);
+  int get _viewportFirstRow =>
+      _followTail ? _maxFirstRow : (_anchorRow - emulator.trimmedRowCount).clamp(0, _maxFirstRow);
 
   /// Row index, in buffer space, currently at the top of the view.
   int get viewportFirstRow => _viewportFirstRow;
@@ -265,9 +264,9 @@ class ShellSession extends ChangeNotifier {
   void _onStreamDone() {
     // `remoteExited` is the transport's judgement, already made by `classifyTerminalClose`. An ended
     // stream on its own says nothing: a dropped socket ends it exactly as `exit` does.
-    _finish(_channel.remoteExited.value
-        ? ShellSessionEnd.remoteExited
-        : ShellSessionEnd.disconnected);
+    _finish(
+      _channel.remoteExited.value ? ShellSessionEnd.remoteExited : ShellSessionEnd.disconnected,
+    );
   }
 
   void _onChannelClosed() {

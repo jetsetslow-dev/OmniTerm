@@ -89,7 +89,7 @@ class SftpViewModel extends ChangeNotifier {
     }
     return canBrowse
         ? 'Could not open a file connection to ${server?.name ?? 'this host'}. '
-            'Check its key or credential profile in the host settings.'
+              'Check its key or credential profile in the host settings.'
         : whenUnsupported;
   }
 
@@ -167,8 +167,7 @@ class SftpViewModel extends ChangeNotifier {
     return online.firstOrNull;
   }
 
-  List<Server> get onlineServers =>
-      _app.servers.where((s) => s.status == 'online').toList();
+  List<Server> get onlineServers => _app.servers.where((s) => s.status == 'online').toList();
 
   bool get hasNoOnlineHosts => browsedServer == null;
 
@@ -386,8 +385,7 @@ class SftpViewModel extends ChangeNotifier {
   }
 
   /// The selected rows, resolved against the current listing.
-  List<SftpFile> get selectedEntries =>
-      _entries.where((e) => _selected.contains(e.name)).toList();
+  List<SftpFile> get selectedEntries => _entries.where((e) => _selected.contains(e.name)).toList();
 
   // ── file operations ─────────────────────────────────────────────────────────
 
@@ -398,10 +396,7 @@ class SftpViewModel extends ChangeNotifier {
     final valid = validateFileName(name);
     if (valid == null) return 'That name cannot be used.';
     if (_entries.any((e) => e.name == valid)) return '"$valid" already exists here.';
-    await _mutate(
-      (client) => client.mkdir(joinPath(_path, valid)),
-      success: 'Created $valid',
-    );
+    await _mutate((client) => client.mkdir(joinPath(_path, valid)), success: 'Created $valid');
     return null;
   }
 
@@ -425,17 +420,11 @@ class SftpViewModel extends ChangeNotifier {
   /// Deletes [entries]. The caller confirms first — this does not ask.
   Future<void> deleteEntries(List<SftpFile> entries) async {
     if (entries.isEmpty) return;
-    await _mutate(
-      (client) async {
-        for (final entry in entries) {
-          await client.delete(
-            joinPath(_path, entry.name),
-            isDirectory: entry.isDirectory,
-          );
-        }
-      },
-      success: 'Deleted ${entries.length} item${entries.length == 1 ? '' : 's'}',
-    );
+    await _mutate((client) async {
+      for (final entry in entries) {
+        await client.delete(joinPath(_path, entry.name), isDirectory: entry.isDirectory);
+      }
+    }, success: 'Deleted ${entries.length} item${entries.length == 1 ? '' : 's'}');
   }
 
   /// Runs a mutating operation, then refreshes so the listing reflects what the server actually
@@ -533,8 +522,7 @@ class SftpViewModel extends ChangeNotifier {
   /// Newest first — the one the user just started is the one they want to see.
   List<SftpTransfer> get transfers => List.unmodifiable(_transfers.reversed);
 
-  int get activeTransferCount =>
-      _transfers.where((t) => t.status == TransferStatus.running).length;
+  int get activeTransferCount => _transfers.where((t) => t.status == TransferStatus.running).length;
 
   void clearFinishedTransfers() {
     _transfers.removeWhere((t) => t.status != TransferStatus.running);

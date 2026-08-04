@@ -151,8 +151,10 @@ _Scheme _resolve(OmniThemeMode mode, Brightness platformBrightness, ColorScheme?
   return switch (mode) {
     // Dynamic colour is Android 12+ only; elsewhere (and on iOS) it degrades to the app palette,
     // which is why the fallback is the ordinary dark/light scheme rather than an error.
-    OmniThemeMode.dynamic when dynamicScheme != null =>
-      (scheme: dynamicScheme, background: dynamicScheme.surface),
+    OmniThemeMode.dynamic when dynamicScheme != null => (
+      scheme: dynamicScheme,
+      background: dynamicScheme.surface,
+    ),
     OmniThemeMode.dynamic => systemDark ? _dark : _light,
     OmniThemeMode.highContrastDark => _highContrastDark,
     OmniThemeMode.highContrastLight => _highContrastLight,

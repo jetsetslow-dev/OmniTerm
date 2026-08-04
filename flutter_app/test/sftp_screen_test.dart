@@ -33,45 +33,41 @@ void main() {
   });
 
   Server server({required String name, String status = 'online'}) => Server(
-        id: 0,
-        name: name,
-        host: '10.0.0.1',
-        port: 22,
-        username: 'root',
-        serverColor: 'Default',
-        authType: 'password',
-        authPassword: 'pw',
-        sudoPassword: '',
-        notes: '',
-        keepAlive: 30,
-        sshCompression: false,
-        persistentSession: false,
-        proxyCommand: '',
-        proxyType: 'none',
-        proxyHost: '',
-        proxyPort: 0,
-        proxyUser: '',
-        proxyPassword: '',
-        agentForwarding: false,
-        healthScore: 100,
-        lastLatency: 0,
-        status: status,
-        authStatus: 'ok',
-      );
+    id: 0,
+    name: name,
+    host: '10.0.0.1',
+    port: 22,
+    username: 'root',
+    serverColor: 'Default',
+    authType: 'password',
+    authPassword: 'pw',
+    sudoPassword: '',
+    notes: '',
+    keepAlive: 30,
+    sshCompression: false,
+    persistentSession: false,
+    proxyCommand: '',
+    proxyType: 'none',
+    proxyHost: '',
+    proxyPort: 0,
+    proxyUser: '',
+    proxyPassword: '',
+    agentForwarding: false,
+    healthScore: 100,
+    lastLatency: 0,
+    status: status,
+    authStatus: 'ok',
+  );
 
   SftpFile entry(String name, {bool dir = false, int size = 10}) =>
       SftpFile(name: name, isDirectory: dir, size: size, modDate: '2026-08-01');
 
   FakeFsClient homeTree() => FakeFsClient(
-        tree: {
-          '/home/root': [
-            entry('docs', dir: true),
-            entry('notes.txt', size: 120),
-            entry('.hidden'),
-          ],
-          '/home/root/docs': [entry('report.pdf', size: 900)],
-        },
-      );
+    tree: {
+      '/home/root': [entry('docs', dir: true), entry('notes.txt', size: 120), entry('.hidden')],
+      '/home/root/docs': [entry('report.pdf', size: 900)],
+    },
+  );
 
   Future<void> pump(WidgetTester tester, {FakeFsClient? client, SharesViewModel? shares}) async {
     await app.start();
@@ -331,8 +327,11 @@ void main() {
 
     expect(find.byKey(const ValueKey('sftp.error')), findsOneWidget);
     expect(find.textContaining('permission denied'), findsOneWidget);
-    expect(find.text('notes.txt'), findsNothing,
-        reason: 'the previous folder rows must not sit under a path that failed to open');
+    expect(
+      find.text('notes.txt'),
+      findsNothing,
+      reason: 'the previous folder rows must not sit under a path that failed to open',
+    );
     vm.dispose();
   });
 

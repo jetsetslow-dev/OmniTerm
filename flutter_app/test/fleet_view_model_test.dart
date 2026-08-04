@@ -92,34 +92,33 @@ void main() {
     String status = 'online',
     String? group,
     int healthScore = 100,
-  }) =>
-      Server(
-        id: 0,
-        name: name,
-        host: host,
-        port: 22,
-        username: 'root',
-        groupName: group,
-        serverColor: 'Default',
-        authType: 'password',
-        authPassword: 'pw',
-        sudoPassword: '',
-        notes: '',
-        keepAlive: 30,
-        sshCompression: false,
-        persistentSession: false,
-        proxyCommand: '',
-        proxyType: 'none',
-        proxyHost: '',
-        proxyPort: 0,
-        proxyUser: '',
-        proxyPassword: '',
-        agentForwarding: false,
-        healthScore: healthScore,
-        lastLatency: 0,
-        status: status,
-        authStatus: 'ok',
-      );
+  }) => Server(
+    id: 0,
+    name: name,
+    host: host,
+    port: 22,
+    username: 'root',
+    groupName: group,
+    serverColor: 'Default',
+    authType: 'password',
+    authPassword: 'pw',
+    sudoPassword: '',
+    notes: '',
+    keepAlive: 30,
+    sshCompression: false,
+    persistentSession: false,
+    proxyCommand: '',
+    proxyType: 'none',
+    proxyHost: '',
+    proxyPort: 0,
+    proxyUser: '',
+    proxyPassword: '',
+    agentForwarding: false,
+    healthScore: healthScore,
+    lastLatency: 0,
+    status: status,
+    authStatus: 'ok',
+  );
 
   Future<FleetViewModel> boot({BroadcastTransport? transport}) async {
     await app.start();
@@ -173,8 +172,11 @@ void main() {
 
       vm.targetMode = FleetTargetMode.groups;
       vm.toggleTargetGroup('prod');
-      expect(vm.resolvedTargets.map((s) => s.name), ['a'],
-          reason: 'a group must not promise hosts that cannot answer');
+      expect(
+        vm.resolvedTargets.map((s) => s.name),
+        ['a'],
+        reason: 'a group must not promise hosts that cannot answer',
+      );
       vm.dispose();
     });
 
@@ -264,8 +266,11 @@ void main() {
         ..toggleTargetServer(id);
 
       expect(vm.dangerWarning, isNotNull);
-      expect(vm.canRun, isTrue,
-          reason: 'the user chose these hosts; the app warns rather than refuses');
+      expect(
+        vm.canRun,
+        isTrue,
+        reason: 'the user chose these hosts; the app warns rather than refuses',
+      );
       vm.dispose();
     });
   });
@@ -313,8 +318,10 @@ void main() {
 
     test('a credential failure is reported per host', () async {
       await repo.insertServer(
-        server(name: 'a', host: '10.0.0.1')
-            .copyWith(authType: 'key', authKeyAlias: const Value('gone')),
+        server(
+          name: 'a',
+          host: '10.0.0.1',
+        ).copyWith(authType: 'key', authKeyAlias: const Value('gone')),
       );
       final vm = await boot(transport: BroadcastTransport());
       await Future<void>.delayed(Duration.zero);
@@ -382,8 +389,7 @@ void main() {
 
     test('a second run cannot start while one is in flight', () async {
       await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
-      final transport = BroadcastTransport()
-        ..stalls = {'10.0.0.1': Completer<void>()};
+      final transport = BroadcastTransport()..stalls = {'10.0.0.1': Completer<void>()};
       final vm = await boot(transport: transport);
       await Future<void>.delayed(Duration.zero);
       vm
@@ -405,8 +411,7 @@ void main() {
 
     test('results cannot be cleared mid-run', () async {
       await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
-      final transport = BroadcastTransport()
-        ..stalls = {'10.0.0.1': Completer<void>()};
+      final transport = BroadcastTransport()..stalls = {'10.0.0.1': Completer<void>()};
       final vm = await boot(transport: transport);
       await Future<void>.delayed(Duration.zero);
       vm
@@ -442,15 +447,14 @@ void main() {
   });
 
   group('fleet logs', () {
-    const journal = '2026-08-04T10:00:00+0000 host sshd: accepted connection\n'
+    const journal =
+        '2026-08-04T10:00:00+0000 host sshd: accepted connection\n'
         '2026-08-04T10:00:01+0000 host kernel: disk errors detected\n';
 
     test('logs from several hosts are merged newest first', () async {
       final aId = await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
       final bId = await repo.insertServer(server(name: 'b', host: '10.0.0.2'));
-      final vm = await boot(
-        transport: BroadcastTransport(replies: {'journalctl': journal}),
-      );
+      final vm = await boot(transport: BroadcastTransport(replies: {'journalctl': journal}));
       await Future<void>.delayed(Duration.zero);
       vm
         ..toggleLogServer(aId)
@@ -496,8 +500,11 @@ void main() {
       vm.logLevelFilter = 'ERROR';
       expect(transport.commands.length, calls);
       expect(vm.logs, hasLength(1));
-      expect(vm.logs.single.message, contains('disk errors detected'),
-          reason: 'the §15.1 inferLevel fix classifies this as ERROR');
+      expect(
+        vm.logs.single.message,
+        contains('disk errors detected'),
+        reason: 'the §15.1 inferLevel fix classifies this as ERROR',
+      );
       vm.dispose();
     });
 

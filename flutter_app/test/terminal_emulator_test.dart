@@ -18,8 +18,7 @@ void main() {
   List<String> screen(TerminalEmulator e) {
     final snap = e.snapshot();
     return [
-      for (var i = e.scrollbackRowCount(); i < snap.rows.length; i++)
-        snap.rows[i].text.trimRight(),
+      for (var i = e.scrollbackRowCount(); i < snap.rows.length; i++) snap.rows[i].text.trimRight(),
     ];
   }
 
@@ -72,8 +71,10 @@ void main() {
       expect(row, 'éx');
 
       final spans = e.snapshot().rows.first.spans;
-      expect(spans.first.glyphs, ['é', 'x'],
-          reason: 'two cells, the first holding the composed cluster');
+      expect(spans.first.glyphs, [
+        'é',
+        'x',
+      ], reason: 'two cells, the first holding the composed cluster');
       expect(spans.first.glyphWidths, [1, 1]);
     });
 
@@ -170,8 +171,11 @@ void main() {
         write(e, 'line$i\r\n');
       }
       expect(e.scrollbackRowCount(), 3);
-      expect(e.trimmedRowCount, greaterThan(0),
-          reason: 'trimmed rows anchor a scrolled-up viewport');
+      expect(
+        e.trimmedRowCount,
+        greaterThan(0),
+        reason: 'trimmed rows anchor a scrolled-up viewport',
+      );
     });
 
     test('a scroll region confines scrolling', () {
@@ -297,8 +301,11 @@ void main() {
       for (var i = 0; i < 10; i++) {
         write(e, 'x\r\n');
       }
-      expect(e.scrollbackRowCount(), 0,
-          reason: 'an alt-screen app owns its display and must not pour repaints into history');
+      expect(
+        e.scrollbackRowCount(),
+        0,
+        reason: 'an alt-screen app owns its display and must not pour repaints into history',
+      );
     });
 
     test('tmux-backed sessions can opt into alt-screen scrollback', () {
@@ -365,8 +372,11 @@ void main() {
       final window = e.snapshotRange(2, 3);
       expect(window.rows, hasLength(3));
       expect(window.firstRow, 2);
-      expect(window.totalRows, all.totalRows,
-          reason: 'a windowed snapshot still knows the document size');
+      expect(
+        window.totalRows,
+        all.totalRows,
+        reason: 'a windowed snapshot still knows the document size',
+      );
     });
 
     test('an out-of-range window is clamped rather than throwing', () {

@@ -147,7 +147,9 @@ void main() {
     });
 
     test('totalRows defaults to the row count but can be overridden', () {
-      const rows = [TermRow([TermSpan('x', kDefaultFg, kDefaultBg)])];
+      const rows = [
+        TermRow([TermSpan('x', kDefaultFg, kDefaultBg)]),
+      ];
       const windowed = TerminalSnapshot(
         rows: rows,
         cursorRow: 0,

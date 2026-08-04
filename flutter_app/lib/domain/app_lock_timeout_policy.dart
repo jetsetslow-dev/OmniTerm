@@ -9,11 +9,7 @@ const maxAppLockBackgroundTimeoutMs = 24 * 60 * 60 * 1000;
 /// which would show the chip selected and the custom field open at the same time.
 final _appLockTimeoutPresetValuesMs = {for (final (_, ms) in appLockTimeoutPresets) ms};
 
-const _appLockUnits = <String, int>{
-  'Seconds': 1000,
-  'Minutes': 60 * 1000,
-  'Hours': 3600 * 1000,
-};
+const _appLockUnits = <String, int>{'Seconds': 1000, 'Minutes': 60 * 1000, 'Hours': 3600 * 1000};
 
 /// The units the screen offers, taken from the same map that parses them so a unit can never be
 /// offered that [parseAppLockCustomDuration] would then reject.
@@ -69,13 +65,12 @@ class AppLockTimeoutDraft {
     String? customValue,
     String? customUnit,
     bool? customSelected,
-  }) =>
-      AppLockTimeoutDraft(
-        timeoutMs: timeoutMs ?? this.timeoutMs,
-        customValue: customValue ?? this.customValue,
-        customUnit: customUnit ?? this.customUnit,
-        customSelected: customSelected ?? this.customSelected,
-      );
+  }) => AppLockTimeoutDraft(
+    timeoutMs: timeoutMs ?? this.timeoutMs,
+    customValue: customValue ?? this.customValue,
+    customUnit: customUnit ?? this.customUnit,
+    customSelected: customSelected ?? this.customSelected,
+  );
 
   AppLockTimeoutDraft selectPreset(int timeoutMs) =>
       copyWith(timeoutMs: timeoutMs, customSelected: false);
@@ -94,8 +89,10 @@ class AppLockTimeoutDraft {
   /// Digits only, capped at 5 characters. An unparseable entry leaves [timeoutMs] untouched rather
   /// than resetting it, so clearing the field mid-edit does not silently change the saved value.
   AppLockTimeoutDraft editCustomValue(String input) {
-    final filtered =
-        input.split('').where((c) => c.codeUnitAt(0) >= 0x30 && c.codeUnitAt(0) <= 0x39).join();
+    final filtered = input
+        .split('')
+        .where((c) => c.codeUnitAt(0) >= 0x30 && c.codeUnitAt(0) <= 0x39)
+        .join();
     final capped = filtered.length <= 5 ? filtered : filtered.substring(0, 5);
     return copyWith(
       customValue: capped,
@@ -104,9 +101,9 @@ class AppLockTimeoutDraft {
   }
 
   AppLockTimeoutDraft selectCustomUnit(String unit) => copyWith(
-        customUnit: unit,
-        timeoutMs: parseAppLockCustomDuration(customValue, unit) ?? timeoutMs,
-      );
+    customUnit: unit,
+    timeoutMs: parseAppLockCustomDuration(customValue, unit) ?? timeoutMs,
+  );
 
   @override
   bool operator ==(Object other) =>

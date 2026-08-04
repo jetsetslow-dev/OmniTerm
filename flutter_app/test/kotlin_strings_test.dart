@@ -8,10 +8,12 @@ void main() {
   group('splitWhitespace with a limit', () {
     test('leaves the remainder unsplit in the final element', () {
       // This is what lets `ps` keep a command containing spaces in one field.
-      expect(
-        splitWhitespace('1 root 0:00 /sbin/init --verbose splash', limit: 4),
-        ['1', 'root', '0:00', '/sbin/init --verbose splash'],
-      );
+      expect(splitWhitespace('1 root 0:00 /sbin/init --verbose splash', limit: 4), [
+        '1',
+        'root',
+        '0:00',
+        '/sbin/init --verbose splash',
+      ]);
     });
 
     test('a limit larger than the field count returns every field', () {
@@ -92,10 +94,7 @@ void main() {
 
     test('distinctBy keeps the first match and preserves order', () {
       final items = [(1, 'a'), (2, 'b'), (3, 'a'), (4, 'c')];
-      expect(
-        items.distinctBy((e) => e.$2).map((e) => e.$1).toList(),
-        [1, 2, 4],
-      );
+      expect(items.distinctBy((e) => e.$2).map((e) => e.$1).toList(), [1, 2, 4]);
     });
   });
 }

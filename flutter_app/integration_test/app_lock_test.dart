@@ -33,7 +33,6 @@ void main() {
     }
   }
 
-
   /// Sends the app away and brings it back, through the states Android actually delivers.
   ///
   /// Not a single jump to `paused`: the framework rejects illegal transitions, and more to the
@@ -76,11 +75,7 @@ void main() {
   /// first attempt was still verifying when the second PIN was typed, and its completion then wiped
   /// the field — so the flow submitted an empty PIN and read the resulting "Incorrect PIN" as the
   /// app rejecting a PIN it had just been given.
-  Future<void> pumpUntil(
-    WidgetTester tester,
-    bool Function() done, {
-    int maxFrames = 600,
-  }) async {
+  Future<void> pumpUntil(WidgetTester tester, bool Function() done, {int maxFrames = 600}) async {
     for (var i = 0; i < maxFrames && !done(); i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }

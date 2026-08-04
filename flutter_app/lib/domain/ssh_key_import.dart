@@ -142,5 +142,4 @@ String sshPublicKeyFingerprint(String publicKey) {
 String keyMaterialFingerprint(String keyMaterial) =>
     'SHA256:${_base64NoPadding(sha256.convert(utf8.encode(keyMaterial)).bytes)}';
 
-String _base64NoPadding(List<int> bytes) =>
-    base64.encode(bytes).replaceAll(RegExp(r'=+$'), '');
+String _base64NoPadding(List<int> bytes) => base64.encode(bytes).replaceAll(RegExp(r'=+$'), '');

@@ -80,8 +80,7 @@ class _BackupScreenState extends State<BackupScreen> {
             title: Text(section.label, style: const TextStyle(fontSize: 13)),
             subtitle: _dependencyNote(section, scheme),
             value: vm.selection.contains(section),
-            onChanged: (value) =>
-                vm.toggleSection(section, enabled: value ?? false),
+            onChanged: (value) => vm.toggleSection(section, enabled: value ?? false),
           ),
         const SizedBox(height: 8),
         if (vm.requiresPassphrase)
@@ -196,17 +195,16 @@ Future<String?> _askPassphrase(
   required String title,
   required String confirmLabel,
   required String note,
-}) =>
-    showDialog<String>(
-      context: context,
-      builder: (_) => _PromptDialog(
-        dialogKey: 'backup.passphrase',
-        title: title,
-        note: note,
-        confirmLabel: confirmLabel,
-        obscure: true,
-      ),
-    );
+}) => showDialog<String>(
+  context: context,
+  builder: (_) => _PromptDialog(
+    dialogKey: 'backup.passphrase',
+    title: title,
+    note: note,
+    confirmLabel: confirmLabel,
+    obscure: true,
+  ),
+);
 
 /// Asks for one value. Owns its controller so it dies with the dialog.
 class _PromptDialog extends StatefulWidget {

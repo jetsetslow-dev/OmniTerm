@@ -36,8 +36,11 @@ void main() {
     );
 
     expect(ok, isFalse);
-    expect(published, isFalse,
-        reason: 'a tunnel must not be left alive after stop() returned to its caller');
+    expect(
+      published,
+      isFalse,
+      reason: 'a tunnel must not be left alive after stop() returned to its caller',
+    );
   });
 
   test('rollback runs when a stop lands inside the publish window', () {

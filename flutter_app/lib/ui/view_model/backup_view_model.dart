@@ -172,14 +172,9 @@ class BackupViewModel extends ChangeNotifier {
     _safeNotify();
 
     try {
-      final json = looksEncrypted(contents)
-          ? await decryptBackup(contents, passphrase)
-          : contents;
+      final json = looksEncrypted(contents) ? await decryptBackup(contents, passphrase) : contents;
 
-      final counts = await BackupPayload.restore(
-        RepositoryRestoreTarget(_app.repository),
-        json,
-      );
+      final counts = await BackupPayload.restore(RepositoryRestoreTarget(_app.repository), json);
 
       final restored = counts.entries
           .where((e) => !e.key.endsWith('Skipped'))
@@ -191,7 +186,7 @@ class BackupViewModel extends ChangeNotifier {
           // Naming the skip rather than hiding it: an alert rule silently missing after a restore
           // is a rule that is no longer watching anything.
           : 'Restored $restored items. $skipped alert rule(s) were skipped because the hosts they '
-              'watch were not in this backup.';
+                'watch were not in this backup.';
       return counts;
     } on BackupException catch (e) {
       _error = e.message;

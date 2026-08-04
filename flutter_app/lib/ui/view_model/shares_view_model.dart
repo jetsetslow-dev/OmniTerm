@@ -150,10 +150,7 @@ class SharesViewModel extends ChangeNotifier {
     _checking.remove(share.id);
     try {
       await _app.repository.insertNetworkShare(
-        share.copyWith(
-          lastStatus: status,
-          lastChecked: DateTime.now().millisecondsSinceEpoch,
-        ),
+        share.copyWith(lastStatus: status, lastChecked: DateTime.now().millisecondsSinceEpoch),
       );
     } catch (_) {
       // The probe result is still worth showing even if it could not be recorded.

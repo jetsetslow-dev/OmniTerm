@@ -123,19 +123,13 @@ class SharesTab extends StatelessWidget {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => ChangeNotifierProvider<SharesViewModel>.value(
-        value: vm,
-        child: const _ShareForm(),
-      ),
+      builder: (_) =>
+          ChangeNotifierProvider<SharesViewModel>.value(value: vm, child: const _ShareForm()),
     );
     vm.cancelEdit();
   }
 
-  Future<void> _confirmDelete(
-    BuildContext context,
-    SharesViewModel vm,
-    NetworkShare share,
-  ) async {
+  Future<void> _confirmDelete(BuildContext context, SharesViewModel vm, NetworkShare share) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -225,10 +219,7 @@ class _ShareCard extends StatelessWidget {
             ListenableBuilder(
               listenable: HostDisplay.instance,
               builder: (context, _) => Text(
-                shareUri(
-                  share,
-                  maskedAddress: HostDisplay.instance.sensitive(share.address),
-                ),
+                shareUri(share, maskedAddress: HostDisplay.instance.sensitive(share.address)),
                 key: ValueKey('shares.card.${share.id}.uri'),
                 style: TextStyle(
                   fontSize: 11,
@@ -238,10 +229,7 @@ class _ShareCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 2),
-            Text(
-              _authLabel(),
-              style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
-            ),
+            Text(_authLabel(), style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant)),
             if (unavailable != null)
               Padding(
                 padding: const EdgeInsets.only(top: 6),
@@ -264,7 +252,10 @@ class _ShareCard extends StatelessWidget {
                 TextButton(
                   key: ValueKey('shares.card.${share.id}.test'),
                   onPressed: checking ? null : onTest,
-                  child: Text(checking ? 'Checking…' : 'Check', style: const TextStyle(fontSize: 12)),
+                  child: Text(
+                    checking ? 'Checking…' : 'Check',
+                    style: const TextStyle(fontSize: 12),
+                  ),
                 ),
                 TextButton(
                   key: ValueKey('shares.card.${share.id}.edit'),
@@ -532,23 +523,23 @@ class _FieldState extends State<_Field> {
 
   @override
   Widget build(BuildContext context) => Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: TextField(
-          key: ValueKey('shares.form.${widget.fieldKey}'),
-          controller: _controller,
-          obscureText: widget.obscure,
-          enableSuggestions: !widget.obscure,
-          autocorrect: false,
-          keyboardType: widget.keyboardType,
-          onChanged: widget.onChanged,
-          decoration: InputDecoration(
-            labelText: widget.label,
-            // Shown only once the field has been touched — a form that opens covered in red says
-            // the user has done something wrong before they have done anything at all.
-            errorText: _controller.text.isEmpty && widget.value.isEmpty ? null : widget.error,
-            isDense: true,
-            border: const OutlineInputBorder(),
-          ),
-        ),
-      );
+    padding: const EdgeInsets.only(bottom: 10),
+    child: TextField(
+      key: ValueKey('shares.form.${widget.fieldKey}'),
+      controller: _controller,
+      obscureText: widget.obscure,
+      enableSuggestions: !widget.obscure,
+      autocorrect: false,
+      keyboardType: widget.keyboardType,
+      onChanged: widget.onChanged,
+      decoration: InputDecoration(
+        labelText: widget.label,
+        // Shown only once the field has been touched — a form that opens covered in red says
+        // the user has done something wrong before they have done anything at all.
+        errorText: _controller.text.isEmpty && widget.value.isEmpty ? null : widget.error,
+        isDense: true,
+        border: const OutlineInputBorder(),
+      ),
+    ),
+  );
 }

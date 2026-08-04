@@ -49,9 +49,17 @@ List<SftpFile> sortEntries(List<SftpFile> entries, SftpSortOption option) {
       SftpSortOption.nameAsc || SftpSortOption.typeFoldersFirst => byName(a, b),
       SftpSortOption.nameDesc => -byName(a, b),
       SftpSortOption.modifiedAsc => _thenName(
-          a.modTimeSeconds.compareTo(b.modTimeSeconds), a, b, byName),
+        a.modTimeSeconds.compareTo(b.modTimeSeconds),
+        a,
+        b,
+        byName,
+      ),
       SftpSortOption.modifiedDesc => _thenName(
-          b.modTimeSeconds.compareTo(a.modTimeSeconds), a, b, byName),
+        b.modTimeSeconds.compareTo(a.modTimeSeconds),
+        a,
+        b,
+        byName,
+      ),
       SftpSortOption.sizeAsc => _thenName(a.size.compareTo(b.size), a, b, byName),
       SftpSortOption.sizeDesc => _thenName(b.size.compareTo(a.size), a, b, byName),
       SftpSortOption.typeFilesFirst => byName(a, b),
@@ -62,10 +70,5 @@ List<SftpFile> sortEntries(List<SftpFile> entries, SftpSortOption option) {
 }
 
 /// Falls back to name so equal sizes or timestamps still produce a stable, predictable order.
-int _thenName(
-  int primary,
-  SftpFile a,
-  SftpFile b,
-  int Function(SftpFile, SftpFile) byName,
-) =>
+int _thenName(int primary, SftpFile a, SftpFile b, int Function(SftpFile, SftpFile) byName) =>
     primary != 0 ? primary : byName(a, b);
