@@ -1,4 +1,3 @@
-import 'dart:typed_data';
 
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
@@ -12,10 +11,33 @@ import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/sftp/shares_tab.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
+import 'package:omniterm/data/shares/remote_fs_client.dart';
+import 'package:omniterm/data/remote_models.dart';
 import 'package:omniterm/ui/view_model/shares_view_model.dart';
+import 'package:omniterm/ui/view_model/sftp_view_model.dart';
 import 'package:provider/provider.dart';
 
 import 'support/fake_secure_storage.dart';
+
+/// A file client that reports one directory, so Browse has something to show.
+class _FakeShareClient extends RemoteFsClient {
+  @override
+  Future<String> home() async => '/';
+
+  @override
+  Future<List<SftpFile>> list(String path) async => [
+        SftpFile(
+          name: 'movies',
+          isDirectory: true,
+          size: 0,
+          modDate: '2026-01-01',
+          modTimeSeconds: 0,
+        ),
+      ];
+
+  @override
+  noSuchMethod(Invocation invocation) => throw UnimplementedError();
+}
 
 /// A probe that answers from a fixed map of reachable endpoints.
 class _FakeProbe implements NetworkProbe {
@@ -398,6 +420,7 @@ void main() {
     late AppRepository repo;
     late AppState app;
     late SharesViewModel vm;
+    late SftpViewModel sftp;
 
     setUp(() {
       db = AppDatabase(NativeDatabase.memory());
@@ -408,6 +431,7 @@ void main() {
 
     tearDown(() async {
       vm.dispose();
+      sftp.dispose();
       app.dispose();
       await db.close();
     });
@@ -419,11 +443,13 @@ void main() {
 
       await app.start();
       vm = SharesViewModel(app, probe: _FakeProbe());
+      sftp = SftpViewModel(app, shareClientFor: (_) async => _FakeShareClient());
       await tester.pumpWidget(
         MultiProvider(
           providers: [
             ChangeNotifierProvider<AppState>.value(value: app),
             ChangeNotifierProvider<SharesViewModel>.value(value: vm),
+            ChangeNotifierProvider<SftpViewModel>.value(value: sftp),
           ],
           child: MaterialApp(
             theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
@@ -559,6 +585,104 @@ void main() {
 
       expect(vm.draft!.port, '22');
       await finish(tester);
+    });
+  });
+
+  group('browsing a share', () {
+    late AppDatabase db;
+    late AppRepository repo;
+    late AppState app;
+    late SftpViewModel sftp;
+
+    setUp(() {
+      db = AppDatabase(NativeDatabase.memory());
+      repo = AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{})));
+      app = AppState(repo);
+    });
+
+    tearDown(() async {
+      sftp.dispose();
+      app.dispose();
+      await db.close();
+    });
+
+    NetworkShare share() => NetworkShare(
+          id: 7,
+          name: 'media',
+          protocol: 'SMB',
+          address: '10.0.0.5',
+          port: 445,
+          sharePath: 'media',
+          workgroup: '',
+          username: 'sam',
+          password: 'pw',
+          anonymous: false,
+          useHttps: true,
+          notes: '',
+          lastChecked: 0,
+          lastStatus: 'online',
+        );
+
+    Future<SftpViewModel> boot({bool withClient = true}) async {
+      await app.start();
+      await Future<void>.delayed(Duration.zero);
+      return sftp = SftpViewModel(
+        app,
+        shareClientFor: withClient ? (_) async => _FakeShareClient() : null,
+      );
+    }
+
+    test('opening a share lists it and takes over the Files tab', () async {
+      await boot();
+      await sftp.openShare(share());
+
+      expect(sftp.browsedShare?.name, 'media');
+      expect(sftp.activeTab, SftpTab.files);
+      expect(sftp.visibleEntries.single.name, 'movies');
+      expect(sftp.hasBrowseTarget, isTrue);
+    });
+
+    test('closing a share leaves the share browser', () async {
+      await boot();
+      await sftp.openShare(share());
+      await sftp.closeShare();
+
+      expect(sftp.browsedShare, isNull);
+      expect(sftp.path, isEmpty);
+    });
+
+    test('bookmarks are unavailable while a share is open', () async {
+      // They are stored per serverId, and a share has no host to key them to.
+      await boot();
+      await sftp.openShare(share());
+
+      expect(sftp.canBookmark, isFalse);
+      await sftp.toggleBookmark('/movies');
+      expect(sftp.bookmarks, isEmpty);
+    });
+
+    test('a host change underneath does not disturb the open share', () async {
+      // Otherwise a host dropping offline would reset the path and reload the host's bookmarks
+      // under the share's listing.
+      await boot();
+      await sftp.openShare(share());
+      await sftp.openPath('/movies');
+      final path = sftp.path;
+
+      app.selectedServerId = 999;
+      await Future<void>.delayed(Duration.zero);
+
+      expect(sftp.browsedShare?.name, 'media');
+      expect(sftp.path, path);
+    });
+
+    test('without a share client the failure names the share', () async {
+      // "This build cannot browse shares" and "that share would not open" send the user to
+      // different places.
+      await boot(withClient: false);
+      await sftp.openShare(share());
+
+      expect(sftp.error, contains('unavailable in this build'));
     });
   });
 }

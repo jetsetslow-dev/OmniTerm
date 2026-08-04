@@ -2,14 +2,14 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Network Shares is ported (session 42) — the last screen §7.1 was blocking.**
+> **Shares are browsable (session 43).** The Files tab now opens a saved SMB or SFTP share, not
+> only a host.
 >
-> **Immediate task:** browsing a share (SMB and SFTP have clients; the file-browser view needs to be
-> reused for a share rather than a host), then the foreground service (`SessionService.kt`), then
-> **iOS SMB** (§18).
+> **Immediate task:** the foreground service that keeps a session alive with the app closed
+> (`SessionService.kt`), then **iOS SMB** (§18).
 >
-> **Validate on device — it works.** §19 has the recipe. A screen that passes 1400 host tests can
-> still be broken in a way only a real lifecycle reveals; §15.7 is exactly that.
+> **Validate on device — it works.** §19 has the recipe. §15.7 is why: a screen that passes 1400
+> host tests can still be broken in a way only a real lifecycle reveals.
 >
 > **The Kotlin app is maintained in parallel** on `fix/kotlin-parity-defects` — see §15.6. A §15
 > entry is not finished until it is fixed on both branches.
@@ -1106,10 +1106,9 @@ rather than silently dropped.
 
 ## 18. Known parity gaps (requirement 13)
 
-**Share browsing (session 42).** Shares can be saved, edited, checked and deleted; **opening one in
-the file browser is not wired yet**. SMB and SFTP have clients, so this is a UI job — the browser
-view is currently bound to a host rather than to a `RemoteFsClient`. FTP and WebDAV have no client
-at all, and the cards say so per protocol rather than offering a Browse button that fails on tap.
+**Share browsing (session 43).** SMB and SFTP shares open in the Files tab. **FTP and WebDAV have
+no client**, so their cards say so per protocol rather than offering a Browse button that fails on
+tap; NFS is mounted by the OS and never was browsable.
 
 **SMB on iOS (session 40).** Android is done — smbj behind `PlatformSmbClient`. iOS has no
 implementation, and `isSupported()` reports false so the Shares screen can say so rather than
@@ -2696,3 +2695,33 @@ job — the browser view is currently bound to a host rather than to a `RemoteFs
 **Verified — 1445 tests pass (35 new), `flutter analyze` clean, APK builds, and the tab was opened
 on the emulator**: the protocol chips render, SMB's port pre-fills to 445, the workgroup field
 appears only for SMB, Save stays disabled until the draft is valid, and logcat is clean.
+
+---
+
+### Session 43 — browsing a share
+
+The Files tab now opens a saved SMB or SFTP share, not only a host.
+
+**Generalised rather than duplicated (§11).** The obvious move was a second screen with its own view
+model; the right one was noticing that the file-browser widgets — breadcrumbs, toolbar, rows, sort,
+selection, transfers — never reference the host at all. Only the screen *chrome* did. So
+`SftpViewModel` gained a share as an alternative browse target and everything downstream was already
+protocol-agnostic, which is what `RemoteFsClient` was for.
+
+| Decision | Why |
+|---|---|
+| A share **takes over** the Files tab while open | It has its own address, credentials and root. Mixing it with the host's path would let a delete land on a different machine. |
+| Opening or closing clears the path, entries and bookmarks | Carrying a path across would point the next listing — or delete — at a directory on the other endpoint. |
+| A host change is ignored while a share is open | Otherwise a host dropping offline behind the share would reset the path and reload that host's bookmarks under the share's listing. |
+| The share bar has **no host picker** | A control that looks like it changes what you are viewing and does not is worse than no control; the only action is Close. |
+| Bookmarks are disabled for shares | They are stored per `serverId`, and a share has no host to key them to. |
+| Browse appears only for SMB and SFTP | The two with clients. The rest already said why on the card. |
+| SFTP shares reuse the pooled transport | A share and a host on the same machine then share one authenticated connection instead of dialling twice. |
+
+**A real bug this surfaced.** `openPath` began `if (server == null) return;`, so with a share open and
+no online host the first listing was never issued — the tab sat empty with no error. Fixed by making
+the guard "no browse target at all", and by re-keying the stale-response check: it compared
+`browsedServer?.id`, which is meaningless for a share, so a slow listing could not be discarded
+correctly. It now compares an identity that names *what* was being browsed, host or share.
+
+**Verified — 1450 tests pass (5 new), `flutter analyze` clean, APK builds, and the Shares tab opens cleanly on the emulator.**

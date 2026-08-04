@@ -46,7 +46,7 @@ class SftpTransfer {
 
 /// The SFTP screen's state and actions, split out of `ui/AppViewModel.kt` per §5.2.
 class SftpViewModel extends ChangeNotifier {
-  SftpViewModel(this._app, {this.fsClientFor}) {
+  SftpViewModel(this._app, {this.fsClientFor, this.shareClientFor}) {
     _app.addListener(_onAppChanged);
   }
 
@@ -65,6 +65,14 @@ class SftpViewModel extends ChangeNotifier {
   /// in the repository rather than in memory.
   final Future<RemoteFsClient?> Function(Server server)? fsClientFor;
 
+  /// Resolves the file client for a saved **share**.
+  ///
+  /// Separate from [fsClientFor] because a share carries its own address and credentials and is not
+  /// tied to a host at all — but everything downstream (listing, sorting, rename, delete,
+  /// transfers) is identical, which is why the browser is generalised here rather than duplicated
+  /// into a second screen (§11).
+  final Future<RemoteFsClient?> Function(NetworkShare share)? shareClientFor;
+
   bool get canBrowse => fsClientFor != null;
 
   /// Why there is no client, in the user's terms.
@@ -72,13 +80,68 @@ class SftpViewModel extends ChangeNotifier {
   /// "This build cannot browse files" and "this host's credentials could not be resolved" are
   /// different problems with different fixes, and one message for both sends the user looking in
   /// the wrong place.
-  String _unavailable(Server? server, String whenUnsupported) => canBrowse
-      ? 'Could not open a file connection to ${server?.name ?? 'this host'}. '
-          'Check its key or credential profile in the host settings.'
-      : whenUnsupported;
+  String _unavailable(Server? server, String whenUnsupported) {
+    final share = _browsedShare;
+    if (share != null) {
+      return shareClientFor == null
+          ? 'Browsing shares is unavailable in this build.'
+          : 'Could not open ${share.name}. Check its address and credentials.';
+    }
+    return canBrowse
+        ? 'Could not open a file connection to ${server?.name ?? 'this host'}. '
+            'Check its key or credential profile in the host settings.'
+        : whenUnsupported;
+  }
 
-  /// The client for the host currently being browsed, or null when there is none.
+  /// The share being browsed, or null when browsing a host.
+  ///
+  /// A share takes over the Files tab while it is open: it has its own address, credentials and
+  /// root, and mixing it with the host's path or bookmarks would let a delete land on the wrong
+  /// machine entirely.
+  NetworkShare? _browsedShare;
+
+  NetworkShare? get browsedShare => _browsedShare;
+
+  /// True when the Files tab has something to show — a host or a share.
+  bool get hasBrowseTarget => _browsedShare != null || browsedServer != null;
+
+  /// What the Files tab is currently showing, for the header.
+  String get browseLabel => _browsedShare?.name ?? browsedServer?.name ?? '';
+
+  /// Open [share] in the Files tab.
+  Future<void> openShare(NetworkShare share) async {
+    _browsedShare = share;
+    // Paths and bookmarks belong to whatever was open before; carrying either across would point a
+    // listing — or a delete — at a directory on a different machine.
+    _path = '';
+    _entries = const [];
+    _bookmarks = const [];
+    _error = null;
+    _status = null;
+    _activeTab = SftpTab.files;
+    _safeNotify();
+    await openPath('');
+  }
+
+  /// Return to browsing hosts.
+  Future<void> closeShare() async {
+    if (_browsedShare == null) return;
+    _browsedShare = null;
+    _path = '';
+    _entries = const [];
+    _error = null;
+    _status = null;
+    _safeNotify();
+    final server = browsedServer;
+    if (server == null) return;
+    await _loadBookmarks(server.id);
+    await openPath('');
+  }
+
+  /// The client for whatever is currently being browsed, or null when there is none.
   Future<RemoteFsClient?> get _client async {
+    final share = _browsedShare;
+    if (share != null) return shareClientFor?.call(share);
     final server = browsedServer;
     final resolve = fsClientFor;
     if (server == null || resolve == null) return null;
@@ -128,6 +191,13 @@ class SftpViewModel extends ChangeNotifier {
 
   void _onAppChanged() {
     final current = browsedServer?.id;
+    // A share owns the Files tab while it is open, so a host going offline behind it must not
+    // reset the path or reload the host's bookmarks under the share's listing.
+    if (_browsedShare != null) {
+      _lastServerId = current;
+      _safeNotify();
+      return;
+    }
     if (current != _lastServerId) {
       _lastServerId = current;
       // One host's directory listing is not another's, and a path that exists on one may not exist
@@ -155,7 +225,7 @@ class SftpViewModel extends ChangeNotifier {
   set activeTab(SftpTab value) {
     if (_activeTab == value) return;
     // Only the file browser needs a reachable SSH host; the others work regardless.
-    if (value == SftpTab.files && browsedServer == null) return;
+    if (value == SftpTab.files && !hasBrowseTarget) return;
     _activeTab = value;
     notifyListeners();
   }
@@ -233,9 +303,13 @@ class SftpViewModel extends ChangeNotifier {
 
   /// Opens [target], or the remote home when it is empty.
   Future<void> openPath(String target) async {
-    final client = await _client;
+    final share = _browsedShare;
     final server = browsedServer;
-    if (server == null) return;
+    // A share is a browse target in its own right; requiring a host here left the share's first
+    // listing never issued at all.
+    if (share == null && server == null) return;
+
+    final client = await _client;
     if (client == null) {
       _error = _unavailable(server, 'File browsing is unavailable in this build.');
       _safeNotify();
@@ -246,17 +320,22 @@ class SftpViewModel extends ChangeNotifier {
     _error = null;
     _safeNotify();
 
-    final startedFor = server.id;
+    // What the listing belongs to. A share's identity is its own; a host's is the host id, which is
+    // what changes underneath when the user switches machines mid-fetch.
+    final startedFor = share != null ? 'share:${share.id}' : 'host:${server!.id}';
+    String currentTarget() =>
+        _browsedShare != null ? 'share:${_browsedShare!.id}' : 'host:${browsedServer?.id}';
+
     try {
       final resolved = target.isEmpty ? await client.home() : normalisePath(target);
       final listing = await client.list(resolved);
-      // A listing that lands after the user switched hosts describes a different machine.
-      if (browsedServer?.id != startedFor) return;
+      // A listing that lands after the user switched target describes a different machine.
+      if (currentTarget() != startedFor) return;
       _path = resolved;
       _entries = listing;
       _selected.clear();
     } catch (e) {
-      if (browsedServer?.id == startedFor) {
+      if (currentTarget() == startedFor) {
         _error = e.toString();
         // The previous directory's rows are not this directory's contents; leaving them visible
         // under a path that failed to open invites acting on the wrong files.
@@ -420,7 +499,12 @@ class SftpViewModel extends ChangeNotifier {
 
   bool isBookmarked(String path) => _bookmarks.contains(normalisePath(path));
 
+  /// Bookmarks belong to a host, not to a share: they are stored per `serverId`, and a share has
+  /// no host to key them to.
+  bool get canBookmark => _browsedShare == null && browsedServer != null;
+
   Future<void> toggleBookmark(String path) async {
+    if (!canBookmark) return;
     final server = browsedServer;
     if (server == null) return;
     final normalised = normalisePath(path);

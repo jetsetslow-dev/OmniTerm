@@ -6,6 +6,7 @@ import '../../../domain/host_display.dart';
 import '../../../domain/network_share_form.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
+import '../../view_model/sftp_view_model.dart';
 import '../../view_model/shares_view_model.dart';
 import '../../widgets/omni_components.dart';
 
@@ -98,6 +99,7 @@ class SharesTab extends StatelessWidget {
                     share: vm.shares[index],
                     checking: vm.isChecking(vm.shares[index].id),
                     onTest: () => vm.test(vm.shares[index]),
+                    onBrowse: () => context.read<SftpViewModel>().openShare(vm.shares[index]),
                     onEdit: () => _edit(context, vm, share: vm.shares[index]),
                     onDelete: () => _confirmDelete(context, vm, vm.shares[index]),
                   ),
@@ -167,6 +169,7 @@ class _ShareCard extends StatelessWidget {
     required this.share,
     required this.checking,
     required this.onTest,
+    required this.onBrowse,
     required this.onEdit,
     required this.onDelete,
   });
@@ -174,6 +177,7 @@ class _ShareCard extends StatelessWidget {
   final NetworkShare share;
   final bool checking;
   final VoidCallback onTest;
+  final VoidCallback onBrowse;
   final VoidCallback onEdit;
   final VoidCallback onDelete;
 
@@ -251,6 +255,12 @@ class _ShareCard extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
+                if (unavailable == null)
+                  TextButton(
+                    key: ValueKey('shares.card.${share.id}.browse'),
+                    onPressed: onBrowse,
+                    child: const Text('Browse', style: TextStyle(fontSize: 12)),
+                  ),
                 TextButton(
                   key: ValueKey('shares.card.${share.id}.test'),
                   onPressed: checking ? null : onTest,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../domain/host_display.dart';
+import '../../../domain/network_share_form.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/sftp_view_model.dart';
@@ -36,7 +37,10 @@ class _SftpScreenState extends State<SftpScreen> {
       children: [
         // The host bar belongs to the browser only: Transfers and Bookmarks span every endpoint and
         // Shares has its own list, so a host picker there would be misleading.
-        if (vm.activeTab == SftpTab.files && vm.browsedServer != null) _HostBar(vm: vm),
+        if (vm.activeTab == SftpTab.files && vm.browsedShare != null)
+          _ShareBar(vm: vm)
+        else if (vm.activeTab == SftpTab.files && vm.browsedServer != null)
+          _HostBar(vm: vm),
         _TabBar(vm: vm),
         Expanded(
           child: Padding(
@@ -44,7 +48,7 @@ class _SftpScreenState extends State<SftpScreen> {
             child: switch (vm.activeTab) {
               SftpTab.bookmarks => SftpBookmarksTab(vm: vm),
               SftpTab.files =>
-                vm.browsedServer == null ? const _NoOnlineHost() : SftpFilesTab(vm: vm),
+                vm.hasBrowseTarget ? SftpFilesTab(vm: vm) : const _NoOnlineHost(),
               SftpTab.shares => const SharesTab(),
               SftpTab.transfers => SftpTransfersTab(vm: vm),
             },
@@ -103,6 +107,62 @@ class _HostBar extends StatelessWidget {
   }
 }
 
+/// Names the share being browsed, and offers the only way back to hosts.
+///
+/// A separate bar from [_HostBar] rather than a reused one with a different label: the host picker
+/// must not appear here at all, because switching hosts underneath an open share would be a control
+/// that looks like it changes what you are looking at and does not.
+class _ShareBar extends StatelessWidget {
+  const _ShareBar({required this.vm});
+
+  final SftpViewModel vm;
+
+  @override
+  Widget build(BuildContext context) {
+    final share = vm.browsedShare!;
+    final scheme = Theme.of(context).colorScheme;
+
+    return Container(
+      key: const ValueKey('sftp.shareBar'),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Row(
+        children: [
+          const Icon(Icons.folder_shared, size: 18, color: OmniColors.cyan),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  share.name,
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                ListenableBuilder(
+                  listenable: HostDisplay.instance,
+                  builder: (context, _) => Text(
+                    shareUri(
+                      share,
+                      maskedAddress: HostDisplay.instance.sensitive(share.address),
+                    ),
+                    style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          TextButton.icon(
+            key: const ValueKey('sftp.shareBar.close'),
+            icon: const Icon(Icons.close, size: 16),
+            label: const Text('Close', style: TextStyle(fontSize: 12)),
+            onPressed: vm.closeShare,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TabBar extends StatelessWidget {
   const _TabBar({required this.vm});
 
@@ -117,7 +177,7 @@ class _TabBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasHost = vm.browsedServer != null;
+    final hasHost = vm.hasBrowseTarget;
     return SizedBox(
       height: 44,
       child: ListView(

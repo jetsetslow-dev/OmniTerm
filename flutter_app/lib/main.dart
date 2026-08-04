@@ -5,11 +5,13 @@ import 'package:provider/provider.dart';
 
 import 'data/app_database.dart';
 import 'data/app_repository.dart';
+import 'data/shares/platform_smb_client.dart';
 import 'data/shares/remote_fs_client.dart';
 import 'data/ssh/dartssh_transport.dart';
 import 'data/ssh/secure_host_key_store.dart';
 import 'data/ssh/ssh_host_key_trust.dart';
 import 'data/ssh/ssh_transport.dart';
+import 'domain/network_share_form.dart';
 import 'domain/server_credentials.dart';
 import 'platform/alert_notifier.dart';
 import 'platform/biometric_auth.dart';
@@ -58,6 +60,39 @@ AppRepository _buildRepository(AppDatabase db) {
   unawaited(repository.migrateLegacySecrets());
   return repository;
 }
+
+/// Builds the file client for one saved share.
+///
+/// The protocol decides the implementation, and only the two with a client are offered — the Shares
+/// tab hides Browse for the rest rather than handing back a null the browser would have to explain
+/// (§18). SMB goes through the native bridge (§7.1); SFTP reuses the same pooled transport every
+/// other screen uses, so a share and a host on the same machine share one authenticated connection.
+Future<RemoteFsClient?> Function(NetworkShare) _shareClientFor(DartSshTransport transport) =>
+    (share) async {
+      final protocol = ShareProtocol.fromId(share.protocol);
+      return switch (protocol) {
+        ShareProtocol.smb => PlatformSmbClient(
+            SmbEndpoint(
+              host: share.address,
+              port: share.port,
+              shareName: share.sharePath,
+              domain: share.workgroup,
+              username: share.username,
+              password: share.password,
+              anonymous: share.anonymous,
+            ),
+          ),
+        ShareProtocol.sftp => transport.sftp(
+            SshCredentials(
+              host: share.address,
+              port: share.port,
+              username: share.username,
+              password: share.password.isEmpty ? null : share.password,
+            ),
+          ),
+        _ => null,
+      };
+    };
 
 /// Builds the SFTP client for one host.
 ///
@@ -134,7 +169,14 @@ class OmniTermApp extends StatelessWidget {
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, SftpViewModel>(
-          create: (context) => SftpViewModel(context.read<AppState>(), fsClientFor: _sftpFor(context.read<DartSshTransport>(), context.read<AppState>().repository)),
+          create: (context) => SftpViewModel(
+            context.read<AppState>(),
+            fsClientFor: _sftpFor(
+              context.read<DartSshTransport>(),
+              context.read<AppState>().repository,
+            ),
+            shareClientFor: _shareClientFor(context.read<DartSshTransport>()),
+          ),
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, SharesViewModel>(
