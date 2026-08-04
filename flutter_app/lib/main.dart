@@ -18,6 +18,7 @@ import 'platform/biometric_auth.dart';
 import 'platform/screen_security.dart';
 import 'platform/session_service.dart';
 import 'ui/view_model/app_lock_controller.dart';
+import 'ui/view_model/host_status_probe.dart';
 import 'ui/widgets/app_lock_gate.dart';
 import 'ui/widgets/host_key_approval_host.dart';
 import 'ui/app_scaffold.dart';
@@ -144,6 +145,15 @@ class OmniTermApp extends StatelessWidget {
         Provider<ScreenSecurity>(create: (_) => ScreenSecurity()),
         ChangeNotifierProvider<AppState>(
           create: (context) => AppState(_buildRepository(context.read<AppDatabase>()))..start(),
+        ),
+        // Nothing else keeps `status` current, and Monitor, Infra, Fleet, SFTP and the terminal all
+        // offer only hosts that are online — so without this sweep the app reads as empty
+        // everywhere (§15.8).
+        ChangeNotifierProvider<HostStatusProbe>(
+          // `lazy: false` matters: nothing in the widget tree reads this provider, so with the
+          // default it would never be constructed and the sweep would never run.
+          lazy: false,
+          create: (context) => HostStatusProbe(context.read<AppState>().repository)..start(),
         ),
         // Declared after AppState because it reads the same repository, and loaded eagerly: the
         // lock has to be up before the first frame, not after it.

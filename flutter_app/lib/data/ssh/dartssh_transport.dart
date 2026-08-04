@@ -349,16 +349,29 @@ class DartSshTransport implements SshTransport {
       client = await _connect(creds, onPhaseChange: onPhaseChange);
 
       onPhaseChange?.call('Opening channel…');
-      final session = await client.shell(
-        pty: SSHPtyConfig(
-          type: 'xterm-256color',
-          width: cols < 1 ? 1 : cols,
-          height: rows < 1 ? 1 : rows,
-          pixelWidth: cols * 8,
-          pixelHeight: rows * 16,
-        ),
-        environment: const {'COLORTERM': 'truecolor'},
+      final pty = SSHPtyConfig(
+        type: 'xterm-256color',
+        width: cols < 1 ? 1 : cols,
+        height: rows < 1 ? 1 : rows,
+        pixelWidth: cols * 8,
+        pixelHeight: rows * 16,
       );
+
+      // COLORTERM is a nicety; the shell is not. A stock OpenSSH server accepts no environment
+      // variables at all unless they are listed in `AcceptEnv`, and refuses the request outright —
+      // so asking for it as part of opening the channel meant **the terminal could not open on a
+      // default-configured server**, which is nearly all of them. Requested first because a server
+      // that does allow it renders 24-bit colour correctly, then retried without it, because a
+      // rejected optional request must never cost the user their shell (§15.9).
+      SSHSession session;
+      try {
+        session = await client.shell(
+          pty: pty,
+          environment: const {'COLORTERM': 'truecolor'},
+        );
+      } on SSHChannelRequestError {
+        session = await client.shell(pty: pty);
+      }
       return _DartSshTerminalSession(client, session);
     } catch (e) {
       client?.close();

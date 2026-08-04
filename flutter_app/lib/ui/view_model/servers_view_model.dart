@@ -83,7 +83,17 @@ class ServersViewModel extends ChangeNotifier {
         keys: await _app.repository.getAllKeys(),
         profiles: await _app.repository.getAllProfiles(),
       );
-      return await transport.testConnection(creds);
+      final failure = await transport.testConnection(creds);
+      // Persisted, not just returned. Nothing else wrote this column, so a host stayed offline
+      // forever no matter how many times its connection tested green — and every screen that
+      // filters on `status == 'online'` showed nothing (§15.8).
+      await _app.repository.updateConnectionState(
+        candidate.id,
+        failure == null ? 'online' : 'offline',
+        candidate.healthScore,
+        0,
+      );
+      return failure;
     } on CredentialResolutionException catch (e) {
       return e.message;
     } catch (e) {

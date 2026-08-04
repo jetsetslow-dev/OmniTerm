@@ -2,21 +2,15 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **The background session service is in (session 44).** Task #8's last Android piece.
+> **The terminal works against a real SSH server (session 45).** Connect → host-key prompt →
+> password auth → live shell → command round trip → foreground service, all verified on the
+> emulator against the repo's lab. Two blocking defects were found doing it (§15.8, §15.9).
 >
-> **Immediate task: validate the SSH path against the repo's own lab.** The fleet is **already
-> running** (`./scripts/test-hosts.sh status`); `./scripts/test-hosts.sh fleet` prints the
-> credentials. Add `10.0.2.2:2201` (password auth) in the app, connect, and watch the host-key
-> prompt, the terminal and the foreground service work for real. Session 44 got as far as the
-> add-host form and ran out of runway.
+> **Immediate task: keep walking the app against the lab.** Monitor, Infra, Fleet and SFTP have
+> never been exercised against a real host, and §15.8 shows what that turns up. `10.0.2.2:2202`
+> (key auth), `:2203` (bastion) and the proxy paths are also unexercised. **Then iOS SMB** (§18).
 >
-> ⚠️ **Driving that form by `adb`: do not send `KEYCODE_ESCAPE`** to dismiss the keyboard — it is
-> routed as Back and closes the whole sheet, losing everything typed. `KEYCODE_TAB` moves between
-> fields; tapping a second field does not reliably move focus (§19).
->
-> **Then iOS SMB** (§18), which is the last #8 item.
->
-> **Validate on device — it works.** §19 has the recipe. §15.7 is why.
+> **Validate on device — it works, and it keeps finding things.** §19 has the recipe.
 >
 > **The Kotlin app is maintained in parallel** on `fix/kotlin-parity-defects` — see §15.6. A §15
 > entry is not finished until it is fixed on both branches.
@@ -1789,6 +1783,51 @@ This defect exists in the shipped Android app today.
 
 ---
 
+### 15.9 The terminal could not open on a stock OpenSSH server (session 45)
+
+`openShell` requested `COLORTERM=truecolor` as part of opening the channel:
+
+```dart
+final session = await client.shell(pty: pty, environment: {'COLORTERM': 'truecolor'});
+```
+
+**A default OpenSSH server accepts no environment variables at all** — only those listed in
+`AcceptEnv`, which is empty out of the box — and refuses the request outright with
+`SSHChannelRequestError`. That exception propagated, so opening a terminal failed on
+**nearly every server in existence**:
+
+> `SSHChannelRequestError(Failed to set environment variable: COLORTERM)`
+
+The app's central feature was completely broken and no host test could see it: every test used a
+fake channel that accepted whatever it was handed.
+
+Fixed by requesting it first and retrying without it on refusal — a server that *does* allow it
+still gets 24-bit colour, and a rejected optional nicety never costs the user their shell.
+
+**Port-introduced** (the Kotlin used JSch, which did not set this), so not back-ported.
+
+---
+
+### 15.8 Nothing ever marked a host online (session 45)
+
+`status` is the column Monitor, Infra, Fleet, the SFTP browser and the terminal all filter on — and
+**nothing in the port ever wrote it.** `ServersViewModel.testConnection` returned its result to the
+caller and discarded it; there was no periodic probe at all.
+
+The effect on a device: add a host, watch "Connection succeeded", then find *every* screen reporting
+"no online hosts" forever. The app was inert past the Servers list.
+
+Fixed with `HostStatusProbe` — a bounded, non-overlapping TCP sweep every 45 s, ported from
+`probeServer` in `ui/AppViewModel.kt` — plus persisting the result of an explicit connection test.
+
+**A second bug sat on top of it:** the provider was registered with Provider's default
+`lazy: true`, and since nothing in the widget tree reads it, it was never constructed and the sweep
+never ran. `lazy: false` is required and is now commented as such.
+
+**Port-introduced**, so not back-ported.
+
+---
+
 ### 15.7 The app lock never engaged (found on a device, session 41)
 
 `AppLockGate` records the background time on `inactive`, `paused`, `hidden` and `detached`, and
@@ -2775,3 +2814,45 @@ terminal and this service all testable for real, and it is the next thing to do.
 runs. The service itself is not yet exercised**, because that needs a live SSH session: the lab was
 started and the add-host form reached, but the host was not saved before the iteration ended. The
 form is the next thing to finish, and §19 records the `adb` gotcha that cost the attempt.
+
+---
+
+### Session 45 — the terminal works against a real server, and two blockers found doing it
+
+`lib/ui/view_model/host_status_probe.dart`, a fix in `dartssh_transport.dart`, and persistence in
+`ServersViewModel.testConnection`.
+
+**The whole path is verified end to end** against `./scripts/test-hosts.sh`'s `direct` host on the
+emulator:
+
+| Step | Result |
+|---|---|
+| Add host, **Test connection** | Host-key prompt appeared for `10.0.2.2`, `ssh-ed25519` |
+| Fingerprint shown | `SHA256:K3LSk44Jsz…` — **identical** to `./scripts/test-hosts.sh keys` for that container, so the fingerprint computation is right |
+| Trust & connect → test | **"Connection succeeded"**; Save changed from "Save (test first)" to "Save" |
+| Term tab | Host listed online, connect prompt with `omniterm@10.0.2.2:2201` |
+| Connect | **Live shell**: "Welcome to OpenSSH Server", real prompt, measured 52×38 grid, session chip, RO toggle, key bar |
+| Typed `uname` + Enter | **`Linux`** came back from the server |
+| Foreground service | `isForeground=true`, `foregroundId=1`, `types=DATA_SYNC`, channel `session_channel`, group summary, 1 action |
+
+**Two defects, both invisible to 1464 host tests.**
+
+**§15.9 — the terminal could not open on a stock OpenSSH server.** `openShell` asked for
+`COLORTERM=truecolor` while opening the channel. A default OpenSSH server accepts *no* environment
+variables (`AcceptEnv` is empty) and refuses the request, and that exception propagated — so the
+app's central feature failed on nearly every server there is. Every test used a fake channel that
+accepted whatever it was handed. Now requested, then retried without it on refusal.
+
+**§15.8 — nothing ever marked a host online.** `status` is what Monitor, Infra, Fleet, SFTP and the
+terminal all filter on, and no code wrote it: `testConnection` threw its own result away and there
+was no probe. On a device that reads as "Connection succeeded" followed by "no online hosts" on
+every screen, forever. Fixed with `HostStatusProbe` (bounded, non-overlapping TCP sweep, ported from
+`probeServer`) plus persisting explicit test results. **A second bug sat on top:** the provider was
+lazy, so nothing constructed it and the sweep never ran — `lazy: false` is now required and
+commented.
+
+The probe is deliberately TCP-only and leaves `healthScore` alone: health is Monitor's, computed
+from real telemetry, and overwriting it from a ping would make a struggling host look perfect.
+
+**Verified — 1473 tests pass (9 new), `flutter analyze` clean, APK builds, and every step above was
+done by hand on Android 15 against a real SSH server.**
