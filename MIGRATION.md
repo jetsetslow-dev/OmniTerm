@@ -5,7 +5,12 @@
 > **Task #9 is running: 11 Dart-only flows + 5 Patrol native flows, green on the emulator** (sessions 50-54). The key-import sheet
 > and the app-lock cycle are both done — the two flows the manual walk could not drive at all.
 >
-> ⚠️ **Read §19.1 before writing another flow.** `pumpAndSettle` near a focused field, fixed frame
+> ⚠️ **Read §19.1 and §19.2 before writing another flow.** §19.2 is the expensive one: a live-binding
+> probe reported three false failures in a row, and two "fixes" were written for a defect that did
+> not exist. When a device probe disagrees with a widget test, believe neither — measure from
+> outside the app.
+>
+> ⚠️ **Original §19.1 note:** `pumpAndSettle` near a focused field, fixed frame
 > counts instead of observable outcomes, and `enterText` without focus each cost a ten-minute device
 > run and each looked like an app bug first.
 >
@@ -2844,6 +2849,27 @@ containers and would fail on any other checkout — see `tests-must-be-host-inde
 in the scratchpad, run them, delete them, and land a *host-independent* regression test instead:
 §15.11's proxy tests bind their own loopback server rather than talking to the lab.
 
+### 19.2 A live-binding probe can lie about widget state (session 59)
+
+`tester.widget<T>(finder)` under `LiveTestWidgetsFlutterBinding` — what an `integration_test` flow
+runs on a device — returned **stale state** for a modal bottom sheet through a whole afternoon of
+probing. It reported the file editor as read-only after the pencil was tapped, its Save button as
+disabled after text was entered, and the sheet as still open after a successful save. All three were
+false.
+
+Two independent measurements settled it:
+
+- **A screenshot** taken from outside the test showed the sheet in edit mode, unlocked icon and all.
+- **The server** showed the file with its new contents and new byte count.
+
+Before that, the framework's own missed-tap warning had pointed at an offset below the bottom of the
+screen, which read exactly like a layout bug — and **two "fixes" were written for a defect that did
+not exist** before the screenshot showed the sheet rendering perfectly. Both were reverted.
+
+**The rule: when a device probe disagrees with a widget test, do not believe either one.** Get a
+measurement from outside the app — a screenshot, or the server's own view of what changed. On this
+project the server is usually the better witness, because it is the thing the feature is *for*.
+
 ### 19.1 Writing E2E flows: three rules learned the hard way (session 52)
 
 Every one of these cost a ten-minute device run to find, and each looked like an app bug first.
@@ -3754,3 +3780,39 @@ than offering a copy of nothing.
 
 **Verified — 11 new tests (8 transcript rules, 3 widget); 1522 host tests pass, `analyze
 --fatal-infos` clean.**
+
+---
+
+### Session 59 — validating the last two features on a device (§19)
+
+Both features from session 58 were built against widget tests only, which §19 says is not evidence.
+Driven against the lab (`./scripts/test-hosts.sh`, host at `10.0.2.2:2201`) from a scratchpad probe,
+deleted afterwards as §19 requires.
+
+**The terminal transcript — proven, including the part that matters most:**
+
+| Checked on device | Result |
+|---|---|
+| Long press on a live session opens the sheet | yes |
+| The transcript's content | `Welcome to OpenSSH Server` + the prompt |
+| Trailing empty grid excluded | 2 lines, not 24 |
+| **Copy actually reaches the system clipboard** | 41 characters, byte-identical to the sheet's text |
+
+The clipboard round-trip is the reason to do this on a device at all: it is a platform channel, and
+no host test touches it.
+
+**The file editor — proven end to end, against a real file on a real server:**
+
+The probe created `~/probe-edit.conf` over SSH, opened it in the app, unlocked it, changed it, saved,
+and then **read the file back over SSH**. The server showed the new contents and a new size (24 →
+40 bytes). The read-only-on-open state and the pencil were confirmed from a screenshot.
+
+**And the session's real lesson is now §19.2.** For most of this pass the probe reported the editor
+as read-only after the pencil, Save as disabled after typing, and the sheet as still open after
+saving — *all false*. `tester.widget<T>()` under the live binding was returning stale state, and the
+framework's missed-tap warning pointed at an offset below the screen, which read exactly like a
+layout bug. **Two fixes were written for a defect that did not exist**, and both were reverted once
+a screenshot showed the sheet rendering correctly and the server showed the save had landed.
+
+Nothing in the app changed this session. That is the honest outcome: the features were already
+right, and the tooling was wrong about them.
