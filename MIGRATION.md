@@ -2,21 +2,22 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Task #9 is running: 11 Dart-only flows + 2 Patrol native flows, green on the emulator** (sessions 50-53). The key-import sheet
+> **Task #9 is running: 11 Dart-only flows + 5 Patrol native flows, green on the emulator** (sessions 50-54). The key-import sheet
 > and the app-lock cycle are both done — the two flows the manual walk could not drive at all.
 >
 > ⚠️ **Read §19.1 before writing another flow.** `pumpAndSettle` near a focused field, fixed frame
 > counts instead of observable outcomes, and `enterText` without focus each cost a ten-minute device
 > run and each looked like an app bug first.
 >
-> **Patrol's native half now runs** (session 53) — 2 flows on the notification-permission dialog.
-> Layout and commands are in §11.1; the two runners cannot share a directory.
+> **Patrol's native half runs: 5 flows** (sessions 53-54) — the notification-permission dialog and
+> the system document picker. Layout and commands are in §11.1; the two runners cannot share a
+> directory.
 >
-> **Immediate task: keep growing the suite.** Next native targets: the **system file picker**
-> (backup export/import, SFTP upload) and the **foreground-service notification** in the shade. The
-> biometric prompt needs an enrolled fingerprint the emulator does not have. **SFTP
-> upload/download** over a real transport needs the lab, so it is opt-in by nature — see §19.
-> Then Maestro as the CI smoke suite, and #10 (CI/CD).
+> **Immediate task: keep growing the suite.** The remaining native target is the
+> **foreground-service notification** in the shade, which needs a live session and therefore the
+> lab. The biometric prompt needs an enrolled fingerprint the emulator does not have. **SFTP
+> upload/download** over a real transport needs the lab too, so it is opt-in by nature — see §19.
+> Then Maestro as the CI smoke suite, and **#10 (CI/CD), which is now the largest unstarted item**.
 >
 > **Remaining #8 work:** iOS SMB (§18).
 >
@@ -526,7 +527,7 @@ transaction), which are exactly where the legacy app has had regressions.
 
 ```
 integration_test/*_test.dart          Dart-only flows   → flutter test integration_test/*_test.dart -d <device>
-integration_test/native/*_test.dart   Patrol flows      → patrol test --target <file> -d <device>
+integration_test/native/*_test.dart   Patrol flows      → patrol test --target integration_test/native -d <device>
 ```
 
 **They cannot share a runner.** A `patrolTest` needs Patrol's binding and its native side; run under
@@ -3440,3 +3441,37 @@ have, and the system file picker is next.
 
 **Verified — 1500 host tests pass, 11 Dart-only E2E flows and 2 Patrol native flows pass on
 Android 15, `flutter analyze` clean.**
+
+---
+
+### Session 54 — the system file picker (task #9)
+
+`integration_test/native/backup_file_picker_test.dart`, three flows. **The native suite is now five
+flows and runs as a directory:** `patrol test --target integration_test/native -d emulator-5554`.
+
+The document picker is *another app*. `ACTION_CREATE_DOCUMENT` hands the save to the platform's
+Files UI, which is neither in this app's widget tree nor in its process, so everything that happens
+after "Create backup" — including whether the screen tells the truth afterwards — had never been
+covered by anything.
+
+| Flow | What it pins |
+|---|---|
+| Cancelling the save claims nothing was written | the picker actually opens (asserted against `com.google.android.documentsui`, not assumed), and backing out of it leaves **no** success message and a usable screen |
+| The picker is offered the file name the backup should have | the flattened native view tree contains `omniterm`, so the file is findable later rather than an anonymous default |
+| Cancelling the restore picker changes nothing | the mirror case, and the more dangerous one — restoring *adds* rows, so a false "Restored N items" would send someone hunting for entries that were never added |
+
+Backing out of a picker reporting success is a specific failure the code comments already worried
+about ("'Backup ready.' left standing after a cancelled save would claim a file that was never
+written"). Until now that was a claim in a comment; it is now a claim a machine checks.
+
+**Not attempted: driving the picker's own Save button to complete a round trip.** The export→import
+round trip is already covered host-side, so the only thing a native round trip would add is SAF's
+button layout — which is the picker's business and changes between Android versions. Asserting the
+boundary on both sides is worth more than automating someone else's UI.
+
+**One thing learned:** Patrol taps only what is *hit-testable*, so a control below the fold needs
+`$(key).scrollTo().tap()`. Unlike the Dart-only flows, widening the surface is not an option here —
+the native side is looking at a real screen.
+
+**Verified — 5 Patrol native flows pass on Android 15, `flutter analyze` clean. No production code
+changed this iteration**, so the host suite and the Dart-only flows stand as verified in session 53.
