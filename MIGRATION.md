@@ -22,8 +22,9 @@
 > **Task #10 is largely done** (sessions 55-56): `flutter-pr-check.yml` gates format, analyze,
 > tests, the **release** APK/AAB, an unsigned iOS build and both device suites;
 > `flutter-release.yml` builds signed, version-identified artifacts from a tag, reusing
-> `scripts/release-version.sh`. Both are in §12.1. **Left in #10:** Maestro as the CI smoke suite,
-> and Play publication (needs a service-account secret and a track decision).
+> `scripts/release-version.sh`, and smoke-tests the APK it produced (`maestro/smoke.yaml`). Both are
+> in §12.1. **Left in #10:** Play publication only — it needs a service-account secret and a track
+> decision, and the build is nowhere near ready for a store.
 >
 > **Remaining #8 work:** iOS SMB (§18).
 >
@@ -517,6 +518,19 @@ the app, and the same suite runs on Android and iOS — which requirement 3 dema
 the CI smoke suite. Patrol has had reported CI stability issues through late-2025/2026, so a
 black-box suite that does not depend on the Dart test harness is a deliberate hedge.
 
+> **What Maestro can and cannot do against a Flutter release build (session 57, measured).**
+> To a non-accessibility client the entire app collapses into a **single merged node**: `maestro
+> hierarchy` reports *two* labels for the whole host screen — one of them the clock. Maestro
+> therefore cannot address individual widgets here. It could, if the app permanently called
+> `ensureSemantics()`, but that is a behaviour change made for a test, and building a *different*
+> artifact for the smoke suite would defeat the only reason the suite exists.
+>
+> So the split is: **Patrol owns depth** (it sees the real widget tree, §11.1), and **Maestro owns
+> the one question Patrol cannot answer** — does the APK we are about to publish start at all.
+> `flutter_app/maestro/smoke.yaml` launches the release artifact from a cleared install, waits for
+> the app's own content, backgrounds and resumes it, and stops. Assertions are regexes because the
+> screen arrives as one node.
+
 Appium + Flutter driver is **not** adopted: setup cost is high and it duplicates what Patrol does
 better, with known animation/hybrid-view limitations. UIAutomator is reachable *through* Patrol for
 the Android-only surfaces (home-screen widget, foreground-service notification, biometric prompt).
@@ -610,6 +624,12 @@ What it verifies about what it actually produced, rather than what it asked for:
 The decoded key is deleted immediately after signing, before any later step can see it, and the R8
 mapping is deliberately **not** uploaded as a workflow artifact: in a public repository those are
 public, and a mapping is the deobfuscation key for the shipped binary.
+
+The release workflow ends by **smoke-testing the artifact it just built** — `maestro/smoke.yaml`
+against the installed release APK on an emulator. That is the one question no other suite answers:
+every other suite runs a *debug* build through Flutter's own test binding, so none of them would
+notice a bad R8 rule, a missing native library or a manifest mistake that only affects the release
+package.
 
 **Deliberately not included: Play publication.** That needs a service-account secret and a track
 decision, and the Flutter build is nowhere near ready to be uploaded to a store.
@@ -3608,3 +3628,39 @@ decision, and the Flutter build is nowhere near ready for a store.
 
 **Verified — the version tooling, the signed release build, the artifact-identity check and the
 App Bundle build all exercised locally; both workflow files parse.**
+
+---
+
+### Session 57 — the Maestro smoke suite, scoped to what it can honestly do (tasks #9, #10)
+
+`flutter_app/maestro/smoke.yaml`, passing against the **installed release APK** — the same artifact
+`flutter-release.yml` builds, signed and version-identified, not a debug bundle. Wired into the
+release workflow immediately after the artifact-identity check, which is where "does the thing we
+are about to publish start?" belongs.
+
+**The interesting part was finding out what Maestro can actually see.** The first flow asserted its
+way down the bottom navigation and failed at once. `maestro hierarchy` explains why: the whole host
+screen arrives as **two** labels, one of them the clock — Flutter paints its own pixels and, to a
+non-accessibility client, merges the entire app into one node. Enabling an accessibility service on
+the emulator changed nothing, and the run was repeated with it off to prove the flow does not
+secretly depend on it.
+
+Two ways out, and the reason for choosing neither of the obvious ones:
+
+- Have the app call `ensureSemantics()` permanently — a behaviour change made for a test, on every
+  user's device.
+- Build a separate instrumented APK for the smoke suite — which defeats the only reason the suite
+  exists, since the artifact under test would no longer be the artifact that ships.
+
+So the suite was scoped instead: **Patrol owns depth** (it sees the real widget tree), and Maestro
+owns the question Patrol cannot answer, because Patrol only ever drives a debug build through
+Flutter's own test binding. A bad R8 rule, a missing native library, a manifest mistake — none of
+those are visible to any other suite here, and all of them are visible to this one.
+
+The flow launches from a cleared install, waits for the app's own content, asserts the empty state
+*says* it is empty, backgrounds and resumes, and stops. Assertions are regexes because the screen
+is one node.
+
+**Verified — the smoke flow passes against the release APK (versionCode 10200399) on Android 15,
+both with and without an accessibility service enabled; the emulator was restored to its original
+state afterwards; both workflow files parse.**

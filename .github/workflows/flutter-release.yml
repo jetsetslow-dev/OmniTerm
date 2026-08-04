@@ -198,6 +198,26 @@ jobs:
             echo "No R8 mapping — the release build was not minified" >&2; exit 1; }
         working-directory: flutter_app
 
+      # The last question nobody else asks: does the artifact we are about to publish *start*?
+      #
+      # Every other suite runs a debug build through Flutter's own test binding, so none of them
+      # would notice a bad R8 rule, a missing native library, or a manifest mistake that only
+      # affects the release package. This installs the real APK and drives it black-box.
+      - name: Smoke-test the release APK
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.35.0
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          working-directory: flutter_app
+          script: |
+            curl -fsSL "https://get.maestro.mobile.dev" | bash
+            adb install -r build/app/outputs/flutter-apk/app-release.apk
+            "$HOME/.maestro/bin/maestro" test maestro/smoke.yaml
+
       - name: Collect artifacts
         env:
           TAG: ${{ steps.version.outputs.tag }}
