@@ -6,10 +6,16 @@ import 'package:flutter/services.dart';
 /// task-switcher thumbnail is the real exposure: the OS captures it automatically, it survives
 /// backgrounding, and it routinely contains a live root shell.
 ///
-/// [isSupported] is asked of the platform rather than assumed, so the Settings screen can tell the
-/// user the option does nothing here instead of implying a protection that is not being applied.
-/// iOS has no API to block screenshots; it reports unsupported until the `willResignActive` cover
-/// is built.
+/// **The two platforms protect different things, and the app must not blur that.**
+///
+/// - **Android** applies `FLAG_SECURE`: screenshots, screen recordings and the task-switcher
+///   thumbnail are all blocked.
+/// - **iOS** has no API to block a screenshot at all. What it does have is the moment before the
+///   system snapshots the window for the app switcher, so the window is covered for the duration of
+///   that snapshot. The switcher preview is protected; a deliberate screenshot is not.
+///
+/// [isSupported] is asked of the platform rather than assumed, so a platform with neither can say
+/// the option does nothing rather than implying a protection nobody is applying.
 class ScreenSecurity {
   ScreenSecurity({MethodChannel? channel})
       : _channel = channel ?? const MethodChannel('omniterm/screen_security');

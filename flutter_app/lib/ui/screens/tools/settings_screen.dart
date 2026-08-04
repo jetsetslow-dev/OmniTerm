@@ -232,7 +232,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _Switch(
               settingKey: 'blockScreenshots',
               title: 'Block screenshots',
-              subtitle: 'Also hides the app from the recent-apps preview',
+              // Accurate on both platforms rather than flattering on one: Android blocks
+              // screenshots outright, iOS cannot and only covers the app-switcher preview.
+              subtitle: 'Hides the app in the recent-apps preview. Screenshots are blocked on '
+                  'Android; iOS does not allow that.',
               value: draft.blockScreenshots,
               onChanged: (v) => vm.update((p) => p.copyWith(blockScreenshots: v)),
             ),

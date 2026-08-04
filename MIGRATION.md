@@ -2,12 +2,12 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Task #8 is under way.** Sessions 35–38 landed the SSH transport wiring, the host-key prompt,
-> the app lock (PIN + biometrics), `FLAG_SECURE`, link opening, backup file save/restore, and alert
-> notifications.
+> **Task #8 is under way.** Sessions 35–39 landed the SSH transport wiring, the host-key prompt,
+> the app lock, screen security on **both** platforms, link opening, backup file save/restore, and
+> alert notifications. **Session 39 also produced the first real build: `flutter build apk --debug`
+> succeeds.**
 >
-> **Immediate task: the rest of #8** — the platform-native SMB client (§7.1), the iOS
-> `willResignActive` screen cover (`FLAG_SECURE` is Android-only), and the background/foreground
+> **Immediate task: the rest of #8** — the platform-native SMB client (§7.1) and the foreground
 > service that keeps a session alive with the app closed (`SessionService.kt`).
 >
 > **The Kotlin app is maintained in parallel** on `fix/kotlin-parity-defects` — see §15.6. A §15
@@ -16,9 +16,8 @@
 > **Shell parity gaps (§18) are a second Shell iteration:** split panes, quick connect, tmux
 > persistent sessions, the tunnel manager UI, text selection.
 >
-> ⚠️ **Nothing since session 34 has been exercised on a device.** The transport wiring, host-key
-> prompt, app lock, file dialogs and notifications all need an on-device run before they count as
-> finished.
+> ⚠️ **On-device validation is blocked on this machine** — see §19. The APK builds and every host
+> test passes, but nothing has been *run*. Report anything needing a live app as unverified.
 >
 > Then #9 (Patrol/Maestro E2E) and #10 (CI/CD).
 >
@@ -2463,3 +2462,80 @@ recovered hours ago.
 | No notifier at all degrades to "no banner" | Convention 4 — the rule still fires and the incident is still recorded. |
 
 **Verified — 1393 tests pass (10 new), `flutter analyze` clean. Not yet exercised on a device.**
+
+
+---
+
+## 19. On-device validation is blocked on this machine
+
+The standing rule is to validate on a device before reporting anything done. **That is currently
+impossible here**, and it should be stated rather than quietly skipped.
+
+The Android emulator will not start at all — not the API 35 image, not any of them:
+
+```
+Could not load the Qt platform plugin "xcb" ... even though it was found.
+Fatal: This application failed to start because no Qt platform plugin could be initialized.
+```
+
+`-no-window`, `-qt-hide-window`, `QT_QPA_PLATFORM=offscreen` and `QT_QPA_PLATFORM=minimal` all make
+no difference; the launcher still demands a display. `xvfb-run`/`Xvfb` are not installed. This is a
+*separate* problem from the known API ≥ 36 image instability — it blocks every API level.
+
+**The strongest verification available here is therefore:**
+
+1. `flutter build apk --debug` — which is not nothing: it compiles the Kotlin bridges, merges the
+   manifest, resolves every plugin's Gradle config and packages the resources. It caught a real bug
+   this session (below).
+2. The host test suites.
+
+**Everything that needs a running app stays unverified**, and is listed as such:
+
+| Needs a device | Why a host test cannot cover it |
+|---|---|
+| The SSH transport against a real host | No lab host reachable from here (§ see `e2e-suites-need-a-personal-lab`). |
+| The host-key approval prompt | Needs a real handshake with a server presenting a key. |
+| The app lock's biometric path | Needs enrolled biometrics. |
+| `FLAG_SECURE` / the iOS app-switcher cover | Both are window-level effects with no observable Dart state. |
+| Notification channel behaviour, the Android 13 permission dialog, the small-icon asset | The plugin's platform side is entirely stubbed in tests. |
+| The file dialogs | The system document picker is a platform UI. |
+
+---
+
+### Session 39 — the first real build, and screen security on iOS
+
+**`flutter build apk --debug` succeeds.** That is the first time the app has been built rather than
+only tested, and it immediately earned its keep.
+
+**It caught a runtime crash waiting to happen.** `LocalAlertNotifier` initialises with
+`AndroidInitializationSettings('ic_stat_omniterm')` — an icon carried over from the Kotlin app that
+**did not exist in the Flutter project's resources**. Every host test passes with that reference in
+place, because the plugin's platform side is entirely stubbed; on a device the first notification
+would have failed to initialise. The Kotlin app's vector drawable is now copied across, comments and
+all — it encodes constraints that are not obvious (small icons are rendered alpha-only, artwork must
+stay inside the centre ~22dp, a thin ribbon smears at status-bar size).
+
+**Screen security now covers iOS too**, and the app is careful about what it claims:
+
+- **Android** applies `FLAG_SECURE` — screenshots, recordings and the task-switcher thumbnail all
+  blocked.
+- **iOS has no API to block a screenshot at all.** What it has is
+  `willResignActiveNotification`, fired just before the system snapshots the window for the app
+  switcher. `ScreenSecurityBridge.swift` covers the window for the duration of that snapshot, with an
+  opaque black view rather than a blur — a blur still leaks the *shape* of the text, and on a
+  terminal the shape of the text is most of the information.
+- **The Settings subtitle says exactly this**: "Screenshots are blocked on Android; iOS does not
+  allow that." Accurate on both rather than flattering on one. Claiming a protection the platform is
+  not applying is worse than not offering it.
+
+Turning the setting off takes the cover down immediately, rather than leaving the app behind a blank
+rectangle until the next foreground.
+
+**§19 is new and is the honest part of this session: on-device validation is blocked here.** The
+emulator will not start on this machine at all — its Qt launcher demands a display even with
+`-no-window`, and `xvfb` is not installed. That is a *different* problem from the known API ≥ 36
+image instability; it blocks every API level. Everything needing a running app is listed in §19 as
+unverified, rather than assumed working.
+
+**Verified — 1393 tests pass, `flutter analyze` clean, `flutter build apk --debug` succeeds. Still
+not run on a device.**
