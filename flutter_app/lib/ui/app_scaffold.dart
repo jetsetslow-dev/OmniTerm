@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import 'navigation.dart';
 import 'screens/placeholder_screen.dart';
+import 'screens/fleet/fleet_screen.dart';
 import 'screens/infra/infra_screen.dart';
 import 'screens/monitor/monitor_screen.dart';
 import 'screens/servers/servers_screen.dart';
@@ -176,7 +177,7 @@ class _ScreenBody extends StatelessWidget {
     // TODO(migration): replace each placeholder as the screen is ported (MIGRATION.md §3.6).
     return switch (screen) {
       Screen.servers => const ServersScreen(),
-      Screen.fleet => const PlaceholderScreen(title: 'Fleet', source: 'ui/FleetScreen.kt'),
+      Screen.fleet => const FleetScreen(),
       Screen.monitor => const MonitorScreen(),
       Screen.shell => const PlaceholderScreen(title: 'Term', source: 'ui/ShellScreen.kt'),
       Screen.sftp => const PlaceholderScreen(title: 'Files', source: 'ui/SftpScreen.kt'),

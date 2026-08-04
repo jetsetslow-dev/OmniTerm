@@ -2,11 +2,11 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 7. Immediate task: Fleet.**
-> Infra has landed: `InfraViewModel` + `lib/ui/screens/infra/` are wired into `app_scaffold.dart`.
-> Four of its five tabs work (Stacks, Images, Volumes, Networks); the visual **Compose Builder** is a
-> placeholder that says so and is a whole editor deserving its own iteration (§18).
-> Next is Fleet, in the same shape: a ViewModel reading from `AppState`, then the screen.
+> **Phase 7. Immediate task: SFTP.**
+> Fleet has landed: `FleetViewModel` + `lib/ui/screens/fleet/` are wired into `app_scaffold.dart`,
+> with all three tabs (Dashboard, Broadcast, Logs) working.
+> Next is SFTP, in the same shape: a ViewModel reading from `AppState`, then the screen. Then Tools,
+> the largest remaining screen (`ui/ToolsScreen.kt`, 5,005 lines) — plan it as several iterations.
 >
 > Then, in the §9 order — for each: a feature ViewModel reading from `AppState`, then the screen,
 > replacing its placeholder in `lib/ui/app_scaffold.dart`: Monitor → Infra → Fleet → SFTP → Tools.
@@ -169,7 +169,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | `ui/ComposeBuilder.kt` | 2100 | `lib/ui/screens/infra/compose_builder.dart` | ⬜ |
 | `ui/MonitorScreen.kt` | 1185 | `lib/ui/screens/monitor/` | 🟡 4 of 6 tabs; Scripts/CRON pending |
 | `ui/InfraScreen.kt` | 1020 | `lib/ui/screens/infra/` | 🟡 4 of 5 tabs; Builder pending |
-| `ui/FleetScreen.kt` | 878 | `lib/ui/screens/fleet/` | ⬜ |
+| `ui/FleetScreen.kt` | 878 | `lib/ui/screens/fleet/` | ✅ |
 | `ui/CodeEditor.kt` | 850 | `lib/ui/widgets/code_editor.dart` | ⬜ |
 | `ui/OmniComponents.kt` | 779 | `omni_chrome.dart` + `omni_components.dart` | 🟨 chrome, card, stat box, section header, formatters done |
 | `ui/LanHostnameResolver.kt` | 295 | `lib/domain/lan_hostname_resolver.dart` | ⬜ |
@@ -1061,6 +1061,12 @@ rather than silently dropped.
 
 ## 18. Known parity gaps (requirement 13)
 
+**Fleet (session 25):**
+- **Quick-script presets in Broadcast** — the Kotlin offers saved fleet-enabled quick scripts as
+  pickable command presets, with a search box and an inline editor. Not ported; the command field is
+  free text only. Blocked on the Quick Scripts store, which lands with Tools.
+- **The refresh countdown** in the summary bar — needs the telemetry poller, as Monitor's does.
+
 **Infra (session 24):**
 - **The visual Compose Builder** — not ported; the tab renders a note saying so. It is a whole YAML
   editor (`ComposeBuilder`, plus `parseDockerComposeYaml` and the atomic deploy flow) and deserves
@@ -1644,3 +1650,76 @@ Compose output is shown **verbatim and selectable**. Compose failures are diagno
 wording and get pasted into issue trackers, so paraphrasing them is worse than useless.
 
 **Verified — 710 tests pass (34 new), `flutter analyze` clean.**
+
+---
+
+### 15.5 The destructive-command warning missed `dd if=… of=…`
+
+`commandDangerHits` (`ui/FleetScreen.kt` line 862) is Fleet's last check before a command runs on
+every selected host at once. Two of its patterns only matched when the destructive flag came *first*:
+
+```kotlin
+Regex("""\bdd\s+\S*of=""")                      // dd
+Regex("""\biptables\s+(-\w+\s+)*-F\b""")        // iptables
+```
+
+`\S*` cannot cross a space, so after `dd ` it can only reach an `of=` inside the *same* token.
+
+| Command | Kotlin | Flutter |
+|---|---|---|
+| `dd if=/dev/zero of=/dev/sda bs=1M` | **not flagged** | flagged |
+| `dd of=/dev/sda if=/dev/zero` | flagged | flagged |
+| `dd if=/dev/sda of=/backup/disk.img` | **not flagged** | flagged |
+| `iptables -F` | flagged | flagged |
+| `iptables -t nat -F` | **not flagged** | flagged |
+
+The first row is the textbook disk-destroyer, written the way every tutorial writes it — and it was
+the one form the warning did not catch. Broadcast it across a fleet and every host is wiped with no
+extra confirmation. Both patterns now scan to the end of the command segment (`[^;&|\n]*`) instead of
+one token, and a test pins that flag order does not decide whether a command is caught.
+
+This defect exists in the shipped Android app today.
+
+---
+
+### Session 25 — Fleet: dashboard, broadcast and merged logs
+
+`lib/ui/view_model/fleet_view_model.dart` and `lib/ui/screens/fleet/`, wired into
+`app_scaffold.dart`. All three tabs work. `lib/domain/command_danger.dart` holds the
+destructive-command classifier as testable logic, per convention 3.
+
+**§15.5 above is the headline:** the Kotlin's `dd` rule missed the canonical
+`dd if=/dev/zero of=/dev/sda`, and its `iptables` rule missed `iptables -t nat -F`. Both are fixed,
+with 35 tests over the classifier.
+
+**Broadcast is the security-sensitive surface here, and the design follows §17: warn, never block.**
+The user picked these hosts and may run what they like on them — a fleet-wide `reboot` is a
+legitimate thing to want. What justifies interrupting is the *multiplier*: the same typo costs one
+host or forty. So the confirmation dialog **names every host** rather than saying "5 hosts", which is
+not something a user can check, and adds the danger sentence when one applies.
+
+**The targets shown are the targets used.** `runBroadcast` takes the list the dialog displayed rather
+than re-resolving it. Cached reachability can change between confirming and running, or simply be
+stale after a resume; re-resolving would silently drop a host the user explicitly approved. Better to
+attempt it and show that host's real SSH error.
+
+Three concurrency properties, each tested:
+- **At most six hosts at once.** Unbounded fan-out opens one SSH connection per host simultaneously —
+  a self-inflicted connection storm on a large fleet, and on a phone it exhausts sockets and battery.
+- **A run generation counter.** `timeout` abandons the wait but cannot cancel the workers, so they
+  keep running; without the counter they would write into whatever run is current when they finally
+  return, resurrecting a finished card as "running" or mixing one run's output into the next.
+- **Anything not finished when the workers return is marked failed**, so an abandoned run never keeps
+  showing a spinner.
+
+Stale targets are pruned as hosts go offline — otherwise a ticked host that dropped would still be
+counted, and the user would confirm "run on 5 hosts" and get four with no explanation. Group mode
+resolves to *currently online* members, so a group is never a promise about hosts that cannot answer.
+
+The dashboard sorts **worst score first** (offline last): the reason to open a fleet dashboard is to
+find what needs attention, and a name-sorted list buries it. An offline host shows an OFFLINE tag
+rather than its last score — a score for an unreachable host is a stale number pretending to be
+current. Fleet logs merge across hosts newest-first with the host name leading each line, and one
+unreachable host does not empty the view.
+
+**Verified — 782 tests pass (72 new), `flutter analyze` clean.**
