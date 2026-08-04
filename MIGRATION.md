@@ -2,13 +2,14 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Walking the app against the lab is paying for itself.** Session 45 fixed two blockers, session
-> 46 another (§15.10). Monitor's Overview and Processes are verified against a real host.
+> **Monitor and SFTP are both verified against a real host** (sessions 46–47). SFTP's full CRUD path
+> was confirmed server-side.
 >
-> **Immediate task: keep going.** Monitor → Services and Scripts/CRON are unwalked; **SFTP, Fleet
-> and Infra have never touched a real host at all**. Then the other lab hosts: `10.0.2.2:2202`
-> (key auth), `:2204` (key + passphrase), `:2203` (bastion), and `internal-a` behind the SSH-jump,
-> SOCKS5 and HTTP proxy paths — none of which the port has ever exercised. **Then iOS SMB** (§18).
+> **Immediate task: Fleet and Infra have still never touched a real host**, nor has SFTP's
+> upload/download (both need the platform file picker in the loop). Then the other lab machines:
+> `10.0.2.2:2202` (key auth), `:2204` (key + passphrase), `:2203` (bastion), and `internal-a` behind
+> the SSH-jump, SOCKS5 and HTTP proxy paths — **the port has never exercised key auth or any proxy
+> at all.** Then iOS SMB (§18).
 >
 > The lab: `./scripts/test-hosts.sh up|fleet|keys|status`. §19 has the emulator recipe.
 >
@@ -2927,3 +2928,36 @@ tests. 489 Kotlin unit tests pass.
 
 **Verified — 1476 tests pass (3 new), `flutter analyze` clean, APK builds, and the fix was confirmed
 on the real host.**
+
+---
+
+### Session 47 — SFTP against a real host, end to end
+
+Continued the device walk. **Monitor → Services** and the whole **SFTP** path, against the lab's
+`direct` container.
+
+**Services was right, and I checked rather than assumed.** It reports "This host runs neither systemd
+nor OpenRC, so its services cannot be listed." Confirmed on the host: no `systemctl`, no `rc-status`,
+no `rc-service` — it runs s6. The message is accurate, and s6 support is a *feature* the Kotlin does
+not have either (§16.4), so nothing to fix.
+
+**SFTP works against a real server, verified on both sides:**
+
+| Step | Verified |
+|---|---|
+| List | `/config` listed with real directories, a 4 B file, and real mtimes |
+| Create folder | `omniterm-probe` appeared in the listing **and** on the server (`ls -la` shows it, owned by `omniterm`) |
+| Status | "Created omniterm-probe", listing refreshed, correct sort position |
+| Delete | Confirm dialog named the blast radius; after confirming, **gone from the server** |
+| Cancel | Nothing deleted |
+
+**One defect, small but user-facing on a destructive dialog:** the confirm read "This includes 1
+folder and everything inside **them**". Singular now reads "inside **it**". It only shows on the
+dialog that cannot be undone, which is the worst place to look careless.
+
+**Not a defect, worth recording:** file times render in the *device's* timezone, not the host's — the
+container reported `17:49` UTC and the app showed `23:19`. That is the right behaviour for a phone
+and matches the Kotlin.
+
+**Verified — 1476 tests pass, `flutter analyze` clean, and every SFTP operation above was confirmed
+server-side.**

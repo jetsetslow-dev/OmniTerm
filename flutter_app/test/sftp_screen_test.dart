@@ -203,7 +203,8 @@ void main() {
       await tester.tap(find.text('Delete'));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('everything inside them'), findsOneWidget);
+      // Singular: one folder is "inside it", not "inside them". Spotted on a device.
+      expect(find.textContaining('1 folder and everything inside it.'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('sftp.delete.cancel')));
       await tester.pumpAndSettle();
       expect(client.deleted, isEmpty, reason: 'cancelling must delete nothing');
@@ -228,7 +229,7 @@ void main() {
       await tester.tap(find.text('Delete'));
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('everything inside them'), findsNothing);
+      expect(find.textContaining('everything inside'), findsNothing);
       expect(find.textContaining('cannot be recovered'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('sftp.delete.cancel')));
       await tester.pumpAndSettle();

@@ -401,7 +401,7 @@ Future<void> _confirmDelete(
         // A directory delete takes everything under it, which is the part users misjudge.
         directories > 0
             ? 'This includes $directories folder${directories == 1 ? '' : 's'} and everything '
-                'inside them. Deleted files cannot be recovered.'
+                'inside ${directories == 1 ? 'it' : 'them'}. Deleted files cannot be recovered.'
             : 'Deleted files cannot be recovered.',
       ),
       actions: [
