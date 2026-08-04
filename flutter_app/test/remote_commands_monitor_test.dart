@@ -125,6 +125,18 @@ void main() {
           reason: 'the UI needs to distinguish "no log source" from "no log lines"');
     });
 
+    test('each log source is tried until one produces output', () {
+      // Not `elif`. A BusyBox host ships `logread` whether or not syslogd is running; when it is
+      // not, `logread` fails to stderr and exits, so a chain that branches on the binary merely
+      // *existing* stopped there, printed nothing, never emitted the marker, and left the pane
+      // silently blank on most containers. Verified against a real Alpine host (§15.10).
+      final linux = journalCommand();
+      expect(linux, isNot(contains('elif')));
+      // Every later source is guarded on the accumulated output still being empty.
+      expect(r'[ -z "$L" ]'.allMatches(linux).length, greaterThanOrEqualTo(3));
+      expect(linux, contains(r'printf'), reason: 'the collected output is what gets emitted');
+    });
+
     test('the log line count is honoured', () {
       expect(journalCommand(lines: 42), contains('-n 42'));
     });

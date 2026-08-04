@@ -594,16 +594,24 @@ class _LogsTabState extends State<LogsTab> {
           child: Container(
             color: Colors.black,
             padding: const EdgeInsets.all(8),
-            child: vm.logsUnsupported && lines.isEmpty
-                ? const Center(
-                    key: ValueKey('monitor.logs.unsupported'),
+            child: lines.isEmpty && !vm.logsLoading
+                ? Center(
+                    key: ValueKey(
+                      vm.logsUnsupported ? 'monitor.logs.unsupported' : 'monitor.logs.empty',
+                    ),
                     child: Padding(
-                      padding: EdgeInsets.all(24),
-                      // A host with no journalctl/logread/syslog would otherwise show a pane
-                      // indistinguishable from a host that simply logged nothing.
+                      padding: const EdgeInsets.all(24),
+                      // Three situations all render as an empty black pane unless they are named:
+                      // no log source at all, a source that returned nothing, and a filter that
+                      // matched nothing. Only the first was ever explained.
                       child: Text(
-                        'No readable log source on this host.',
-                        style: TextStyle(color: Color(0xFF9CA3AF), fontSize: 12),
+                        vm.logsUnsupported
+                            ? 'No readable log source on this host.'
+                            : vm.logFilter == 'ALL'
+                                ? 'No log entries on this host yet.'
+                                : 'No ${vm.logFilter} entries. Choose ALL to see everything.',
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 12),
                       ),
                     ),
                   )

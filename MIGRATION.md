@@ -2,15 +2,15 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **The terminal works against a real SSH server (session 45).** Connect → host-key prompt →
-> password auth → live shell → command round trip → foreground service, all verified on the
-> emulator against the repo's lab. Two blocking defects were found doing it (§15.8, §15.9).
+> **Walking the app against the lab is paying for itself.** Session 45 fixed two blockers, session
+> 46 another (§15.10). Monitor's Overview and Processes are verified against a real host.
 >
-> **Immediate task: keep walking the app against the lab.** Monitor, Infra, Fleet and SFTP have
-> never been exercised against a real host, and §15.8 shows what that turns up. `10.0.2.2:2202`
-> (key auth), `:2203` (bastion) and the proxy paths are also unexercised. **Then iOS SMB** (§18).
+> **Immediate task: keep going.** Monitor → Services and Scripts/CRON are unwalked; **SFTP, Fleet
+> and Infra have never touched a real host at all**. Then the other lab hosts: `10.0.2.2:2202`
+> (key auth), `:2204` (key + passphrase), `:2203` (bastion), and `internal-a` behind the SSH-jump,
+> SOCKS5 and HTTP proxy paths — none of which the port has ever exercised. **Then iOS SMB** (§18).
 >
-> **Validate on device — it works, and it keeps finding things.** §19 has the recipe.
+> The lab: `./scripts/test-hosts.sh up|fleet|keys|status`. §19 has the emulator recipe.
 >
 > **The Kotlin app is maintained in parallel** on `fix/kotlin-parity-defects` — see §15.6. A §15
 > entry is not finished until it is fixed on both branches.
@@ -1783,6 +1783,37 @@ This defect exists in the shipped Android app today.
 
 ---
 
+### 15.10 The log pane was silently blank on most containers (session 46)
+
+`journalCommand` walked its fallback sources with `elif`, branching on whether each **binary
+exists**:
+
+```sh
+if command -v journalctl …; elif command -v logread …; elif [ -r /var/log/messages ] …
+```
+
+A BusyBox host ships `logread` whether or not syslogd is running. When it is not, `logread` fails to
+*stderr* — `can't find syslogd buffer` — which `2>/dev/null` swallows, and exits. The chain stopped
+there, printed nothing, and **never reached the `---NOLOGS---` marker**, so `logsUnsupported` stayed
+false and the UI rendered an empty black pane with no message at all.
+
+That is most containers, and every host test passed because they fed the parser canned output rather
+than running the shell.
+
+Fixed by accumulating into a variable and trying the next source whenever the previous produced
+nothing, so the marker is reached whenever *no source yields output* rather than only when no binary
+exists. Verified against the real Alpine container: the pane now reads "No readable log source on
+this host."
+
+**Also fixed alongside it:** three situations all rendered as an empty pane and only one was ever
+explained. Now distinguished — no source at all, a source that returned nothing, and a *filter* that
+matched nothing ("No ERROR entries. Choose ALL to see everything.").
+
+**Port-introduced** — the Kotlin has the same `elif` shape, so this one **does** apply to the shipped
+app and belongs on `fix/kotlin-parity-defects`. Recorded as outstanding there.
+
+---
+
 ### 15.9 The terminal could not open on a stock OpenSSH server (session 45)
 
 `openShell` requested `COLORTERM=truecolor` as part of opening the channel:
@@ -2856,3 +2887,40 @@ from real telemetry, and overwriting it from a ping would make a struggling host
 
 **Verified — 1473 tests pass (9 new), `flutter analyze` clean, APK builds, and every step above was
 done by hand on Android 15 against a real SSH server.**
+
+---
+
+### Session 46 — walking Monitor against a real host
+
+Continued the device walk from session 45, this time through Monitor's tabs against the lab's
+`direct` container.
+
+**What already worked, verified against real command output:**
+
+| | |
+|---|---|
+| Overview | Real load average (6.52 · 6.59 · 6.61), CPU temp 51 °C, 14.7 GB of 18.8 GB memory, uptime 3d 22h, 21 processes |
+| Processes | Real pids, owner, and `S`/`R` state, sorted by CPU, with the CPU/MEM chips |
+
+**One thing I checked before "fixing":** the CPU figure renders red at 3 %, which looks like an alarm.
+It is the *host's* accent colour, and `MonitorScreen.kt` does exactly the same
+(`accent = getServerColor(srv)`). Faithful port, left alone — §16.4 cuts both ways.
+
+**§15.10 — the log pane was silently blank on most containers.** `journalCommand` walked its
+fallbacks with `elif`, branching on whether each *binary exists*. A BusyBox host ships `logread`
+whether or not syslogd is running; when it is not, `logread` fails to stderr (swallowed by
+`2>/dev/null`) and exits. The chain stopped there, printed nothing, and never reached the
+`---NOLOGS---` marker — so the UI showed an empty black pane with no message.
+
+Now each source is tried until one actually *produces* output. Verified on the real Alpine
+container: the pane reads "No readable log source on this host."
+
+**Three empty states, one message.** Only "no log source" was ever explained; a source that returned
+nothing, and a *filter* that matched nothing, both rendered as the same blank pane. All three are
+now distinct — the last one says "No ERROR entries. Choose ALL to see everything."
+
+**This one is in the shipped Kotlin too** — `RemoteParsers.kt` has the identical `elif` chain — so
+per §15.6 it is fixed on `fix/kotlin-parity-defects` as well.
+
+**Verified — 1476 tests pass (3 new), `flutter analyze` clean, APK builds, and the fix was confirmed
+on the real host.**

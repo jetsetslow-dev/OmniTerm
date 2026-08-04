@@ -107,7 +107,14 @@ void main() {
 
   testWidgets('every tab is reachable and renders', (tester) async {
     await repo.insertServer(server(name: 'nas'));
-    await pump(tester, transport: RecordingTransport());
+    // Each tab is given something to show: an empty tab now renders its own explanation rather
+    // than an empty list, which is the right behaviour but not what this test is about.
+    await pump(
+      tester,
+      transport: RecordingTransport(
+        replies: {'journalctl': '2026-08-04T10:00:00+0000 host unit[1]: started nginx'},
+      ),
+    );
 
     for (final (tab, probe) in [
       (MonitorTab.processes, 'monitor.processes.list'),
@@ -240,6 +247,40 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('monitor.logs.unsupported')), findsOneWidget);
+    expect(find.textContaining('No readable log source'), findsOneWidget);
+    vm.dispose();
+  });
+
+  testWidgets('a host that simply has no log lines says so, distinctly', (tester) async {
+    // A working log source that returned nothing rendered as a bare black pane with no message at
+    // all — indistinguishable from a broken screen. Found on a real Alpine host (§15.10).
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester, transport: RecordingTransport(replies: {'journalctl': ''}));
+
+    await tester.tap(find.byKey(const ValueKey('monitor.tab.logs')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('monitor.logs.empty')), findsOneWidget);
+    expect(find.textContaining('No log entries'), findsOneWidget);
+    vm.dispose();
+  });
+
+  testWidgets('a filter that matches nothing blames the filter, not the host', (tester) async {
+    await repo.insertServer(server(name: 'nas'));
+    await pump(
+      tester,
+      transport: RecordingTransport(
+        replies: {'journalctl': '2026-08-04T10:00:00+0000 host unit[1]: started nginx'},
+      ),
+    );
+
+    await tester.tap(find.byKey(const ValueKey('monitor.tab.logs')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('monitor.logs.filter.ERROR')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('monitor.logs.empty')), findsOneWidget);
+    expect(find.textContaining('No ERROR entries'), findsOneWidget);
     vm.dispose();
   });
 

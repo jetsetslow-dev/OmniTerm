@@ -141,11 +141,22 @@ String journalCommand({int lines = 300, String os = ''}) => switch (normaliseOs(
       'Windows' => _journalWindows(lines),
       'Darwin' => 'log show --last 1h --style syslog 2>/dev/null | tail -n $lines || '
           "echo '---NOLOGS---'",
-      _ => 'if command -v journalctl >/dev/null 2>&1; then journalctl -n $lines --no-pager -o short-iso 2>/dev/null; '
-          'elif command -v logread >/dev/null 2>&1; then logread 2>/dev/null | tail -n $lines; '
-          'elif [ -r /var/log/messages ]; then tail -n $lines /var/log/messages 2>/dev/null; '
-          'elif [ -r /var/log/syslog ]; then tail -n $lines /var/log/syslog 2>/dev/null; '
-          "else echo '---NOLOGS---'; fi",
+      // Each source is tried until one actually *produces* something, rather than stopping at the
+      // first one that merely exists. A BusyBox host ships `logread` whether or not syslogd is
+      // running, and when it is not, `logread` fails to stderr and exits — so an `elif` chain
+      // stopped there, printed nothing, never emitted the marker, and left the pane silently blank
+      // on most containers (§15.10).
+      _ => r'L=""; '
+          'if command -v journalctl >/dev/null 2>&1; then '
+          r'L=$(journalctl -n ' '$lines' r' --no-pager -o short-iso 2>/dev/null); fi; '
+          r'if [ -z "$L" ] && command -v logread >/dev/null 2>&1; then '
+          r'L=$(logread 2>/dev/null | tail -n ' '$lines' r'); fi; '
+          r'if [ -z "$L" ] && [ -r /var/log/messages ]; then '
+          r'L=$(tail -n ' '$lines' r' /var/log/messages 2>/dev/null); fi; '
+          r'if [ -z "$L" ] && [ -r /var/log/syslog ]; then '
+          r'L=$(tail -n ' '$lines' r' /var/log/syslog 2>/dev/null); fi; '
+          r'''if [ -z "$L" ]; then echo '---NOLOGS---'; else printf '%s
+' "$L"; fi''',
     };
 
 String _journalWindows(int lines) =>
