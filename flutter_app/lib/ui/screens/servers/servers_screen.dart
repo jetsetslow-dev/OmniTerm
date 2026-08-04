@@ -68,7 +68,11 @@ Future<void> openServerForm(
   ServersViewModel vm, {
   required ServerFormMode mode,
   Server? source,
-}) {
+}) async {
+  // Read the saved key aliases before opening: the form's Auth tab offers them, and a picker with
+  // no options would make a key-authenticated host impossible to create.
+  final aliases = (await vm.savedKeyAliases()).toList();
+  if (!context.mounted) return;
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -77,6 +81,7 @@ Future<void> openServerForm(
       mode: mode,
       source: source,
       existingServers: vm.servers,
+      savedKeyAliases: aliases,
       onSave: (server) =>
           mode == ServerFormMode.edit ? vm.updateServer(server) : vm.saveServer(server),
       onTestConnection: vm.canTestConnections ? vm.testConnection : null,

@@ -65,6 +65,10 @@ class ServersViewModel extends ChangeNotifier {
 
   List<int> get selectedServerIdsForBulk => List.unmodifiable(_selectedServerIdsForBulk);
 
+  /// The aliases of every stored SSH key, for the form's key picker.
+  Future<List<String>> savedKeyAliases() async =>
+      (await _app.repository.getAllKeys()).map((k) => k.alias).toList();
+
   /// Attempts a connection with [candidate]'s settings. Returns null on success, otherwise a
   /// message to show the user.
   ///

@@ -84,3 +84,23 @@ String? _usableDetail(Object error) {
   if (text.contains('[B@') || text.contains('Instance of')) return null;
   return text;
 }
+
+/// The reason [privateKey] cannot be used, or null when it parses.
+///
+/// Lets a caller reject bad key material at the point the user pastes it, rather than storing it and
+/// failing at connect time — where the message arrives while they are trying to do something else
+/// and gives no hint that the key was the problem.
+///
+/// An **encrypted** key is not a failure: it parses once its passphrase is supplied, and the app
+/// prompts for that at connect time.
+String? privateKeyParseError(String privateKey, {String? passphrase}) {
+  if (passphrase == null && privateKeyNeedsPassphrase(privateKey)) return null;
+  try {
+    parsePrivateKey(privateKey, passphrase: passphrase);
+    return null;
+  } on InvalidPrivateKeyException catch (e) {
+    return e.message;
+  } catch (e) {
+    return 'Invalid private key.';
+  }
+}

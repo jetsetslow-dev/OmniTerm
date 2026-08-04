@@ -2,16 +2,21 @@
 
 > ## ▶ NEXT ACTION (read this first)
 >
-> **Phase 7. Immediate task: Tools — the last and largest screen.**
-> SFTP has landed: `SftpViewModel` + `lib/ui/screens/sftp/` are wired into `app_scaffold.dart`.
-> Three of its four tabs work (Bookmarks, the SFTP browser, Transfers); **Shares** is a placeholder
-> that says so, blocked on the §7.1 platform-native SMB work.
+> **Phase 7. Immediate task: Tools, continued — Quick Scripts next.**
+> **Auth Keys has landed** (`AuthKeysViewModel` + `lib/ui/screens/tools/auth_keys_screen.dart`),
+> wired into `app_scaffold.dart`. With it, the **server form's key picker now works** — a key-auth
+> host can be created from the UI for the first time.
 >
-> `ui/ToolsScreen.kt` is 5,005 lines and hosts eight of the fifteen screens (Alerts, Quick Scripts,
-> Network, Auth Keys, Backup, Health Scoring, Settings, About), each currently a placeholder in
-> `app_scaffold.dart`. **Plan it as several iterations, one or two tool views at a time** — starting
-> with Auth Keys and Quick Scripts, since Fleet's preset picker and the server form's key picker are
-> both blocked on those stores.
+> Seven tool views remain, each still a placeholder in `app_scaffold.dart`: **Quick Scripts** (do
+> this next — Fleet's broadcast preset picker is blocked on it), Alerts, Network, Backup, Health
+> Scoring, Settings, About. One or two per iteration.
+>
+> **A fifth convention, learned the hard way this session:** a widget test whose view model
+> subscribes to a drift `watch` stream must dispose the view model *inside* the test and then
+> `pump()` twice — once plain, once with a small duration. Cancelling such a subscription schedules
+> zero-duration timers, and the framework's end-of-test check fails while any are queued. Symptom:
+> "A Timer is still pending even after the widget tree was disposed", followed by the whole file
+> wedging. See the `finish()` helper in `test/auth_keys_screen_test.dart`.
 >
 > Then, in the §9 order — for each: a feature ViewModel reading from `AppState`, then the screen,
 > replacing its placeholder in `lib/ui/app_scaffold.dart`: Monitor → Infra → Fleet → SFTP → Tools.
@@ -167,7 +172,7 @@ Status legend: ⬜ not started · 🟨 in progress · ✅ done · ⚠️ blocked
 | File | LOC | Flutter destination | Status |
 |---|---|---|---|
 | `ui/AppViewModel.kt` | **12310** | `lib/ui/view_model/` (split by feature, §5.2) | 🟨 `AppState` + `ServersViewModel` done |
-| `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | ⬜ |
+| `ui/ToolsScreen.kt` | 5005 | `lib/ui/screens/tools/` | 🟡 Auth Keys done; 7 tool views pending |
 | `ui/SftpScreen.kt` | 3474 | `lib/ui/screens/sftp/` | 🟡 3 of 4 tabs; Shares blocked on §7.1 |
 | `ui/ShellScreen.kt` | 3175 | `lib/ui/screens/shell/` | ⬜ |
 | `ui/AppUi.kt` | 2806 | `lib/ui/app_scaffold.dart` + `lib/ui/screens/servers/` | 🟨 scaffold, nav, Servers list + form logic done; form **widget** pending |
@@ -1791,3 +1796,41 @@ been emitted by `AppState` before the view model subscribed, in which case no ch
 coming and nothing would ever load. That bug was caught by the first test run.
 
 **Verified — 856 tests pass (74 new), `flutter analyze` clean.**
+
+---
+
+### Session 27 — Tools, part 1: Auth Keys, and the server form's key picker
+
+`lib/domain/ssh_key_import.dart`, `lib/ui/view_model/auth_keys_view_model.dart` and
+`lib/ui/screens/tools/auth_keys_screen.dart`, wired into `app_scaffold.dart`. Three sections:
+credential profiles, SSH keys, and pinned host keys — together they are the app's whole answer to
+"who am I, and who am I talking to".
+
+**The server form's key picker now works.** It has been inert since session 21 because there was no
+key store to populate it; `ServersViewModel.savedKeyAliases()` now feeds it, so a key-authenticated
+host can be created from the UI for the first time. That closes the gap flagged in the session 21
+commit message.
+
+**`privateKeyParseError` was added to `ssh_private_key.dart`** so bad key material is rejected at the
+moment it is pasted rather than stored and failed at connect time, where the message arrives while
+the user is doing something else and gives no hint the key was at fault. An *encrypted* key is
+explicitly not a failure — it parses once its passphrase is supplied, which the app asks for at
+connect time.
+
+**Security decisions in this screen:**
+
+| | |
+|---|---|
+| The fingerprint hashes the **decoded** base64 blob | So it matches `ssh-keygen -lf` on the host exactly. A fingerprint you cannot compare with the one the server prints has no purpose. It is also selectable, because comparing means copying. |
+| A key profile never carries a password | A server that rejects the key could otherwise harvest it — the same rule the credential resolver enforces at connect time (§ session 21). |
+| Deleting names the dependent hosts | "Delete this key" gives no sense of the blast radius, and the private material cannot be recovered. |
+| Revoking a host key explains what it costs | Forgetting a pin removes the protection that would otherwise catch an interception, so the dialog says the next connection asks again, and when that is the right thing to do. |
+| Editing a profile never shows the stored password | Same rule as the host form: an empty field means "unchanged". |
+| Renaming a key updates the hosts that reference it | The alias is what a host records; leaving it stale would break authentication silently. |
+
+**A bug caught by the tests:** `splitHostPort` originally took the last colon, which mangles the
+`[host]:port` form the trust store actually writes — the revoke would then have matched nothing and
+silently failed. It now parses the bracketed form first, which also makes a bare IPv6 address
+(full of colons) resolve correctly instead of having its last group read as a port.
+
+**Verified — 907 tests pass (51 new), `flutter analyze` clean.**

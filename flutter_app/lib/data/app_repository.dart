@@ -226,6 +226,8 @@ class AppRepository {
   Stream<List<CredentialProfile>> get profilesStream =>
       _db.appDataDao.watchAllProfiles().asyncMap(_decryptProfiles);
 
+  Future<void> deleteKey(SshKey key) => _db.appDataDao.deleteKeyById(key.id);
+
   Future<List<CredentialProfile>> getAllProfiles() async =>
       _decryptProfiles(await _db.appDataDao.getAllProfiles());
 
@@ -234,6 +236,9 @@ class AppRepository {
     if (profile == null) return null;
     return profile.copyWith(password: Value(await _secrets.decrypt(profile.password)));
   }
+
+  Future<void> deleteProfile(CredentialProfile profile) =>
+      _db.appDataDao.deleteProfileById(profile.id);
 
   Future<int> insertProfile(CredentialProfile profile) async {
     final encrypted = await _encryptProfile(profile);
