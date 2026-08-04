@@ -6,11 +6,13 @@ import 'package:flutter/foundation.dart';
 
 import '../../data/app_database.dart';
 import '../../data/network/network_probe.dart';
+import '../../data/ssh/ssh_tunnel_manager.dart';
 import '../../domain/network_tools.dart';
+import '../../domain/server_credentials.dart';
 import 'app_state.dart';
 
 /// The Network tool's tabs, in the Kotlin's order.
-enum NetworkTab { hostScan, wakeOnLan, ping, portScan, dnsLookup }
+enum NetworkTab { hostScan, wakeOnLan, ping, portScan, dnsLookup, tunnels }
 
 /// One port probe's outcome.
 class PortResult {
@@ -35,9 +37,14 @@ class PingResult {
 
 /// The Network tool's state and actions, split out of `NetworkToolView` in `ui/ToolsScreen.kt`.
 class NetworkViewModel extends ChangeNotifier {
-  NetworkViewModel(this._app, {NetworkProbe? probe}) : probe = probe ?? const SocketNetworkProbe();
+  NetworkViewModel(this._app, {NetworkProbe? probe, this.tunnels})
+    : probe = probe ?? const SocketNetworkProbe();
 
   final AppState _app;
+
+  /// The forwarder. Nullable and injected (convention 4): without it the Tunnels tab says tunnels
+  /// are unavailable rather than offering switches that do nothing.
+  final SshTunnelManager? tunnels;
 
   /// The socket layer. Injected so the tests never touch a real network — a test that depends on
   /// the dev machine's own LAN fails elsewhere for reasons unrelated to the code.
@@ -157,6 +164,9 @@ class NetworkViewModel extends ChangeNotifier {
       _wolTargets = list;
       _safeNotify();
     });
+    // Subscribed here rather than when the Tunnels tab is first opened: a tunnel can be running
+    // while the user is on another tab, and the list has to know about it either way.
+    startTunnels();
     await guessSubnet();
   }
 
@@ -200,6 +210,90 @@ class NetworkViewModel extends ChangeNotifier {
   }
 
   Future<void> deleteWolTarget(WolTarget target) => _app.repository.deleteWolTargetById(target.id);
+
+  // ── tunnels ─────────────────────────────────────────────────────────────────
+
+  StreamSubscription<List<PortForward>>? _tunnelSub;
+  List<PortForward> _portForwards = const [];
+
+  List<PortForward> get portForwards => List.unmodifiable(_portForwards);
+
+  bool get canTunnel => tunnels != null;
+
+  /// Ids currently being started or stopped, so a card shows progress instead of a switch that
+  /// snaps back while the connection is still dialling.
+  final Set<int> _tunnelBusy = {};
+  final Map<int, String> _tunnelErrors = {};
+
+  bool isTunnelBusy(int id) => _tunnelBusy.contains(id);
+  bool isTunnelActive(int id) => tunnels?.isActive(id) ?? false;
+  String? tunnelError(int id) => _tunnelErrors[id];
+
+  /// Subscribes to the saved tunnels. Called by [start]; public so a test can drive it alone.
+  void startTunnels() {
+    _tunnelSub ??= _app.repository.portForwardsStream.listen((list) {
+      _portForwards = list;
+      _safeNotify();
+    });
+  }
+
+  Future<void> saveTunnel(PortForwardsCompanion row) async {
+    await _app.repository.insertPortForward(row);
+  }
+
+  /// Removes a saved tunnel, stopping it first if it is up.
+  ///
+  /// Stopped before the row goes, not after: deleting the record while the forward is still
+  /// listening would leave a port bound with nothing in the UI that can release it.
+  Future<void> deleteTunnel(PortForward pf) async {
+    if (isTunnelActive(pf.id)) await tunnels?.stop(pf.id);
+    _tunnelErrors.remove(pf.id);
+    await _app.repository.deletePortForwardById(pf.id);
+  }
+
+  /// Brings [pf] up, or takes it down if it is already running.
+  Future<void> toggleTunnel(PortForward pf) async {
+    final manager = tunnels;
+    if (manager == null || _tunnelBusy.contains(pf.id)) return;
+
+    _tunnelBusy.add(pf.id);
+    _tunnelErrors.remove(pf.id);
+    _safeNotify();
+    try {
+      if (manager.isActive(pf.id)) {
+        await manager.stop(pf.id);
+      } else {
+        final server = _app.servers.where((s) => s.id == pf.serverId).firstOrNull;
+        if (server == null) {
+          // The host was deleted out from under the tunnel. Saying so beats a connection error
+          // that blames the network.
+          _tunnelErrors[pf.id] = 'The host this tunnel runs over no longer exists.';
+          return;
+        }
+        final creds = resolveCredentials(
+          server,
+          keys: await _app.repository.getAllKeys(),
+          profiles: await _app.repository.getAllProfiles(),
+        );
+        await manager.start(
+          id: pf.id,
+          creds: creds,
+          kind: pf.kind,
+          bindHost: pf.bindHost,
+          bindPort: pf.bindPort,
+          destHost: pf.destHost,
+          destPort: pf.destPort,
+        );
+      }
+    } on CredentialResolutionException catch (e) {
+      _tunnelErrors[pf.id] = e.message;
+    } catch (e) {
+      _tunnelErrors[pf.id] = '$e';
+    } finally {
+      _tunnelBusy.remove(pf.id);
+      _safeNotify();
+    }
+  }
 
   /// Sends the magic packet for [target].
   ///
@@ -406,6 +500,7 @@ class NetworkViewModel extends ChangeNotifier {
         dnsTarget = address;
       case NetworkTab.hostScan:
       case NetworkTab.wakeOnLan:
+      case NetworkTab.tunnels:
         return;
     }
     _activeTab = tool;
@@ -416,6 +511,7 @@ class NetworkViewModel extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _wolSub?.cancel();
+    _tunnelSub?.cancel();
     super.dispose();
   }
 }

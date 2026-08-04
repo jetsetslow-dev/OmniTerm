@@ -1255,7 +1255,8 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
   around it.
 - **tmux persistent sessions**, the session picker and the background-session list. The control-mode
   parser (`tmux_control_*.dart`) is ported and tested; the attach/reattach lifecycle is not.
-- **The tunnel manager UI.** `ssh_tunnel_manager.dart` is ported; nothing drives it yet.
+- ~~**The tunnel manager UI.**~~ **Done in session 60**, in the Network tool rather than Shell —
+  that is where the Kotlin keeps it.
 - ~~**Text selection and the copy dialog.**~~ **Done in session 58.** The surface still paints a
   grid — a canvas cannot be made to behave like a document — so a **long press opens the scrollback
   as selectable text**, which is how the Kotlin answers it too (its PR #69). `domain/
@@ -1278,8 +1279,9 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
 - **WHOIS** — a plain TCP query to port 43 and a text response; straightforward, just not done.
 - **Speed test** — needs a bandwidth endpoint and a policy on how much data to pull on a metered
   connection. Worth a product decision before implementing.
-- **Tunnels** — the Kotlin's ninth tab manages SSH port forwards. `ssh_tunnel_manager.dart` is
-  ported; the UI is not, and it belongs with the Shell screen's session lifecycle.
+- ~~**Tunnels**~~ — **done in session 60.** The Kotlin's ninth Network tab: saved local (`-L`),
+  remote (`-R`) and dynamic (`-D`) forwards, started and stopped from a switch. `autoStart` is
+  stored but nothing acts on it yet.
 
 **Scripts (session 28):**
 - **Per-OS / per-platform filtering of quick scripts** — the columns (`targetOs`, `targetSystem`) are
@@ -3816,3 +3818,45 @@ a screenshot showed the sheet rendering correctly and the server showed the save
 
 Nothing in the app changed this session. That is the honest outcome: the features were already
 right, and the tooling was wrong about them.
+
+---
+
+### Session 60 — SSH tunnels, and proving one carries traffic (task #7)
+
+The Kotlin's ninth Network tab. `ssh_tunnel_manager.dart` had been ported and tested since session
+33 and **nothing drove it** — the same "helper nobody calls" problem §20.3 caught twice before, and
+the reason this was worth doing next.
+
+Saved forwards now live in the Network tool: local (`-L`), remote (`-R`) and dynamic (`-D`), each a
+card with a switch, an editor, and a delete that stops a running forward before removing its row —
+deleting the record first would leave a port bound with nothing left in the UI to release it.
+
+Three decisions worth recording:
+
+- **`domain/tunnel_form.dart` gates the editor**, using the shared `portError` rather than a local
+  copy of the range. A tunnel is the worst place for the Kotlin's PR #67 bug: a port parsed with a
+  fallback silently becomes 0, the bind succeeds on an arbitrary port, and the forward is running
+  somewhere the user cannot find.
+- **A dynamic forward is never asked for a destination.** SOCKS decides that per connection, so the
+  fields disappear and the validator stops requiring them.
+- **The forward gets its own connection.** `DartSshTransport.openDedicatedClient` deliberately
+  bypasses the session pool: a pooled client is reaped when its last lease goes, which would drop a
+  port forward the moment the last terminal on that host closed.
+
+**Proven on the device, end to end.** A tunnel bound `127.0.0.1:18080` on the phone to the lab's
+nginx, and the request came back through it:
+
+```
+curl → adb forward → device 18080 (the app's forward) → SSH → lab nginx
+HTTP/1.1 200 OK · Server: nginx/1.31.3
+```
+
+Getting there took three attempts and is a footnote to §19.2. `toybox nc` from `adb shell` connected
+and returned nothing, which looked exactly like a broken forward; `netstat` on the device showed
+`127.0.0.1:18080 LISTEN`, which proved the bind but not the traffic. Only `adb forward` — which
+reaches the device loopback through adbd rather than the shell — settled it. **The shell's silence
+was an SELinux artefact, not a defect**, and the difference was one more measurement rather than one
+more guess.
+
+**Verified — 17 new tests (10 domain, 7 widget); 1539 host tests pass, `analyze --fatal-infos`
+clean; the forward carries real HTTP on Android 15.**

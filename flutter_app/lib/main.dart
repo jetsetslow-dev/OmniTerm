@@ -8,6 +8,7 @@ import 'data/app_repository.dart';
 import 'data/shares/platform_smb_client.dart';
 import 'data/shares/remote_fs_client.dart';
 import 'data/ssh/dartssh_transport.dart';
+import 'data/ssh/ssh_tunnel_manager.dart';
 import 'data/ssh/secure_host_key_store.dart';
 import 'data/ssh/ssh_host_key_trust.dart';
 import 'data/ssh/ssh_transport.dart';
@@ -138,6 +139,13 @@ class OmniTermApp extends StatelessWidget {
           dispose: (_, transport) => transport.shutdown(),
         ),
         ProxyProvider<DartSshTransport, SshTransport>(update: (_, transport, _) => transport),
+        // A tunnel's connection is its own: `openDedicatedClient` stays out of the session pool, so
+        // a forward does not die when the last terminal on that host is closed.
+        Provider<SshTunnelManager>(
+          create: (context) =>
+              SshTunnelManager(context.read<DartSshTransport>().openDedicatedClient),
+          dispose: (_, manager) => manager.stopAll(),
+        ),
         Provider<ScreenSecurity>(create: (_) => ScreenSecurity()),
         ChangeNotifierProvider<AppState>(
           create: (context) => AppState(_buildRepository(context.read<AppDatabase>()))..start(),
@@ -212,7 +220,8 @@ class OmniTermApp extends StatelessWidget {
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, NetworkViewModel>(
-          create: (context) => NetworkViewModel(context.read<AppState>()),
+          create: (context) =>
+              NetworkViewModel(context.read<AppState>(), tunnels: context.read<SshTunnelManager>()),
           update: (_, app, previous) => previous ?? NetworkViewModel(app),
         ),
         ChangeNotifierProxyProvider<AppState, BackupViewModel>(

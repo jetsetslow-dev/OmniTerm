@@ -169,6 +169,13 @@ class DartSshTransport implements SshTransport {
   ///
   /// Jump-host connections are never pooled: the pool has nowhere to hold the paired bastion, so
   /// those get a dedicated connection torn down by the caller.
+  /// Opens a connection that belongs to the caller alone, outside the pool.
+  ///
+  /// Tunnels need this. A pooled client is shared and reaped when the last lease goes, which is
+  /// exactly wrong for a forward that must stay up on its own terms — a port bound on this device
+  /// has to keep working whether or not anything else is talking to that host.
+  Future<SSHClient> openDedicatedClient(SshCredentials creds) => _connect(creds);
+
   Future<SshLease<SSHClient>> _acquire(SshCredentials creds) async {
     if (_isJump(creds)) {
       final client = await _connect(creds);
