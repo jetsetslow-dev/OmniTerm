@@ -4,9 +4,16 @@
 >
 > **The background session service is in (session 44).** Task #8's last Android piece.
 >
-> **Immediate task: validate the SSH path against the repo's own lab.** `./scripts/test-hosts.sh up`
-> starts a disposable SSH fleet reachable from the emulator at `10.0.2.2:2201` (see §19) — enough to
-> exercise the transport, the host-key prompt, the terminal and the foreground service for real.
+> **Immediate task: validate the SSH path against the repo's own lab.** The fleet is **already
+> running** (`./scripts/test-hosts.sh status`); `./scripts/test-hosts.sh fleet` prints the
+> credentials. Add `10.0.2.2:2201` (password auth) in the app, connect, and watch the host-key
+> prompt, the terminal and the foreground service work for real. Session 44 got as far as the
+> add-host form and ran out of runway.
+>
+> ⚠️ **Driving that form by `adb`: do not send `KEYCODE_ESCAPE`** to dismiss the keyboard — it is
+> routed as Back and closes the whole sheet, losing everything typed. `KEYCODE_TAB` moves between
+> fields; tapping a second field does not reliably move focus (§19).
+>
 > **Then iOS SMB** (§18), which is the last #8 item.
 >
 > **Validate on device — it works.** §19 has the recipe. §15.7 is why.
@@ -2765,4 +2772,6 @@ as `10.0.2.2:2201` and up. §19 now records it. That makes the transport, host-k
 terminal and this service all testable for real, and it is the next thing to do.
 
 **Verified — 1464 tests pass (14 new), `flutter analyze` clean, APK builds, and the app installs and
-runs. The service itself is not yet exercised**, because that needs a live SSH session.
+runs. The service itself is not yet exercised**, because that needs a live SSH session: the lab was
+started and the add-host form reached, but the host was not saved before the iteration ended. The
+form is the next thing to finish, and §19 records the `adb` gotcha that cost the attempt.
