@@ -43,35 +43,17 @@
 > **The Kotlin app is maintained in parallel** on `fix/kotlin-parity-defects` — see §15.6. A §15
 > entry is not finished until it is fixed on both branches.
 >
-> **Shell parity gaps (§18) are a second Shell iteration:** split panes, quick connect, tmux
-> persistent sessions, the tunnel manager UI, text selection.
+> ⚠️ **This blockquote is history.** It was the "what next" note written around session 23 and is
+> kept because its warnings still hold, not because its status does. **For current state read §22**,
+> for what remains read §21, and for the working conventions read §23.
 >
 > ⚠️ **Read §16.4 before porting anything else** — port the feature set, not the code set.
 >
 > ⚠️ **§20 is the lessons ledger from all 42 Kotlin commits.** Read it before writing a ViewModel or
 > touching an async path: it lists the failure shapes this codebase actually hits, with the verdict
-> for each. Two of its patterns are preconditions on work not yet started — **O on task #8** (no
+> for each. Two of its patterns are preconditions on work **not yet started** — **O on task #8** (no
 > widget, shortcut or notification may act before the app-lock state has loaded) and **L on task
 > #10** (CI must build the configuration that ships, not a debug approximation).
->
-> Then, in the §9 order — for each: a feature ViewModel reading from `AppState`, then the screen,
-> replacing its placeholder in `lib/ui/app_scaffold.dart`: Monitor → Infra → Fleet → SFTP → Tools.
->
-> **Four conventions established so far — follow all:**
-> 1. Every interactive widget gets a stable `ValueKey('<screen>.<element>')` (Patrol has no native
->    view tree to fall back on).
-> 2. Anything reading an observable singleton (`HostDisplay`) must **listen** via
->    `ListenableBuilder` — Compose recomposed readers automatically, Flutter does not.
-> 3. Logic that is a security control or easy to get wrong goes in a plain testable class beside the
->    widget, not inside `build()`.
-> 4. Anything a screen needs from the SSH layer arrives through an **injected, nullable** dependency
->    (`ServersViewModel({SshTransport? transport})`). Absent means the feature is disabled and says
->    so — never a stub that reports success.
->
-> ✅ **Both former blockers are decided (session 23).** §7.10 is **built and verified** — the Android
-> bridge, the Dart channel and the one-pass migration all exist and are tested; the only thing left
-> is a check on a real device carrying real `enc:v1:` data. §7.1 is decided in favour of
-> platform-native SMB behind `RemoteFsClient`, **not started**.
 >
 > Working rules that are easy to lose: never `git add -A` (`shared/` must stay untracked, stage
 > explicit paths); `export PATH="/home/sbvino/sdks/flutter/bin:$PATH"`; run `flutter analyze` and
@@ -5003,3 +4985,54 @@ lessons about writing those probes, and every one of them was learned by wasting
    the server itself (§19.2). Several "defects" here turned out to be the probe.
 3. **Fix the Kotlin's flaws rather than porting them**, and write down *why* in the code. Requirement
    9 is the reason §15 and §20 exist, and PR #77 is where those fixes go back upstream.
+
+---
+
+## 23. Working agreements
+
+The rules every iteration of this port has followed. They are here because they were previously
+spread between a stale blockquote and the sessions that invented them — and one of them existed only
+in a conversation.
+
+### Code conventions
+
+1. **Every interactive widget carries a stable `ValueKey('<screen>.<element>')`.** Patrol and the
+   device probes have no native view tree to fall back on, so a widget without a key cannot be
+   driven or asserted on. New screens inherit the naming: `sftp.entry.<name>.menu`,
+   `monitor.tab.cron`, `run.confirm`.
+2. **Anything reading an observable singleton (`HostDisplay`) must *listen*** via
+   `ListenableBuilder`. Compose recomposed readers automatically; Flutter does not, so a plain read
+   leaves "hide sensitive info" showing the address it was meant to mask.
+3. **Logic that is a security control, or easy to get wrong, goes in a plain testable class** beside
+   the widget — never inside `build()`. `tmux_bootstrap.dart`, `cron_schedule.dart`, `whois.dart`
+   and `telemetry_sampling.dart` all exist because of this rule, and each one earned it.
+4. **Anything a screen needs from the SSH or platform layer arrives injected and nullable.** Absent
+   means the feature is *disabled and says so* — never a stub that reports success. This is what
+   lets every screen be tested without a network, and what makes "unavailable in this build" an
+   honest sentence rather than a bug.
+5. **A widget test whose view model subscribes to a drift `watch` stream must dispose the view model
+   inside the test body, then `pump()` twice.** Cancelling that subscription schedules zero-duration
+   timers, and the end-of-test check fails while any remain queued. Every screen test here ends with
+   `vm.dispose(); await tester.pump(const Duration(milliseconds: 10));` for this reason.
+
+### Process
+
+- **Never `git add -A`.** `shared/` must stay untracked; stage explicit paths.
+- **`export PATH="/home/sbvino/sdks/flutter/bin:$PATH"`** — Flutter is not on PATH by default.
+- **`flutter analyze` and `flutter test` before every commit**, from `flutter_app/`. CI runs the
+  same, plus `dart format --set-exit-if-changed --line-length 100`.
+- **Append a §14 progress entry and commit before finishing an iteration.** The entry says what was
+  built, what was *decided against*, and what the device run did and did not prove.
+- **Validate on a device before reporting something works** (the user mandate behind §19). A green
+  host suite is not evidence a screen opens.
+- **A defect found in the Kotlin is not finished until it is fixed on both branches** — the port,
+  and `fix/kotlin-parity-defects` (PR #77).
+
+### If your environment cannot reach this machine
+
+Most of this document assumes the dev box: the Flutter SDK at `/home/sbvino/sdks/flutter`, an
+Android emulator behind Xvfb, and the Docker SSH lab. An agent without them can still do the
+**pure-logic and widget-test work**, which is most of the port — the host suite needs nothing but
+Dart. What it cannot do is §19 device validation, and it should say so in its progress entry rather
+than quietly skipping the step. Anything landed without a device pass should be listed as such, so
+the next session with hardware knows what to check.
