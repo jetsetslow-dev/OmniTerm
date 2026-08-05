@@ -37,32 +37,33 @@ void main() {
     await db.close();
   });
 
-  Server server({required String name, String status = 'online'}) => Server(
-    id: 0,
-    name: name,
-    host: '10.0.0.1',
-    port: 22,
-    username: 'root',
-    serverColor: 'Default',
-    authType: 'password',
-    authPassword: 'pw',
-    sudoPassword: '',
-    notes: '',
-    keepAlive: 30,
-    sshCompression: false,
-    persistentSession: false,
-    proxyCommand: '',
-    proxyType: 'none',
-    proxyHost: '',
-    proxyPort: 0,
-    proxyUser: '',
-    proxyPassword: '',
-    agentForwarding: false,
-    healthScore: 100,
-    lastLatency: 0,
-    status: status,
-    authStatus: 'ok',
-  );
+  Server server({required String name, String status = 'online', bool persistent = false}) =>
+      Server(
+        id: 0,
+        name: name,
+        host: '10.0.0.1',
+        port: 22,
+        username: 'root',
+        serverColor: 'Default',
+        authType: 'password',
+        authPassword: 'pw',
+        sudoPassword: '',
+        notes: '',
+        keepAlive: 30,
+        sshCompression: false,
+        persistentSession: persistent,
+        proxyCommand: '',
+        proxyType: 'none',
+        proxyHost: '',
+        proxyPort: 0,
+        proxyUser: '',
+        proxyPassword: '',
+        agentForwarding: false,
+        healthScore: 100,
+        lastLatency: 0,
+        status: status,
+        authStatus: 'ok',
+      );
 
   Future<void> pump(WidgetTester tester, {bool withTransport = true}) async {
     tester.view.physicalSize = const Size(1000, 1400);
@@ -513,6 +514,56 @@ void main() {
 
       expect(vm.isSplit, isFalse);
       expect(find.byKey(const ValueKey('shell.splitView')), findsNothing);
+      await finish(tester);
+    });
+  });
+
+  group('sessions left running', () {
+    testWidgets('a closed persistent session is offered again, and forgetting explains itself', (
+      tester,
+    ) async {
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await pump(tester);
+      await connect(tester);
+      expect(
+        find.byKey(const ValueKey('shell.resumable')),
+        findsNothing,
+        reason: 'it is open in a tab',
+      );
+
+      final row = (await repo.getPersistentSessions()).single;
+      vm.close(vm.sessions.single);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(ValueKey('shell.resumable.${row.tmuxName}')), findsOneWidget);
+      expect(find.textContaining('still running on their servers'), findsOneWidget);
+
+      await tester.tap(find.byKey(ValueKey('shell.resumable.${row.tmuxName}.forget')));
+      await tester.pumpAndSettle();
+      // The distinction that matters: this is a pointer on this device, not the session itself.
+      expect(find.textContaining('keeps running on the server'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('shell.resumable.forget.cancel')));
+      await tester.pumpAndSettle();
+      expect(await repo.getPersistentSessions(), hasLength(1));
+
+      await tester.tap(find.byKey(ValueKey('shell.resumable.${row.tmuxName}.forget')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('shell.resumable.forget.confirm')));
+      await tester.pumpAndSettle();
+      expect(await repo.getPersistentSessions(), isEmpty);
+      await finish(tester);
+    });
+
+    testWidgets('a non-persistent host leaves nothing behind', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+      vm.close(vm.sessions.single);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('shell.resumable')), findsNothing);
+      expect(await repo.getPersistentSessions(), isEmpty);
       await finish(tester);
     });
   });

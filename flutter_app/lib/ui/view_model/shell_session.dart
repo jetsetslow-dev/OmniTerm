@@ -39,6 +39,7 @@ class ShellSession extends ChangeNotifier {
     required this.serverName,
     required TerminalSession channel,
     required this.emulator,
+    this.tmuxName,
   }) : _channel = channel {
     _subscription = channel.output.listen(
       _onOutput,
@@ -52,6 +53,13 @@ class ShellSession extends ChangeNotifier {
   final String id;
   final int serverId;
   final String serverName;
+
+  /// The tmux session this terminal is attached to, when the host is persistent.
+  ///
+  /// Held so the resumable list can tell "already open in a tab" from "still running on the server
+  /// with nobody watching" — offering to resume a session the user is currently looking at would be
+  /// nonsense.
+  final String? tmuxName;
 
   final TerminalSession _channel;
 

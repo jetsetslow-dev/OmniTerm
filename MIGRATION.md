@@ -1256,9 +1256,10 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
   around it.
 - **tmux persistent sessions** — **attach and resume are done (sessions 64-65).** A host marked
   "Persistent session (tmux)" is now put inside a named tmux session on connect, and reconnecting
-  re-attaches to the same one. **Still to do:** the resumable-session picker, the background-session
-  list, and control mode (`tmux -C`) — the parser is ported and the attach command exists, but
-  nothing drives control mode yet.
+  re-attaches to the same one, and **sessions left running are listed on the connect pane** with
+  Resume and Forget (session 66). **Still to do:** the background-session list (sessions deliberately
+  left running while the app stays open) and control mode (`tmux -C`) — the parser is ported and the
+  attach command exists, but nothing drives control mode yet.
 - ~~**The tunnel manager UI.**~~ **Done in session 60**, in the Network tool rather than Shell —
   that is where the Kotlin keeps it.
 - ~~**Text selection and the copy dialog.**~~ **Done in session 58.** The surface still paints a
@@ -4067,3 +4068,36 @@ unfinished, and finishing it is what found the bug — which is the argument for
 *not* measured, in the words that make it easy to pick up.
 
 **Verified — 5 new tests; 1574 host tests pass, `analyze --fatal-infos` clean.**
+
+---
+
+### Session 66 — sessions you left running (task #7)
+
+Sessions 64-65 made persistent sessions real, and left a gap that would have grown quietly: rows
+accumulated in `persistent_sessions` with **no way to see them, reach a specific one, or remove
+one**. A user could only get back to a session by reconnecting to its host, which always joined the
+newest row.
+
+The connect pane now lists what is still running, below the connect prompt rather than instead of
+it — a session left on a server is something to come back to, so it belongs where someone arrives
+looking for a terminal.
+
+Three decisions:
+
+- **A session open in a tab is not offered.** `ShellSession` now carries its own `tmuxName`, which
+  is what lets the list tell "open here" from "running on the server with nobody watching".
+  Offering to resume the terminal the user is looking at would be nonsense.
+- **Resume attaches to *that* session**, not to whichever row is newest. The list exists so a
+  specific session can be reached; joining the last one would make choosing meaningless. `connect`
+  takes an optional `resumeName` for exactly this.
+- **Forget is local, and says so.** The confirmation states that the tmux session keeps running on
+  the server and how to actually end it. Calling the button "Close" would have been a lie about
+  what it does, and the test asserts nothing is sent to the remote.
+
+Resuming a session whose host has since been deleted says that, rather than failing at connect time
+with something about credentials.
+
+**Verified — 7 new tests (5 view-model, 2 widget); 1581 host tests pass, `analyze --fatal-infos`
+clean.** Not device-checked this session: the behaviour here is list construction and a row delete,
+both fully observable host-side, and the attach path underneath it was measured against the lab in
+sessions 64-65.

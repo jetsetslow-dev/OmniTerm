@@ -25,6 +25,9 @@ import 'shell_session.dart';
 class ShellViewModel extends ChangeNotifier {
   ShellViewModel(this._app, {this.transport, this.sessionService}) {
     _app.addListener(_onAppChanged);
+    // Read once at construction rather than watched: rows change only when this view model writes
+    // them, and it reloads itself when it does.
+    unawaited(_reloadSaved());
     final service = sessionService;
     if (service != null) {
       _actionsSub = service.actions.listen(_onServiceAction, onError: (Object _) {});
@@ -206,44 +209,88 @@ class ShellViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
-  /// Puts a freshly opened session inside a named tmux session.
+  /// Decides which tmux session a connection to [server] should join, creating a row if needed.
   ///
-  /// The name is remembered per host, so reconnecting later **re-attaches** rather than starting a
-  /// second session beside the first — which is what makes the feature persistence rather than just
-  /// "runs tmux".
-  Future<void> _attachPersistent(ShellSession session, Server server) async {
+  /// [resumeName] forces a specific session — that is what the resumable list passes, so tapping a
+  /// remembered session joins *that* one rather than whichever row happens to be newest.
+  Future<(String name, String command)> _persistentTarget(
+    Server server, {
+    String? resumeName,
+  }) async {
     final scrollback = PreferenceLimits.terminalScrollback.parse(
       await _app.repository.getSetting('terminal_scrollback_limit'),
     );
-    final existing = (await _app.repository.getPersistentSessions())
+    final rows = (await _app.repository.getPersistentSessions())
         .where((row) => row.serverId == server.id)
         .toList();
+    final existing = resumeName ?? (rows.isEmpty ? null : rows.last.tmuxName);
 
-    final String command;
-    if (existing.isNotEmpty) {
+    if (existing != null) {
       // Resume, not plain attach. A remembered row outlives the server rebooting, and a plain
       // attach to a session that is gone silently leaves an ordinary, non-persistent shell.
-      command = tmuxResumeCommand(existing.last.tmuxName, historyLimit: scrollback);
-    } else {
-      final name = tmuxSafeName('omniterm-${server.id}-${DateTime.now().millisecondsSinceEpoch}');
-      await _app.repository.upsertPersistentSession(
-        PersistentSessionsCompanion.insert(
-          tmuxName: name,
-          serverId: server.id,
-          serverName: server.name,
-          createdAt: DateTime.now().millisecondsSinceEpoch,
-          // Only meaningful once the session is actually left running in the background; the
-          // "backgrounded since" clock starts there, not here.
-          backgroundedAt: 0,
-        ),
-      );
-      command = tmuxCreateAttachCommand(name, historyLimit: scrollback);
+      return (existing, tmuxResumeCommand(existing, historyLimit: scrollback));
     }
-    session.write(Uint8List.fromList(utf8.encode(command)));
+
+    final name = tmuxSafeName('omniterm-${server.id}-${DateTime.now().millisecondsSinceEpoch}');
+    await _app.repository.upsertPersistentSession(
+      PersistentSessionsCompanion.insert(
+        tmuxName: name,
+        serverId: server.id,
+        serverName: server.name,
+        createdAt: DateTime.now().millisecondsSinceEpoch,
+        // Only meaningful once the session is actually left running in the background; the
+        // "backgrounded since" clock starts there, not here.
+        backgroundedAt: 0,
+      ),
+    );
+    return (name, tmuxCreateAttachCommand(name, historyLimit: scrollback));
+  }
+
+  // ── resumable sessions ──────────────────────────────────────────────────────
+
+  List<PersistentSession> _saved = const [];
+
+  /// Sessions left running on a server that are **not** open in a tab here.
+  ///
+  /// The filter is the point: offering to resume a session the user is currently looking at would
+  /// be nonsense, and hiding one they left running would lose it.
+  List<PersistentSession> get resumableSessions =>
+      List.unmodifiable(_saved.where((row) => _sessions.every((s) => s.tmuxName != row.tmuxName)));
+
+  /// Removes a saved session from this device.
+  ///
+  /// **Does not touch the server.** The tmux session keeps running; this only forgets the pointer,
+  /// which is why the button says "Forget" rather than "Close".
+  Future<void> forgetResumable(PersistentSession row) async {
+    await _app.repository.deletePersistentSession(row.tmuxName);
+    await _reloadSaved();
+  }
+
+  /// Opens a saved session again, attaching to that exact tmux name.
+  Future<void> resume(PersistentSession row) async {
+    final server = _app.servers.where((s) => s.id == row.serverId).firstOrNull;
+    if (server == null) {
+      _error = 'The host this session ran on is no longer saved.';
+      _safeNotify();
+      return;
+    }
+    await connect(server, resumeName: row.tmuxName);
+  }
+
+  /// Re-reads the saved sessions.
+  ///
+  /// Public because the list can change without this view model writing it — another device, a
+  /// restored backup — and the Shell screen refreshes when it is shown rather than trusting a
+  /// snapshot taken at construction.
+  Future<void> refreshResumable() => _reloadSaved();
+
+  Future<void> _reloadSaved() async {
+    _saved = await _app.repository.getPersistentSessions();
+    _safeNotify();
   }
 
   /// Open a new shell on [server].
-  Future<void> connect(Server server) async {
+  Future<void> connect(Server server, {String? resumeName}) async {
     if (_connecting) return;
     final ssh = transport;
     if (ssh == null) {
@@ -290,12 +337,19 @@ class ShellViewModel extends ChangeNotifier {
         rows: _preferredRows,
         scrollbackLimit: scrollbackLimit,
       );
+      // Resolved before the session is built so it can carry its own tmux name — that is what
+      // lets the resumable list tell "open in a tab" from "running with nobody watching".
+      final persistent = server.persistentSession
+          ? await _persistentTarget(server, resumeName: resumeName)
+          : null;
+
       final session = ShellSession(
         id: '${DateTime.now().microsecondsSinceEpoch}-${server.id}',
         serverId: server.id,
         serverName: server.name,
         channel: channel,
         emulator: emulator,
+        tmuxName: persistent?.$1,
       )..setViewportRows(_preferredRows);
       session.addListener(_safeNotify);
       session.addListener(_syncBackgroundSessions);
@@ -306,7 +360,10 @@ class ShellViewModel extends ChangeNotifier {
       // dropped link then leaves the work running on the server instead of killing it. Written as
       // the shell's first input rather than run as a channel command, so a host without tmux is
       // left at a perfectly ordinary prompt (the command guards itself with `command -v tmux`).
-      if (server.persistentSession) await _attachPersistent(session, server);
+      if (persistent != null) {
+        session.write(Uint8List.fromList(utf8.encode(persistent.$2)));
+        await _reloadSaved();
+      }
       _syncBackgroundSessions();
     } on CredentialResolutionException catch (e) {
       _error = e.message;

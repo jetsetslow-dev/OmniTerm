@@ -364,6 +364,102 @@ void main() {
       );
     });
 
+    test('an open session is not offered as resumable', () async {
+      // Offering to resume the terminal the user is looking at would be nonsense.
+      final transport = FakeShellTransport();
+      final vm = await start(ssh: transport);
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await Future<void>.delayed(Duration.zero);
+
+      await vm.connect((await repo.getAllServers()).single);
+
+      expect(await repo.getPersistentSessions(), hasLength(1));
+      expect(vm.resumableSessions, isEmpty, reason: 'it is open in a tab');
+    });
+
+    test('a session left running is offered once its tab is closed', () async {
+      final transport = FakeShellTransport();
+      final vm = await start(ssh: transport);
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await Future<void>.delayed(Duration.zero);
+      await vm.connect((await repo.getAllServers()).single);
+
+      vm.close(vm.sessions.single);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(vm.resumableSessions, hasLength(1));
+      expect(vm.resumableSessions.single.serverName, 'nas');
+    });
+
+    test('resuming attaches to that exact session, not the newest one', () async {
+      // The list exists so a specific session can be reached; joining whichever row happened to be
+      // last would make picking one meaningless.
+      final transport = FakeShellTransport();
+      final vm = await start(ssh: transport);
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await Future<void>.delayed(Duration.zero);
+      await repo.upsertPersistentSession(
+        PersistentSessionsCompanion.insert(
+          tmuxName: 'omniterm-1-older',
+          serverId: 1,
+          serverName: 'nas',
+          createdAt: 1,
+          backgroundedAt: 0,
+        ),
+      );
+      await repo.upsertPersistentSession(
+        PersistentSessionsCompanion.insert(
+          tmuxName: 'omniterm-1-newer',
+          serverId: 1,
+          serverName: 'nas',
+          createdAt: 2,
+          backgroundedAt: 0,
+        ),
+      );
+      await vm.refreshResumable();
+
+      await vm.resume(vm.resumableSessions.firstWhere((r) => r.tmuxName == 'omniterm-1-older'));
+
+      expect(sent(transport), contains('attach-session -t omniterm-1-older'));
+      expect(sent(transport), isNot(contains('omniterm-1-newer')));
+    });
+
+    test('forgetting removes the pointer and says the server keeps running it', () async {
+      final transport = FakeShellTransport();
+      final vm = await start(ssh: transport);
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await Future<void>.delayed(Duration.zero);
+      await vm.connect((await repo.getAllServers()).single);
+      final row = (await repo.getPersistentSessions()).single;
+
+      await vm.forgetResumable(row);
+
+      expect(await repo.getPersistentSessions(), isEmpty);
+      // Nothing was sent to the remote: forgetting is a local act, which is why the button is not
+      // called "Close".
+      expect(sent(transport), isNot(contains('kill-session')));
+    });
+
+    test('resuming a session whose host is gone says so', () async {
+      final transport = FakeShellTransport();
+      final vm = await start(ssh: transport);
+      await repo.upsertPersistentSession(
+        PersistentSessionsCompanion.insert(
+          tmuxName: 'orphan',
+          serverId: 99,
+          serverName: 'deleted',
+          createdAt: 1,
+          backgroundedAt: 0,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+      await vm.refreshResumable();
+
+      await vm.resume(vm.resumableSessions.single);
+
+      expect(vm.error, contains('no longer saved'));
+    });
+
     test('the tmux name never carries anything a shell would act on', () async {
       // The name is interpolated into a command the *remote* runs. It is derived from the host id
       // and a timestamp, but the sanitiser is what makes that safe rather than the derivation.

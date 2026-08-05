@@ -12,6 +12,7 @@ import '../../view_model/shell_session.dart';
 import '../../view_model/shell_view_model.dart';
 import '../../widgets/terminal_key_bar.dart';
 import '../../widgets/terminal_surface.dart';
+import '../../widgets/omni_components.dart';
 
 /// The Shell screen, ported from `ShellScreen` in `ui/ShellScreen.kt`.
 ///
@@ -71,8 +72,126 @@ class _ConnectPane extends StatelessWidget {
       );
     }
 
-    return _ConnectPrompt(vm: vm, server: server);
+    return Column(
+      children: [
+        Expanded(
+          child: _ConnectPrompt(vm: vm, server: server),
+        ),
+        // Below the connect prompt rather than instead of it: a session left running on a server is
+        // something to *come back to*, so it belongs where the user arrives looking for a terminal.
+        if (vm.resumableSessions.isNotEmpty) _ResumableSessions(vm: vm),
+      ],
+    );
   }
+}
+
+/// tmux sessions still running on a server with nothing attached to them.
+class _ResumableSessions extends StatelessWidget {
+  const _ResumableSessions({required this.vm});
+
+  final ShellViewModel vm;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return Container(
+      key: const ValueKey('shell.resumable'),
+      constraints: const BoxConstraints(maxHeight: 200),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('Left running', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+          Text(
+            // Saying where they are, because "resumable" alone reads as a local draft rather than
+            // work still executing on someone else's machine.
+            'These are still running on their servers. Resuming attaches to one again.',
+            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+          ),
+          const SizedBox(height: 6),
+          Flexible(
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                for (final row in vm.resumableSessions)
+                  OmniCard(
+                    key: ValueKey('shell.resumable.${row.tmuxName}'),
+                    leftAccent: OmniColors.amber,
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                row.serverName,
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                              ),
+                              Text(
+                                row.tmuxName,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 10,
+                                  fontFamily: OmniFonts.mono,
+                                  color: scheme.onSurfaceVariant,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        TextButton(
+                          key: ValueKey('shell.resumable.${row.tmuxName}.resume'),
+                          onPressed: vm.isConnecting ? null : () => vm.resume(row),
+                          child: const Text('Resume', style: TextStyle(fontSize: 12)),
+                        ),
+                        TextButton(
+                          key: ValueKey('shell.resumable.${row.tmuxName}.forget'),
+                          onPressed: () => _confirmForget(context, vm, row),
+                          child: Text(
+                            'Forget',
+                            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+Future<void> _confirmForget(BuildContext context, ShellViewModel vm, PersistentSession row) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      key: const ValueKey('shell.resumable.forget.dialog'),
+      title: Text('Forget "${row.serverName}"?'),
+      content: const Text(
+        // The distinction that matters: this is a pointer on this device, not the session itself.
+        'This only removes it from this list. The tmux session keeps running on the server — to '
+        'end it, resume it and exit the shell.',
+      ),
+      actions: [
+        TextButton(
+          key: const ValueKey('shell.resumable.forget.cancel'),
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          key: const ValueKey('shell.resumable.forget.confirm'),
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: const Text('Forget', style: TextStyle(color: OmniColors.red)),
+        ),
+      ],
+    ),
+  );
+  if (confirmed ?? false) await vm.forgetResumable(row);
 }
 
 class _EmptyState extends StatelessWidget {
