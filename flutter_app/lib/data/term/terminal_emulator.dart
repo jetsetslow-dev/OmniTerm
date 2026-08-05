@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'terminal_cell.dart';
+import 'terminal_reflow.dart';
 import 'terminal_palette.dart';
 import 'terminal_parser.dart';
 import 'terminal_snapshot.dart';
@@ -155,7 +156,15 @@ class TerminalEmulator implements TerminalSink {
     final nr = newRows < 1 ? 1 : newRows;
     if (nc == _cols && nr == _rows) return;
 
-    _screen = _resizeGrid(_screen, nc, nr);
+    // A width change re-wraps the text; a height change only moves rows between the screen and the
+    // scrollback. The alternate screen is never reflowed: it is a full-screen application's canvas,
+    // not a transcript, and re-wrapping it would scramble a drawn layout. That is what xterm does
+    // too, and the application is told the new size and redraws.
+    if (nc != _cols && !_altActive) {
+      _reflow(nc, nr);
+    } else {
+      _screen = _resizeGrid(_screen, nc, nr);
+    }
     final saved = _savedScreen;
     if (saved != null) _savedScreen = _resizeGrid(saved, nc, nr);
 
@@ -163,12 +172,65 @@ class TerminalEmulator implements TerminalSink {
     _rows = nr;
     _scrollTop = 0;
     _scrollBottom = _rows - 1;
+    // Clamped, not recomputed: a reflow has already placed the cursor on the character it was on.
     _curRow = _curRow.clamp(0, _rows - 1);
     _curCol = _curCol.clamp(0, _cols - 1);
     _wrapPending = false;
     // Cached spans were built at the old width.
     _scrollbackSpanCache.clear();
   }
+
+  /// Re-wraps the scrollback and screen together at [nc], then re-splits them at [nr].
+  ///
+  /// Together, because a logical line straddles the boundary: the row that scrolled off the top and
+  /// the row still on screen are one paragraph, and reflowing them separately would leave a seam
+  /// exactly where the eye is drawn.
+  void _reflow(int nc, int nr) {
+    final all = [..._scrollback, ..._screen];
+    final result = reflowRows(
+      rows: all,
+      wrapLengthOf: (row) => _softWrapped[row],
+      newCols: nc,
+      cursorRow: _scrollback.length + _curRow,
+      cursorCol: _curCol,
+    );
+
+    // Blank rows below the last content are padding the old screen happened to have, not text.
+    // Keeping them would push real output off the top of a shorter window — the first thing the
+    // old resize test noticed — so they are dropped and the screen is re-padded below.
+    final rows = result.rows;
+    var end = rows.length;
+    while (end > result.cursorRow + 1 && end > 1 && _isBlankRow(rows[end - 1])) {
+      end--;
+    }
+    rows.removeRange(end, rows.length);
+
+    // The screen is the tail; everything above it becomes scrollback. Re-wrapping changes how many
+    // rows the same text occupies, so this count is genuinely different from the one before.
+    final screenStart = rows.length > nr ? rows.length - nr : 0;
+    final screen = rows.sublist(screenStart);
+    while (screen.length < nr) {
+      screen.add(blankRow(nc));
+    }
+
+    _softWrapped.clear();
+    for (final row in result.softWrapped) {
+      // The stored value is the occupied length; after a re-wrap every wrapped row is full.
+      _softWrapped[row] = nc;
+    }
+
+    _scrollback
+      ..clear()
+      ..addAll(rows.sublist(0, screenStart));
+    _screen = screen;
+    _curRow = (result.cursorRow - screenStart).clamp(0, nr - 1);
+    _curCol = result.cursorCol.clamp(0, nc - 1);
+    _scrollbackSpanCache.clear();
+    _trimScrollbackToLimit();
+  }
+
+  static bool _isBlankRow(List<TerminalCell> row) =>
+      row.every((cell) => cell.width == 0 || cell.text.trim().isEmpty);
 
   List<List<TerminalCell>> _resizeGrid(List<List<TerminalCell>> old, int nc, int nr) {
     return List.generate(nr, (r) {

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../data/app_database.dart';
@@ -258,10 +260,17 @@ class _ServiceRow extends StatelessWidget {
           if (stack.canRunComposeActions)
             PopupMenuButton<String>(
               key: ValueKey('infra.service.${stack.name}.${service.name}.menu'),
-              onSelected: (action) => vm.stackAction(stack, action, service: service.name),
+              onSelected: (action) => switch (action) {
+                'scale' => _promptScale(context, vm, stack, service),
+                'ports' => _showPorts(context, vm, stack, service.name),
+                'serviceLogs' => _showServiceLogs(context, vm, stack, service.name),
+                _ => vm.stackAction(stack, action, service: service.name),
+              },
               itemBuilder: (_) => const [
                 PopupMenuItem(value: 'serviceRestart', child: Text('Restart')),
                 PopupMenuItem(value: 'serviceStop', child: Text('Stop')),
+                PopupMenuItem(value: 'scale', child: Text('Scale…')),
+                PopupMenuItem(value: 'ports', child: Text('Ports')),
                 PopupMenuItem(value: 'serviceLogs', child: Text('Logs')),
               ],
             ),
@@ -269,6 +278,222 @@ class _ServiceRow extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Asks how many replicas of [service] to run, then scales it.
+Future<void> _promptScale(
+  BuildContext context,
+  InfraViewModel vm,
+  StackSummary stack,
+  StackService service,
+) async {
+  final replicas = await showDialog<int>(
+    context: context,
+    builder: (_) => _ScaleDialog(service: service),
+  );
+  if (replicas == null) return;
+  await vm.stackAction(stack, 'scale', service: service.name, replicas: replicas);
+}
+
+/// The replica-count prompt.
+///
+/// A widget rather than a closure over a controller: a dialog's content outlives the `showDialog`
+/// call by the length of its exit animation, and disposing the controller when that call returns
+/// throws while the dialog is still fading out.
+class _ScaleDialog extends StatefulWidget {
+  const _ScaleDialog({required this.service});
+
+  final StackService service;
+
+  @override
+  State<_ScaleDialog> createState() => _ScaleDialogState();
+}
+
+class _ScaleDialogState extends State<_ScaleDialog> {
+  late final _replicas = TextEditingController(text: '${widget.service.total}');
+
+  @override
+  void dispose() {
+    _replicas.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Zero is allowed — draining a service without tearing the stack down is a real thing to want.
+    // Negative is not a scale-down, it is a typo.
+    final value = int.tryParse(_replicas.text.trim());
+    final scheme = Theme.of(context).colorScheme;
+
+    return AlertDialog(
+      key: const ValueKey('infra.scale.dialog'),
+      title: Text('Scale ${widget.service.name}'),
+      content: SizedBox(
+        width: 320,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Currently ${widget.service.running} of ${widget.service.total} running.',
+              style: const TextStyle(fontSize: 12),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              key: const ValueKey('infra.scale.replicas'),
+              controller: _replicas,
+              keyboardType: TextInputType.number,
+              autofocus: true,
+              decoration: const InputDecoration(labelText: 'Replicas', isDense: true),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              // Said before it runs: `up --scale` is how compose changes a replica count, and it
+              // recreates containers whose definition has changed since they started. That is a
+              // surprise worth two lines.
+              'Runs compose up with a new replica count, which recreates containers whose '
+              'definition has changed.',
+              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          key: const ValueKey('infra.scale.cancel'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const ValueKey('infra.scale.confirm'),
+          onPressed: (value ?? -1) < 0 ? null : () => Navigator.of(context).pop(value),
+          child: const Text('Scale'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Lists what [service] publishes to the outside world.
+Future<void> _showPorts(
+  BuildContext context,
+  InfraViewModel vm,
+  StackSummary stack,
+  String service,
+) async {
+  final ports = vm.publishedPortsFor(stack, service);
+  await showDialog<void>(
+    context: context,
+    builder: (context) => AlertDialog(
+      key: const ValueKey('infra.ports.dialog'),
+      title: Text('Ports · $service'),
+      content: ports.isEmpty
+          ? const SizedBox(
+              width: 320,
+              child: Text(
+                // Not the same as "we could not tell": this service publishes nothing, which is the
+                // normal case for a database behind a compose network.
+                'This service publishes no ports. It is reachable from other services on the '
+                'stack network, but not from outside the host.',
+                key: ValueKey('infra.ports.none'),
+                style: TextStyle(fontSize: 12),
+              ),
+            )
+          : SizedBox(
+              width: 320,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (final port in ports)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 2),
+                      child: Text(
+                        port,
+                        style: const TextStyle(fontSize: 12, fontFamily: OmniFonts.mono),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+      actions: [
+        TextButton(
+          key: const ValueKey('infra.ports.close'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    ),
+  );
+}
+
+/// Shows a service's recent output in a sheet rather than the one-line result banner.
+Future<void> _showServiceLogs(
+  BuildContext context,
+  InfraViewModel vm,
+  StackSummary stack,
+  String service,
+) async {
+  unawaited(vm.loadServiceLogs(stack, service));
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (_) => ListenableBuilder(
+      listenable: vm,
+      builder: (context, _) {
+        final logs = vm.serviceLogs;
+        return SizedBox(
+          height: MediaQuery.of(context).size.height * 0.7,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Logs · ${logs?.service ?? service}',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    IconButton(
+                      key: const ValueKey('infra.logs.close'),
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: () => Navigator.of(context).pop(),
+                    ),
+                  ],
+                ),
+              ),
+              if (logs == null || logs.text.isEmpty)
+                const Expanded(
+                  child: Center(
+                    key: ValueKey('infra.logs.loading'),
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              else
+                Expanded(
+                  child: SingleChildScrollView(
+                    key: const ValueKey('infra.logs.text'),
+                    padding: const EdgeInsets.all(16),
+                    child: SelectionArea(
+                      child: Text(
+                        logs.text,
+                        style: const TextStyle(fontSize: 11, fontFamily: OmniFonts.mono),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    ),
+  );
+  vm.clearServiceLogs();
 }
 
 /// A stack this app has seen before that has no containers right now.

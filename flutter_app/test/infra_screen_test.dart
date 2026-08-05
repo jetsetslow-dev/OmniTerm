@@ -309,4 +309,149 @@ void main() {
     expect(find.textContaining('10.0.0.1'), findsNothing);
     vm.dispose();
   });
+
+  group('the per-service dialogs', () {
+    Future<void> openServiceMenu(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('infra.tab.stacks')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('infra.stack.web.services')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('infra.service.web.front.menu')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('scaling asks for a count and sends it', (tester) async {
+      // The command was ported with the screens; nothing could reach it until now.
+      await repo.insertServer(server(name: 'nas'));
+      final transport = withStack();
+      await pump(tester, transport: transport);
+      await openServiceMenu(tester);
+
+      await tester.tap(find.text('Scale…'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('infra.scale.dialog')), findsOneWidget);
+
+      await tester.enterText(find.byKey(const ValueKey('infra.scale.replicas')), '3');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('infra.scale.confirm')));
+      await tester.pumpAndSettle();
+
+      expect(
+        transport.commands.any((c) => c.contains('--scale') && c.contains("front'=3")),
+        isTrue,
+        reason: 'the typed count reaches the host',
+      );
+      vm.dispose();
+    });
+
+    testWidgets('scaling to zero is allowed, but a negative count is not', (tester) async {
+      // Draining a service without tearing the stack down is a real thing to want; a negative
+      // replica count is a typo.
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, transport: withStack());
+      await openServiceMenu(tester);
+      await tester.tap(find.text('Scale…'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const ValueKey('infra.scale.replicas')), '0');
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<FilledButton>(find.byKey(const ValueKey('infra.scale.confirm'))).onPressed,
+        isNotNull,
+      );
+
+      await tester.enterText(find.byKey(const ValueKey('infra.scale.replicas')), '-2');
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<FilledButton>(find.byKey(const ValueKey('infra.scale.confirm'))).onPressed,
+        isNull,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('infra.scale.cancel')));
+      await tester.pumpAndSettle();
+      vm.dispose();
+    });
+
+    testWidgets('ports are listed from what the host already reported', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      final transport = withStack();
+      await pump(tester, transport: transport);
+      final before = transport.commands.length;
+      await openServiceMenu(tester);
+
+      await tester.tap(find.text('Ports'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('infra.ports.dialog')), findsOneWidget);
+      expect(find.text('0.0.0.0:8080->80/tcp'), findsOneWidget);
+      expect(
+        transport.commands.length,
+        before,
+        reason: 'docker ps already said this; asking again could disagree with the list on screen',
+      );
+      await tester.tap(find.byKey(const ValueKey('infra.ports.close')));
+      await tester.pumpAndSettle();
+      vm.dispose();
+    });
+
+    testWidgets('a service that publishes nothing says so, rather than showing an empty list',
+        (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, transport: withStack());
+      await tester.tap(find.byKey(const ValueKey('infra.tab.stacks')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('infra.stack.web.services')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('infra.service.web.db.menu')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Ports'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('infra.ports.none')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('infra.ports.close')));
+      await tester.pumpAndSettle();
+      vm.dispose();
+    });
+
+    testWidgets('logs open in a sheet, not in the one-line result banner', (tester) async {
+      // Pages of log text through the result banner made both the banner and the logs unusable.
+      await repo.insertServer(server(name: 'nas'));
+      final transport = withStack()
+        ..replies = {
+          ...withStack().replies,
+          'logs --tail 200': 'front-1  | listening on 8080\nfront-1  | ready',
+        };
+      await pump(tester, transport: transport);
+      await openServiceMenu(tester);
+
+      await tester.tap(find.text('Logs'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('infra.logs.text')), findsOneWidget);
+      expect(find.textContaining('listening on 8080'), findsOneWidget);
+      expect(find.byKey(const ValueKey('infra.actionOutput')), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('infra.logs.close')));
+      await tester.pumpAndSettle();
+      vm.dispose();
+    });
+
+    testWidgets('a service that has logged nothing says that', (tester) async {
+      // An empty sheet is indistinguishable from one still loading.
+      await repo.insertServer(server(name: 'nas'));
+      final transport = withStack()
+        ..replies = {...withStack().replies, 'logs --tail 200': '   '};
+      await pump(tester, transport: transport);
+      await openServiceMenu(tester);
+
+      await tester.tap(find.text('Logs'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('logged nothing'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('infra.logs.close')));
+      await tester.pumpAndSettle();
+      vm.dispose();
+    });
+  });
 }

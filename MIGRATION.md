@@ -1328,9 +1328,9 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
 - **The visual Compose Builder** — not ported; the tab renders a note saying so. It is a whole YAML
   editor (`ComposeBuilder`, plus `parseDockerComposeYaml` and the atomic deploy flow) and deserves
   its own iteration.
-- **Stack scale, ports detail and logs dialogs** — the Kotlin has modal sheets for scaling a
-  service, listing published ports and streaming compose logs. The underlying commands are ported
-  (`dockerComposeAction` covers scale/serviceLogs/followLogs); the dialogs are not.
+- ~~**Stack scale, ports detail and logs dialogs**~~ — **done in session 79.** Follow-on logs
+  (`followLogs`) remain unported: they need a streaming sheet rather than a fetch, which is the
+  Shell screen's machinery, not Infra's.
 
 **Monitor (session 22):**
 - ~~**Quick scripts tab**~~ — **done in session 76.** Nothing in Monitor is a placeholder any more.
@@ -1350,7 +1350,7 @@ Capabilities where the Dart port does not yet match the Kotlin. Each needs a dec
 | Dynamic forward protocol | SOCKS4, SOCKS4a **and** SOCKS5 | **SOCKS5 only** (dartssh2 native) | A client that speaks only SOCKS4 stops working. Rare — modern clients use SOCKS5. Fixing it means re-adding a hand-written SOCKS4 front end, which is what §17 just removed. |
 | Encrypted jump-host keys | Not supported (Kotlin passed a null passphrase) | Not supported | No regression; documented so it is not mistaken for one. |
 | SMB browsing | smbj (SMB 2/3) | **Not implemented** — see §7.1 | Blocks a headline feature. Must be resolved before cut-over. |
-| Resize reflow | Soft-wrapped runs are re-joined and re-wrapped at the new width | Grid resize only: content preserved top-left, cursor clamped | A narrowed window truncates wrapped lines instead of re-wrapping them. `docs/TERMINAL_COMPATIBILITY.md` lists reflow as Supported, so this must be closed before cut-over. The `softWrapped` bookkeeping the algorithm needs is already ported and maintained. |
+| ~~Resize reflow~~ | Soft-wrapped runs are re-joined and re-wrapped at the new width | **Done in session 79** — same behaviour, plus the alternate screen deliberately excluded | Closed. |
 | Unicode combining marks | JVM `Character.getType` (full Unicode database) | Explicit range table | An exotic script's marks could render one column wide instead of zero. Conservative by design; the compatibility matrix already scopes width to a bounded subset. |
 
 
@@ -4663,3 +4663,53 @@ Built and checked on the emulator: `com.jetsetslow.omniterm.app.flutter`, versio
 label `OmniTerm Flutter`, installs and launches (`topResumedActivity=…app.flutter/…MainActivity`).
 
     flutter build apk --debug   →   build/app/outputs/flutter-apk/app-debug.apk
+
+### Session 79 — the two cut-over blockers (task #7)
+
+§18's table named two things that had to close before the Kotlin app could be retired. One of them —
+iOS SMB — is parked for want of a macOS toolchain. This is the other, plus the largest remaining
+hole in a headline feature.
+
+**Resize reflow** (`data/term/terminal_reflow.dart`). A terminal stores fixed-width rows, but what
+the user typed is *logical lines*: a paragraph that ran off the right edge and continued below. The
+old resize copied each row into a row of the new width and dropped the overflow, so **narrowing the
+window truncated every wrapped line permanently** — while `docs/TERMINAL_COMPATIBILITY.md` listed
+reflow as Supported. Now the buffer is joined on its soft-wrap marks, re-wrapped at the new width and
+re-split; scrollback and screen are done **together**, because a logical line straddles that boundary
+and reflowing them apart leaves a seam exactly where the eye is.
+
+Three decisions worth stating. A double-width glyph is never split across the edge — it moves whole
+and leaves the last column blank, because half a glyph desynchronises every column after it. The
+**alternate screen is not reflowed**: it is a full-screen application's canvas, not a transcript, and
+re-wrapping a drawn layout scrambles it (xterm agrees; the application is told the new size and
+redraws). And trailing blank rows are dropped rather than carried, or padding would push real output
+off the top of a shorter window.
+
+That last one came from an existing test. `content survives a resize and the cursor is clamped`
+failed, and it was right to: with the cursor parked on the last row, shrinking the height pushes the
+top of the buffer into scrollback — which is what a terminal does, and not what the pre-reflow code
+did. The test asserted the old grid-copy behaviour, so **its expectation was corrected**, with the
+reason written into it: "survives" now means still in the buffer, not still on the screen.
+
+**Infra's per-service dialogs.** `dockerComposeAction` has covered scale, ports and logs since the
+screens were ported, with nothing able to reach them. Scale asks for a replica count (zero allowed —
+draining a service without tearing the stack down is a real thing to want; negative refused as a
+typo) and says up front that `up --scale` recreates containers whose definition changed. Ports are
+read from the containers already fetched rather than asked of the host again, since a second round
+trip could disagree with the list on screen — and a service that publishes nothing says so, which is
+the normal case for a database behind a compose network. Logs open in a sheet rather than the
+one-line result banner, which made both unusable.
+
+Two defects of my own, both caught by the tests rather than reasoned about: the scale dialog disposed
+its controller while the dialog was still fading out, and the ports list treated `parseContainers`'
+own em-dash placeholder as a published port — quoting our own "nothing here" back at the user.
+
+**One batched device pass** (per the budget note): WHOIS answered by the live `whois.iana.org` over
+port 43 and rendered with its source named, and Infra's honest empty state — *"No container runtime
+on this host…"* — on a lab host that has neither Docker nor Podman. **What that pass did not
+exercise:** the WHOIS referral hop (IANA's reply for that name carried none), the Infra dialogs
+themselves (no runtime on the lab to scale or log), and a live SSH resize. Reflow is covered at the
+emulator level instead — 13 tests driving real byte streams in and rendered rows out, which is the
+level buffer logic can actually be wrong at.
+
+**Verified — 21 new tests; 1786 host tests pass, `analyze` clean.**

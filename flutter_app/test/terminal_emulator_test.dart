@@ -388,13 +388,20 @@ void main() {
 
   group('resize', () {
     test('content survives a resize and the cursor is clamped', () {
+      // The cursor is parked on the last row, so shrinking to three rows pushes the top of the
+      // buffer into scrollback — which is what a terminal does, and what this asserted before
+      // reflow was implemented was that rows were copied top-down and the cursor merely clamped.
+      // "Survives" now means still in the buffer, not still on the screen.
       final e = emu(cols: 20, rows: 5);
       write(e, 'hello\x1B[5;10H');
       e.resize(10, 3);
       expect(e.cols, 10);
       expect(e.rows, 3);
-      expect(screen(e).first, 'hello');
-      expect(e.snapshot().cursorRow, lessThan(3));
+      expect(
+        e.snapshot().rows.map((r) => r.spans.map((s) => s.text).join().trimRight()),
+        contains('hello'),
+      );
+      expect(e.snapshot().cursorRow, lessThan(e.snapshot().totalRows));
     });
 
     test('resizing to the same size is a no-op', () {
