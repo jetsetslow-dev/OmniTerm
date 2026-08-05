@@ -589,14 +589,88 @@ private fun isCronPartValid(part: String, min: Int, max: Int): Boolean {
     }
 }
 
-private fun cronSummary(expression: String): String =
-    when (expression.trim()) {
-        "0 * * * *" -> "Every hour"
-        "0 2 * * *" -> "Every day at 02:00"
-        "0 2 * * 0" -> "Every Sunday at 02:00"
-        "0 2 1 * *" -> "Monthly on day 1 at 02:00"
+/**
+ * A schedule in words.
+ *
+ * Previously this recognised only the four presets this screen can create, so every schedule
+ * written by hand -- including the every-five-minutes step form, probably the most common cron line
+ * in existence -- was labelled "Custom schedule". The card then showed a name that described
+ * nothing, next to a Delete button.
+ *
+ * Still deliberately conservative: anything whose shape is not read confidently says so, because a
+ * confident wrong sentence about when someone's job runs is worse than admitting it is unusual.
+ */
+internal fun cronSummary(expression: String): String {
+    val trimmed = expression.trim()
+    CRON_SHORTHANDS[trimmed]?.let { return it }
+
+    val parts = trimmed.split(Regex("\\s+"))
+    if (parts.size != 5) return "Custom schedule"
+    val (minute, hour, day, month, weekday) = parts.let {
+        Quintuple(it[0], it[1], it[2], it[3], it[4])
+    }
+
+    val everyDate = day == "*" && month == "*"
+    val everyDay = everyDate && weekday == "*"
+    val minuteValue = minute.toIntOrNull()
+    val time = cronTimeOfDay(minute, hour)
+
+    return when {
+        minute.startsWith("*/") && hour == "*" && everyDay ->
+            "Every ${minute.removePrefix("*/")} minutes"
+        minute == "*" && hour == "*" && everyDay -> "Every minute"
+        hour.startsWith("*/") && everyDay && minuteValue != null ->
+            "Every ${hour.removePrefix("*/")} hours, at ${minute.padStart(2, '0')} past"
+        // On the hour is "every hour"; any other offset has to be said, or two different schedules
+        // read identically.
+        hour == "*" && everyDay && minuteValue != null ->
+            if (minute == "0") "Every hour" else "Every hour at ${minute.padStart(2, '0')} past"
+        time == null -> "Custom schedule"
+        everyDay -> "Every day at $time"
+        everyDate -> "${cronWeekdayName(weekday)} at $time"
+        month == "*" && weekday == "*" && day.toIntOrNull() != null ->
+            "Monthly on day $day at $time"
         else -> "Custom schedule"
     }
+}
+
+private data class Quintuple(
+    val a: String, val b: String, val c: String, val d: String, val e: String,
+)
+
+private operator fun Quintuple.component1() = a
+private operator fun Quintuple.component2() = b
+private operator fun Quintuple.component3() = c
+private operator fun Quintuple.component4() = d
+private operator fun Quintuple.component5() = e
+
+/** `HH:MM`, or null when either field is not a plain number. */
+private fun cronTimeOfDay(minute: String, hour: String): String? {
+    val m = minute.toIntOrNull() ?: return null
+    val h = hour.toIntOrNull() ?: return null
+    return "%02d:%02d".format(h, m)
+}
+
+private val CRON_SHORTHANDS = mapOf(
+    "@reboot" to "At every boot",
+    "@yearly" to "Once a year, 1 January at 00:00",
+    "@annually" to "Once a year, 1 January at 00:00",
+    "@monthly" to "Monthly on day 1 at 00:00",
+    "@weekly" to "Every Sunday at 00:00",
+    "@daily" to "Every day at 00:00",
+    "@midnight" to "Every day at 00:00",
+    "@hourly" to "Every hour",
+)
+
+private val CRON_WEEKDAY_NAMES = mapOf(
+    "0" to "Every Sunday", "7" to "Every Sunday",
+    "1" to "Every Monday", "2" to "Every Tuesday", "3" to "Every Wednesday",
+    "4" to "Every Thursday", "5" to "Every Friday", "6" to "Every Saturday",
+    "1-5" to "Every weekday", "6,0" to "Every weekend day", "0,6" to "Every weekend day",
+)
+
+private fun cronWeekdayName(weekday: String): String =
+    CRON_WEEKDAY_NAMES[weekday.trim()] ?: "On a schedule"
 
 @Composable
 fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
