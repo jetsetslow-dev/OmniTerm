@@ -268,6 +268,19 @@ class _ToolbarState extends State<_Toolbar> {
                 ? null
                 : () => vm.searchHost(_search.text),
           ),
+        if (vm.canUseSudo)
+          IconButton(
+            key: const ValueKey('sftp.sudo'),
+            tooltip: vm.sudoMode ? 'Reading and writing as root' : 'Read and write as root',
+            icon: Icon(
+              vm.sudoMode ? Icons.shield : Icons.shield_outlined,
+              size: 18,
+              // Red when on, because the difference between the two states is who you are on
+              // someone else's machine.
+              color: vm.sudoMode ? OmniColors.red : null,
+            ),
+            onPressed: () => vm.sudoMode ? vm.sudoMode = false : _confirmSudo(context, vm),
+          ),
         IconButton(
           key: const ValueKey('sftp.toggleHidden'),
           tooltip: vm.showHidden ? 'Hide dotfiles' : 'Show dotfiles',
@@ -759,4 +772,35 @@ class _SearchResults extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Asks before turning sudo on, and says exactly how far it reaches.
+Future<void> _confirmSudo(BuildContext context, SftpViewModel vm) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      key: const ValueKey('sftp.sudo.dialog'),
+      title: const Text('Read and write as root?'),
+      content: const Text(
+        // Naming the boundary, because a vaguer "enable sudo" would leave people assuming the
+        // browser now deletes as root too.
+        'Opening and saving files will use sudo, so you can edit configuration this login cannot '
+        'write. Browsing, renaming and deleting are unchanged and still run as you.\n\n'
+        'This uses the sudo password saved for this host.',
+      ),
+      actions: [
+        TextButton(
+          key: const ValueKey('sftp.sudo.cancel'),
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('Cancel'),
+        ),
+        TextButton(
+          key: const ValueKey('sftp.sudo.confirm'),
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: const Text('Use sudo', style: TextStyle(color: OmniColors.red)),
+        ),
+      ],
+    ),
+  );
+  if (confirmed ?? false) vm.sudoMode = true;
 }

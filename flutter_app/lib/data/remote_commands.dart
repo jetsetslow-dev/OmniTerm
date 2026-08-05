@@ -660,3 +660,66 @@ String remoteSearchCommand(String base, String query, {int maxHits = remoteSearc
   final truncated = hits.length > maxHits;
   return (hits: truncated ? hits.take(maxHits).toList() : hits, truncated: truncated);
 }
+
+// ── sudo file access ───────────────────────────────────────────────────────────
+
+/// Marks where a privileged command's real output begins.
+///
+/// **This exists because `sudo` talks.** On first use in a session it prints its lecture — "We trust
+/// you have received the usual lecture…" — to stderr, and every sudo wrapper here folds stderr into
+/// the output so failures are visible. Without a marker that lecture would be prepended *to the
+/// file being read*, land in the editor, and be written back on save. Verified against a real host:
+/// the lecture appears before the command runs, so anything after the marker is the command's own
+/// output and nothing else.
+const sudoOutputMarker = '---OMNITERM-BEGIN---';
+
+/// Reads a file the ordinary login cannot, with `sudo cat`.
+///
+/// SFTP has no way to elevate — the protocol has no concept of it — so a protected file has to come
+/// back over an exec channel instead.
+String sudoReadCommand(String path, String sudoPassword) => sudoShWrap(
+  "printf '%s\n' ${shellQuote(sudoOutputMarker)}; cat -- ${shellQuote(path)}",
+  sudoPassword,
+);
+
+/// The file contents from [sudoReadCommand], or null when the command never ran.
+///
+/// Null means sudo refused — a wrong password, no sudo rights, a missing file — and the raw output
+/// is then the explanation, which the caller shows. An empty string means the file really is empty:
+/// the two must not collapse into each other.
+String? parseSudoRead(String output) {
+  final marker = '$sudoOutputMarker\n';
+  final at = output.indexOf(marker);
+  if (at < 0) return null;
+  return output.substring(at + marker.length);
+}
+
+/// Writes [content] to a protected path.
+///
+/// SFTP cannot write there either, so the file goes to a temp path the login *can* write, is copied
+/// into place with sudo, and its size is read back as root. The temp copy is removed whether or not
+/// the copy worked — leaving a readable copy of a protected file in `/tmp` would be a quiet way to
+/// widen access to it.
+String sudoWriteCommand(String tempPath, String destPath, String sudoPassword) => sudoShWrap(
+  'cp -f -- ${shellQuote(tempPath)} ${shellQuote(destPath)} && '
+  'wc -c < ${shellQuote(destPath)}; '
+  'rm -f -- ${shellQuote(tempPath)}',
+  sudoPassword,
+);
+
+/// The byte count [sudoWriteCommand] reported, or -1 when none came back.
+///
+/// The *last* numeric line, not the first: sudo's lecture and any warning come first, and a `wc`
+/// count is the last thing the script prints. -1 means the write may still have happened but
+/// nothing confirmed it, which `judgeSave` reports as unconfirmed rather than as success.
+int parseSudoWriteSize(String output) {
+  var size = -1;
+  for (final line in const LineSplitter().convert(output)) {
+    final parsed = int.tryParse(line.trim());
+    if (parsed != null) size = parsed;
+  }
+  return size;
+}
+
+/// A temp path for the sudo write dance, in a directory any login can write.
+String sudoTempPath() => '/tmp/.omniterm-save-${DateTime.now().microsecondsSinceEpoch}';

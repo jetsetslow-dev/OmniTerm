@@ -174,4 +174,71 @@ void main() {
       expect(parseRemoteSearch('', base: '/a').hits, isEmpty);
     });
   });
+
+  group('sudo file access', () {
+    // Real output shape, captured from the lab on sudo's first use in a session.
+    const lecture =
+        '\nWe trust you have received the usual lecture from the local System\n'
+        'Administrator. It usually boils down to these three things:\n\n'
+        '    #1) Respect the privacy of others.\n'
+        '    #2) Think before you type.\n'
+        '    #3) With great power comes great responsibility.\n\n'
+        'For security reasons, the password you type will not be visible.\n\n';
+
+    test('the read marker separates sudo chatter from the file', () {
+      // Without this the lecture would be prepended to the file, land in the editor, and be
+      // written back on save. Observed against a real host, not hypothetical.
+      final output = '$lecture$sudoOutputMarker\nlisten 8080\nmode strict\n';
+
+      expect(parseSudoRead(output), 'listen 8080\nmode strict\n');
+    });
+
+    test('a file that really is empty is not confused with a refusal', () {
+      // Empty content and "sudo said no" have to stay distinguishable, or an unreadable file looks
+      // like an empty one and saving it would truncate the original.
+      expect(parseSudoRead('$sudoOutputMarker\n'), '');
+      expect(parseSudoRead('sudo: a password is required\n'), isNull);
+      expect(parseSudoRead(''), isNull);
+    });
+
+    test('the file keeps its own leading blank lines', () {
+      expect(parseSudoRead('$sudoOutputMarker\n\n\n# comment\n'), '\n\n# comment\n');
+    });
+
+    test('the read command elevates and quotes the path', () {
+      final command = sudoReadCommand('/etc/; rm -rf ~', 'pw');
+      expect(command, contains('sudo -S'));
+      expect(command, contains('cat --'));
+      expect(command, isNot(contains('rm -rf ~ ')));
+    });
+
+    test('the write command copies into place and removes the temp copy', () {
+      // Leaving a readable copy of a protected file in /tmp would quietly widen access to it, so
+      // the removal is part of the same command rather than a follow-up that might not run.
+      final command = sudoWriteCommand('/tmp/.omniterm-save-1', '/etc/thing.conf', 'pw');
+
+      expect(command, contains('cp -f --'));
+      expect(command, contains('wc -c <'));
+      expect(command, contains('rm -f --'));
+      // `;` before rm, not `&&`: the temp copy goes even when the copy into place failed.
+      expect(command, contains("; rm -f --"));
+    });
+
+    test('the written size is the last number, not the first', () {
+      // sudo's lecture and any warning come first; the count is the last thing printed. Taking the
+      // first number would report a line number from a warning as the file size.
+      expect(parseSudoWriteSize('${lecture}20\n'), 20);
+      expect(parseSudoWriteSize('cp: preserving permissions: ignored\n40\n'), 40);
+    });
+
+    test('no number at all is -1, which judgeSave reports as unconfirmed', () {
+      // Not 0: that would be indistinguishable from having written an empty file.
+      expect(parseSudoWriteSize('sudo: a password is required\n'), -1);
+      expect(parseSudoWriteSize(''), -1);
+    });
+
+    test('the temp path is somewhere any login can write', () {
+      expect(sudoTempPath(), startsWith('/tmp/.omniterm-save-'));
+    });
+  });
 }

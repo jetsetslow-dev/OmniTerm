@@ -1303,12 +1303,13 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
 - **Network Shares** — the whole tab, blocked on §7.1 (platform-native SMB). Renders a note saying so.
 - ~~**The file editor**~~ — **done in session 58.** Read-only on open with a pencil to unlock, and
   save-and-verify: the size is read back and compared, and only a match reports success. The **sudo**
-  write path is still absent (below), so a file the login cannot write is refused by the server
-  rather than escalated.
+  read and write paths landed in session 70.
 - ~~**Folder sizes via `du`**~~ — **done in session 68**, including the partial-total case.
 - ~~**Remote search**~~ — **done in session 69.**
-- **Copy/move between hosts** (the cross-clipboard bar) and **sudo mode** — present in the Kotlin
-  browser, not ported.
+- **Sudo mode** — **read and write are done (session 70)**; listing, rename and delete deliberately
+  still run as the ordinary login, and the toggle's confirmation says so. Elevating those too is the
+  Kotlin's behaviour and remains unported.
+- **Copy/move between hosts** (the cross-clipboard bar) — present in the Kotlin browser, not ported.
 
 **Fleet (session 25):**
 - **Quick-script presets in Broadcast** — the Kotlin offers saved fleet-enabled quick scripts as
@@ -4201,3 +4202,39 @@ anything else would show a listing the file is not in.
 **Verified — 20 new tests; 1619 host tests pass, `analyze --fatal-infos` clean; the exact command
 was run against the lab for file hits, directory hits, the base-directory case and a name with a
 quote in it.**
+
+---
+
+### Session 70 — editing files you do not own (task #7)
+
+Session 58 built the file editor and recorded that its **sudo path was not ported**. Done now, and
+deliberately narrower than the Kotlin's: **only reading and writing contents elevate.** Listing,
+rename and delete still run as the ordinary login, and the confirmation dialog says exactly that.
+Elevating the whole browser would mean a mis-tap deletes a system directory, while the case people
+actually need is editing a config they can see but not write.
+
+**Everything here was measured against a real host before it was written**, and one measurement
+changed the design outright:
+
+> `sudo -S -p ''` **still prints its lecture** — *"We trust you have received the usual lecture…"* —
+> on first use in a session, to stderr, which every sudo wrapper folds into the output so failures
+> stay visible.
+
+The Kotlin reads protected files with `sudoShWrap("cat -- path")` and does not account for that, so
+the lecture would be **prepended to the file, land in the editor, and be written back on save.**
+This port emits a marker line first and takes only what follows it. That also gives the honest
+distinction the naive version cannot make: **no marker means sudo refused**, and the raw output is
+the explanation — whereas an empty string after the marker means the file really is empty. Collapsing
+those two would let an unreadable file open as blank and be saved back as truncation.
+
+The write dance was verified end to end against a root-owned file: staged to `/tmp`, copied into
+place with sudo, `wc -c` returning **20** for a 20-byte body, the file's contents changed on disk,
+and the temp copy gone. The removal is part of the same command and uses `;` rather than `&&`, so a
+readable copy of a protected file is never left behind when the copy into place fails.
+
+`parseSudoWriteSize` takes the **last** number for the same reason the `du` parser does: the lecture
+and any warning come first. Nothing found is `-1`, not `0` — zero is indistinguishable from having
+written an empty file, and `judgeSave` already reports -1 as *unconfirmed* rather than as success.
+
+**Verified — 13 new tests; 1633 host tests pass, `analyze --fatal-infos` clean; the read marker, the
+lecture case, the temp-copy dance and the byte count were all exercised against the lab.**

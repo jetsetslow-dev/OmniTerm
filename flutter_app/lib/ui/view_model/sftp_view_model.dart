@@ -410,7 +410,9 @@ class SftpViewModel extends ChangeNotifier {
     _error = null;
     _safeNotify();
     try {
-      return await client.readText(joinPath(_path, entry.name), maxBytes: maxEditableBytes);
+      final path = joinPath(_path, entry.name);
+      if (_sudo && transport != null && browsedServer != null) return await _sudoRead(path);
+      return await client.readText(path, maxBytes: maxEditableBytes);
     } catch (e) {
       _error = 'Could not open "${entry.name}": $e';
       return null;
@@ -418,6 +420,28 @@ class SftpViewModel extends ChangeNotifier {
       _loading = false;
       _safeNotify();
     }
+  }
+
+  /// Reads a protected file over an exec channel, because SFTP cannot elevate.
+  Future<String?> _sudoRead(String path) async {
+    final server = browsedServer!;
+    final creds = resolveCredentials(
+      server,
+      keys: await _app.repository.getAllKeys(),
+      profiles: await _app.repository.getAllProfiles(),
+    );
+    final output = await transport!.exec(
+      creds,
+      sudoReadCommand(path, server.sudoPassword),
+      stdin: sudoStdin(server.sudoPassword),
+    );
+    final contents = parseSudoRead(output);
+    if (contents == null) {
+      // No marker means the command never ran, so the output *is* the reason — a wrong sudo
+      // password, no sudo rights, a missing file. Showing it beats inventing a summary.
+      _error = 'Could not read "$path" as root: ${output.trim()}';
+    }
+    return contents;
   }
 
   /// Writes [content] to [entry] and **confirms it landed**.
@@ -437,7 +461,10 @@ class SftpViewModel extends ChangeNotifier {
     FileSaveResult result;
     try {
       final expected = utf8.encode(content).length;
-      final reported = await client.writeText(joinPath(_path, entry.name), content);
+      final dest = joinPath(_path, entry.name);
+      final reported = _sudo && transport != null && browsedServer != null
+          ? await _sudoWrite(client, dest, content)
+          : await client.writeText(dest, content);
       result = judgeSave(name: entry.name, expected: expected, reported: reported);
     } catch (e) {
       result = saveFailed(e);
@@ -504,6 +531,26 @@ class SftpViewModel extends ChangeNotifier {
 
   // ── searching the host ──────────────────────────────────────────────────────
 
+  // ── sudo ────────────────────────────────────────────────────────────────────
+
+  bool _sudo = false;
+
+  /// Whether file *contents* are read and written as root.
+  ///
+  /// Deliberately narrow, and the screen says so: listing, rename and delete still run as the
+  /// ordinary login. Elevating everything would mean a mis-tap in a file browser deletes a system
+  /// directory, and the case people actually need is editing a config they can see but not write.
+  bool get sudoMode => _sudo;
+
+  /// True when sudo can be offered at all: it needs a shell, and a host rather than a share.
+  bool get canUseSudo => canMeasureSize;
+
+  set sudoMode(bool value) {
+    if (_sudo == value) return;
+    _sudo = value;
+    _safeNotify();
+  }
+
   /// Whether a host-wide search can be run: it needs a shell, which a share does not have.
   bool get canSearchHost => canMeasureSize;
 
@@ -568,6 +615,29 @@ class SftpViewModel extends ChangeNotifier {
   Future<void> openSearchHit(RemoteSearchHit hit) async {
     clearSearchHits();
     await openPath(hit.isDirectory ? hit.path : parentPath(hit.path));
+  }
+
+  /// Writes to a path the login cannot, and reports the size the server ends up with.
+  ///
+  /// SFTP cannot write there, so the content goes to a temp file the login *can* write and is
+  /// copied into place with sudo. The temp copy is removed by the same command whether or not the
+  /// copy succeeded: leaving a readable copy of a protected file in `/tmp` would quietly widen
+  /// access to it.
+  Future<int> _sudoWrite(RemoteFsClient client, String dest, String content) async {
+    final server = browsedServer!;
+    final temp = sudoTempPath();
+    await client.writeText(temp, content);
+    final creds = resolveCredentials(
+      server,
+      keys: await _app.repository.getAllKeys(),
+      profiles: await _app.repository.getAllProfiles(),
+    );
+    final output = await transport!.exec(
+      creds,
+      sudoWriteCommand(temp, dest, server.sudoPassword),
+      stdin: sudoStdin(server.sudoPassword),
+    );
+    return parseSudoWriteSize(output);
   }
 
   // ── selection ───────────────────────────────────────────────────────────────

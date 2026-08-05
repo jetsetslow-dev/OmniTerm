@@ -815,4 +815,79 @@ void main() {
       vm.dispose();
     });
   });
+
+  group('sudo mode', () {
+    test('it is not offered without a shell', () async {
+      final vm = await booted(homeTree());
+      expect(vm.canUseSudo, isFalse);
+      vm.dispose();
+    });
+
+    test('opening a file goes over an exec channel, not SFTP', () async {
+      // SFTP has no concept of elevation, so a protected file has to come back another way.
+      final client = homeTree();
+      client.files['/home/root/notes.txt'] = 'unused';
+      final ssh = FakeShell('---OMNITERM-BEGIN---\nroot-only contents\n');
+      final vm = await booted(client, shell: ssh);
+      vm.sudoMode = true;
+
+      expect(await vm.readForEditing(entry('notes.txt', size: 20)), 'root-only contents\n');
+      expect(ssh.commands.single, contains('cat --'));
+      vm.dispose();
+    });
+
+    test('a refusal is shown rather than opening an empty editor', () async {
+      // Empty content and "sudo said no" must stay distinguishable: saving the former would
+      // truncate a file the user could not even read.
+      final client = homeTree();
+      final vm = await booted(client, shell: FakeShell('sudo: a password is required\n'));
+      vm.sudoMode = true;
+
+      expect(await vm.readForEditing(entry('notes.txt', size: 20)), isNull);
+      expect(vm.error, contains('password is required'));
+      vm.dispose();
+    });
+
+    test('saving stages a temp copy and confirms the size the server ends up with', () async {
+      final client = homeTree();
+      // 20 bytes — the exact count the lab returned for this string through the same command.
+      final ssh = FakeShell('20\n');
+      final vm = await booted(client, shell: ssh);
+      vm.sudoMode = true;
+
+      final result = await vm.saveText(entry('notes.txt'), 'edited by sudo path\n');
+
+      expect(result.outcome, FileSaveOutcome.confirmed);
+      // Staged through a path the ordinary login can write…
+      expect(client.written.single.$1, startsWith('/tmp/.omniterm-save-'));
+      // …then copied into place and cleaned up by the privileged command.
+      expect(ssh.commands.single, contains('cp -f --'));
+      expect(ssh.commands.single, contains('rm -f --'));
+      vm.dispose();
+    });
+
+    test('a sudo write that reports nothing is unconfirmed, not a success', () async {
+      final vm = await booted(homeTree(), shell: FakeShell('sudo: a password is required\n'));
+      vm.sudoMode = true;
+
+      final result = await vm.saveText(entry('notes.txt'), 'x');
+
+      expect(result.outcome, FileSaveOutcome.unconfirmed);
+      expect(result.message, contains('could not be read back'));
+      vm.dispose();
+    });
+
+    test('with sudo off nothing goes near a shell', () async {
+      final client = homeTree();
+      client.files['/home/root/notes.txt'] = 'plain';
+      final ssh = FakeShell('');
+      final vm = await booted(client, shell: ssh);
+
+      await vm.readForEditing(entry('notes.txt', size: 5));
+      await vm.saveText(entry('notes.txt'), 'plain2');
+
+      expect(ssh.commands, isEmpty, reason: 'the ordinary path is still SFTP');
+      vm.dispose();
+    });
+  });
 }
