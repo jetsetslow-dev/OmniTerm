@@ -1293,11 +1293,10 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
   from session 60's proof rather than measured; §19.3 says how to finish it.
 
 **Scripts (session 28):**
-- ~~**Per-OS / per-platform filtering of quick scripts**~~ — **applied since session 76**, in
-  Monitor → Quick scripts, which is where the Kotlin applies it too. The Tools editor still has no
-  pickers for `targetOs`/`targetSystem`, so the columns can be set by restore or by a preset but not
-  yet typed in by hand.
-- **Drag-to-reorder** within a category. `moveScript` exists; no UI drives it.
+- ~~**Per-OS / per-platform filtering of quick scripts**~~ — **applied since session 76** in
+  Monitor → Quick scripts, and **editable since session 77**: the Tools editor has pickers for
+  `targetOs`/`targetSystem`, and the list tags the scripts that are restricted.
+- ~~**Drag-to-reorder** within a category~~ — **done in session 77.**
 
 **SFTP (session 26):**
 - **Network Shares** — the whole tab, blocked on §7.1 (platform-native SMB). Renders a note saying so.
@@ -4542,3 +4541,48 @@ mundane explanation in the harness before it has an interesting one in the app.
 
 **Verified — 8 new tests; 1729 host tests pass, `analyze` clean; the targeting, the confirmation,
 the streamed output and the danger warning were all read off the device.**
+
+### Session 77 — the Quick Scripts editor catches up with what the app now reads (task #7)
+
+Session 76 made script targeting decide something, which left an odd state: Monitor hid scripts
+based on two columns the user had no way to set. Both §18 Scripts gaps are closed here.
+
+**Targeting is editable.** Two pickers in the editor, drawn from the same `quickScriptOsOptions` /
+`quickScriptSystemOptions` the filter reads, so the choices offered and the values matched against
+can never drift apart. The list tags a restricted script on its card — a list where some rows appear
+on some hosts has to say which, or the filtering downstream looks like scripts going missing. "Any"
+is not tagged: it is the absence of a restriction, not a value.
+
+One trap worth naming: the editor previously passed `existing?.targetOs` straight through to the
+save. Turning that into a form field means seeding it from the row, and getting that wrong would
+**silently widen every edited script to every host** — an edit to a script's name quietly undoing
+its targeting. There is a test for exactly that.
+
+**Drag-to-reorder.** `sortOrder` has been stored and honoured by the DAO since the port with nothing
+able to change it. Each category is now its own `ReorderableListView` with a grip on the right —
+`buildDefaultDragHandles: false`, because the whole card opens the editor on tap and a full-card
+drag handle would swallow both that gesture and the list's own scroll.
+
+`reorderCategory` **renumbers the whole category 0..n-1** rather than writing the dragged row alone.
+The DAO orders by `(category, sortOrder, name)`, so two rows sharing a number fall back to
+alphabetical — and sharing is the normal case, because every preset family starts its own numbering
+from zero. Writing one row would produce a drag that appears to snap back, or one that lands
+somewhere the user did not drop it. Only rows whose number actually changes are written.
+
+**On the device:**
+
+```
+order after adding  = [probe-alpha, probe-beta, probe-gamma]   Darwin tag shown = true
+order after drag    = [probe-gamma, probe-alpha, probe-beta]
+order after revisit = [probe-gamma, probe-alpha, probe-beta]
+```
+
+The revisit is the assertion that matters: an order that lives only in the widget is not an order.
+
+Two harness notes. The editor sheet is a lazy `ListView`, so the new pickers are not built until
+scrolled to (§19.5 again) — the form now carries `scripts.editor.form` so tests and probes can drag
+to a field rather than guess. And the Tools hub labels this screen **Scripts**, not "Quick Scripts";
+the probe's first run failed on that alone.
+
+**Verified — 10 new tests; 1739 host tests pass, `analyze` clean; the pickers, the tag, the drag and
+its persistence across leaving the screen were all read off the device.**

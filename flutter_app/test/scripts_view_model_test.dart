@@ -362,4 +362,83 @@ void main() {
     expect(vm.allScripts, isEmpty);
     vm.dispose();
   });
+
+  group('reordering a category', () {
+    Future<ScriptsViewModel> withThree() async {
+      final vm = await boot();
+      // Seeded rows routinely share a sortOrder — every preset family starts its own numbering —
+      // so the starting state here is the awkward one, not a tidy 0,1,2.
+      for (final name in ['alpha', 'beta', 'gamma']) {
+        await vm.saveScript(name: name, command: 'echo $name', category: 'Ops');
+      }
+      await settle();
+      return vm;
+    }
+
+    List<String> namesIn(ScriptsViewModel vm) =>
+        (vm.groupedScripts['Ops'] ?? const []).map((s) => s.name).toList();
+
+    test('a row dragged to the top lands at the top and stays there', () async {
+      final vm = await withThree();
+      expect(namesIn(vm), ['alpha', 'beta', 'gamma']);
+
+      await vm.reorderCategory('Ops', 2, 0);
+      await settle();
+
+      expect(namesIn(vm), ['gamma', 'alpha', 'beta']);
+      // Renumbered rather than one row written: sharing a sortOrder makes the DAO fall back to
+      // alphabetical, which is a drag that appears to snap back.
+      expect((vm.groupedScripts['Ops'] ?? const []).map((s) => s.sortOrder), [0, 1, 2]);
+      vm.dispose();
+    });
+
+    test('a row dragged down lands below the one it passed', () async {
+      final vm = await withThree();
+      await vm.reorderCategory('Ops', 0, 2);
+      await settle();
+
+      expect(namesIn(vm), ['beta', 'gamma', 'alpha']);
+      vm.dispose();
+    });
+
+    test('the order survives a reload', () async {
+      // The point of persisting it: an order that lives only in the widget is not an order.
+      final vm = await withThree();
+      await vm.reorderCategory('Ops', 2, 0);
+      await settle();
+      vm.dispose();
+
+      final reopened = await boot();
+      expect(namesIn(reopened), ['gamma', 'alpha', 'beta']);
+      reopened.dispose();
+    });
+
+    test('another category is left alone', () async {
+      final vm = await withThree();
+      await vm.saveScript(name: 'other', command: 'true', category: 'Misc');
+      await settle();
+
+      await vm.reorderCategory('Ops', 2, 0);
+      await settle();
+
+      expect((vm.groupedScripts['Misc'] ?? const []).map((s) => s.name), ['other']);
+      vm.dispose();
+    });
+
+    test('a drop that changes nothing writes nothing', () async {
+      final vm = await withThree();
+      await vm.reorderCategory('Ops', 1, 1);
+      await settle();
+      expect(namesIn(vm), ['alpha', 'beta', 'gamma']);
+
+      // Out-of-range indices are ignored rather than throwing: a reorder callback can arrive after
+      // the list it described has changed underneath.
+      await vm.reorderCategory('Ops', 9, 0);
+      await vm.reorderCategory('Ops', 0, 9);
+      await vm.reorderCategory('Nope', 0, 1);
+      await settle();
+      expect(namesIn(vm), ['alpha', 'beta', 'gamma']);
+      vm.dispose();
+    });
+  });
 }

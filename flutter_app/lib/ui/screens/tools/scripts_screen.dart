@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../../data/app_database.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
+import '../../../domain/script_filters.dart';
 import '../../view_model/scripts_view_model.dart';
 import '../../widgets/omni_components.dart';
 
@@ -119,7 +120,29 @@ class _ScriptsScreenState extends State<ScriptsScreen> {
                       children: [
                         for (final entry in grouped.entries) ...[
                           SectionHeader(title: entry.key),
-                          for (final script in entry.value) _ScriptCard(vm: vm, script: script),
+                          // Order is the user's, not the database's: the row someone runs daily
+                          // belongs at the top of its category, and `sortOrder` has been stored and
+                          // honoured since the port with nothing able to change it.
+                          ReorderableListView(
+                            key: ValueKey('scripts.group.${entry.key}'),
+                            shrinkWrap: true,
+                            physics: const NeverScrollableScrollPhysics(),
+                            // The whole card opens the editor on tap, so a full-card drag handle
+                            // would fight that gesture and swallow the list's own scroll. The grip
+                            // on the right is the only thing that starts a drag.
+                            buildDefaultDragHandles: false,
+                            onReorderItem: (oldIndex, newIndex) =>
+                                vm.reorderCategory(entry.key, oldIndex, newIndex),
+                            children: [
+                              for (final (index, script) in entry.value.indexed)
+                                _ScriptCard(
+                                  key: ValueKey('scripts.row.${script.id}'),
+                                  vm: vm,
+                                  script: script,
+                                  dragIndex: index,
+                                ),
+                            ],
+                          ),
                           const SizedBox(height: 12),
                         ],
                       ],
@@ -228,10 +251,18 @@ class _PresetToggle extends StatelessWidget {
 }
 
 class _ScriptCard extends StatelessWidget {
-  const _ScriptCard({required this.vm, required this.script});
+  const _ScriptCard({
+    super.key,
+    required this.vm,
+    required this.script,
+    required this.dragIndex,
+  });
 
   final ScriptsViewModel vm;
   final QuickScript script;
+
+  /// Position within its category, which is what the drag handle reorders.
+  final int dragIndex;
 
   @override
   Widget build(BuildContext context) {
@@ -274,6 +305,17 @@ class _ScriptCard extends StatelessWidget {
                         // that editing it makes it permanently yours.
                         const OmniTag(label: 'PRESET', color: OmniColors.textMuted),
                       ],
+                      // Why this script will not appear on some hosts, said here rather than only
+                      // inside the editor.
+                      if (script.targetOs.isNotEmpty && script.targetOs.toLowerCase() != 'any') ...[
+                        const SizedBox(width: 6),
+                        OmniTag(label: script.targetOs, color: OmniColors.amber),
+                      ],
+                      if (script.targetSystem.isNotEmpty &&
+                          script.targetSystem.toLowerCase() != 'any') ...[
+                        const SizedBox(width: 6),
+                        OmniTag(label: script.targetSystem, color: OmniColors.purple),
+                      ],
                     ],
                   ),
                   Text(
@@ -294,6 +336,14 @@ class _ScriptCard extends StatelessWidget {
               tooltip: 'Delete script',
               icon: const Icon(Icons.delete_outline, size: 18, color: OmniColors.red),
               onPressed: () => _confirmDelete(context, vm, script),
+            ),
+            ReorderableDragStartListener(
+              key: ValueKey('scripts.card.${script.id}.drag'),
+              index: dragIndex,
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 4),
+                child: Icon(Icons.drag_handle, size: 18, color: OmniColors.textMuted),
+              ),
             ),
           ],
         ),
@@ -364,6 +414,8 @@ class _ScriptSheetState extends State<_ScriptSheet> {
   late final _notes = TextEditingController(text: widget.existing?.notes ?? '');
 
   late String _color = widget.existing?.color ?? 'cyan';
+  late String _targetOs = widget.existing?.targetOs ?? 'Any';
+  late String _targetSystem = widget.existing?.targetSystem ?? 'Any';
   late bool _quick = widget.existing?.availableForQuick ?? !widget.forFleet;
   late bool _fleet = widget.existing?.availableForFleet ?? widget.forFleet;
   late bool _longRunning = widget.existing?.longRunning ?? false;
@@ -391,8 +443,8 @@ class _ScriptSheetState extends State<_ScriptSheet> {
       longRunning: _longRunning,
       availableForQuick: _quick,
       availableForFleet: _fleet,
-      targetOs: widget.existing?.targetOs ?? 'Any',
-      targetSystem: widget.existing?.targetSystem ?? 'Any',
+      targetOs: _targetOs,
+      targetSystem: _targetSystem,
     );
     if (!mounted) return;
     if (failure == null) {
@@ -433,6 +485,7 @@ class _ScriptSheetState extends State<_ScriptSheet> {
             ),
             Expanded(
               child: ListView(
+                key: const ValueKey('scripts.editor.form'),
                 padding: const EdgeInsets.all(16),
                 children: [
                   if (editingPreset)
@@ -508,6 +561,41 @@ class _ScriptSheetState extends State<_ScriptSheet> {
                       labelText: 'Notes',
                       hintText: 'What this does, and anything to watch out for',
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  // What decides where this script is offered. Monitor's Quick scripts tab reads
+                  // these columns; until now they could only be set by a preset or a restore, so a
+                  // script written by hand was offered on every host whatever it was for.
+                  DropdownButtonFormField<String>(
+                    key: const ValueKey('scripts.editor.targetOs'),
+                    initialValue: quickScriptOsOptions.contains(_targetOs) ? _targetOs : 'Any',
+                    decoration: omniInputDecoration(
+                      context,
+                      labelText: 'Runs on',
+                      helperText: 'Hidden on hosts that report a different OS',
+                    ),
+                    items: [
+                      for (final os in quickScriptOsOptions)
+                        DropdownMenuItem(value: os, child: Text(os)),
+                    ],
+                    onChanged: (v) => setState(() => _targetOs = v ?? 'Any'),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<String>(
+                    key: const ValueKey('scripts.editor.targetSystem'),
+                    initialValue: quickScriptSystemOptions.contains(_targetSystem)
+                        ? _targetSystem
+                        : 'Any',
+                    decoration: omniInputDecoration(
+                      context,
+                      labelText: 'Platform',
+                      helperText: 'Hidden unless the host reports this platform',
+                    ),
+                    items: [
+                      for (final system in quickScriptSystemOptions)
+                        DropdownMenuItem(value: system, child: Text(system)),
+                    ],
+                    onChanged: (v) => setState(() => _targetSystem = v ?? 'Any'),
                   ),
                   SwitchListTile(
                     key: const ValueKey('scripts.editor.quick'),

@@ -240,6 +240,30 @@ class ScriptsViewModel extends ChangeNotifier {
     await _app.repository.insertScript(script.copyWith(sortOrder: newSortOrder).toCompanion(false));
   }
 
+  /// Moves one script within its category and **renumbers the whole category** 0..n-1.
+  ///
+  /// Renumbering rather than writing one row: the DAO orders by `(category, sortOrder, name)`, so
+  /// two scripts sharing a sortOrder fall back to alphabetical — which is a drag that appears to
+  /// snap back, or worse, lands somewhere the user did not drop it. Seeded rows all start at the
+  /// preset's own order and duplicates are the normal case, not an edge one.
+  ///
+  /// Only the rows whose number actually changes are written, so a drag near the end of a long list
+  /// does not rewrite every row above it.
+  ///
+  /// [newIndex] is the position the row ends up at **after** it has been lifted out — the
+  /// `onReorderItem` convention, which already accounts for the gap the drag left behind.
+  Future<void> reorderCategory(String category, int oldIndex, int newIndex) async {
+    final ordered = [...?groupedScripts[category]];
+    if (oldIndex < 0 || oldIndex >= ordered.length) return;
+    if (newIndex == oldIndex || newIndex < 0 || newIndex >= ordered.length) return;
+
+    ordered.insert(newIndex, ordered.removeAt(oldIndex));
+    for (var i = 0; i < ordered.length; i++) {
+      if (ordered[i].sortOrder == i) continue;
+      await _app.repository.insertScript(ordered[i].copyWith(sortOrder: i).toCompanion(false));
+    }
+  }
+
   /// Sets whether [script] appears in the Fleet broadcast picker.
   Future<void> setAvailableForFleet(QuickScript script, bool value) async {
     if (!value && !script.availableForQuick) return;

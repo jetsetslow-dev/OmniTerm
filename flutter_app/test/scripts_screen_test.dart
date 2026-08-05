@@ -244,4 +244,127 @@ void main() {
       await finish(tester);
     });
   });
+
+  group('targeting', () {
+    testWidgets('a script can be told which hosts it belongs on', (tester) async {
+      // Until now `targetOs` and `targetSystem` could only be set by a preset or a restore, so a
+      // script written by hand was offered on every host whatever it was for.
+      await pump(tester);
+      await tester.tap(find.byKey(const ValueKey('scripts.add')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const ValueKey('scripts.editor.name')), 'Proxmox backup');
+      await tester.enterText(find.byKey(const ValueKey('scripts.editor.command')), 'vzdump');
+      await tester.pumpAndSettle();
+
+      await tester.dragUntilVisible(
+        find.byKey(const ValueKey('scripts.editor.targetOs')),
+        find.byKey(const ValueKey('scripts.editor.form')),
+        const Offset(0, -120),
+      );
+      await tester.tap(find.byKey(const ValueKey('scripts.editor.targetOs')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Linux').last);
+      await tester.pumpAndSettle();
+
+      await tester.dragUntilVisible(
+        find.byKey(const ValueKey('scripts.editor.targetSystem')),
+        find.byKey(const ValueKey('scripts.editor.form')),
+        const Offset(0, -120),
+      );
+      await tester.tap(find.byKey(const ValueKey('scripts.editor.targetSystem')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Proxmox').last);
+      await tester.pumpAndSettle();
+
+      await tester.dragUntilVisible(
+        find.byKey(const ValueKey('scripts.editor.save')),
+        find.byKey(const ValueKey('scripts.editor.form')),
+        const Offset(0, -120),
+      );
+      await tester.tap(find.byKey(const ValueKey('scripts.editor.save')));
+      await tester.pumpAndSettle();
+
+      final saved = vm.allScripts.single;
+      expect(saved.targetOs, 'Linux');
+      expect(saved.targetSystem, 'Proxmox');
+      await finish(tester);
+    });
+
+    testWidgets('targeting is visible on the card, not only inside the editor', (tester) async {
+      // A list where some rows appear on some hosts needs to say which, or the filtering downstream
+      // looks like scripts going missing.
+      await pump(tester);
+      await vm.saveScript(
+        name: 'Mac only',
+        command: 'sw_vers',
+        targetOs: 'Darwin',
+        targetSystem: 'Any',
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Darwin'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('an untargeted script is not labelled with anything', (tester) async {
+      await pump(tester);
+      await vm.saveScript(name: 'Anywhere', command: 'uptime');
+      await tester.pumpAndSettle();
+
+      expect(find.text('Any'), findsNothing, reason: '"Any" is the absence of a restriction');
+      await finish(tester);
+    });
+
+    testWidgets('editing keeps the targeting it already had', (tester) async {
+      // The editor used to pass the stored values straight through; now that they are fields, they
+      // have to be seeded from the row or an edit would silently widen the script to every host.
+      await pump(tester);
+      await vm.saveScript(
+        name: 'Pi thing',
+        command: 'vcgencmd measure_temp',
+        targetOs: 'Linux',
+        targetSystem: 'Raspberry Pi',
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Pi thing'));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('scripts.editor.name')), 'Pi temperature');
+      await tester.pumpAndSettle();
+      await tester.dragUntilVisible(
+        find.byKey(const ValueKey('scripts.editor.save')),
+        find.byKey(const ValueKey('scripts.editor.form')),
+        const Offset(0, -120),
+      );
+      await tester.tap(find.byKey(const ValueKey('scripts.editor.save')));
+      await tester.pumpAndSettle();
+
+      final saved = vm.allScripts.single;
+      expect(saved.name, 'Pi temperature');
+      expect(saved.targetOs, 'Linux');
+      expect(saved.targetSystem, 'Raspberry Pi');
+      await finish(tester);
+    });
+  });
+
+  testWidgets('each category has a drag handle to reorder within it', (tester) async {
+    await pump(tester);
+    for (final name in ['alpha', 'beta']) {
+      await vm.saveScript(name: name, command: 'echo $name', category: 'Ops');
+    }
+    await tester.pumpAndSettle();
+
+    final ids = vm.allScripts.map((s) => s.id).toList();
+    for (final id in ids) {
+      expect(find.byKey(ValueKey('scripts.card.$id.drag')), findsOneWidget);
+    }
+    // The card still opens the editor on tap — the handle is the only thing that starts a drag.
+    await tester.tap(find.text('alpha'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('scripts.editor.save')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('scripts.editor.close')));
+    await tester.pumpAndSettle();
+    await finish(tester);
+  });
 }
