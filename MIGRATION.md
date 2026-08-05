@@ -1265,9 +1265,11 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
 - **tmux persistent sessions** — **attach and resume are done (sessions 64-65).** A host marked
   "Persistent session (tmux)" is now put inside a named tmux session on connect, and reconnecting
   re-attaches to the same one, and **sessions left running are listed on the connect pane** with
-  Resume and Forget (session 66). **Still to do:** the background-session list (sessions deliberately
-  left running while the app stays open). **Control mode (`tmux -C`) is driven since session 82**, as
-  an opt-in on the connect pane.
+  Resume and Forget (session 66), and **since session 83 each row says how long it has been running
+  unwatched**. **Control mode (`tmux -C`) is driven since session 82**, as an opt-in on the connect
+  pane. The Kotlin's separate **background-session list** is a deliberate non-goal: it listed the
+  sessions the app is holding open, which the tab strip already shows and the foreground-service
+  notification already names — a third surface for one fact is how two of them end up disagreeing.
 - ~~**The tunnel manager UI.**~~ **Done in session 60**, in the Network tool rather than Shell —
   that is where the Kotlin keeps it.
 - ~~**Text selection and the copy dialog.**~~ **Done in session 58.** The surface still paints a
