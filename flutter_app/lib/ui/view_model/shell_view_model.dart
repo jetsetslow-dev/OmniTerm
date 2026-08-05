@@ -286,6 +286,28 @@ class ShellViewModel extends ChangeNotifier {
     await connect(server, resumeName: row.tmuxName);
   }
 
+  /// Stamps when [tmuxName] stopped being watched.
+  ///
+  /// Read-then-write rather than a partial update: the row carries the host it belongs to, and
+  /// rewriting it from anything but itself would be how a session ends up attributed to the wrong
+  /// machine.
+  Future<void> _markBackgrounded(String tmuxName) async {
+    final row = (await _app.repository.getPersistentSessions())
+        .where((r) => r.tmuxName == tmuxName)
+        .firstOrNull;
+    if (row == null) return;
+    await _app.repository.upsertPersistentSession(
+      PersistentSessionsCompanion.insert(
+        tmuxName: row.tmuxName,
+        serverId: row.serverId,
+        serverName: row.serverName,
+        createdAt: row.createdAt,
+        backgroundedAt: DateTime.now().millisecondsSinceEpoch,
+      ),
+    );
+    await _reloadSaved();
+  }
+
   /// Re-reads the saved sessions.
   ///
   /// Public because the list can change without this view model writing it — another device, a
@@ -424,7 +446,14 @@ class ShellViewModel extends ChangeNotifier {
   }
 
   /// Close and forget a session.
+  ///
+  /// For a persistent host this is *not* the end of the work: the tmux session keeps running on the
+  /// server, which is the entire point of marking a host persistent. So closing the tab starts that
+  /// session's "left running since" clock — without it the resumable list cannot tell a session
+  /// abandoned two minutes ago from one abandoned last month, and Forget is a decision made blind.
   void close(ShellSession session) {
+    final tmuxName = session.tmuxName;
+    if (tmuxName != null) unawaited(_markBackgrounded(tmuxName));
     session.closeByUser();
     session.removeListener(_safeNotify);
     session.removeListener(_syncBackgroundSessions);

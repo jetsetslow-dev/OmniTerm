@@ -4893,3 +4893,34 @@ exit. The escaping test is written with literal `\015\012` because that is what 
 no octal escape, and writing it any other way tests nothing.
 
 **Verified — 7 new tests; 1809 host tests pass, `analyze` clean.**
+
+### Session 83 — a resumable session you can actually make a decision about (task #7)
+
+`persistent_sessions.backgroundedAt` has existed since the schema was ported, written as `0` at
+creation with a comment saying the clock "starts there, not here" — and **nothing ever started it**.
+Every remembered session therefore carried the same non-answer, and the resumable list showed a name
+and a Forget button with nothing to judge them by: a session abandoned four minutes ago and one
+abandoned last month were the same card.
+
+Closing a tab on a persistent host now stamps that moment. That is the honest place for it: closing
+the tab is precisely when the session stops being watched, and for a persistent host it is *not* the
+end of the work — the tmux session keeps running, which is the entire point of marking the host
+persistent. The write is a read-then-write of the whole row rather than a partial update, because
+the row carries the host it belongs to and rewriting it from anything else is how a session ends up
+attributed to the wrong machine.
+
+`domain/session_age.dart` turns the stamp into a phrase, and is pure so the wording can be tested
+without a database or a clock. Two cases are deliberate:
+
+- **`backgroundedAt == 0` is not rendered as an elapsed time.** A session that was created and never
+  closed is either still open in a tab or was left behind by a crash; dating it to 1970 would be a
+  confident wrong answer, so it says so instead.
+- **A negative age produces no number.** If the device clock moved backwards between closing and
+  reading, that is a fact about the clock, not about the session.
+
+While here, the Kotlin's separate **background-session list** is recorded in §18 as a deliberate
+non-goal rather than an outstanding gap. It listed sessions the app is holding open; the tab strip
+already shows exactly those, and the foreground-service notification already names them — a third
+surface for the same fact is how two of them end up disagreeing.
+
+**Verified — 5 new tests; 1814 host tests pass, `analyze` clean.**

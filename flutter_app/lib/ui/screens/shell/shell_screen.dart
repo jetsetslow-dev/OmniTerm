@@ -9,6 +9,7 @@ import '../../../domain/terminal_soft_input.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/shell_session.dart';
+import '../../../domain/session_age.dart';
 import '../../view_model/shell_view_model.dart';
 import '../servers/server_form_state.dart';
 import '../../widgets/terminal_key_bar.dart';
@@ -282,7 +283,10 @@ class _ResumableSessions extends StatelessWidget {
                                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                               ),
                               Text(
-                                row.tmuxName,
+                                // The name alone cannot be acted on: "left running 4m ago" and
+                                // "left running last month" are the same card otherwise, and Forget
+                                // is the button next to it.
+                                '${row.tmuxName}  ·  ${describeSessionAge(row)}',
                                 overflow: TextOverflow.ellipsis,
                                 style: TextStyle(
                                   fontSize: 10,

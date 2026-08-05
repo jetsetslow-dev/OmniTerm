@@ -391,6 +391,45 @@ void main() {
       expect(vm.resumableSessions.single.serverName, 'nas');
     });
 
+    test('closing a tab starts the left-running clock', () async {
+      // The whole point of a persistent host is that closing the tab does not end the work — so the
+      // moment it stops being watched is the only thing that makes the resumable list actionable.
+      // Without it every row reads as having been abandoned in 1970.
+      final transport = FakeShellTransport();
+      final vm = await start(ssh: transport);
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await Future<void>.delayed(Duration.zero);
+      await vm.connect((await repo.getAllServers()).single);
+
+      final before = (await repo.getPersistentSessions()).single;
+      expect(before.backgroundedAt, 0, reason: 'still being watched');
+
+      final closedAt = DateTime.now().millisecondsSinceEpoch;
+      vm.close(vm.sessions.single);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      final after = (await repo.getPersistentSessions()).single;
+      expect(after.backgroundedAt, greaterThanOrEqualTo(closedAt));
+      expect(after.tmuxName, before.tmuxName, reason: 'the same row, not a second one');
+      expect(after.serverId, before.serverId);
+      expect(after.createdAt, before.createdAt, reason: 'when it started is not when it was left');
+    });
+
+    test('a non-persistent host has no clock to start', () async {
+      // Closing an ordinary shell ends it. There is no row, and nothing to stamp.
+      final transport = FakeShellTransport();
+      final vm = await start(ssh: transport);
+      await repo.insertServer(server(name: 'plain'));
+      await Future<void>.delayed(Duration.zero);
+      await vm.connect((await repo.getAllServers()).single);
+
+      vm.close(vm.sessions.single);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(await repo.getPersistentSessions(), isEmpty);
+    });
+
     test('resuming attaches to that exact session, not the newest one', () async {
       // The list exists so a specific session can be reached; joining whichever row happened to be
       // last would make picking one meaningless.
