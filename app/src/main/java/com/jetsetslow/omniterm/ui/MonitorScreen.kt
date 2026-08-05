@@ -40,7 +40,12 @@ import com.jetsetslow.omniterm.R
 fun MonitorScreen(viewModel: AppViewModel) {
     val serversList by viewModel.servers.collectAsStateWithLifecycle()
     val onlineServers = serversList.filter { it.status == "online" }
-    val explicitlySelected = serversList.find { it.id == viewModel.selectedServerId }
+    // The explicit selection wins only while it is still online. The selector bar directly below is
+    // built with onlineOnly = true, so matching on id alone left the body rendering a host the bar
+    // no longer listed: the header and the content disagreed about which machine was on screen, the
+    // tabs kept issuing SSH commands at a host that was down, and there was no way to switch away
+    // except via the Hosts tab.
+    val explicitlySelected = onlineServers.find { it.id == viewModel.selectedServerId }
     val srv = explicitlySelected ?: onlineServers.firstOrNull()
     LaunchedEffect(srv?.id) {
         if (srv != null && explicitlySelected == null && viewModel.selectedServerId != srv.id) {

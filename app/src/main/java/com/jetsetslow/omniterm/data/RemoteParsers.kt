@@ -131,6 +131,22 @@ object RemoteCommands {
     // `|| echo Windows` fallback fires.
     const val OS_PROBE = "uname -s 2>/dev/null || echo Windows"
 
+    /** Marks the end of `crontab -l` output so its exit status can be read alongside it. */
+    const val CRON_EXIT_MARKER = "---OMNITERM-CRON-EXIT---"
+
+    /**
+     * Reads the login user's crontab, keeping stderr *and* the exit status.
+     *
+     * `crontab -l 2>/dev/null || true` collapses three different answers into one empty string:
+     * this user has no crontab, this user is not allowed one, and this host has no cron at all.
+     * The CRON tab then offers Add, and a save rewrites the whole file -- so a crontab the user was
+     * never allowed to read would be replaced by a single line.
+     */
+    const val CRON_READ_COMMAND = "crontab -l 2>&1; printf '%s%s\n' '$CRON_EXIT_MARKER' \"\$?\""
+
+    /** Marks where a sudo-elevated read's real content begins, after sudo's own chatter. */
+    const val SUDO_OUTPUT_MARKER = "---OMNITERM-BEGIN---"
+
     // ── tmux persistent-session support ───────────────────────────────────────────────────────
     // A shell launched inside tmux survives an SSH drop: the remote process group stays attached to
     // the tmux server, so reconnecting re-attaches the *same* session (and any long-running command
@@ -383,11 +399,22 @@ object RemoteCommands {
             "log show --last 1h --style syslog 2>/dev/null | tail -n $lines || " +
                 "echo '---NOLOGS---'"
         else ->
-            "if command -v journalctl >/dev/null 2>&1; then journalctl -n $lines --no-pager -o short-iso 2>/dev/null; " +
-                "elif command -v logread >/dev/null 2>&1; then logread 2>/dev/null | tail -n $lines; " +
-                "elif [ -r /var/log/messages ]; then tail -n $lines /var/log/messages 2>/dev/null; " +
-                "elif [ -r /var/log/syslog ]; then tail -n $lines /var/log/syslog 2>/dev/null; " +
-                "else echo '---NOLOGS---'; fi"
+            // Each source is tried until one actually PRODUCES output, rather than stopping at the
+            // first one that merely exists. A BusyBox host ships `logread` whether or not syslogd is
+            // running, and when it is not, `logread` fails to stderr -- swallowed by 2>/dev/null --
+            // and exits. The old `elif` chain stopped there, printed nothing, and never reached the
+            // ---NOLOGS--- marker, so the Logs tab showed an empty pane with no explanation on most
+            // containers. Found by running the Flutter port against a real Alpine host.
+            "L=\"\"; " +
+                "if command -v journalctl >/dev/null 2>&1; then " +
+                "L=\$(journalctl -n $lines --no-pager -o short-iso 2>/dev/null); fi; " +
+                "if [ -z \"\$L\" ] && command -v logread >/dev/null 2>&1; then " +
+                "L=\$(logread 2>/dev/null | tail -n $lines); fi; " +
+                "if [ -z \"\$L\" ] && [ -r /var/log/messages ]; then " +
+                "L=\$(tail -n $lines /var/log/messages 2>/dev/null); fi; " +
+                "if [ -z \"\$L\" ] && [ -r /var/log/syslog ]; then " +
+                "L=\$(tail -n $lines /var/log/syslog 2>/dev/null); fi; " +
+                "if [ -z \"\$L\" ]; then echo '---NOLOGS---'; else printf '%s\\n' \"\$L\"; fi"
     }
 
     private fun journalWindows(lines: Int) =
@@ -430,6 +457,17 @@ object RemoteCommands {
      * newline `sudo -S` waits for, or null when no password is configured (NOPASSWD hosts).
      * None of the wrapped scripts read stdin themselves, so the line is consumed only by sudo.
      */
+    /**
+     * Reads a file as root, with a marker separating sudo's own output from the file's.
+     *
+     * On sudo's first use in a session it prints its lecture, and `sudoShWrap` merges stderr into
+     * stdout -- so without this the lecture is prepended to the file, lands in the editor, and is
+     * written back on save. The marker also distinguishes an empty file from a refusal: no marker
+     * means sudo said no, and the raw output is the explanation.
+     */
+    fun sudoReadCommand(path: String, sudoPassword: String): String =
+        sudoShWrap("printf '%s\\n' '$SUDO_OUTPUT_MARKER'; cat -- ${shellQuote(path)}", sudoPassword)
+
     fun sudoStdin(sudoPassword: String): String? =
         if (sudoPassword.isNotBlank()) sudoPassword + "\n" else null
 
@@ -1105,6 +1143,44 @@ object RemoteParsers {
             }
             .toList()
 
+    /** What a crontab read found: the body, whether it could be read at all, and why not. */
+    data class CrontabRead(val text: String, val readable: Boolean, val error: String = "")
+
+    /**
+     * Splits [RemoteCommands.CRON_READ_COMMAND]'s output into the crontab and the command's fate.
+     *
+     * "no crontab for <user>" is cron's own way of saying the file is empty -- every implementation
+     * prints it on stderr and exits non-zero -- so it has to be recognised, or a first-time user
+     * could never add their first entry. Everything else non-zero is unreadable, and an unreadable
+     * crontab must not be writable: a save rewrites the whole file.
+     */
+    fun parseCrontabRead(output: String): CrontabRead {
+        val marker = output.lastIndexOf(RemoteCommands.CRON_EXIT_MARKER)
+        if (marker < 0) {
+            // The command never ran to completion -- a dropped connection, or a shell that died.
+            val text = output.trim()
+            return CrontabRead("", false, text.ifBlank { "No response" })
+        }
+        val body = output.substring(0, marker)
+        val status = output.substring(marker + RemoteCommands.CRON_EXIT_MARKER.length).trim().toIntOrNull() ?: -1
+        if (status == 0) return CrontabRead(body.trimEnd('\n'), true)
+        if (body.contains("no crontab for", ignoreCase = true)) return CrontabRead("", true)
+        return CrontabRead("", false, body.trim().ifBlank { "crontab exited $status" })
+    }
+
+    /**
+     * The file content from a [RemoteCommands.sudoReadCommand] reply, or null when sudo refused.
+     *
+     * Null and "" are deliberately different: an unreadable file that looked empty would be saved
+     * back as a truncation of the original.
+     */
+    fun parseSudoRead(output: String): String? {
+        val marker = output.indexOf(RemoteCommands.SUDO_OUTPUT_MARKER)
+        if (marker < 0) return null
+        val after = marker + RemoteCommands.SUDO_OUTPUT_MARKER.length
+        return output.substring(after).removePrefix("\n")
+    }
+
     fun parseJournal(output: String): List<SimLog> =
         output.lineSequence()
             .map { it.trim() }
@@ -1587,8 +1663,15 @@ object RemoteParsers {
     private fun inferLevel(text: String): String {
         val l = text.lowercase()
         return when {
-            Regex("\\b(error|fail|failed|fatal|critical|denied|refused|panic|segfault)\\b").containsMatchIn(l) -> "ERROR"
-            Regex("\\b(warn|warning|deprecat|timeout|retry)\\b").containsMatchIn(l) -> "WARN"
+            // No trailing \b: these are word *stems*, and a closing boundary disabled every one
+            // of them. "fail" could not match "failure" or "failing", "error" could not match
+            // "errors", and "deprecat" — plainly written as a stem — could only ever match the
+            // literal string "deprecat". Real errors were being shown as INFO in Monitor → Logs and
+            // in Fleet broadcast output, which is exactly backwards for triage. The leading \b is
+            // kept so a stem must still start a word and cannot match mid-token ("shutdown" is
+            // still INFO).
+            Regex("\\b(error|fail|failed|fatal|critical|denied|refused|panic|segfault)").containsMatchIn(l) -> "ERROR"
+            Regex("\\b(warn|warning|deprecat|timeout|retry)").containsMatchIn(l) -> "WARN"
             else -> "INFO"
         }
     }

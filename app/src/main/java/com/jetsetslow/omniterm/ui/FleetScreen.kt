@@ -864,12 +864,17 @@ internal fun commandDangerHits(command: String): List<String> {
         Regex("""\brm\s+(-+\w*[rfRF]\w*\s+)+""") to "recursive/forced delete",
         Regex("""\b(mkfs|wipefs|blkdiscard|mkswap)\b""") to "filesystem format/wipe",
         Regex("""\b(fdisk|parted|sgdisk|sfdisk)\b""") to "partition table changes",
-        Regex("""\bdd\s+\S*of=""") to "raw write with dd",
+        // `[^;&|\n]*` rather than `\S*`: `\S*` cannot cross a space, so it only reached an `of=`
+        // inside the same token. `dd if=/dev/zero of=/dev/sda` — the textbook disk-destroyer, and
+        // the way every tutorial writes it — was the one form this did not catch.
+        Regex("""\bdd\s+[^;&|\n]*of=""") to "raw write with dd",
         Regex(""">+\s*/dev/(sd|nvme|mmcblk|vd|hd)""") to "writing directly to a block device",
         Regex("""\b(shutdown|poweroff|halt)\b""") to "host shutdown",
         Regex("""\breboot\b|\binit\s+[06]\b|\bsystemctl\s+(reboot|poweroff|halt|kexec|emergency|rescue)\b""") to "host reboot/shutdown",
         Regex("""\b(userdel|groupdel)\b""") to "account deletion",
-        Regex("""\biptables\s+(-\w+\s+)*-F\b|\bnft\s+flush\b|\bufw\s+disable\b""") to "firewall teardown",
+        // Same shape: `(-\w+\s+)*` stops at the first non-flag token, so `iptables -t nat -F`
+        // slipped through because `nat` is not a flag.
+        Regex("""\biptables\s+[^;&|\n]*-F\b|\bnft\s+flush\b|\bufw\s+disable\b""") to "firewall teardown",
         Regex("""\bchmod\s+(-\w+\s+)*[0-7]*777\s+/\S*""") to "world-writable permission change",
         Regex(""":\s*\(\s*\)\s*\{""") to "fork bomb",
         Regex("""\btruncate\s+(-\w+\s+)*-s\s*0\b""") to "file truncation",
