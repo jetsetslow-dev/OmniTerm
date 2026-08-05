@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -472,4 +474,55 @@ void main() {
       vm.dispose();
     });
   });
+
+  testWidgets('a listing still in flight is not called an empty directory', (tester) async {
+    // Found on a real host, not reasoned about: the first listing of a host carries the TCP
+    // connect, the handshake, the auth and opening the SFTP subsystem, and for all of it the
+    // browser stated "This directory is empty" about a folder holding nine files. The 2px progress
+    // bar in the toolbar is not a correction — the body was asserting the opposite of it.
+    final gate = Completer<List<SftpFile>>();
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester, client: _GatedFsClient(gate));
+
+    await tester.tap(find.byKey(const ValueKey('sftp.tab.files')));
+    // Not pumpAndSettle: the progress indicator animates forever while the listing is in flight.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+
+    expect(find.byKey(const ValueKey('sftp.loading')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('sftp.empty')),
+      findsNothing,
+      reason: 'nothing has been read yet, so nothing is known about what is there',
+    );
+    expect(find.text('This directory is empty'), findsNothing);
+
+    gate.complete([entry('notes.txt')]);
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('sftp.list')), findsOneWidget);
+    expect(find.byKey(const ValueKey('sftp.loading')), findsNothing);
+    vm.dispose();
+  });
+
+  testWidgets('a folder that really is empty still says so', (tester) async {
+    // The other half: once the listing has landed, "empty" is a fact and has to be stated.
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester, client: FakeFsClient(tree: {'/home/root': const []}));
+    await goToFiles(tester);
+
+    expect(find.byKey(const ValueKey('sftp.empty')), findsOneWidget);
+    expect(find.text('This directory is empty'), findsOneWidget);
+    vm.dispose();
+  });
+}
+
+/// A client whose home listing does not land until the test says so.
+class _GatedFsClient extends FakeFsClient {
+  _GatedFsClient(this.gate);
+
+  final Completer<List<SftpFile>> gate;
+
+  @override
+  Future<List<SftpFile>> list(String path) => gate.future;
 }

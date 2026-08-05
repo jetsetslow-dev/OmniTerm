@@ -118,11 +118,19 @@ class SftpFilesTab extends StatelessWidget {
         if (vm.searchHits == null)
           Expanded(
             child: vm.visibleEntries.isEmpty
+                // "Not read yet" is not "nothing here". The first listing of a host includes the
+                // TCP connect, the handshake, the auth and opening the SFTP subsystem, and a
+                // browser that says "This directory is empty" throughout that is stating something
+                // false about the user's files — measured on a real host, where the claim stood for
+                // seconds before the listing landed. The 2px bar above is not a correction: it sits
+                // in the toolbar while the body asserts the opposite.
                 ? Center(
-                    key: const ValueKey('sftp.empty'),
+                    key: ValueKey(vm.loading ? 'sftp.loading' : 'sftp.empty'),
                     child: Text(
-                      // "Nothing matched" and "nothing here" are different facts.
-                      vm.searchText.trim().isNotEmpty
+                      vm.loading
+                          ? 'Listing…'
+                          // "Nothing matched" and "nothing here" are different facts.
+                          : vm.searchText.trim().isNotEmpty
                           ? 'Nothing matches your search'
                           : 'This directory is empty',
                       style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),

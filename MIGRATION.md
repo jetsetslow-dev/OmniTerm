@@ -4238,3 +4238,46 @@ written an empty file, and `judgeSave` already reports -1 as *unconfirmed* rathe
 
 **Verified — 13 new tests; 1633 host tests pass, `analyze --fatal-infos` clean; the read marker, the
 lecture case, the temp-copy dance and the byte count were all exercised against the lab.**
+
+### Session 71 — a device pass over sessions 66–70, and the browser that lied while connecting (task #7)
+
+Sessions 66–70 added folder sizes, host-wide search and sudo file access. All three were driven on
+the emulator against the lab (`10.0.2.2:2201` from the device), on fixtures seeded for the run and
+removed after it:
+
+| what | result on the device |
+| --- | --- |
+| Measure size on a 200 KB tree | `208K on disk`, not flagged partial |
+| Search this host for `needle` | `1 found`, the "only what this login can read" note shown, and tapping the hit jumped into `/config/probe-tree/deep` with the file listed |
+| Opening a `-rw------- root root` file **without** sudo | no editor, and the reason on the listing: `Permission denied(code 3)` |
+| The sudo toggle | warns first; the read then returned the real contents |
+| Saving through sudo | **confirmed from the server, not the UI**: the file went 19 → 27 bytes with the appended line present, mtime updated |
+
+The defect the pass turned up is in neither of those features. **While the first listing was still
+in flight, the browser stated "This directory is empty."** The first listing of a host carries the
+TCP connect, the handshake, the auth and opening the SFTP subsystem; for all of it the body asserted
+that a folder holding nine files held nothing. The 2px progress bar in the toolbar is not a
+correction — it sat above a sentence saying the opposite. Fixed: an unread folder now says
+`Listing…` under its own key `sftp.loading`, and `sftp.empty` means what it says. Two tests, one per
+half — in flight is not empty, and a folder that really is empty still says so.
+
+This is §20 pattern K again (a confident statement about data not yet in hand) and it is worth
+noting that it survived five sessions of widget tests: every one of them used a fake client that
+answers within the same microtask, so the in-flight state never existed to be asserted on. The test
+that catches it holds the listing open on a `Completer`.
+
+**§19.4 — a key that renders in more than one state is not a wait condition.** The probe waited on
+`sftp.list || sftp.empty` and returned instantly every time, because `sftp.empty` was on screen
+*during* the connect. It read as "the listing landed and the folder is empty" and was really "no
+listing yet". The wait was against the app's own bug, so the probe reported success against a screen
+that was wrong. Wait on the outcome that can only mean one thing — here `sftp.list || sftp.error`.
+
+Two smaller things the pass corrected in the probe itself rather than in the app, both correct
+behaviour that looked like defects: the Files tab is *disabled* until the 45s status sweep marks a
+freshly added host online (§15.8), so the tap that selects it is a no-op that leaves Bookmarks
+showing; and the folder filter box keeps its text when you navigate, so a filter left as `needle`
+makes every subsequent folder look empty.
+
+**Verified — 2 new tests; 1635 host tests pass, `analyze` clean; measure-size, host search, the
+refused read, the sudo read and the sudo write all exercised on the device, and the write confirmed
+on the server.**
