@@ -90,7 +90,10 @@ class HealthScoringViewModel extends ChangeNotifier {
     final candidate = configFrom(_draft);
     if (candidate == null) return 'Those values cannot be used.';
 
-    await _app.repository.insertSetting(settingKey, candidate.encode());
+    // Through AppState rather than straight to the repository: the poller and the breakdown dialog
+    // read the shared copy, and a write that does not refresh it leaves the next cycle scoring by
+    // the old thresholds while the form says the new ones are saved.
+    await _app.saveSetting(settingKey, candidate.encode());
     _saved = candidate;
     // Re-seeded from the saved config so the fields show exactly what was stored — including any
     // normalisation, which would otherwise leave the form disagreeing with the rule it just wrote.
@@ -109,7 +112,7 @@ class HealthScoringViewModel extends ChangeNotifier {
 
   /// Restores the shipped defaults and saves them.
   Future<void> resetToDefaults() async {
-    await _app.repository.insertSetting(settingKey, HealthScoringConfig.defaults.encode());
+    await _app.saveSetting(settingKey, HealthScoringConfig.defaults.encode());
     _saved = HealthScoringConfig.defaults;
     _draft = fieldsFrom(_saved);
     _status = 'Reset to the default thresholds.';

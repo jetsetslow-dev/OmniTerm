@@ -7,6 +7,7 @@ import '../../data/remote_commands.dart';
 import '../../data/remote_models.dart';
 import '../../data/remote_parsers.dart';
 import '../../data/ssh/ssh_transport.dart';
+import '../../domain/health_scoring.dart';
 import '../../domain/server_credentials.dart';
 import '../../domain/operation_generation.dart';
 import 'app_state.dart';
@@ -52,6 +53,40 @@ class MonitorViewModel extends ChangeNotifier {
   }
 
   DateTime? _metricsAt;
+
+  /// The recent CPU readings for the monitored host, oldest first, for the Overview chart.
+  ///
+  /// Empty without a poller: a chart is a claim about how something changed over time, and one
+  /// on-demand fetch cannot support it.
+  List<double> get cpuHistory => _history.map((s) => s.metrics.cpuPercent).toList();
+
+  /// The recent memory readings, parallel to [cpuHistory].
+  List<double> get ramHistory => _history.map((s) => s.metrics.memPercent).toList();
+
+  /// When each of those readings was taken, for the chart's end labels.
+  List<int> get historyTimestamps =>
+      _history.map((s) => s.at.millisecondsSinceEpoch).toList();
+
+  List<TimedSample> get _history {
+    final server = monitoredServer;
+    return server == null ? const [] : poller?.historyForServer(server.id) ?? const [];
+  }
+
+  /// Why the monitored host scores what it does.
+  ///
+  /// Computed from the same config the poller scored with (held on [AppState]) and the readings on
+  /// screen, so the explanation cannot disagree with the number it explains.
+  HealthBreakdown? get healthBreakdown {
+    final server = monitoredServer;
+    if (server == null) return null;
+    return _app.healthScoring.breakdown(
+      _metrics.cpuPercent,
+      _metrics.memPercent,
+      _metrics.diskPercent,
+      server.lastLatency,
+      online: server.status == 'online',
+    );
+  }
 
   void _onTelemetrySample() {
     final server = monitoredServer;

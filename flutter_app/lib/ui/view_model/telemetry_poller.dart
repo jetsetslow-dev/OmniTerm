@@ -8,7 +8,6 @@ import '../../data/remote_commands.dart';
 import '../../data/remote_models.dart';
 import '../../data/remote_parsers.dart';
 import '../../data/ssh/ssh_transport.dart';
-import '../../domain/health_scoring.dart';
 import '../../domain/server_credentials.dart';
 import '../../domain/telemetry_sampling.dart';
 import 'app_state.dart';
@@ -214,9 +213,12 @@ class TelemetryPoller extends ChangeNotifier {
   }
 
   Future<void> _persist(Server server, HostMetrics metrics, DateTime at) async {
-    final health = HealthScoringConfig.decode(
-      await _app.repository.getSetting(HealthScoringConfig.settingKey),
-    ).score(metrics.cpuPercent, metrics.memPercent, metrics.diskPercent, server.lastLatency);
+    final health = _app.healthScoring.score(
+      metrics.cpuPercent,
+      metrics.memPercent,
+      metrics.diskPercent,
+      server.lastLatency,
+    );
 
     await _app.repository.insertMetric(
       MetricHistoryCompanion.insert(

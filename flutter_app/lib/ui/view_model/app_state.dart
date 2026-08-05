@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import '../../data/app_database.dart';
 import '../../data/app_repository.dart';
+import '../../domain/health_scoring.dart';
 import '../../domain/measurement_units.dart';
 
 /// The state every feature shares: the host list, which host is selected, and the persisted app
@@ -62,6 +63,14 @@ class AppState extends ChangeNotifier {
   // ── settings ───────────────────────────────────────────────────────────────
 
   int metricsRetentionDays = 7;
+
+  /// The health-scoring thresholds every score in the app is computed from.
+  ///
+  /// One copy, here, because three things read it: the telemetry poller writes a score per host per
+  /// cycle, Monitor explains that score in its breakdown dialog, and Settings edits it. Two of them
+  /// reading it from the database on their own schedule is how a user's edited thresholds end up
+  /// applied to the score but not to the explanation of the score.
+  HealthScoringConfig healthScoring = HealthScoringConfig.defaults;
   MeasurementSystem measurementSystem = MeasurementSystem.metric;
   bool alertsEnabled = true;
   bool homelabPresetsEnabled = false;
@@ -99,6 +108,7 @@ class AppState extends ChangeNotifier {
     Future<String?> read(String key) => _repository.getSetting(key);
 
     metricsRetentionDays = int.tryParse(await read('metrics_retention_days') ?? '') ?? 7;
+    healthScoring = HealthScoringConfig.decode(await read(HealthScoringConfig.settingKey));
     measurementSystem = MeasurementSystem.fromSetting(await read('measurement_system'));
     alertsEnabled = (await read('alerts_enabled')) != 'false';
     homelabPresetsEnabled = (await read('homelab_presets')) == 'true';

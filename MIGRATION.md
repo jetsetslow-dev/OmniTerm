@@ -1327,9 +1327,9 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
 
 **Monitor (session 22):**
 - **Scripts and CRON tabs** — not ported; both render a note saying so rather than a blank pane.
-- **Overview sparklines** (`MetricLineChart`) and the **health-breakdown dialog** — the data both
-  need now exists (session 72: `TelemetryPoller.historyForServer` in memory, `metric_history` on
-  disk); the widgets are not drawn yet.
+- ~~**Overview sparklines** (`MetricLineChart`) and the **health-breakdown dialog**~~ — **done in
+  session 73**, on the data session 72's poller produces. The chart widget is shared, so Fleet's
+  per-host charts are a placement away.
 - ~~**The telemetry poller itself**~~ — **done in session 72.** Every online host is probed on a 15s
   cadence; the sample feeds Monitor, the health score column and the retained history, and the
   cadence is what the Overview countdown is anchored to. Alert evaluation still reads on demand.
@@ -4340,3 +4340,52 @@ on screen, whichever loop fetched it, and only says "waiting" when nothing has b
 
 **Verified — 29 new tests; 1664 host tests pass, `analyze` clean; the cadence, the moving CPU figure
 and the health score were all measured on the emulator against the lab.**
+
+### Session 73 — the charts and the health breakdown, on real data (task #7)
+
+Session 72's poller produced a series that nothing drew and a score that nothing explained. Both are
+drawn now, and both are the §18 Monitor items that were blocked on it.
+
+**`ui/widgets/metric_line_chart.dart`** — ported from `MetricLineChart` in `ui/FleetScreen.kt`, and
+shared rather than nested in Monitor, because Fleet renders the same chart per host. Two properties
+are deliberate. The axis is **fixed at 0..maxY**, never scaled to the data: an auto-scaled axis
+redraws a host idling between 1% and 3% as a mountain range, and someone glancing at it reads a
+problem that is not there. And the header states the **sample count**, because a flat line from two
+readings and a flat line from two hundred mean entirely different things and draw identically. An
+empty series says "0 samples" and "—" rather than drawing a line along the bottom, which would be a
+claim that the host was idle for a window nobody sampled.
+
+The Kotlin renders `1 samples`. Fixed here — it is the first thing shown after connecting to a host,
+which is exactly when someone is deciding whether this app is careful.
+
+**The health-breakdown dialog** (`HealthBreakdownDialog` in `ui/AppUi.kt`) now opens from Monitor's
+score ring. A number between 0 and 100 with no stated reason is not information. It reads the
+breakdown from the view model, which computes it from **the same config and the same readings the
+poller scored with** — so the explanation cannot justify a number nobody computed. That required
+centralising the config: `AppState.healthScoring` is now the single copy, loaded with the other
+settings, read by the poller each cycle and by the dialog, and refreshed when Settings saves it. The
+poller previously re-read and re-decoded it from the database on every host of every cycle.
+
+**On the device, against the lab, over 45s:**
+
+```
+t+0s   CPU utilisation · 0 samples      t+15s  CPU utilisation · 1 sample
+t+30s  CPU utilisation · 2 samples      t+45s  CPU utilisation · 3 samples
+PER-CORE (16)
+R 1.9 KB/s · W 205.1 KB/s
+Score: 80 / 100 · Memory 73% — elevated (≥70%) -5 · Latency 358ms — critical (≥200ms) -15
+```
+
+The disk I/O line is worth calling out: those rates are **derived from two probes fifteen seconds
+apart** and had never been anything but zero in this port. The breakdown sums to exactly the 80 on
+the ring.
+
+**§19.5 — a lazy list only builds what is on screen, so "not found" is not "not rendered".** The
+first device run reported no disk I/O line. The counters on the host were moving (7.5 MB written in
+the same 15s window, checked from outside), so the probe was wrong, not the app: the Overview is a
+`ListView` and the disks card sits below the fold, unbuilt. Scrolling to it showed the line. A probe
+that looks for a widget it has not scrolled to proves nothing either way — and had I trusted it, the
+"fix" would have been for a defect that did not exist (§19.2 again).
+
+**Verified — 14 new tests; 1678 host tests pass, `analyze` clean; the growing series, the per-core
+bars, the derived disk throughput and the breakdown arithmetic were all read off the device.**

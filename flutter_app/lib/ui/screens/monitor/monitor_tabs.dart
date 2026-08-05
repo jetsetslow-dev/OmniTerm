@@ -7,6 +7,7 @@ import '../../../data/remote_models.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/monitor_view_model.dart';
+import '../../widgets/metric_line_chart.dart';
 import '../../widgets/omni_components.dart';
 
 /// The Monitor sub-tabs, ported from `OverviewTab` / `ProcessesTab` / `ServicesTab` / `LogsTab` in
@@ -158,6 +159,14 @@ class _OverviewTabState extends State<OverviewTab> {
               ),
               const SizedBox(height: 10),
               GaugeBar(value: m.cpuPercent, color: accent, height: 6),
+              const SizedBox(height: 12),
+              MetricLineChart(
+                key: const ValueKey('monitor.overview.cpuChart'),
+                points: vm.cpuHistory,
+                timestamps: vm.historyTimestamps,
+                color: accent,
+                label: 'CPU utilisation',
+              ),
               if (m.perCoreCpu.isNotEmpty) ...[
                 const SizedBox(height: 10),
                 _CardLabel(text: 'PER-CORE (${m.perCoreCpu.length})'),
@@ -211,6 +220,14 @@ class _OverviewTabState extends State<OverviewTab> {
               ),
               const SizedBox(height: 10),
               GaugeBar(value: m.memPercent, color: OmniColors.amber, height: 7),
+              const SizedBox(height: 12),
+              MetricLineChart(
+                key: const ValueKey('monitor.overview.ramChart'),
+                points: vm.ramHistory,
+                timestamps: vm.historyTimestamps,
+                color: OmniColors.amber,
+                label: 'RAM utilisation',
+              ),
             ],
           ),
         ),

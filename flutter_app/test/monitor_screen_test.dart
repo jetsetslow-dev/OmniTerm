@@ -4,12 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
+import 'package:omniterm/domain/health_scoring.dart';
 import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/monitor/monitor_screen.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/monitor_view_model.dart';
+import 'package:omniterm/ui/view_model/telemetry_poller.dart';
 import 'package:provider/provider.dart';
 
 import 'monitor_view_model_test.dart' show RecordingTransport;
@@ -61,9 +63,13 @@ void main() {
 
   late MonitorViewModel vm;
 
-  Future<void> pump(WidgetTester tester, {RecordingTransport? transport}) async {
+  Future<void> pump(
+    WidgetTester tester, {
+    RecordingTransport? transport,
+    TelemetryPoller? poller,
+  }) async {
     await app.start();
-    vm = MonitorViewModel(app, transport: transport);
+    vm = MonitorViewModel(app, transport: transport, poller: poller);
     await tester.pumpWidget(
       MultiProvider(
         providers: [
@@ -367,5 +373,110 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('monitor.reboot.cancel')));
     await tester.pumpAndSettle();
     vm.dispose();
+  });
+
+  group('the health score', () {
+    /// 95% memory and 1% disk, in the shapes `free -b` and `df -PB1 /` print.
+    const strained =
+        '@OS\nLinux\n'
+        '@MEM\nMem: 100 95 0 0 0 5\n'
+        '@DISK\n/dev/sda1 100 1 1 1% /\n';
+
+    testWidgets('the ring explains itself when tapped', (tester) async {
+      // A number between 0 and 100 with no stated reason is not information.
+      await repo.insertServer(server(name: 'nas', healthScore: 88));
+      final poller = TelemetryPoller(app, transport: RecordingTransport(fallback: strained));
+      await pump(tester, poller: poller);
+      await poller.cycle();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('monitor.healthScore.open')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('monitor.health.dialog')), findsOneWidget);
+      // The deduction names the reading and its threshold, not just a number.
+      expect(find.byKey(const ValueKey('monitor.health.factor.0')), findsOneWidget);
+      expect(find.textContaining('Memory 95%'), findsOneWidget);
+      expect(find.byKey(const ValueKey('monitor.health.healthy')), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('monitor.health.close')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('monitor.health.dialog')), findsNothing);
+      vm.dispose();
+      poller.dispose();
+    });
+
+    testWidgets('a host with nothing wrong says exactly that', (tester) async {
+      // "No deductions" and "we did not check" are different facts, and an empty factor list would
+      // render as the second.
+      await repo.insertServer(server(name: 'nas'));
+      final poller = TelemetryPoller(
+        app,
+        transport: RecordingTransport(
+          fallback: '@OS\nLinux\n@MEM\nMem: 100 5 0 0 0 95\n@DISK\n/dev/sda1 100 1 1 1% /\n',
+        ),
+      );
+      await pump(tester, poller: poller);
+      await poller.cycle();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('monitor.healthScore.open')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('monitor.health.healthy')), findsOneWidget);
+      expect(find.byKey(const ValueKey('monitor.health.factor.0')), findsNothing);
+      vm.dispose();
+      poller.dispose();
+    });
+
+    testWidgets("the user's own thresholds explain the score", (tester) async {
+      // The explanation and the number both come from the shared config; two copies of it is how
+      // the dialog ends up justifying a score nobody computed.
+      await repo.insertServer(server(name: 'nas'));
+      const strict = HealthScoringConfig(mem: MetricTiers(10, 20, 30, 40, 50, 60));
+      await repo.insertSetting(HealthScoringConfig.settingKey, strict.encode());
+
+      final poller = TelemetryPoller(app, transport: RecordingTransport(fallback: strained));
+      await pump(tester, poller: poller);
+      await poller.cycle();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('monitor.healthScore.open')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Score: ${strict.score(0, 95, 1, 0)} / 100'), findsOneWidget);
+      vm.dispose();
+      poller.dispose();
+    });
+  });
+
+  group('the overview charts', () {
+    const reply = '@OS\nLinux\n@MEM\nMem: 100 40 0 0 0 60\n@DISK\n/dev/sda1 100 1 1 1% /\n';
+
+    testWidgets('a chart per headline reading, fed by the poller', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      final poller = TelemetryPoller(app, transport: RecordingTransport(fallback: reply));
+      await pump(tester, poller: poller);
+      await poller.cycle();
+      await poller.cycle();
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('monitor.overview.cpuChart')), findsOneWidget);
+      expect(find.byKey(const ValueKey('monitor.overview.ramChart')), findsOneWidget);
+      expect(find.text('RAM utilisation · 2 samples'), findsOneWidget);
+      vm.dispose();
+      poller.dispose();
+    });
+
+    testWidgets('with no poller the charts are honest about having no series', (tester) async {
+      // Every build without SSH wired. A line drawn from one on-demand fetch would be a claim about
+      // a period nobody sampled.
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.text('CPU utilisation · 0 samples'), findsOneWidget);
+      vm.dispose();
+    });
   });
 }
