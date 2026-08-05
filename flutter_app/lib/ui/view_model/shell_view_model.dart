@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -8,6 +9,7 @@ import '../../data/ssh/dartssh_transport.dart' show SshHostKeyException;
 import '../../data/ssh/ssh_host_key_trust.dart';
 import '../../data/ssh/ssh_transport.dart';
 import '../../data/term/terminal_emulator.dart';
+import '../../data/term/tmux_bootstrap.dart';
 import '../../domain/app_preferences.dart';
 import '../../domain/server_credentials.dart';
 import '../../domain/terminal_key_encoder.dart';
@@ -204,6 +206,41 @@ class ShellViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
+  /// Puts a freshly opened session inside a named tmux session.
+  ///
+  /// The name is remembered per host, so reconnecting later **re-attaches** rather than starting a
+  /// second session beside the first — which is what makes the feature persistence rather than just
+  /// "runs tmux".
+  Future<void> _attachPersistent(ShellSession session, Server server) async {
+    final scrollback = PreferenceLimits.terminalScrollback.parse(
+      await _app.repository.getSetting('terminal_scrollback_limit'),
+    );
+    final existing = (await _app.repository.getPersistentSessions())
+        .where((row) => row.serverId == server.id)
+        .toList();
+
+    final String command;
+    if (existing.isNotEmpty) {
+      // Attach, which checks the session is really there — a row can outlive the server rebooting.
+      command = tmuxAttachCommand(existing.last.tmuxName, historyLimit: scrollback);
+    } else {
+      final name = tmuxSafeName('omniterm-${server.id}-${DateTime.now().millisecondsSinceEpoch}');
+      await _app.repository.upsertPersistentSession(
+        PersistentSessionsCompanion.insert(
+          tmuxName: name,
+          serverId: server.id,
+          serverName: server.name,
+          createdAt: DateTime.now().millisecondsSinceEpoch,
+          // Only meaningful once the session is actually left running in the background; the
+          // "backgrounded since" clock starts there, not here.
+          backgroundedAt: 0,
+        ),
+      );
+      command = tmuxCreateAttachCommand(name, historyLimit: scrollback);
+    }
+    session.write(Uint8List.fromList(utf8.encode(command)));
+  }
+
   /// Open a new shell on [server].
   Future<void> connect(Server server) async {
     if (_connecting) return;
@@ -263,6 +300,12 @@ class ShellViewModel extends ChangeNotifier {
       session.addListener(_syncBackgroundSessions);
       _sessions.add(session);
       _currentId = session.id;
+
+      // A host marked "persistent" is put inside tmux immediately, which is the whole point: a
+      // dropped link then leaves the work running on the server instead of killing it. Written as
+      // the shell's first input rather than run as a channel command, so a host without tmux is
+      // left at a perfectly ordinary prompt (the command guards itself with `command -v tmux`).
+      if (server.persistentSession) await _attachPersistent(session, server);
       _syncBackgroundSessions();
     } on CredentialResolutionException catch (e) {
       _error = e.message;

@@ -40,6 +40,7 @@ void main() {
   Server server({
     required String name,
     String status = 'online',
+    bool persistent = false,
     String authType = 'password',
     String authKeyAlias = '',
   }) => Server(
@@ -56,7 +57,7 @@ void main() {
     notes: '',
     keepAlive: 30,
     sshCompression: false,
-    persistentSession: false,
+    persistentSession: persistent,
     proxyCommand: '',
     proxyType: 'none',
     proxyHost: '',
@@ -301,6 +302,80 @@ void main() {
       vm.dismissEnded(vm.current!);
 
       expect(vm.sessions, hasLength(1));
+    });
+  });
+
+  group('persistent sessions', () {
+    test('an ordinary host is not put inside tmux', () async {
+      final transport = FakeShellTransport();
+      final vm = await start(ssh: transport);
+      await repo.insertServer(server(name: 'nas'));
+      await Future<void>.delayed(Duration.zero);
+
+      await vm.connect((await repo.getAllServers()).single);
+
+      expect(sent(transport), isEmpty, reason: 'nothing should be typed into a plain shell');
+      expect(await repo.getPersistentSessions(), isEmpty);
+    });
+
+    test('a persistent host is put inside a named tmux session', () async {
+      final transport = FakeShellTransport();
+      final vm = await start(ssh: transport);
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await Future<void>.delayed(Duration.zero);
+
+      await vm.connect((await repo.getAllServers()).single);
+
+      final command = sent(transport);
+      expect(command, contains('new-session -d -s'));
+      expect(command, contains('exec tmux attach-session'));
+      // Guarded, so a host without tmux is left at an ordinary prompt rather than a broken one.
+      expect(command, startsWith('command -v tmux'));
+
+      final saved = await repo.getPersistentSessions();
+      expect(saved, hasLength(1));
+      expect(saved.single.serverName, 'nas');
+    });
+
+    test('reconnecting re-attaches instead of starting a second session', () async {
+      // This is the difference between persistence and merely "runs tmux": a host that starts a
+      // fresh session on every reconnect has lost the work the user came back for.
+      final transport = FakeShellTransport();
+      final vm = await start(ssh: transport);
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await Future<void>.delayed(Duration.zero);
+      final host = (await repo.getAllServers()).single;
+
+      await vm.connect(host);
+      final name = (await repo.getPersistentSessions()).single.tmuxName;
+
+      await vm.connect(host);
+      final second = sent(transport);
+
+      expect(second, contains('has-session -t $name'));
+      expect(second, contains('attach-session -t $name'));
+      expect(second, isNot(contains('new-session')));
+      expect(
+        await repo.getPersistentSessions(),
+        hasLength(1),
+        reason: 'the same session is resumed, not duplicated',
+      );
+    });
+
+    test('the tmux name never carries anything a shell would act on', () async {
+      // The name is interpolated into a command the *remote* runs. It is derived from the host id
+      // and a timestamp, but the sanitiser is what makes that safe rather than the derivation.
+      final transport = FakeShellTransport();
+      final vm = await start(ssh: transport);
+      await repo.insertServer(server(name: r'evil; rm -rf ~ $(id)', persistent: true));
+      await Future<void>.delayed(Duration.zero);
+
+      await vm.connect((await repo.getAllServers()).single);
+
+      final command = sent(transport);
+      expect(command, isNot(contains('rm -rf')));
+      expect(command, isNot(contains(r'$(')));
+      expect(RegExp(r'-s ([A-Za-z0-9-]+) ').hasMatch(command), isTrue);
     });
   });
 }

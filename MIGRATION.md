@@ -1254,8 +1254,11 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
   is still the OPEN picker's job (below).
 - **Quick connect** — a connect-without-saving sheet. Needs the entitlement gate the Kotlin puts
   around it.
-- **tmux persistent sessions**, the session picker and the background-session list. The control-mode
-  parser (`tmux_control_*.dart`) is ported and tested; the attach/reattach lifecycle is not.
+- **tmux persistent sessions** — **the attach half is done in session 64.** A host marked
+  "Persistent session (tmux)" is now put inside a named tmux session on connect, and reconnecting
+  re-attaches to the same one. **Still to do:** the resumable-session picker, the background-session
+  list, and control mode (`tmux -C`) — the parser is ported and the attach command exists, but
+  nothing drives control mode yet.
 - ~~**The tunnel manager UI.**~~ **Done in session 60**, in the Network tool rather than Shell —
   that is where the Kotlin keeps it.
 - ~~**Text selection and the copy dialog.**~~ **Done in session 58.** The surface still paints a
@@ -3988,3 +3991,43 @@ that no longer exists.
 | `SINGLE` | back to 1 |
 
 **Verified — 5 new tests; 1554 host tests pass, `analyze --fatal-infos` clean.**
+
+---
+
+### Session 64 — persistent sessions actually persist (task #7)
+
+The "Persistent session (tmux)" switch has been on the host form since the form was ported, stored
+faithfully, and **read by nothing**. A host marked persistent behaved exactly like one that was not.
+
+`lib/data/term/tmux_bootstrap.dart` ports the command builders from `data/RemoteParsers.kt`, and the
+shell now `exec`s into a named tmux session on connect. Three properties are load-bearing:
+
+- **`tmuxSafeName` is a security boundary, not tidying.** The name is interpolated into a command the
+  *remote* runs, so anything surviving the filter runs there — a session called `x; rm -rf ~` would
+  be two commands rather than one name. Only letters, digits and `-` get through, which leaves
+  nothing to quote or escape. Eleven tests cover it, including `$(id)`, backticks, pipes, quotes,
+  newlines and unicode.
+- **Every command is guarded by `command -v tmux`.** A host without tmux is left at a perfectly
+  ordinary prompt; the feature degrades to "not persistent" rather than to a broken shell.
+- **Reconnecting re-attaches rather than starting a second session.** The name is remembered per
+  host in `persistent_sessions`, and the reconnect path uses `has-session` instead of
+  `new-session`. That difference *is* the feature: a host that starts fresh every time has lost the
+  work the user came back for.
+
+**Proven on the device, then proven again from the server:**
+
+| Checked | Result |
+|---|---|
+| The app is really inside tmux | the transcript shows tmux's own status line — `[omniterm-0:bash* "56409efe201a" …` |
+| The session exists server-side | `omniterm-1-1785890446062: 1 windows (created …) (attached)` — the exact `omniterm-<serverId>-<timestamp>` scheme |
+| **It survives the client disappearing** | after the test harness uninstalled the app and the SSH connection died, `tmux ls` still listed the session, no longer `(attached)`, with its pane content intact |
+
+That last row is the whole point of the feature, and it is measured from the server rather than
+inferred from the app — the witness §19.2 asks for.
+
+**The reattach path is unit-tested, not device-observed.** The probe's attempt to kill the shell
+from the server missed, so the app never got to re-attach; what is proven on device is the attach
+half. Said plainly rather than rounded up.
+
+**Verified — 15 new tests (11 command builders, 4 view-model); 1570 host tests pass, `analyze
+--fatal-infos` clean.**
