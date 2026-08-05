@@ -65,8 +65,7 @@ class MonitorViewModel extends ChangeNotifier {
   List<double> get ramHistory => _history.map((s) => s.metrics.memPercent).toList();
 
   /// When each of those readings was taken, for the chart's end labels.
-  List<int> get historyTimestamps =>
-      _history.map((s) => s.at.millisecondsSinceEpoch).toList();
+  List<int> get historyTimestamps => _history.map((s) => s.at.millisecondsSinceEpoch).toList();
 
   List<TimedSample> get _history {
     final server = monitoredServer;

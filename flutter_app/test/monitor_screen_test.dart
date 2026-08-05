@@ -560,9 +560,7 @@ void main() {
       // arrives as an empty crontab — and the first Add would replace a file nobody has seen.
       await repo.insertServer(server(name: 'nas'));
       final transport = RecordingTransport(
-        replies: {
-          'crontab -l': reply('You (root) are not allowed to use this program', status: 1),
-        },
+        replies: {'crontab -l': reply('You (root) are not allowed to use this program', status: 1)},
       );
       await pump(tester, transport: transport);
       await openCron(tester);
@@ -646,8 +644,9 @@ void main() {
       vm.dispose();
     });
 
-    testWidgets('an invalid field blocks the save rather than writing a broken schedule',
-        (tester) async {
+    testWidgets('an invalid field blocks the save rather than writing a broken schedule', (
+      tester,
+    ) async {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester, transport: RecordingTransport(replies: {'crontab -l': reply(crontab)}));
       await openCron(tester);
@@ -817,8 +816,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 10));
     });
 
-    testWidgets('confirmed output is shown, and a silent command says it printed nothing',
-        (tester) async {
+    testWidgets('confirmed output is shown, and a silent command says it printed nothing', (
+      tester,
+    ) async {
       await repo.insertServer(server(name: 'nas'));
       await addScript(name: 'Echo', command: 'echo hello');
       final transport = RecordingTransport(fallback: 'hello\n');
@@ -842,8 +842,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 10));
     });
 
-    testWidgets('a second one-off command replaces the first, and is what gets confirmed',
-        (tester) async {
+    testWidgets('a second one-off command replaces the first, and is what gets confirmed', (
+      tester,
+    ) async {
       // Observed on a device: after running one command and closing the output, the confirmation
       // for the next one still named the previous command.
       await repo.insertServer(server(name: 'nas'));
@@ -860,7 +861,10 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('monitor.scripts.output.close')));
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byKey(const ValueKey('monitor.scripts.command')), 'rm -rf /tmp/x');
+      await tester.enterText(
+        find.byKey(const ValueKey('monitor.scripts.command')),
+        'rm -rf /tmp/x',
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('monitor.scripts.run')));
       await tester.pumpAndSettle();

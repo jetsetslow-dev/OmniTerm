@@ -69,9 +69,7 @@ bool isUsableWhoisHost(String host) {
   if (host.isEmpty || host.length > 253) return false;
   if (!host.contains('.')) return false;
   if (host.startsWith('.') || host.endsWith('.') || host.contains('..')) return false;
-  return RegExp(r'^[A-Za-z0-9.-]+$').hasMatch(host) &&
-      !host.startsWith('-') &&
-      !host.endsWith('-');
+  return RegExp(r'^[A-Za-z0-9.-]+$').hasMatch(host) && !host.startsWith('-') && !host.endsWith('-');
 }
 
 /// The keys registries use to point at the server that actually holds the record.

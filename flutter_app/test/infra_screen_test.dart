@@ -394,8 +394,9 @@ void main() {
       vm.dispose();
     });
 
-    testWidgets('a service that publishes nothing says so, rather than showing an empty list',
-        (tester) async {
+    testWidgets('a service that publishes nothing says so, rather than showing an empty list', (
+      tester,
+    ) async {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester, transport: withStack());
       await tester.tap(find.byKey(const ValueKey('infra.tab.stacks')));
@@ -440,8 +441,7 @@ void main() {
     testWidgets('a service that has logged nothing says that', (tester) async {
       // An empty sheet is indistinguishable from one still loading.
       await repo.insertServer(server(name: 'nas'));
-      final transport = withStack()
-        ..replies = {...withStack().replies, 'logs --tail 200': '   '};
+      final transport = withStack()..replies = {...withStack().replies, 'logs --tail 200': '   '};
       await pump(tester, transport: transport);
       await openServiceMenu(tester);
 

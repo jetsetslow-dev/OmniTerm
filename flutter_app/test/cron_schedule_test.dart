@@ -62,10 +62,13 @@ void main() {
       final lines = parseCrontab(raw);
 
       expect(lines, hasLength(4), reason: 'the blank line is the only thing dropped');
-      expect(renderCrontab(lines), 'MAILTO=ops@example.com\n'
-          '# nightly jobs\n'
-          '0 2 * * * /usr/bin/backup\n'
-          '@reboot /usr/local/bin/warm-cache\n');
+      expect(
+        renderCrontab(lines),
+        'MAILTO=ops@example.com\n'
+        '# nightly jobs\n'
+        '0 2 * * * /usr/bin/backup\n'
+        '@reboot /usr/local/bin/warm-cache\n',
+      );
     });
 
     test('a shorthand schedule is understood rather than shown as raw text', () {
@@ -189,8 +192,10 @@ void main() {
 
   group('reading the remote crontab', () {
     test('a crontab that was read is returned as-is', () {
-      final read = parseCrontabRead('0 2 * * * /bin/true\n$cronExitMarker'
-          '0\n');
+      final read = parseCrontabRead(
+        '0 2 * * * /bin/true\n$cronExitMarker'
+        '0\n',
+      );
 
       expect(read.readable, isTrue);
       expect(read.text, '0 2 * * * /bin/true');

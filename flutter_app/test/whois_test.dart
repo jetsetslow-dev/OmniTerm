@@ -100,7 +100,9 @@ void main() {
 
     test('ARIN spells it differently again', () {
       expect(
-        extractReferralServer('NetRange: 1.0.0.0\nReferralServer: rwhois://rwhois.example.net:4321'),
+        extractReferralServer(
+          'NetRange: 1.0.0.0\nReferralServer: rwhois://rwhois.example.net:4321',
+        ),
         'rwhois.example.net',
       );
     });
@@ -126,10 +128,7 @@ void main() {
     test('a port or a path is stripped rather than rejected', () {
       // That is what the field means when a registry writes it — unlike a space, which means the
       // field is malformed and picking a half would be this app guessing.
-      expect(
-        extractReferralServer('refer: whois.nic.uk:43/lookup'),
-        'whois.nic.uk',
-      );
+      expect(extractReferralServer('refer: whois.nic.uk:43/lookup'), 'whois.nic.uk');
     });
 
     test('the key must start the line, not appear in prose', () {

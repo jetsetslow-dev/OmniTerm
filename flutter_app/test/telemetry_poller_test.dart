@@ -339,6 +339,5 @@ void main() {
       expect(called, 0);
       poller.dispose();
     });
-
   });
 }

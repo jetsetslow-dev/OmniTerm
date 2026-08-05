@@ -87,9 +87,7 @@ TelemetrySample enrichMetrics({
   final aggregateCpu = tooSoon
       ? previous.cpuPercent
       : computeCpuUsageDelta(previous?.cpu, cpuCounters, 'cpu');
-  final perCore = tooSoon
-      ? const <double>[]
-      : computePerCoreCpuDeltas(previous?.cpu, cpuCounters);
+  final perCore = tooSoon ? const <double>[] : computePerCoreCpuDeltas(previous?.cpu, cpuCounters);
 
   /// Per-second change in a cumulative counter.
   ///

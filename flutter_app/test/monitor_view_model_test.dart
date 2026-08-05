@@ -560,7 +560,11 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       final poller = TelemetryPoller(app, transport: RecordingTransport(fallback: reply));
-      final vm = MonitorViewModel(app, transport: RecordingTransport(fallback: reply), poller: poller);
+      final vm = MonitorViewModel(
+        app,
+        transport: RecordingTransport(fallback: reply),
+        poller: poller,
+      );
       expect(vm.metricsSampledAt, isNull, reason: 'nothing has been fetched at all yet');
 
       await vm.loadHostMetrics();

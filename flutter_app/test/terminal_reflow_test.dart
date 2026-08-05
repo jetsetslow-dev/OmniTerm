@@ -158,5 +158,4 @@ void main() {
 
     expect(allText(term).where((l) => l.isNotEmpty).toList(), ['ab']);
   });
-
 }

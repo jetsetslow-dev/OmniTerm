@@ -770,7 +770,11 @@ CrontabRead parseCrontabRead(String output) {
   if (marker < 0) {
     // No marker means the command never ran to completion — a dropped connection, or a shell that
     // died. Not an empty crontab.
-    return CrontabRead('', readable: false, error: output.trim().isEmpty ? 'No response' : output.trim());
+    return CrontabRead(
+      '',
+      readable: false,
+      error: output.trim().isEmpty ? 'No response' : output.trim(),
+    );
   }
 
   final body = output.substring(0, marker);
@@ -780,7 +784,11 @@ CrontabRead parseCrontabRead(String output) {
   if (RegExp(r'no crontab for', caseSensitive: false).hasMatch(body)) {
     return const CrontabRead('', readable: true);
   }
-  return CrontabRead('', readable: false, error: body.trim().isEmpty ? 'crontab exited $status' : body.trim());
+  return CrontabRead(
+    '',
+    readable: false,
+    error: body.trim().isEmpty ? 'crontab exited $status' : body.trim(),
+  );
 }
 
 String _stripTrailingNewline(String s) => s.endsWith('\n') ? s.substring(0, s.length - 1) : s;

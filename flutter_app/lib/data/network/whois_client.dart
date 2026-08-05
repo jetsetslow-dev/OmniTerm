@@ -43,7 +43,10 @@ class SocketWhoisClient implements WhoisClient {
       final bytes = <int>[];
       await socket
           .forEach(bytes.addAll)
-          .timeout(readTimeout, onTimeout: () => throw const WhoisException('The server stopped responding.'));
+          .timeout(
+            readTimeout,
+            onTimeout: () => throw const WhoisException('The server stopped responding.'),
+          );
 
       // allowMalformed: registry replies are mostly ASCII but carry latin-1 names often enough that
       // throwing on one bad byte would lose an otherwise complete record.

@@ -218,7 +218,6 @@ class NetworkViewModel extends ChangeNotifier {
 
   Future<void> deleteWolTarget(WolTarget target) => _app.repository.deleteWolTargetById(target.id);
 
-
   // ── whois ───────────────────────────────────────────────────────────────────
 
   String whoisTarget = '';

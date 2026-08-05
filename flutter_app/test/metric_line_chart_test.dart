@@ -4,7 +4,9 @@ import 'package:omniterm/ui/widgets/metric_line_chart.dart';
 
 void main() {
   Future<void> pump(WidgetTester tester, Widget chart) => tester.pumpWidget(
-    MaterialApp(home: Scaffold(body: SizedBox(width: 300, child: chart))),
+    MaterialApp(
+      home: Scaffold(body: SizedBox(width: 300, child: chart)),
+    ),
   );
 
   testWidgets('the latest reading is stated, not only drawn', (tester) async {

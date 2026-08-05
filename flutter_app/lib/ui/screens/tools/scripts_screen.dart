@@ -251,12 +251,7 @@ class _PresetToggle extends StatelessWidget {
 }
 
 class _ScriptCard extends StatelessWidget {
-  const _ScriptCard({
-    super.key,
-    required this.vm,
-    required this.script,
-    required this.dragIndex,
-  });
+  const _ScriptCard({super.key, required this.vm, required this.script, required this.dragIndex});
 
   final ScriptsViewModel vm;
   final QuickScript script;

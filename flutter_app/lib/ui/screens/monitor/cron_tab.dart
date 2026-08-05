@@ -265,14 +265,7 @@ Future<void> _edit(BuildContext context, MonitorViewModel vm, CronLine? existing
       else
         line,
     if (existing == null)
-      CronLine(
-        index: 1 << 30,
-        raw: result,
-        expression: '',
-        command: '',
-        label: '',
-        editable: true,
-      ),
+      CronLine(index: 1 << 30, raw: result, expression: '', command: '', label: '', editable: true),
   ];
   await vm.saveCron(next);
 }
@@ -309,8 +302,7 @@ class _ScheduleDialogState extends State<_ScheduleDialog> {
     final source = cronShorthands.containsKey(expression) ? cronPresets['daily']! : expression;
     final values = source.split(RegExp(r'\s+'));
     _parts = [
-      for (var i = 0; i < 5; i++)
-        TextEditingController(text: i < values.length ? values[i] : '*'),
+      for (var i = 0; i < 5; i++) TextEditingController(text: i < values.length ? values[i] : '*'),
     ];
     _preset = cronPresetFor(source);
   }
@@ -432,11 +424,7 @@ class _ScheduleDialogState extends State<_ScheduleDialog> {
           key: const ValueKey('cron.editor.save'),
           onPressed: _valid
               ? () => Navigator.of(context).pop(
-                  cronLineFor(
-                    expression: _expression,
-                    command: _command.text,
-                    label: _label.text,
-                  ),
+                  cronLineFor(expression: _expression, command: _command.text, label: _label.text),
                 )
               : null,
           child: const Text('Save'),

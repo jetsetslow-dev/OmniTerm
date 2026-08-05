@@ -62,10 +62,7 @@ class _RefreshCountdownState extends State<_RefreshCountdown> {
       padding: const EdgeInsets.only(bottom: 6),
       child: Text(
         [
-          if (age == null)
-            'Waiting for the first sample'
-          else
-            'Sampled ${_ago(age)}',
+          if (age == null) 'Waiting for the first sample' else 'Sampled ${_ago(age)}',
           if (!remaining.isNegative) 'next in ${remaining.inSeconds + 1}s' else 'refreshing…',
         ].join(' · '),
         style: TextStyle(

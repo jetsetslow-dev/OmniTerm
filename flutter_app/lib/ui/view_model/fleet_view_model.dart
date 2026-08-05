@@ -72,10 +72,7 @@ class FleetViewModel extends ChangeNotifier {
 
   /// When each of those readings was taken, for the chart's end labels.
   List<int> historyTimestampsFor(int serverId) =>
-      poller
-          ?.historyForServer(serverId)
-          .map((s) => s.at.millisecondsSinceEpoch)
-          .toList() ??
+      poller?.historyForServer(serverId).map((s) => s.at.millisecondsSinceEpoch).toList() ??
       const [];
 
   /// Why [server] scores what it does, from the same config and readings the poller scored with.

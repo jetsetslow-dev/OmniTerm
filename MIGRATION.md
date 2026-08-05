@@ -483,31 +483,42 @@ that **future versions will fail to build** on this. Not blocking today; track u
 
 ## 8. Recovery procedure (read this after any context loss)
 
+**Read §22 first** — it is the one-page statement of where the port stands. Then:
+
 1. `cd /home/sbvino/Omniterm && git branch --show-current` → must be `migration-to-flutter`.
+   The branch is pushed; `git status` should be clean apart from untracked `shared/`.
 2. `export PATH="/home/sbvino/sdks/flutter/bin:$PATH"` (Flutter is NOT on PATH by default).
-3. Read this file's [Progress log](#14-progress-log) — the last entry is the resume point.
-4. `git log --oneline origin/main..HEAD` shows everything committed so far this migration.
-5. Check the task list (TaskList tool) for per-phase status.
+   Everything below runs from `flutter_app/`.
+3. **§22** for the current state, **§21** for what is left before cut-over, **§18** for the
+   per-screen gap list. The [Progress log](#14-progress-log) is the narrative; the last entry is the
+   most recent iteration, not necessarily the next thing to do.
+4. `git log --oneline origin/main..HEAD` is every commit of this migration.
+5. **Before writing code**, read §19 (how to validate on a device here) and §20 (the recurring
+   failure patterns from the Kotlin history). §19.1–§19.7 are lessons about the *probes themselves*
+   and will save a wasted emulator run.
 6. Legacy behaviour questions are answered by `app/src/main/java/com/jetsetslow/omniterm/…`
    (never deleted until final cut-over) and by `docs/`.
-7. Resume at the first ⬜/🟨 row in §3, honouring the phase order in §9.
+7. Pick the next item from §21, honouring the phase order in §9.
 
 ---
 
 ## 9. Phase order
 
-1. **Scaffold** — Flutter project, deps, CI, analysis options. *(in progress)*
-2. **Theme + shell** — `OmniColors`, typography, `OmniAppBar`, `OmniBottomNav`, `AppCoreScaffold`,
-   15-screen routing. Gives a navigable skeleton early.
-3. **Data layer** — Drift tables/DAOs/repository + secret store.
-4. **Pure-logic ports** — `RemoteParsers`, `HealthScoring`, validators, encoders (these carry their
-   unit tests across and are the safest, highest-value early wins).
-5. **SSH transport** — dartssh2 behind the existing `SshTransport` interface.
-6. **Terminal** — emulator + tmux + shell screen.
-7. **Feature screens** — Servers → Monitor → Infra → Fleet → SFTP → Tools.
-8. **Shares** — pending the §7.1 decision.
-9. **Platform integrations** — billing, ads, notifications, widgets, background.
-10. **Cut-over** — flavors, CI, release signing, then retire `app/`.
+1. ✅ **Scaffold** — Flutter project, deps, CI, analysis options.
+2. ✅ **Theme + shell** — `OmniColors`, typography, `OmniAppBar`, `OmniBottomNav`,
+   `AppCoreScaffold`, 15-screen routing.
+3. ✅ **Data layer** — Drift tables/DAOs/repository + secret store.
+4. ✅ **Pure-logic ports** — `RemoteParsers`, `HealthScoring`, validators, encoders.
+5. ✅ **SSH transport** — dartssh2 behind the existing `SshTransport` interface.
+6. ✅ **Terminal** — emulator + tmux + shell screen, including reflow (session 79) and control mode
+   (session 82).
+7. ✅ **Feature screens** — every screen is ported with no placeholder tabs left. The remaining
+   per-screen gaps are individually listed in §18; the substantial ones are the Compose Builder and
+   SFTP cross-host copy/move.
+8. 🟨 **Shares** — Android SMB done; **iOS SMB parked** for want of a macOS toolchain (§18).
+9. ⬜ **Platform integrations** — billing, ads, notifications, widgets, background. **This is the
+   next phase**, and the largest remaining body of work (§21 item 2).
+10. ⬜ **Cut-over** — flavors, CI, release signing, then retire `app/`.
 
 ---
 
@@ -4926,3 +4937,69 @@ already shows exactly those, and the foreground-service notification already nam
 surface for the same fact is how two of them end up disagreeing.
 
 **Verified — 5 new tests; 1814 host tests pass, `analyze` clean.**
+
+---
+
+## 22. Where the port stands (written at the end of session 83)
+
+The one page to read after a context loss. Everything here was true at commit `7049935`.
+
+### The shape of it
+
+| | |
+|---|---|
+| Branch | `migration-to-flutter`, pushed to origin. 94 commits ahead of `main`. |
+| Code | `flutter_app/` — 145 hand-written Dart files (excluding generated), 84 test files. |
+| Tests | **1814 host tests pass.** `flutter test` from `flutter_app/`. |
+| Gates | `dart format --output=none --set-exit-if-changed --line-length 100 .`, `flutter analyze --fatal-infos`, `flutter test` — all clean, and all three are what CI runs (§12). |
+| Debug build | `com.jetsetslow.omniterm.app.flutter`, label **OmniTerm Flutter**, installs beside the shipped Kotlin app. `flutter build apk --debug`. |
+| Upstream | **PR #77** on `fix/kotlin-parity-defects` carries six defects this port found in the Kotlin app. |
+
+### What is finished
+
+Every one of the 15 screens is ported, and **no tab anywhere renders a "not available in this
+build" placeholder**. Behind them: the Drift data layer with an encrypted secret store, the dartssh2
+transport with host-key pinning, the terminal (emulator, tmux attach/resume, control mode, reflow),
+the telemetry poller that makes every live number live, alert evaluation, backup/restore of all
+eleven sections, and the CI pipeline including a tag-driven release to the Play internal track.
+
+### What is not
+
+§21 is the cut-over checklist and is the authoritative list. In one line: **platform integrations
+(billing, ads, notifications, widgets, background) are the next phase and have not been started**;
+**iOS SMB is parked** for want of a macOS toolchain; the **Compose Builder** and **SFTP cross-host
+copy/move** are the two substantial per-screen gaps; and no release has ever been built with the
+real signing key.
+
+### How to work on it here
+
+```bash
+export PATH="/home/sbvino/sdks/flutter/bin:$PATH"
+cd /home/sbvino/Omniterm/flutter_app
+
+flutter test                      # 1814 tests, ~90s
+flutter analyze --fatal-infos
+flutter build apk --debug         # → build/app/outputs/flutter-apk/app-debug.apk
+
+../scripts/test-hosts.sh up       # the SSH lab (§19)
+../scripts/test-hosts.sh status
+```
+
+The emulator reaches the lab at `10.0.2.2`; credentials are in gitignored
+`scripts/test-hosts/.env`. **Which port takes which credential matters** and has cost two probe runs
+already: 2201 and 2203 are password, 2202 and 2204 are key-only. The emulator needs Xvfb — the exact
+recipe is in §19.
+
+Device validation is done by writing a temporary `integration_test/zz_probe_test.dart`, running it
+with `flutter test integration_test/zz_probe_test.dart -d emulator-5554`, reading its `debugPrint`
+output, and **deleting it afterwards** — it is never committed. §19.1–§19.7 are the accumulated
+lessons about writing those probes, and every one of them was learned by wasting a run.
+
+### Three habits this log is built on
+
+1. **Validate on a device before saying something works.** A green host suite is not evidence that a
+   screen opens (§19, and the user mandate that created it).
+2. **When a probe disagrees with a test, believe neither.** Measure from outside — a screenshot, or
+   the server itself (§19.2). Several "defects" here turned out to be the probe.
+3. **Fix the Kotlin's flaws rather than porting them**, and write down *why* in the code. Requirement
+   9 is the reason §15 and §20 exist, and PR #77 is where those fixes go back upstream.
