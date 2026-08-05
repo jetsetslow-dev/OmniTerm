@@ -20,6 +20,7 @@ import 'platform/screen_security.dart';
 import 'platform/session_service.dart';
 import 'ui/view_model/app_lock_controller.dart';
 import 'ui/view_model/host_status_probe.dart';
+import 'ui/view_model/tunnel_autostart.dart';
 import 'ui/widgets/app_lock_gate.dart';
 import 'ui/widgets/host_key_approval_host.dart';
 import 'ui/app_scaffold.dart';
@@ -153,6 +154,15 @@ class OmniTermApp extends StatelessWidget {
         // Nothing else keeps `status` current, and Monitor, Infra, Fleet, SFTP and the terminal all
         // offer only hosts that are online — so without this sweep the app reads as empty
         // everywhere (§15.8).
+        // Same reason as the probe below: nothing reads this, so without `lazy: false` the tunnels
+        // marked "start when OmniTerm opens" would never start.
+        Provider<TunnelAutoStarter>(
+          lazy: false,
+          create: (context) => TunnelAutoStarter(
+            context.read<AppState>().repository,
+            context.read<SshTunnelManager>(),
+          )..start(),
+        ),
         ChangeNotifierProvider<HostStatusProbe>(
           // `lazy: false` matters: nothing in the widget tree reads this provider, so with the
           // default it would never be constructed and the sweep would never run.

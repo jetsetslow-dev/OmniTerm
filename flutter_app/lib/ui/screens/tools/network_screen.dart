@@ -1130,6 +1130,41 @@ class _TunnelEditorSheetState extends State<_TunnelEditorSheet> {
                 onChanged: (_) => setState(() {}),
               ),
             ],
+            const SizedBox(height: 10),
+            // What this mode actually does, in a sentence. The flags are the precise name and the
+            // sentence is the explanation; showing only one of the two leaves somebody guessing.
+            Text(
+              switch (_kind) {
+                'remote' =>
+                  'The SSH host listens on the bind port and forwards back to a '
+                      'destination reachable from this device.',
+                'dynamic' =>
+                  'Opens a SOCKS5 proxy on the bind address; point apps at it to route '
+                      'through the SSH host.',
+                _ =>
+                  'This device listens on the bind address and forwards to a destination '
+                      'reachable from the SSH host.',
+              },
+              key: const ValueKey('tunnelEditor.explain'),
+              style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            ),
+            SwitchListTile(
+              key: const ValueKey('tunnelEditor.autoStart'),
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Start when OmniTerm opens', style: TextStyle(fontSize: 13)),
+              subtitle: Text(
+                // Saying the lifetime plainly: a tunnel is not a system service, and a user who
+                // expects it to survive the app being closed would be wrong in a way that matters.
+                'Only while the app is running — closing OmniTerm takes the tunnel down.',
+                style: TextStyle(
+                  fontSize: 11,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              value: _autoStart,
+              onChanged: (v) => setState(() => _autoStart = v),
+            ),
             if (failure != null)
               Padding(
                 padding: const EdgeInsets.only(top: 10),

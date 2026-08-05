@@ -1279,9 +1279,10 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
 - **WHOIS** — a plain TCP query to port 43 and a text response; straightforward, just not done.
 - **Speed test** — needs a bandwidth endpoint and a policy on how much data to pull on a metered
   connection. Worth a product decision before implementing.
-- ~~**Tunnels**~~ — **done in session 60.** The Kotlin's ninth Network tab: saved local (`-L`),
-  remote (`-R`) and dynamic (`-D`) forwards, started and stopped from a switch. `autoStart` is
-  stored but nothing acts on it yet.
+- ~~**Tunnels**~~ — **done in sessions 60-61.** The Kotlin's ninth Network tab: saved local (`-L`),
+  remote (`-R`) and dynamic (`-D`) forwards, started and stopped from a switch, plus "start when
+  OmniTerm opens" (`TunnelAutoStarter`). **Auto-start is host-tested but not device-verified** —
+  see the note in §19.3.
 
 **Scripts (session 28):**
 - **Per-OS / per-platform filtering of quick scripts** — the columns (`targetOs`, `targetSystem`) are
@@ -2851,6 +2852,20 @@ containers and would fail on any other checkout — see `tests-must-be-host-inde
 in the scratchpad, run them, delete them, and land a *host-independent* regression test instead:
 §15.11's proxy tests bind their own loopback server rather than talking to the lab.
 
+### 19.3 `flutter test integration_test/` uninstalls the app between runs (session 61)
+
+A device check that needs state to *survive a restart* cannot be built from two `flutter test` runs:
+the harness installs, runs and **uninstalls**, so the second run starts from an empty database.
+
+This cost a wrong diagnosis. Tunnel auto-start was checked by marking a tunnel in one run and
+launching in the next; the port was not listening, which read as a defect, and production code was
+changed on that reading. The truth was that the second run had no saved tunnel at all — there was
+nothing to start. §19.2's rule applied again, one level up: *the absence of an effect is not
+evidence of a broken cause when the cause was never present.*
+
+To verify anything that must outlive a launch, install the APK yourself (`flutter build apk --debug`
++ `adb install`) and drive it outside the test harness, or seed the database through `run-as`.
+
 ### 19.2 A live-binding probe can lie about widget state (session 59)
 
 `tester.widget<T>(finder)` under `LiveTestWidgetsFlutterBinding` — what an `integration_test` flow
@@ -3860,3 +3875,42 @@ more guess.
 
 **Verified — 17 new tests (10 domain, 7 widget); 1539 host tests pass, `analyze --fatal-infos`
 clean; the forward carries real HTTP on Android 15.**
+
+---
+
+### Session 61 — tunnel auto-start, and a diagnosis that was wrong twice
+
+Two gaps left over from session 60, both closed:
+
+- **The `autoStart` column had no switch.** It has existed since the first schema and nothing could
+  set it — storage with no way in. The editor now offers it, and says plainly what it means: *only
+  while the app is running — closing OmniTerm takes the tunnel down.* A user who expected a system
+  service would otherwise be wrong in a way that matters.
+- **Nothing acted on it.** `TunnelAutoStarter` brings those tunnels up once per app lifetime,
+  registered `lazy: false` for the same reason the status probe is (§15.8): nothing in the widget
+  tree reads it, so with the default it would never be constructed at all.
+
+Three properties of the starter are decisions, not details: it runs **once** (the saved list is a
+stream, and starting from it would re-dial a tunnel every time an unrelated one was renamed);
+failures are **silent there** and reported on the tunnel's own card (a host asleep at launch must
+not throw a banner over whatever screen the user opened to); and one tunnel failing **does not stop
+the next**, because launch is exactly when a machine is most likely to be unreachable.
+
+The editor also gained the per-mode explanation the Kotlin shows. The flags are the precise name;
+the sentence is what they mean. Showing only one of the two leaves somebody guessing.
+
+**The device pass produced a wrong diagnosis, twice over, and no confirmed defect.** Auto-start was
+checked by marking a tunnel in one run and launching in the next. The port was not listening — which
+looked like the eager starter racing the host list, so it was changed to read hosts from the
+repository. It still was not listening. The actual reason is now §19.3: **`flutter test
+integration_test/` uninstalls the app between runs**, so the second launch had an empty database and
+there was never a tunnel to start.
+
+The repository change was kept, because it is right on its own terms — the starter runs before
+`AppState.start()` finishes and the in-memory list can legitimately be empty — but **the comment
+claiming a device observation was corrected to say what was reasoned rather than what was seen.**
+That distinction is the whole point of §19.2, and this is the second session running where it
+mattered more than any code.
+
+**Verified — 8 new tests (6 auto-starter, 2 editor); 1547 host tests pass, `analyze --fatal-infos`
+clean. Auto-start is host-tested only; §19.3 records how to check it on a device.**

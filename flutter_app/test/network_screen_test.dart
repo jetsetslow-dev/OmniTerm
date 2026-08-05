@@ -389,6 +389,8 @@ void main() {
       save = tester.widget<FilledButton>(find.byKey(const ValueKey('tunnelEditor.save')));
       expect(save.onPressed, isNotNull);
 
+      await tester.ensureVisible(find.byKey(const ValueKey('tunnelEditor.save')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('tunnelEditor.save')));
       await tester.pumpAndSettle();
 
@@ -417,6 +419,55 @@ void main() {
         findsNothing,
         reason: 'SOCKS decides its destination per connection',
       );
+      await finish(tester);
+    });
+
+    testWidgets('auto-start is offered, saved, and honest about its lifetime', (tester) async {
+      // The column existed from the first schema and nothing set it, so a tunnel could never be
+      // marked to start on its own — the field was storage with no way in.
+      await repo.insertServer(host(name: 'nas'));
+      await pump(tester, FakeProbe(), tunnels: SshTunnelManager((_) async => throw 'never'));
+      await goTo(tester, NetworkTab.tunnels);
+
+      await tester.tap(find.byKey(const ValueKey('tunnels.add')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('tunnelEditor.name')), 'web');
+      await tester.enterText(find.byKey(const ValueKey('tunnelEditor.bindPort')), '8080');
+      await tester.enterText(find.byKey(const ValueKey('tunnelEditor.destHost')), '10.0.0.5');
+      await tester.enterText(find.byKey(const ValueKey('tunnelEditor.destPort')), '80');
+      await tester.pumpAndSettle();
+
+      // A tunnel is not a system service, and a user who expected it to outlive the app would be
+      // wrong in a way that matters.
+      expect(find.textContaining('closing OmniTerm takes the tunnel down'), findsOneWidget);
+
+      await tester.ensureVisible(find.byKey(const ValueKey('tunnelEditor.autoStart')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('tunnelEditor.autoStart')));
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const ValueKey('tunnelEditor.save')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('tunnelEditor.save')));
+      await tester.pumpAndSettle();
+
+      expect((await repo.getAllPortForwards()).single.autoStart, isTrue);
+      await finish(tester);
+    });
+
+    testWidgets('each mode explains itself, not just its flag', (tester) async {
+      await repo.insertServer(host(name: 'nas'));
+      await pump(tester, FakeProbe(), tunnels: SshTunnelManager((_) async => throw 'never'));
+      await goTo(tester, NetworkTab.tunnels);
+
+      await tester.tap(find.byKey(const ValueKey('tunnels.add')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('This device listens'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('tunnelEditor.kind')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('-D  SOCKS5 proxy').last);
+      await tester.pumpAndSettle();
+      expect(find.textContaining('SOCKS5 proxy on the bind address'), findsOneWidget);
       await finish(tester);
     });
 
