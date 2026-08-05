@@ -124,6 +124,13 @@ class HealthScoringConfig {
 
   static const defaults = HealthScoringConfig();
 
+  /// Where the encoded config lives in `app_settings`.
+  ///
+  /// On the config rather than on the Settings screen's view model: the telemetry poller reads it
+  /// every cycle to score each host, and two spellings of the same key would leave the poller
+  /// scoring with the defaults while the user's own thresholds sat in the database.
+  static const settingKey = 'health_scoring';
+
   int score(double cpuPct, double ramPct, double diskPct, int rtt) =>
       (100 -
               cpu.penaltyFor(cpuPct) -

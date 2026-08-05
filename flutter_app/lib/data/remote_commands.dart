@@ -185,6 +185,13 @@ String killProcessCommand(int pid, {int signal = 15}) => 'kill -$signal $pid 2>&
 
 // ── host metrics ───────────────────────────────────────────────────────────────
 
+/// Asks the host what it is, once, before any command that has per-OS variants.
+///
+/// Windows has no `uname`, so it is identified by the *failure*: whatever its shell says when the
+/// command is not found, `normaliseOs` recognises. The fallback echo means the reply is never empty,
+/// which would otherwise be indistinguishable from an unreachable host.
+const osProbeCommand = 'uname -s 2>/dev/null || echo Windows';
+
 /// Linux host metrics: one round trip, sections delimited by `@NAME` markers that
 /// `parseMetrics` splits on. Every probe is `|| true` so a missing tool degrades one section rather
 /// than failing the whole poll.

@@ -375,6 +375,38 @@ class HostMetrics {
   int get netRxPerSec => netInterfaces.fold(0, (a, i) => a + i.rxPerSec);
   int get netTxPerSec => netInterfaces.fold(0, (a, i) => a + i.txPerSec);
 
+  /// Replaces only the fields the telemetry poller derives from two probes (`telemetry_sampling`).
+  ///
+  /// Deliberately not a full copyWith: everything else in a sample is a reading, and a reading is
+  /// replaced by taking another one, not by editing the one you have.
+  HostMetrics copyWith({
+    double? cpuPercent,
+    List<double>? perCoreCpu,
+    List<NetInterface>? netInterfaces,
+    int? diskReadPerSec,
+    int? diskWritePerSec,
+  }) => HostMetrics(
+    cpuPercent: cpuPercent ?? this.cpuPercent,
+    memUsedBytes: memUsedBytes,
+    memTotalBytes: memTotalBytes,
+    diskUsedBytes: diskUsedBytes,
+    diskTotalBytes: diskTotalBytes,
+    load1: load1,
+    load5: load5,
+    load15: load15,
+    uptimeSeconds: uptimeSeconds,
+    procCount: procCount,
+    perCoreCpu: perCoreCpu ?? this.perCoreCpu,
+    cpuTempC: cpuTempC,
+    tcpConnections: tcpConnections,
+    disks: disks,
+    netInterfaces: netInterfaces ?? this.netInterfaces,
+    diskReadPerSec: diskReadPerSec ?? this.diskReadPerSec,
+    diskWritePerSec: diskWritePerSec ?? this.diskWritePerSec,
+    os: os,
+    platforms: platforms,
+  );
+
   static const empty = HostMetrics(
     cpuPercent: 0,
     memUsedBytes: 0,

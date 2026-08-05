@@ -10,6 +10,7 @@ import 'package:omniterm/data/ssh/ssh_transport.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/monitor_view_model.dart';
+import 'package:omniterm/ui/view_model/telemetry_poller.dart';
 
 import 'support/fake_secure_storage.dart';
 
@@ -485,6 +486,93 @@ void main() {
       await vm.loadServices();
       expect(vm.error, isNotNull);
       expect(vm.services, isEmpty);
+      vm.dispose();
+    });
+  });
+
+  group('the fleet telemetry poller', () {
+    /// Ten percent of memory used, in the shapes `free -b` and `df -PB1 /` actually print.
+    const reply =
+        '@OS\nLinux\n'
+        '@MEM\nMem: 100 10 0 0 0 90\n'
+        '@DISK\n/dev/sda1 100 1 1 1% /\n';
+
+    test('Monitor shows the poller\'s sample without fetching for itself', () async {
+      // Two loops fetching the same numbers on different cadences is how one screen ends up
+      // disagreeing with another about the same host.
+      final id = await repo.insertServer(server(name: 'a'));
+      await app.start();
+      await Future<void>.delayed(Duration.zero);
+
+      final transport = RecordingTransport(fallback: reply);
+      final poller = TelemetryPoller(app, transport: transport);
+      final vm = MonitorViewModel(app, poller: poller);
+      await poller.cycle();
+
+      expect(vm.monitoredServer?.id, id);
+      expect(vm.metrics.memPercent, closeTo(10, 0.001));
+      vm.dispose();
+      poller.dispose();
+    });
+
+    test('the countdown and the sample age come from the poller, not a second timer', () async {
+      await repo.insertServer(server(name: 'a'));
+      await app.start();
+      await Future<void>.delayed(Duration.zero);
+
+      final at = DateTime(2026, 8, 5, 12);
+      final poller = TelemetryPoller(
+        app,
+        transport: RecordingTransport(fallback: reply),
+        interval: const Duration(seconds: 15),
+        clock: () => at,
+      );
+      final vm = MonitorViewModel(app, poller: poller);
+
+      expect(vm.nextRefreshAt, isNull, reason: 'nothing has been sampled yet');
+      await poller.cycle();
+
+      expect(vm.nextRefreshAt, at.add(const Duration(seconds: 15)));
+      expect(vm.metricsSampledAt, at);
+      vm.dispose();
+      poller.dispose();
+    });
+
+    test("the age describes the reading on screen, whichever loop fetched it", () async {
+      // Found on a device: for the first fifteen seconds Overview showed its own fetch while the
+      // line above it said "waiting for the first sample", which reads as "do not trust these".
+      await repo.insertServer(server(name: 'a'));
+      await app.start();
+      await Future<void>.delayed(Duration.zero);
+
+      final poller = TelemetryPoller(app, transport: RecordingTransport(fallback: reply));
+      final vm = MonitorViewModel(app, transport: RecordingTransport(fallback: reply), poller: poller);
+      expect(vm.metricsSampledAt, isNull, reason: 'nothing has been fetched at all yet');
+
+      await vm.loadHostMetrics();
+      for (var i = 0; i < 5 && vm.metrics.memTotalBytes == 0; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(vm.metricsSampledAt, isNotNull);
+      vm.dispose();
+      poller.dispose();
+    });
+
+    test('with no poller Monitor still fetches for itself', () async {
+      // Every build without SSH wired, and the manual refresh in the ones that have it.
+      await repo.insertServer(server(name: 'a'));
+      final vm = await boot(transport: RecordingTransport(fallback: reply));
+      await Future<void>.delayed(Duration.zero);
+      await vm.loadHostMetrics();
+      // The host list re-emitting starts a load of its own, and the generation guard keeps the
+      // newer one — so the figure lands a turn later than the call that asked for it.
+      for (var i = 0; i < 5 && vm.metrics.memTotalBytes == 0; i++) {
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      expect(vm.nextRefreshAt, isNull);
+      expect(vm.metrics.memPercent, closeTo(10, 0.001));
       vm.dispose();
     });
   });

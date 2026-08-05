@@ -10,6 +10,7 @@ import '../../data/ssh/ssh_transport.dart';
 import '../../domain/server_credentials.dart';
 import '../../domain/operation_generation.dart';
 import 'app_state.dart';
+import 'telemetry_poller.dart';
 
 /// The Monitor screen's six sub-tabs, in the Kotlin's order (`ui/MonitorScreen.kt` line 100).
 enum MonitorTab { overview, processes, services, logs, scripts, cron }
@@ -19,11 +20,50 @@ enum MonitorTab { overview, processes, services, logs, scripts, cron }
 /// Holds what Monitor needs — the host it is showing, the active tab, and each tab's loaded data —
 /// and reads the host list from the shared [AppState] rather than keeping a second copy.
 class MonitorViewModel extends ChangeNotifier {
-  MonitorViewModel(this._app, {this.transport}) {
+  MonitorViewModel(this._app, {this.transport, this.poller}) {
     _app.addListener(_onAppChanged);
+    poller?.addListener(_onTelemetrySample);
   }
 
   final AppState _app;
+
+  /// The fleet-wide telemetry loop, when one is running.
+  ///
+  /// Monitor does not poll for itself: this screen showing live numbers while every other screen
+  /// showed stale ones is how the two disagree. It adopts the poller's sample for whichever host it
+  /// is showing, and keeps [loadHostMetrics] for the manual refresh and for builds with no poller.
+  final TelemetryPoller? poller;
+
+  /// When the next telemetry cycle is due, for the countdown. Null without a poller.
+  DateTime? get nextRefreshAt => poller?.nextCycleAt;
+
+  /// When the sample **on screen** was taken, whichever loop fetched it.
+  ///
+  /// Not simply the poller's timestamp: Monitor fetches once itself when Overview opens, and for
+  /// the first fifteen seconds that is the reading being displayed. Reporting "waiting for the
+  /// first sample" beside a screen full of real numbers — which is what a device run showed — tells
+  /// the user the figures are not to be trusted when they are.
+  DateTime? get metricsSampledAt {
+    final server = monitoredServer;
+    final polled = server == null ? null : poller?.sampledAtFor(server.id);
+    if (polled == null) return _metricsAt;
+    if (_metricsAt == null) return polled;
+    return polled.isAfter(_metricsAt!) ? polled : _metricsAt;
+  }
+
+  DateTime? _metricsAt;
+
+  void _onTelemetrySample() {
+    final server = monitoredServer;
+    if (server == null) return;
+    final sample = poller?.metricsForServer(server.id);
+    // The poller notifies at the start and end of every cycle too; only a real sample replaces what
+    // is on screen.
+    if (sample == null) return;
+    _metrics = sample;
+    _metricsAt = poller?.sampledAtFor(server.id);
+    _safeNotify();
+  }
 
   /// Null in tests and in any build without a transport wired; every loader then reports that
   /// monitoring is unavailable rather than showing an empty tab that looks like a healthy host with
@@ -92,6 +132,7 @@ class MonitorViewModel extends ChangeNotifier {
     _logsUnsupported = false;
     _servicesUnsupported = false;
     _metrics = HostMetrics.empty;
+    _metricsAt = null;
     _expandedProcessPid = null;
     _actionFeedback = null;
     _error = null;
@@ -145,6 +186,7 @@ class MonitorViewModel extends ChangeNotifier {
         final parsed = parseMetrics(out, host: server.host);
         return () {
           _metrics = parsed;
+          _metricsAt = DateTime.now();
           if (parsed.os.isNotEmpty) _app.recordOsForServer(server.id, parsed.os);
         };
       },
@@ -429,6 +471,7 @@ class MonitorViewModel extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _liveTimer?.cancel();
+    poller?.removeListener(_onTelemetrySample);
     _app.removeListener(_onAppChanged);
     super.dispose();
   }

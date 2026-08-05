@@ -1327,12 +1327,12 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
 
 **Monitor (session 22):**
 - **Scripts and CRON tabs** — not ported; both render a note saying so rather than a blank pane.
-- **Overview sparklines** (`MetricLineChart`) and the **health-breakdown dialog** — both need the
-  telemetry history poller, which is not ported. Overview shows current numbers only.
-- **The telemetry poller itself** — the Kotlin polls every host on a 15s cadence and feeds the
-  refresh countdown, the per-host metrics map and the alert evaluation. Monitor currently fetches
-  metrics on demand when its Overview tab opens, so there is no countdown ring and no background
-  refresh.
+- **Overview sparklines** (`MetricLineChart`) and the **health-breakdown dialog** — the data both
+  need now exists (session 72: `TelemetryPoller.historyForServer` in memory, `metric_history` on
+  disk); the widgets are not drawn yet.
+- ~~**The telemetry poller itself**~~ — **done in session 72.** Every online host is probed on a 15s
+  cadence; the sample feeds Monitor, the health score column and the retained history, and the
+  cadence is what the Overview countdown is anchored to. Alert evaluation still reads on demand.
 
 Capabilities where the Dart port does not yet match the Kotlin. Each needs a decision, not silence.
 
@@ -4281,3 +4281,62 @@ makes every subsequent folder look empty.
 **Verified — 2 new tests; 1635 host tests pass, `analyze` clean; measure-size, host search, the
 refused read, the sudo read and the sudo write all exercised on the device, and the write confirmed
 on the server.**
+
+### Session 72 — the telemetry poller: the app's numbers become live (task #7)
+
+Until now nothing in the port polled anything. Monitor fetched metrics when its Overview tab opened
+and never again, `metric_history` was written by nobody so every chart had an empty table to read,
+and **every host's health score sat at the 100 it was inserted with** — the column exists, the
+scoring config exists and is editable in Settings, and no code had ever computed a score from a
+reading. `TelemetryPoller` (`ui/view_model/telemetry_poller.dart`) closes all three.
+
+It is deliberately **not** merged into `HostStatusProbe`. That one answers "is the SSH port open",
+cheaply, for every saved host including the ones that are down. This one authenticates and runs a
+command, so it visits **only hosts already believed online** — asking a host that is down for its
+metrics can only time out, once per host per cycle, forever. It also never writes `status`: a
+metrics command failing says nothing certain about reachability, and writing it from here would
+fight the probe that actually measured it.
+
+The delta arithmetic is a separate pure file (`domain/telemetry_sampling.dart`, convention 3),
+because that is the part that is wrong in ways nobody notices. A host reports **cumulative
+counters**; every rate on the screen is a difference divided by a window. Four rules, each a test:
+
+| case | what this port does | what the Kotlin does |
+| --- | --- | --- |
+| First probe of a host | rates are 0, CPU falls back to what `top` reported — "not measured yet", not "idle" | same |
+| A counter that went **backwards** (reboot, interface recreated) | 0 for that device, and the next window measures normally | clamps to 0 per device, same outcome |
+| Two probes **closer than a second** (a manual refresh right after a cycle) | repeats the last measured rates, and **does not become the baseline** | divides by the fraction of a second and renders the spike |
+| A host with no `/proc/net/dev` (BSD, macOS) | keeps the netstat totals the probe already carried | same |
+
+Three smaller fixes went in with it. The per-host baselines, samples and history are **dropped when
+a host is deleted** — the Kotlin's maps are keyed by row id and never pruned, so a new host reusing
+a freed id inherits a stranger's counters and measures its first window against a machine it has
+never met. The persisted `network_in`/`network_out` columns get the real rates; the Kotlin writes
+`0f` into both on every sample, so its retained network chart can only ever be flat. And
+`HealthScoringConfig.settingKey` moved onto the config from the Settings view model, so the poller
+scores with the user's own thresholds rather than a second spelling of the key finding nothing.
+
+Monitor adopts the poller's sample rather than running a second loop — two loops fetching the same
+numbers on different cadences is how one screen ends up disagreeing with another about one host. Its
+own fetch stays for the manual refresh and for builds with no transport.
+
+**On the device, against the lab, over 40s:**
+
+```
+t+0s  Waiting for the first sample · next in 15s   cpu = 0%    health = 100
+t+10s Sampled 10s ago · next in 3s                 cpu = 25%   health = 100
+t+20s Sampled 7s ago · next in 7s                  cpu = 22%   health = 88
+t+30s Sampled just now · next in 10s               cpu = 20%   health = 88
+```
+
+The countdown resetting is what proves a cycle ran; the CPU figure moving is what proves it is
+measured rather than a cached number redrawn. **The health score moving off 100 is the column no
+code in this port had ever written.**
+
+The first device run also caught a wording defect the tests could not: for the first fifteen seconds
+the line said *"Waiting for the first sample"* above a screen of real numbers — Overview's own fetch
+— which reads as "do not trust these". `metricsSampledAt` now reports the age of whatever reading is
+on screen, whichever loop fetched it, and only says "waiting" when nothing has been fetched at all.
+
+**Verified — 29 new tests; 1664 host tests pass, `analyze` clean; the cadence, the moving CPU figure
+and the health score were all measured on the emulator against the lab.**

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../../data/app_database.dart';
@@ -9,6 +11,78 @@ import '../../widgets/omni_components.dart';
 
 /// The Monitor sub-tabs, ported from `OverviewTab` / `ProcessesTab` / `ServicesTab` / `LogsTab` in
 /// `ui/MonitorScreen.kt`.
+
+/// Says when these numbers were taken and when they will be taken again.
+///
+/// Ported from the Kotlin's refresh ring. It exists because a screen of live-looking figures gives
+/// no way to tell a host that is idle from one that stopped answering four minutes ago — the numbers
+/// look identical. The countdown is derived from the poller's own cycle rather than from a timer of
+/// its own, so it cannot drift away from the thing it is describing.
+class _RefreshCountdown extends StatefulWidget {
+  const _RefreshCountdown({required this.vm});
+
+  final MonitorViewModel vm;
+
+  @override
+  State<_RefreshCountdown> createState() => _RefreshCountdownState();
+}
+
+class _RefreshCountdownState extends State<_RefreshCountdown> {
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final next = widget.vm.nextRefreshAt;
+    final taken = widget.vm.metricsSampledAt;
+    // No poller in this build: no countdown to show, and inventing one would be a promise the app
+    // cannot keep.
+    if (next == null) return const SizedBox.shrink();
+
+    final now = DateTime.now();
+    final remaining = next.difference(now);
+    final age = taken == null ? null : now.difference(taken);
+
+    return Padding(
+      key: const ValueKey('monitor.overview.countdown'),
+      padding: const EdgeInsets.only(bottom: 6),
+      child: Text(
+        [
+          if (age == null)
+            'Waiting for the first sample'
+          else
+            'Sampled ${_ago(age)}',
+          if (!remaining.isNegative) 'next in ${remaining.inSeconds + 1}s' else 'refreshing…',
+        ].join(' · '),
+        style: TextStyle(
+          fontSize: 10,
+          fontFamily: OmniFonts.mono,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
+      ),
+    );
+  }
+
+  static String _ago(Duration age) {
+    if (age.inSeconds < 5) return 'just now';
+    if (age.inMinutes < 1) return '${age.inSeconds}s ago';
+    if (age.inHours < 1) return '${age.inMinutes}m ago';
+    return '${age.inHours}h ago';
+  }
+}
 
 /// CPU, memory, disks and uptime for the monitored host.
 class OverviewTab extends StatefulWidget {
@@ -41,6 +115,7 @@ class _OverviewTabState extends State<OverviewTab> {
       key: const ValueKey('monitor.overview'),
       children: [
         if (vm.metricsLoading) const LinearProgressIndicator(minHeight: 2),
+        _RefreshCountdown(vm: vm),
         OmniCard(
           key: const ValueKey('monitor.overview.cpu'),
           child: Column(

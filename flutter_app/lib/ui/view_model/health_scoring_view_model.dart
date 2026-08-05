@@ -14,8 +14,9 @@ class HealthScoringViewModel extends ChangeNotifier {
 
   final AppState _app;
 
-  /// Where the encoded config lives in `app_settings`.
-  static const settingKey = 'health_scoring';
+  /// Where the encoded config lives in `app_settings`. Owned by [HealthScoringConfig] because the
+  /// telemetry poller reads the same key; kept here as a name the screen already uses.
+  static const settingKey = HealthScoringConfig.settingKey;
 
   bool _disposed = false;
 
