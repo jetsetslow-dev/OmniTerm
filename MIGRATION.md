@@ -1273,9 +1273,11 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
 **Backup (session 31):**
 - ~~**Reading and writing the file itself.**~~ **Done in session 37** — the system document picker,
   via `BackupFileStore`.
-- **Sections not yet carried:** firing alerts, alert history, network shares, port forwards and
-  crash logs. The selection model already knows them and their dependencies; the serialiser does
-  not. Shares and port forwards are blocked on their own screens being ported.
+- ~~**Port forwards**~~ — **carried since session 67**, now that the Tunnels screen exists.
+- **Sections still not carried:** firing alerts, alert history, network shares and crash logs. The
+  selection model already knows them and their dependencies; the serialiser does not. Shares remain
+  blocked on their own screen; firing alerts and alert history are transient state and worth less
+  than the rest.
 
 **Network (session 30):**
 - **Traceroute** — needs per-hop TTL control, which `dart:io`'s `Socket` does not expose. Options:
@@ -4101,3 +4103,28 @@ with something about credentials.
 clean.** Not device-checked this session: the behaviour here is list construction and a row delete,
 both fully observable host-side, and the attach path underneath it was measured against the lab in
 sessions 64-65.
+
+---
+
+### Session 67 — a backup that carries your tunnels (task #7)
+
+§18 listed port forwards as "blocked on their own screen being ported". That screen was built in
+session 60, so the block was gone and the gap was just unnoticed — **a backup was quietly omitting
+every tunnel**, which meant restoring one produced a setup that looked complete and could not
+actually reach anything.
+
+Carried now, with the same host-remapping rule alert rules already use. Two decisions:
+
+- **A tunnel whose host is not in the backup is skipped and counted, never guessed at.** Restoring
+  it against an arbitrary host would forward a local port to a machine the user never chose — the
+  same reasoning as an orphaned alert rule, with a worse failure mode. The restore summary now names
+  both kinds of skip rather than only rules.
+- **A restored tunnel never comes back set to auto-start.** A backup carried to a new device would
+  otherwise open ports on it at first launch, before its owner had seen the tunnel exists.
+
+A detail the tests pin rather than assume: exporting tunnels **requires a passphrase**, because a
+tunnel row carries a host address and the port it exposes. The unencrypted path refuses the
+selection, which is `hasSensitiveData` doing its job.
+
+**Verified — 4 new tests; 1585 host tests pass, `analyze --fatal-infos` clean.** Host-side only,
+deliberately: this is serialisation and a row insert, and the device has nothing to add to either.

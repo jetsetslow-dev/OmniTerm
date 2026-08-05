@@ -95,6 +95,7 @@ class BackupViewModel extends ChangeNotifier {
         scripts: await repository.getAllScripts(),
         rules: await repository.getAllRules(),
         wolTargets: await repository.getAllWolTargets(),
+        portForwards: await repository.getAllPortForwards(),
         settings: await repository.getAllSettings(),
       );
 
@@ -179,14 +180,17 @@ class BackupViewModel extends ChangeNotifier {
       final restored = counts.entries
           .where((e) => !e.key.endsWith('Skipped'))
           .fold<int>(0, (sum, e) => sum + e.value);
-      final skipped = counts['alertRulesSkipped'] ?? 0;
+      // Naming every skip rather than hiding it: a rule silently missing after a restore is a rule
+      // no longer watching anything, and a missing tunnel is a port that never opens.
+      final skips = <String>[
+        if ((counts['alertRulesSkipped'] ?? 0) > 0) '${counts['alertRulesSkipped']} alert rule(s)',
+        if ((counts['portForwardsSkipped'] ?? 0) > 0) '${counts['portForwardsSkipped']} tunnel(s)',
+      ];
 
-      _status = skipped == 0
+      _status = skips.isEmpty
           ? 'Restored $restored items.'
-          // Naming the skip rather than hiding it: an alert rule silently missing after a restore
-          // is a rule that is no longer watching anything.
-          : 'Restored $restored items. $skipped alert rule(s) were skipped because the hosts they '
-                'watch were not in this backup.';
+          : 'Restored $restored items. ${skips.join(' and ')} were skipped because the hosts they '
+                'belong to were not in this backup.';
       return counts;
     } on BackupException catch (e) {
       _error = e.message;

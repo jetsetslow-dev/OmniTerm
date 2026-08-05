@@ -32,6 +32,7 @@ class BackupPayload {
     required List<QuickScript> scripts,
     required List<AlertRule> rules,
     required List<WolTarget> wolTargets,
+    required List<PortForward> portForwards,
     required List<AppSetting> settings,
   }) {
     final closed = selection.withReferentialClosure();
@@ -138,6 +139,22 @@ class BackupPayload {
       ];
     }
 
+    if (closed.contains(BackupSection.portForwards)) {
+      document['portForwards'] = [
+        for (final pf in portForwards)
+          {
+            'serverId': pf.serverId,
+            'name': pf.name,
+            'kind': pf.kind,
+            'bindHost': pf.bindHost,
+            'bindPort': pf.bindPort,
+            'destHost': pf.destHost,
+            'destPort': pf.destPort,
+            'autoStart': pf.autoStart,
+          },
+      ];
+    }
+
     if (closed.contains(BackupSection.wolTargets)) {
       document['wolTargets'] = [
         for (final target in wolTargets)
@@ -212,6 +229,19 @@ class BackupPayload {
       counts['scripts'] = (counts['scripts'] ?? 0) + 1;
     }
 
+    for (final raw in _list(document, 'portForwards')) {
+      final mapped = remapServerId(raw['serverId'] as int? ?? 0, serverIdMap);
+      // A tunnel with no host has nothing to run over. Restoring it against an arbitrary host would
+      // forward a port to a machine the user never chose — the same reasoning as an alert rule, with
+      // a worse failure mode.
+      if (mapped == null) {
+        counts['portForwardsSkipped'] = (counts['portForwardsSkipped'] ?? 0) + 1;
+        continue;
+      }
+      await repository.insertRestoredPortForward({...raw, 'serverId': mapped});
+      counts['portForwards'] = (counts['portForwards'] ?? 0) + 1;
+    }
+
     for (final raw in _list(document, 'alertRules')) {
       final mapped = remapServerId(raw['serverId'] as int? ?? 0, serverIdMap);
       // A rule whose host was not in the backup has nothing to watch. Restoring it against an
@@ -260,6 +290,7 @@ abstract interface class AppRepositoryLike {
   Future<void> insertRestoredScript(Map<String, dynamic> row);
   Future<void> insertRestoredRule(Map<String, dynamic> row);
   Future<void> insertRestoredWolTarget(Map<String, dynamic> row);
+  Future<void> insertRestoredPortForward(Map<String, dynamic> row);
   Future<void> insertRestoredSetting(String key, String value);
 }
 
@@ -372,6 +403,22 @@ class RepositoryRestoreTarget implements AppRepositoryLike {
       broadcastIp: Value(row['broadcastIp'] as String? ?? '255.255.255.255'),
       ipAddress: Value(row['ipAddress'] as String? ?? ''),
       port: Value(row['port'] as int? ?? 9),
+    ),
+  );
+
+  @override
+  Future<void> insertRestoredPortForward(Map<String, dynamic> row) => _repository.insertPortForward(
+    PortForwardsCompanion.insert(
+      serverId: row['serverId'] as int? ?? 0,
+      name: row['name'] as String? ?? 'Restored tunnel',
+      kind: Value(row['kind'] as String? ?? 'local'),
+      bindHost: Value(row['bindHost'] as String? ?? '127.0.0.1'),
+      bindPort: row['bindPort'] as int? ?? 0,
+      destHost: Value(row['destHost'] as String? ?? ''),
+      destPort: Value(row['destPort'] as int? ?? 0),
+      // Deliberately **not** restored as auto-start. A backup carried to a new device would
+      // otherwise open ports on it at first launch, before its owner had seen the tunnel exists.
+      autoStart: const Value(false),
     ),
   );
 

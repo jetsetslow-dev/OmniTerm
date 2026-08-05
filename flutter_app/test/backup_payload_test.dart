@@ -1,5 +1,7 @@
 import 'dart:convert';
 
+import 'package:drift/drift.dart' show Value;
+
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
@@ -421,5 +423,115 @@ void main() {
     );
     expect(kHomelabPresets, isNotEmpty, reason: 'the presets really were seeded');
     vm.dispose();
+  });
+
+  group('port forwards', () {
+    Future<void> addTunnel({int serverId = 1, String name = 'web', bool autoStart = true}) =>
+        repo.insertPortForward(
+          PortForwardsCompanion.insert(
+            serverId: serverId,
+            name: name,
+            kind: const Value('local'),
+            bindHost: const Value('127.0.0.1'),
+            bindPort: 8080,
+            destHost: const Value('10.0.0.5'),
+            destPort: const Value(80),
+            autoStart: Value(autoStart),
+          ),
+        );
+
+    test('tunnels are carried with the host they run over', () async {
+      // Blocked until the Tunnels screen existed (§18); a backup that quietly omitted them was a
+      // backup that could not restore a working setup.
+      await repo.insertServer(server(name: 'nas'));
+      await addTunnel();
+      final vm = await boot();
+      vm
+        ..selectNone()
+        ..toggleSection(BackupSection.portForwards, enabled: true);
+
+      final document = await exportedDocument(vm);
+      expect(document['portForwards'], hasLength(1));
+      final row = (document['portForwards'] as List).single as Map<String, dynamic>;
+      expect(row['name'], 'web');
+      expect(row['bindPort'], 8080);
+      // The host comes with it, because a tunnel without one has nothing to run over.
+      expect(document['servers'], hasLength(1));
+      vm.dispose();
+    });
+
+    test('a restored tunnel points at the restored host, not the old id', () async {
+      await repo.insertServer(server(name: 'nas'));
+      await addTunnel();
+      final vm = await boot();
+      vm
+        ..selectNone()
+        ..toggleSection(BackupSection.portForwards, enabled: true);
+      // A passphrase is required here, not incidental: a tunnel carries a host's address and the
+      // port it exposes, so the selection counts as sensitive and an unencrypted export is refused.
+      final contents = await vm.exportBackup('pass');
+      await settle();
+
+      final counts = await vm.importBackup(contents!, 'pass');
+      await settle();
+
+      expect(counts!['portForwards'], 1);
+      final servers = await repo.getAllServers();
+      final tunnels = await repo.getAllPortForwards();
+      expect(tunnels, hasLength(2), reason: 'restore is additive');
+      expect(
+        tunnels.last.serverId,
+        servers.last.id,
+        reason: 'the restored tunnel must follow the restored host',
+      );
+      vm.dispose();
+    });
+
+    test('a restored tunnel never comes back set to auto-start', () async {
+      // A backup carried to a new device would otherwise open ports on it at first launch, before
+      // its owner had seen the tunnel exists.
+      await repo.insertServer(server(name: 'nas'));
+      await addTunnel();
+      final vm = await boot();
+      vm
+        ..selectNone()
+        ..toggleSection(BackupSection.portForwards, enabled: true);
+      final contents = await vm.exportBackup('pass');
+      await settle();
+
+      await vm.importBackup(contents!, 'pass');
+      await settle();
+
+      expect((await repo.getAllPortForwards()).last.autoStart, isFalse);
+      vm.dispose();
+    });
+
+    test('a tunnel whose host is missing is skipped and counted, not guessed at', () async {
+      // Restoring it against an arbitrary host would forward a port to a machine the user never
+      // chose — the same reasoning as an orphaned alert rule, with a worse failure mode.
+      final vm = await boot();
+      final json = jsonEncode({
+        'portForwards': [
+          {
+            'serverId': 42,
+            'name': 'orphan',
+            'kind': 'local',
+            'bindHost': '127.0.0.1',
+            'bindPort': 9000,
+            'destHost': '10.0.0.9',
+            'destPort': 80,
+            'autoStart': false,
+          },
+        ],
+      });
+
+      final counts = await vm.importBackup(json, '');
+      await settle();
+
+      expect(counts!['portForwardsSkipped'], 1);
+      expect(await repo.getAllPortForwards(), isEmpty);
+      expect(vm.status, contains('tunnel(s) were skipped'));
+      vm.dispose();
+    });
   });
 }
