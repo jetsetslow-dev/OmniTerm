@@ -4713,3 +4713,32 @@ emulator level instead — 13 tests driving real byte streams in and rendered ro
 level buffer logic can actually be wrong at.
 
 **Verified — 21 new tests; 1786 host tests pass, `analyze` clean.**
+
+### Session 79b — the Kotlin defects go back upstream (PR #77)
+
+The port keeps finding defects in the app it is replacing, and until now they lived only in this
+log. `fix/kotlin-parity-defects` is pushed and **PR #77** is open against `main`, carrying six of
+them. Two are new in this session and are the reason the PR was worth finishing now — both destroy
+the file they were reading:
+
+- **A crontab that could not be read looked like an empty one.** `crontab -l 2>/dev/null || true`
+  collapses "no crontab", "not allowed" and "no cron on this host" into one empty string; the CRON
+  tab then offers Add, and a save rewrites the whole file. The lab reproduces it exactly: as a
+  non-root user, BusyBox answers `crontab: must be suid to work properly` and exits 1.
+- **A sudo-elevated read carried sudo's lecture into the file.** The read is wrapped with `2>&1`, so
+  on sudo's first use in a session the lecture is prepended to the file, shown in the editor, and
+  written back on save — corrupting a root-owned config someone opened only to look at.
+
+Both fixes are the same shape the Dart port already uses (`CRON_READ_COMMAND` + `parseCrontabRead`,
+`sudoReadCommand` + `parseSudoRead`), which is the point: the port found them, and the fix is the
+design the port arrived at. 11 new Kotlin unit tests; the full `openSourceDebug` unit suite passes.
+
+The other four on the branch were from earlier sessions: `inferLevel`'s trailing `\b` disabling
+every word stem, `commandDangerHits` missing the canonical `dd if=… of=/dev/sda`, Monitor showing a
+host that had gone offline, and the Logs tab going blank on a host with a log binary but no logs.
+
+**Still unported to Kotlin, and deliberately so:** the telemetry poller's network columns always
+writing 0, its per-host baselines never being pruned when a host is deleted, the rate spike when two
+probes land under a second apart, `cronSummary` calling every non-preset schedule "Custom schedule",
+and `MetricLineChart`'s "1 samples". All are cosmetic or data-quality rather than destructive, and
+the Kotlin app is being retired — they are recorded here rather than spent on.
