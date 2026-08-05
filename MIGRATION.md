@@ -1254,7 +1254,7 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
   is still the OPEN picker's job (below).
 - **Quick connect** — a connect-without-saving sheet. Needs the entitlement gate the Kotlin puts
   around it.
-- **tmux persistent sessions** — **the attach half is done in session 64.** A host marked
+- **tmux persistent sessions** — **attach and resume are done (sessions 64-65).** A host marked
   "Persistent session (tmux)" is now put inside a named tmux session on connect, and reconnecting
   re-attaches to the same one. **Still to do:** the resumable-session picker, the background-session
   list, and control mode (`tmux -C`) — the parser is ported and the attach command exists, but
@@ -4031,3 +4031,39 @@ half. Said plainly rather than rounded up.
 
 **Verified — 15 new tests (11 command builders, 4 view-model); 1570 host tests pass, `analyze
 --fatal-infos` clean.**
+
+---
+
+### Session 65 — the reconnect that silently stopped being persistent
+
+Session 64 shipped a defect, found by finishing the check it had left open.
+
+**A remembered tmux session that the server no longer has left the user in an ordinary shell, with
+nothing saying so.** The reconnect command is a chain of `&&`: when `has-session` fails — the server
+rebooted, someone ran `tmux kill-server`, the session timed out — every later step is skipped, the
+`exec` never happens, and the shell carries on as a perfectly normal, **non-persistent** one. Worse,
+the remembered name never becomes valid again, so every future reconnect to that host degrades the
+same way. Verified directly against the lab before writing any code: the chain exits 1 and leaves a
+plain prompt.
+
+`tmuxResumeCommand` replaces the plain attach on the reconnect path: `has-session || new-session`,
+so a vanished session is recreated under the same remembered name. **Not** tmux's own
+`new-session -A`, which looks like the obvious answer — measured against the lab's tmux, that flag
+*reports failure when the session already exists*, which would have reintroduced exactly the silent
+degrade it was meant to remove. The first connect still uses strict `new-session`, because a
+freshly generated high-entropy name colliding means something is wrong and should say so.
+
+**Proven end to end on the device, with the server as witness:**
+
+| Step | Evidence |
+|---|---|
+| Attached | `omniterm-1-1785891069908: 1 windows (attached)` |
+| Killed underneath it | `tmux kill-server` → `no server running on /tmp/tmux-1000/default` |
+| Reconnected | the transcript shows tmux's own status line — **back inside tmux** |
+| Under the same name | `omniterm-1-1785891069908: 1 windows (created …00:51:36)` — the *same* name, a new creation time |
+
+Before this change that reconnect produced a plain shell. This is the check session 64 recorded as
+unfinished, and finishing it is what found the bug — which is the argument for writing down what was
+*not* measured, in the words that make it easy to pick up.
+
+**Verified — 5 new tests; 1574 host tests pass, `analyze --fatal-infos` clean.**

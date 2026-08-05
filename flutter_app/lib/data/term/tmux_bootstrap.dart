@@ -74,9 +74,36 @@ String tmuxCreateAttachCommand(String name, {int historyLimit = 10000}) {
 }
 
 /// Attaches to a session that already exists.
+///
+/// Fails — leaving an ordinary shell — when the session is gone. Prefer [tmuxResumeCommand] for
+/// reconnecting to a remembered name; see the note there.
 String tmuxAttachCommand(String name, {int historyLimit = 10000}) {
   final safe = tmuxSafeName(name);
   return '${_existingBootstrap(safe, historyLimit)}exec tmux attach-session -t $safe\n';
+}
+
+/// Reconnects to a remembered session, **creating it again if the server no longer has it**.
+///
+/// This is what a reconnect must use, and the distinction is not academic. A plain attach is a
+/// chain of `&&`: when `has-session` fails — the server rebooted, someone ran `tmux kill-server`,
+/// the session timed out — every later step is skipped and the user is dropped into a perfectly
+/// ordinary shell **that is no longer persistent, with nothing saying so**. Worse, the remembered
+/// name never becomes valid again, so every future reconnect degrades the same way. Verified
+/// against a real server: the chain exits 1 and leaves a plain prompt.
+///
+/// `has-session || new-session` rather than tmux's own `new-session -A`: that flag reports failure
+/// when the session already exists on the tmux shipped by the lab's image, which would reintroduce
+/// exactly the silent degrade this exists to remove.
+String tmuxResumeCommand(String name, {int historyLimit = 10000}) {
+  final safe = tmuxSafeName(name);
+  final limit = _boundedHistory(historyLimit);
+  return 'command -v tmux >/dev/null 2>&1 && '
+      '{ tmux has-session -t $safe 2>/dev/null || '
+      'tmux start-server \\; set-option -g history-limit $limit \\; '
+      'new-session -d -s $safe; } && '
+      '(tmux set-option -t $safe history-limit $limit >/dev/null 2>&1 || true) && '
+      '(tmux set-option -t $safe mouse off >/dev/null 2>&1 || true) && '
+      'exec tmux attach-session -t $safe\n';
 }
 
 /// Attaches in **control mode** (`tmux -C`).

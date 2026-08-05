@@ -354,11 +354,13 @@ void main() {
 
       expect(second, contains('has-session -t $name'));
       expect(second, contains('attach-session -t $name'));
-      expect(second, isNot(contains('new-session')));
+      // Recreated under the *same* name if the server lost it, rather than the reconnect silently
+      // dropping the user into an ordinary, non-persistent shell.
+      expect(second, contains('new-session -d -s $name'));
       expect(
         await repo.getPersistentSessions(),
         hasLength(1),
-        reason: 'the same session is resumed, not duplicated',
+        reason: 'the same name is resumed, not duplicated',
       );
     });
 

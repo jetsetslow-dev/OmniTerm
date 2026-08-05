@@ -221,8 +221,9 @@ class ShellViewModel extends ChangeNotifier {
 
     final String command;
     if (existing.isNotEmpty) {
-      // Attach, which checks the session is really there — a row can outlive the server rebooting.
-      command = tmuxAttachCommand(existing.last.tmuxName, historyLimit: scrollback);
+      // Resume, not plain attach. A remembered row outlives the server rebooting, and a plain
+      // attach to a session that is gone silently leaves an ordinary, non-persistent shell.
+      command = tmuxResumeCommand(existing.last.tmuxName, historyLimit: scrollback);
     } else {
       final name = tmuxSafeName('omniterm-${server.id}-${DateTime.now().millisecondsSinceEpoch}');
       await _app.repository.upsertPersistentSession(

@@ -96,6 +96,40 @@ void main() {
       expect(tmuxAttachCommand('a', historyLimit: 5000), contains('history-limit 5000'));
     });
 
+    test('resuming recreates a session the server no longer has', () {
+      // The defect this fixes, found against a real server: a plain attach is a chain of `&&`, so
+      // when `has-session` fails the user lands in an ordinary shell that is **no longer
+      // persistent, with nothing saying so** — and the remembered name never becomes valid again,
+      // so every later reconnect degrades the same way.
+      final command = tmuxResumeCommand('nas-1');
+
+      expect(command, contains('has-session -t nas-1'));
+      expect(
+        command,
+        contains('new-session -d -s nas-1'),
+        reason: 'a vanished session has to be recreated, not silently skipped',
+      );
+      expect(command, contains('||'), reason: 'create is the fallback, not a second condition');
+      expect(command, contains('exec tmux attach-session -t nas-1'));
+    });
+
+    test('resume still degrades to a plain shell without tmux', () {
+      expect(tmuxResumeCommand('a'), startsWith('command -v tmux >/dev/null 2>&1 && '));
+    });
+
+    test('resume bounds the scrollback and turns mouse mode off', () {
+      final command = tmuxResumeCommand('a', historyLimit: 99999999);
+      expect(command, contains('history-limit $tmuxHistoryMax'));
+      expect(command, contains('set-option -t a mouse off'));
+    });
+
+    test('resume sanitises the name too', () {
+      final command = tmuxResumeCommand('evil; rm -rf ~');
+      expect(command, isNot(contains('rm -rf')));
+      expect(command, contains('has-session -t evilrm-rf'));
+      expect(command, contains('new-session -d -s evilrm-rf'));
+    });
+
     test('a dangerous name is sanitised everywhere it appears in the command', () {
       // Not just in the `-t` argument: the same name reaches `set-option` and `new-session` too, and
       // one unsanitised occurrence is enough.
