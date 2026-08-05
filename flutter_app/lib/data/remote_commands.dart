@@ -5,6 +5,7 @@
 /// (MIGRATION.md §3.2).
 library;
 
+import 'dart:convert';
 import 'kotlin_strings.dart';
 
 /// Collapses `uname -s` output (or a Windows shell's error text) to one of the four families the
@@ -549,4 +550,52 @@ String composeConfigPresent(String workingDir, String configFiles) {
         ].map((n) => '[ -f ${expand('$dir/$n')} ]').join(' || ');
 
   return 'if { $test; } 2>/dev/null; then echo OMNITERM_COMPOSE_OK; else echo OMNITERM_COMPOSE_MISSING; fi';
+}
+
+/// Measures how much disk a directory actually uses.
+///
+/// `du -sh` rather than summing the listing: a directory's own size in a file listing is the size of
+/// its *index*, not its contents, so a browser that shows "4.0 KB" for a folder holding 80 GB is
+/// technically right and useless. This is the answer to the question people actually open a file
+/// browser to ask.
+///
+/// `-x` stays on one filesystem, so measuring `/` on a host with network mounts does not wander off
+/// into them and hang. Errors are folded into the output rather than discarded, because `du` reports
+/// a *partial* total when it cannot read part of the tree — and a partial total presented as a
+/// final one is worse than either the number or the warning alone.
+String folderSizeCommand(String path) => 'du -shx -- ${shellQuote(path)} 2>&1';
+
+/// What `du` managed to measure.
+class FolderSize {
+  const FolderSize(this.size, {required this.complete});
+
+  /// The human-readable total, e.g. `1.2G`.
+  final String size;
+
+  /// False when `du` could not read part of the tree, so [size] is a floor rather than the answer.
+  ///
+  /// Kept separate rather than folded into the string because the caller has to *say* it: observed
+  /// against a real host, `du -shx /root` as an unprivileged user prints a warning, prints `4.0K`,
+  /// and exits non-zero. Reporting `4.0K` alone would be a confident wrong answer about a directory
+  /// that is far larger; reporting nothing would throw away a real lower bound.
+  final bool complete;
+}
+
+/// The size `du` reported, or null when the output carries none.
+///
+/// `du` prints `SIZE\tPATH`, and on a permission error prints warning lines *as well*, so the size
+/// is taken from the last line that starts with one rather than from the first line of output.
+FolderSize? parseFolderSize(String output) {
+  String? size;
+  var complete = true;
+  for (final line in const LineSplitter().convert(output)) {
+    final match = RegExp(r'^\s*([0-9][0-9.,]*[KMGTPE]?)\s+\S').firstMatch(line);
+    if (match != null) {
+      size = match.group(1);
+      continue;
+    }
+    // Anything else on stderr means part of the tree was not counted.
+    if (line.trim().isNotEmpty) complete = false;
+  }
+  return size == null ? null : FolderSize(size, complete: complete);
 }

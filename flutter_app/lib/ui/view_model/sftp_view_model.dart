@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 
 import '../../data/app_database.dart';
+import '../../data/remote_commands.dart';
 import '../../data/remote_models.dart';
 import '../../data/shares/remote_fs_client.dart';
 import '../../data/ssh/ssh_transport.dart';
@@ -48,7 +49,7 @@ class SftpTransfer {
 
 /// The SFTP screen's state and actions, split out of `ui/AppViewModel.kt` per §5.2.
 class SftpViewModel extends ChangeNotifier {
-  SftpViewModel(this._app, {this.fsClientFor, this.shareClientFor}) {
+  SftpViewModel(this._app, {this.fsClientFor, this.shareClientFor, this.transport}) {
     _app.addListener(_onAppChanged);
   }
 
@@ -74,6 +75,12 @@ class SftpViewModel extends ChangeNotifier {
   /// transfers) is identical, which is why the browser is generalised here rather than duplicated
   /// into a second screen (§11).
   final Future<RemoteFsClient?> Function(NetworkShare share)? shareClientFor;
+
+  /// A shell on the browsed host, used for the few questions SFTP itself cannot answer.
+  ///
+  /// Nullable (convention 4): without it the menu simply does not offer folder sizes, rather than
+  /// offering an action that fails on tap.
+  final SshTransport? transport;
 
   bool get canBrowse => fsClientFor != null;
 
@@ -449,6 +456,50 @@ class SftpViewModel extends ChangeNotifier {
     }
     _safeNotify();
     return result;
+  }
+
+  /// Measures a directory with `du`, returning a human size like `1.2G`.
+  ///
+  /// Only for a **host**: a network share has no shell to run anything on, which is why the caller
+  /// checks [canMeasureSize] rather than this failing halfway.
+  ///
+  /// A listing shows a directory's index size, not what is inside it — "4.0 KB" for a folder holding
+  /// 80 GB is technically right and useless — so this is the answer to the question people open a
+  /// file browser to ask.
+  bool get canMeasureSize => transport != null && _browsedShare == null && browsedServer != null;
+
+  Future<FolderSize?> folderSize(SftpFile entry) async {
+    final ssh = transport;
+    final server = browsedServer;
+    if (ssh == null || server == null || _browsedShare != null) return null;
+
+    _loading = true;
+    _error = null;
+    _safeNotify();
+    try {
+      final creds = resolveCredentials(
+        server,
+        keys: await _app.repository.getAllKeys(),
+        profiles: await _app.repository.getAllProfiles(),
+      );
+      final output = await ssh.exec(creds, folderSizeCommand(joinPath(_path, entry.name)));
+      final size = parseFolderSize(output);
+      if (size == null) {
+        // No number at all: the path is gone, or the host has no `du`. Saying so beats reporting
+        // zero, which would read as "this folder is empty".
+        _error = 'Could not measure "${entry.name}" — the host refused or has no `du`.';
+      }
+      return size;
+    } on CredentialResolutionException catch (e) {
+      _error = e.message;
+      return null;
+    } catch (e) {
+      _error = 'Could not measure "${entry.name}": $e';
+      return null;
+    } finally {
+      _loading = false;
+      _safeNotify();
+    }
   }
 
   // ── selection ───────────────────────────────────────────────────────────────

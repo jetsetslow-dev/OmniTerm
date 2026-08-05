@@ -475,9 +475,13 @@ class _EntryRow extends StatelessWidget {
           PopupMenuButton<String>(
             key: ValueKey('sftp.entry.${entry.name}.menu'),
             onSelected: (action) => _handle(context, action),
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'rename', child: Text('Rename')),
-              PopupMenuItem(value: 'delete', child: Text('Delete')),
+            itemBuilder: (_) => [
+              // Only for a directory, and only where there is a shell to run `du` on: a file
+              // already shows its real size, and a network share has nothing to ask.
+              if (entry.isDirectory && vm.canMeasureSize)
+                const PopupMenuItem(value: 'size', child: Text('Measure size')),
+              const PopupMenuItem(value: 'rename', child: Text('Rename')),
+              const PopupMenuItem(value: 'delete', child: Text('Delete')),
             ],
           ),
         ],
@@ -487,6 +491,8 @@ class _EntryRow extends StatelessWidget {
 
   Future<void> _handle(BuildContext context, String action) async {
     switch (action) {
+      case 'size':
+        await _measureSize(context, vm, entry);
       case 'rename':
         await _promptRename(context, vm, entry);
       case 'delete':
@@ -605,4 +611,56 @@ class SftpTransfersTab extends StatelessWidget {
       ],
     );
   }
+}
+
+/// Measures a directory and shows the result.
+///
+/// A dialog rather than a value written into the row: `du` walks the whole tree, so the number is a
+/// point-in-time answer to a question that was asked, not a property of the listing. Putting it in
+/// the row would imply the browser keeps it current.
+Future<void> _measureSize(BuildContext context, SftpViewModel vm, SftpFile entry) async {
+  final size = await vm.folderSize(entry);
+  if (!context.mounted) return;
+  // A failure has already put its reason on the screen; a second dialog saying nothing useful over
+  // the top of it would only hide the explanation.
+  if (size == null) return;
+
+  await showDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      key: const ValueKey('sftp.size.dialog'),
+      title: Text(entry.name),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '${size.size} on disk',
+            key: const ValueKey('sftp.size.value'),
+            style: const TextStyle(fontFamily: OmniFonts.mono),
+          ),
+          if (!size.complete)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text(
+                // Observed against a real host: `du` on a directory the login cannot fully read
+                // prints a warning *and* a partial total. Presenting that total as the answer would
+                // be a confident wrong number about something far larger.
+                'At least that much — some directories could not be read, so the real total is '
+                'higher.',
+                key: ValueKey('sftp.size.partial'),
+                style: TextStyle(fontSize: 12, color: OmniColors.amber),
+              ),
+            ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          key: const ValueKey('sftp.size.close'),
+          onPressed: () => Navigator.of(dialogContext).pop(),
+          child: const Text('Close'),
+        ),
+      ],
+    ),
+  );
 }

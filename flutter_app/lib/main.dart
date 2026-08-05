@@ -206,6 +206,8 @@ class OmniTermApp extends StatelessWidget {
               context.read<AppState>().repository,
             ),
             shareClientFor: _shareClientFor(context.read<DartSshTransport>()),
+            // A shell, for the questions SFTP itself cannot answer — currently `du`.
+            transport: context.read<SshTransport>(),
           ),
           update: (_, app, previous) => previous!,
         ),

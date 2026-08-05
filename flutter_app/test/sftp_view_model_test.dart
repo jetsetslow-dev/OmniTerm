@@ -6,6 +6,7 @@ import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/data/remote_models.dart';
 import 'package:omniterm/data/shares/remote_fs_client.dart';
+import 'package:omniterm/data/ssh/ssh_transport.dart';
 import 'package:omniterm/domain/file_edit.dart';
 import 'package:omniterm/domain/sftp_sort.dart';
 import 'package:omniterm/platform/secret_store.dart';
@@ -13,6 +14,28 @@ import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/sftp_view_model.dart';
 
 import 'support/fake_secure_storage.dart';
+
+/// A shell that records what it was asked and replays a staged answer.
+class FakeShell implements SshTransport {
+  FakeShell(this._output);
+
+  FakeShell.failing(String message) : _output = '', _failure = message;
+
+  final String _output;
+  String? _failure;
+
+  final List<String> commands = [];
+
+  @override
+  Future<String> exec(SshCredentials creds, String command, {String? stdin}) async {
+    commands.add(command);
+    if (_failure != null) throw Exception(_failure);
+    return _output;
+  }
+
+  @override
+  noSuchMethod(Invocation invocation) => throw UnimplementedError();
+}
 
 /// An in-memory remote filesystem: a map of directory path to its entries.
 class FakeFsClient extends RemoteFsClient {
@@ -170,15 +193,19 @@ void main() {
     },
   );
 
-  Future<SftpViewModel> boot({RemoteFsClient? client}) async {
+  Future<SftpViewModel> boot({RemoteFsClient? client, SshTransport? shell}) async {
     await app.start();
     await Future<void>.delayed(Duration.zero);
-    return SftpViewModel(app, fsClientFor: client == null ? null : (_) async => client);
+    return SftpViewModel(
+      app,
+      fsClientFor: client == null ? null : (_) async => client,
+      transport: shell,
+    );
   }
 
-  Future<SftpViewModel> booted(FakeFsClient client) async {
+  Future<SftpViewModel> booted(FakeFsClient client, {SshTransport? shell}) async {
     await repo.insertServer(server(name: 'nas'));
-    final vm = await boot(client: client);
+    final vm = await boot(client: client, shell: shell);
     await Future<void>.delayed(Duration.zero);
     await vm.start();
     return vm;
@@ -662,6 +689,51 @@ void main() {
       expect(result.outcome, FileSaveOutcome.failed);
       expect(result.canClose, isFalse);
       expect(vm.error, contains('Save failed'));
+      vm.dispose();
+    });
+  });
+
+  group('folder size', () {
+    /// A shell that answers `du` with whatever the test stages.
+    FakeShell shell({String output = '1.2G\t/home/root/docs\n'}) => FakeShell(output);
+
+    test('a directory is measured with du', () async {
+      // A listing shows a directory's *index* size — "4.0 KB" for a folder holding 80 GB — so this
+      // is the answer to the question people open a file browser to ask.
+      final ssh = shell();
+      final vm = await booted(homeTree(), shell: ssh);
+
+      expect((await vm.folderSize(entry('docs', dir: true)))!.size, '1.2G');
+      expect(ssh.commands.single, contains("du -shx -- '/home/root/docs'"));
+      vm.dispose();
+    });
+
+    test('without a shell the action is not offered at all', () async {
+      // Convention 4: absent means the feature is off, not that it fails on tap.
+      final vm = await booted(homeTree());
+
+      expect(vm.canMeasureSize, isFalse);
+      expect(await vm.folderSize(entry('docs', dir: true)), isNull);
+      vm.dispose();
+    });
+
+    test('a host with no du says so rather than reporting nothing', () async {
+      // Zero would read as "this folder is empty", which is a different and wrong statement.
+      final vm = await booted(
+        homeTree(),
+        shell: shell(output: 'sh: du: not found\n---DU-FAILED---'),
+      );
+
+      expect(await vm.folderSize(entry('docs', dir: true)), isNull);
+      expect(vm.error, contains('Could not measure'));
+      vm.dispose();
+    });
+
+    test('a shell failure is reported, not swallowed', () async {
+      final vm = await booted(homeTree(), shell: FakeShell.failing('connection lost'));
+
+      expect(await vm.folderSize(entry('docs', dir: true)), isNull);
+      expect(vm.error, contains('connection lost'));
       vm.dispose();
     });
   });

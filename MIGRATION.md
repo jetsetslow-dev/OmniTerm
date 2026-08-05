@@ -1305,8 +1305,9 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
   save-and-verify: the size is read back and compared, and only a match reports success. The **sudo**
   write path is still absent (below), so a file the login cannot write is refused by the server
   rather than escalated.
-- **Copy/move between hosts** (the cross-clipboard bar), **folder sizes via `du`**, **sudo mode**,
-  and **remote search** — all present in the Kotlin browser, none ported.
+- ~~**Folder sizes via `du`**~~ — **done in session 68**, including the partial-total case.
+- **Copy/move between hosts** (the cross-clipboard bar), **sudo mode**, and **remote search** — all
+  present in the Kotlin browser, none ported.
 
 **Fleet (session 25):**
 - **Quick-script presets in Broadcast** — the Kotlin offers saved fleet-enabled quick scripts as
@@ -4128,3 +4129,40 @@ selection, which is `hasSensitiveData` doing its job.
 
 **Verified — 4 new tests; 1585 host tests pass, `analyze --fatal-infos` clean.** Host-side only,
 deliberately: this is serialisation and a row insert, and the device has nothing to add to either.
+
+---
+
+### Session 68 — how big is that folder, honestly (task #7)
+
+A file listing shows a directory's *index* size, so a folder holding 80 GB reads as "4.0 KB" —
+technically right and useless. "Measure size" on a directory runs `du -shx` over the host's shell
+and shows what it actually occupies. The action appears only for directories, and only where there
+is a shell to run it on: a network share has nothing to ask, so the menu simply does not offer it.
+
+**Running the real command against the lab changed the design, and the tests with it.** The
+hand-written expectation was that `du` either answers or fails. It does neither:
+
+```
+$ du -shx -- '/root' 2>&1        # as an unprivileged user
+du: cannot read directory '/root': Permission denied
+4.0K	/root                      # …and exits non-zero
+```
+
+A warning, **a partial total, and a failure exit at the same time.** The first implementation used
+`|| echo ---DU-FAILED---` and would have thrown that number away, telling the user "could not
+measure" while holding a real lower bound. Reporting `4.0K` alone would have been worse — a
+confident wrong answer about a directory that is far larger.
+
+So `parseFolderSize` returns the size *and* whether it is complete, and the dialog says "At least
+that much — some directories could not be read, so the real total is higher." A path that does not
+exist still yields no number at all, because there is nothing true to say about it.
+
+**The unit test I had written first asserted output `du` cannot produce** — a warning line followed
+by a total with no failure marker. That is §20 pattern K in miniature: a test that agrees with the
+implementation rather than with the world. The tests now use output copied from the lab.
+
+Paths are quoted through the existing `shellQuote`, and a directory named `; rm -rf ~` is a legal
+directory on every Unix filesystem, so that has its own test.
+
+**Verified — 13 new tests; 1599 host tests pass, `analyze --fatal-infos` clean; the exact command
+the app sends was run against the lab in all three of its outcomes.**
