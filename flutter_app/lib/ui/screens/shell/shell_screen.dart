@@ -10,6 +10,7 @@ import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/shell_session.dart';
 import '../../view_model/shell_view_model.dart';
+import '../servers/server_form_state.dart';
 import '../../widgets/terminal_key_bar.dart';
 import '../../widgets/terminal_surface.dart';
 import '../../widgets/omni_components.dart';
@@ -47,6 +48,157 @@ class ShellScreen extends StatelessWidget {
 }
 
 // ── connect / empty states ────────────────────────────────────────────────────
+
+/// Connects to a host that is not in the list, and is not added to it.
+///
+/// The row this builds is never handed to the repository — no host, no credential, no host-key
+/// preference outlives the session. That is the whole feature: a one-off connection to a machine
+/// you do not want in your fleet, which is a normal thing to want and a bad thing to have to
+/// clean up afterwards.
+///
+/// The host key still goes through the usual trust prompt. A connection being temporary is not a
+/// reason to skip the one check that tells you whether the machine is the one you meant.
+Future<void> _quickConnect(BuildContext context, ShellViewModel vm) async {
+  final server = await showModalBottomSheet<Server>(
+    context: context,
+    isScrollControlled: true,
+    useSafeArea: true,
+    builder: (_) => const _QuickConnectSheet(),
+  );
+  if (server != null) await vm.connect(server);
+}
+
+class _QuickConnectSheet extends StatefulWidget {
+  const _QuickConnectSheet();
+
+  @override
+  State<_QuickConnectSheet> createState() => _QuickConnectSheetState();
+}
+
+class _QuickConnectSheetState extends State<_QuickConnectSheet> {
+  final _host = TextEditingController();
+  final _port = TextEditingController(text: '22');
+  final _user = TextEditingController();
+  final _password = TextEditingController();
+
+  @override
+  void dispose() {
+    _host.dispose();
+    _port.dispose();
+    _user.dispose();
+    _password.dispose();
+    super.dispose();
+  }
+
+  bool get _valid =>
+      _host.text.trim().isNotEmpty &&
+      _user.text.trim().isNotEmpty &&
+      (int.tryParse(_port.text.trim()) ?? 0) > 0;
+
+  /// The in-memory row, built by the same code the host form uses so a quick connection and a saved
+  /// one cannot drift apart in how they resolve credentials.
+  Server _build() {
+    final form = ServerFormState(mode: ServerFormMode.add)
+      ..name = _host.text.trim()
+      ..host = _host.text.trim()
+      ..port = _port.text.trim()
+      ..username = _user.text.trim()
+      ..authType = 'password'
+      ..password = _password.text;
+    return form.toServer();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Quick connect',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                  ),
+                ),
+                IconButton(
+                  key: const ValueKey('shell.quick.close'),
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+            Text(
+              'Nothing here is saved: the host, the username and the password live only for this '
+              'session. The host key is still checked as usual.',
+              key: const ValueKey('shell.quick.note'),
+              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  flex: 3,
+                  child: TextField(
+                    key: const ValueKey('shell.quick.host'),
+                    controller: _host,
+                    autofocus: true,
+                    decoration: omniInputDecoration(context, labelText: 'Host'),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    key: const ValueKey('shell.quick.port'),
+                    controller: _port,
+                    keyboardType: TextInputType.number,
+                    decoration: omniInputDecoration(context, labelText: 'Port'),
+                    onChanged: (_) => setState(() {}),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              key: const ValueKey('shell.quick.username'),
+              controller: _user,
+              decoration: omniInputDecoration(context, labelText: 'Username'),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 10),
+            TextField(
+              key: const ValueKey('shell.quick.password'),
+              controller: _password,
+              obscureText: true,
+              decoration: omniInputDecoration(
+                context,
+                labelText: 'Password',
+                helperText: 'Leave empty to try the agent or a key-less host',
+              ),
+              onChanged: (_) => setState(() {}),
+            ),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerRight,
+              child: FilledButton(
+                key: const ValueKey('shell.quick.connect'),
+                onPressed: _valid ? () => Navigator.of(context).pop(_build()) : null,
+                child: const Text('Connect'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 class _ConnectPane extends StatelessWidget {
   const _ConnectPane({required this.vm});
@@ -283,6 +435,13 @@ class _ConnectPrompt extends StatelessWidget {
             icon: const Icon(Icons.play_arrow, size: 18),
             label: const Text('Connect'),
             onPressed: vm.canConnect ? () => vm.connect(server) : null,
+          ),
+          const SizedBox(height: 8),
+          TextButton.icon(
+            key: const ValueKey('shell.quickConnect'),
+            icon: const Icon(Icons.bolt, size: 16),
+            label: const Text('Quick connect', style: TextStyle(fontSize: 12)),
+            onPressed: vm.canConnect ? () => _quickConnect(context, vm) : null,
           ),
           if (!vm.canConnect)
             const Padding(

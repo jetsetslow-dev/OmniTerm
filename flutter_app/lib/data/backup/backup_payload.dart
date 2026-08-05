@@ -15,8 +15,9 @@ import 'backup_envelope.dart';
 /// restore. An *edited* preset is effectively the user's and is kept, with its key, so the preset
 /// toggle can still remove it afterwards rather than treating it as custom.
 ///
-/// Ids are exported for hosts and profiles only, because other rows reference them. Everything else
-/// is restored with fresh ids — a backup is content, not a snapshot of a rowid space.
+/// Ids are exported only for the rows other rows point at — hosts, profiles and alert rules — and
+/// are remapped on restore. Everything else is restored with fresh ids: a backup is content, not a
+/// snapshot of a rowid space.
 class BackupPayload {
   const BackupPayload._();
 
@@ -34,6 +35,9 @@ class BackupPayload {
     required List<WolTarget> wolTargets,
     required List<PortForward> portForwards,
     required List<AppSetting> settings,
+    List<ActiveAlert> activeAlerts = const [],
+    List<AlertHistoryRow> alertHistory = const [],
+    List<NetworkShare> networkShares = const [],
   }) {
     final closed = selection.withReferentialClosure();
 
@@ -126,6 +130,9 @@ class BackupPayload {
       document['alertRules'] = [
         for (final rule in rules)
           {
+            // The rule's own id travels because a firing alert points at it — the same reason hosts
+            // and profiles carry theirs. Restore maps it to the new row rather than trusting it.
+            'id': rule.id,
             'serverId': rule.serverId,
             'metricName': rule.metricName,
             'mountPoint': rule.mountPoint,
@@ -151,6 +158,66 @@ class BackupPayload {
             'destHost': pf.destHost,
             'destPort': pf.destPort,
             'autoStart': pf.autoStart,
+          },
+      ];
+    }
+
+    if (closed.contains(BackupSection.activeAlerts)) {
+      document['activeAlerts'] = [
+        for (final alert in activeAlerts)
+          {
+            'ruleId': alert.ruleId,
+            'serverId': alert.serverId,
+            'metricName': alert.metricName,
+            'currentValue': alert.currentValue,
+            'thresholdValue': alert.thresholdValue,
+            'severity': alert.severity,
+            'triggeredTime': alert.triggeredTime,
+            'acknowledged': alert.acknowledged,
+            'mutedUntil': alert.mutedUntil,
+          },
+      ];
+    }
+
+    if (closed.contains(BackupSection.alertHistory)) {
+      document['alertHistory'] = [
+        for (final row in alertHistory)
+          {
+            'activeAlertId': row.activeAlertId,
+            'serverId': row.serverId,
+            // The host's name is stored on the row, not looked up: an incident is a record of what
+            // was true then, and a host renamed since must not rewrite its own history.
+            'serverName': row.serverName,
+            'metricName': row.metricName,
+            'currentValue': row.currentValue,
+            'thresholdValue': row.thresholdValue,
+            'severity': row.severity,
+            'triggeredTime': row.triggeredTime,
+            'historyTime': row.historyTime,
+            'status': row.status,
+          },
+      ];
+    }
+
+    if (closed.contains(BackupSection.networkShares)) {
+      document['networkShares'] = [
+        for (final share in networkShares)
+          {
+            'name': share.name,
+            'protocol': share.protocol,
+            'address': share.address,
+            'port': share.port,
+            'sharePath': share.sharePath,
+            'workgroup': share.workgroup,
+            'username': share.username,
+            // The password travels because a share without it cannot be mounted, and this document
+            // is already encrypted end to end (`backup_envelope.dart`). A backup that silently
+            // dropped credentials would restore a list of shares that all fail to open.
+            'password': share.password,
+            'authProfileId': share.authProfileId,
+            'anonymous': share.anonymous,
+            'useHttps': share.useHttps,
+            'notes': share.notes,
           },
       ];
     }
@@ -242,6 +309,8 @@ class BackupPayload {
       counts['portForwards'] = (counts['portForwards'] ?? 0) + 1;
     }
 
+    // Old rule id → new rule id, so a firing alert lands on the rule that raised it.
+    final ruleIdMap = <int, int>{};
     for (final raw in _list(document, 'alertRules')) {
       final mapped = remapServerId(raw['serverId'] as int? ?? 0, serverIdMap);
       // A rule whose host was not in the backup has nothing to watch. Restoring it against an
@@ -250,8 +319,40 @@ class BackupPayload {
         counts['alertRulesSkipped'] = (counts['alertRulesSkipped'] ?? 0) + 1;
         continue;
       }
-      await repository.insertRestoredRule({...raw, 'serverId': mapped});
+      final oldId = raw['id'] as int? ?? 0;
+      final newId = await repository.insertRestoredRule({...raw, 'serverId': mapped});
+      if (oldId != 0) ruleIdMap[oldId] = newId;
       counts['alertRules'] = (counts['alertRules'] ?? 0) + 1;
+    }
+
+    for (final raw in _list(document, 'activeAlerts')) {
+      final server = remapServerId(raw['serverId'] as int? ?? 0, serverIdMap);
+      final rule = remapServerId(raw['ruleId'] as int? ?? 0, ruleIdMap);
+      // A firing alert is a claim that something is wrong *right now* on a particular host, raised
+      // by a particular rule. Without both, it is a red banner about a machine nobody can check
+      // against a threshold nobody can see — so it is skipped and counted rather than guessed at.
+      if (server == null || rule == null) {
+        counts['activeAlertsSkipped'] = (counts['activeAlertsSkipped'] ?? 0) + 1;
+        continue;
+      }
+      await repository.insertRestoredAlert({...raw, 'serverId': server, 'ruleId': rule});
+      counts['activeAlerts'] = (counts['activeAlerts'] ?? 0) + 1;
+    }
+
+    for (final raw in _list(document, 'alertHistory')) {
+      final mapped = remapServerId(raw['serverId'] as int? ?? 0, serverIdMap);
+      if (mapped == null) {
+        counts['alertHistorySkipped'] = (counts['alertHistorySkipped'] ?? 0) + 1;
+        continue;
+      }
+      await repository.insertRestoredAlertHistory({...raw, 'serverId': mapped});
+      counts['alertHistory'] = (counts['alertHistory'] ?? 0) + 1;
+    }
+
+    for (final raw in _list(document, 'networkShares')) {
+      // Shares reference no host, so there is nothing to remap and nothing to skip.
+      await repository.insertRestoredShare(raw);
+      counts['networkShares'] = (counts['networkShares'] ?? 0) + 1;
     }
 
     for (final raw in _list(document, 'wolTargets')) {
@@ -288,7 +389,12 @@ abstract interface class AppRepositoryLike {
   Future<void> insertRestoredKey(Map<String, dynamic> row);
   Future<void> insertRestoredProfile(Map<String, dynamic> row);
   Future<void> insertRestoredScript(Map<String, dynamic> row);
-  Future<void> insertRestoredRule(Map<String, dynamic> row);
+
+  /// Returns the new row id, so a firing alert can be re-pointed at the rule that raised it.
+  Future<int> insertRestoredRule(Map<String, dynamic> row);
+  Future<void> insertRestoredAlert(Map<String, dynamic> row);
+  Future<void> insertRestoredAlertHistory(Map<String, dynamic> row);
+  Future<void> insertRestoredShare(Map<String, dynamic> row);
   Future<void> insertRestoredWolTarget(Map<String, dynamic> row);
   Future<void> insertRestoredPortForward(Map<String, dynamic> row);
   Future<void> insertRestoredSetting(String key, String value);
@@ -381,7 +487,7 @@ class RepositoryRestoreTarget implements AppRepositoryLike {
   );
 
   @override
-  Future<void> insertRestoredRule(Map<String, dynamic> row) => _repository.insertRule(
+  Future<int> insertRestoredRule(Map<String, dynamic> row) => _repository.insertRule(
     AlertRulesCompanion.insert(
       serverId: row['serverId'] as int? ?? 0,
       metricName: row['metricName'] as String? ?? 'CPU Usage',
@@ -394,6 +500,70 @@ class RepositoryRestoreTarget implements AppRepositoryLike {
       presetKey: Value(row['presetKey'] as String?),
     ),
   );
+
+  @override
+  Future<void> insertRestoredAlert(Map<String, dynamic> row) async {
+    await _repository.insertAlert(
+      ActiveAlertsCompanion.insert(
+        ruleId: row['ruleId'] as int? ?? 0,
+        serverId: row['serverId'] as int? ?? 0,
+        metricName: row['metricName'] as String? ?? '',
+        currentValue: (row['currentValue'] as num?)?.toDouble() ?? 0,
+        thresholdValue: (row['thresholdValue'] as num?)?.toDouble() ?? 0,
+        severity: row['severity'] as String? ?? 'WARNING',
+        triggeredTime: row['triggeredTime'] as int? ?? 0,
+        acknowledged: Value(row['acknowledged'] as bool? ?? false),
+        mutedUntil: Value(row['mutedUntil'] as int? ?? 0),
+      ),
+    );
+  }
+
+  @override
+  Future<void> insertRestoredAlertHistory(Map<String, dynamic> row) async {
+    await _repository.insertAlertHistory(
+      AlertHistoryCompanion.insert(
+        // The incident's own id from the source device. It is only an identity for the unique index
+        // and never dereferenced, so it does not need remapping — but two backups restored onto one
+        // device could collide, which the DAO's conflict handling absorbs.
+        activeAlertId: row['activeAlertId'] as int? ?? 0,
+        serverId: row['serverId'] as int? ?? 0,
+        serverName: row['serverName'] as String? ?? '',
+        metricName: row['metricName'] as String? ?? '',
+        currentValue: (row['currentValue'] as num?)?.toDouble() ?? 0,
+        thresholdValue: (row['thresholdValue'] as num?)?.toDouble() ?? 0,
+        severity: row['severity'] as String? ?? 'WARNING',
+        triggeredTime: row['triggeredTime'] as int? ?? 0,
+        historyTime: row['historyTime'] as int? ?? 0,
+        status: row['status'] as String? ?? 'RESOLVED',
+      ),
+    );
+  }
+
+  @override
+  Future<void> insertRestoredShare(Map<String, dynamic> row) async {
+    await _repository.insertNetworkShare(
+      NetworkShare(
+        id: 0,
+        name: row['name'] as String? ?? 'Restored share',
+        protocol: row['protocol'] as String? ?? 'SMB',
+        address: row['address'] as String? ?? '',
+        port: row['port'] as int? ?? 445,
+        sharePath: row['sharePath'] as String? ?? '',
+        workgroup: row['workgroup'] as String? ?? '',
+        username: row['username'] as String? ?? '',
+        password: row['password'] as String? ?? '',
+        authProfileId: row['authProfileId'] as int?,
+        anonymous: row['anonymous'] as bool? ?? true,
+        useHttps: row['useHttps'] as bool? ?? false,
+        notes: row['notes'] as String? ?? '',
+        // Reachability is this device's observation, not the backup's: a share that answered on the
+        // old phone says nothing about this one, and restoring "online" would show a green dot for
+        // a check that never ran here.
+        lastChecked: 0,
+        lastStatus: '',
+      ),
+    );
+  }
 
   @override
   Future<void> insertRestoredWolTarget(Map<String, dynamic> row) => _repository.insertWolTarget(

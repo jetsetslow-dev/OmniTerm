@@ -1258,8 +1258,10 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
 - ~~**Split panes (multi-SSH).**~~ **Done in session 63.** Two sessions at once, stacked or in
   columns, focus following the pane that was tapped. Opening a *new* connection straight into a pane
   is still the OPEN picker's job (below).
-- **Quick connect** — a connect-without-saving sheet. Needs the entitlement gate the Kotlin puts
-  around it.
+- ~~**Quick connect**~~ — **done in session 80.** The sheet builds an in-memory row through the same
+  `ServerFormState.toServer()` the host form uses and hands it straight to `connect`; nothing reaches
+  the repository. **The Kotlin's entitlement gate is not ported**, because billing is not ported
+  (task #8) — there is no entitlement to ask. It goes back when billing does.
 - **tmux persistent sessions** — **attach and resume are done (sessions 64-65).** A host marked
   "Persistent session (tmux)" is now put inside a named tmux session on connect, and reconnecting
   re-attaches to the same one, and **sessions left running are listed on the connect pane** with
@@ -1280,10 +1282,10 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
 - ~~**Reading and writing the file itself.**~~ **Done in session 37** — the system document picker,
   via `BackupFileStore`.
 - ~~**Port forwards**~~ — **carried since session 67**, now that the Tunnels screen exists.
-- **Sections still not carried:** firing alerts, alert history, network shares and crash logs. The
-  selection model already knows them and their dependencies; the serialiser does not. Shares remain
-  blocked on their own screen; firing alerts and alert history are transient state and worth less
-  than the rest.
+- ~~**Sections still not carried:** firing alerts, alert history, network shares~~ — **done in
+  session 80.** All three round-trip, with firing alerts re-pointed at both their host *and* the
+  rule that raised them. **Crash logs** are the one section left out, and deliberately: the port has
+  no crash-log store of its own, so there is nothing to serialise until one exists.
 
 **Network (session 30):**
 - **Traceroute** — needs per-hop TTL control, which `dart:io`'s `Socket` does not expose. Options:
@@ -1318,9 +1320,10 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
 - **Copy/move between hosts** (the cross-clipboard bar) — present in the Kotlin browser, not ported.
 
 **Fleet (session 25):**
-- **Quick-script presets in Broadcast** — the saved fleet-enabled scripts *are* offered as one-tap
-  presets (`fleet.preset.*`). The Kotlin additionally puts a **search box and an inline editor** in
-  that picker; those are not ported, and a fleet with dozens of saved scripts will want the search.
+- ~~**Quick-script presets in Broadcast**~~ — presets since the Tools port, and **a filter since
+  session 80**, appearing once there are more than six saved commands and matching name *or*
+  command. The Kotlin's **inline editor** inside the picker is still not ported: Tools → Scripts is
+  two taps away and is the one place a script is edited, which is the better arrangement.
 - ~~**The refresh countdown** in the summary bar~~ — **done in session 74**, along with the per-host
   CPU charts, on session 72's poller.
 
@@ -4742,3 +4745,75 @@ writing 0, its per-host baselines never being pruned when a host is deleted, the
 probes land under a second apart, `cronSummary` calling every non-preset schedule "Custom schedule",
 and `MetricLineChart`'s "1 samples". All are cosmetic or data-quality rather than destructive, and
 the Kotlin app is being retired — they are recorded here rather than spent on.
+
+### Session 80 — three gaps closed, and what is left before cut-over (task #7)
+
+**Backup carried three sections it had been quietly dropping.** Firing alerts, alert history and
+network shares were in the picker and in the selection model's dependency graph, and absent from the
+document — so a user who selected everything got a backup that silently was not everything. All
+three round-trip now:
+
+- **Network shares** carry their password. The document is already encrypted end to end, and a
+  backup that dropped credentials would restore a list of shares that all fail on first open — which
+  looks like the backup worked. Reachability (`lastStatus`, `lastChecked`) is *not* carried: that is
+  this device's observation, and restoring "online" would show a green dot for a check that never
+  ran here.
+- **Alert history** keeps the host name stored on the row rather than looking it up, because an
+  incident records what was true then and a host renamed since must not rewrite its own history.
+- **Firing alerts** are re-pointed at both their host and the rule that raised them, which meant
+  exporting the rule's id — the export had been carrying ids only for hosts and profiles. An alert
+  whose rule did not come back is skipped and counted: without it, it is a red banner about a
+  machine nobody can check against a threshold nobody can see.
+
+**Fleet's preset picker got a filter**, appearing only above six saved commands and matching the
+command text as well as the name — half of what makes a saved command recognisable is what it runs.
+
+**Shell quick connect.** A one-off connection to a machine you do not want in your fleet. The row is
+built by the same `ServerFormState.toServer()` the host form uses — so a quick connection and a
+saved one cannot drift apart in how credentials resolve — and is handed straight to `connect`.
+**Nothing reaches the repository**, which is the whole feature and what the tests assert: after
+connecting to `10.9.9.9`, the host list still holds exactly the one host that was there before. The
+host key is still checked as usual; a connection being temporary is not a reason to skip the one
+check that says whether the machine is the one you meant.
+
+**Verified — 15 new tests; 1800 host tests pass. All three CI gates run clean locally** (`dart
+format --set-exit-if-changed`, `flutter analyze --fatal-infos`, `flutter test`).
+
+---
+
+## 21. Cut-over checklist
+
+What must be true before `app/` can be retired. Everything not listed here is either done or
+recorded in §18 as a deliberate non-goal.
+
+**Blocking — the app cannot ship without these**
+
+1. **SMB on iOS.** The only unported headline capability. Needs `AMSMB2` via CocoaPods or
+   `NSFileProviderManager`, an Xcode toolchain and a macOS host. Parked, not deferred: nothing on a
+   Linux machine can build or verify it. §18.
+2. **Platform integrations (task #8).** Billing, ads, notifications, home-screen widgets and
+   background sessions. Quick connect's entitlement gate waits on billing; the widget and
+   foreground-service pieces are the other half.
+3. **A release build signed with the distribution key.** The workflow exists and fails loudly when a
+   keystore is named without credentials (§12.1); it has never run with the real key.
+4. **iOS `build ipa` in CI**, which needs a macOS runner the pipeline has never had.
+
+**Expected before cut-over, not strictly blocking**
+
+5. **The visual Compose Builder** (§18) — a whole YAML editor. The Infra tab says so rather than
+   pretending.
+6. **SFTP copy/move between hosts**, and **tmux control mode** driving live sessions: the parser and
+   commands are ported and nothing uses them.
+7. **Traceroute** (needs a platform channel or an SSH-based redesign) and **speed test** (needs a
+   product decision about metered data).
+8. **The device suites on real hardware.** They run on the emulator against the local lab; §19.2 and
+   §19.6 are both about probes that lied, and a real device is the last place that shows up.
+
+**Already true**
+
+- Every Monitor, Fleet, Infra, SFTP, Servers, Shell and Tools screen is ported, with no placeholder
+  tabs remaining anywhere.
+- 1800 host tests, three CI gates green, a release workflow that publishes to the Play internal
+  track behind a draft GitHub Release.
+- The debug build installs beside the shipped app (`…app.flutter`), which is how parity gets checked.
+- Six defects found during the port are fixed upstream in the Kotlin app (PR #77).

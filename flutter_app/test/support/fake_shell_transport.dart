@@ -19,6 +19,9 @@ class FakeShellTransport implements SshTransport {
 
   final List<(int, int)> openSizes = [];
 
+  /// The credentials each shell was opened with, so a test can check *which* host was dialled.
+  final List<SshCredentials> openedWith = [];
+
   /// Completes each `openShell` only when released, so the connecting state can be observed.
   Completer<void>? gate;
 
@@ -30,6 +33,7 @@ class FakeShellTransport implements SshTransport {
     void Function(String phase)? onPhaseChange,
   }) async {
     openSizes.add((cols, rows));
+    openedWith.add(creds);
     for (final phase in phases) {
       onPhaseChange?.call(phase);
     }

@@ -567,4 +567,102 @@ void main() {
       await finish(tester);
     });
   });
+
+  group('quick connect', () {
+    Future<void> openSheet(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('shell.quickConnect')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('connects to a host that is never added to the list', (tester) async {
+      // The whole feature: a one-off connection to a machine you do not want in your fleet, and do
+      // not want to clean up afterwards.
+      await repo.insertServer(server(name: 'saved'));
+      await pump(tester);
+      await openSheet(tester);
+
+      expect(find.byKey(const ValueKey('shell.quick.note')), findsOneWidget);
+      await tester.enterText(find.byKey(const ValueKey('shell.quick.host')), '10.9.9.9');
+      await tester.enterText(find.byKey(const ValueKey('shell.quick.port')), '2222');
+      await tester.enterText(find.byKey(const ValueKey('shell.quick.username')), 'root');
+      await tester.enterText(find.byKey(const ValueKey('shell.quick.password')), 'once');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('shell.quick.connect')));
+      await tester.pumpAndSettle();
+
+      // It dialled what was typed...
+      expect(transport.openedWith.single.host, '10.9.9.9');
+      expect(transport.openedWith.single.port, 2222);
+      expect(transport.openedWith.single.username, 'root');
+      expect(transport.openedWith.single.password, 'once');
+
+      // ...and left no trace of it.
+      final saved = await repo.getAllServers();
+      expect(saved, hasLength(1));
+      expect(saved.single.name, 'saved');
+      await finish(tester);
+    });
+
+    testWidgets('connect stays disabled until there is something to connect to', (tester) async {
+      await repo.insertServer(server(name: 'saved'));
+      await pump(tester);
+      await openSheet(tester);
+
+      FilledButton button() =>
+          tester.widget<FilledButton>(find.byKey(const ValueKey('shell.quick.connect')));
+      expect(button().onPressed, isNull);
+
+      await tester.enterText(find.byKey(const ValueKey('shell.quick.host')), '10.9.9.9');
+      await tester.pumpAndSettle();
+      expect(button().onPressed, isNull, reason: 'a host with no user is not a connection');
+
+      await tester.enterText(find.byKey(const ValueKey('shell.quick.username')), 'root');
+      await tester.pumpAndSettle();
+      expect(button().onPressed, isNotNull);
+
+      await tester.enterText(find.byKey(const ValueKey('shell.quick.port')), 'abc');
+      await tester.pumpAndSettle();
+      expect(button().onPressed, isNull, reason: 'a port that is not a number is not a port');
+      await finish(tester);
+    });
+
+    testWidgets('an empty password is allowed, for a key-less or agent host', (tester) async {
+      await repo.insertServer(server(name: 'saved'));
+      await pump(tester);
+      await openSheet(tester);
+
+      await tester.enterText(find.byKey(const ValueKey('shell.quick.host')), '10.9.9.9');
+      await tester.enterText(find.byKey(const ValueKey('shell.quick.username')), 'root');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('shell.quick.connect')));
+      await tester.pumpAndSettle();
+
+      expect(transport.openedWith, hasLength(1));
+      expect(await repo.getAllServers(), hasLength(1));
+      await finish(tester);
+    });
+
+    testWidgets('closing the sheet connects to nothing', (tester) async {
+      await repo.insertServer(server(name: 'saved'));
+      await pump(tester);
+      await openSheet(tester);
+
+      await tester.enterText(find.byKey(const ValueKey('shell.quick.host')), '10.9.9.9');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('shell.quick.close')));
+      await tester.pumpAndSettle();
+
+      expect(transport.openedWith, isEmpty);
+      await finish(tester);
+    });
+
+    testWidgets('without a transport there is nothing to offer', (tester) async {
+      await repo.insertServer(server(name: 'saved'));
+      await pump(tester, withTransport: false);
+
+      final button = tester.widget<TextButton>(find.byKey(const ValueKey('shell.quickConnect')));
+      expect(button.onPressed, isNull);
+      await finish(tester);
+    });
+  });
 }

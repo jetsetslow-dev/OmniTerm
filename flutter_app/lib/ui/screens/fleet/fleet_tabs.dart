@@ -633,6 +633,12 @@ class _PresetRow extends StatefulWidget {
 }
 
 class _PresetRowState extends State<_PresetRow> {
+  /// Narrows the row. Only shown once there are enough presets for scrolling to be worse than
+  /// typing — below that the filter is more work than the thing it filters.
+  static const _searchAppearsAbove = 6;
+
+  final _search = TextEditingController();
+
   @override
   void initState() {
     super.initState();
@@ -642,10 +648,71 @@ class _PresetRowState extends State<_PresetRow> {
   }
 
   @override
-  Widget build(BuildContext context) {
-    final scripts = context.watch<ScriptsViewModel>().fleetPresetScripts;
-    if (scripts.isEmpty) return const SizedBox.shrink();
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
 
+  @override
+  Widget build(BuildContext context) {
+    final all = context.watch<ScriptsViewModel>().fleetPresetScripts;
+    if (all.isEmpty) return const SizedBox.shrink();
+
+    final query = _search.text.trim().toLowerCase();
+    // Matched against the command too: half of what makes a saved command recognisable is what it
+    // runs, and someone hunting for the one with `journalctl` in it should find it.
+    final scripts = query.isEmpty
+        ? all
+        : all
+              .where(
+                (s) =>
+                    s.name.toLowerCase().contains(query) || s.command.toLowerCase().contains(query),
+              )
+              .toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (all.length > _searchAppearsAbove)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: TextField(
+              key: const ValueKey('fleet.presets.search'),
+              controller: _search,
+              decoration: InputDecoration(
+                isDense: true,
+                prefixIcon: const Icon(Icons.search, size: 16),
+                hintText: 'Filter ${all.length} saved commands',
+                suffixIcon: query.isEmpty
+                    ? null
+                    : IconButton(
+                        key: const ValueKey('fleet.presets.search.clear'),
+                        icon: const Icon(Icons.close, size: 14),
+                        onPressed: () => setState(_search.clear),
+                      ),
+              ),
+              style: const TextStyle(fontSize: 12),
+              onChanged: (_) => setState(() {}),
+            ),
+          ),
+        if (scripts.isEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Text(
+              // "Nothing matched" and "you have none saved" are different facts; the second is
+              // handled by the early return above.
+              'No saved command matches "${_search.text.trim()}".',
+              key: const ValueKey('fleet.presets.noMatch'),
+              style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            ),
+          )
+        else
+          _presetChips(scripts),
+      ],
+    );
+  }
+
+  Widget _presetChips(List<QuickScript> scripts) {
     return SizedBox(
       height: 38,
       child: ListView(

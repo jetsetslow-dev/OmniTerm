@@ -97,6 +97,9 @@ class BackupViewModel extends ChangeNotifier {
         wolTargets: await repository.getAllWolTargets(),
         portForwards: await repository.getAllPortForwards(),
         settings: await repository.getAllSettings(),
+        activeAlerts: await repository.getActiveAlerts(),
+        alertHistory: await repository.getAlertHistory(),
+        networkShares: await repository.getAllNetworkShares(),
       );
 
       // An unencrypted export is only reachable for a selection with nothing sensitive in it.

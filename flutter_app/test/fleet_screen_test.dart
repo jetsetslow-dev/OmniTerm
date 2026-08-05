@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -444,7 +445,9 @@ void main() {
       await tester.pump(const Duration(milliseconds: 10));
     });
 
-    testWidgets('a host nothing has sampled yet does not open an invented breakdown', (tester) async {
+    testWidgets('a host nothing has sampled yet does not open an invented breakdown', (
+      tester,
+    ) async {
       // A breakdown assembled from empty metrics reads as a host at 0% on everything, which is a
       // description of a machine that does not exist.
       final id = await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
@@ -493,6 +496,92 @@ void main() {
 
       expect(find.byKey(const ValueKey('fleet.summary.countdown')), findsNothing);
       expect(find.text('CPU · 0 samples'), findsOneWidget);
+      vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+  });
+
+  group('the broadcast preset picker', () {
+    Future<void> seedPresets(int count) async {
+      for (var i = 0; i < count; i++) {
+        await repo.insertScript(
+          QuickScriptsCompanion.insert(
+            emoji: '*',
+            name: 'preset$i',
+            command: i == 0 ? 'journalctl -xe' : 'echo $i',
+            color: 'cyan',
+            availableForQuick: const Value(false),
+            availableForFleet: const Value(true),
+          ),
+        );
+      }
+    }
+
+    testWidgets('a short list is offered without a filter in the way', (tester) async {
+      // Below the threshold the filter is more work than the thing it filters.
+      await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
+      await seedPresets(3);
+      await pump(tester);
+      await goToBroadcast(tester);
+
+      expect(find.byKey(const ValueKey('fleet.presets')), findsOneWidget);
+      expect(find.byKey(const ValueKey('fleet.presets.search')), findsNothing);
+      vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+
+    testWidgets('a long list gets a filter that matches name or command', (tester) async {
+      // Half of what makes a saved command recognisable is what it runs.
+      await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
+      await seedPresets(9);
+      await pump(tester);
+      await goToBroadcast(tester);
+
+      expect(find.byKey(const ValueKey('fleet.presets.search')), findsOneWidget);
+      await tester.enterText(find.byKey(const ValueKey('fleet.presets.search')), 'journalctl');
+      await tester.pumpAndSettle();
+
+      expect(find.text('preset0'), findsOneWidget);
+      expect(find.text('preset1'), findsNothing);
+
+      await tester.tap(find.byKey(const ValueKey('fleet.presets.search.clear')));
+      await tester.pumpAndSettle();
+      expect(find.text('preset1'), findsOneWidget);
+      vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+
+    testWidgets('a filter that matches nothing blames the filter', (tester) async {
+      await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
+      await seedPresets(9);
+      await pump(tester);
+      await goToBroadcast(tester);
+
+      await tester.enterText(find.byKey(const ValueKey('fleet.presets.search')), 'zzz');
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('fleet.presets.noMatch')), findsOneWidget);
+      vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+
+    testWidgets('picking a preset fills the field rather than running it', (tester) async {
+      // The confirmation dialog is where a broadcast gets approved; a preset must not skip it.
+      await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
+      await seedPresets(2);
+      await pump(tester, transport: BroadcastTransport());
+      await goToBroadcast(tester);
+
+      final id = (await repo.getAllScripts()).first.id;
+      await tester.tap(find.byKey(ValueKey('fleet.preset.$id')));
+      await tester.pumpAndSettle();
+
+      expect(vm.commandText, 'journalctl -xe');
+      expect(find.byKey(const ValueKey('run.dialog')), findsNothing);
       vm.dispose();
       scriptsVm.dispose();
       await tester.pump(const Duration(milliseconds: 10));

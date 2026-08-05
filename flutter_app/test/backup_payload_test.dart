@@ -534,4 +534,228 @@ void main() {
       vm.dispose();
     });
   });
+
+  group('the sections that used to be dropped', () {
+    /// A fresh device to restore onto.
+    Future<(AppDatabase, AppRepository, AppState, BackupViewModel)> freshDevice() async {
+      final freshDb = AppDatabase(NativeDatabase.memory());
+      final freshRepo = AppRepository(
+        freshDb,
+        SecretStore(storage: FakeSecureStorage(<String, String>{})),
+      );
+      final freshApp = AppState(freshRepo);
+      await freshApp.start();
+      return (freshDb, freshRepo, freshApp, BackupViewModel(freshApp));
+    }
+
+    Future<int> seedRule(int serverId) => repo.insertRule(
+      AlertRulesCompanion.insert(
+        serverId: serverId,
+        metricName: 'CPU Usage',
+        thresholdValue: 90,
+        severity: 'CRITICAL',
+      ),
+    );
+
+    test('network shares round-trip, credentials and all', () async {
+      // A share whose password was dropped restores as a row that fails on first open, which is
+      // worse than not restoring it: it looks like the backup worked.
+      await repo.insertNetworkShare(
+        NetworkShare(
+          id: 0,
+          name: 'media',
+          protocol: 'SMB',
+          address: '10.0.0.5',
+          port: 445,
+          sharePath: 'films',
+          workgroup: 'WORKGROUP',
+          username: 'nas',
+          password: 'share-secret',
+          authProfileId: null,
+          anonymous: false,
+          useHttps: false,
+          notes: 'the big one',
+          lastChecked: 1234,
+          lastStatus: 'online',
+        ),
+      );
+      final vm = await boot();
+      final contents = await vm.exportBackup('pass');
+
+      final (freshDb, freshRepo, freshApp, freshVm) = await freshDevice();
+      await freshVm.importBackup(contents!, 'pass');
+
+      final restored = (await freshRepo.getAllNetworkShares()).single;
+      expect(restored.name, 'media');
+      expect(restored.password, 'share-secret');
+      expect(restored.sharePath, 'films');
+      expect(restored.notes, 'the big one');
+      // Reachability is this device's observation, not the backup's.
+      expect(restored.lastStatus, isEmpty);
+      expect(restored.lastChecked, 0);
+
+      freshVm.dispose();
+      freshApp.dispose();
+      await freshDb.close();
+      vm.dispose();
+    });
+
+    test('alert history comes back with the host name it was raised against', () async {
+      // The name is on the row on purpose: an incident records what was true then, and a host
+      // renamed since must not rewrite its own history.
+      final serverId = await repo.insertServer(server(name: 'nas'));
+      await repo.insertAlertHistory(
+        AlertHistoryCompanion.insert(
+          activeAlertId: 7,
+          serverId: serverId,
+          serverName: 'nas-as-it-was-called',
+          metricName: 'CPU Usage',
+          currentValue: 97,
+          thresholdValue: 90,
+          severity: 'CRITICAL',
+          triggeredTime: 1000,
+          historyTime: 2000,
+          status: 'RESOLVED',
+        ),
+      );
+      final vm = await boot();
+      final contents = await vm.exportBackup('pass');
+
+      final (freshDb, freshRepo, freshApp, freshVm) = await freshDevice();
+      await freshVm.importBackup(contents!, 'pass');
+
+      final restored = (await freshRepo.getAlertHistory()).single;
+      expect(restored.serverName, 'nas-as-it-was-called');
+      expect(restored.status, 'RESOLVED');
+      // Re-pointed at the host's new id, not the old one.
+      expect(restored.serverId, (await freshRepo.getAllServers()).single.id);
+
+      freshVm.dispose();
+      freshApp.dispose();
+      await freshDb.close();
+      vm.dispose();
+    });
+
+    test('a firing alert is re-pointed at both its host and the rule that raised it', () async {
+      final serverId = await repo.insertServer(server(name: 'nas'));
+      final ruleId = await seedRule(serverId);
+      await repo.insertAlert(
+        ActiveAlertsCompanion.insert(
+          ruleId: ruleId,
+          serverId: serverId,
+          metricName: 'CPU Usage',
+          currentValue: 99,
+          thresholdValue: 90,
+          severity: 'CRITICAL',
+          triggeredTime: 1000,
+        ),
+      );
+      final vm = await boot();
+      final contents = await vm.exportBackup('pass');
+
+      final (freshDb, freshRepo, freshApp, freshVm) = await freshDevice();
+      await freshVm.importBackup(contents!, 'pass');
+
+      final restoredServer = (await freshRepo.getAllServers()).single;
+      final restoredRule = (await freshRepo.getAllRules()).single;
+      final restored = (await freshRepo.getActiveAlerts()).single;
+
+      expect(restored.serverId, restoredServer.id);
+      expect(
+        restored.ruleId,
+        restoredRule.id,
+        reason: 'an alert pointing at a rule id from another device explains nothing',
+      );
+
+      freshVm.dispose();
+      freshApp.dispose();
+      await freshDb.close();
+      vm.dispose();
+    });
+
+    test('a firing alert whose rule was not selected is skipped, not guessed at', () async {
+      // Without its rule, the alert is a red banner about a threshold nobody can see.
+      final serverId = await repo.insertServer(server(name: 'nas'));
+      final ruleId = await seedRule(serverId);
+      await repo.insertAlert(
+        ActiveAlertsCompanion.insert(
+          ruleId: ruleId,
+          serverId: serverId,
+          metricName: 'CPU Usage',
+          currentValue: 99,
+          thresholdValue: 90,
+          severity: 'CRITICAL',
+          triggeredTime: 1000,
+        ),
+      );
+      final vm = await boot();
+      // Hand-built: the selection model's referential closure would add the rules back, which is
+      // exactly what it is for — this is the case where a document arrives without them anyway.
+      final document = await exportedDocument(vm);
+      document.remove('alertRules');
+
+      final (freshDb, freshRepo, freshApp, freshVm) = await freshDevice();
+      await freshVm.importBackup(jsonEncode(document), '');
+
+      expect(await freshRepo.getActiveAlerts(), isEmpty);
+      expect(
+        (await freshRepo.getAllServers()),
+        hasLength(1),
+        reason: 'the rest of the document still restores',
+      );
+
+      freshVm.dispose();
+      freshApp.dispose();
+      await freshDb.close();
+      vm.dispose();
+    });
+
+    test('selecting everything now carries all eleven sections', () async {
+      // The regression this guards: three sections were in the picker, and in the selection model's
+      // dependency graph, but silently absent from the document.
+      final serverId = await repo.insertServer(server(name: 'nas'));
+      await seedRule(serverId);
+      await repo.insertNetworkShare(
+        NetworkShare(
+          id: 0,
+          name: 'media',
+          protocol: 'SMB',
+          address: '10.0.0.5',
+          port: 445,
+          sharePath: '',
+          workgroup: '',
+          username: '',
+          password: '',
+          authProfileId: null,
+          anonymous: true,
+          useHttps: false,
+          notes: '',
+          lastChecked: 0,
+          lastStatus: '',
+        ),
+      );
+      await repo.insertAlertHistory(
+        AlertHistoryCompanion.insert(
+          activeAlertId: 1,
+          serverId: serverId,
+          serverName: 'nas',
+          metricName: 'CPU Usage',
+          currentValue: 91,
+          thresholdValue: 90,
+          severity: 'WARNING',
+          triggeredTime: 1,
+          historyTime: 2,
+          status: 'RESOLVED',
+        ),
+      );
+
+      final vm = await boot();
+      final document = await exportedDocument(vm);
+
+      for (final key in ['networkShares', 'alertHistory']) {
+        expect(document.containsKey(key), isTrue, reason: '$key is missing from a full export');
+      }
+      vm.dispose();
+    });
+  });
 }
