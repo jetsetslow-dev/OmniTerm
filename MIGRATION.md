@@ -1293,10 +1293,10 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
   from session 60's proof rather than measured; §19.3 says how to finish it.
 
 **Scripts (session 28):**
-- **Per-OS / per-platform filtering of quick scripts** — the columns (`targetOs`, `targetSystem`) are
-  stored and round-trip through the editor, and `quickScriptMatchesHost` is ported, but the editor
-  has no pickers for them and the per-host Quick Scripts row that would apply the filter lives on
-  the Shell screen, which is not ported.
+- ~~**Per-OS / per-platform filtering of quick scripts**~~ — **applied since session 76**, in
+  Monitor → Quick scripts, which is where the Kotlin applies it too. The Tools editor still has no
+  pickers for `targetOs`/`targetSystem`, so the columns can be set by restore or by a preset but not
+  yet typed in by hand.
 - **Drag-to-reorder** within a category. `moveScript` exists; no UI drives it.
 
 **SFTP (session 26):**
@@ -1327,7 +1327,7 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
   (`dockerComposeAction` covers scale/serviceLogs/followLogs); the dialogs are not.
 
 **Monitor (session 22):**
-- **Quick scripts tab** — not ported; renders a note saying so rather than a blank pane.
+- ~~**Quick scripts tab**~~ — **done in session 76.** Nothing in Monitor is a placeholder any more.
 - ~~**CRON tab**~~ — **done in session 75**, including the read/edit/delete round trip and the
   refusal to write a crontab that could not be read.
 - ~~**Overview sparklines** (`MetricLineChart`) and the **health-breakdown dialog**~~ — **done in
@@ -4499,3 +4499,46 @@ follows the symlink and sets the bit on **busybox itself**, which is every comma
 
 **Verified — 38 new tests; 1721 host tests pass, `analyze` clean; the refusal, the round trip and
 the delete were all read off the device and confirmed on the server.**
+
+### Session 76 — Monitor's quick scripts, and the targeting that finally does something (task #7)
+
+The last placeholder in Monitor is gone. `ui/screens/monitor/scripts_tab.dart` lists the saved quick
+scripts **narrowed to the ones that apply to this host**, groups them by category, and adds a field
+for a one-off command.
+
+The narrowing is the point. `quickScriptMatchesHost` has been ported since session 28 and
+`targetOs`/`targetSystem` have round-tripped through the editor and through backup ever since — with
+**nothing anywhere reading them**. A Proxmox helper was offered on a Raspberry Pi because no screen
+had ever asked the question. It reads the poller's sample for that host, which is why this landed
+after session 72 rather than before it.
+
+A host that has not reported its OS yet matches nothing that names one, so the list starts short and
+grows. That is stated on screen — a short list with no explanation reads as "your scripts are gone",
+and the user goes looking for them. **My first version of that note claimed the opposite** (that
+everything is listed until the host answers); the test written against it failed, which is how the
+claim was checked rather than shipped.
+
+Running goes through the same confirmation Fleet uses, so that dialog moved to
+`ui/widgets/run_command_dialog.dart` — both screens are one tap from executing an arbitrary command
+on someone's server, and two dialogs would eventually warn about different things. It names the
+hosts rather than counting them, and carries the destructive-command heuristic. Output streams into
+a panel rather than arriving at the end: a quick script is often a package update or a backup, and a
+screen that shows nothing until it finishes is indistinguishable from one that has hung. The run
+lives on the view model, so leaving the tab does not throw away output from a command still running.
+
+**On the device, against the lab:**
+
+```
+$ id -un && uname -s     →  omniterm⏎Linux⏎          (confirmed, streamed, panel closed cleanly)
+$ rm -rf /tmp/nothing    →  ⚠ This command looks destructive (recursive/forced delete).
+```
+
+**§19.7 — `enterText` into a field that was previously focused elsewhere can silently no-op.** The
+probe's second command never landed and the confirmation read back the *first* command, which looks
+exactly like a stale-controller bug in the app. A widget test of the same sequence passed, so the
+app was fine; tapping the field before typing fixed the probe. Two device runs were spent on the
+probe's own input handling — worth remembering that "the screen shows the previous value" has a
+mundane explanation in the harness before it has an interesting one in the app.
+
+**Verified — 8 new tests; 1729 host tests pass, `analyze` clean; the targeting, the confirmation,
+the streamed output and the danger warning were all read off the device.**

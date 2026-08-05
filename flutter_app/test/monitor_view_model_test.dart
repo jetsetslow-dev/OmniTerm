@@ -42,6 +42,20 @@ class RecordingTransport implements SshTransport {
     return fallback;
   }
 
+  /// Streams the same scripted reply in one chunk, so a caller that streams and a caller that
+  /// awaits see the same output.
+  @override
+  Future<String> execStream(
+    SshCredentials creds,
+    String command, {
+    String? stdin,
+    required Future<void> Function(String chunk) onChunk,
+  }) async {
+    final out = await exec(creds, command, stdin: stdin);
+    await onChunk(out);
+    return out;
+  }
+
   @override
   noSuchMethod(Invocation invocation) => throw UnimplementedError();
 }

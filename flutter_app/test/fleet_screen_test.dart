@@ -212,7 +212,7 @@ void main() {
       expect(find.textContaining('alpha'), findsWidgets);
       expect(find.textContaining('beta'), findsWidgets);
 
-      await tester.tap(find.byKey(const ValueKey('fleet.run.cancel')));
+      await tester.tap(find.byKey(const ValueKey('run.cancel')));
       await tester.pumpAndSettle();
       expect(transport.commands, isEmpty, reason: 'cancelling must send nothing');
       vm.dispose();
@@ -232,12 +232,12 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('fleet.run')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('fleet.run.dialog.danger')), findsOneWidget);
+      expect(find.byKey(const ValueKey('run.dialog.danger')), findsOneWidget);
       expect(find.textContaining('recursive/forced delete'), findsWidgets);
 
       // Flagged, not blocked — the user chose these hosts.
-      expect(find.byKey(const ValueKey('fleet.run.confirm')), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('fleet.run.cancel')));
+      expect(find.byKey(const ValueKey('run.confirm')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('run.cancel')));
       await tester.pumpAndSettle();
       vm.dispose();
       scriptsVm.dispose();
@@ -256,7 +256,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('fleet.run')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('fleet.run.confirm')));
+      await tester.tap(find.byKey(const ValueKey('run.confirm')));
       await tester.pumpAndSettle();
 
       expect(transport.commands, hasLength(2));
@@ -280,7 +280,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('fleet.run')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('fleet.run.confirm')));
+      await tester.tap(find.byKey(const ValueKey('run.confirm')));
       await tester.pumpAndSettle();
 
       expect(find.text('OK'), findsOneWidget);

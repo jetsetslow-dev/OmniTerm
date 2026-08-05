@@ -169,6 +169,7 @@ class MonitorViewModel extends ChangeNotifier {
     _servicesUnsupported = false;
     _metrics = HostMetrics.empty;
     _metricsAt = null;
+    _scriptRun = null;
     _cronLines = const [];
     _cronReadable = false;
     _cronError = null;
@@ -424,6 +425,70 @@ class MonitorViewModel extends ChangeNotifier {
     );
   }
 
+  // ── quick scripts ───────────────────────────────────────────────────────────
+
+  /// The command currently running from the Scripts tab, and everything it has printed.
+  ///
+  /// Held on the view model rather than in the tab's widget state so leaving the tab — or the
+  /// screen — does not throw away output from a command that is still running on someone's server.
+  ScriptRun? _scriptRun;
+
+  ScriptRun? get scriptRun => _scriptRun;
+
+  void clearScriptRun() {
+    _scriptRun = null;
+    notifyListeners();
+  }
+
+  /// Runs [command] on the monitored host, streaming its output.
+  ///
+  /// Streamed rather than awaited whole: a quick script is often something slow — a package update,
+  /// a backup — and a screen that shows nothing until it finishes is indistinguishable from one
+  /// that has hung.
+  Future<void> runScript(String title, String command) async {
+    final server = monitoredServer;
+    final ssh = transport;
+    if (server == null) return;
+
+    final run = ScriptRun(title: title, command: command, serverId: server.id);
+    _scriptRun = run;
+    _safeNotify();
+
+    if (ssh == null) {
+      run
+        ..finished = true
+        ..error = 'Running commands is unavailable in this build.';
+      _safeNotify();
+      return;
+    }
+
+    try {
+      final creds = resolveCredentials(
+        server,
+        keys: await _app.repository.getAllKeys(),
+        profiles: await _app.repository.getAllProfiles(),
+      );
+      await ssh.execStream(
+        creds,
+        command,
+        onChunk: (chunk) async {
+          // A run the user dismissed, or one replaced by a newer run, must not keep writing to the
+          // panel — its output would appear under another command's heading.
+          if (_scriptRun != run) return;
+          run.output.write(chunk);
+          _safeNotify();
+        },
+      );
+    } on CredentialResolutionException catch (e) {
+      run.error = e.message;
+    } catch (e) {
+      run.error = e.toString();
+    } finally {
+      run.finished = true;
+      if (_scriptRun == run) _safeNotify();
+    }
+  }
+
   // ── cron ────────────────────────────────────────────────────────────────────
 
   List<CronLine> _cronLines = const [];
@@ -594,4 +659,22 @@ class MonitorViewModel extends ChangeNotifier {
     _app.removeListener(_onAppChanged);
     super.dispose();
   }
+}
+
+/// One command run from the Scripts tab, and what it has printed so far.
+class ScriptRun {
+  ScriptRun({required this.title, required this.command, required this.serverId});
+
+  final String title;
+  final String command;
+  final int serverId;
+
+  final StringBuffer output = StringBuffer();
+
+  /// True once the command ended, however it ended.
+  bool finished = false;
+
+  /// Set when the run could not start or died. Kept separate from [output] so a failure is not
+  /// mistaken for something the command printed.
+  String? error;
 }

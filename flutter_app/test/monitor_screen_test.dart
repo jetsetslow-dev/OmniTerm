@@ -14,6 +14,7 @@ import 'package:omniterm/ui/screens/monitor/monitor_screen.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/monitor_view_model.dart';
+import 'package:omniterm/ui/view_model/scripts_view_model.dart';
 import 'package:omniterm/ui/view_model/telemetry_poller.dart';
 import 'package:provider/provider.dart';
 
@@ -65,6 +66,7 @@ void main() {
   );
 
   late MonitorViewModel vm;
+  late ScriptsViewModel scriptsVm;
 
   Future<void> pump(
     WidgetTester tester, {
@@ -73,11 +75,14 @@ void main() {
   }) async {
     await app.start();
     vm = MonitorViewModel(app, transport: transport, poller: poller);
+    scriptsVm = ScriptsViewModel(app);
     await tester.pumpWidget(
       MultiProvider(
         providers: [
           ChangeNotifierProvider<AppState>.value(value: app),
           ChangeNotifierProvider<MonitorViewModel>.value(value: vm),
+          // The Scripts tab offers the saved quick scripts, so the store is in scope.
+          ChangeNotifierProvider<ScriptsViewModel>.value(value: scriptsVm),
         ],
         child: MaterialApp(
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
@@ -95,6 +100,8 @@ void main() {
     expect(find.byKey(const ValueKey('monitor.noHosts')), findsOneWidget);
     expect(find.text('No online hosts available to monitor'), findsOneWidget);
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
   testWidgets('an online host shows the selector, health score and tabs', (tester) async {
@@ -107,6 +114,8 @@ void main() {
       expect(find.byKey(ValueKey('monitor.tab.${tab.name}')), findsOneWidget);
     }
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
   testWidgets('every tab is reachable and renders', (tester) async {
@@ -135,18 +144,28 @@ void main() {
       );
     }
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
-  testWidgets('tabs not yet ported say so rather than showing an empty pane', (tester) async {
-    // A blank pane reads as "this host has nothing", which is a different and misleading claim.
-    // Cron used to be one of these; Quick scripts is the one that remains (§18).
+  testWidgets('every tab renders its own content, with none left as a placeholder', (tester) async {
+    // Scripts and CRON were the last two notes saying "not available in this build yet"; both are
+    // ported, so nothing in Monitor is a placeholder any more.
     await repo.insertServer(server(name: 'nas'));
     await pump(tester, transport: RecordingTransport());
 
-    await tester.tap(find.byKey(const ValueKey('monitor.tab.scripts')));
-    await tester.pumpAndSettle();
-    expect(find.textContaining('not available in this build yet'), findsOneWidget);
+    for (final tab in MonitorTab.values) {
+      await tester.tap(find.byKey(ValueKey('monitor.tab.${tab.name}')), warnIfMissed: false);
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining('not available in this build yet'),
+        findsNothing,
+        reason: '${tab.name} still shows a placeholder',
+      );
+    }
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
   testWidgets('the overview renders the host metrics it fetched', (tester) async {
@@ -171,6 +190,8 @@ void main() {
     expect(find.text('25%'), findsOneWidget, reason: '100 - 75 idle');
     expect(find.textContaining('Load: 0.5'), findsOneWidget);
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
   testWidgets('processes list, and the sort chips switch order without refetching', (tester) async {
@@ -196,6 +217,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(transport.commands.length, callsBefore, reason: 'the list is re-sorted locally');
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
   testWidgets('killing a process asks first and names what it will kill', (tester) async {
@@ -230,6 +253,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(transport.commands.any((c) => c.contains('kill -15 102')), isTrue);
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
   testWidgets('rebooting asks first and says what it will run', (tester) async {
@@ -256,6 +281,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(transport.commands.any((c) => c.contains('reboot')), isTrue);
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
   testWidgets('a host with no log source explains why the pane is empty', (tester) async {
@@ -268,6 +295,8 @@ void main() {
     expect(find.byKey(const ValueKey('monitor.logs.unsupported')), findsOneWidget);
     expect(find.textContaining('No readable log source'), findsOneWidget);
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
   testWidgets('a host that simply has no log lines says so, distinctly', (tester) async {
@@ -282,6 +311,8 @@ void main() {
     expect(find.byKey(const ValueKey('monitor.logs.empty')), findsOneWidget);
     expect(find.textContaining('No log entries'), findsOneWidget);
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
   testWidgets('a filter that matches nothing blames the filter, not the host', (tester) async {
@@ -301,6 +332,8 @@ void main() {
     expect(find.byKey(const ValueKey('monitor.logs.empty')), findsOneWidget);
     expect(find.textContaining('No ERROR entries'), findsOneWidget);
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
   testWidgets('a host with no service manager explains why the list is empty', (tester) async {
@@ -315,6 +348,8 @@ void main() {
 
     expect(find.byKey(const ValueKey('monitor.services.unsupported')), findsOneWidget);
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
   testWidgets('the log level filter narrows the rendered lines', (tester) async {
@@ -344,6 +379,8 @@ void main() {
       reason: 'the §15.1 inferLevel fix makes this an ERROR rather than INFO',
     );
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
   testWidgets('a credential failure is shown as an error banner', (tester) async {
@@ -358,6 +395,8 @@ void main() {
     expect(find.byKey(const ValueKey('monitor.error')), findsOneWidget);
     expect(find.textContaining('gone'), findsOneWidget);
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
   testWidgets('hide-sensitive-info masks the address in the reboot dialog', (tester) async {
@@ -377,6 +416,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('monitor.reboot.cancel')));
     await tester.pumpAndSettle();
     vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 
   group('the health score', () {
@@ -621,6 +662,237 @@ void main() {
       final save = tester.widget<FilledButton>(find.byKey(const ValueKey('cron.editor.save')));
       expect(save.onPressed, isNull);
       vm.dispose();
+    });
+  });
+
+  group('the Quick scripts tab', () {
+    Future<void> addScript({
+      required String name,
+      String command = '/bin/true',
+      String category = 'General',
+      String targetOs = 'Any',
+      String targetSystem = 'Any',
+      bool quick = true,
+    }) => repo.insertScript(
+      QuickScriptsCompanion.insert(
+        emoji: '*',
+        name: name,
+        command: command,
+        color: 'cyan',
+        category: Value(category),
+        targetOs: Value(targetOs),
+        targetSystem: Value(targetSystem),
+        availableForQuick: Value(quick),
+      ),
+    );
+
+    /// A metrics reply that says what the host is, which is what the targeting reads.
+    String metricsFor(String os, {String platforms = 'docker'}) =>
+        '@OS\n$os\n@PLATFORM\n$platforms\n@MEM\nMem: 100 10 0 0 0 90\n'
+        '@DISK\n/dev/sda1 100 1 1 1% /\n';
+
+    Future<void> openScripts(WidgetTester tester) async {
+      // The Monitor tab strip scrolls, and Scripts is the fifth chip.
+      await tester.dragUntilVisible(
+        find.byKey(const ValueKey('monitor.tab.scripts')),
+        find.byKey(const ValueKey('monitor.tabs')),
+        const Offset(-120, 0),
+      );
+      await tester.tap(find.byKey(const ValueKey('monitor.tab.scripts')));
+      await tester.pumpAndSettle();
+      // The saved scripts arrive on a drift watch stream, so the list is a turn or two behind the
+      // tap that opened the tab.
+      for (var i = 0; i < 5 && scriptsVm.allScripts.isEmpty; i++) {
+        await tester.pump(const Duration(milliseconds: 10));
+      }
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('only the scripts that target this host are offered', (tester) async {
+      // The whole point of the tab, and the first thing to consume `quickScriptMatchesHost` — the
+      // targeting columns have round-tripped through the editor since the Tools port with nothing
+      // reading them, so a Proxmox helper was offered on a Raspberry Pi.
+      await repo.insertServer(server(name: 'nas'));
+      await addScript(name: 'Anywhere');
+      await addScript(name: 'Linux only', targetOs: 'Linux');
+      await addScript(name: 'Mac only', targetOs: 'Darwin');
+      await addScript(name: 'Proxmox only', targetSystem: 'Proxmox');
+
+      final poller = TelemetryPoller(
+        app,
+        transport: RecordingTransport(fallback: metricsFor('Linux')),
+      );
+      await pump(tester, poller: poller);
+      await poller.cycle();
+      await tester.pumpAndSettle();
+      await openScripts(tester);
+
+      expect(find.text('* Anywhere'), findsOneWidget);
+      expect(find.text('* Linux only'), findsOneWidget);
+      expect(find.text('* Mac only'), findsNothing);
+      expect(find.text('* Proxmox only'), findsNothing);
+      vm.dispose();
+      scriptsVm.dispose();
+      poller.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+
+    testWidgets('a host that has not said what it is says why the list is short', (tester) async {
+      // A script that names an OS does not match a host that has not reported one, so the list
+      // starts short. Without the note that reads as "your scripts are gone".
+      await repo.insertServer(server(name: 'nas'));
+      await addScript(name: 'Mac only', targetOs: 'Darwin');
+      await addScript(name: 'Anywhere');
+      await pump(tester);
+      await openScripts(tester);
+
+      expect(find.byKey(const ValueKey('monitor.scripts.unfiltered')), findsOneWidget);
+      expect(find.text('* Anywhere'), findsOneWidget);
+      expect(find.text('* Mac only'), findsNothing);
+      vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+
+    testWidgets('"nothing saved" and "nothing matches" are different sentences', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      final poller = TelemetryPoller(
+        app,
+        transport: RecordingTransport(fallback: metricsFor('Linux')),
+      );
+      await pump(tester, poller: poller);
+      await poller.cycle();
+      await tester.pumpAndSettle();
+      await openScripts(tester);
+      expect(find.textContaining('No quick scripts saved yet'), findsOneWidget);
+
+      await addScript(name: 'Mac only', targetOs: 'Darwin');
+      await tester.pumpAndSettle();
+      expect(find.textContaining('None of your quick scripts target this host'), findsOneWidget);
+      vm.dispose();
+      scriptsVm.dispose();
+      poller.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+
+    testWidgets('running asks first, naming the command and the host', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await addScript(name: 'Disk usage', command: 'df -h');
+      final transport = RecordingTransport(fallback: 'Filesystem  Size\n/dev/sda1  20G\n');
+      await pump(tester, transport: transport);
+      await openScripts(tester);
+
+      await tester.tap(find.text('* Disk usage'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('run.dialog')), findsOneWidget);
+      expect(find.text('\$ df -h'), findsOneWidget);
+      expect(find.textContaining('nas'), findsWidgets);
+
+      await tester.tap(find.byKey(const ValueKey('run.cancel')));
+      await tester.pumpAndSettle();
+      expect(
+        transport.commands,
+        isNot(contains('df -h')),
+        reason: 'cancelling must not run the script',
+      );
+      vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+
+    testWidgets('a destructive script is flagged before it runs', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await addScript(name: 'Wipe', command: 'rm -rf /var/log');
+      await pump(tester, transport: RecordingTransport());
+      await openScripts(tester);
+
+      await tester.tap(find.text('* Wipe'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('run.dialog.danger')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('run.cancel')));
+      await tester.pumpAndSettle();
+      vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+
+    testWidgets('confirmed output is shown, and a silent command says it printed nothing',
+        (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await addScript(name: 'Echo', command: 'echo hello');
+      final transport = RecordingTransport(fallback: 'hello\n');
+      await pump(tester, transport: transport);
+      await openScripts(tester);
+
+      await tester.tap(find.text('* Echo'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('run.confirm')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('monitor.scripts.output')), findsOneWidget);
+      expect(find.text('* Echo'), findsWidgets);
+      expect(transport.commands, contains('echo hello'));
+
+      await tester.tap(find.byKey(const ValueKey('monitor.scripts.output.close')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('monitor.scripts.output')), findsNothing);
+      vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+
+    testWidgets('a second one-off command replaces the first, and is what gets confirmed',
+        (tester) async {
+      // Observed on a device: after running one command and closing the output, the confirmation
+      // for the next one still named the previous command.
+      await repo.insertServer(server(name: 'nas'));
+      final transport = RecordingTransport(fallback: 'ok\n');
+      await pump(tester, transport: transport);
+      await openScripts(tester);
+
+      await tester.enterText(find.byKey(const ValueKey('monitor.scripts.command')), 'uptime');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('monitor.scripts.run')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('run.confirm')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('monitor.scripts.output.close')));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const ValueKey('monitor.scripts.command')), 'rm -rf /tmp/x');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('monitor.scripts.run')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('\$ rm -rf /tmp/x'), findsOneWidget);
+      expect(find.byKey(const ValueKey('run.dialog.danger')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('run.cancel')));
+      await tester.pumpAndSettle();
+      vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+
+    testWidgets('a one-off command runs through the same confirmation', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      final transport = RecordingTransport(fallback: 'ok\n');
+      await pump(tester, transport: transport);
+      await openScripts(tester);
+
+      await tester.enterText(find.byKey(const ValueKey('monitor.scripts.command')), 'uptime');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('monitor.scripts.run')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('run.dialog')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('run.confirm')));
+      await tester.pumpAndSettle();
+
+      expect(transport.commands, contains('uptime'));
+      vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
     });
   });
 }

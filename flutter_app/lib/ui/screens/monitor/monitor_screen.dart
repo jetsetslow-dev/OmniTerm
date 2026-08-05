@@ -9,6 +9,7 @@ import '../../view_model/monitor_view_model.dart';
 import '../../widgets/health_breakdown_dialog.dart';
 import '../../widgets/omni_components.dart';
 import 'cron_tab.dart';
+import 'scripts_tab.dart';
 import 'monitor_tabs.dart';
 
 /// The Monitor screen, ported from `MonitorScreen` in `ui/MonitorScreen.kt`.
@@ -38,7 +39,7 @@ class MonitorScreen extends StatelessWidget {
               MonitorTab.processes => ProcessesTab(vm: vm),
               MonitorTab.services => ServicesTab(vm: vm),
               MonitorTab.logs => LogsTab(vm: vm),
-              MonitorTab.scripts => const _NotYetPorted(name: 'Quick scripts'),
+              MonitorTab.scripts => ScriptsTab(vm: vm),
               MonitorTab.cron => CronTab(vm: vm),
             },
           ),
@@ -269,19 +270,3 @@ class _ErrorBanner extends StatelessWidget {
 ///
 /// Named plainly rather than left blank: an empty pane reads as "this host has nothing", which is a
 /// different and misleading claim.
-class _NotYetPorted extends StatelessWidget {
-  const _NotYetPorted({required this.name});
-
-  final String name;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      key: ValueKey('monitor.notPorted.$name'),
-      child: Text(
-        '$name is not available in this build yet.',
-        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
-      ),
-    );
-  }
-}

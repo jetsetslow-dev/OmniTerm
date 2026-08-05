@@ -11,6 +11,7 @@ import '../../view_model/scripts_view_model.dart';
 import '../../widgets/health_breakdown_dialog.dart';
 import '../../widgets/metric_line_chart.dart';
 import '../../widgets/omni_components.dart';
+import '../../widgets/run_command_dialog.dart';
 
 /// Every host at a glance, worst first.
 class FleetDashboardTab extends StatelessWidget {
@@ -282,67 +283,20 @@ class _FleetBroadcastTabState extends State<FleetBroadcastTab> {
     );
   }
 
-  /// Shows exactly what will run where, then runs that exact list.
+  /// Confirms, then runs exactly the list that was approved.
   ///
-  /// The targets are snapshotted at tap time and passed through, so what the user approved is what
-  /// executes — group membership and reachability are not re-resolved behind the dialog.
+  /// The targets are snapshotted at tap time and passed through, so group membership and
+  /// reachability are not re-resolved behind the dialog.
   Future<void> _confirmAndRun(BuildContext context, FleetViewModel vm) async {
     final targets = vm.resolvedTargets;
     final command = vm.commandText.trim();
-    final danger = vm.dangerWarning;
-    if (targets.isEmpty || command.isEmpty) return;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const ValueKey('fleet.run.dialog'),
-        title: Text('Run on ${targets.length} host${targets.length == 1 ? '' : 's'}?'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '\$ $command',
-                  style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 12),
-                ),
-                const SizedBox(height: 10),
-                // Naming every host is the point: "5 hosts" is not something a user can check.
-                for (final target in targets)
-                  Text(
-                    '• ${HostDisplay.instance.name(target)} '
-                    '(${HostDisplay.instance.userAtHost(target)})',
-                    style: const TextStyle(fontSize: 11),
-                  ),
-                if (danger != null) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    '⚠ $danger',
-                    key: const ValueKey('fleet.run.dialog.danger'),
-                    style: const TextStyle(fontSize: 12, color: OmniColors.red),
-                  ),
-                ],
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton(
-            key: const ValueKey('fleet.run.cancel'),
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            key: const ValueKey('fleet.run.confirm'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: Text('Run', style: TextStyle(color: danger != null ? OmniColors.red : null)),
-          ),
-        ],
-      ),
+    final confirmed = await confirmRunCommand(
+      context,
+      command: command,
+      targets: targets,
+      danger: vm.dangerWarning,
     );
-    if (confirmed ?? false) await vm.runBroadcast(targets);
+    if (confirmed) await vm.runBroadcast(targets);
   }
 }
 
