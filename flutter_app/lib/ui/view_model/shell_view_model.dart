@@ -133,6 +133,60 @@ class ShellViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
+  // ── split view ──────────────────────────────────────────────────────────────
+
+  /// The session shown in the second pane, or null when the view is single.
+  ///
+  /// Held as an id rather than a `ShellSession` so a session that ends while split simply stops
+  /// resolving — [splitSession] returns null and the view falls back to single, instead of the
+  /// screen holding a reference to a terminal that no longer exists.
+  String? _splitId;
+
+  /// True when the panes stack vertically. The Kotlin calls these `⬍ STACK` and `⬌ COLS`.
+  bool _splitStacked = true;
+  bool get splitStacked => _splitStacked;
+
+  ShellSession? get splitSession =>
+      _splitId == null ? null : _sessions.where((s) => s.id == _splitId).firstOrNull;
+
+  bool get isSplit => splitSession != null && current != null && splitSession != current;
+
+  /// Sessions that could occupy the second pane: everything except the one already in the first.
+  List<ShellSession> get splitCandidates => _sessions.where((s) => s.id != current?.id).toList();
+
+  /// Shows [id] in the second pane.
+  void splitWith(String id) {
+    if (id == current?.id) return;
+    _splitId = id;
+    _safeNotify();
+  }
+
+  void unsplit() {
+    if (_splitId == null) return;
+    _splitId = null;
+    _safeNotify();
+  }
+
+  void toggleSplitAxis() {
+    _splitStacked = !_splitStacked;
+    _safeNotify();
+  }
+
+  /// Focuses the pane showing [id].
+  ///
+  /// Focus is what every per-session action targets — keystrokes, the key bar, disconnect — so in
+  /// split view "the current session" has to mean "the pane the user last touched", not whichever
+  /// pane happens to be first.
+  void focusPane(String id) {
+    if (!_sessions.any((s) => s.id == id)) return;
+    if (id == _currentId) return;
+    // Swap rather than replace: the pane being focused becomes the primary, and the one that was
+    // primary keeps its place in the split instead of vanishing.
+    if (id == _splitId) _splitId = _currentId;
+    _currentId = id;
+    _safeNotify();
+  }
+
   bool _connecting = false;
   bool get isConnecting => _connecting;
 
@@ -242,6 +296,7 @@ class ShellViewModel extends ChangeNotifier {
     session.removeListener(_safeNotify);
     session.removeListener(_syncBackgroundSessions);
     _sessions.remove(session);
+    if (_splitId == session.id) _splitId = null;
     if (_currentId == session.id) _currentId = _sessions.isEmpty ? null : _sessions.last.id;
     session.dispose();
     _syncBackgroundSessions();

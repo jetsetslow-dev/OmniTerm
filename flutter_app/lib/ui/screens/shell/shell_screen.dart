@@ -32,9 +32,11 @@ class ShellScreen extends StatelessWidget {
         children: [
           if (vm.sessions.isNotEmpty || session != null) _SessionBar(vm: vm),
           Expanded(
-            child: session != null
-                ? _ActiveTerminal(vm: vm, session: session)
-                : _ConnectPane(vm: vm),
+            child: session == null
+                ? _ConnectPane(vm: vm)
+                : vm.isSplit
+                ? _SplitTerminals(vm: vm, first: session, second: vm.splitSession!)
+                : _ActiveTerminal(vm: vm, session: session),
           ),
           if (session != null) TerminalKeyBar(viewModel: vm),
         ],
@@ -254,6 +256,16 @@ class _SessionBar extends StatelessWidget {
               ],
             ),
           ),
+          // Splitting needs a second session to show, so the control lives next to the one that
+          // creates them.
+          if (vm.sessions.length > 1 && !vm.isSplit)
+            IconButton(
+              key: const ValueKey('shell.split'),
+              tooltip: 'Split the view',
+              iconSize: 18,
+              icon: const Icon(Icons.vertical_split, color: OmniColors.cyan),
+              onPressed: () => _openSplitPicker(context, vm),
+            ),
           if (vm.server != null && !vm.isConnecting)
             IconButton(
               key: const ValueKey('shell.newSession'),
@@ -423,7 +435,13 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
                 children: [
                   GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onTap: () => _imeFocus.requestFocus(),
+                    // The pane that takes the keyboard is the pane that should be current. Doing
+                    // this here rather than in an ancestor detector is not a detail: the surface
+                    // claims the gesture arena, so an outer detector's tap never arrives.
+                    onTap: () {
+                      widget.vm.focusPane(session.id);
+                      _imeFocus.requestFocus();
+                    },
                     child: TerminalSurface(
                       session: session,
                       focused: _imeFocus.hasFocus,
@@ -603,6 +621,158 @@ class _Toggle extends StatelessWidget {
             color: active ? OmniColors.amber : const Color(0xFF7C8AA5),
           ),
         ),
+      ),
+    ),
+  );
+}
+
+/// Two terminals at once, the app's headline Shell feature.
+///
+/// Each pane is an ordinary [_ActiveTerminal]; nothing about a session changes because it is in a
+/// split. That is why this could be added late — `ShellSession` has owned its own geometry, scroll
+/// position and read-only flag since it was first ported, so the surface reports its real grid to
+/// the remote per pane and neither terminal learns the other exists.
+class _SplitTerminals extends StatelessWidget {
+  const _SplitTerminals({required this.vm, required this.first, required this.second});
+
+  final ShellViewModel vm;
+  final ShellSession first;
+  final ShellSession second;
+
+  @override
+  Widget build(BuildContext context) {
+    final panes = [
+      Expanded(
+        child: _FocusablePane(vm: vm, session: first, focused: true),
+      ),
+      const _SplitDivider(),
+      Expanded(
+        child: _FocusablePane(vm: vm, session: second, focused: false),
+      ),
+    ];
+
+    return Column(
+      key: const ValueKey('shell.splitView'),
+      children: [
+        _SplitControls(vm: vm),
+        Expanded(
+          child: vm.splitStacked ? Column(children: panes) : Row(children: panes),
+        ),
+      ],
+    );
+  }
+}
+
+class _SplitDivider extends StatelessWidget {
+  const _SplitDivider();
+
+  @override
+  Widget build(BuildContext context) => Container(width: 1, height: 1, color: OmniColors.cyan);
+}
+
+/// A pane that takes focus when tapped, and shows which one has it.
+///
+/// Focus is not decoration here: every per-session action — keystrokes, the key bar, disconnect —
+/// targets the focused pane, so a split with no visible focus would leave the user guessing which
+/// terminal is about to receive what they type.
+class _FocusablePane extends StatelessWidget {
+  const _FocusablePane({required this.vm, required this.session, required this.focused});
+
+  final ShellViewModel vm;
+  final ShellSession session;
+  final bool focused;
+
+  @override
+  Widget build(BuildContext context) {
+    // No gesture detector here on purpose — the terminal surface below claims the arena, so a
+    // wrapper's tap would never fire. Focus is taken in `_ActiveTerminal`, where the tap lands.
+    return DecoratedBox(
+      key: ValueKey('shell.pane.${session.id}'),
+      decoration: BoxDecoration(
+        border: Border.all(color: focused ? OmniColors.cyan : Colors.transparent),
+      ),
+      child: _ActiveTerminal(vm: vm, session: session),
+    );
+  }
+}
+
+class _SplitControls extends StatelessWidget {
+  const _SplitControls({required this.vm});
+
+  final ShellViewModel vm;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const ValueKey('shell.splitControls'),
+      height: 34,
+      color: const Color(0xFF0B1017),
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: Row(
+        children: [
+          TextButton.icon(
+            key: const ValueKey('shell.split.axis'),
+            icon: Icon(
+              vm.splitStacked ? Icons.swap_vert : Icons.swap_horiz,
+              size: 16,
+              color: OmniColors.cyan,
+            ),
+            // Named for what the layout *is*, matching the Kotlin's own chips, so the button says
+            // the current state rather than the action.
+            label: Text(
+              vm.splitStacked ? 'STACK' : 'COLS',
+              style: const TextStyle(fontSize: 11, color: OmniColors.cyan),
+            ),
+            onPressed: vm.toggleSplitAxis,
+          ),
+          const Spacer(),
+          TextButton(
+            key: const ValueKey('shell.split.single'),
+            onPressed: vm.unsplit,
+            child: const Text('SINGLE', style: TextStyle(fontSize: 11, color: OmniColors.cyan)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Picks the session for the second pane.
+Future<void> _openSplitPicker(BuildContext context, ShellViewModel vm) async {
+  final candidates = vm.splitCandidates;
+  await showModalBottomSheet<void>(
+    context: context,
+    useSafeArea: true,
+    builder: (sheetContext) => SafeArea(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Padding(
+            padding: EdgeInsets.all(16),
+            child: Text('Show alongside', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          if (candidates.isEmpty)
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: Text(
+                // A split needs two terminals, and saying so beats an empty sheet.
+                'Open a second session first — a split shows two of them at once.',
+                key: ValueKey('shell.split.none'),
+                style: TextStyle(fontSize: 12),
+              ),
+            )
+          else
+            for (final session in candidates)
+              ListTile(
+                key: ValueKey('shell.split.pick.${session.id}'),
+                dense: true,
+                title: Text(session.serverName, style: const TextStyle(fontSize: 13)),
+                onTap: () {
+                  vm.splitWith(session.id);
+                  Navigator.of(sheetContext).pop();
+                },
+              ),
+        ],
       ),
     ),
   );

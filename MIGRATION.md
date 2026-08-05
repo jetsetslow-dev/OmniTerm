@@ -1249,8 +1249,9 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
 
 
 **Shell (session 34)** — the single-session terminal is complete; these are a second Shell iteration:
-- **Split panes (multi-SSH).** `ShellSession` is already per-session for geometry, scroll position
-  and read-only precisely so this drops in: the screen shows one pane, not the model.
+- ~~**Split panes (multi-SSH).**~~ **Done in session 63.** Two sessions at once, stacked or in
+  columns, focus following the pane that was tapped. Opening a *new* connection straight into a pane
+  is still the OPEN picker's job (below).
 - **Quick connect** — a connect-without-saving sheet. Needs the entitlement gate the Kotlin puts
   around it.
 - **tmux persistent sessions**, the session picker and the background-session list. The control-mode
@@ -3949,3 +3950,41 @@ measured part, and it is written down as such rather than claimed.
 
 **Verified — 2 new tests (8 in the auto-starter suite); 1549 host tests pass, `analyze
 --fatal-infos` clean; the auto-start path observed executing on Android 15.**
+
+---
+
+### Session 63 — split panes (task #7)
+
+Two terminals at once, the Shell's headline gap. §18 predicted this would "drop in" because
+`ShellSession` has owned its own geometry, scroll position and read-only flag since it was first
+ported — and that held: **no session code changed at all.** Each pane is an ordinary
+`_ActiveTerminal`, the surface reports its real grid to its own remote, and neither terminal learns
+the other exists.
+
+What was added is the view model's idea of a second pane (`splitWith`, `unsplit`,
+`toggleSplitAxis`, `focusPane`) and a layout to render it.
+
+Two decisions worth recording:
+
+- **Focus is not decoration.** Keystrokes, the key bar and disconnect all target "the current
+  session", so in a split that has to mean *the pane last touched*. `focusPane` **swaps** the two
+  rather than replacing one, so the pane losing focus keeps its place instead of vanishing.
+- **The focus tap lives inside the terminal, not in a wrapper around it.** The first attempt put a
+  `GestureDetector` around each pane; it never fired, because `TerminalSurface` claims the gesture
+  arena. Taking focus in the same handler that grabs the IME is also the more honest rule: *the pane
+  that takes the keyboard is the pane that is current.*
+
+A session that ends while split clears the split rather than leaving an id pointing at a terminal
+that no longer exists.
+
+**Proven on the device, against two real SSH sessions to the lab:**
+
+| Checked | Result |
+|---|---|
+| Split offered only once a second session exists | yes |
+| Surfaces on screen after splitting | **2** |
+| A command typed into the focused pane | appears in **that pane's own** transcript — the panes are independent terminals, not one view drawn twice |
+| Rotate (`STACK` ⇄ `COLS`) | still 2 |
+| `SINGLE` | back to 1 |
+
+**Verified — 5 new tests; 1554 host tests pass, `analyze --fatal-infos` clean.**

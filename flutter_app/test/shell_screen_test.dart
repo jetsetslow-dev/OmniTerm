@@ -413,4 +413,107 @@ void main() {
       await finish(tester);
     });
   });
+
+  group('split view', () {
+    Future<void> connectTwo(WidgetTester tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await repo.insertServer(server(name: 'pi'));
+      await pump(tester);
+      await connect(tester);
+      await tester.tap(find.byKey(const ValueKey('shell.newSession')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('splitting needs a second session to show', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+
+      expect(
+        find.byKey(const ValueKey('shell.split')),
+        findsNothing,
+        reason: 'one terminal cannot be split against anything',
+      );
+      await finish(tester);
+    });
+
+    testWidgets('two sessions can be shown at once', (tester) async {
+      await connectTwo(tester);
+      expect(vm.sessions, hasLength(2));
+
+      await tester.tap(find.byKey(const ValueKey('shell.split')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey('shell.split.pick.${vm.sessions.first.id}')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('shell.splitView')), findsOneWidget);
+      expect(find.byKey(const ValueKey('shell.surface')), findsNWidgets(2));
+      await finish(tester);
+    });
+
+    testWidgets('the pane that was tapped becomes the one that receives input', (tester) async {
+      // Focus is not decoration: keystrokes, the key bar and disconnect all target the focused
+      // pane, so a split with ambiguous focus would leave the user guessing where their typing is
+      // about to land.
+      await connectTwo(tester);
+      // Whichever session is *not* current is the one offered for the second pane.
+      final other = vm.splitCandidates.single;
+      final wasCurrent = vm.current!.id;
+
+      await tester.tap(find.byKey(const ValueKey('shell.split')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey('shell.split.pick.${other.id}')));
+      await tester.pumpAndSettle();
+      expect(vm.current!.id, wasCurrent, reason: 'splitting must not move focus on its own');
+
+      await tester.tap(find.byKey(ValueKey('shell.pane.${other.id}')));
+      await tester.pumpAndSettle();
+
+      expect(vm.current!.id, other.id);
+      expect(
+        vm.splitSession!.id,
+        wasCurrent,
+        reason: 'the panes swap rather than one of them vanishing',
+      );
+      await finish(tester);
+    });
+
+    testWidgets('the layout can be rotated and dismissed', (tester) async {
+      await connectTwo(tester);
+      await tester.tap(find.byKey(const ValueKey('shell.split')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey('shell.split.pick.${vm.sessions.first.id}')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('STACK'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('shell.split.axis')));
+      await tester.pumpAndSettle();
+      expect(find.text('COLS'), findsOneWidget, reason: 'the button names the layout, not the act');
+
+      await tester.tap(find.byKey(const ValueKey('shell.split.single')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('shell.splitView')), findsNothing);
+      expect(find.byKey(const ValueKey('shell.surface')), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('closing a split session falls back to a single view', (tester) async {
+      // Otherwise the screen holds an id for a terminal that no longer exists.
+      await connectTwo(tester);
+      final first = vm.sessions.first;
+
+      await tester.tap(find.byKey(const ValueKey('shell.split')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey('shell.split.pick.${first.id}')));
+      await tester.pumpAndSettle();
+      expect(vm.isSplit, isTrue);
+
+      vm.close(first);
+      await tester.pumpAndSettle();
+
+      expect(vm.isSplit, isFalse);
+      expect(find.byKey(const ValueKey('shell.splitView')), findsNothing);
+      await finish(tester);
+    });
+  });
 }
