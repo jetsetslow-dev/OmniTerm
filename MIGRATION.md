@@ -5028,6 +5028,14 @@ in a conversation.
 - **A defect found in the Kotlin is not finished until it is fixed on both branches** — the port,
   and `fix/kotlin-parity-defects` (PR #77).
 
+### The continuation prompt
+
+`docs/CONTINUATION_PROMPT.md` is the prompt to hand a fresh agent. It carries every standing
+instruction given since this started — the thirteen requirements in the user's own words, the
+process rules, the device-validation mandate and the loop behaviour — and points here for the rest.
+Keep it current: an instruction that lives only in a chat is an instruction the next session will
+not follow, which is how convention 5 went eighty sessions without being written down.
+
 ### If your environment cannot reach this machine
 
 Most of this document assumes the dev box: the Flutter SDK at `/home/sbvino/sdks/flutter`, an
