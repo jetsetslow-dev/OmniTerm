@@ -4773,11 +4773,14 @@ The other four on the branch were from earlier sessions: `inferLevel`'s trailing
 every word stem, `commandDangerHits` missing the canonical `dd if=… of=/dev/sda`, Monitor showing a
 host that had gone offline, and the Logs tab going blank on a host with a log binary but no logs.
 
-**Still unported to Kotlin, and deliberately so:** the telemetry poller's network columns always
-writing 0, its per-host baselines never being pruned when a host is deleted, the rate spike when two
-probes land under a second apart, `cronSummary` calling every non-preset schedule "Custom schedule",
-and `MetricLineChart`'s "1 samples". All are cosmetic or data-quality rather than destructive, and
-the Kotlin app is being retired — they are recorded here rather than spent on.
+**Also fixed upstream, in a second PR (#78, session 83):** the telemetry poller's network columns
+always writing 0, its per-host caches never being pruned when a host is deleted — Room reuses a
+freed rowid, so a new host could inherit a deleted one's counters — `cronSummary` calling every
+hand-written schedule "Custom schedule", and `MetricLineChart`'s "1 samples".
+
+**Still unported to Kotlin:** the rate spike when two probes land under a second apart. It needs the
+minimum-window rule from `telemetry_sampling.dart`, which is a behaviour change to the Kotlin's
+sampling rather than a bug fix, and the app is being retired.
 
 ### Session 80 — three gaps closed, and what is left before cut-over (task #7)
 
