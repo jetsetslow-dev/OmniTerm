@@ -1183,6 +1183,44 @@ Decisions taken under the code-security reading, so they are not silently revisi
 - **Unmaintained dependencies are treated as a security concern**, which is what actually rules out
   `smb_connect` (§7.1) — not its protocol version.
 
+### The rules the later sessions added
+
+§17 above was written at session 10 and stopped there; these came out of the screens that followed.
+Each is a place where the *obvious* implementation is the unsafe one.
+
+- **Anything interpolated into a remote command is a boundary, even when it looks like a name.**
+  `tmuxSafeName` reduces a session name to `[A-Za-z0-9-]` — not tidying, but the reason `x; rm -rf ~`
+  cannot become two commands. `shellQuote` does the same job for paths, and the point that is easy
+  to miss is that **a remote path is not this app's text**: it came from a listing on someone else's
+  machine, and a directory called `; rm -rf ~` is legal on every Unix filesystem.
+- **A crontab is written whole, so a read that failed must not look empty.** `crontab -l 2>/dev/null
+  || true` turns "not allowed" into "no entries", and the next Add rewrites the entire file. The
+  read keeps stderr and the exit status, and editing is disabled unless a crontab was actually read
+  (session 75; fixed upstream in PR #77).
+- **An elevated read must separate the tool's output from the file's.** `sudo` prints its lecture on
+  first use and `2>&1` merges it in, so without a marker it is prepended to the file, shown in the
+  editor and written back on save. The marker also keeps "empty file" distinguishable from "sudo
+  refused" — collapsing those truncates a file the user was never allowed to read (session 70; also
+  in PR #77).
+- **Free text from a remote server may not decide what this app connects to.** A WHOIS referral is
+  exactly that: it is stripped of scheme, port and path, validated as a hostname, followed **once**,
+  and never back to the server that offered it. A field containing whitespace is refused outright
+  rather than half-believed (session 78).
+- **A command a user is one tap from running gets named, targeted and screened first.** The shared
+  run dialog prints the command, *names every host* rather than counting them, and carries the
+  destructive-command heuristic. "5 hosts" is not something anyone can check; a list is.
+- **A temporary connection is not an unchecked one.** Quick connect never writes host, username or
+  password to the database — and still goes through the host-key prompt. A connection being
+  short-lived is not a reason to skip the one check that says whether the machine is the one you
+  meant (session 80).
+- **Credentials travel in a backup because the envelope is encrypted, and only for that reason.**
+  Share passwords are exported; `app_pin` never is, because it is a credential for *this device*
+  rather than a preference. A backup that silently dropped credentials would restore a list of
+  shares that all fail on first open, which looks like it worked (session 80).
+- **Bytes that arrive should be the bytes that were typed.** A crontab is installed base64-encoded
+  rather than echoed, because it is full of `%`, `*`, quotes and `$`, each of which means something
+  to the shell on the way in.
+
 ### Warnings owed to the user (to implement with the Shares/Settings screens)
 Under the corrected reading, these are **warnings, not blocks**:
 - SMB shares negotiating < 3.x → note that the transport is unencrypted.
