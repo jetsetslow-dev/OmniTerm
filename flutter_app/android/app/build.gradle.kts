@@ -60,7 +60,18 @@ android {
     }
 
     buildTypes {
+        debug {
+            // Installs alongside the Kotlin app rather than replacing it. The shipped app is
+            // `com.jetsetslow.omniterm.app` (Play) and `…app.oss` (source-available); a debug build
+            // of this port carries a third id so the two can be compared side by side on one
+            // device — which is the only way to check parity on real hardware.
+            applicationIdSuffix = ".flutter"
+            versionNameSuffix = "-flutter"
+            manifestPlaceholders["appLabel"] = "OmniTerm Flutter"
+        }
+
         release {
+            manifestPlaceholders["appLabel"] = "omniterm"
             // R8 stops on a reference it cannot resolve, and the SMB client brings several that are
             // absent by design. See `proguard-rules.pro` — every rule there says why.
             proguardFiles(

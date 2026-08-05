@@ -4594,6 +4594,20 @@ the probe's first run failed on that alone.
 **Verified — 10 new tests; 1739 host tests pass, `analyze` clean; the pickers, the tag, the drag and
 its persistence across leaving the screen were all read off the device.**
 
+### Working budget (session 78)
+
+The weekly limit is close, so the remaining effort is aimed rather than spread:
+
+1. **Cut-over blockers before breadth.** §18's table names two things that must be closed before the
+   Kotlin app can be retired — resize reflow, and SMB on iOS. The second is parked (no macOS
+   toolchain here), so reflow is the priority; the Infra dialogs come next as the largest remaining
+   hole in a headline feature.
+2. **One emulator pass per iteration, not three.** The device runs are the expensive part: batching
+   validation into a single pass roughly halves the cost of an iteration, at the price of slower
+   feedback when a probe misbehaves. Leaf features whose logic is fully covered by host tests ride
+   along with the next pass instead of buying one of their own.
+3. **iOS SMB is parked explicitly**, not silently deferred — see §18.
+
 ### Session 78 — WHOIS (task #7)
 
 The Network tool's seventh tab. `domain/whois.dart` decides where to ask and reads the referral out
@@ -4625,3 +4639,27 @@ the width of a phone, so the screen tests switch tabs through the view model and
 scrolls to each chip and taps it — a chip off the end of a lazy strip is not built, so tapping it
 hits nothing (§19.5, third time). And **iOS SMB is now explicitly parked** in §18: it needs an Xcode
 toolchain and a macOS host, so no amount of budget closes it here.
+
+### Session 78b — a debug APK that installs beside the Kotlin app
+
+Comparing the port against the app it replaces means having both on one device, and until now the
+Flutter debug build claimed `com.jetsetslow.omniterm.app` — the shipped Play identity — so
+installing it replaced the real app.
+
+The debug build type now carries `applicationIdSuffix = ".flutter"` and its own launcher label, so
+the three builds coexist:
+
+| build | application id | label |
+| --- | --- | --- |
+| Kotlin, Play flavour | `com.jetsetslow.omniterm.app` | omniterm |
+| Kotlin, source-available flavour | `com.jetsetslow.omniterm.app.oss` | omniterm |
+| **Flutter, debug** | **`com.jetsetslow.omniterm.app.flutter`** | **OmniTerm Flutter** |
+
+Release is untouched: it keeps the shipped id, because the cut-over is meant to *replace* that app,
+not sit next to it forever. The label moved to a manifest placeholder so only the debug build is
+renamed — two identically-named icons on one launcher would defeat the point.
+
+Built and checked on the emulator: `com.jetsetslow.omniterm.app.flutter`, version `1.0.0-flutter`,
+label `OmniTerm Flutter`, installs and launches (`topResumedActivity=…app.flutter/…MainActivity`).
+
+    flutter build apk --debug   →   build/app/outputs/flutter-apk/app-debug.apk
