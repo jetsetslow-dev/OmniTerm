@@ -131,6 +131,22 @@ object RemoteCommands {
     // `|| echo Windows` fallback fires.
     const val OS_PROBE = "uname -s 2>/dev/null || echo Windows"
 
+    /** Marks the end of `crontab -l` output so its exit status can be read alongside it. */
+    const val CRON_EXIT_MARKER = "---OMNITERM-CRON-EXIT---"
+
+    /**
+     * Reads the login user's crontab, keeping stderr *and* the exit status.
+     *
+     * `crontab -l 2>/dev/null || true` collapses three different answers into one empty string:
+     * this user has no crontab, this user is not allowed one, and this host has no cron at all.
+     * The CRON tab then offers Add, and a save rewrites the whole file -- so a crontab the user was
+     * never allowed to read would be replaced by a single line.
+     */
+    const val CRON_READ_COMMAND = "crontab -l 2>&1; printf '%s%s\n' '$CRON_EXIT_MARKER' \"\$?\""
+
+    /** Marks where a sudo-elevated read's real content begins, after sudo's own chatter. */
+    const val SUDO_OUTPUT_MARKER = "---OMNITERM-BEGIN---"
+
     // ── tmux persistent-session support ───────────────────────────────────────────────────────
     // A shell launched inside tmux survives an SSH drop: the remote process group stays attached to
     // the tmux server, so reconnecting re-attaches the *same* session (and any long-running command
@@ -441,6 +457,17 @@ object RemoteCommands {
      * newline `sudo -S` waits for, or null when no password is configured (NOPASSWD hosts).
      * None of the wrapped scripts read stdin themselves, so the line is consumed only by sudo.
      */
+    /**
+     * Reads a file as root, with a marker separating sudo's own output from the file's.
+     *
+     * On sudo's first use in a session it prints its lecture, and `sudoShWrap` merges stderr into
+     * stdout -- so without this the lecture is prepended to the file, lands in the editor, and is
+     * written back on save. The marker also distinguishes an empty file from a refusal: no marker
+     * means sudo said no, and the raw output is the explanation.
+     */
+    fun sudoReadCommand(path: String, sudoPassword: String): String =
+        sudoShWrap("printf '%s\\n' '$SUDO_OUTPUT_MARKER'; cat -- ${shellQuote(path)}", sudoPassword)
+
     fun sudoStdin(sudoPassword: String): String? =
         if (sudoPassword.isNotBlank()) sudoPassword + "\n" else null
 
@@ -1115,6 +1142,44 @@ object RemoteParsers {
                 )
             }
             .toList()
+
+    /** What a crontab read found: the body, whether it could be read at all, and why not. */
+    data class CrontabRead(val text: String, val readable: Boolean, val error: String = "")
+
+    /**
+     * Splits [RemoteCommands.CRON_READ_COMMAND]'s output into the crontab and the command's fate.
+     *
+     * "no crontab for <user>" is cron's own way of saying the file is empty -- every implementation
+     * prints it on stderr and exits non-zero -- so it has to be recognised, or a first-time user
+     * could never add their first entry. Everything else non-zero is unreadable, and an unreadable
+     * crontab must not be writable: a save rewrites the whole file.
+     */
+    fun parseCrontabRead(output: String): CrontabRead {
+        val marker = output.lastIndexOf(RemoteCommands.CRON_EXIT_MARKER)
+        if (marker < 0) {
+            // The command never ran to completion -- a dropped connection, or a shell that died.
+            val text = output.trim()
+            return CrontabRead("", false, text.ifBlank { "No response" })
+        }
+        val body = output.substring(0, marker)
+        val status = output.substring(marker + RemoteCommands.CRON_EXIT_MARKER.length).trim().toIntOrNull() ?: -1
+        if (status == 0) return CrontabRead(body.trimEnd('\n'), true)
+        if (body.contains("no crontab for", ignoreCase = true)) return CrontabRead("", true)
+        return CrontabRead("", false, body.trim().ifBlank { "crontab exited $status" })
+    }
+
+    /**
+     * The file content from a [RemoteCommands.sudoReadCommand] reply, or null when sudo refused.
+     *
+     * Null and "" are deliberately different: an unreadable file that looked empty would be saved
+     * back as a truncation of the original.
+     */
+    fun parseSudoRead(output: String): String? {
+        val marker = output.indexOf(RemoteCommands.SUDO_OUTPUT_MARKER)
+        if (marker < 0) return null
+        val after = marker + RemoteCommands.SUDO_OUTPUT_MARKER.length
+        return output.substring(after).removePrefix("\n")
+    }
 
     fun parseJournal(output: String): List<SimLog> =
         output.lineSequence()

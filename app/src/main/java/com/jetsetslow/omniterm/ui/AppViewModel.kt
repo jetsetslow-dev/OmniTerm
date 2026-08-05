@@ -1969,6 +1969,10 @@ class AppViewModel @JvmOverloads constructor(
     var cronStatus by mutableStateOf(""); private set
     var cronLoading by mutableStateOf(false); private set
 
+    /** True once a crontab has actually been read from this host. Editing is gated on it: a save
+     *  rewrites the entire file, so an unreadable crontab must not be writable. */
+    var cronReadable by mutableStateOf(false); private set
+
     // In-flight flags for long operations that report only through a completion callback, so the
     // UI can disable its trigger and show a spinner instead of looking frozen. RSA keygen and
     // backup export/restore all run for seconds; without these the user gets no feedback at all.
@@ -6931,10 +6935,19 @@ class AppViewModel @JvmOverloads constructor(
             cronLoading = true
             try {
                 cronStatus = ""
-                val cmd = "crontab -l 2>/dev/null || true"
-                val out = executeSshCommand(srv, cmd).trim()
+                // Keep stderr and the exit status. `crontab -l 2>/dev/null || true` collapses three
+                // different answers into one empty string -- this user has no crontab, this user is
+                // not allowed one, and this host has no cron at all -- and the CRON tab then offers
+                // Add, whose save rewrites the *whole file*. A crontab the user was never allowed to
+                // read would be replaced by a single line.
+                val out = executeSshCommand(srv, RemoteCommands.CRON_READ_COMMAND)
                 if (srv.id != selectedServerId) return@launch
-                cronText = out
+                val read = RemoteParsers.parseCrontabRead(out)
+                cronReadable = read.readable
+                cronText = read.text
+                if (!read.readable) {
+                    cronStatus = read.error.ifBlank { "This host would not show its crontab." }
+                }
             } finally {
                 if (cronJob == coroutineContext[Job]) cronLoading = false
             }
@@ -6943,6 +6956,8 @@ class AppViewModel @JvmOverloads constructor(
 
     fun saveCron(text: String, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
         val srv = selectedServer ?: return onResult(false, "No host selected.")
+        // Writing a file we were never allowed to read would replace contents nobody has seen.
+        if (!cronReadable) return onResult(false, "This host's crontab could not be read, so it will not be written.")
         cronJob?.cancel()
         cronJob = viewModelScope.launch {
             cronLoading = true
@@ -9314,9 +9329,15 @@ class AppViewModel @JvmOverloads constructor(
                 val path = joinPath(sftpPath, file.name)
                 val text = if (sftpSudo && srv != null) {
                     // SFTP can't elevate; read protected files with `sudo cat` over an exec channel.
-                    val out = executeSshCommand(srv, RemoteCommands.sudoShWrap("cat -- ${shellQuote(path)}", srv.sudoPassword), stdin = RemoteCommands.sudoStdin(srv.sudoPassword))
+                    val out = executeSshCommand(srv, RemoteCommands.sudoReadCommand(path, srv.sudoPassword), stdin = RemoteCommands.sudoStdin(srv.sudoPassword))
                     sftpReadError(out)?.let { sftpError = it; return@launch }
-                    out
+                    // Everything before the marker is sudo's, not the file's. Without this the
+                    // lecture sudo prints on first use is prepended to the file, shown in the
+                    // editor, and written back on save.
+                    RemoteParsers.parseSudoRead(out) ?: run {
+                        sftpError = out.trim().ifBlank { "Could not read ${file.name} as root." }
+                        return@launch
+                    }
                 } else {
                     sftpClientOrNull()?.readText(path) ?: return@launch
                 }
