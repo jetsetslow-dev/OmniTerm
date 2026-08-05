@@ -1266,8 +1266,8 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
   "Persistent session (tmux)" is now put inside a named tmux session on connect, and reconnecting
   re-attaches to the same one, and **sessions left running are listed on the connect pane** with
   Resume and Forget (session 66). **Still to do:** the background-session list (sessions deliberately
-  left running while the app stays open) and control mode (`tmux -C`) — the parser is ported and the
-  attach command exists, but nothing drives control mode yet.
+  left running while the app stays open). **Control mode (`tmux -C`) is driven since session 82**, as
+  an opt-in on the connect pane.
 - ~~**The tunnel manager UI.**~~ **Done in session 60**, in the Network tool rather than Shell —
   that is where the Kotlin keeps it.
 - ~~**Text selection and the copy dialog.**~~ **Done in session 58.** The surface still paints a
@@ -4802,8 +4802,7 @@ recorded in §18 as a deliberate non-goal.
 
 5. **The visual Compose Builder** (§18) — a whole YAML editor. The Infra tab says so rather than
    pretending.
-6. **SFTP copy/move between hosts**, and **tmux control mode** driving live sessions: the parser and
-   commands are ported and nothing uses them.
+6. **SFTP copy/move between hosts.** ~~tmux control mode~~ is driven as of session 82.
 7. **Traceroute** (needs a platform channel or an SSH-based redesign) and **speed test** (needs a
    product decision about metered data).
 8. **The device suites on real hardware.** They run on the emulator against the local lab; §19.2 and
