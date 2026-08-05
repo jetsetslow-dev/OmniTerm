@@ -3,6 +3,7 @@ import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
+import 'package:omniterm/data/ssh/ssh_host_key_trust.dart';
 import 'package:omniterm/data/ssh/ssh_tunnel_manager.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/view_model/tunnel_autostart.dart';
@@ -71,6 +72,40 @@ void main() {
       }),
     );
   }
+
+  /// A trust store with nothing pinned, and one that trusts everything.
+  SshHostKeyTrust trustStore({required bool pinned}) {
+    final store = InMemoryHostKeyStore();
+    if (pinned) {
+      // The alias form the trust store itself computes, so this is a real pin rather than a
+      // hand-written key that only looks like one.
+      store.write('${SshHostKeyTrust.canonicalAlias('10.0.0.1', 22)}|ssh-ed25519', 'SHA256:abc');
+    }
+    return SshHostKeyTrust(store);
+  }
+
+  test('a host whose key was never approved is skipped, not dialled', () async {
+    // Observed on a device: dialling one throws the "Trust this server?" prompt over whatever the
+    // user opened the app to do, then fails closed two minutes later. A trust decision asked out
+    // of context at launch is the one most likely to be tapped through.
+    await repo.insertServer(server());
+    await addTunnel(autoStart: true);
+    final harness = failingManager();
+
+    await TunnelAutoStarter(repo, harness.manager, trust: trustStore(pinned: false)).start();
+
+    expect(harness.dialled, isEmpty);
+  });
+
+  test('a host that has been approved is dialled', () async {
+    await repo.insertServer(server());
+    await addTunnel(autoStart: true);
+    final harness = failingManager();
+
+    await TunnelAutoStarter(repo, harness.manager, trust: trustStore(pinned: true)).start();
+
+    expect(harness.dialled, hasLength(1));
+  });
 
   test('hosts come from the repository, not from an app state that has not loaded yet', () async {
     // The hazard this pins: the starter runs eagerly at launch, before `AppState.start()` has

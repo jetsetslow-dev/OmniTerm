@@ -1281,8 +1281,9 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
   connection. Worth a product decision before implementing.
 - ~~**Tunnels**~~ — **done in sessions 60-61.** The Kotlin's ninth Network tab: saved local (`-L`),
   remote (`-R`) and dynamic (`-D`) forwards, started and stopped from a switch, plus "start when
-  OmniTerm opens" (`TunnelAutoStarter`). **Auto-start is host-tested but not device-verified** —
-  see the note in §19.3.
+  OmniTerm opens" (`TunnelAutoStarter`), which **skips hosts whose key has never been approved** —
+  see session 62 for why. The last hop (a valid credential binding the port unattended) is reasoned
+  from session 60's proof rather than measured; §19.3 says how to finish it.
 
 **Scripts (session 28):**
 - **Per-OS / per-platform filtering of quick scripts** — the columns (`targetOs`, `targetSystem`) are
@@ -3914,3 +3915,37 @@ mattered more than any code.
 
 **Verified — 8 new tests (6 auto-starter, 2 editor); 1547 host tests pass, `analyze --fatal-infos`
 clean. Auto-start is host-tested only; §19.3 records how to check it on a device.**
+
+---
+
+### Session 62 — finishing the auto-start check, and what it turned up
+
+Session 61 left auto-start host-tested only, with §19.3 describing how to check it properly. Done
+here: debug APK installed **by hand** so the data survives, host and tunnel seeded straight into
+`databases/omniterm_database` through `run-as` + `sqlite3`, then force-stop and relaunch.
+
+**What the device showed, in order:**
+
+| Observation | What it means |
+|---|---|
+| `AUTOSTART: start() running` · `1 rows marked` | the eager provider is constructed and reads the marked row — the path executes |
+| Then nothing for two minutes | not a hang: a **"Trust this server?" prompt** was on screen, which a screenshot confirmed |
+| `SSHAuthAbortError(Connection closed before authentication)` at exactly +120s | the approval deadline expired and the trust store **failed closed**, as designed |
+| After approving: `SSHAuthFailError(All authentication methods failed)` | the seeded plaintext password was correctly treated as *absent* — `SecretStore.decrypt` returns null for anything without an `enc:` envelope, so the app refuses to guess at a value it did not write |
+
+Three of those four are the app behaving exactly as intended, and the fourth was my seeding.
+
+**The finding worth acting on: auto-start was asking for a trust decision at launch.** Dialling an
+unpinned host throws that prompt over whatever the user opened the app to do, and then gives up
+silently two minutes later. A security question asked out of context, at startup, is the one most
+likely to be tapped through — so `TunnelAutoStarter` now **skips hosts with no pinned key**. The
+honest place to make that decision is the first deliberate connection to the host.
+
+**Still not measured:** the final hop, a valid credential binding the port unattended. Setting a
+real password needs the app's own form (the database column is encrypted, deliberately), and
+driving that form by `adb` taps is the fragile path §19 warns about. The same `manager.start` call
+was proven end-to-end on a device in session 60, carrying real HTTP — so this is composition from a
+measured part, and it is written down as such rather than claimed.
+
+**Verified — 2 new tests (8 in the auto-starter suite); 1549 host tests pass, `analyze
+--fatal-infos` clean; the auto-start path observed executing on Android 15.**

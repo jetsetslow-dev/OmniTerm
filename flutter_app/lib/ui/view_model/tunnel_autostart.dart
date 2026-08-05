@@ -1,4 +1,5 @@
 import '../../data/app_repository.dart';
+import '../../data/ssh/ssh_host_key_trust.dart';
 import '../../data/ssh/ssh_tunnel_manager.dart';
 import '../../domain/server_credentials.dart';
 
@@ -21,10 +22,16 @@ import '../../domain/server_credentials.dart';
 /// also why it reads hosts from the repository rather than from `AppState` — at that moment the
 /// in-memory list is still empty.
 class TunnelAutoStarter {
-  TunnelAutoStarter(this._repository, this._tunnels);
+  TunnelAutoStarter(this._repository, this._tunnels, {SshHostKeyTrust? trust})
+    // ignore: prefer_initializing_formals — a private field cannot be a named initializing formal.
+    : _trust = trust;
 
   final AppRepository _repository;
   final SshTunnelManager? _tunnels;
+
+  /// Used to skip hosts whose key has never been approved. Nullable so a build without the trust
+  /// store still starts tunnels rather than refusing everything.
+  final SshHostKeyTrust? _trust;
 
   bool _ran = false;
 
@@ -49,6 +56,15 @@ class TunnelAutoStarter {
     for (final pf in rows) {
       final server = servers.where((s) => s.id == pf.serverId).firstOrNull;
       if (server == null) continue;
+
+      // A host whose key has never been approved is skipped, not dialled.
+      //
+      // Observed on a device: dialling one throws the "Trust this server?" prompt over whatever the
+      // user opened the app to do, and then fails closed 120 seconds later if they do not answer.
+      // A trust decision asked out of context, at launch, is the one most likely to be tapped
+      // through — and the honest place to make it is the first deliberate connection to that host.
+      if (_trust != null && !await _trust.hasPinnedKey(server.host, server.port)) continue;
+
       try {
         await manager.start(
           id: pf.id,

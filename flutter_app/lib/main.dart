@@ -161,6 +161,7 @@ class OmniTermApp extends StatelessWidget {
           create: (context) => TunnelAutoStarter(
             context.read<AppState>().repository,
             context.read<SshTunnelManager>(),
+            trust: context.read<SshHostKeyTrust>(),
           )..start(),
         ),
         ChangeNotifierProvider<HostStatusProbe>(
