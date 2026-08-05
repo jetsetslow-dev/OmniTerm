@@ -150,4 +150,24 @@ void main() {
       );
     });
   });
+
+  group('control-mode resume', () {
+    test('resuming in control mode still recreates a vanished session', () {
+      // The reason there is no plain control-mode attach here: it fails on a session the server no
+      // longer has, and the fallback would be an ordinary shell whose bytes the control-mode parser
+      // reads as a protocol and renders as nothing — worse than the non-persistent shell that
+      // `tmuxResumeCommand` exists to prevent.
+      final command = tmuxResumeCommand('nas-1', controlMode: true);
+
+      expect(command, contains('has-session -t nas-1'));
+      expect(command, contains('new-session -d -s nas-1'));
+      expect(command, contains('exec tmux -C attach-session -t nas-1'));
+    });
+
+    test('the ordinary resume is unchanged', () {
+      final command = tmuxResumeCommand('nas-1');
+      expect(command, contains('exec tmux attach-session -t nas-1'));
+      expect(command, isNot(contains('-C')));
+    });
+  });
 }

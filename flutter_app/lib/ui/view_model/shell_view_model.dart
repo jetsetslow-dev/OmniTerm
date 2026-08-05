@@ -216,6 +216,7 @@ class ShellViewModel extends ChangeNotifier {
   Future<(String name, String command)> _persistentTarget(
     Server server, {
     String? resumeName,
+    bool controlMode = false,
   }) async {
     final scrollback = PreferenceLimits.terminalScrollback.parse(
       await _app.repository.getSetting('terminal_scrollback_limit'),
@@ -228,7 +229,10 @@ class ShellViewModel extends ChangeNotifier {
     if (existing != null) {
       // Resume, not plain attach. A remembered row outlives the server rebooting, and a plain
       // attach to a session that is gone silently leaves an ordinary, non-persistent shell.
-      return (existing, tmuxResumeCommand(existing, historyLimit: scrollback));
+      return (
+        existing,
+        tmuxResumeCommand(existing, historyLimit: scrollback, controlMode: controlMode),
+      );
     }
 
     final name = tmuxSafeName('omniterm-${server.id}-${DateTime.now().millisecondsSinceEpoch}');
@@ -243,7 +247,12 @@ class ShellViewModel extends ChangeNotifier {
         backgroundedAt: 0,
       ),
     );
-    return (name, tmuxCreateAttachCommand(name, historyLimit: scrollback));
+    return (
+      name,
+      controlMode
+          ? tmuxControlCreateAttachCommand(name, historyLimit: scrollback)
+          : tmuxCreateAttachCommand(name, historyLimit: scrollback),
+    );
   }
 
   // ── resumable sessions ──────────────────────────────────────────────────────
@@ -289,8 +298,28 @@ class ShellViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
+  /// Whether the next connection to a persistent host attaches with `tmux -C`.
+  ///
+  /// A per-connection choice rather than a stored host setting: it changes how this app reads the
+  /// channel, not anything about the server, and a wrong guess is undone by reconnecting.
+  bool _useControlMode = false;
+
+  bool get useControlMode => _useControlMode;
+
+  set useControlMode(bool value) {
+    if (_useControlMode == value) return;
+    _useControlMode = value;
+    notifyListeners();
+  }
+
   /// Open a new shell on [server].
-  Future<void> connect(Server server, {String? resumeName}) async {
+  ///
+  /// [controlMode] attaches a persistent host with `tmux -C` instead of an ordinary client. It is
+  /// opt-in rather than the default because this app renders one pane: control mode's window and
+  /// layout events are parsed and ignored, so a session that is split *inside* tmux would show only
+  /// the pane whose output arrives. For a single pane it is strictly better — every byte is
+  /// delivered as an event rather than folded into a redraw — which is why it is offered at all.
+  Future<void> connect(Server server, {String? resumeName, bool controlMode = false}) async {
     if (_connecting) return;
     final ssh = transport;
     if (ssh == null) {
@@ -340,7 +369,7 @@ class ShellViewModel extends ChangeNotifier {
       // Resolved before the session is built so it can carry its own tmux name — that is what
       // lets the resumable list tell "open in a tab" from "running with nobody watching".
       final persistent = server.persistentSession
-          ? await _persistentTarget(server, resumeName: resumeName)
+          ? await _persistentTarget(server, resumeName: resumeName, controlMode: controlMode)
           : null;
 
       final session = ShellSession(
@@ -350,6 +379,9 @@ class ShellViewModel extends ChangeNotifier {
         channel: channel,
         emulator: emulator,
         tmuxName: persistent?.$1,
+        // Only a host that actually went into tmux can be in control mode; a plain shell that was
+        // asked for it would have its ordinary output parsed as a protocol and rendered as nothing.
+        controlMode: controlMode && persistent != null,
       )..setViewportRows(_preferredRows);
       session.addListener(_safeNotify);
       session.addListener(_syncBackgroundSessions);

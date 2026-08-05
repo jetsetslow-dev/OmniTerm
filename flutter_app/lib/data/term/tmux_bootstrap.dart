@@ -94,7 +94,11 @@ String tmuxAttachCommand(String name, {int historyLimit = 10000}) {
 /// `has-session || new-session` rather than tmux's own `new-session -A`: that flag reports failure
 /// when the session already exists on the tmux shipped by the lab's image, which would reintroduce
 /// exactly the silent degrade this exists to remove.
-String tmuxResumeCommand(String name, {int historyLimit = 10000}) {
+/// [controlMode] attaches with `tmux -C` once the session is known to exist. There is no
+/// control-mode `attach` that also creates: `tmuxControlAttachCommand` fails on a vanished session
+/// and would leave an ordinary shell whose bytes the control-mode parser reads as a protocol and
+/// renders as nothing — a worse failure than the plain one this function exists to prevent.
+String tmuxResumeCommand(String name, {int historyLimit = 10000, bool controlMode = false}) {
   final safe = tmuxSafeName(name);
   final limit = _boundedHistory(historyLimit);
   return 'command -v tmux >/dev/null 2>&1 && '
@@ -103,7 +107,7 @@ String tmuxResumeCommand(String name, {int historyLimit = 10000}) {
       'new-session -d -s $safe; } && '
       '(tmux set-option -t $safe history-limit $limit >/dev/null 2>&1 || true) && '
       '(tmux set-option -t $safe mouse off >/dev/null 2>&1 || true) && '
-      'exec tmux attach-session -t $safe\n';
+      'exec tmux ${controlMode ? '-C ' : ''}attach-session -t $safe\n';
 }
 
 /// Attaches in **control mode** (`tmux -C`).

@@ -5,6 +5,8 @@ import 'package:flutter/foundation.dart';
 
 import '../../data/ssh/ssh_transport.dart';
 import '../../data/term/terminal_emulator.dart';
+import '../../data/term/tmux_control_event.dart';
+import '../../data/term/tmux_control_parser.dart';
 import '../../data/term/terminal_snapshot.dart';
 
 /// Why a shell session is no longer usable.
@@ -40,7 +42,9 @@ class ShellSession extends ChangeNotifier {
     required TerminalSession channel,
     required this.emulator,
     this.tmuxName,
-  }) : _channel = channel {
+    this.controlMode = false,
+  }) : _channel = channel,
+       _control = controlMode ? TmuxControlParser() : null {
     _subscription = channel.output.listen(
       _onOutput,
       onError: (Object _) => _finish(ShellSessionEnd.disconnected),
@@ -60,6 +64,21 @@ class ShellSession extends ChangeNotifier {
   /// with nobody watching" — offering to resume a session the user is currently looking at would be
   /// nonsense.
   final String? tmuxName;
+
+  /// True when the remote was attached with `tmux -C`, so the channel carries a control-mode
+  /// conversation rather than raw terminal bytes.
+  ///
+  /// This is what makes fast output safe: tmux streams **every** pane byte as a `%output` event
+  /// instead of redrawing a client, so output the user has not seen yet cannot be collapsed into a
+  /// repaint. Nothing else about the terminal changes — the bytes carried inside those events go to
+  /// the same emulator.
+  final bool controlMode;
+
+  /// Splits the control-mode conversation into events. Null for an ordinary attach.
+  final TmuxControlParser? _control;
+
+  /// Why tmux said the session ended, when it said anything.
+  String? controlExitReason;
 
   final TerminalSession _channel;
 
@@ -88,7 +107,30 @@ class ShellSession extends ChangeNotifier {
 
   void _onOutput(Uint8List bytes) {
     if (_disposed) return;
-    emulator.feed(bytes);
+    final control = _control;
+    if (control == null) {
+      emulator.feed(bytes);
+      _schedulePublish();
+      return;
+    }
+
+    for (final event in control.feed(bytes)) {
+      switch (event) {
+        // Only pane output is terminal content. A reply, a notification or a session change is the
+        // protocol talking about itself, and feeding it to the emulator would paint tmux's own
+        // bookkeeping into the user's scrollback.
+        case TmuxOutput(:final data):
+          emulator.feed(data);
+        case TmuxExit(:final reason):
+          controlExitReason = reason;
+          // tmux saying %exit is the remote finishing, not the link failing: the session should
+          // disappear rather than linger with its scrollback for a network that never dropped.
+          _finish(ShellSessionEnd.remoteExited);
+          return;
+        case TmuxReply() || TmuxSessionChanged() || TmuxNotification():
+          break;
+      }
+    }
     _schedulePublish();
   }
 

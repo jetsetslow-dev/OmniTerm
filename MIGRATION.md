@@ -4848,3 +4848,49 @@ has not been watched on a device.
 
 **Verified — 2 new tests; 1802 host tests pass, `analyze` clean, and the app starts with the new
 provider graph.**
+
+### Session 82 — control mode finally drives something (task #7)
+
+The control-mode parser, its event types and its command builders were ported in session 11 with
+their own tests, and **nothing ever used them**. `tmux -C` is what makes fast output safe: tmux
+streams every pane byte as a `%output` event instead of drawing a client, so output the user has not
+seen cannot be collapsed into a repaint. That was a paragraph in this log and no behaviour.
+
+`ShellSession` now takes `controlMode`. When set, bytes go through `TmuxControlParser` and **only
+`%output` payloads reach the emulator** — a reply, a notification or a session change is the
+protocol talking about itself, and feeding it to the terminal would paint tmux's bookkeeping into
+the user's scrollback. `%exit` ends the session as a *remote exit* rather than a dropped link, which
+is the distinction that decides whether the tab disappears or stays with its scrollback.
+
+**It is opt-in, not the default**, and the reason is a real limitation rather than caution: this app
+draws one pane. Control mode's window and layout events are parsed and ignored, so a session split
+*inside* tmux would show only the pane whose output arrives. For a single pane it is strictly
+better; for a split one it is worse, and the user is the one who knows which they have. The checkbox
+appears only on hosts marked persistent, because a host that never enters tmux has no protocol to
+speak — and `ShellSession` refuses control mode when the tmux bootstrap did not run, since parsing
+an ordinary shell's output as a protocol renders nothing at all.
+
+`tmuxResumeCommand` gained a `controlMode` flag rather than the caller string-patching `exec tmux
+attach-session` into `exec tmux -C attach-session`. There is deliberately no control-mode *plain*
+attach on the resume path: it fails on a session the server no longer has, and the fallback would be
+an ordinary shell whose bytes the parser reads as a protocol — a worse failure than the
+non-persistent shell `tmuxResumeCommand` exists to prevent.
+
+**Measured against real tmux (3.6b on the lab), not imagined.** A live `tmux -C attach-session`
+produced:
+
+```
+%begin 1785926735 276 0
+%config-error /root/.tmux.conf: Permission denied
+%config-error /root/.config/tmux/tmux.conf: Permission denied
+%end 1785926735 276 0
+%session-changed $0 probe-cm
+%exit
+```
+
+That transcript is now a test: every line of it is tmux talking about itself, the terminal stays
+empty, and the `%exit` — which carries no reason on this version — ends the session as a remote
+exit. The escaping test is written with literal `\015\012` because that is what tmux sends; Dart has
+no octal escape, and writing it any other way tests nothing.
+
+**Verified — 7 new tests; 1809 host tests pass, `analyze` clean.**

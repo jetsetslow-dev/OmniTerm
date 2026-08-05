@@ -11,7 +11,7 @@ void main() {
   late FakeTerminalSession channel;
   late ShellSession session;
 
-  ShellSession build({int rows = 24, int scrollbackLimit = 2000}) {
+  ShellSession build({int rows = 24, int scrollbackLimit = 2000, bool controlMode = false}) {
     channel = FakeTerminalSession();
     return session = ShellSession(
       id: 's1',
@@ -19,6 +19,7 @@ void main() {
       serverName: 'nas',
       channel: channel,
       emulator: TerminalEmulator(cols: 80, rows: rows, scrollbackLimit: scrollbackLimit),
+      controlMode: controlMode,
     )..setViewportRows(rows);
   }
 
@@ -269,6 +270,82 @@ void main() {
 
     expect(channel.closeCalled, isTrue);
     // Re-disposed by tearDown; the second call must be a no-op rather than a throw.
+  });
+
+  group('control mode', () {
+    // tmux -C escapes control bytes as three octal digits and frames everything as events. The
+    // point of attaching this way is that fast output cannot be folded into a redraw: every byte
+    // arrives as %output whether or not the user is looking.
+    test('pane output reaches the terminal', () async {
+      build(controlMode: true);
+      // Literal backslash-digits: that is what tmux sends, and Dart has no octal escape to
+      // accidentally collapse them with.
+      channel.emit('${r'%output %1 hello\015\012'}\n');
+      await settle();
+
+      expect(session.snapshot.rows.first.text.trimRight(), 'hello');
+    });
+
+    test("the protocol's own chatter is not painted into the scrollback", () async {
+      // A reply, a notification or a session rename is tmux talking about itself. Feeding any of it
+      // to the emulator would write tmux's bookkeeping into the user's transcript.
+      build(controlMode: true);
+      channel.emit('%begin 1 1 0\r\n0: 1 windows\r\n%end 1 1 0\r\n');
+      channel.emit('%session-changed \$0 main\r\n');
+      channel.emit('%window-add @1\r\n');
+      await settle();
+
+      final text = session.snapshot.rows.map((r) => r.text.trim()).join();
+      expect(text, isEmpty, reason: 'nothing tmux said about itself belongs on screen');
+    });
+
+    test('%exit ends the session as a remote exit, not a dropped link', () async {
+      // The distinction decides whether the tab disappears or stays with its scrollback for the
+      // user to read: tmux saying %exit is the remote finishing.
+      build(controlMode: true);
+      channel.emit('%exit server exited\r\n');
+      await settle();
+
+      expect(session.endReason, ShellSessionEnd.remoteExited);
+      expect(session.controlExitReason, contains('server exited'));
+    });
+
+    test('a real tmux 3.6b attach paints nothing but its pane output', () async {
+      // Captured verbatim from `tmux -C attach-session` on the lab: a reply block, two config
+      // errors, a session change and an exit. Every line here is tmux talking about itself, and
+      // none of it belongs in the user's transcript.
+      build(controlMode: true);
+      channel.emit(
+        '%begin 1785926735 276 0\r\n'
+        '%config-error /root/.tmux.conf: Permission denied\r\n'
+        '%config-error /root/.config/tmux/tmux.conf: Permission denied\r\n'
+        '%end 1785926735 276 0\r\n'
+        '%session-changed \$0 probe-cm\r\n',
+      );
+      await settle();
+
+      expect(session.snapshot.rows.map((r) => r.text.trim()).join(), isEmpty);
+      expect(session.endReason, ShellSessionEnd.open, reason: 'the session is still attached');
+
+      channel.emit('%exit\r\n');
+      await settle();
+      expect(session.endReason, ShellSessionEnd.remoteExited);
+      expect(session.controlExitReason, anyOf(isNull, isEmpty));
+    });
+
+    test('an ordinary session still takes raw bytes', () async {
+      // The default path must be untouched: everything that is not an explicit control-mode attach
+      // is a normal terminal.
+      build();
+      channel.emit('${r'%output %1 not-an-event'}\r\n');
+      await settle();
+
+      expect(
+        session.snapshot.rows.first.text.trimRight(),
+        '%output %1 not-an-event',
+        reason: 'without control mode these are just characters',
+      );
+    });
   });
 }
 

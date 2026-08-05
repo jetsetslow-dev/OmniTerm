@@ -434,8 +434,35 @@ class _ConnectPrompt extends StatelessWidget {
             key: const ValueKey('shell.connect'),
             icon: const Icon(Icons.play_arrow, size: 18),
             label: const Text('Connect'),
-            onPressed: vm.canConnect ? () => vm.connect(server) : null,
+            onPressed: vm.canConnect
+                ? () => vm.connect(server, controlMode: vm.useControlMode)
+                : null,
           ),
+          // Offered only where it means something: control mode is a property of a tmux attach, and
+          // a host that never enters tmux has no protocol to speak.
+          if (server.persistentSession)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Checkbox(
+                    key: const ValueKey('shell.controlMode'),
+                    value: vm.useControlMode,
+                    onChanged: vm.canConnect ? (v) => vm.useControlMode = v ?? false : null,
+                  ),
+                  const Text('Attach in control mode', style: TextStyle(fontSize: 11)),
+                  const SizedBox(width: 4),
+                  Tooltip(
+                    message:
+                        'tmux sends every byte as an event instead of redrawing, so fast output '
+                        'cannot be lost. This app draws one pane: splits made inside tmux will '
+                        'not all be visible.',
+                    child: const Icon(Icons.info_outline, size: 14, color: OmniColors.textMuted),
+                  ),
+                ],
+              ),
+            ),
           const SizedBox(height: 8),
           TextButton.icon(
             key: const ValueKey('shell.quickConnect'),
