@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -73,6 +75,7 @@ class _SummaryBar extends StatelessWidget {
               ),
             ),
             const Spacer(),
+            _RefreshCountdown(vm: vm),
             Text(
               '${vm.onlineCount} / ${vm.totalCount} Online',
               key: const ValueKey('fleet.summary.online'),
@@ -84,6 +87,60 @@ class _SummaryBar extends StatelessWidget {
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// How long until every host on this screen is measured again.
+///
+/// The dashboard is a wall of numbers with nothing on it that changes visibly, so without this
+/// there is no way to tell a fleet that is idle from one the app stopped polling ten minutes ago.
+/// Driven by the poller's own cycle rather than a timer of its own, so it cannot drift away from
+/// the thing it describes.
+class _RefreshCountdown extends StatefulWidget {
+  const _RefreshCountdown({required this.vm});
+
+  final FleetViewModel vm;
+
+  @override
+  State<_RefreshCountdown> createState() => _RefreshCountdownState();
+}
+
+class _RefreshCountdownState extends State<_RefreshCountdown> {
+  Timer? _tick;
+
+  @override
+  void initState() {
+    super.initState();
+    _tick = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _tick?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final next = widget.vm.nextRefreshAt;
+    // No poller in this build: no countdown, rather than a promise the app cannot keep.
+    if (next == null) return const SizedBox.shrink();
+
+    final remaining = next.difference(DateTime.now());
+    return Padding(
+      key: const ValueKey('fleet.summary.countdown'),
+      padding: const EdgeInsets.only(right: 10),
+      child: Text(
+        remaining.isNegative ? 'refreshing…' : '${remaining.inSeconds + 1}s',
+        style: TextStyle(
+          fontSize: 11,
+          fontFamily: OmniFonts.mono,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
         ),
       ),
     );

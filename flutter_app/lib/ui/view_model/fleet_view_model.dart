@@ -8,8 +8,10 @@ import '../../data/remote_models.dart';
 import '../../data/remote_parsers.dart';
 import '../../data/ssh/ssh_transport.dart';
 import '../../domain/command_danger.dart';
+import '../../domain/health_scoring.dart';
 import '../../domain/server_credentials.dart';
 import 'app_state.dart';
+import 'telemetry_poller.dart';
 
 /// The Fleet screen's three tabs, in the Kotlin's order (`ui/FleetScreen.kt` line 59).
 enum FleetTab { dashboard, broadcast, logs }
@@ -40,8 +42,9 @@ class BroadcastResult {
 
 /// The Fleet screen's state and actions, split out of `ui/AppViewModel.kt` per §5.2.
 class FleetViewModel extends ChangeNotifier {
-  FleetViewModel(this._app, {this.transport}) {
+  FleetViewModel(this._app, {this.transport, this.poller}) {
     _app.addListener(_onAppChanged);
+    poller?.addListener(_safeNotify);
   }
 
   final AppState _app;
@@ -51,6 +54,46 @@ class FleetViewModel extends ChangeNotifier {
   final SshTransport? transport;
 
   bool get canBroadcast => transport != null;
+
+  /// The fleet-wide telemetry loop, when one is running.
+  ///
+  /// Fleet reads the poller rather than fetching for itself. It is the one screen showing every
+  /// host at once, so a per-screen fetch here would mean N more SSH sessions every time someone
+  /// opens the dashboard — on top of the ones the poller already opened for the same numbers.
+  final TelemetryPoller? poller;
+
+  /// When the next telemetry cycle is due, for the summary bar's countdown.
+  DateTime? get nextRefreshAt => poller?.nextCycleAt;
+
+  /// The recent CPU readings for [serverId], oldest first. Empty without a poller, because one
+  /// on-demand fetch cannot support a claim about how something changed over time.
+  List<double> cpuHistoryFor(int serverId) =>
+      poller?.historyForServer(serverId).map((s) => s.metrics.cpuPercent).toList() ?? const [];
+
+  /// When each of those readings was taken, for the chart's end labels.
+  List<int> historyTimestampsFor(int serverId) =>
+      poller
+          ?.historyForServer(serverId)
+          .map((s) => s.at.millisecondsSinceEpoch)
+          .toList() ??
+      const [];
+
+  /// Why [server] scores what it does, from the same config and readings the poller scored with.
+  ///
+  /// Null when nothing has sampled this host yet: an explanation assembled from
+  /// [HostMetrics.empty] would read as a host at 0% on every metric, which is a description of a
+  /// machine that does not exist.
+  HealthBreakdown? healthBreakdownFor(Server server) {
+    final metrics = poller?.metricsForServer(server.id);
+    if (metrics == null) return null;
+    return _app.healthScoring.breakdown(
+      metrics.cpuPercent,
+      metrics.memPercent,
+      metrics.diskPercent,
+      server.lastLatency,
+      online: server.status == 'online',
+    );
+  }
 
   /// How many hosts a broadcast talks to at once.
   ///
@@ -401,6 +444,7 @@ class FleetViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    poller?.removeListener(_safeNotify);
     _app.removeListener(_onAppChanged);
     super.dispose();
   }

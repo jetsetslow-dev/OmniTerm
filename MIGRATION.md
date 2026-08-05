@@ -1312,10 +1312,11 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
 - **Copy/move between hosts** (the cross-clipboard bar) — present in the Kotlin browser, not ported.
 
 **Fleet (session 25):**
-- **Quick-script presets in Broadcast** — the Kotlin offers saved fleet-enabled quick scripts as
-  pickable command presets, with a search box and an inline editor. Not ported; the command field is
-  free text only. Blocked on the Quick Scripts store, which lands with Tools.
-- **The refresh countdown** in the summary bar — needs the telemetry poller, as Monitor's does.
+- **Quick-script presets in Broadcast** — the saved fleet-enabled scripts *are* offered as one-tap
+  presets (`fleet.preset.*`). The Kotlin additionally puts a **search box and an inline editor** in
+  that picker; those are not ported, and a fleet with dozens of saved scripts will want the search.
+- ~~**The refresh countdown** in the summary bar~~ — **done in session 74**, along with the per-host
+  CPU charts, on session 72's poller.
 
 **Infra (session 24):**
 - **The visual Compose Builder** — not ported; the tab renders a note saying so. It is a whole YAML
@@ -4389,3 +4390,52 @@ that looks for a widget it has not scrolled to proves nothing either way — and
 
 **Verified — 14 new tests; 1678 host tests pass, `analyze` clean; the growing series, the per-core
 bars, the derived disk throughput and the breakdown arithmetic were all read off the device.**
+
+### Session 74 — the Fleet dashboard reads the same loop (task #7)
+
+The dashboard was a column of bare numbers: a name, an address, a score. It is the one screen whose
+entire job is *comparing* machines, and nothing on it showed which host was climbing or when any of
+it had last been measured. Both are now fed by session 72's poller, and neither costs a connection —
+Fleet renders every host at once, so a per-screen fetch here would have opened N more SSH sessions
+for numbers the poller already has.
+
+- **A CPU chart per online host**, using session 73's shared `MetricLineChart`. Offline hosts get
+  none: their series stopped, and a line ending mid-air reads as current.
+- **A countdown in the summary bar.** A wall of numbers with nothing visibly moving gives no way to
+  tell a fleet that is idle from one the app stopped polling ten minutes ago.
+- **The score explains itself**, as Monitor's ring does. The dialog moved to
+  `ui/widgets/health_breakdown_dialog.dart` rather than being written twice — both screens draw the
+  same ring from the same column, and two dialogs would eventually explain it two different ways.
+  It takes a breakdown rather than a host and a config, so it can only ever narrate a number
+  somebody else computed.
+
+One deliberate refusal: a host **nothing has sampled yet** opens no dialog at all. A breakdown
+assembled from `HostMetrics.empty` reads as a machine at 0% on every metric, which describes a
+computer that does not exist — and it would appear at exactly the moment a user is most likely to
+tap, in the first seconds after adding a host.
+
+**On the device, against two real lab hosts:**
+
+```
+t+0s   countdown 10s   CPU · —            0 / 2 Online
+t+15s  countdown 8s    CPU · 0 samples    2 / 2 Online
+t+30s  countdown 5s    CPU · 1 sample     2 / 2 Online
+t+45s  countdown 2s    CPU · 2 samples    2 / 2 Online
+charts on screen = 2 · score rings = 2
+Score: 80 / 100 · Memory 72% — elevated (≥70%) -5 · Latency 270ms — critical (≥200ms) -15
+```
+
+**§19.6 — a probe that walks the app can fail for reasons that are about the lab, not the app.** The
+first run reported no dashboard at all. The cause was in the probe's own setup: it added its second
+host on port **2202**, which is the lab's **key-only** host, so the password never authenticated,
+the Save button never enabled, and the form stayed open over the navigation the rest of the run
+depended on. Nothing was wrong with Fleet. `scripts/test-hosts.sh` lists which port takes which
+credential (2201 and 2203 password, 2202 and 2204 key) and is worth re-reading before assuming the
+app is at fault.
+
+While here: §18's claim that Broadcast has no quick-script presets was stale — they have been there
+since the Tools port. Corrected to name what is actually still missing (the picker's search box and
+inline editor).
+
+**Verified — 5 new tests; 1683 host tests pass, `analyze` clean; the countdown, both per-host series
+and the breakdown were read off the device with two hosts online.**

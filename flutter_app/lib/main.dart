@@ -209,8 +209,11 @@ class OmniTermApp extends StatelessWidget {
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, FleetViewModel>(
-          create: (context) =>
-              FleetViewModel(context.read<AppState>(), transport: context.read<SshTransport>()),
+          create: (context) => FleetViewModel(
+            context.read<AppState>(),
+            transport: context.read<SshTransport>(),
+            poller: context.read<TelemetryPoller>(),
+          ),
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, SftpViewModel>(

@@ -8,6 +8,8 @@ import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/fleet_view_model.dart';
 import '../../view_model/scripts_view_model.dart';
+import '../../widgets/health_breakdown_dialog.dart';
+import '../../widgets/metric_line_chart.dart';
 import '../../widgets/omni_components.dart';
 
 /// Every host at a glance, worst first.
@@ -43,15 +45,16 @@ class FleetDashboardTab extends StatelessWidget {
         key: const ValueKey('fleet.dashboard.list'),
         itemCount: ordered.length,
         separatorBuilder: (_, _) => const SizedBox(height: 8),
-        itemBuilder: (context, index) => _HostCard(server: ordered[index]),
+        itemBuilder: (context, index) => _HostCard(vm: vm, server: ordered[index]),
       ),
     );
   }
 }
 
 class _HostCard extends StatelessWidget {
-  const _HostCard({required this.server});
+  const _HostCard({required this.vm, required this.server});
 
+  final FleetViewModel vm;
   final Server server;
 
   @override
@@ -67,46 +70,80 @@ class _HostCard extends StatelessWidget {
         ? OmniColors.amber
         : OmniColors.red;
 
+    final accent = OmniColors.serverAccent(server.serverColor, server.name);
+
     return OmniCard(
       key: ValueKey('fleet.host.${server.id}'),
-      leftAccent: OmniColors.serverAccent(server.serverColor, server.name),
-      child: Row(
+      leftAccent: accent,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  display.name(server),
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      display.name(server),
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                    ),
+                    Text(
+                      display.userAtHost(server),
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontFamily: OmniFonts.mono,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ),
-                Text(
-                  display.userAtHost(server),
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontFamily: OmniFonts.mono,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (online)
-            Text(
-              '${server.healthScore}',
-              key: ValueKey('fleet.host.${server.id}.score'),
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                fontFamily: OmniFonts.mono,
-                color: scoreColor,
               ),
-            )
-          else
-            // A score for an unreachable host is a stale number pretending to be current.
-            const OmniTag(label: 'OFFLINE', color: OmniColors.textMuted),
+              if (online)
+                // Tappable for the same reason as Monitor's ring: a score with no stated reason is not
+                // information. Only for an online host — there is nothing to explain about a number
+                // that is not being computed.
+                InkWell(
+                  key: ValueKey('fleet.host.${server.id}.score.open'),
+                  onTap: () => showHealthBreakdown(
+                    context,
+                    name: display.name(server),
+                    breakdown: vm.healthBreakdownFor(server),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                    child: Text(
+                      '${server.healthScore}',
+                      key: ValueKey('fleet.host.${server.id}.score'),
+                      style: TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: OmniFonts.mono,
+                        color: scoreColor,
+                      ),
+                    ),
+                  ),
+                )
+              else
+                // A score for an unreachable host is a stale number pretending to be current.
+                const OmniTag(label: 'OFFLINE', color: OmniColors.textMuted),
+            ],
+          ),
+          // The dashboard's whole job is comparing hosts, and a column of bare numbers cannot show
+          // which machine is climbing. An offline host gets no chart: its series stopped, and a
+          // line ending mid-air would read as current.
+          if (online) ...[
+            const SizedBox(height: 10),
+            MetricLineChart(
+              key: ValueKey('fleet.host.${server.id}.chart'),
+              points: vm.cpuHistoryFor(server.id),
+              timestamps: vm.historyTimestampsFor(server.id),
+              color: accent,
+              label: 'CPU',
+            ),
+          ],
         ],
       ),
     );

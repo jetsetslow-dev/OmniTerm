@@ -10,9 +10,11 @@ import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/fleet_view_model.dart';
 import 'package:omniterm/ui/view_model/scripts_view_model.dart';
+import 'package:omniterm/ui/view_model/telemetry_poller.dart';
 import 'package:provider/provider.dart';
 
 import 'fleet_view_model_test.dart' show BroadcastTransport;
+import 'monitor_view_model_test.dart' show RecordingTransport;
 import 'support/fake_secure_storage.dart';
 
 void main() {
@@ -68,9 +70,13 @@ void main() {
     authStatus: 'ok',
   );
 
-  Future<void> pump(WidgetTester tester, {BroadcastTransport? transport}) async {
+  Future<void> pump(
+    WidgetTester tester, {
+    BroadcastTransport? transport,
+    TelemetryPoller? poller,
+  }) async {
     await app.start();
-    vm = FleetViewModel(app, transport: transport);
+    vm = FleetViewModel(app, transport: transport, poller: poller);
     scriptsVm = ScriptsViewModel(app);
     await tester.pumpWidget(
       MultiProvider(
@@ -385,5 +391,111 @@ void main() {
     vm.dispose();
     scriptsVm.dispose();
     await tester.pump(const Duration(milliseconds: 10));
+  });
+
+  group('the dashboard reads the fleet poller', () {
+    /// 40% memory, in the shape `free -b` prints.
+    const reply = '@OS\nLinux\n@MEM\nMem: 100 40 0 0 0 60\n@DISK\n/dev/sda1 100 1 1 1% /\n';
+
+    testWidgets('every online host gets its own CPU chart', (tester) async {
+      // The dashboard's job is comparing hosts, and a column of bare numbers cannot show which
+      // machine is climbing.
+      final upId = await repo.insertServer(server(name: 'up', host: '10.0.0.1'));
+      final downId = await repo.insertServer(
+        server(name: 'down', host: '10.0.0.2', status: 'offline'),
+      );
+      final poller = TelemetryPoller(app, transport: RecordingTransport(fallback: reply));
+      await pump(tester, poller: poller);
+      await poller.cycle();
+      await poller.cycle();
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(ValueKey('fleet.host.$upId.chart')), findsOneWidget);
+      expect(find.text('CPU · 2 samples'), findsOneWidget);
+      expect(
+        find.byKey(ValueKey('fleet.host.$downId.chart')),
+        findsNothing,
+        reason: 'an offline host has no current series, and a line ending mid-air reads as one',
+      );
+      vm.dispose();
+      scriptsVm.dispose();
+      poller.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+
+    testWidgets('a host score explains itself when tapped', (tester) async {
+      final id = await repo.insertServer(server(name: 'a', host: '10.0.0.1', healthScore: 95));
+      final poller = TelemetryPoller(app, transport: RecordingTransport(fallback: reply));
+      await pump(tester, poller: poller);
+      await poller.cycle();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(ValueKey('fleet.host.$id.score.open')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('health.dialog')), findsOneWidget);
+      expect(find.textContaining('Health score · a'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('health.close')));
+      await tester.pumpAndSettle();
+
+      vm.dispose();
+      scriptsVm.dispose();
+      poller.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+
+    testWidgets('a host nothing has sampled yet does not open an invented breakdown', (tester) async {
+      // A breakdown assembled from empty metrics reads as a host at 0% on everything, which is a
+      // description of a machine that does not exist.
+      final id = await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
+      final poller = TelemetryPoller(app, transport: RecordingTransport(fallback: reply));
+      await pump(tester, poller: poller);
+
+      await tester.tap(find.byKey(ValueKey('fleet.host.$id.score.open')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('health.dialog')), findsNothing);
+      vm.dispose();
+      scriptsVm.dispose();
+      poller.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+
+    testWidgets('the summary counts down to the next sweep', (tester) async {
+      await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
+      final at = DateTime.now();
+      final poller = TelemetryPoller(
+        app,
+        transport: RecordingTransport(fallback: reply),
+        interval: const Duration(seconds: 15),
+        clock: () => at,
+      );
+      await pump(tester, poller: poller);
+      expect(
+        find.byKey(const ValueKey('fleet.summary.countdown')),
+        findsNothing,
+        reason: 'nothing has swept yet, so there is no cadence to describe',
+      );
+
+      await poller.cycle();
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('fleet.summary.countdown')), findsOneWidget);
+      vm.dispose();
+      scriptsVm.dispose();
+      poller.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+
+    testWidgets('with no poller the dashboard says nothing about a cadence', (tester) async {
+      await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
+      await pump(tester);
+
+      expect(find.byKey(const ValueKey('fleet.summary.countdown')), findsNothing);
+      expect(find.text('CPU · 0 samples'), findsOneWidget);
+      vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    });
   });
 }

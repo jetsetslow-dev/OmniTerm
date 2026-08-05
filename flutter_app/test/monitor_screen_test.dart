@@ -393,15 +393,15 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('monitor.healthScore.open')));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('monitor.health.dialog')), findsOneWidget);
+      expect(find.byKey(const ValueKey('health.dialog')), findsOneWidget);
       // The deduction names the reading and its threshold, not just a number.
-      expect(find.byKey(const ValueKey('monitor.health.factor.0')), findsOneWidget);
+      expect(find.byKey(const ValueKey('health.factor.0')), findsOneWidget);
       expect(find.textContaining('Memory 95%'), findsOneWidget);
-      expect(find.byKey(const ValueKey('monitor.health.healthy')), findsNothing);
+      expect(find.byKey(const ValueKey('health.healthy')), findsNothing);
 
-      await tester.tap(find.byKey(const ValueKey('monitor.health.close')));
+      await tester.tap(find.byKey(const ValueKey('health.close')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('monitor.health.dialog')), findsNothing);
+      expect(find.byKey(const ValueKey('health.dialog')), findsNothing);
       vm.dispose();
       poller.dispose();
     });
@@ -423,8 +423,8 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('monitor.healthScore.open')));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('monitor.health.healthy')), findsOneWidget);
-      expect(find.byKey(const ValueKey('monitor.health.factor.0')), findsNothing);
+      expect(find.byKey(const ValueKey('health.healthy')), findsOneWidget);
+      expect(find.byKey(const ValueKey('health.factor.0')), findsNothing);
       vm.dispose();
       poller.dispose();
     });
