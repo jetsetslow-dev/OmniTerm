@@ -2499,8 +2499,11 @@ class AppViewModel @JvmOverloads constructor(
                 ramUsage = metrics.memPercent,
                 diskUsage = metrics.diskPercent,
                 latency = latency,
-                networkIn = 0f,
-                networkOut = 0f,
+                // The columns are KB/s and the interface rates are bytes/s. These were written as
+                // 0f on every sample, so the retained history could only ever draw a flat network
+                // chart -- for data the poller had already computed one line earlier.
+                networkIn = metrics.netInterfaces.sumOf { it.rxPerSec } / 1024f,
+                networkOut = metrics.netInterfaces.sumOf { it.txPerSec } / 1024f,
                 cpuTemperatureC = metrics.cpuTempC,
             )
         )
@@ -3328,6 +3331,11 @@ class AppViewModel @JvmOverloads constructor(
             runCatching { ShortcutHelper.removeShortcutsForServer(getApplication(), server.id) }
             refreshHomeWidgets()
             restorablePersistentSessions = restorablePersistentSessions.filter { it.serverId != server.id }
+            // Everything keyed by this host's row id goes with it. Room reuses a freed rowid, so a
+            // host added later can be handed the deleted one's id -- and would then inherit its
+            // cumulative counters, measuring its first CPU and network rates against a machine it
+            // has never met, and showing a sparkline drawn from someone else's readings.
+            forgetTelemetryFor(server.id)
             SshHostKeyTrust.removeHost(server.host, server.port)
             if (selectedServerId == server.id) {
                 selectedServerId = null
@@ -3337,6 +3345,21 @@ class AppViewModel @JvmOverloads constructor(
                     "Host deleted locally, but at least one remote tmux session could not be confirmed stopped."
             }
         }
+    }
+
+    /** Drops every per-host cache keyed by [serverId]. See the call in [deleteServer]. */
+    private fun forgetTelemetryFor(serverId: Int) {
+        hostMetricsById.remove(serverId)
+        cpuSparklineCache.remove(serverId)
+        ramSparklineCache.remove(serverId)
+        sparklineTimestampCache.remove(serverId)
+        prevStatByServer.remove(serverId)
+        prevNetByServer.remove(serverId)
+        prevDiskByServer.remove(serverId)
+        osByServer.remove(serverId)
+        probedServerIds.remove(serverId)
+        telemetryProbeMutexes.remove(serverId)
+        activeProbes.remove(serverId)?.cancel()
     }
 
     fun dismissHostKeyChangedDialog() { hostKeyChangedServer = null }
