@@ -9,6 +9,7 @@ import '../../../domain/tunnel_form.dart';
 import '../../view_model/app_state.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
+import '../../../domain/whois.dart';
 import '../../view_model/network_view_model.dart';
 import '../../widgets/omni_components.dart';
 
@@ -38,6 +39,7 @@ class _NetworkScreenState extends State<NetworkScreen> {
     NetworkTab.ping: 'Ping',
     NetworkTab.portScan: 'Port scan',
     NetworkTab.dnsLookup: 'DNS',
+    NetworkTab.whois: 'WHOIS',
     NetworkTab.tunnels: 'Tunnels',
   };
 
@@ -102,6 +104,7 @@ class _NetworkScreenState extends State<NetworkScreen> {
               NetworkTab.ping => _PingTab(vm: vm),
               NetworkTab.portScan => _PortScanTab(vm: vm),
               NetworkTab.dnsLookup => _DnsTab(vm: vm),
+              NetworkTab.whois => _WhoisTab(vm: vm),
               NetworkTab.tunnels => _TunnelsTab(vm: vm),
             },
           ),
@@ -286,6 +289,7 @@ Future<void> _openHostActions(BuildContext context, NetworkViewModel vm, String 
             (NetworkTab.ping, 'Ping this host'),
             (NetworkTab.portScan, 'Scan its ports'),
             (NetworkTab.dnsLookup, 'Look it up in DNS'),
+            (NetworkTab.whois, 'Look up its registration'),
           ])
             ListTile(
               key: ValueKey('network.scan.action.${tab.name}'),
@@ -660,6 +664,93 @@ class _PortScanTab extends StatelessWidget {
                       ),
                     );
                   },
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+/// Who a domain or address is registered to.
+class _WhoisTab extends StatelessWidget {
+  const _WhoisTab({required this.vm});
+
+  final NetworkViewModel vm;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _ToolField(
+          fieldKey: 'network.whois.target',
+          label: 'Domain or IP address',
+          hint: 'example.com',
+          initial: vm.whoisTarget,
+          mono: true,
+          onChanged: (v) => vm.whoisTarget = v,
+        ),
+        const SizedBox(height: 10),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                // Said before the lookup runs, because a WHOIS query sends the typed name to a
+                // third party in the clear — a fact worth knowing on a shared or monitored link.
+                'Queries port 43 directly, starting at '
+                '${initialWhoisServer(vm.whoisTarget.trim().isEmpty ? 'example.com' : vm.whoisTarget)}.',
+                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+              ),
+            ),
+            const SizedBox(width: 8),
+            FilledButton(
+              key: const ValueKey('network.whois.run'),
+              onPressed: vm.whoisRunning ? null : vm.runWhois,
+              child: Text(vm.whoisRunning ? 'Looking up…' : 'Look up'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        if (vm.whoisServers.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6),
+            child: Text(
+              // Which server said this. A registrar's answer and a registry's answer are different
+              // claims about the same domain, and the text alone does not say which you have.
+              'Answered by ${vm.whoisServers.join(' → ')}',
+              key: const ValueKey('network.whois.servers'),
+              style: const TextStyle(
+                fontSize: 11,
+                fontFamily: OmniFonts.mono,
+                color: OmniColors.cyan,
+              ),
+            ),
+          ),
+        Expanded(
+          child: vm.whoisResult.isEmpty
+              ? Center(
+                  key: const ValueKey('network.whois.empty'),
+                  child: Text(
+                    'Registration records for a domain or an IP address.',
+                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                  ),
+                )
+              : SingleChildScrollView(
+                  key: const ValueKey('network.whois.result'),
+                  child: OmniCard(
+                    leftAccent: OmniColors.cyan,
+                    child: SelectionArea(
+                      child: Text(
+                        vm.whoisResult,
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontFamily: OmniFonts.mono,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ),
+                  ),
                 ),
         ),
       ],

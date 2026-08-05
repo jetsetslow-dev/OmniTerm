@@ -6,13 +6,15 @@ import 'package:flutter/foundation.dart';
 
 import '../../data/app_database.dart';
 import '../../data/network/network_probe.dart';
+import '../../data/network/whois_client.dart';
 import '../../data/ssh/ssh_tunnel_manager.dart';
 import '../../domain/network_tools.dart';
+import '../../domain/whois.dart';
 import '../../domain/server_credentials.dart';
 import 'app_state.dart';
 
 /// The Network tool's tabs, in the Kotlin's order.
-enum NetworkTab { hostScan, wakeOnLan, ping, portScan, dnsLookup, tunnels }
+enum NetworkTab { hostScan, wakeOnLan, ping, portScan, dnsLookup, whois, tunnels }
 
 /// One port probe's outcome.
 class PortResult {
@@ -37,8 +39,9 @@ class PingResult {
 
 /// The Network tool's state and actions, split out of `NetworkToolView` in `ui/ToolsScreen.kt`.
 class NetworkViewModel extends ChangeNotifier {
-  NetworkViewModel(this._app, {NetworkProbe? probe, this.tunnels})
-    : probe = probe ?? const SocketNetworkProbe();
+  NetworkViewModel(this._app, {NetworkProbe? probe, WhoisClient? whois, this.tunnels})
+    : probe = probe ?? const SocketNetworkProbe(),
+      whois = whois ?? const SocketWhoisClient();
 
   final AppState _app;
 
@@ -49,6 +52,10 @@ class NetworkViewModel extends ChangeNotifier {
   /// The socket layer. Injected so the tests never touch a real network — a test that depends on
   /// the dev machine's own LAN fails elsewhere for reasons unrelated to the code.
   final NetworkProbe probe;
+
+  /// The WHOIS transport, injected for the same reason as [probe]: a test that queries a real
+  /// registry fails on a train.
+  final WhoisClient whois;
 
   bool _disposed = false;
 
@@ -210,6 +217,78 @@ class NetworkViewModel extends ChangeNotifier {
   }
 
   Future<void> deleteWolTarget(WolTarget target) => _app.repository.deleteWolTargetById(target.id);
+
+
+  // ── whois ───────────────────────────────────────────────────────────────────
+
+  String whoisTarget = '';
+
+  String _whoisResult = '';
+  bool _whoisRunning = false;
+
+  /// The registry text, exactly as the server sent it.
+  String get whoisResult => _whoisResult;
+  bool get whoisRunning => _whoisRunning;
+
+  /// Which servers answered, in order, so the text on screen can be attributed. A record that came
+  /// from a registrar rather than the registry is a different claim about the same domain.
+  List<String> _whoisServers = const [];
+
+  List<String> get whoisServers => List.unmodifiable(_whoisServers);
+
+  /// Looks [whoisTarget] up, following at most one referral.
+  ///
+  /// One hop, and only to a host that passes [isUsableWhoisHost]: the referral is free text from a
+  /// remote server and it decides what this app connects to next. A chain would also be a loop
+  /// waiting to happen — registries refer to each other in both directions.
+  Future<void> runWhois() async {
+    if (_whoisRunning) return;
+    final target = whoisTarget.trim();
+    if (target.isEmpty) {
+      _error = 'Enter a domain or IP address to look up.';
+      _safeNotify();
+      return;
+    }
+
+    _whoisRunning = true;
+    _error = null;
+    _whoisResult = '';
+    _whoisServers = const [];
+    _safeNotify();
+
+    try {
+      final first = initialWhoisServer(target);
+      final response = await whois.query(first, target);
+      var text = response;
+      var servers = [first];
+
+      final referral = extractReferralServer(response);
+      if (referral != null && referral.toLowerCase() != first.toLowerCase()) {
+        try {
+          final referred = await whois.query(referral, target);
+          // Both are kept. The registry reply says who owns the delegation and the registrar reply
+          // says who registered it; showing only the second silently drops the authority for the
+          // first, and showing only the first is the thin answer the user came here to get past.
+          text = '$response\n\n─── $referral ───\n\n$referred';
+          servers = [first, referral];
+        } on WhoisException catch (e) {
+          text = '$response\n\n[$referral did not answer: ${e.message}]';
+          servers = [first];
+        }
+      }
+
+      _whoisResult = text;
+      _whoisServers = servers;
+      if (text.trim().isEmpty) _error = 'No registration records came back for $target.';
+    } on WhoisException catch (e) {
+      _error = 'WHOIS lookup failed: ${e.message}';
+    } catch (e) {
+      _error = 'WHOIS lookup failed: $e';
+    } finally {
+      _whoisRunning = false;
+      _safeNotify();
+    }
+  }
 
   // ── tunnels ─────────────────────────────────────────────────────────────────
 
@@ -500,6 +579,8 @@ class NetworkViewModel extends ChangeNotifier {
         dnsTarget = address;
       case NetworkTab.hostScan:
       case NetworkTab.wakeOnLan:
+      case NetworkTab.whois:
+        whoisTarget = address;
       case NetworkTab.tunnels:
         return;
     }

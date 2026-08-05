@@ -58,8 +58,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 10));
   }
 
+  /// Switches to [tab] through the view model.
+  ///
+  /// Not by tapping the chip: the strip scrolls, and since WHOIS was added it is wider than a phone,
+  /// so a chip that has not been scrolled to is not built and the tap lands on nothing. These tests
+  /// are about what each tab *shows*; that the chips are all reachable is its own test below, which
+  /// does scroll to each one.
   Future<void> goTo(WidgetTester tester, NetworkTab tab) async {
-    await tester.tap(find.byKey(ValueKey('network.tab.${tab.name}')));
+    vm.activeTab = tab;
     await tester.pumpAndSettle();
   }
 
@@ -67,7 +73,15 @@ void main() {
     await pump(tester, FakeProbe());
 
     for (final tab in NetworkTab.values) {
-      expect(find.byKey(ValueKey('network.tab.${tab.name}')), findsOneWidget);
+      // Scrolled to, because a chip off the end of the strip is not built at all.
+      await tester.dragUntilVisible(
+        find.byKey(ValueKey('network.tab.${tab.name}')),
+        find.byKey(const ValueKey('network.tabs')),
+        const Offset(-120, 0),
+      );
+      await tester.tap(find.byKey(ValueKey('network.tab.${tab.name}')));
+      await tester.pumpAndSettle();
+      expect(vm.activeTab, tab);
     }
     for (final (tab, probeKey) in [
       (NetworkTab.wakeOnLan, 'network.wol.empty'),

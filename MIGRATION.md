@@ -1242,6 +1242,12 @@ rather than silently dropped.
 no client**, so their cards say so per protocol rather than offering a Browse button that fails on
 tap; NFS is mounted by the OS and never was browsable.
 
+**SMB on iOS — PARKED (session 78).** Not a scheduling decision: it needs `AMSMB2` via CocoaPods or
+`NSFileProviderManager`, both of which require an Xcode toolchain and a macOS host to compile and
+link against. Nothing on this machine can build or verify it, so it stays a documented gap for the
+cut-over checklist rather than an item this migration can close. Everything else here is buildable
+on Linux (see §7 on Apple targets).
+
 **SMB on iOS (session 40).** Android is done — smbj behind `PlatformSmbClient`. iOS has no
 implementation, and `isSupported()` reports false so the Shares screen can say so rather than
 offering a share that fails on first tap. This is a real gap against requirement 3 (iOS
@@ -1283,7 +1289,8 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
 - **Traceroute** — needs per-hop TTL control, which `dart:io`'s `Socket` does not expose. Options:
   a platform channel, or shelling out to `traceroute` over SSH from a chosen host (a different
   feature, arguably a better one — it traces from the server rather than the phone).
-- **WHOIS** — a plain TCP query to port 43 and a text response; straightforward, just not done.
+- ~~**WHOIS**~~ — **done in session 78.** Two hops at most (IANA or ARIN, then whatever the reply
+  refers on to), with the referral validated as a hostname before it is dialled.
 - **Speed test** — needs a bandwidth endpoint and a policy on how much data to pull on a metered
   connection. Worth a product decision before implementing.
 - ~~**Tunnels**~~ — **done in sessions 60-61.** The Kotlin's ninth Network tab: saved local (`-L`),
@@ -4586,3 +4593,35 @@ the probe's first run failed on that alone.
 
 **Verified — 10 new tests; 1739 host tests pass, `analyze` clean; the pickers, the tag, the drag and
 its persistence across leaving the screen were all read off the device.**
+
+### Session 78 — WHOIS (task #7)
+
+The Network tool's seventh tab. `domain/whois.dart` decides where to ask and reads the referral out
+of the reply; `data/network/whois_client.dart` is the socket; the tab shows the text and **says which
+servers answered**, because a registry's record and a registrar's record are different claims about
+the same domain and the text alone does not say which one you are reading.
+
+The part worth care is the referral. WHOIS is two hops in practice — the first server usually only
+knows who else to ask — and **that pointer is free text from a remote server that decides what this
+app connects to next**. It is stripped of scheme, port and path, then checked as a hostname
+(`isUsableWhoisHost`), and anything else is ignored with the first answer left standing. A field
+containing whitespace is refused outright rather than half-believed. One hop only, and never back to
+the server that gave it.
+
+Three things the Kotlin does differently. It follows whatever the field says with no validation; it
+replaces the first response with the referred one, dropping the delegation record the registry gave;
+and a referred server that fails to answer turns the whole lookup into an error. Here the two
+replies are concatenated under a header naming the second server, and a failed second hop leaves the
+first answer on screen with a line saying who did not answer.
+
+**Not device-validated.** Per the budget decision recorded below, device runs are being batched: this
+is a leaf feature whose transport is one socket and whose logic is covered by 27 tests, so it rides
+along with the next iteration's single emulator pass rather than spending one of its own.
+
+**Verified — 27 new tests; 1767 host tests pass, `analyze` clean.**
+
+Two housekeeping notes in the same commit. Adding a seventh chip pushed the Network tab strip past
+the width of a phone, so the screen tests switch tabs through the view model and one dedicated test
+scrolls to each chip and taps it — a chip off the end of a lazy strip is not built, so tapping it
+hits nothing (§19.5, third time). And **iOS SMB is now explicitly parked** in §18: it needs an Xcode
+toolchain and a macOS host, so no amount of budget closes it here.
