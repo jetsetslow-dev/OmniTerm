@@ -4817,3 +4817,34 @@ recorded in §18 as a deliberate non-goal.
   track behind a draft GitHub Release.
 - The debug build installs beside the shipped app (`…app.flutter`), which is how parity gets checked.
 - Six defects found during the port are fixed upstream in the Kotlin app (PR #77).
+
+### Session 81 — the alerts that never fired (task #7)
+
+`AlertsViewModel.evaluate` carries the comment *"Called by the telemetry path once per poll."*
+Nothing called it. Alert rules could be created, edited, enabled, backed up and restored; the
+evaluation, the breach tracker and the notifier were all ported with their own tests — and **every
+configured rule sat inert**, because the one call that turns a reading into an incident was never
+written. The screen looked like a working alerts feature.
+
+`TelemetryPoller` now takes an `onSample` callback and hands it every sample, after recording it.
+A callback rather than a dependency on the alerts layer: the poller's job is to measure hosts, and
+something else decides what a measurement *means*. It is awaited, so a slow evaluation delays the
+next host rather than racing the sample behind it, and its failures are the caller's — a poller that
+swallowed them would hide the fact that nothing is being evaluated, which is the exact bug being
+fixed.
+
+The wiring exposed an ordering problem worth recording. `context.read` inside a provider's `create`
+only sees providers **above** it, so feeding the poller from `AlertsViewModel` meant moving the
+notifier, the alerts view model and the poller above Monitor and Fleet, which read the poller in
+their own `create`. Nothing in the test suite covers `main.dart`, so this was checked the only way it
+can be: **built, installed and launched** — `topResumedActivity=…app.flutter/…MainActivity`, no
+`ProviderNotFoundException`, no exception in the log.
+
+**What is not proven:** a rule actually crossing its threshold on a real host and producing a
+notification. That needs a host driven past a limit on demand, which the lab cannot do cheaply. The
+two halves either side of the new call are tested — the poller offers every sample and offers none
+for a host it could not reach, and the evaluation has its own suite — but the whole path end to end
+has not been watched on a device.
+
+**Verified — 2 new tests; 1802 host tests pass, `analyze` clean, and the app starts with the new
+provider graph.**

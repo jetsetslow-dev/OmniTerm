@@ -29,6 +29,7 @@ class TelemetryPoller extends ChangeNotifier {
     this._app, {
     this.transport,
     this.interval = const Duration(seconds: 15),
+    this.onSample,
     DateTime Function()? clock,
   }) : _clock = clock ?? DateTime.now;
 
@@ -40,6 +41,15 @@ class TelemetryPoller extends ChangeNotifier {
   final SshTransport? transport;
 
   final Duration interval;
+
+  /// Called with every sample this poller takes, before it returns.
+  ///
+  /// A callback rather than a dependency on the alerts layer: this class's job is to measure hosts,
+  /// and something has to decide what a measurement *means*. Awaited, so a slow evaluation delays
+  /// the next host rather than racing the sample after it; failures are the caller's to handle,
+  /// because a poller that swallowed them would hide the fact that no alert is being evaluated.
+  final Future<void> Function(Server server, HostMetrics metrics)? onSample;
+
   final DateTime Function() _clock;
 
   bool get canPoll => transport != null;
@@ -197,6 +207,7 @@ class TelemetryPoller extends ChangeNotifier {
 
       await _persist(server, sample.metrics, now);
       _safeNotify();
+      await onSample?.call(server, sample.metrics);
     } catch (_) {
       // One unreachable or unauthenticated host must not end the cycle for the rest of the fleet.
       // Its status is [HostStatusProbe]'s to write, not this poller's: a metrics command that fails

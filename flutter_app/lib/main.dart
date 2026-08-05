@@ -39,6 +39,7 @@ import 'ui/view_model/monitor_view_model.dart';
 import 'ui/view_model/network_view_model.dart';
 import 'ui/view_model/scripts_view_model.dart';
 import 'ui/view_model/settings_view_model.dart';
+import 'domain/alert_evaluation.dart';
 import 'ui/view_model/telemetry_poller.dart';
 import 'ui/view_model/shell_view_model.dart';
 import 'ui/view_model/shares_view_model.dart';
@@ -171,17 +172,6 @@ class OmniTermApp extends StatelessWidget {
           lazy: false,
           create: (context) => HostStatusProbe(context.read<AppState>().repository)..start(),
         ),
-        // The other half of the same question. The probe above answers "is the port open"; this one
-        // asks each *online* host what it is actually doing, which is where every live number, the
-        // health score and the retained history come from. Eager for the same reason: the screens
-        // read its samples, but nobody constructs it.
-        ChangeNotifierProvider<TelemetryPoller>(
-          lazy: false,
-          create: (context) => TelemetryPoller(
-            context.read<AppState>(),
-            transport: context.read<SshTransport>(),
-          )..start(),
-        ),
         // Declared after AppState because it reads the same repository, and loaded eagerly: the
         // lock has to be up before the first frame, not after it.
         ChangeNotifierProvider<AppLockController>(
@@ -189,6 +179,39 @@ class OmniTermApp extends StatelessWidget {
             context.read<AppState>().repository,
             biometricPrompt: BiometricAuth().prompt,
           )..load(),
+        ),
+        Provider<AlertNotifier>(create: (_) => LocalAlertNotifier()),
+        ChangeNotifierProxyProvider<AppState, AlertsViewModel>(
+          create: (context) =>
+              AlertsViewModel(context.read<AppState>(), notifier: context.read<AlertNotifier>()),
+          update: (_, app, previous) => previous!,
+        ),
+        // Declared after the alerts view model because it feeds it: the poller measures hosts, and
+        // something has to decide what a measurement means. Still `lazy: false` — nothing in the
+        // widget tree reads this provider, so without it the loop would never start.
+        ChangeNotifierProvider<TelemetryPoller>(
+          lazy: false,
+          create: (context) {
+            final alerts = context.read<AlertsViewModel>();
+            return TelemetryPoller(
+              context.read<AppState>(),
+              transport: context.read<SshTransport>(),
+              // Alert rules, the evaluation and the notifier were all ported and tested, and
+              // nothing ever called them — every configured rule sat inert. This is the call the
+              // evaluation's own doc comment says exists.
+              onSample: (server, metrics) => alerts.evaluate(
+                server,
+                AlertSample(
+                  cpuPercent: metrics.cpuPercent,
+                  memoryPercent: metrics.memPercent,
+                  diskPercent: metrics.diskPercent,
+                  latencyMs: server.lastLatency,
+                  mounts: metrics.disks,
+                  cpuTempC: metrics.cpuTempC,
+                ),
+              ),
+            )..start();
+          },
         ),
         ChangeNotifierProxyProvider<AppState, ServersViewModel>(
           create: (context) =>
@@ -243,12 +266,6 @@ class OmniTermApp extends StatelessWidget {
         ChangeNotifierProxyProvider<AppState, ScriptsViewModel>(
           create: (context) => ScriptsViewModel(context.read<AppState>()),
           update: (_, app, previous) => previous ?? ScriptsViewModel(app),
-        ),
-        Provider<AlertNotifier>(create: (_) => LocalAlertNotifier()),
-        ChangeNotifierProxyProvider<AppState, AlertsViewModel>(
-          create: (context) =>
-              AlertsViewModel(context.read<AppState>(), notifier: context.read<AlertNotifier>()),
-          update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, NetworkViewModel>(
           create: (context) =>

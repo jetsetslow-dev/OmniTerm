@@ -56,10 +56,7 @@ void main() {
   /// A metrics reply shaped like the real one: the `@` sections `parseMetrics` splits on, with
   /// `free -b` and `df -PB1 /` in the shapes those tools actually print, because the health score
   /// is computed from what the parser makes of them.
-  String metricsReply({
-    required int memUsedPct,
-    int diskUsedPct = 1,
-  }) =>
+  String metricsReply({required int memUsedPct, int diskUsedPct = 1}) =>
       '@OS\nLinux\n'
       '@MEM\nMem: 100 $memUsedPct 0 0 0 ${100 - memUsedPct}\n'
       '@DISK\n/dev/sda1 100 $diskUsedPct 1 $diskUsedPct% /\n'
@@ -78,7 +75,11 @@ void main() {
       expect(poller.canPoll, isFalse);
       await poller.cycle();
 
-      expect(poller.lastCycleStart, isNull, reason: 'a cycle that cannot run must not look like one');
+      expect(
+        poller.lastCycleStart,
+        isNull,
+        reason: 'a cycle that cannot run must not look like one',
+      );
       poller.dispose();
     });
 
@@ -167,30 +168,32 @@ void main() {
       poller.dispose();
     });
 
-    test('a health score computed from the readings, replacing the 100 every host starts at',
-        () async {
-      // Nothing else in the app writes this column, so before the poller existed every host looked
-      // perfectly healthy no matter what it was doing.
-      final id = await repo.insertServer(server(name: 'a', latency: 0));
-      await app.start();
-      await settle();
+    test(
+      'a health score computed from the readings, replacing the 100 every host starts at',
+      () async {
+        // Nothing else in the app writes this column, so before the poller existed every host looked
+        // perfectly healthy no matter what it was doing.
+        final id = await repo.insertServer(server(name: 'a', latency: 0));
+        await app.start();
+        await settle();
 
-      final poller = TelemetryPoller(
-        app,
-        // 95% of memory used: the default tiers put that in the highest band.
-        transport: RecordingTransport(fallback: metricsReply(memUsedPct: 95)),
-      );
-      await poller.cycle();
+        final poller = TelemetryPoller(
+          app,
+          // 95% of memory used: the default tiers put that in the highest band.
+          transport: RecordingTransport(fallback: metricsReply(memUsedPct: 95)),
+        );
+        await poller.cycle();
 
-      final row = (await repo.getAllServers()).firstWhere((s) => s.id == id);
-      expect(row.healthScore, lessThan(100));
-      expect(
-        row.healthScore,
-        HealthScoringConfig.defaults.score(0, 95, 1, 0),
-        reason: 'the score is the configured one, not a second implementation',
-      );
-      poller.dispose();
-    });
+        final row = (await repo.getAllServers()).firstWhere((s) => s.id == id);
+        expect(row.healthScore, lessThan(100));
+        expect(
+          row.healthScore,
+          HealthScoringConfig.defaults.score(0, 95, 1, 0),
+          reason: 'the score is the configured one, not a second implementation',
+        );
+        poller.dispose();
+      },
+    );
 
     test("the user's own thresholds are used, not the defaults", () async {
       final id = await repo.insertServer(server(name: 'a'));
@@ -294,5 +297,48 @@ void main() {
       expect(poller.historyForServer(app.servers.first.id), hasLength(1));
       poller.dispose();
     });
+  });
+
+  group('what a sample is handed to', () {
+    test('every sample is offered to the caller that decides what it means', () async {
+      // Alert rules, the evaluation and the notifier were all ported and tested, and nothing ever
+      // called them: every configured rule sat inert. This callback is that call.
+      final id = await repo.insertServer(server(name: 'a', latency: 12));
+      await app.start();
+      await settle();
+
+      final seen = <(int, double)>[];
+      final poller = TelemetryPoller(
+        app,
+        transport: RecordingTransport(fallback: metricsReply(memUsedPct: 40)),
+        onSample: (server, metrics) async => seen.add((server.id, metrics.memPercent)),
+      );
+      await poller.cycle();
+
+      expect(seen, hasLength(1));
+      expect(seen.single.$1, id);
+      expect(seen.single.$2, closeTo(40, 0.001));
+      poller.dispose();
+    });
+
+    test('a host that could not be reached produces no sample to judge', () async {
+      // An alert raised from a reading nobody took would be a claim about a machine the app never
+      // spoke to.
+      await repo.insertServer(server(name: 'a'));
+      await app.start();
+      await settle();
+
+      var called = 0;
+      final poller = TelemetryPoller(
+        app,
+        transport: RecordingTransport()..failure = Exception('connection refused'),
+        onSample: (_, _) async => called++,
+      );
+      await poller.cycle();
+
+      expect(called, 0);
+      poller.dispose();
+    });
+
   });
 }
