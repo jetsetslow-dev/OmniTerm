@@ -502,6 +502,74 @@ class SftpViewModel extends ChangeNotifier {
     }
   }
 
+  // ── searching the host ──────────────────────────────────────────────────────
+
+  /// Whether a host-wide search can be run: it needs a shell, which a share does not have.
+  bool get canSearchHost => canMeasureSize;
+
+  List<RemoteSearchHit>? _searchHits;
+  bool _searchTruncated = false;
+  bool _searching = false;
+
+  /// Results of the last host search, or null when none has been run.
+  ///
+  /// Null and empty mean different things — "not asked" versus "asked, nothing there" — and the
+  /// screen says each of them differently.
+  List<RemoteSearchHit>? get searchHits =>
+      _searchHits == null ? null : List.unmodifiable(_searchHits!);
+
+  bool get searchTruncated => _searchTruncated;
+  bool get isSearching => _searching;
+
+  void clearSearchHits() {
+    if (_searchHits == null) return;
+    _searchHits = null;
+    _searchTruncated = false;
+    _safeNotify();
+  }
+
+  /// Searches the host below the current folder for [query].
+  Future<void> searchHost(String query) async {
+    final ssh = transport;
+    final server = browsedServer;
+    if (ssh == null || server == null || _browsedShare != null) return;
+    if (query.trim().isEmpty) return;
+
+    _searching = true;
+    _searchHits = null;
+    _searchTruncated = false;
+    _error = null;
+    _safeNotify();
+    try {
+      final creds = resolveCredentials(
+        server,
+        keys: await _app.repository.getAllKeys(),
+        profiles: await _app.repository.getAllProfiles(),
+      );
+      final base = _path.isEmpty ? '/' : _path;
+      final output = await ssh.exec(creds, remoteSearchCommand(base, query));
+      final result = parseRemoteSearch(output, base: base);
+      _searchHits = result.hits;
+      _searchTruncated = result.truncated;
+    } on CredentialResolutionException catch (e) {
+      _error = e.message;
+    } catch (e) {
+      _error = 'Search failed: $e';
+    } finally {
+      _searching = false;
+      _safeNotify();
+    }
+  }
+
+  /// Opens the folder a hit lives in, so the result can be acted on with the ordinary browser.
+  ///
+  /// The browser works on the current directory, so jumping to a *file* means opening its parent —
+  /// anything else would show a listing the file is not in.
+  Future<void> openSearchHit(RemoteSearchHit hit) async {
+    clearSearchHits();
+    await openPath(hit.isDirectory ? hit.path : parentPath(hit.path));
+  }
+
   // ── selection ───────────────────────────────────────────────────────────────
 
   final Set<String> _selected = {};

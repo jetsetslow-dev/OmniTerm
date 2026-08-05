@@ -737,4 +737,82 @@ void main() {
       vm.dispose();
     });
   });
+
+  group('searching the host', () {
+    test('results come back tagged, and the folder itself is not one of them', () async {
+      final ssh = FakeShell('d\t/home/root\nf\t/home/root/notes.txt\nd\t/home/root/docs\n');
+      final vm = await booted(homeTree(), shell: ssh);
+
+      await vm.searchHost('o');
+
+      expect(ssh.commands.single, contains("-iname '*o*'"));
+      expect(vm.searchHits, hasLength(2), reason: 'the base folder is not a result');
+      expect(vm.searchHits!.last.isDirectory, isTrue);
+      expect(vm.searchTruncated, isFalse);
+      vm.dispose();
+    });
+
+    test('nothing found is said differently from not having asked', () async {
+      // Null and empty are different facts, and the screen shows each of them differently.
+      final vm = await booted(homeTree(), shell: FakeShell(''));
+
+      expect(vm.searchHits, isNull, reason: 'nothing has been asked yet');
+      await vm.searchHost('zzz');
+      expect(vm.searchHits, isEmpty, reason: 'asked, and there is nothing there');
+      vm.dispose();
+    });
+
+    test('an empty query does nothing rather than walking the whole host', () async {
+      final ssh = FakeShell('');
+      final vm = await booted(homeTree(), shell: ssh);
+
+      await vm.searchHost('   ');
+
+      expect(ssh.commands, isEmpty);
+      vm.dispose();
+    });
+
+    test('opening a file hit lands in the folder that contains it', () async {
+      // The browser works on a directory, so jumping to a file means opening its parent — anything
+      // else would show a listing the file is not in.
+      final client = homeTree();
+      final vm = await booted(client, shell: FakeShell('f\t/home/root/docs/report.pdf\n'));
+      await vm.searchHost('report');
+
+      await vm.openSearchHit(vm.searchHits!.single);
+
+      expect(vm.path, '/home/root/docs');
+      expect(vm.searchHits, isNull, reason: 'the results give way to the listing');
+      vm.dispose();
+    });
+
+    test('opening a directory hit opens that directory', () async {
+      final vm = await booted(homeTree(), shell: FakeShell('d\t/home/root/docs\n'));
+      await vm.searchHost('docs');
+
+      await vm.openSearchHit(vm.searchHits!.single);
+
+      expect(vm.path, '/home/root/docs');
+      vm.dispose();
+    });
+
+    test('a shell failure is reported rather than looking like no results', () async {
+      final vm = await booted(homeTree(), shell: FakeShell.failing('connection lost'));
+
+      await vm.searchHost('x');
+
+      expect(vm.searchHits, isNull);
+      expect(vm.error, contains('Search failed'));
+      vm.dispose();
+    });
+
+    test('without a shell searching is not offered', () async {
+      final vm = await booted(homeTree());
+
+      expect(vm.canSearchHost, isFalse);
+      await vm.searchHost('x');
+      expect(vm.searchHits, isNull);
+      vm.dispose();
+    });
+  });
 }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../../data/remote_commands.dart';
 import '../../../data/remote_models.dart';
 import '../../../domain/sftp_sort.dart';
 import '../../theme/colors.dart';
@@ -111,26 +112,30 @@ class SftpFilesTab extends StatelessWidget {
             ),
           ),
         const SizedBox(height: 6),
-        Expanded(
-          child: vm.visibleEntries.isEmpty
-              ? Center(
-                  key: const ValueKey('sftp.empty'),
-                  child: Text(
-                    // "Nothing matched" and "nothing here" are different facts.
-                    vm.searchText.trim().isNotEmpty
-                        ? 'Nothing matches your search'
-                        : 'This directory is empty',
-                    style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
+        // Search results take the listing's place while they exist, because they answer a different
+        // question than "what is in this folder" and mixing the two would make neither readable.
+        if (vm.searchHits != null) Expanded(child: _SearchResults(vm: vm)),
+        if (vm.searchHits == null)
+          Expanded(
+            child: vm.visibleEntries.isEmpty
+                ? Center(
+                    key: const ValueKey('sftp.empty'),
+                    child: Text(
+                      // "Nothing matched" and "nothing here" are different facts.
+                      vm.searchText.trim().isNotEmpty
+                          ? 'Nothing matches your search'
+                          : 'This directory is empty',
+                      style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
+                    ),
+                  )
+                : ListView.separated(
+                    key: const ValueKey('sftp.list'),
+                    itemCount: vm.visibleEntries.length,
+                    separatorBuilder: (_, _) => const SizedBox(height: 4),
+                    itemBuilder: (context, index) =>
+                        _EntryRow(vm: vm, entry: vm.visibleEntries[index]),
                   ),
-                )
-              : ListView.separated(
-                  key: const ValueKey('sftp.list'),
-                  itemCount: vm.visibleEntries.length,
-                  separatorBuilder: (_, _) => const SizedBox(height: 4),
-                  itemBuilder: (context, index) =>
-                      _EntryRow(vm: vm, entry: vm.visibleEntries[index]),
-                ),
-        ),
+          ),
       ],
     );
   }
@@ -240,7 +245,9 @@ class _ToolbarState extends State<_Toolbar> {
             child: TextField(
               key: const ValueKey('sftp.search'),
               controller: _search,
-              onChanged: (value) => vm.searchText = value,
+              // setState as well as the view model: the "search this host" button beside it is
+              // enabled by whether anything has been typed, and a controller alone does not rebuild.
+              onChanged: (value) => setState(() => vm.searchText = value),
               style: const TextStyle(fontSize: 13),
               decoration: omniInputDecoration(
                 context,
@@ -250,6 +257,17 @@ class _ToolbarState extends State<_Toolbar> {
             ),
           ),
         ),
+        // The escalation from the filter beside it: when what you want is not in this folder, the
+        // next question is "is it on this host at all".
+        if (vm.canSearchHost)
+          IconButton(
+            key: const ValueKey('sftp.searchHost'),
+            tooltip: 'Search this host',
+            icon: const Icon(Icons.travel_explore, size: 18, color: OmniColors.cyan),
+            onPressed: vm.isSearching || _search.text.trim().isEmpty
+                ? null
+                : () => vm.searchHost(_search.text),
+          ),
         IconButton(
           key: const ValueKey('sftp.toggleHidden'),
           tooltip: vm.showHidden ? 'Hide dotfiles' : 'Show dotfiles',
@@ -663,4 +681,82 @@ Future<void> _measureSize(BuildContext context, SftpViewModel vm, SftpFile entry
       ],
     ),
   );
+}
+
+/// What a host-wide search found.
+class _SearchResults extends StatelessWidget {
+  const _SearchResults({required this.vm});
+
+  final SftpViewModel vm;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final hits = vm.searchHits!;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                hits.isEmpty ? 'Nothing found on this host' : '${hits.length} found',
+                key: const ValueKey('sftp.search.summary'),
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+            ),
+            TextButton(
+              key: const ValueKey('sftp.search.clear'),
+              onPressed: vm.clearSearchHits,
+              child: const Text('Back to folder', style: TextStyle(fontSize: 12)),
+            ),
+          ],
+        ),
+        Text(
+          // Always true and worth saying: a search runs as the logged-in user, so anything that
+          // user cannot read is not in these results and never will be.
+          vm.searchTruncated
+              ? 'Showing the first $remoteSearchMaxHits — narrow the search to see the rest. '
+                    'Only what this login can read is searched.'
+              : 'Only what this login can read is searched.',
+          key: const ValueKey('sftp.search.note'),
+          style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+        ),
+        const SizedBox(height: 6),
+        Expanded(
+          child: ListView.separated(
+            key: const ValueKey('sftp.search.list'),
+            itemCount: hits.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 4),
+            itemBuilder: (context, index) {
+              final hit = hits[index];
+              return OmniCard(
+                key: ValueKey('sftp.search.hit.$index'),
+                leftAccent: hit.isDirectory ? OmniColors.cyan : OmniColors.purple,
+                onTap: () => vm.openSearchHit(hit),
+                child: Row(
+                  children: [
+                    Icon(
+                      hit.isDirectory ? Icons.folder : Icons.insert_drive_file,
+                      size: 16,
+                      color: hit.isDirectory ? OmniColors.cyan : scheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        hit.path,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12, fontFamily: OmniFonts.mono),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
 }

@@ -1306,8 +1306,9 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
   write path is still absent (below), so a file the login cannot write is refused by the server
   rather than escalated.
 - ~~**Folder sizes via `du`**~~ — **done in session 68**, including the partial-total case.
-- **Copy/move between hosts** (the cross-clipboard bar), **sudo mode**, and **remote search** — all
-  present in the Kotlin browser, none ported.
+- ~~**Remote search**~~ — **done in session 69.**
+- **Copy/move between hosts** (the cross-clipboard bar) and **sudo mode** — present in the Kotlin
+  browser, not ported.
 
 **Fleet (session 25):**
 - **Quick-script presets in Broadcast** — the Kotlin offers saved fleet-enabled quick scripts as
@@ -4166,3 +4167,37 @@ directory on every Unix filesystem, so that has its own test.
 
 **Verified — 13 new tests; 1599 host tests pass, `analyze --fatal-infos` clean; the exact command
 the app sends was run against the lab in all three of its outcomes.**
+
+---
+
+### Session 69 — searching a host, not just a folder (task #7)
+
+The browser already filtered the current folder. The next question a person asks is "is it on this
+host at all", so the filter now has an escalation beside it: **Search this host** walks from the
+current directory with `find`.
+
+Ported from the Kotlin's own search, whose two best ideas were worth keeping verbatim:
+
+- **Each hit is type-tagged by a POSIX `while read` loop**, not by `find -printf`, which does not
+  exist on BSD, macOS or busybox — between them a large share of what people actually run at home.
+  Without the tag the screen would have to probe every result to know whether it is a folder.
+- **One more hit than the limit is fetched**, so truncation is *known* rather than guessed at. A
+  search returning exactly a full page is not called truncated, because crying wolf there teaches
+  people to ignore the warning that matters.
+
+**Checked against the lab before the UI existed**, which confirmed a rule that would otherwise have
+looked theoretical: `find /config/searchprobe -iname '*searchprobe*'` **emits the base directory
+itself**, so the folder you are already standing in would have been offered as a search result. Also
+confirmed: a file called `it's a file.conf` survives the round trip intact, which is what
+`shellQuote` on both the path *and* the query is for.
+
+Results replace the listing rather than mixing with it — they answer a different question — and the
+note under them says the search covers only what this login can read. That is a statement which is
+always true, unlike a per-run claim about permissions the app cannot verify.
+
+Tapping a file hit opens the folder that contains it, because the browser works on directories and
+anything else would show a listing the file is not in.
+
+**Verified — 20 new tests; 1619 host tests pass, `analyze --fatal-infos` clean; the exact command
+was run against the lab for file hits, directory hits, the base-directory case and a name with a
+quote in it.**

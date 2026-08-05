@@ -599,3 +599,64 @@ FolderSize? parseFolderSize(String output) {
   }
   return size == null ? null : FolderSize(size, complete: complete);
 }
+
+/// How many search hits are fetched before the rest are declared "more".
+const remoteSearchMaxHits = 200;
+
+/// One result from a host-wide search.
+class RemoteSearchHit {
+  const RemoteSearchHit(this.path, {required this.isDirectory});
+
+  final String path;
+  final bool isDirectory;
+}
+
+/// Searches a host for names matching [query], starting at [base].
+///
+/// A plain `find` prints paths and nothing else, so the type of each hit — file or directory —
+/// would be unknown and every result would have to be probed separately. The `while read` loop
+/// tags each line instead. It is deliberately POSIX `sh`: GNU `find -printf` does not exist on
+/// BSD, macOS or busybox, which between them cover a large part of what people run at home.
+///
+/// One more hit than the caller wants is fetched, which is how truncation is *known* rather than
+/// guessed at — see [parseRemoteSearch].
+///
+/// `2>/dev/null` because a walk of a large tree as an unprivileged user produces pages of
+/// permission noise that would swamp the results. The screen says plainly that a search covers what
+/// the login can read, which is a statement that is always true rather than a per-run claim.
+String remoteSearchCommand(String base, String query, {int maxHits = remoteSearchMaxHits}) {
+  final root = base.trim().isEmpty ? '/' : base;
+  final term = query.trim();
+  // A query already carrying a wildcard is taken at its word; anything else is matched anywhere in
+  // the name, because that is what a person typing three letters into a search box means.
+  final pattern = term.contains('*') || term.contains('?') ? term : '*$term*';
+  return 'find ${shellQuote(root)} -iname ${shellQuote(pattern)} 2>/dev/null | '
+      'head -n ${maxHits + 1} | '
+      'while IFS= read -r p; do '
+      'if [ -d "\$p" ]; then printf "d\\t%s\\n" "\$p"; else printf "f\\t%s\\n" "\$p"; fi; '
+      'done';
+}
+
+/// The hits [remoteSearchCommand] produced, and whether there were more.
+///
+/// [base] is dropped from the results: `find` emits the directory it was pointed at whenever that
+/// directory's own name matches, and offering the folder you are already in as a search result is
+/// noise.
+({List<RemoteSearchHit> hits, bool truncated}) parseRemoteSearch(
+  String output, {
+  required String base,
+  int maxHits = remoteSearchMaxHits,
+}) {
+  final hits = <RemoteSearchHit>[];
+  for (final line in const LineSplitter().convert(output)) {
+    final tab = line.indexOf('\t');
+    if (tab <= 0) continue;
+    final path = line.substring(tab + 1).trim();
+    if (path.isEmpty || path == base) continue;
+    hits.add(RemoteSearchHit(path, isDirectory: line.startsWith('d')));
+  }
+  // The extra hit is the evidence. Counting a full page as "probably more" would cry wolf on a
+  // search that happened to return exactly the limit.
+  final truncated = hits.length > maxHits;
+  return (hits: truncated ? hits.take(maxHits).toList() : hits, truncated: truncated);
+}

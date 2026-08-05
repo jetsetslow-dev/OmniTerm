@@ -72,4 +72,106 @@ void main() {
       expect(parseFolderSize('something went wrong\n'), isNull);
     });
   });
+
+  group('remoteSearchCommand', () {
+    test('a bare term is matched anywhere in the name', () {
+      // What a person typing three letters into a search box means.
+      expect(remoteSearchCommand('/config', 'beta'), contains("-iname '*beta*'"));
+    });
+
+    test('a term carrying a wildcard is taken at its word', () {
+      expect(remoteSearchCommand('/config', '*.conf'), contains("-iname '*.conf'"));
+      expect(remoteSearchCommand('/config', 'log?'), contains("-iname 'log?'"));
+    });
+
+    test('both the path and the term are quoted', () {
+      // Neither is this app's text: the path comes from a listing on someone else's machine and
+      // the term is typed by a user.
+      final command = remoteSearchCommand('/srv/; rm -rf ~', r'$(id)');
+
+      expect(command, contains(r"'/srv/; rm -rf ~'"));
+      expect(command, contains(r"'*$(id)*'"));
+      expect(command, isNot(contains('find /srv/; rm')));
+    });
+
+    test('one more than the limit is fetched', () {
+      // That extra hit is how truncation is known rather than guessed at.
+      expect(remoteSearchCommand('/', 'x', maxHits: 200), contains('head -n 201'));
+    });
+
+    test('an empty base searches the whole host rather than nothing', () {
+      expect(remoteSearchCommand('', 'x'), contains("find '/'"));
+    });
+
+    test('the type tagging is POSIX sh, not GNU find', () {
+      // `find -printf` does not exist on BSD, macOS or busybox — between them, a large part of what
+      // people run at home.
+      final command = remoteSearchCommand('/config', 'x');
+      expect(command, isNot(contains('-printf')));
+      expect(command, contains('while IFS= read -r p'));
+    });
+  });
+
+  group('parseRemoteSearch', () {
+    test('a tagged file hit, exactly as the lab produced it', () {
+      final result = parseRemoteSearch(
+        'f\t/config/searchprobe/nested/beta.conf\n',
+        base: '/config',
+      );
+
+      expect(result.hits.single.path, '/config/searchprobe/nested/beta.conf');
+      expect(result.hits.single.isDirectory, isFalse);
+      expect(result.truncated, isFalse);
+    });
+
+    test('a directory hit is distinguished', () {
+      final result = parseRemoteSearch('d\t/config/searchprobe\n', base: '/config');
+      expect(result.hits.single.isDirectory, isTrue);
+    });
+
+    test('the folder being searched is not offered as a result', () {
+      // Observed on a real host: `find /config/searchprobe -iname "*searchprobe*"` emits the base
+      // directory itself, and offering the folder you are already in is noise.
+      final result = parseRemoteSearch(
+        'd\t/config/searchprobe\nf\t/config/searchprobe/alpha.conf\n',
+        base: '/config/searchprobe',
+      );
+
+      expect(result.hits, hasLength(1));
+      expect(result.hits.single.path, '/config/searchprobe/alpha.conf');
+    });
+
+    test('names with spaces and quotes survive', () {
+      // Also from the lab: `it's a file.conf` came back intact.
+      final result = parseRemoteSearch(
+        "f\t/config/searchprobe/it's a file.conf\n",
+        base: '/config',
+      );
+
+      expect(result.hits.single.path, "/config/searchprobe/it's a file.conf");
+    });
+
+    test('exactly the limit is not called truncated', () {
+      // Crying wolf on a search that happened to return a full page would teach the user to ignore
+      // the warning that matters.
+      final output = List.generate(3, (i) => 'f\t/a/$i').join('\n');
+      final result = parseRemoteSearch(output, base: '/a', maxHits: 3);
+
+      expect(result.hits, hasLength(3));
+      expect(result.truncated, isFalse);
+    });
+
+    test('one over the limit is truncated, and the extra is not shown', () {
+      final output = List.generate(4, (i) => 'f\t/a/$i').join('\n');
+      final result = parseRemoteSearch(output, base: '/a', maxHits: 3);
+
+      expect(result.hits, hasLength(3));
+      expect(result.truncated, isTrue);
+    });
+
+    test('untagged noise is ignored', () {
+      expect(parseRemoteSearch('some stray line\n', base: '/a').hits, isEmpty);
+      expect(parseRemoteSearch('', base: '/a').hits, isEmpty);
+    });
+  });
 }
