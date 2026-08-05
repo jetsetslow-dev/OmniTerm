@@ -8,6 +8,7 @@ import '../../theme/typography.dart';
 import '../../view_model/monitor_view_model.dart';
 import '../../widgets/health_breakdown_dialog.dart';
 import '../../widgets/omni_components.dart';
+import 'cron_tab.dart';
 import 'monitor_tabs.dart';
 
 /// The Monitor screen, ported from `MonitorScreen` in `ui/MonitorScreen.kt`.
@@ -38,7 +39,7 @@ class MonitorScreen extends StatelessWidget {
               MonitorTab.services => ServicesTab(vm: vm),
               MonitorTab.logs => LogsTab(vm: vm),
               MonitorTab.scripts => const _NotYetPorted(name: 'Quick scripts'),
-              MonitorTab.cron => const _NotYetPorted(name: 'Cron'),
+              MonitorTab.cron => CronTab(vm: vm),
             },
           ),
         ),

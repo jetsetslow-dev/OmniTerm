@@ -1327,7 +1327,9 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
   (`dockerComposeAction` covers scale/serviceLogs/followLogs); the dialogs are not.
 
 **Monitor (session 22):**
-- **Scripts and CRON tabs** — not ported; both render a note saying so rather than a blank pane.
+- **Quick scripts tab** — not ported; renders a note saying so rather than a blank pane.
+- ~~**CRON tab**~~ — **done in session 75**, including the read/edit/delete round trip and the
+  refusal to write a crontab that could not be read.
 - ~~**Overview sparklines** (`MetricLineChart`) and the **health-breakdown dialog**~~ — **done in
   session 73**, on the data session 72's poller produces. The chart widget is shared, so Fleet's
   per-host charts are a placement away.
@@ -4439,3 +4441,61 @@ inline editor).
 
 **Verified — 5 new tests; 1683 host tests pass, `analyze` clean; the countdown, both per-host series
 and the breakdown were read off the device with two hosts online.**
+
+### Session 75 — the CRON tab, and refusing to write a file we could not read (task #7)
+
+Monitor's sixth tab is ported: the host user's crontab, listed, described in words, and edited
+through a schedule dialog. `domain/cron_schedule.dart` holds the parse, the validation and the
+summaries; `data/remote_commands.dart` holds the two commands; `ui/screens/monitor/cron_tab.dart` is
+the screen.
+
+The thing that shapes the whole port: **cron has no partial write.** Changing one entry means
+reading the user's entire crontab, editing a line and installing all of it back. So the parse is the
+dangerous part — anything it drops is deleted from someone's machine. Comments, `MAILTO=`, `PATH=`
+and entries this app does not understand are all kept, shown as *"Kept as written"*, and carried
+through every save untouched.
+
+**The defect that motivated the iteration.** The Kotlin reads with `crontab -l 2>/dev/null || true`,
+which collapses three very different answers into one empty string: *this user has no crontab*,
+*this user is not allowed one*, and *this host has no cron at all*. The screen then offers **Add**,
+and saving writes the whole file — so a crontab the user was never allowed to read is replaced by a
+single line. This port keeps stderr and the exit status, recognises cron's own "no crontab for
+`<user>`" as genuinely empty, and treats everything else as **unreadable: the list is replaced by
+the host's own message and Add is disabled.**
+
+That is not hypothetical, and the lab proved it without being asked to. As the ordinary login on
+`omniterm-test-direct`, busybox answers `crontab: must be suid to work properly` and exits 1 — the
+Kotlin would show an empty crontab with Add enabled:
+
+```
+PROBE: unreadable = true
+PROBE: reason = This host would not show its crontab, so nothing here can be changed.
+               | crontab: must be suid to work properly
+PROBE: add enabled = false
+```
+
+Two smaller fixes. Saves are **confirmed by reading the crontab back**, not by the reply being
+empty: `crontab -` prints an installation notice on some implementations and nothing on others, so
+the Kotlin's `ok = out.isBlank()` reports a save that worked as a failure. And `cronSummary` reads
+the common hand-written shapes — `*/5 * * * *`, `30 7 * * 1-5`, `@reboot` — instead of calling
+everything that is not one of four presets "Custom schedule".
+
+**Then the full round trip on the device, with the lab's crontab made usable for the login user and
+verified from the server afterwards:**
+
+```
+line 0 = Kept as written | # probe fixture
+line 1 = Kept as written | MAILTO=ops@example.com
+line 2 = Every day at 04:00 | /bin/echo nightly | 0 4 * * *
+editor summary = Every hour        save status = Crontab saved.
+after save line 3 = Probe entry | /bin/echo probe-cron | 0 * * * *  ·  Every hour
+delete asks = true                 after delete = back to three lines
+```
+
+The server agreed at every step: after the add it held four lines with the comment and `MAILTO`
+intact, and after the delete it was back to the original three. The container was restored
+afterwards (`chmod u-s /bin/busybox`, `crontab -r`) — worth noting that `chmod u+s /usr/bin/crontab`
+follows the symlink and sets the bit on **busybox itself**, which is every command on that host.
+
+**Verified — 38 new tests; 1721 host tests pass, `analyze` clean; the refusal, the round trip and
+the delete were all read off the device and confirmed on the server.**

@@ -730,3 +730,73 @@ int parseSudoWriteSize(String output) {
 
 /// A temp path for the sudo write dance, in a directory any login can write.
 String sudoTempPath() => '/tmp/.omniterm-save-${DateTime.now().microsecondsSinceEpoch}';
+
+// ── crontab ────────────────────────────────────────────────────────────────────
+
+/// Marks the end of `crontab -l`'s output so its exit status can be read.
+const cronExitMarker = '---OMNITERM-CRON-EXIT---';
+
+/// Reads the login user's crontab, **keeping the exit status and the error text**.
+///
+/// The Kotlin runs `crontab -l 2>/dev/null || true`, which collapses three very different answers
+/// into one empty string: this user has no crontab, this user is not allowed one, and the command
+/// does not exist on this host. That matters because the next thing the screen offers is *Add*, and
+/// saving writes the **whole file** — so an unreadable crontab that reads as empty becomes a
+/// crontab containing one line, with everything that was in it gone.
+const crontabReadCommand = 'crontab -l 2>&1; printf "%s%s\\n" "$cronExitMarker" "\$?"';
+
+/// What a crontab read actually found.
+class CrontabRead {
+  const CrontabRead(this.text, {required this.readable, this.error = ''});
+
+  /// The crontab body. Empty when there is none, or when it could not be read.
+  final String text;
+
+  /// False when the host refused or could not answer. Editing must be disabled: writing a file we
+  /// were not allowed to read would replace contents nobody has seen.
+  final bool readable;
+
+  /// Why it could not be read, for the screen to show verbatim.
+  final String error;
+}
+
+/// Splits [output] into the crontab body and the fate of the command.
+///
+/// "no crontab for `<user>`" is cron's own way of saying the file is empty; every implementation
+/// prints it on stderr and exits non-zero, so it has to be recognised or a first-time user could
+/// never add an entry.
+CrontabRead parseCrontabRead(String output) {
+  final marker = output.lastIndexOf(cronExitMarker);
+  if (marker < 0) {
+    // No marker means the command never ran to completion — a dropped connection, or a shell that
+    // died. Not an empty crontab.
+    return CrontabRead('', readable: false, error: output.trim().isEmpty ? 'No response' : output.trim());
+  }
+
+  final body = output.substring(0, marker);
+  final status = int.tryParse(output.substring(marker + cronExitMarker.length).trim()) ?? -1;
+  if (status == 0) return CrontabRead(_stripTrailingNewline(body), readable: true);
+
+  if (RegExp(r'no crontab for', caseSensitive: false).hasMatch(body)) {
+    return const CrontabRead('', readable: true);
+  }
+  return CrontabRead('', readable: false, error: body.trim().isEmpty ? 'crontab exited $status' : body.trim());
+}
+
+String _stripTrailingNewline(String s) => s.endsWith('\n') ? s.substring(0, s.length - 1) : s;
+
+/// Installs [text] as the login user's crontab.
+///
+/// Sent base64-encoded rather than as a here-doc or an echo chain: a crontab is full of `%`, `*`,
+/// quotes and `$`, every one of which means something to the shell on the way in. Encoding it means
+/// the bytes that arrive are the bytes that were typed. The three decoder spellings cover GNU,
+/// BusyBox and BSD/macOS, which disagree on the flag.
+String crontabWriteCommand(String text) {
+  final normalised = '${text.trimRight()}\n';
+  final encoded = base64.encode(utf8.encode(normalised));
+  final decode =
+      '{ printf %s ${shellQuote(encoded)} | base64 -d 2>/dev/null || '
+      'printf %s ${shellQuote(encoded)} | base64 --decode 2>/dev/null || '
+      'printf %s ${shellQuote(encoded)} | base64 -D; }';
+  return '$decode | crontab - 2>&1';
+}

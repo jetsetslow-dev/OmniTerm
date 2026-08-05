@@ -1,9 +1,12 @@
 import 'package:drift/drift.dart' show Value;
+import 'dart:convert';
+
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
+import 'package:omniterm/data/remote_commands.dart';
 import 'package:omniterm/domain/health_scoring.dart';
 import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/platform/secret_store.dart';
@@ -136,10 +139,11 @@ void main() {
 
   testWidgets('tabs not yet ported say so rather than showing an empty pane', (tester) async {
     // A blank pane reads as "this host has nothing", which is a different and misleading claim.
+    // Cron used to be one of these; Quick scripts is the one that remains (§18).
     await repo.insertServer(server(name: 'nas'));
     await pump(tester, transport: RecordingTransport());
 
-    await tester.tap(find.byKey(const ValueKey('monitor.tab.cron')));
+    await tester.tap(find.byKey(const ValueKey('monitor.tab.scripts')));
     await tester.pumpAndSettle();
     expect(find.textContaining('not available in this build yet'), findsOneWidget);
     vm.dispose();
@@ -476,6 +480,146 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('CPU utilisation · 0 samples'), findsOneWidget);
+      vm.dispose();
+    });
+  });
+
+  group('the CRON tab', () {
+    const crontab =
+        'MAILTO=ops@example.com\n'
+        '# nightly jobs\n'
+        '0 2 * * * /usr/bin/backup # OmniTerm: Nightly backup\n'
+        '*/5 * * * * /usr/local/bin/ping-check\n';
+
+    String reply(String body, {int status = 0}) => '$body\n$cronExitMarker$status\n';
+
+    Future<void> openCron(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('monitor.tab.cron')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('the host crontab is listed, described and kept whole', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      final transport = RecordingTransport(replies: {'crontab -l': reply(crontab)});
+      await pump(tester, transport: transport);
+      await openCron(tester);
+
+      expect(find.byKey(const ValueKey('cron.list')), findsOneWidget);
+      // The label the app wrote, and a description for the one written by hand.
+      expect(find.text('Nightly backup'), findsOneWidget);
+      expect(find.text('Every 5 minutes'), findsOneWidget);
+      // The lines it does not understand are shown, not hidden — they are what a save carries.
+      expect(find.text('MAILTO=ops@example.com'), findsOneWidget);
+      expect(find.text('Kept as written'), findsNWidgets(2));
+      vm.dispose();
+    });
+
+    testWidgets('a crontab that could not be read offers no editing at all', (tester) async {
+      // The defect this guards: the Kotlin sends `crontab -l 2>/dev/null || true`, so a refusal
+      // arrives as an empty crontab — and the first Add would replace a file nobody has seen.
+      await repo.insertServer(server(name: 'nas'));
+      final transport = RecordingTransport(
+        replies: {
+          'crontab -l': reply('You (root) are not allowed to use this program', status: 1),
+        },
+      );
+      await pump(tester, transport: transport);
+      await openCron(tester);
+
+      expect(find.byKey(const ValueKey('cron.unreadable')), findsOneWidget);
+      expect(find.textContaining('not allowed'), findsOneWidget);
+      expect(find.byKey(const ValueKey('cron.empty')), findsNothing);
+      final add = tester.widget<TextButton>(find.byKey(const ValueKey('cron.add')));
+      expect(add.onPressed, isNull, reason: 'writing a crontab we could not read would replace it');
+      vm.dispose();
+    });
+
+    testWidgets('a user with no crontab can still add their first job', (tester) async {
+      // cron says this on stderr and exits non-zero; treating that as a failure would lock a
+      // first-time user out of the feature entirely.
+      await repo.insertServer(server(name: 'nas'));
+      final transport = RecordingTransport(
+        replies: {'crontab -l': reply('no crontab for root', status: 1)},
+      );
+      await pump(tester, transport: transport);
+      await openCron(tester);
+
+      expect(find.byKey(const ValueKey('cron.empty')), findsOneWidget);
+      final add = tester.widget<TextButton>(find.byKey(const ValueKey('cron.add')));
+      expect(add.onPressed, isNotNull);
+      vm.dispose();
+    });
+
+    testWidgets('adding a job writes the whole file, with every other line intact', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      final transport = RecordingTransport(replies: {'crontab -l': reply(crontab)});
+      await pump(tester, transport: transport);
+      await openCron(tester);
+
+      await tester.tap(find.byKey(const ValueKey('cron.add')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('cron.editor.command')), '/usr/bin/tidy');
+      await tester.enterText(find.byKey(const ValueKey('cron.editor.label')), 'Tidy');
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const ValueKey('cron.preset.hourly')));
+      await tester.tap(find.byKey(const ValueKey('cron.preset.hourly')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('cron.editor.summary'))).data,
+        'Every hour',
+        reason: 'the preset is described in words before it is written',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('cron.editor.save')));
+      await tester.pumpAndSettle();
+
+      final write = transport.commands.firstWhere((c) => c.contains('| crontab -'));
+      final encoded = RegExp(r"printf %s '([A-Za-z0-9+/=]+)'").firstMatch(write)!.group(1)!;
+      final sent = utf8.decode(base64Decode(encoded));
+
+      expect(sent, contains('0 * * * * /usr/bin/tidy # OmniTerm: Tidy'));
+      expect(sent, contains('MAILTO=ops@example.com'), reason: 'the whole file is rewritten');
+      expect(sent, contains('# nightly jobs'));
+      expect(sent, contains('*/5 * * * * /usr/local/bin/ping-check'));
+      expect(sent, endsWith('\n'));
+      vm.dispose();
+    });
+
+    testWidgets('deleting says what it will actually do, and asks first', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      final transport = RecordingTransport(replies: {'crontab -l': reply(crontab)});
+      await pump(tester, transport: transport);
+      await openCron(tester);
+
+      await tester.tap(find.byKey(const ValueKey('cron.line.2.delete')));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('rewrites the crontab'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('cron.delete.cancel')));
+      await tester.pumpAndSettle();
+      expect(
+        transport.commands.where((c) => c.contains('| crontab -')),
+        isEmpty,
+        reason: 'cancelling must not have written anything',
+      );
+      vm.dispose();
+    });
+
+    testWidgets('an invalid field blocks the save rather than writing a broken schedule',
+        (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, transport: RecordingTransport(replies: {'crontab -l': reply(crontab)}));
+      await openCron(tester);
+
+      await tester.tap(find.byKey(const ValueKey('cron.add')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('cron.editor.command')), '/bin/true');
+      await tester.enterText(find.byKey(const ValueKey('cron.field.hour')), '99');
+      await tester.pumpAndSettle();
+
+      expect(find.text('Not a hour cron accepts'), findsOneWidget);
+      final save = tester.widget<FilledButton>(find.byKey(const ValueKey('cron.editor.save')));
+      expect(save.onPressed, isNull);
       vm.dispose();
     });
   });

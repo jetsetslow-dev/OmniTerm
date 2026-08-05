@@ -7,6 +7,7 @@ import '../../data/remote_commands.dart';
 import '../../data/remote_models.dart';
 import '../../data/remote_parsers.dart';
 import '../../data/ssh/ssh_transport.dart';
+import '../../domain/cron_schedule.dart';
 import '../../domain/health_scoring.dart';
 import '../../domain/server_credentials.dart';
 import '../../domain/operation_generation.dart';
@@ -168,6 +169,10 @@ class MonitorViewModel extends ChangeNotifier {
     _servicesUnsupported = false;
     _metrics = HostMetrics.empty;
     _metricsAt = null;
+    _cronLines = const [];
+    _cronReadable = false;
+    _cronError = null;
+    _cronStatus = null;
     _expandedProcessPid = null;
     _actionFeedback = null;
     _error = null;
@@ -195,7 +200,8 @@ class MonitorViewModel extends ChangeNotifier {
     MonitorTab.processes => loadProcesses(),
     MonitorTab.services => loadServices(),
     MonitorTab.logs => loadLogs(),
-    // Scripts and Cron are not ported yet (§18).
+    MonitorTab.cron => loadCron(),
+    // Scripts is not ported yet (§18).
     _ => Future<void>.value(),
   };
 
@@ -413,6 +419,84 @@ class MonitorViewModel extends ChangeNotifier {
         return () {
           _logsUnsupported = unsupported;
           _logs = parsed;
+        };
+      },
+    );
+  }
+
+  // ── cron ────────────────────────────────────────────────────────────────────
+
+  List<CronLine> _cronLines = const [];
+  bool _cronLoading = false;
+  bool _cronReadable = false;
+  String? _cronError;
+  String? _cronStatus;
+
+  List<CronLine> get cronLines => _cronLines;
+  bool get cronLoading => _cronLoading;
+
+  /// True once a crontab has actually been read from this host.
+  ///
+  /// **Editing is gated on this.** Saving replaces the user's whole crontab, so offering Add or
+  /// Delete after a read that failed would let the app write a file built from an error message —
+  /// see [crontabReadCommand] for what the Kotlin does instead.
+  bool get cronReadable => _cronReadable;
+
+  /// Why the crontab could not be read, verbatim from the host.
+  String? get cronError => _cronError;
+
+  /// The result of the last save, for the screen to show.
+  String? get cronStatus => _cronStatus;
+
+  void dismissCronStatus() {
+    _cronStatus = null;
+    notifyListeners();
+  }
+
+  Future<void> loadCron() async {
+    _cronStatus = null;
+    await _load(
+      operation: 'cron',
+      setLoading: (v) => _cronLoading = v,
+      run: (server, exec) async {
+        final read = parseCrontabRead(await exec(crontabReadCommand));
+        final parsed = parseCrontab(read.text);
+        return () {
+          _cronReadable = read.readable;
+          _cronError = read.readable ? null : read.error;
+          _cronLines = read.readable ? parsed : const [];
+        };
+      },
+    );
+  }
+
+  /// Writes [lines] back as the host user's crontab, then re-reads to confirm.
+  ///
+  /// Confirmed by reading, not by an empty reply: `crontab -` prints an installation notice on some
+  /// implementations and nothing at all on others, so treating any output as failure — which the
+  /// Kotlin does — reports a save that worked as an error, and the user's next move is to try again.
+  Future<void> saveCron(List<CronLine> lines) async {
+    if (!_cronReadable) return;
+    final wanted = renderCrontab(lines);
+
+    await _load(
+      operation: 'cron',
+      setLoading: (v) => _cronLoading = v,
+      run: (server, exec) async {
+        await exec(crontabWriteCommand(wanted));
+        final read = parseCrontabRead(await exec(crontabReadCommand));
+        final landed = renderCrontab(parseCrontab(read.text));
+        return () {
+          if (!read.readable) {
+            _cronStatus = 'Saved, but the crontab could not be read back to confirm it.';
+            return;
+          }
+          _cronLines = parseCrontab(read.text);
+          // Compared against what the host now has rather than what was sent: cron rewrites what it
+          // accepts, and a silent rejection would otherwise be reported as success.
+          _cronStatus = landed.trim() == wanted.trim()
+              ? 'Crontab saved.'
+              : 'The host stored something different from what was sent — check the entries below.';
         };
       },
     );
