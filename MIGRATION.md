@@ -4961,6 +4961,18 @@ surface for the same fact is how two of them end up disagreeing.
 
 **Verified — 5 new tests; 1814 host tests pass, `analyze` clean.**
 
+### Session 84 — Phase 9 begins: Platform Integrations (billing, ads, home widgets & Pattern O guard) (task #8)
+
+Phase 9 (Platform Integrations) started per §21 item 2.
+
+- **Billing & Entitlements (`lib/platform/license_controller.dart`):** Built `LicenseController` interface, `LicenseState`, `DisabledLicenseController` (for OpenSource/test mode), and `InAppLicenseController` (integrating `in_app_purchase`).
+- **Quick Connect Entitlement Gate (`lib/ui/screens/shell/shell_screen.dart`):** Re-instated the entitlement gate on Quick Connect when billing is enabled and `unlocked` is false, displaying an upgrade bottom sheet offering `launchPurchase()`.
+- **Ads Upsell (`lib/ui/widgets/ad_banner.dart`):** Ported `AdBanner` component which displays ad removal upsell when `state.value.adsRemoved` is false and hides when ads are removed or disabled.
+- **Home Screen Widgets (`lib/platform/home_widget_sync.dart`):** Added `HomeWidgetSync` integration wrapping `home_widget` to sync host/server counts and top host details to native home widgets, and handle widget tap launch URIs safely across platforms.
+- **Pattern O Guard (`lib/domain/external_action_guard.dart`):** Implemented `ExternalActionGuard` to enforce §20.1 & §20.3 Pattern O: cold-start external actions (from home widgets, shortcuts, notifications) MUST await app-lock verification and are consumed **at most once**.
+
+**Verified — 10 new tests; 1824 host tests pass, `flutter analyze --fatal-infos` clean.**
+
 ---
 
 ## 22. Where the port stands (written at the end of session 83)

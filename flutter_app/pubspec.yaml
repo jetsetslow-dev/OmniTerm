@@ -64,6 +64,7 @@ dependencies:
   path: ^1.9.1
   sqlite3: ^3.5.0
   crypto: ^3.0.7
+  in_app_purchase: ^3.3.0
 
 
 dev_dependencies:

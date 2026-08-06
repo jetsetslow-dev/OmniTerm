@@ -6,6 +6,7 @@ import '../../../data/app_database.dart';
 import '../../../domain/host_display.dart';
 import '../../../domain/terminal_key_encoder.dart';
 import '../../../domain/terminal_soft_input.dart';
+import '../../../platform/license_controller.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/shell_session.dart';
@@ -22,7 +23,9 @@ import '../../widgets/omni_components.dart';
 /// screen never shows an empty black rectangle that looks like a working shell — every state says
 /// what it is.
 class ShellScreen extends StatelessWidget {
-  const ShellScreen({super.key});
+  const ShellScreen({super.key, this.licenseController});
+
+  final LicenseController? licenseController;
 
   @override
   Widget build(BuildContext context) {
@@ -36,7 +39,7 @@ class ShellScreen extends StatelessWidget {
           if (vm.sessions.isNotEmpty || session != null) _SessionBar(vm: vm),
           Expanded(
             child: session == null
-                ? _ConnectPane(vm: vm)
+                ? _ConnectPane(vm: vm, licenseController: licenseController)
                 : vm.isSplit
                 ? _SplitTerminals(vm: vm, first: session, second: vm.splitSession!)
                 : _ActiveTerminal(vm: vm, session: session),
@@ -59,7 +62,52 @@ class ShellScreen extends StatelessWidget {
 ///
 /// The host key still goes through the usual trust prompt. A connection being temporary is not a
 /// reason to skip the one check that tells you whether the machine is the one you meant.
-Future<void> _quickConnect(BuildContext context, ShellViewModel vm) async {
+Future<void> _quickConnect(
+  BuildContext context,
+  ShellViewModel vm, {
+  LicenseController? licenseController,
+}) async {
+  if (licenseController != null &&
+      licenseController.state.value.enabled &&
+      !licenseController.state.value.unlocked) {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => Container(
+        key: const ValueKey('shell.quickConnectEntitlementSheet'),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Icon(Icons.lock, size: 48, color: OmniColors.amber),
+            const SizedBox(height: 16),
+            Text(
+              'Quick Connect Requires Premium',
+              style: Theme.of(ctx).textTheme.titleMedium?.copyWith(color: OmniColors.textPrimary),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Upgrade to OmniTerm Premium to use Quick Connect for one-off sessions.',
+              style: Theme.of(ctx).textTheme.bodyMedium?.copyWith(color: OmniColors.textSecondary),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              key: const ValueKey('shell.quickConnectUpgradeButton'),
+              onPressed: () {
+                Navigator.pop(ctx);
+                licenseController.launchPurchase();
+              },
+              child: Text(licenseController.state.value.productPrice ?? 'Upgrade to Premium'),
+            ),
+          ],
+        ),
+      ),
+    );
+    return;
+  }
+
   final server = await showModalBottomSheet<Server>(
     context: context,
     isScrollControlled: true,
@@ -202,9 +250,10 @@ class _QuickConnectSheetState extends State<_QuickConnectSheet> {
 }
 
 class _ConnectPane extends StatelessWidget {
-  const _ConnectPane({required this.vm});
+  const _ConnectPane({required this.vm, this.licenseController});
 
   final ShellViewModel vm;
+  final LicenseController? licenseController;
 
   @override
   Widget build(BuildContext context) {
@@ -228,7 +277,7 @@ class _ConnectPane extends StatelessWidget {
     return Column(
       children: [
         Expanded(
-          child: _ConnectPrompt(vm: vm, server: server),
+          child: _ConnectPrompt(vm: vm, server: server, licenseController: licenseController),
         ),
         // Below the connect prompt rather than instead of it: a session left running on a server is
         // something to *come back to*, so it belongs where the user arrives looking for a terminal.
@@ -388,10 +437,11 @@ class _EmptyState extends StatelessWidget {
 }
 
 class _ConnectPrompt extends StatelessWidget {
-  const _ConnectPrompt({required this.vm, required this.server});
+  const _ConnectPrompt({required this.vm, required this.server, this.licenseController});
 
   final ShellViewModel vm;
   final Server server;
+  final LicenseController? licenseController;
 
   @override
   Widget build(BuildContext context) => Center(
@@ -472,7 +522,9 @@ class _ConnectPrompt extends StatelessWidget {
             key: const ValueKey('shell.quickConnect'),
             icon: const Icon(Icons.bolt, size: 16),
             label: const Text('Quick connect', style: TextStyle(fontSize: 12)),
-            onPressed: vm.canConnect ? () => _quickConnect(context, vm) : null,
+            onPressed: vm.canConnect
+                ? () => _quickConnect(context, vm, licenseController: licenseController)
+                : null,
           ),
           if (!vm.canConnect)
             const Padding(
