@@ -132,7 +132,7 @@ class TelemetryPoller extends ChangeNotifier {
       final queue = servers.iterator;
       Future<void> worker() async {
         while (!_disposed && queue.moveNext()) {
-          await _pollOne(queue.current);
+          await pollOne(queue.current);
         }
       }
 
@@ -165,7 +165,7 @@ class TelemetryPoller extends ChangeNotifier {
     _history.removeWhere((id, _) => !live.contains(id));
   }
 
-  Future<void> _pollOne(Server server) async {
+  Future<void> pollOne(Server server) async {
     final ssh = transport;
     if (ssh == null) return;
     try {

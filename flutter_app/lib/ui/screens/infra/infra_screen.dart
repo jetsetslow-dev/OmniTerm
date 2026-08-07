@@ -8,6 +8,7 @@ import '../../theme/typography.dart';
 import '../../view_model/infra_view_model.dart';
 import '../../widgets/omni_components.dart';
 import 'infra_tabs.dart';
+import 'compose_builder.dart';
 
 /// The Infra (containers) screen, ported from `InfraScreen` in `ui/InfraScreen.kt`.
 ///
@@ -49,7 +50,7 @@ class _InfraScreenState extends State<InfraScreen> {
             child: switch (vm.activeTab) {
               // The builder is the one tab that does not depend on a successful probe, so it is
               // reachable even when the runtime could not be queried.
-              InfraTab.builder => const _BuilderNotPorted(),
+              InfraTab.builder => const BuilderTab(),
               _ when vm.error != null => _RuntimeError(message: vm.error!),
               InfraTab.stacks => StacksTab(vm: vm),
               InfraTab.images => ImagesTab(vm: vm),
@@ -273,29 +274,4 @@ class _RuntimeError extends StatelessWidget {
   }
 }
 
-class _BuilderNotPorted extends StatelessWidget {
-  const _BuilderNotPorted();
 
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Center(
-      key: const ValueKey('infra.builder.notPorted'),
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.construction, size: 36, color: OmniColors.textMuted),
-            const SizedBox(height: 12),
-            Text(
-              'The visual Compose builder is not available in this build yet.',
-              textAlign: TextAlign.center,
-              style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}

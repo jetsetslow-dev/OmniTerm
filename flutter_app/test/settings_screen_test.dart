@@ -106,7 +106,7 @@ void main() {
     var save = tester.widget<FilledButton>(find.byKey(const ValueKey('settings.save')));
     expect(save.onPressed, isNull);
 
-    await tester.tap(find.byKey(const ValueKey('settings.amoled')));
+    await tester.tap(find.byKey(const ValueKey('settings.accessibility')));
     await tester.pumpAndSettle();
     save = tester.widget<FilledButton>(find.byKey(const ValueKey('settings.save')));
     expect(save.onPressed, isNotNull);

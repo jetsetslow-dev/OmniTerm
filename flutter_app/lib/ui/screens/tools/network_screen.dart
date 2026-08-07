@@ -37,6 +37,7 @@ class _NetworkScreenState extends State<NetworkScreen> {
     NetworkTab.hostScan: 'Host scan',
     NetworkTab.wakeOnLan: 'Wake-on-LAN',
     NetworkTab.ping: 'Ping',
+    NetworkTab.traceroute: 'Traceroute',
     NetworkTab.portScan: 'Port scan',
     NetworkTab.dnsLookup: 'DNS',
     NetworkTab.whois: 'WHOIS',
@@ -102,6 +103,7 @@ class _NetworkScreenState extends State<NetworkScreen> {
               NetworkTab.hostScan => _HostScanTab(vm: vm),
               NetworkTab.wakeOnLan => _WolTab(vm: vm),
               NetworkTab.ping => _PingTab(vm: vm),
+              NetworkTab.traceroute => _TracerouteTab(vm: vm),
               NetworkTab.portScan => _PortScanTab(vm: vm),
               NetworkTab.dnsLookup => _DnsTab(vm: vm),
               NetworkTab.whois => _WhoisTab(vm: vm),
@@ -570,6 +572,66 @@ class _PingTab extends StatelessWidget {
                       fontFamily: OmniFonts.mono,
                       fontSize: 12,
                       color: result.latency == null ? OmniColors.red : null,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _TracerouteTab extends StatelessWidget {
+  const _TracerouteTab({required this.vm});
+
+  final NetworkViewModel vm;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Expanded(
+              child: _ToolField(
+                fieldKey: 'network.traceroute.target',
+                label: 'Host',
+                initial: vm.tracerouteTarget,
+                mono: true,
+                onChanged: (v) => vm.tracerouteTarget = v,
+              ),
+            ),
+            const SizedBox(width: 8),
+            if (vm.tracerouteRunning)
+              FilledButton.tonal(
+                key: const ValueKey('network.traceroute.stop'),
+                onPressed: vm.stopTraceroute,
+                child: const Text('Stop'),
+              )
+            else
+              FilledButton(
+                key: const ValueKey('network.traceroute.run'),
+                onPressed: vm.runTraceroute,
+                child: const Text('Trace'),
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Expanded(
+          child: ListView(
+            key: const ValueKey('network.traceroute.list'),
+            children: [
+              for (final line in vm.tracerouteLines)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Text(
+                    line,
+                    style: const TextStyle(
+                      fontFamily: OmniFonts.mono,
+                      fontSize: 12,
                     ),
                   ),
                 ),

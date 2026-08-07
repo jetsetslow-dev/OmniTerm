@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:drift/drift.dart' show Value;
@@ -14,7 +15,7 @@ import '../../domain/server_credentials.dart';
 import 'app_state.dart';
 
 /// The Network tool's tabs, in the Kotlin's order.
-enum NetworkTab { hostScan, wakeOnLan, ping, portScan, dnsLookup, whois, tunnels }
+enum NetworkTab { hostScan, wakeOnLan, ping, traceroute, portScan, dnsLookup, whois, tunnels }
 
 /// One port probe's outcome.
 class PortResult {
@@ -451,6 +452,89 @@ class NetworkViewModel extends ChangeNotifier {
       _safeNotify();
     }
   }
+  // ── traceroute ──────────────────────────────────────────────────────────────
+
+  String tracerouteTarget = '';
+  List<String> _tracerouteLines = const [];
+  bool _tracerouteRunning = false;
+  Process? _tracerouteProcess;
+
+  List<String> get tracerouteLines => List.unmodifiable(_tracerouteLines);
+  bool get tracerouteRunning => _tracerouteRunning;
+
+  Future<void> runTraceroute() async {
+    if (_tracerouteRunning) return;
+    final target = tracerouteTarget.trim();
+    if (target.isEmpty) {
+      _error = 'Enter a valid hostname or IP address.';
+      _safeNotify();
+      return;
+    }
+
+    _tracerouteRunning = true;
+    _error = null;
+    _tracerouteLines = ['ICMP trace via TTL-stepped ping (no traceroute binary on this device)'];
+    _safeNotify();
+
+    bool reached = false;
+    for (var ttl = 1; ttl <= 30; ttl++) {
+      if (!_tracerouteRunning) break;
+      final startedNs = DateTime.now().microsecondsSinceEpoch;
+      String output = '';
+
+      try {
+        _tracerouteProcess = await Process.start(
+          'ping',
+          ['-c', '1', '-W', '2', '-t', ttl.toString(), target],
+        );
+        output = await systemEncoding.decodeStream(_tracerouteProcess!.stdout);
+        await _tracerouteProcess!.exitCode;
+      } catch (e) {
+        _tracerouteLines = List.of(_tracerouteLines)..add('ping is not available on this device — cannot trace.');
+        _safeNotify();
+        break;
+      } finally {
+        _tracerouteProcess?.kill();
+        _tracerouteProcess = null;
+      }
+
+      if (ttl == 1 && (output.toLowerCase().contains('unknown host') || output.toLowerCase().contains('name or service not known'))) {
+        _tracerouteLines = List.of(_tracerouteLines)..add('Cannot resolve $target.');
+        _safeNotify();
+        break;
+      }
+
+      final elapsedMs = (DateTime.now().microsecondsSinceEpoch - startedNs) / 1000.0;
+      final replyMatch = RegExp(r'bytes from ([0-9a-fA-F.:]*[0-9a-fA-F])[:\s].*time=([\d.]+)').firstMatch(output);
+      String hopLine = '';
+
+      if (replyMatch != null) {
+        hopLine = '${ttl.toString().padLeft(2)}  ${replyMatch.group(1)}  ${replyMatch.group(2)} ms';
+        reached = true;
+      } else {
+        final hopMatch = RegExp(r'[Ff]rom ([0-9a-fA-F.:]*[0-9a-fA-F])[:\s]').firstMatch(output);
+        if (hopMatch != null) {
+          hopLine = '${ttl.toString().padLeft(2)}  ${hopMatch.group(1)}  ~${elapsedMs.toStringAsFixed(0)} ms';
+        } else {
+          hopLine = '${ttl.toString().padLeft(2)}  *';
+        }
+      }
+
+      _tracerouteLines = (List.of(_tracerouteLines)..add(hopLine)).reversed.take(200).toList().reversed.toList();
+      _safeNotify();
+      if (reached) break;
+    }
+
+    _tracerouteLines = List.of(_tracerouteLines)..add(reached ? 'Trace complete.' : 'Stopped after 30 hops without reaching $target.');
+    _tracerouteRunning = false;
+    _safeNotify();
+  }
+
+  void stopTraceroute() {
+    _tracerouteProcess?.kill();
+    _tracerouteRunning = false;
+    _safeNotify();
+  }
 
   // ── port scan ───────────────────────────────────────────────────────────────
 
@@ -572,6 +656,8 @@ class NetworkViewModel extends ChangeNotifier {
     switch (tool) {
       case NetworkTab.ping:
         pingTarget = address;
+      case NetworkTab.traceroute:
+        tracerouteTarget = address;
       case NetworkTab.portScan:
         portScanTarget = address;
       case NetworkTab.dnsLookup:

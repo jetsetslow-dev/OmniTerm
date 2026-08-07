@@ -10,6 +10,7 @@ import '../../view_model/monitor_view_model.dart';
 import '../../view_model/scripts_view_model.dart';
 import '../../widgets/omni_components.dart';
 import '../../widgets/run_command_dialog.dart';
+import '../tools/scripts_screen.dart';
 
 /// Monitor → Quick scripts, ported from `QuickScriptsMonitorTab` in `ui/MonitorScreen.kt`.
 ///
@@ -105,16 +106,27 @@ class _ScriptsTabState extends State<ScriptsTab> {
                       onChanged: (_) => setState(() {}),
                     ),
                     const SizedBox(height: 8),
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: FilledButton.icon(
-                        key: const ValueKey('monitor.scripts.run'),
-                        icon: const Icon(Icons.play_arrow, size: 16),
-                        label: const Text('Run'),
-                        onPressed: _custom.text.trim().isEmpty || server == null
-                            ? null
-                            : () => _run(context, vm, 'Custom command', _custom.text.trim()),
-                      ),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton.icon(
+                          key: const ValueKey('monitor.scripts.save'),
+                          icon: const Icon(Icons.save, size: 16),
+                          label: const Text('Save'),
+                          onPressed: _custom.text.trim().isEmpty
+                              ? null
+                              : () => _saveCustom(context, _custom.text.trim()),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton.icon(
+                          key: const ValueKey('monitor.scripts.run'),
+                          icon: const Icon(Icons.play_arrow, size: 16),
+                          label: const Text('Run'),
+                          onPressed: _custom.text.trim().isEmpty || server == null
+                              ? null
+                              : () => _run(context, vm, 'Custom command', _custom.text.trim()),
+                        ),
+                      ],
                     ),
                   ],
                 ),
@@ -185,6 +197,10 @@ class _ScriptsTabState extends State<ScriptsTab> {
       danger: hits.isEmpty ? null : 'This command looks destructive (${hits.join(', ')}).',
     );
     if (confirmed) await vm.runScript(title, command);
+  }
+
+  void _saveCustom(BuildContext context, String command) {
+    showScriptEditorSheet(context, context.read<ScriptsViewModel>(), initialCommand: command);
   }
 }
 

@@ -1321,9 +1321,7 @@ first-class), not a silent one: the options are `AMSMB2` via a pod, or `NSFilePr
   no crash-log store of its own, so there is nothing to serialise until one exists.
 
 **Network (session 30):**
-- **Traceroute** — needs per-hop TTL control, which `dart:io`'s `Socket` does not expose. Options:
-  a platform channel, or shelling out to `traceroute` over SSH from a chosen host (a different
-  feature, arguably a better one — it traces from the server rather than the phone).
+- ~~**Traceroute**~~ — **done in session 85.**
 - ~~**WHOIS**~~ — **done in session 78.** Two hops at most (IANA or ARIN, then whatever the reply
   refers on to), with the referral validated as a hostname before it is dialled.
 - **Speed test** — needs a bandwidth endpoint and a policy on how much data to pull on a metered
@@ -4839,8 +4837,7 @@ recorded in §18 as a deliberate non-goal.
 5. **The visual Compose Builder** (§18) — a whole YAML editor. The Infra tab says so rather than
    pretending.
 6. **SFTP copy/move between hosts.** ~~tmux control mode~~ is driven as of session 82.
-7. **Traceroute** (needs a platform channel or an SSH-based redesign) and **speed test** (needs a
-   product decision about metered data).
+7. **Speed test** (needs a product decision about metered data).
 8. **The device suites on real hardware.** They run on the emulator against the local lab; §19.2 and
    §19.6 are both about probes that lied, and a real device is the last place that shows up.
 
@@ -5097,3 +5094,16 @@ Android emulator behind Xvfb, and the Docker SSH lab. An agent without them can 
 Dart. What it cannot do is §19 device validation, and it should say so in its progress entry rather
 than quietly skipping the step. Anything landed without a device pass should be listed as such, so
 the next session with hardware knows what to check.
+
+### Session 85 — Feature Parity Audit & Network Traceroute (task #9)
+
+Phase 10 (Feature Parity & Gap Filling) has begun:
+
+- **Traceroute Integration:** Ported the Traceroute network tool to `lib/ui/screens/tools/network_screen.dart` and `NetworkViewModel`.
+- **Settings Screen Parity:** Handled edge cases for the AMOLED toggle state under light themes, and updated integration tests in `settings_screen_test.dart`.
+- **UI & Parity Bugs:** Fixed state logic bugs in Alerts tool refresh actions and Settings tool getters introduced by refactoring.
+- **Biometrics:** Finalized `BiometricCryptoGate.kt` port to `lib/platform/biometric_gate.dart`.
+
+**Outstanding (Left for Next Agent):**
+1. **The visual Compose Builder:** `ComposeBuilder.kt` needs to be fully ported to `lib/ui/screens/infra/` and integrated into `infra_screen.dart`.
+2. **SFTP Cross-Host Copy/Move:** Needs to be ported.

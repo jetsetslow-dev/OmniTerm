@@ -83,7 +83,7 @@ class PreferenceLimits {
 /// A snapshot of every preference.
 class AppPreferences {
   const AppPreferences({
-    this.darkMode = true,
+    this.darkMode,
     this.amoled = false,
     this.textScalePercent = 100,
     this.accessibility = false,
@@ -112,7 +112,7 @@ class AppPreferences {
     this.sftpWarnGigabytes = 2,
   });
 
-  final bool darkMode;
+  final bool? darkMode;
   final bool amoled;
   final int textScalePercent;
   final bool accessibility;
@@ -195,6 +195,13 @@ class AppPreferences {
       return fallback;
     }
 
+    bool? nullableFlag(String key) {
+      final value = settings[keys[key]]?.trim().toLowerCase();
+      if (value == 'true') return true;
+      if (value == 'false') return false;
+      return null;
+    }
+
     // Stored in bytes; shown in gigabytes, because nobody reasons about a transfer warning in bytes.
     final warnBytes = int.tryParse(settings[keys['sftpWarnBytes']] ?? '');
     final warnGigabytes = warnBytes == null
@@ -202,7 +209,7 @@ class AppPreferences {
         : PreferenceLimits.sftpWarnGigabytes.clamp(warnBytes ~/ 1000000000);
 
     return AppPreferences(
-      darkMode: flag('darkMode', fallback: defaults.darkMode),
+      darkMode: nullableFlag('darkMode'),
       amoled: flag('amoled', fallback: defaults.amoled),
       textScalePercent: PreferenceLimits.textScalePercent.parse(settings[keys['textScale']]),
       accessibility: flag('accessibility', fallback: defaults.accessibility),
@@ -252,7 +259,7 @@ class AppPreferences {
 
   /// The rows to write. Only what this screen owns — nothing else in `app_settings` is touched.
   Map<String, String> encode() => {
-    keys['darkMode']!: '$darkMode',
+    if (darkMode != null) keys['darkMode']!: '$darkMode',
     keys['amoled']!: '$amoled',
     keys['textScale']!: '$textScalePercent',
     keys['accessibility']!: '$accessibility',
@@ -283,6 +290,7 @@ class AppPreferences {
 
   AppPreferences copyWith({
     bool? darkMode,
+    bool clearDarkMode = false,
     bool? amoled,
     int? textScalePercent,
     bool? accessibility,
@@ -310,7 +318,7 @@ class AppPreferences {
     int? sftpWarnFileCount,
     int? sftpWarnGigabytes,
   }) => AppPreferences(
-    darkMode: darkMode ?? this.darkMode,
+    darkMode: clearDarkMode ? null : (darkMode ?? this.darkMode),
     amoled: amoled ?? this.amoled,
     textScalePercent: textScalePercent ?? this.textScalePercent,
     accessibility: accessibility ?? this.accessibility,

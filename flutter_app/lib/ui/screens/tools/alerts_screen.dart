@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 
 import '../../../data/app_database.dart';
 import '../../../domain/alert_evaluation.dart';
+import '../../view_model/app_state.dart';
+import '../../view_model/telemetry_poller.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/alerts_view_model.dart';
@@ -229,6 +231,46 @@ class _TabBar extends StatelessWidget {
   }
 }
 
+class _RefreshButton extends StatefulWidget {
+  const _RefreshButton({required this.serverId});
+  final int serverId;
+
+  @override
+  State<_RefreshButton> createState() => _RefreshButtonState();
+}
+
+class _RefreshButtonState extends State<_RefreshButton> {
+  bool _busy = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextButton.icon(
+      key: ValueKey('alerts.active.refresh.${widget.serverId}'),
+      icon: _busy
+          ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2))
+          : const Icon(Icons.refresh, size: 12),
+      label: const Text('Refresh', style: TextStyle(fontSize: 12)),
+      onPressed: _busy
+          ? null
+          : () async {
+              setState(() => _busy = true);
+              try {
+                final srv = context
+                    .read<AppState>()
+                    .servers
+                    .where((s) => s.id == widget.serverId)
+                    .firstOrNull;
+                if (srv != null) {
+                  await context.read<TelemetryPoller>().pollOne(srv);
+                }
+              } finally {
+                if (mounted) setState(() => _busy = false);
+              }
+            },
+    );
+  }
+}
+
 class _ActiveTab extends StatelessWidget {
   const _ActiveTab({required this.vm});
 
@@ -315,6 +357,7 @@ class _ActiveTab extends StatelessWidget {
               const SizedBox(height: 6),
               Row(
                 children: [
+                  _RefreshButton(serverId: alert.serverId),
                   if (!alert.acknowledged)
                     TextButton(
                       key: ValueKey('alerts.active.${alert.id}.ack'),

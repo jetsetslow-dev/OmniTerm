@@ -295,14 +295,22 @@ class OmniTermApp extends StatelessWidget {
       ],
       child: Builder(
         builder: (context) {
-          // TODO(migration): theme mode and font scale come from app_settings once the Drift
-          // data layer lands (MIGRATION.md §3.2); the legacy default is the dark scheme.
-          const mode = OmniThemeMode.dark;
+          final prefs = context.watch<SettingsViewModel>().saved;
           final brightness = MediaQuery.platformBrightnessOf(context);
+          final isDark = prefs.darkMode ?? (brightness == Brightness.dark);
+          final mode = isDark
+              ? (prefs.amoled ? OmniThemeMode.amoled : OmniThemeMode.dark)
+              : OmniThemeMode.light;
           return MaterialApp(
             title: 'OmniTerm',
             debugShowCheckedModeBanner: false,
             theme: omniTheme(mode, brightness),
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: TextScaler.linear(prefs.textScalePercent / 100.0),
+              ),
+              child: child!,
+            ),
             // The lock is the outermost wrapper: a gate with a route, tab or dialog reachable
             // around it is decoration. The host-key prompt sits inside it, so a locked app can
             // never be made to show one.

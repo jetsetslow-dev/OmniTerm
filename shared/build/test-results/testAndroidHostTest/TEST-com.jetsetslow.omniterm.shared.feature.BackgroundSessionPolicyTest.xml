@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.jetsetslow.omniterm.shared.feature.BackgroundSessionPolicyTest" tests="4" skipped="0" failures="0" errors="0" timestamp="2026-08-01T20:10:08.671Z" hostname="SER8-Server" time="0.03">
+  <properties/>
+  <testcase name="aNonTmuxSessionIsWarnedThatBackgroundingMayDropIt" classname="com.jetsetslow.omniterm.shared.feature.BackgroundSessionPolicyTest" time="0.001"/>
+  <testcase name="aNonTmuxSessionIsNotDetachedByTheScheduler" classname="com.jetsetslow.omniterm.shared.feature.BackgroundSessionPolicyTest" time="0.02"/>
+  <testcase name="stayingBackgroundedPastTheGraceDetachesTmuxAndKeepsItResumable" classname="com.jetsetslow.omniterm.shared.feature.BackgroundSessionPolicyTest" time="0.005"/>
+  <testcase name="returningToTheForegroundInsideTheGraceKeepsTheConnection" classname="com.jetsetslow.omniterm.shared.feature.BackgroundSessionPolicyTest" time="0.004"/>
+  <system-out><![CDATA[]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

@@ -96,23 +96,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
 
             const SectionHeader(title: 'Appearance'),
-            _Switch(
+            _Choice<bool?>(
               settingKey: 'darkMode',
-              title: 'Dark theme',
+              title: 'Theme',
               value: draft.darkMode,
-              onChanged: (v) => vm.update((p) => p.copyWith(darkMode: v)),
+              options: const {null: 'System Default', true: 'Dark Theme', false: 'Light Theme'},
+              onChanged: (v) => vm.update((p) => p.copyWith(darkMode: v, clearDarkMode: v == null)),
             ),
             _Switch(
               settingKey: 'amoled',
               title: 'AMOLED black',
               subtitle: 'True black backgrounds, which save power on OLED screens',
               value: draft.amoled,
-              enabled: draft.darkMode,
+              enabled: draft.darkMode ?? MediaQuery.platformBrightnessOf(context) == Brightness.dark,
               onChanged: (v) => vm.update((p) => p.copyWith(amoled: v)),
             ),
             _Switch(
               settingKey: 'accessibility',
-              title: 'Larger touch targets',
+              title: 'High contrast mode',
+              subtitle: 'Stronger colors and borders for better visibility',
               value: draft.accessibility,
               onChanged: (v) => vm.update((p) => p.copyWith(accessibility: v)),
             ),

@@ -156,7 +156,7 @@ class _ScriptsScreenState extends State<ScriptsScreen> {
           child: FloatingActionButton(
             key: const ValueKey('scripts.add'),
             tooltip: isQuick ? 'New quick script' : 'New fleet command',
-            onPressed: () => _openEditor(context, vm, forFleet: !isQuick),
+            onPressed: () => showScriptEditorSheet(context, vm, forFleet: !isQuick),
             child: const Icon(Icons.add),
           ),
         ),
@@ -267,7 +267,7 @@ class _ScriptCard extends StatelessWidget {
       child: OmniCard(
         key: ValueKey('scripts.card.${script.id}'),
         leftAccent: OmniColors.named(script.color),
-        onTap: () => _openEditor(context, vm, existing: script),
+        onTap: () => showScriptEditorSheet(context, vm, existing: script),
         child: Row(
           children: [
             SizedBox(
@@ -376,34 +376,47 @@ Future<void> _confirmDelete(BuildContext context, ScriptsViewModel vm, QuickScri
   if (confirmed ?? false) await vm.deleteScript(script);
 }
 
-Future<void> _openEditor(
+Future<void> showScriptEditorSheet(
   BuildContext context,
   ScriptsViewModel vm, {
   QuickScript? existing,
   bool forFleet = false,
+  String? initialCommand,
 }) async {
   await showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    builder: (_) => _ScriptSheet(vm: vm, existing: existing, forFleet: forFleet),
+    builder: (_) => ScriptEditorSheet(
+      vm: vm,
+      existing: existing,
+      forFleet: forFleet,
+      initialCommand: initialCommand,
+    ),
   );
 }
 
-class _ScriptSheet extends StatefulWidget {
-  const _ScriptSheet({required this.vm, this.existing, this.forFleet = false});
+class ScriptEditorSheet extends StatefulWidget {
+  const ScriptEditorSheet({
+    super.key,
+    required this.vm,
+    this.existing,
+    this.forFleet = false,
+    this.initialCommand,
+  });
 
   final ScriptsViewModel vm;
   final QuickScript? existing;
   final bool forFleet;
+  final String? initialCommand;
 
   @override
-  State<_ScriptSheet> createState() => _ScriptSheetState();
+  State<ScriptEditorSheet> createState() => _ScriptEditorSheetState();
 }
 
-class _ScriptSheetState extends State<_ScriptSheet> {
+class _ScriptEditorSheetState extends State<ScriptEditorSheet> {
   late final _name = TextEditingController(text: widget.existing?.name ?? '');
-  late final _command = TextEditingController(text: widget.existing?.command ?? '');
+  late final _command = TextEditingController(text: widget.existing?.command ?? widget.initialCommand ?? '');
   late final _emoji = TextEditingController(text: widget.existing?.emoji ?? '');
   late final _category = TextEditingController(text: widget.existing?.category ?? 'General');
   late final _notes = TextEditingController(text: widget.existing?.notes ?? '');

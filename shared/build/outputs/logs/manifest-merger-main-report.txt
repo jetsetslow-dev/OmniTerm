@@ -1,0 +1,13 @@
+-- Merging decision tree log ---
+manifest
+ADDED from /home/sbvino/Omniterm/shared/build/intermediates/tmp/ProcessLibraryManifest/tempAndroidManifest10196928507225113202.xml:2:13-83
+INJECTED from /home/sbvino/Omniterm/shared/build/intermediates/tmp/ProcessLibraryManifest/tempAndroidManifest10196928507225113202.xml:2:13-83
+	package
+		INJECTED from /home/sbvino/Omniterm/shared/build/intermediates/tmp/ProcessLibraryManifest/tempAndroidManifest10196928507225113202.xml
+	xmlns:android
+		ADDED from /home/sbvino/Omniterm/shared/build/intermediates/tmp/ProcessLibraryManifest/tempAndroidManifest10196928507225113202.xml:2:23-81
+uses-sdk
+INJECTED from /home/sbvino/Omniterm/shared/build/intermediates/tmp/ProcessLibraryManifest/tempAndroidManifest10196928507225113202.xml reason: use-sdk injection requested
+INJECTED from /home/sbvino/Omniterm/shared/build/intermediates/tmp/ProcessLibraryManifest/tempAndroidManifest10196928507225113202.xml
+	android:minSdkVersion
+		INJECTED from /home/sbvino/Omniterm/shared/build/intermediates/tmp/ProcessLibraryManifest/tempAndroidManifest10196928507225113202.xml
