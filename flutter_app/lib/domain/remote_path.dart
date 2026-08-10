@@ -43,6 +43,24 @@ String normalisePath(String path) {
   return collapsed.endsWith('/') ? collapsed.substring(0, collapsed.length - 1) : collapsed;
 }
 
+/// Where a path typed into the browser's address box should navigate to, or null when there is
+/// nothing to go to.
+///
+/// Blank is null rather than the root: clearing the box and pressing Go is a change of mind, and
+/// jumping to `/` from a folder deep in the tree would be a surprising way to lose your place.
+///
+/// A **relative** entry resolves against [current], because the box is prefilled with the directory
+/// you are in — so typing `docs` on the end of it means the same thing it would in a shell. Sending
+/// it to the server unresolved would list whatever the SFTP session's working directory happens to
+/// be, which is not something the user can see.
+String? resolveTypedPath({required String current, required String typed}) {
+  final trimmed = typed.trim();
+  if (trimmed.isEmpty) return null;
+  if (trimmed.startsWith('/')) return normalisePath(trimmed);
+  final base = current.trim().isEmpty ? '/' : current;
+  return normalisePath('$base/$trimmed');
+}
+
 /// The breadcrumb trail for [path]: root first, then each ancestor, ending at [path] itself.
 List<({String name, String path})> breadcrumbs(String path) {
   final normalised = normalisePath(path);

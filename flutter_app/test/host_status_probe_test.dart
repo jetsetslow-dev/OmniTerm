@@ -6,6 +6,7 @@ import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/data/network/network_probe.dart';
 import 'package:omniterm/platform/secret_store.dart';
+import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/ui/view_model/host_status_probe.dart';
 
 import 'support/fake_secure_storage.dart';
@@ -205,5 +206,68 @@ void main() {
     await probe.sweep();
 
     expect(fake.probed, isEmpty);
+  });
+
+  /// "Has anything actually looked at this host?", ported from Kotlin's `probedServerIds`
+  /// (`ui/AppViewModel.kt:4496`).
+  ///
+  /// A host's stored status is `offline` from the moment it is created, so status alone cannot tell
+  /// "we checked, and it is down" from "nobody has checked yet".
+  group('probed tracking', () {
+    test('a host nothing has looked at is not marked probed', () async {
+      final probe = HostStatusProbe(repo, probe: _FakeProbe());
+      expect(probe.hasProbed(1), isFalse);
+      probe.dispose();
+    });
+
+    test('a reachable host is marked probed', () async {
+      await repo.insertServer(server(name: 'box', host: '10.0.0.5'));
+      final probe = HostStatusProbe(repo, probe: _FakeProbe(reachable: {'10.0.0.5:22'}));
+
+      await probe.probeOne((await repo.getAllServers()).single);
+
+      expect(probe.hasProbed(1), isTrue);
+      probe.dispose();
+    });
+
+    test('an unreachable host is marked probed too', () async {
+      // This is the case the warning exists for: a real answer of "no".
+      await repo.insertServer(server(name: 'box', host: '10.0.0.5'));
+      final probe = HostStatusProbe(repo, probe: _FakeProbe());
+
+      await probe.probeOne((await repo.getAllServers()).single);
+
+      expect(probe.hasProbed(1), isTrue);
+      probe.dispose();
+    });
+
+    test('a probe that threw does not count', () async {
+      // A failed probe says nothing about the host, so it must not arm a warning about it.
+      await repo.insertServer(server(name: 'box', host: '10.0.0.5'));
+      final probe = HostStatusProbe(repo, probe: _FakeProbe(throwFor: {'10.0.0.5:22'}));
+
+      await probe.probeOne((await repo.getAllServers()).single);
+
+      expect(probe.hasProbed(1), isFalse);
+      probe.dispose();
+    });
+  });
+
+  /// The warning rule itself.
+  group('shouldWarnHostOffline', () {
+    test('never warns about a host nothing has probed', () {
+      // The regression: a freshly added host is stored as `offline`, so warning on status alone
+      // fired the first time the user connected to a host they had just created.
+      expect(shouldWarnHostOffline(probed: false, status: 'offline'), isFalse);
+      expect(shouldWarnHostOffline(probed: false, status: 'connecting'), isFalse);
+    });
+
+    test('warns about a probed host that is not online', () {
+      expect(shouldWarnHostOffline(probed: true, status: 'offline'), isTrue);
+    });
+
+    test('never warns about a host that is online', () {
+      expect(shouldWarnHostOffline(probed: true, status: 'online'), isFalse);
+    });
   });
 }

@@ -165,6 +165,28 @@ _Scheme _resolve(OmniThemeMode mode, Brightness platformBrightness, ColorScheme?
   };
 }
 
+/// Which mode the saved preferences select, in Kotlin's priority order.
+///
+/// Ported from the `when` chain in `MyApplicationTheme` (`ui/theme/Theme.kt:159`). Pure so the
+/// precedence can be tested without pumping a widget tree — and precedence is the whole substance
+/// here: the two flags overlap, and picking the wrong winner is invisible in code review.
+///
+/// **High contrast outranks AMOLED.** They both change dark mode, and only one can win. AMOLED is a
+/// preference about battery and taste; high contrast is an accessibility need, and a user who has
+/// asked for legible colours must not have them overridden by a black-background option they set
+/// months earlier and forgot.
+OmniThemeMode themeModeFor({
+  required bool isDark,
+  required bool highContrast,
+  required bool amoled,
+}) {
+  if (highContrast) {
+    return isDark ? OmniThemeMode.highContrastDark : OmniThemeMode.highContrastLight;
+  }
+  if (isDark) return amoled ? OmniThemeMode.amoled : OmniThemeMode.dark;
+  return OmniThemeMode.light;
+}
+
 /// Builds the app [ThemeData]. [dynamicScheme] is the platform-provided scheme (Android 12+
 /// Material You) or null where unavailable.
 ThemeData omniTheme(

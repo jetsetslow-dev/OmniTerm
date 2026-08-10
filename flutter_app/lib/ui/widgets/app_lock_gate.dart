@@ -81,7 +81,7 @@ class AppLockScreen extends StatefulWidget {
   State<AppLockScreen> createState() => _AppLockScreenState();
 }
 
-class _AppLockScreenState extends State<AppLockScreen> {
+class _AppLockScreenState extends State<AppLockScreen> with WidgetsBindingObserver {
   final TextEditingController _pin = TextEditingController();
 
   /// Kept so focus can be handed back after a refused attempt.
@@ -94,9 +94,17 @@ class _AppLockScreenState extends State<AppLockScreen> {
   bool _busy = false;
   Timer? _throttleTick;
 
+  /// True once the app has genuinely been backgrounded while this screen was up.
+  ///
+  /// Used to tell a real return-to-app from the `inactive` flicker the biometric prompt itself can
+  /// cause. Without the distinction, re-prompting on every resume risks a loop where a cancelled
+  /// prompt immediately raises another.
+  bool _wasBackgrounded = false;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     // Offered immediately rather than behind a button: the whole point of enabling biometrics is
     // not having to type. The PIN field stays available underneath if it fails or is dismissed.
     if (widget.controller.canUseBiometrics) {
@@ -105,7 +113,30 @@ class _AppLockScreenState extends State<AppLockScreen> {
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.detached:
+        _wasBackgrounded = true;
+      case AppLifecycleState.resumed:
+        // Re-prompt on the way back in. Leaving the app while the lock screen is up makes the
+        // platform cancel its biometric prompt, and this screen is never rebuilt — the gate keeps it
+        // mounted for as long as the app is locked — so an `initState`-only trigger left the user
+        // staring at a bare PIN field with no way to reach biometrics but the button. Kotlin
+        // re-prompts on every `ON_RESUME` for exactly this reason (`ui/AppUi.kt:724`).
+        if (_wasBackgrounded) {
+          _wasBackgrounded = false;
+          if (widget.controller.canUseBiometrics) unawaited(_tryBiometrics());
+        }
+      case AppLifecycleState.inactive:
+        break;
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _throttleTick?.cancel();
     _pin.dispose();
     _pinFocus.dispose();

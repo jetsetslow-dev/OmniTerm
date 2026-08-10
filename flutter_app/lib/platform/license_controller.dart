@@ -5,6 +5,7 @@ import 'package:in_app_purchase/in_app_purchase.dart';
 /// Product IDs matching Google Play / App Store configuration.
 const String omnitermPremiumUnlockId = 'omniterm_premium_unlock';
 const String omnitermAdRemovalId = 'omniterm_ad_removal';
+const Object _unsetLicenseValue = Object();
 
 /// State of user entitlements and billing products.
 @immutable
@@ -32,18 +33,24 @@ class LicenseState {
     bool? loading,
     bool? unlocked,
     bool? adsRemoved,
-    String? productPrice,
-    String? adRemovalPrice,
-    String? message,
+    Object? productPrice = _unsetLicenseValue,
+    Object? adRemovalPrice = _unsetLicenseValue,
+    Object? message = _unsetLicenseValue,
   }) {
     return LicenseState(
       enabled: enabled ?? this.enabled,
       loading: loading ?? this.loading,
       unlocked: unlocked ?? this.unlocked,
       adsRemoved: adsRemoved ?? this.adsRemoved,
-      productPrice: productPrice ?? this.productPrice,
-      adRemovalPrice: adRemovalPrice ?? this.adRemovalPrice,
-      message: message ?? this.message,
+      productPrice: identical(productPrice, _unsetLicenseValue)
+          ? this.productPrice
+          : productPrice as String?,
+      adRemovalPrice: identical(adRemovalPrice, _unsetLicenseValue)
+          ? this.adRemovalPrice
+          : adRemovalPrice as String?,
+      message: identical(message, _unsetLicenseValue)
+          ? this.message
+          : message as String?,
     );
   }
 
@@ -269,9 +276,9 @@ class InAppLicenseController implements LicenseController {
     bool? loading,
     bool? unlocked,
     bool? adsRemoved,
-    String? productPrice,
-    String? adRemovalPrice,
-    String? message,
+    Object? productPrice = _unsetLicenseValue,
+    Object? adRemovalPrice = _unsetLicenseValue,
+    Object? message = _unsetLicenseValue,
   }) {
     _state.value = _state.value.copyWith(
       loading: loading,

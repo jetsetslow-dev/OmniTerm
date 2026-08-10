@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../../../data/app_database.dart';
 import '../../../domain/host_display.dart';
 import '../../../domain/network_share_form.dart';
+import '../../../domain/share_scan.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/sftp_view_model.dart';
@@ -82,6 +83,7 @@ class SharesTab extends StatelessWidget {
             ],
           ),
         ),
+        _ScanPanel(onAdd: (hit) => _edit(context, vm, fromScan: hit)),
         Expanded(
           child: vm.shares.isEmpty
               ? const Center(
@@ -114,8 +116,11 @@ class SharesTab extends StatelessWidget {
     SharesViewModel vm, {
     NetworkShare? share,
     bool add = false,
+    ShareScanHit? fromScan,
   }) async {
-    if (add) {
+    if (fromScan != null) {
+      vm.startAddFromScan(fromScan);
+    } else if (add) {
       vm.startAdd();
     } else if (share != null) {
       vm.startEdit(share);
@@ -155,6 +160,191 @@ class SharesTab extends StatelessWidget {
       ),
     );
     if (confirmed == true) await vm.delete(share);
+  }
+}
+
+/// Finds share services on the local network, so a NAS does not have to be known before it can be
+/// saved.
+///
+/// Collapsed by default: the tab's job is the saved shares, and a scanner permanently occupying the
+/// top of it would push them off a phone screen.
+class _ScanPanel extends StatefulWidget {
+  const _ScanPanel({required this.onAdd});
+
+  final void Function(ShareScanHit hit) onAdd;
+
+  @override
+  State<_ScanPanel> createState() => _ScanPanelState();
+}
+
+class _ScanPanelState extends State<_ScanPanel> {
+  final _cidr = TextEditingController();
+  bool _open = false;
+  bool _loaded = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      final vm = context.read<SharesViewModel>();
+      await vm.loadScanSettings();
+      if (!mounted || _cidr.text.isNotEmpty) return;
+      // Prefilled from an address the user already saved, because the subnet they want is almost
+      // always the one their existing shares are on. Left blank when there is nothing to infer
+      // from, rather than guessing at 192.168.1.
+      final prefix = vm.shares
+          .map((s) => scanPrefixOf(s.address))
+          .whereType<String>()
+          .firstOrNull;
+      if (prefix != null) setState(() => _cidr.text = '$prefix.0/24');
+      _loaded = true;
+    });
+  }
+
+  @override
+  void dispose() {
+    _cidr.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final vm = context.watch<SharesViewModel>();
+    final scheme = Theme.of(context).colorScheme;
+
+    if (!_open) {
+      return Align(
+        alignment: Alignment.centerLeft,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+          child: TextButton.icon(
+            key: const ValueKey('shares.scan.open'),
+            icon: const Icon(Icons.wifi_find, size: 16),
+            label: const Text('Find shares on my network', style: TextStyle(fontSize: 12)),
+            onPressed: () => setState(() => _open = true),
+          ),
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
+      child: OmniCard(
+        key: const ValueKey('shares.scan.panel'),
+        leftAccent: OmniColors.cyan,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Find shares on my network',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                  ),
+                ),
+                IconButton(
+                  key: const ValueKey('shares.scan.close'),
+                  icon: const Icon(Icons.close, size: 16),
+                  onPressed: () {
+                    vm.clearScanHits();
+                    setState(() => _open = false);
+                  },
+                ),
+              ],
+            ),
+            Wrap(
+              spacing: 6,
+              children: [
+                for (final protocol in allScanProtocols)
+                  FilterChip(
+                    key: ValueKey('shares.scan.protocol.$protocol'),
+                    label: Text(protocol, style: const TextStyle(fontSize: 11)),
+                    selected: vm.isScanProtocolEnabled(protocol),
+                    onSelected: vm.scanning
+                        ? null
+                        : (_) => vm.toggleScanProtocol(protocol),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    key: const ValueKey('shares.scan.cidr'),
+                    controller: _cidr,
+                    enabled: !vm.scanning,
+                    style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 12),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      labelText: 'Subnet',
+                      hintText: '192.168.1.0/24',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  key: const ValueKey('shares.scan.start'),
+                  onPressed: vm.scanning ? null : () => vm.scanForShares(_cidr.text),
+                  child: Text(vm.scanning ? 'Scanning…' : 'Scan'),
+                ),
+              ],
+            ),
+            if (vm.scanning) ...[
+              const SizedBox(height: 6),
+              // Determinate: a sweep of 254 addresses takes long enough that a spinner alone reads
+              // as a hang.
+              LinearProgressIndicator(value: vm.scanProgress, minHeight: 2),
+            ],
+            if (vm.scanStatus != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  vm.scanStatus!,
+                  key: const ValueKey('shares.scan.status'),
+                  style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                ),
+              ),
+            for (final hit in vm.scanHits)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Row(
+                  key: ValueKey('shares.scan.hit.${hit.address}:${hit.port}'),
+                  children: [
+                    const Icon(Icons.lan, size: 14, color: OmniColors.cyan),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        hit.label,
+                        style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 12),
+                      ),
+                    ),
+                    TextButton(
+                      key: ValueKey('shares.scan.add.${hit.address}:${hit.port}'),
+                      onPressed: () => widget.onAdd(hit),
+                      child: const Text('Add', style: TextStyle(fontSize: 12)),
+                    ),
+                  ],
+                ),
+              ),
+            if (_loaded && vm.scanHits.isNotEmpty)
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  // Said plainly, because an open port is weaker evidence than it looks.
+                  'An open port means something is listening — not that these credentials will '
+                  'work, or what the server exports. Fill in the path and sign-in details, then '
+                  'use Check.',
+                  style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 }
 

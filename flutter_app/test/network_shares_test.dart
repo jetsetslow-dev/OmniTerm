@@ -192,19 +192,20 @@ void main() {
     });
 
     group('browsability', () {
-      test('only the protocols with a client are offered', () {
+      test('all four userspace file protocols are offered', () {
         // Offering Browse for a protocol with no client is a button that fails on tap.
         expect(shareIsBrowsable(ShareProtocol.smb), isTrue);
         expect(shareIsBrowsable(ShareProtocol.sftp), isTrue);
-        expect(shareIsBrowsable(ShareProtocol.ftp), isFalse);
-        expect(shareIsBrowsable(ShareProtocol.webdav), isFalse);
+        expect(shareIsBrowsable(ShareProtocol.ftp), isTrue);
+        expect(shareIsBrowsable(ShareProtocol.webdav), isTrue);
         expect(shareIsBrowsable(ShareProtocol.nfs), isFalse);
       });
 
       test('each unavailable protocol explains itself differently', () {
         // "Not built yet" and "the OS does this, not us" send the user to different places.
         expect(shareBrowseUnavailableReason(ShareProtocol.smb), isNull);
-        expect(shareBrowseUnavailableReason(ShareProtocol.ftp), contains('not built yet'));
+        expect(shareBrowseUnavailableReason(ShareProtocol.ftp), isNull);
+        expect(shareBrowseUnavailableReason(ShareProtocol.webdav), isNull);
         expect(shareBrowseUnavailableReason(ShareProtocol.nfs), contains('operating system'));
         expect(shareBrowseUnavailableReason(ShareProtocol.custom), contains('no protocol'));
       });
@@ -410,6 +411,157 @@ void main() {
 
       expect(vm.shares, isEmpty);
       expect(vm.status, contains('untouched'));
+    });
+  });
+
+  group('scanning the network for shares', () {
+    late AppDatabase db;
+    late AppRepository repo;
+    late AppState app;
+    late SharesViewModel vm;
+
+    setUp(() {
+      db = AppDatabase(NativeDatabase.memory());
+      repo = AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{})));
+      app = AppState(repo);
+    });
+
+    tearDown(() async {
+      vm.dispose();
+      app.dispose();
+      await db.close();
+    });
+
+    Future<SharesViewModel> boot({Set<String> reachable = const {}}) async {
+      await app.start();
+      vm = SharesViewModel(app, probe: _FakeProbe(reachable: reachable));
+      await Future<void>.delayed(Duration.zero);
+      return vm;
+    }
+
+    test('a host answering on 445 is offered as an SMB share', () async {
+      await boot(reachable: {'192.168.1.20:445'});
+
+      await vm.scanForShares('192.168.1.0/24');
+
+      expect(vm.scanHits.single.protocol, 'SMB');
+      expect(vm.scanHits.single.address, '192.168.1.20');
+      expect(vm.scanning, isFalse);
+      expect(vm.scanStatus, contains('1 share service'));
+    });
+
+    test('a quiet subnet says so rather than looking unfinished', () async {
+      await boot();
+
+      await vm.scanForShares('192.168.1.0/24');
+
+      expect(vm.scanHits, isEmpty);
+      expect(vm.scanStatus, contains('No share services'));
+    });
+
+    test('only the selected protocols are probed', () async {
+      // The whole point of the toggles: a full sweep is 254 addresses times six ports.
+      await boot();
+      await vm.toggleScanProtocol('FTP');
+      await vm.toggleScanProtocol('SFTP');
+      await vm.toggleScanProtocol('NFS');
+      await vm.toggleScanProtocol('WEBDAV');
+
+      await vm.scanForShares('192.168.1.0/24');
+
+      final probe = vm.probe as _FakeProbe;
+      expect(probe.probed.every((p) => p.endsWith(':445')), isTrue);
+      expect(vm.scanProtocols, ['SMB']);
+    });
+
+    test('the last protocol cannot be turned off', () async {
+      // A scan with nothing selected probes nothing and reports "none found", which is
+      // indistinguishable from a quiet network.
+      await boot();
+      for (final protocol in ['FTP', 'SFTP', 'NFS', 'WEBDAV', 'SMB']) {
+        await vm.toggleScanProtocol(protocol);
+      }
+
+      expect(vm.scanProtocols, ['SMB']);
+    });
+
+    test('the protocol choice is persisted under the Kotlin key', () async {
+      await boot();
+      await vm.toggleScanProtocol('NFS');
+
+      expect(await repo.getSetting('share_scan_protocols'), isNot(contains('NFS')));
+    });
+
+    test('a stored choice is restored', () async {
+      await repo.insertSetting('share_scan_protocols', 'SMB,NFS');
+      await boot();
+
+      await vm.loadScanSettings();
+
+      expect(vm.scanProtocols, ['SMB', 'NFS']);
+    });
+
+    test('input that is not a subnet is refused without sweeping anything', () async {
+      await boot();
+
+      await vm.scanForShares('nas.local');
+
+      final probe = vm.probe as _FakeProbe;
+      expect(probe.probed, isEmpty);
+      expect(vm.scanStatus, contains('192.168.1.0/24'));
+      expect(vm.scanning, isFalse);
+    });
+
+    test('a second scan while one is running is ignored', () async {
+      await boot(reachable: {'192.168.1.20:445'});
+
+      final first = vm.scanForShares('192.168.1.0/24');
+      await vm.scanForShares('10.0.0.0/24');
+      await first;
+
+      // The second call returned immediately rather than clearing the first sweep's results.
+      expect(vm.scanHits, hasLength(1));
+    });
+
+    test('adding from a hit prefills the endpoint and nothing it cannot know', () async {
+      // A port probe says something is listening, not what it exports or who may read it. Guessing
+      // either would save a share that fails on first use with no clue why.
+      await boot(reachable: {'192.168.1.20:445'});
+      await vm.scanForShares('192.168.1.0/24');
+
+      vm.startAddFromScan(vm.scanHits.single);
+
+      expect(vm.draft!.address, '192.168.1.20');
+      expect(vm.draft!.port, '445');
+      expect(vm.draft!.protocol, ShareProtocol.smb);
+      expect(vm.draft!.sharePath, isEmpty);
+      expect(vm.draft!.username, isEmpty);
+      expect(vm.draft!.password, isEmpty);
+    });
+
+    test('a WebDAV hit on 443 comes back with HTTPS on', () async {
+      await boot(reachable: {'192.168.1.20:443'});
+      await vm.scanForShares('192.168.1.0/24');
+
+      vm.startAddFromScan(vm.scanHits.single);
+
+      expect(vm.draft!.useHttps, isTrue);
+    });
+
+    test('a WebDAV hit on 80 does not claim to be HTTPS', () async {
+      await boot(reachable: {'192.168.1.20:80'});
+      await vm.scanForShares('192.168.1.0/24');
+
+      vm.startAddFromScan(vm.scanHits.single);
+
+      expect(vm.draft!.useHttps, isFalse);
+    });
+
+    test('progress is reported so a long sweep does not look hung', () async {
+      await boot();
+      await vm.scanForShares('192.168.1.0/24');
+
+      expect(vm.scanProgress, 1.0);
     });
   });
 
@@ -649,14 +801,36 @@ void main() {
       expect(sftp.path, isEmpty);
     });
 
-    test('bookmarks are unavailable while a share is open', () async {
-      // They are stored per serverId, and a share has no host to key them to.
+    test('a share is bookmarkable under its own key', () async {
+      // Not the host's: `/etc` on the machine you were browsing is not a path on this share, and
+      // the two must never write into each other's row.
       await boot();
       await sftp.openShare(share());
 
-      expect(sftp.canBookmark, isFalse);
+      expect(sftp.canBookmark, isTrue);
       await sftp.toggleBookmark('/movies');
+
+      expect(sftp.bookmarks, ['/movies']);
+      expect(await repo.getSetting('share_bookmarks_7'), '/movies');
+      expect(await repo.getSetting('sftp_bookmarks_7'), isNull);
+    });
+
+    test('a share does not inherit the host bookmark defaults', () async {
+      // /root and /var/log are paths on a Unix host. Offered on an SMB share they would be five
+      // bookmarks that all fail to open.
+      await boot();
+      await sftp.openShare(share());
+
       expect(sftp.bookmarks, isEmpty);
+    });
+
+    test('opening a share loads the bookmarks that share already had', () async {
+      await boot();
+      await repo.insertSetting('share_bookmarks_7', '/movies|||/music');
+      await sftp.openShare(share());
+
+      expect(sftp.bookmarks, ['/movies', '/music']);
+      expect(sftp.isBookmarked('/music'), isTrue);
     });
 
     test('a host change underneath does not disturb the open share', () async {

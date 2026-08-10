@@ -15,7 +15,8 @@ import 'kotlin_strings.dart';
 /// host that answers something unexpected is far more likely to be an unusual Unix than a Windows
 /// box. Windows is detected from its *failure* text, since `uname` does not exist there.
 String normaliseOs(String raw) {
-  final s = raw.trim().lines.where((l) => !l.isBlankString).firstOrNull?.trim() ?? '';
+  final s =
+      raw.trim().lines.where((l) => !l.isBlankString).firstOrNull?.trim() ?? '';
   final lower = s.toLowerCase();
   if (lower.startsWith('linux')) return 'Linux';
   if (lower.startsWith('freebsd') ||
@@ -57,20 +58,24 @@ String shellQuote(String s) => "'${s.replaceAll("'", r"'\''")}'";
 ///
 /// `-p ''` suppresses the prompt so it is never echoed back into the output the user sees.
 String sudoWrap(String cmd, String sudoPassword) =>
-    sudoPassword.trim().isNotEmpty ? "sudo -S -p '' $cmd 2>&1" : 'sudo -n $cmd 2>&1';
+    sudoPassword.trim().isNotEmpty
+    ? "sudo -S -p '' $cmd 2>&1"
+    : 'sudo -n $cmd 2>&1';
 
 /// Elevates a whole [script].
 ///
 /// [sudoWrap] only elevates the first command — in `sudo a && b`, `b` runs as the ordinary user.
 /// This runs the lot under one `sh -c`, so chained operations are all privileged.
-String sudoShWrap(String script, String sudoPassword) => sudoPassword.trim().isNotEmpty
+String sudoShWrap(String script, String sudoPassword) =>
+    sudoPassword.trim().isNotEmpty
     ? "sudo -S -p '' sh -c ${shellQuote(script)} 2>&1"
     : 'sudo -n sh -c ${shellQuote(script)} 2>&1';
 
 /// The stdin payload pairing with [sudoWrap]/[sudoShWrap]: the password and the newline `sudo -S`
 /// waits for, or null on a NOPASSWD host. None of the wrapped scripts read stdin themselves, so the
 /// line is consumed only by sudo.
-String? sudoStdin(String sudoPassword) => sudoPassword.trim().isNotEmpty ? '$sudoPassword\n' : null;
+String? sudoStdin(String sudoPassword) =>
+    sudoPassword.trim().isNotEmpty ? '$sudoPassword\n' : null;
 
 // ── processes ──────────────────────────────────────────────────────────────────
 
@@ -137,7 +142,9 @@ String serviceAction(String name, String action, {String sudoPassword = ''}) {
 ///
 /// `journalctl` only exists on systemd, so Alpine/OpenWrt/BSD/macOS would otherwise return silently
 /// empty output. The `---NOLOGS---` marker lets the UI say *why* the pane is empty.
-String journalCommand({int lines = 300, String os = ''}) => switch (normaliseOs(os)) {
+String journalCommand({int lines = 300, String os = ''}) => switch (normaliseOs(
+  os,
+)) {
   'Windows' => _journalWindows(lines),
   'Darwin' =>
     'log show --last 1h --style syslog 2>/dev/null | tail -n $lines || '
@@ -181,7 +188,8 @@ String rebootCommand({String sudoPassword = ''}) =>
     '${sudoWrap('reboot', sudoPassword)} || reboot 2>&1';
 
 /// Sends [signal] to [pid]. The pid is an int, so there is nothing here to quote.
-String killProcessCommand(int pid, {int signal = 15}) => 'kill -$signal $pid 2>&1';
+String killProcessCommand(int pid, {int signal = 15}) =>
+    'kill -$signal $pid 2>&1';
 
 // ── host metrics ───────────────────────────────────────────────────────────────
 
@@ -346,7 +354,8 @@ const dockerRestartsCommand =
     'if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then ids=\$(podman ps -aq); '
     "[ -n \"\$ids\" ] && podman inspect --format 'podman\\t{{.ID}}\\t{{.RestartCount}}' \$ids 2>/dev/null || true; fi";
 
-const _imageFields = r'{{.ID}}\t{{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}';
+const _imageFields =
+    r'{{.ID}}\t{{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}';
 
 const dockerImagesCommand =
     'found=0; '
@@ -397,6 +406,11 @@ String dockerAction(String id, String action, {String runtime = ''}) {
   return '${_runtimeCommand(runtime)} $verb ${shellQuote(id)} 2>&1';
 }
 
+/// Interactive shell inside a container, preferring bash and falling back to POSIX sh.
+String dockerExecShell(String id, {String runtime = ''}) =>
+    '${_runtimeCommand(runtime)} exec -it ${shellQuote(id)} '
+    "sh -c 'exec bash 2>/dev/null || exec sh'";
+
 String dockerImageAction(String id, String action, {String runtime = ''}) {
   final verb = action == 'remove' ? 'rmi -f' : action;
   return '${_runtimeCommand(runtime)} $verb ${shellQuote(id)} 2>&1';
@@ -424,6 +438,11 @@ String dockerPruneImages() =>
 String dockerPruneVolumes() =>
     '{ command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1 && docker volume prune -a -f; true; } 2>&1; '
     '{ command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1 && podman volume prune -a -f; true; } 2>&1';
+
+/// Removes every network that no container uses, on each available runtime.
+String dockerPruneNetworks() =>
+    '{ command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1 && docker network prune -f; true; } 2>&1; '
+    '{ command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1 && podman network prune -f; true; } 2>&1';
 
 // ── docker compose ─────────────────────────────────────────────────────────────
 
@@ -469,7 +488,10 @@ String _composeFlags(String project, String configFiles) {
       .where((s) => s.isNotEmpty)
       .map((s) => '-f ${shellQuote(s)}')
       .join(' ');
-  return [configFlags, '-p ${shellQuote(project)}'].where((s) => s.isNotEmpty).join(' ');
+  return [
+    configFlags,
+    '-p ${shellQuote(project)}',
+  ].where((s) => s.isNotEmpty).join(' ');
 }
 
 /// Runs a compose action against a stack.
@@ -511,7 +533,10 @@ String dockerComposeAction(
     'forceRecreate' => 'up -d --force-recreate$orphans',
     'restart' => 'restart',
     'logs' => 'logs --tail 200',
-    'followLogs' => 'logs -f --tail 100',
+    'followLogs' =>
+      service == null
+          ? 'logs -f --tail 100'
+          : 'logs -f --tail 100 $quotedService',
     'config' => 'config',
     'ps' => 'ps',
     'serviceLogs' => 'logs --tail 200 $quotedService',
@@ -519,7 +544,8 @@ String dockerComposeAction(
     'serviceStop' => 'stop $quotedService',
     'serviceRemove' => 'rm -sf $quotedService',
     // A negative replica count is not a scale-down, it is a malformed command; clamp at zero.
-    'scale' => 'up -d --scale $quotedService=${(replicas ?? 1) < 0 ? 0 : (replicas ?? 1)}',
+    'scale' =>
+      'up -d --scale $quotedService=${(replicas ?? 1) < 0 ? 0 : (replicas ?? 1)}',
     'removeOrphans' => 'up -d --remove-orphans',
     _ => 'ps',
   };
@@ -532,8 +558,9 @@ String dockerComposeAction(
 /// confusing; this lets the UI say plainly that the file is gone and offer to forget the stack.
 String composeConfigPresent(String workingDir, String configFiles) {
   // `~` is the shell's, not a path component, so it must expand rather than be quoted away.
-  String expand(String p) =>
-      p.startsWith('~/') ? '"\$HOME"/${shellQuote(p.substring(2))}' : shellQuote(p);
+  String expand(String p) => p.startsWith('~/')
+      ? '"\$HOME"/${shellQuote(p.substring(2))}'
+      : shellQuote(p);
 
   final dir = workingDir.endsWith('/')
       ? workingDir.substring(0, workingDir.length - 1)
@@ -559,6 +586,80 @@ String composeConfigPresent(String workingDir, String configFiles) {
   return 'if { $test; } 2>/dev/null; then echo OMNITERM_COMPOSE_OK; else echo OMNITERM_COMPOSE_MISSING; fi';
 }
 
+/// Reads the exact compose file reported by the runtime; absence is distinct from an empty file.
+String composeRead(String composeFilePath) {
+  final path = composeFilePath.startsWith('~/')
+      ? '\$HOME/${shellQuote(composeFilePath.substring(2))}'
+      : shellQuote(composeFilePath);
+  return 'cat $path 2>/dev/null || echo OMNITERM_NO_FILE';
+}
+
+/// Atomically validates, swaps and starts a Compose file, restoring its backup on failure.
+String composeDeploy(
+  String composeFilePath,
+  String project,
+  String yaml, {
+  String workingDir = '',
+  String configFiles = '',
+  String runtime = '',
+}) {
+  String expand(String path) => path.startsWith('~/')
+      ? '\$HOME/${shellQuote(path.substring(2))}'
+      : shellQuote(path);
+  String resolve(String path) =>
+      path.startsWith('/') || path.startsWith('~/') || workingDir.isEmpty
+      ? path
+      : '${workingDir.replaceFirst(RegExp(r'/+$'), '')}/$path';
+  String flags(String replacement) {
+    final files = configFiles
+        .split(',')
+        .map((file) => file.trim())
+        .where((file) => file.isNotEmpty);
+    var matched = false;
+    final rendered = <String>[];
+    for (final raw in files) {
+      final resolved = resolve(raw);
+      if (resolved == composeFilePath) {
+        rendered.add('-f $replacement');
+        matched = true;
+      } else {
+        rendered.add('-f ${expand(resolved)}');
+      }
+    }
+    if (!matched) rendered.insert(0, '-f $replacement');
+    rendered.add('-p ${shellQuote(project)}');
+    return rendered.join(' ');
+  }
+
+  final encoded = base64Encode(utf8.encode(yaml));
+  final file = expand(composeFilePath);
+  final backup = expand('$composeFilePath.omniterm.bak');
+  final rawDirectory = composeFilePath.contains('/')
+      ? composeFilePath.substring(0, composeFilePath.lastIndexOf('/'))
+      : '.';
+  final directory = expand(rawDirectory.isEmpty ? '/' : rawDirectory);
+  final stagedFlags = flags('"\$tmp"');
+  final liveFlags = flags(file);
+  final resolver = _composeResolve(runtime);
+  return '$resolver && umask 077 && mkdir -p $directory '
+      '&& tmp=\$(mktemp $directory/.omniterm-compose.XXXXXX) '
+      '&& err=\$(mktemp $directory/.omniterm-compose-err.XXXXXX) '
+      "&& trap 'rm -f \"\$tmp\" \"\$err\"' EXIT "
+      '&& { existed=0; [ -f $file ] && existed=1; true; } '
+      "&& { printf '%s' ${shellQuote(encoded)} | base64 -d > \"\$tmp\" 2>/dev/null "
+      "|| printf '%s' ${shellQuote(encoded)} | base64 --decode > \"\$tmp\" 2>/dev/null "
+      "|| printf '%s' ${shellQuote(encoded)} | base64 -D > \"\$tmp\"; } "
+      '&& { if ! \$OT_COMPOSE $stagedFlags config >/dev/null 2>"\$err"; then '
+      "echo 'VALIDATION FAILED — stack unchanged:' >&2; cat \"\$err\" >&2; exit 1; fi; } "
+      '&& { cat "\$err" 2>/dev/null || true; } '
+      '&& { if [ -f $file ]; then cp $file $backup; fi; } '
+      '&& mv "\$tmp" $file '
+      '&& { if ! \$OT_COMPOSE $liveFlags up -d 2>&1; then '
+      "if [ \"\$existed\" = 1 ] && [ -f $backup ]; then echo 'DEPLOY FAILED — restoring previous compose file' >&2; mv $backup $file; "
+      "else echo 'DEPLOY FAILED — removing new compose file' >&2; rm -f $file; fi; exit 1; fi; } "
+      "&& echo 'OMNITERM_DEPLOY_OK'";
+}
+
 /// Measures how much disk a directory actually uses.
 ///
 /// `du -sh` rather than summing the listing: a directory's own size in a file listing is the size of
@@ -571,6 +672,44 @@ String composeConfigPresent(String workingDir, String configFiles) {
 /// a *partial* total when it cannot read part of the tree — and a partial total presented as a
 /// final one is worse than either the number or the warning alone.
 String folderSizeCommand(String path) => 'du -shx -- ${shellQuote(path)} 2>&1';
+
+String archiveCreateCommand(
+  String directory,
+  String archiveName,
+  List<String> names,
+  String format,
+) {
+  final args = names.map(shellQuote).join(' ');
+  final target = shellQuote(archiveName);
+  final create = switch (format) {
+    'zip' => 'zip -r -- $target $args',
+    'tar' => 'tar -cf $target -- $args',
+    '7z' => '7z a -y -- $target $args',
+    _ => 'tar -czf $target -- $args',
+  };
+  return 'cd -- ${shellQuote(directory.isEmpty ? '.' : directory)} && '
+      'rm -f -- $target && $create && printf \'\\nOMNITERM_ARCHIVE_OK\\n\'';
+}
+
+String archiveExtractCommand(String directory, String archiveName) {
+  final dir = shellQuote(directory.isEmpty ? '.' : directory);
+  final file = shellQuote(archiveName);
+  final lower = archiveName.toLowerCase();
+  final extract = switch (lower) {
+    _ when lower.endsWith('.zip') => 'unzip -o -- $file',
+    _ when lower.endsWith('.tar.gz') || lower.endsWith('.tgz') =>
+      'tar -xzf $file',
+    _ when lower.endsWith('.tar.bz2') || lower.endsWith('.tbz2') =>
+      'tar -xjf $file',
+    _ when lower.endsWith('.tar.xz') || lower.endsWith('.txz') =>
+      'tar -xJf $file',
+    _ when lower.endsWith('.tar') => 'tar -xf $file',
+    _ when lower.endsWith('.7z') => '7z x -y -- $file',
+    _ when lower.endsWith('.rar') => 'unrar x -o+ -- $file',
+    _ => 'false',
+  };
+  return 'cd -- $dir && $extract && printf \'\\nOMNITERM_EXTRACT_OK\\n\'';
+}
 
 /// What `du` managed to measure.
 class FolderSize {
@@ -631,7 +770,11 @@ class RemoteSearchHit {
 /// `2>/dev/null` because a walk of a large tree as an unprivileged user produces pages of
 /// permission noise that would swamp the results. The screen says plainly that a search covers what
 /// the login can read, which is a statement that is always true rather than a per-run claim.
-String remoteSearchCommand(String base, String query, {int maxHits = remoteSearchMaxHits}) {
+String remoteSearchCommand(
+  String base,
+  String query, {
+  int maxHits = remoteSearchMaxHits,
+}) {
   final root = base.trim().isEmpty ? '/' : base;
   final term = query.trim();
   // A query already carrying a wildcard is taken at its word; anything else is matched anywhere in
@@ -665,7 +808,10 @@ String remoteSearchCommand(String base, String query, {int maxHits = remoteSearc
   // The extra hit is the evidence. Counting a full page as "probably more" would cry wolf on a
   // search that happened to return exactly the limit.
   final truncated = hits.length > maxHits;
-  return (hits: truncated ? hits.take(maxHits).toList() : hits, truncated: truncated);
+  return (
+    hits: truncated ? hits.take(maxHits).toList() : hits,
+    truncated: truncated,
+  );
 }
 
 // ── sudo file access ───────────────────────────────────────────────────────────
@@ -701,13 +847,59 @@ String? parseSudoRead(String output) {
   return output.substring(at + marker.length);
 }
 
+/// Output that means a privileged command was refused rather than run.
+///
+/// Ported from the marker list in `sftpReadError` (`ui/AppViewModel.kt:9678`). One list rather than
+/// a copy per call site, because a marker added to one and not the other is a failure that stops
+/// being reported on exactly one screen.
+const List<String> sudoFailureMarkers = [
+  'permission denied',
+  'no such',
+  'sudo:',
+  'a password is required',
+  'incorrect password',
+  'not in the sudoers',
+  'operation not permitted',
+  'read-only file system',
+];
+
+/// True when [text] anywhere carries one of [sudoFailureMarkers].
+bool hasSudoFailureMarker(String text) {
+  final lower = text.toLowerCase();
+  return sudoFailureMarkers.any(lower.contains);
+}
+
+/// The refusal a privileged search met, or null when it ran.
+///
+/// Needed because [remoteSearchCommand] sends `find`'s own errors to `/dev/null`: without this, a
+/// search of a tree the login cannot read comes back empty and is reported as "nothing matched" —
+/// a wrong answer wearing the clothes of a right one.
+///
+/// **A type-tagged line is a result, never a complaint.** Matching on the text alone would let a
+/// file legitimately named `no such thing.txt` blank out the whole result set it appeared in, and
+/// the first hit is exactly where that would bite. Anything sudo has to say arrives before the
+/// command's output, so the first line settles it either way.
+String? searchSudoFailure(String output) {
+  for (final line in const LineSplitter().convert(output)) {
+    if (line.trim().isEmpty) continue;
+    if (line.startsWith('d\t') || line.startsWith('f\t')) return null;
+    final trimmed = line.trim();
+    return hasSudoFailureMarker(trimmed) ? trimmed : null;
+  }
+  return null;
+}
+
 /// Writes [content] to a protected path.
 ///
 /// SFTP cannot write there either, so the file goes to a temp path the login *can* write, is copied
 /// into place with sudo, and its size is read back as root. The temp copy is removed whether or not
 /// the copy worked — leaving a readable copy of a protected file in `/tmp` would be a quiet way to
 /// widen access to it.
-String sudoWriteCommand(String tempPath, String destPath, String sudoPassword) => sudoShWrap(
+String sudoWriteCommand(
+  String tempPath,
+  String destPath,
+  String sudoPassword,
+) => sudoShWrap(
   'cp -f -- ${shellQuote(tempPath)} ${shellQuote(destPath)} && '
   'wc -c < ${shellQuote(destPath)}; '
   'rm -f -- ${shellQuote(tempPath)}',
@@ -729,7 +921,8 @@ int parseSudoWriteSize(String output) {
 }
 
 /// A temp path for the sudo write dance, in a directory any login can write.
-String sudoTempPath() => '/tmp/.omniterm-save-${DateTime.now().microsecondsSinceEpoch}';
+String sudoTempPath() =>
+    '/tmp/.omniterm-save-${DateTime.now().microsecondsSinceEpoch}';
 
 // ── crontab ────────────────────────────────────────────────────────────────────
 
@@ -743,7 +936,8 @@ const cronExitMarker = '---OMNITERM-CRON-EXIT---';
 /// does not exist on this host. That matters because the next thing the screen offers is *Add*, and
 /// saving writes the **whole file** — so an unreadable crontab that reads as empty becomes a
 /// crontab containing one line, with everything that was in it gone.
-const crontabReadCommand = 'crontab -l 2>&1; printf "%s%s\\n" "$cronExitMarker" "\$?"';
+const crontabReadCommand =
+    'crontab -l 2>&1; printf "%s%s\\n" "$cronExitMarker" "\$?"';
 
 /// What a crontab read actually found.
 class CrontabRead {
@@ -778,8 +972,12 @@ CrontabRead parseCrontabRead(String output) {
   }
 
   final body = output.substring(0, marker);
-  final status = int.tryParse(output.substring(marker + cronExitMarker.length).trim()) ?? -1;
-  if (status == 0) return CrontabRead(_stripTrailingNewline(body), readable: true);
+  final status =
+      int.tryParse(output.substring(marker + cronExitMarker.length).trim()) ??
+      -1;
+  if (status == 0) {
+    return CrontabRead(_stripTrailingNewline(body), readable: true);
+  }
 
   if (RegExp(r'no crontab for', caseSensitive: false).hasMatch(body)) {
     return const CrontabRead('', readable: true);
@@ -791,7 +989,8 @@ CrontabRead parseCrontabRead(String output) {
   );
 }
 
-String _stripTrailingNewline(String s) => s.endsWith('\n') ? s.substring(0, s.length - 1) : s;
+String _stripTrailingNewline(String s) =>
+    s.endsWith('\n') ? s.substring(0, s.length - 1) : s;
 
 /// Installs [text] as the login user's crontab.
 ///
@@ -808,3 +1007,88 @@ String crontabWriteCommand(String text) {
       'printf %s ${shellQuote(encoded)} | base64 -D; }';
   return '$decode | crontab - 2>&1';
 }
+
+/// Sentinel printed after a completed conflict scan.
+///
+/// Its absence means the script died part way — a truncated scan must never be read as "no
+/// conflicts", which would turn a failed check into a silent overwrite.
+const conflictScanOk = '@OMNITERM_CONFLICT_SCAN_OK';
+
+/// Compares each of [sources] against the same basename inside [destDir].
+///
+/// Ported from `RemoteCommands.compareForConflicts` in `data/RemoteParsers.kt`.
+///
+/// Emits `sourceIndex<TAB>verdict<TAB>srcSize<TAB>dstSize<TAB>srcMtime<TAB>dstMtime` per conflict,
+/// where verdict is IDENTICAL / DIFFERENT / DIR / UNKNOWN. **The index, not the basename, is the
+/// key**: tabs and newlines are legal in filenames and would otherwise corrupt this line protocol.
+///
+/// Name, size and mtime together are only a heuristic — an rsync-style copy reproduces mtime
+/// exactly, and two different files can share a size. So when sizes match both sides are hashed and
+/// the digests compared; only then can "identical" be asserted. Differing sizes are decisive on
+/// their own, so the potentially expensive hash is skipped. Directories report DIR because they
+/// merge rather than replace. UNKNOWN means no hash tool was available, and the UI must treat the
+/// pair as possibly-different rather than claiming a match.
+String compareForConflicts(String destDir, List<String> sources) {
+  if (sources.isEmpty) return '';
+  final quotedDest = shellQuote(destDir);
+  final out = StringBuffer()
+    // Pick a digest tool once; an empty OT_H means "cannot hash" -> UNKNOWN, never a false match.
+    ..write('OT_H=; for c in sha256sum shasum md5sum cksum; do ')
+    ..write('command -v "\$c" >/dev/null 2>&1 && { OT_H="\$c"; break; }; done; ')
+    ..write(
+      "OT_STAT() { stat -c '%s %Y' \"\$1\" 2>/dev/null || stat -f '%z %m' \"\$1\" 2>/dev/null; }; ",
+    );
+  for (var index = 0; index < sources.length; index++) {
+    out
+      ..write('OT_S=${shellQuote(sources[index])}; ')
+      ..write('OT_N=\$(basename "\$OT_S"); OT_D=$quotedDest/"\$OT_N"; ')
+      ..write('if [ -e "\$OT_D" ]; then ')
+      ..write('if [ -d "\$OT_S" ] || [ -d "\$OT_D" ]; then ')
+      ..write("printf '$index\\tDIR\\t0\\t0\\t0\\t0\\n'; else ")
+      ..write('set -- \$(OT_STAT "\$OT_S"); OT_SS=\${1:-0}; OT_SM=\${2:-0}; ')
+      ..write('set -- \$(OT_STAT "\$OT_D"); OT_DS=\${1:-0}; OT_DM=\${2:-0}; ')
+      ..write('if [ "\$OT_SS" != "\$OT_DS" ]; then OT_V=DIFFERENT; ')
+      ..write('elif [ -z "\$OT_H" ]; then OT_V=UNKNOWN; ')
+      ..write('else OT_A=\$("\$OT_H" "\$OT_S" 2>/dev/null | awk \'{print \$1}\'); ')
+      ..write('OT_B=\$("\$OT_H" "\$OT_D" 2>/dev/null | awk \'{print \$1}\'); ')
+      ..write('if [ -z "\$OT_A" ] || [ -z "\$OT_B" ]; then OT_V=UNKNOWN; ')
+      ..write(
+        'elif [ "\$OT_A" = "\$OT_B" ]; then OT_V=IDENTICAL; else OT_V=DIFFERENT; fi; fi; ',
+      )
+      ..write(
+        "printf '$index\\t%s\\t%s\\t%s\\t%s\\t%s\\n' \"\$OT_V\" \"\$OT_SS\" \"\$OT_DS\" \"\$OT_SM\" \"\$OT_DM\"; ",
+      )
+      ..write('fi; fi; ');
+  }
+  out.write("printf '%s\\n' '$conflictScanOk'");
+  return out.toString();
+}
+
+/// Whether tmux is on the host's PATH. Answers exactly `yes` or `no`.
+///
+/// Ported from `RemoteCommands.TMUX_CHECK` in `data/RemoteParsers.kt:140`.
+const tmuxCheckCommand = 'command -v tmux >/dev/null 2>&1 && echo yes || echo no';
+
+/// Installs tmux with whichever package manager the host has.
+///
+/// Ported verbatim from `RemoteCommands.tmuxInstallCommand()` in `data/RemoteParsers.kt:303`.
+///
+/// `sudo -S` reads the password from stdin, so the caller pairs this with [sudoStdin] — the password
+/// never appears in the command line, where `ps` and auditd would see it. A host already running as
+/// root skips sudo entirely rather than requiring it to be installed.
+///
+/// It re-checks at the end instead of trusting the package manager's exit code: several of these
+/// return 0 for "nothing to do" on a broken mirror, and reporting a successful install of something
+/// that is not there would send the user back to a non-resumable shell with no explanation.
+String tmuxInstallCommand() =>
+    "set -e; if command -v tmux >/dev/null 2>&1; then echo 'tmux already installed'; exit 0; fi; "
+    'if [ "\$(id -u)" = 0 ]; then SUDO=; else SUDO=\'sudo -S\'; fi; '
+    'if command -v apt-get >/dev/null 2>&1; then \$SUDO apt-get update && \$SUDO apt-get install -y tmux; '
+    'elif command -v dnf >/dev/null 2>&1; then \$SUDO dnf install -y tmux; '
+    'elif command -v yum >/dev/null 2>&1; then \$SUDO yum install -y tmux; '
+    'elif command -v pacman >/dev/null 2>&1; then \$SUDO pacman -Sy --noconfirm tmux; '
+    'elif command -v apk >/dev/null 2>&1; then \$SUDO apk add tmux; '
+    'elif command -v zypper >/dev/null 2>&1; then \$SUDO zypper install -y tmux; '
+    'elif command -v pkg >/dev/null 2>&1; then \$SUDO pkg install -y tmux; '
+    "else echo 'No supported package manager found; install tmux manually.' >&2; exit 1; fi; "
+    "command -v tmux >/dev/null 2>&1 && echo 'tmux installed' || { echo 'tmux install failed' >&2; exit 1; }";

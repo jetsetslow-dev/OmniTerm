@@ -476,4 +476,18 @@ void main() {
     expect(vm.inspectedServer?.id, bId);
     vm.dispose();
   });
+
+  group('first load versus refresh', () {
+    // Drives the screen's choice between a centred spinner and a thin bar over existing rows. A
+    // progress bar above an empty pane reads as "this host has none", which is a claim about the
+    // host made before anything has been asked of it.
+    //
+    // Asserted here rather than in a widget test: reproducing "probe in flight" through the screen
+    // needs an invented pump sequence, and an invented one either cannot fail or tests the harness.
+    test('nothing probed yet is not data', () async {
+      final vm = await boot();
+      expect(vm.hasAnyRuntimeData, isFalse);
+      vm.dispose();
+    });
+  });
 }

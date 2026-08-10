@@ -90,15 +90,41 @@ class HostStatusProbe extends ChangeNotifier {
     }
   }
 
+  /// Re-check one host immediately (the Retry action on its card).
+  /// Hosts this run has actually reached a verdict on.
+  ///
+  /// Ported from Kotlin's `probedServerIds` (`ui/AppViewModel.kt:4496`). A host's stored status
+  /// defaults to `offline` before anything has looked at it, so "offline" on its own cannot be told
+  /// apart from "never checked" — and warning "appears offline" about a host the user has just added
+  /// is a false alarm at the exact moment they first connect. Kept in memory on purpose: it means
+  /// "probed since launch", which is the only thing that makes the stored status trustworthy.
+  final Set<int> _probed = <int>{};
+
+  /// Whether [serverId] has been probed since the app started.
+  bool hasProbed(int serverId) => _probed.contains(serverId);
+
+  Future<void> probeOne(Server server) => _probeOne(server);
+
   Future<void> _probeOne(Server server) async {
     try {
       // Shown as "connecting" while a previously offline host is retried, so a slow probe reads as
       // work in progress rather than a host that is simply still down.
       if (server.status == 'offline') {
-        await _repository.updateConnectionState(server.id, 'connecting', server.healthScore, 0);
+        await _repository.updateConnectionState(
+          server.id,
+          'connecting',
+          server.healthScore,
+          0,
+        );
       }
-      final rtt = await probe.tcpPing(server.host, server.port, timeout: timeout);
+      final rtt = await probe.tcpPing(
+        server.host,
+        server.port,
+        timeout: timeout,
+      );
       if (_disposed) return;
+      // Recorded on a real answer only. A probe that threw says nothing about the host.
+      _probed.add(server.id);
       if (rtt == null) {
         await _repository.updateConnectionState(server.id, 'offline', 0, 0);
         return;
@@ -115,7 +141,9 @@ class HostStatusProbe extends ChangeNotifier {
       if (_disposed) return;
       // Any failure means "not reachable"; a host stuck at "connecting" forever would be worse than
       // one honestly marked offline.
-      await _repository.updateConnectionState(server.id, 'offline', 0, 0).catchError((Object _) {});
+      await _repository
+          .updateConnectionState(server.id, 'offline', 0, 0)
+          .catchError((Object _) {});
     }
   }
 

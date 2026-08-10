@@ -1,13 +1,17 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../../../data/app_database.dart';
+import '../../../data/remote_commands.dart';
 import '../../../data/remote_models.dart';
 import '../../../domain/stack_summary.dart';
+import '../../navigation.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/infra_view_model.dart';
+import '../../view_model/shell_view_model.dart';
 import '../../widgets/omni_components.dart';
 
 /// DOCKER / PODMAN badge.
@@ -132,7 +136,11 @@ class _StackCardState extends State<_StackCard> {
             spacing: 12,
             runSpacing: 4,
             children: [
-              _Stat(label: 'ports', value: '${stack.exposedPorts}'),
+              InkWell(
+                key: ValueKey('infra.stack.${stack.name}.ports'),
+                onTap: () => _showStackPorts(context, stack),
+                child: _Stat(label: 'ports', value: '${stack.exposedPorts}'),
+              ),
               if (stack.unhealthy > 0)
                 _Stat(label: 'unhealthy', value: '${stack.unhealthy}', color: OmniColors.red),
               if (stack.restarting > 0)
@@ -149,18 +157,35 @@ class _StackCardState extends State<_StackCard> {
           ),
           if (stack.canRunComposeActions) ...[
             const SizedBox(height: 8),
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                key: ValueKey('infra.stack.${stack.name}.editBuilder'),
+                onPressed: () => widget.vm.requestComposeEdit(stack),
+                icon: const Icon(Icons.edit_note, size: 17),
+                label: const Text('Edit in Builder'),
+              ),
+            ),
             Wrap(
               spacing: 6,
+              runSpacing: 4,
               children: [
                 for (final (action, label) in [
+                  ('ps', 'PS'),
+                  ('logs', 'Logs'),
+                  ('followLogs', 'Follow'),
+                  ('config', 'Config'),
                   ('up', 'Up'),
+                  ('build', 'Build'),
                   ('restart', 'Restart'),
                   ('pull', 'Pull'),
                   ('update', 'Update'),
+                  ('forceRecreate', 'Force recreate'),
+                  ('removeOrphans', 'Remove orphans'),
                 ])
                   OutlinedButton(
                     key: ValueKey('infra.stack.${stack.name}.$action'),
-                    onPressed: () => widget.vm.stackAction(stack, action),
+                    onPressed: () => _stackAction(context, stack, action),
                     child: Text(label, style: const TextStyle(fontSize: 12)),
                   ),
                 OutlinedButton(
@@ -189,35 +214,155 @@ class _StackCardState extends State<_StackCard> {
     );
   }
 
+  Future<void> _stackAction(BuildContext context, StackSummary stack, String action) async {
+    final confirmation = switch (action) {
+      'build' => (
+        'Build ${stack.name}?',
+        'Build Dockerfile-based images and refresh their base images. Containers are not '
+            'recreated until you run Update or Up.',
+        'Build',
+      ),
+      'update' => (
+        'Update ${stack.name}?',
+        'Pull images, rebuild Dockerfiles, and recreate this stack?',
+        'Update',
+      ),
+      'forceRecreate' => (
+        'Force recreate ${stack.name}?',
+        'Recreate every container even when its configuration did not change?',
+        'Recreate',
+      ),
+      'restart' => (
+        'Restart ${stack.name}?',
+        'All services in this stack will briefly go down.',
+        'Restart',
+      ),
+      'removeOrphans' => (
+        'Remove orphan containers?',
+        'Remove containers for services no longer defined in ${stack.name}.',
+        'Remove orphans',
+      ),
+      _ => null,
+    };
+    if (confirmation != null) {
+      final accepted = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          key: ValueKey('infra.stack.$action.confirm'),
+          title: Text(confirmation.$1),
+          content: Text(confirmation.$2),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(confirmation.$3),
+            ),
+          ],
+        ),
+      );
+      if (accepted != true) return;
+    }
+    await widget.vm.stackAction(stack, action);
+  }
+
   Future<void> _confirmDown(BuildContext context, StackSummary stack) async {
     // `compose down` stops and removes every container in the stack. It is recoverable — the file
     // stays and the registry remembers it — but it is not what a mis-tap should do.
-    final confirmed = await showDialog<bool>(
+    final removeOrphans = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const ValueKey('infra.stack.down.dialog'),
-        title: Text('Bring down ${stack.name}?'),
-        content: Text(
-          'Stops and removes all ${stack.total} container${stack.total == 1 ? '' : 's'} in this '
-          'stack. The compose file stays, so it can be brought back up.',
-        ),
-        actions: [
-          TextButton(
-            key: const ValueKey('infra.stack.down.cancel'),
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
+      builder: (dialogContext) {
+        var includeOrphans = false;
+        return StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            key: const ValueKey('infra.stack.down.dialog'),
+            title: Text('Bring down ${stack.name}?'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Stops and removes all ${stack.total} container${stack.total == 1 ? '' : 's'} '
+                  'in this stack. Volumes are not removed unless the compose file says so.',
+                ),
+                const SizedBox(height: 12),
+                CheckboxListTile(
+                  key: const ValueKey('infra.stack.down.removeOrphans'),
+                  value: includeOrphans,
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  title: const Text('Remove orphans'),
+                  subtitle: const Text(
+                    'Also remove containers for services no longer in the compose file.',
+                    style: TextStyle(fontSize: 11, color: OmniColors.amber),
+                  ),
+                  onChanged: (value) => setDialogState(() => includeOrphans = value ?? false),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                key: const ValueKey('infra.stack.down.cancel'),
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                key: const ValueKey('infra.stack.down.confirm'),
+                onPressed: () => Navigator.of(dialogContext).pop(includeOrphans),
+                child: const Text('Bring down', style: TextStyle(color: OmniColors.red)),
+              ),
+            ],
           ),
-          TextButton(
-            key: const ValueKey('infra.stack.down.confirm'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Bring down', style: TextStyle(color: OmniColors.red)),
-          ),
-        ],
-      ),
+        );
+      },
     );
-    if (confirmed ?? false) await widget.vm.stackAction(stack, 'down');
+    if (removeOrphans != null) {
+      await widget.vm.stackAction(stack, 'down', removeOrphans: removeOrphans);
+    }
   }
 }
+
+Future<void> _showStackPorts(BuildContext context, StackSummary stack) => showDialog<void>(
+  context: context,
+  builder: (dialogContext) => AlertDialog(
+    key: const ValueKey('infra.stack.ports.dialog'),
+    title: Text('${stack.name} ports'),
+    content: stack.portDetails.isEmpty
+        ? const Text('No published ports were reported for this stack.')
+        : Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final detail in stack.portDetails)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '${detail.serviceName} · ${detail.containerName}',
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
+                      ),
+                      Text(
+                        detail.ports,
+                        style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 11),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+    actions: [
+      TextButton(
+        key: const ValueKey('infra.stack.ports.close'),
+        onPressed: () => Navigator.pop(dialogContext),
+        child: const Text('Close'),
+      ),
+    ],
+  ),
+);
 
 class _ServiceRow extends StatelessWidget {
   const _ServiceRow({required this.vm, required this.stack, required this.service});
@@ -264,6 +409,11 @@ class _ServiceRow extends StatelessWidget {
                 'scale' => _promptScale(context, vm, stack, service),
                 'ports' => _showPorts(context, vm, stack, service.name),
                 'serviceLogs' => _showServiceLogs(context, vm, stack, service.name),
+                'followLogs' => vm.stackAction(stack, 'followLogs', service: service.name),
+                'shell' => _openServiceShell(context, vm, stack, service),
+                'serviceRestart' ||
+                'serviceStop' ||
+                'serviceRemove' => _confirmServiceAction(context, vm, stack, service, action),
                 _ => vm.stackAction(stack, action, service: service.name),
               },
               itemBuilder: (_) => const [
@@ -272,11 +422,67 @@ class _ServiceRow extends StatelessWidget {
                 PopupMenuItem(value: 'scale', child: Text('Scale…')),
                 PopupMenuItem(value: 'ports', child: Text('Ports')),
                 PopupMenuItem(value: 'serviceLogs', child: Text('Logs')),
+                PopupMenuItem(value: 'followLogs', child: Text('Follow logs')),
+                PopupMenuItem(value: 'shell', child: Text('Shell')),
+                PopupMenuItem(value: 'serviceRemove', child: Text('Remove')),
               ],
             ),
         ],
       ),
     );
+  }
+}
+
+Future<void> _openServiceShell(
+  BuildContext context,
+  InfraViewModel vm,
+  StackSummary stack,
+  StackService service,
+) async {
+  final server = vm.inspectedServer;
+  if (server == null || service.containerId.isEmpty) return;
+  final shell = context.read<ShellViewModel>();
+  context.read<NavigationController>().navigateTo(Screen.shell);
+  await shell.connect(
+    server,
+    initialCommand: dockerExecShell(service.containerId, runtime: stack.runtime),
+  );
+}
+
+Future<void> _confirmServiceAction(
+  BuildContext context,
+  InfraViewModel vm,
+  StackSummary stack,
+  StackService service,
+  String action,
+) async {
+  final verb = switch (action) {
+    'serviceRestart' => 'Restart',
+    'serviceStop' => 'Stop',
+    'serviceRemove' => 'Remove',
+    _ => 'Run',
+  };
+  final accepted = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      key: ValueKey('infra.service.$action.confirm'),
+      title: Text('$verb ${service.name}?'),
+      content: Text(
+        action == 'serviceRemove'
+            ? 'Stop and remove this service container. Its Compose definition is not deleted.'
+            : '$verb this service in ${stack.name}? It will briefly be unavailable.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(verb)),
+      ],
+    ),
+  );
+  if (accepted == true) {
+    await vm.stackAction(stack, action, service: service.name);
   }
 }
 
@@ -509,211 +715,410 @@ class _DownedStackCard extends StatelessWidget {
     return OmniCard(
       key: ValueKey('infra.downedStack.${stack.runtime}.${stack.project}'),
       leftAccent: OmniColors.textMuted,
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const Icon(Icons.layers_clear, size: 18, color: OmniColors.textMuted),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
+          Row(
+            children: [
+              const Icon(Icons.layers_clear, size: 18, color: OmniColors.textMuted),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Flexible(
-                      child: Text(
-                        stack.project,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
-                          fontFamily: OmniFonts.mono,
+                    Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            stack.project,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 14,
+                              fontFamily: OmniFonts.mono,
+                            ),
+                          ),
                         ),
-                      ),
+                        const SizedBox(width: 6),
+                        RuntimeTag(runtime: stack.runtime),
+                      ],
                     ),
-                    const SizedBox(width: 6),
-                    RuntimeTag(runtime: stack.runtime),
+                    Text(
+                      'Down · ${stack.workingDir}',
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                    ),
                   ],
                 ),
-                Text(
-                  'Down · ${stack.workingDir}',
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+              ),
+              TextButton(
+                key: ValueKey('infra.downedStack.${stack.project}.up'),
+                onPressed: () => _confirmUp(context),
+                child: const Text('Up', style: TextStyle(fontSize: 12)),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: ValueKey('infra.downedStack.${stack.project}.editBuilder'),
+                  onPressed: () => vm.requestDownedComposeEdit(stack),
+                  icon: const Icon(Icons.edit_note, size: 17),
+                  label: const Text('Edit in Builder'),
                 ),
-              ],
-            ),
-          ),
-          TextButton(
-            key: ValueKey('infra.downedStack.${stack.project}.up'),
-            onPressed: () => vm.bringUpDownedStack(stack),
-            child: const Text('Up', style: TextStyle(fontSize: 12)),
-          ),
-          IconButton(
-            key: ValueKey('infra.downedStack.${stack.project}.forget'),
-            tooltip: 'Forget this stack',
-            icon: const Icon(Icons.close, size: 16),
-            onPressed: () => vm.forgetDownedStack(stack),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: ValueKey('infra.downedStack.${stack.project}.forget'),
+                  onPressed: () => _confirmForget(context),
+                  icon: const Icon(Icons.close, size: 16),
+                  label: const Text('Forget'),
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
+
+  Future<void> _confirmUp(BuildContext context) async {
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const ValueKey('infra.downedStack.up.dialog'),
+        title: Text('Bring ${stack.project} up?'),
+        content: Text(
+          'Run compose up from ${stack.workingDir}? Containers and networks are recreated from '
+          'the compose file.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Up'),
+          ),
+        ],
+      ),
+    );
+    if (accepted == true) await vm.bringUpDownedStack(stack);
+  }
+
+  Future<void> _confirmForget(BuildContext context) async {
+    final accepted = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const ValueKey('infra.downedStack.forget.dialog'),
+        title: Text('Forget ${stack.project}?'),
+        content: const Text(
+          'Remove this stack from OmniTerm only. Nothing on the host is touched and the compose '
+          'file remains in place.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Forget'),
+          ),
+        ],
+      ),
+    );
+    if (accepted == true) await vm.forgetDownedStack(stack);
+  }
 }
 
-class ImagesTab extends StatelessWidget {
+class ImagesTab extends StatefulWidget {
   const ImagesTab({super.key, required this.vm});
 
   final InfraViewModel vm;
 
   @override
+  State<ImagesTab> createState() => _ImagesTabState();
+}
+
+class _ImagesTabState extends State<ImagesTab> {
+  bool _selecting = false;
+  Set<String> _selected = {};
+
+  String _key(SimDockerImage image) => '${image.runtime}:${image.id}';
+
+  @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    if (vm.images.isEmpty) {
-      return _EmptyTab(
-        key: const ValueKey('infra.images.empty'),
-        icon: Icons.photo_library_outlined,
-        message: _emptyMessage(vm, 'images'),
-      );
-    }
+    final vm = widget.vm;
 
     return Column(
       children: [
-        _PruneRow(
-          keyName: 'infra.images.prune',
-          label: 'Prune unused images',
-          detail: 'Removes every image no container is using.',
-          onConfirm: vm.pruneImages,
+        Row(
+          children: [
+            TextButton(
+              key: const ValueKey('infra.images.multiSelect'),
+              onPressed: () => setState(() {
+                _selecting = !_selecting;
+                if (!_selecting) _selected = {};
+              }),
+              child: Text(_selecting ? 'Cancel selection' : 'Multi-select'),
+            ),
+            const Spacer(),
+            if (_selecting && _selected.isNotEmpty)
+              TextButton.icon(
+                key: const ValueKey('infra.images.deleteSelected'),
+                icon: const Icon(Icons.delete_outline, size: 16),
+                label: Text('Delete ${_selected.length}'),
+                onPressed: () => _removeSelected(context),
+              ),
+            _PruneButton(
+              keyName: 'infra.images.prune',
+              label: 'Prune unused',
+              detail: 'Remove every image no container currently uses. This cannot be undone.',
+              onConfirm: vm.pruneImages,
+            ),
+          ],
         ),
         Expanded(
-          child: ListView.separated(
-            key: const ValueKey('infra.images.list'),
-            itemCount: vm.images.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 6),
-            itemBuilder: (context, index) {
-              final image = vm.images[index];
-              return OmniCard(
-                key: ValueKey('infra.image.${image.runtime}.${image.id}'),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+          child: vm.images.isEmpty
+              ? _EmptyTab(
+                  key: const ValueKey('infra.images.empty'),
+                  icon: Icons.photo_library_outlined,
+                  message: _emptyMessage(vm, 'images'),
+                )
+              : ListView.separated(
+                  key: const ValueKey('infra.images.list'),
+                  itemCount: vm.images.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 6),
+                  itemBuilder: (context, index) {
+                    final image = vm.images[index];
+                    final selected = _selected.contains(_key(image));
+                    return OmniCard(
+                      key: ValueKey('infra.image.${image.runtime}.${image.id}'),
+                      child: Row(
                         children: [
-                          Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  '${image.repository}:${image.tag}',
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13),
+                          if (_selecting)
+                            Checkbox(
+                              key: ValueKey('infra.image.${image.id}.select'),
+                              value: selected,
+                              onChanged: (value) => setState(() {
+                                value == true
+                                    ? _selected.add(_key(image))
+                                    : _selected.remove(_key(image));
+                              }),
+                            ),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        '${image.repository}:${image.tag}',
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontFamily: OmniFonts.mono,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    RuntimeTag(runtime: image.runtime),
+                                  ],
                                 ),
+                                Text(
+                                  'ID: ${image.id} · ${image.size} · ${image.created}',
+                                  style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (image.inUse) const OmniTag(label: 'IN USE', color: OmniColors.green),
+                          if (!_selecting)
+                            IconButton(
+                              key: ValueKey('infra.image.${image.id}.remove'),
+                              tooltip: 'Remove image',
+                              icon: const Icon(
+                                Icons.delete_outline,
+                                size: 18,
+                                color: OmniColors.red,
                               ),
-                              const SizedBox(width: 6),
-                              RuntimeTag(runtime: image.runtime),
-                            ],
-                          ),
-                          Text(
-                            '${image.size} · ${image.created}',
-                            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-                          ),
+                              onPressed: () => _confirmRemove(context, image),
+                            ),
                         ],
                       ),
-                    ),
-                    if (image.inUse)
-                      const OmniTag(label: 'IN USE', color: OmniColors.green)
-                    else
-                      IconButton(
-                        key: ValueKey('infra.image.${image.id}.remove'),
-                        tooltip: 'Remove image',
-                        icon: const Icon(Icons.delete_outline, size: 18, color: OmniColors.red),
-                        onPressed: () => vm.imageAction(image, 'remove'),
-                      ),
-                  ],
+                    );
+                  },
                 ),
-              );
-            },
-          ),
         ),
       ],
     );
   }
+
+  Future<void> _confirmRemove(BuildContext context, SimDockerImage image) async {
+    final accepted = await _confirmDestructive(
+      context,
+      keyName: 'infra.image.remove',
+      title: 'Remove image?',
+      message: 'Permanently remove ${image.repository}:${image.tag}?',
+      confirmLabel: 'Remove',
+    );
+    if (accepted) await widget.vm.imageAction(image, 'remove');
+  }
+
+  Future<void> _removeSelected(BuildContext context) async {
+    final accepted = await _confirmDestructive(
+      context,
+      keyName: 'infra.images.deleteSelected',
+      title: 'Remove images?',
+      message: 'Permanently remove ${_selected.length} selected images?',
+      confirmLabel: 'Remove',
+    );
+    if (!accepted) return;
+    final targets = widget.vm.images.where((image) => _selected.contains(_key(image))).toList();
+    for (final image in targets) {
+      await widget.vm.imageAction(image, 'remove');
+    }
+    if (mounted) {
+      setState(() {
+        _selected = {};
+        _selecting = false;
+      });
+    }
+  }
 }
 
-class VolumesTab extends StatelessWidget {
+class VolumesTab extends StatefulWidget {
   const VolumesTab({super.key, required this.vm});
 
   final InfraViewModel vm;
 
   @override
+  State<VolumesTab> createState() => _VolumesTabState();
+}
+
+class _VolumesTabState extends State<VolumesTab> {
+  bool _selecting = false;
+  Set<String> _selected = {};
+
+  String _key(SimDockerVolume volume) => '${volume.runtime}:${volume.name}';
+
+  @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    if (vm.volumes.isEmpty) {
-      return _EmptyTab(
-        key: const ValueKey('infra.volumes.empty'),
-        icon: Icons.storage,
-        message: _emptyMessage(vm, 'volumes'),
-      );
-    }
+    final vm = widget.vm;
 
     return Column(
       children: [
-        _PruneRow(
-          keyName: 'infra.volumes.prune',
-          label: 'Prune unused volumes',
-          // Volumes hold data, so this warning is stronger than the images one on purpose.
-          detail:
-              'Removes every volume no container is using, including named ones. '
-              'Any data in them is deleted and cannot be recovered.',
-          onConfirm: vm.pruneVolumes,
+        Row(
+          children: [
+            TextButton(
+              key: const ValueKey('infra.volumes.multiSelect'),
+              onPressed: () => setState(() {
+                _selecting = !_selecting;
+                if (!_selecting) _selected = {};
+              }),
+              child: Text(_selecting ? 'Cancel selection' : 'Multi-select'),
+            ),
+            const Spacer(),
+            if (_selecting && _selected.isNotEmpty)
+              TextButton.icon(
+                key: const ValueKey('infra.volumes.deleteSelected'),
+                icon: const Icon(Icons.delete_outline, size: 16),
+                label: Text('Delete ${_selected.length}'),
+                onPressed: () => _removeSelected(context),
+              ),
+            _PruneButton(
+              keyName: 'infra.volumes.prune',
+              label: 'Prune unused',
+              detail:
+                  'Remove every volume no container uses, including named ones. All data in '
+                  'them is permanently deleted.',
+              onConfirm: vm.pruneVolumes,
+            ),
+          ],
         ),
         Expanded(
-          child: ListView.separated(
-            key: const ValueKey('infra.volumes.list'),
-            itemCount: vm.volumes.length,
-            separatorBuilder: (_, _) => const SizedBox(height: 6),
-            itemBuilder: (context, index) {
-              final volume = vm.volumes[index];
-              return OmniCard(
-                key: ValueKey('infra.volume.${volume.runtime}.${volume.name}'),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+          child: vm.volumes.isEmpty
+              ? _EmptyTab(
+                  key: const ValueKey('infra.volumes.empty'),
+                  icon: Icons.storage,
+                  message: _emptyMessage(vm, 'volumes'),
+                )
+              : ListView.separated(
+                  key: const ValueKey('infra.volumes.list'),
+                  itemCount: vm.volumes.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 6),
+                  itemBuilder: (context, index) {
+                    final volume = vm.volumes[index];
+                    return OmniCard(
+                      key: ValueKey('infra.volume.${volume.runtime}.${volume.name}'),
+                      child: Row(
                         children: [
-                          Row(
-                            children: [
-                              Flexible(
-                                child: Text(
-                                  volume.name,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13),
+                          if (_selecting)
+                            Checkbox(
+                              key: ValueKey('infra.volume.${volume.name}.select'),
+                              value: _selected.contains(_key(volume)),
+                              onChanged: (value) => setState(() {
+                                value == true
+                                    ? _selected.add(_key(volume))
+                                    : _selected.remove(_key(volume));
+                              }),
+                            ),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        volume.name,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontFamily: OmniFonts.mono,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    RuntimeTag(runtime: volume.runtime),
+                                  ],
                                 ),
+                                Text(
+                                  [
+                                    'Driver: ${volume.driver}',
+                                    if (volume.size.isNotEmpty) volume.size,
+                                    if (volume.mountpoint.isNotEmpty) volume.mountpoint,
+                                  ].join(' · '),
+                                  style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (volume.inUse) const OmniTag(label: 'IN USE', color: OmniColors.green),
+                          if (!_selecting)
+                            IconButton(
+                              key: ValueKey('infra.volume.${volume.name}.remove'),
+                              tooltip: 'Remove volume',
+                              icon: const Icon(
+                                Icons.delete_outline,
+                                size: 18,
+                                color: OmniColors.red,
                               ),
-                              const SizedBox(width: 6),
-                              RuntimeTag(runtime: volume.runtime),
-                            ],
-                          ),
-                          Text(
-                            [volume.driver, if (volume.size.isNotEmpty) volume.size].join(' · '),
-                            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-                          ),
+                              onPressed: () => _confirmRemove(context, vm, volume),
+                            ),
                         ],
                       ),
-                    ),
-                    if (volume.inUse)
-                      const OmniTag(label: 'IN USE', color: OmniColors.green)
-                    else
-                      IconButton(
-                        key: ValueKey('infra.volume.${volume.name}.remove'),
-                        tooltip: 'Remove volume',
-                        icon: const Icon(Icons.delete_outline, size: 18, color: OmniColors.red),
-                        onPressed: () => _confirmRemove(context, vm, volume),
-                      ),
-                  ],
+                    );
+                  },
                 ),
-              );
-            },
-          ),
         ),
       ],
     );
@@ -747,6 +1152,27 @@ class VolumesTab extends StatelessWidget {
     );
     if (confirmed ?? false) await vm.volumeAction(volume, 'remove');
   }
+
+  Future<void> _removeSelected(BuildContext context) async {
+    final accepted = await _confirmDestructive(
+      context,
+      keyName: 'infra.volumes.deleteSelected',
+      title: 'Remove volumes?',
+      message: 'Permanently remove ${_selected.length} selected volumes and all data they contain?',
+      confirmLabel: 'Remove',
+    );
+    if (!accepted) return;
+    final targets = widget.vm.volumes.where((volume) => _selected.contains(_key(volume))).toList();
+    for (final volume in targets) {
+      await widget.vm.volumeAction(volume, 'remove');
+    }
+    if (mounted) {
+      setState(() {
+        _selected = {};
+        _selecting = false;
+      });
+    }
+  }
 }
 
 class NetworksTab extends StatelessWidget {
@@ -757,70 +1183,116 @@ class NetworksTab extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    if (vm.networks.isEmpty) {
-      return _EmptyTab(
-        key: const ValueKey('infra.networks.empty'),
-        icon: Icons.lan_outlined,
-        message: _emptyMessage(vm, 'networks'),
-      );
-    }
-
-    return ListView.separated(
-      key: const ValueKey('infra.networks.list'),
-      itemCount: vm.networks.length,
-      separatorBuilder: (_, _) => const SizedBox(height: 6),
-      itemBuilder: (context, index) {
-        final network = vm.networks[index];
-        // Removing these breaks container networking on the host and they cannot be recreated
-        // identically, so they get no delete button at all.
-        final builtIn = const {'bridge', 'host', 'none', 'podman'}.contains(network.name);
-        return OmniCard(
-          key: ValueKey('infra.network.${network.runtime}.${network.id}'),
-          child: Row(
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Flexible(
-                          child: Text(
-                            network.name,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        RuntimeTag(runtime: network.runtime),
-                      ],
-                    ),
-                    Text(
-                      [network.driver, if (network.subnet.isNotEmpty) network.subnet].join(' · '),
-                      style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-                    ),
-                  ],
-                ),
-              ),
-              if (builtIn)
-                const OmniTag(label: 'BUILT-IN', color: OmniColors.textMuted)
-              else
-                IconButton(
-                  key: ValueKey('infra.network.${network.id}.remove'),
-                  tooltip: 'Remove network',
-                  icon: const Icon(Icons.delete_outline, size: 18, color: OmniColors.red),
-                  onPressed: () => vm.networkAction(network, 'remove'),
-                ),
-            ],
+    return Column(
+      children: [
+        Align(
+          alignment: Alignment.centerRight,
+          child: _PruneButton(
+            keyName: 'infra.networks.prune',
+            label: 'Prune unused',
+            detail: 'Remove all networks that no container uses. This cannot be undone.',
+            onConfirm: vm.pruneNetworks,
           ),
-        );
-      },
+        ),
+        Expanded(
+          child: vm.networks.isEmpty
+              ? _EmptyTab(
+                  key: const ValueKey('infra.networks.empty'),
+                  icon: Icons.lan_outlined,
+                  message: _emptyMessage(vm, 'networks'),
+                )
+              : ListView.separated(
+                  key: const ValueKey('infra.networks.list'),
+                  itemCount: vm.networks.length,
+                  separatorBuilder: (_, _) => const SizedBox(height: 6),
+                  itemBuilder: (context, index) {
+                    final network = vm.networks[index];
+                    final builtIn = const {
+                      'bridge',
+                      'host',
+                      'none',
+                      'podman',
+                    }.contains(network.name);
+                    return OmniCard(
+                      key: ValueKey('infra.network.${network.runtime}.${network.id}'),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  children: [
+                                    Flexible(
+                                      child: Text(
+                                        network.name,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(
+                                          fontFamily: OmniFonts.mono,
+                                          fontSize: 13,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 6),
+                                    RuntimeTag(runtime: network.runtime),
+                                  ],
+                                ),
+                                Text(
+                                  [
+                                    'Driver: ${network.driver}',
+                                    if (network.subnet.isNotEmpty) 'Subnet: ${network.subnet}',
+                                    if (network.gateway.isNotEmpty) 'GW: ${network.gateway}',
+                                    '${network.containerCount} container${network.containerCount == 1 ? '' : 's'}',
+                                    network.id.length > 12
+                                        ? network.id.substring(0, 12)
+                                        : network.id,
+                                  ].join(' · '),
+                                  style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                                ),
+                              ],
+                            ),
+                          ),
+                          if (builtIn)
+                            const OmniTag(label: 'BUILT-IN', color: OmniColors.textMuted)
+                          else
+                            IconButton(
+                              key: ValueKey('infra.network.${network.id}.remove'),
+                              tooltip: 'Remove network',
+                              icon: const Icon(
+                                Icons.delete_outline,
+                                size: 18,
+                                color: OmniColors.red,
+                              ),
+                              onPressed: () => _confirmRemoveNetwork(context, vm, network),
+                            ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
     );
   }
 }
 
-class _PruneRow extends StatelessWidget {
-  const _PruneRow({
+Future<void> _confirmRemoveNetwork(
+  BuildContext context,
+  InfraViewModel vm,
+  SimDockerNetwork network,
+) async {
+  final accepted = await _confirmDestructive(
+    context,
+    keyName: 'infra.network.remove',
+    title: 'Remove network?',
+    message: 'Permanently remove network ${network.name}?',
+    confirmLabel: 'Remove',
+  );
+  if (accepted) await vm.networkAction(network, 'remove');
+}
+
+class _PruneButton extends StatelessWidget {
+  const _PruneButton({
     required this.keyName,
     required this.label,
     required this.detail,
@@ -834,39 +1306,65 @@ class _PruneRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.centerRight,
-      child: TextButton.icon(
-        key: ValueKey(keyName),
-        icon: const Icon(Icons.cleaning_services, size: 16),
-        label: Text(label, style: const TextStyle(fontSize: 12)),
-        onPressed: () async {
-          final confirmed = await showDialog<bool>(
-            context: context,
-            builder: (dialogContext) => AlertDialog(
-              key: ValueKey('$keyName.dialog'),
-              title: Text(label),
-              content: Text(detail),
-              actions: [
-                TextButton(
-                  key: ValueKey('$keyName.cancel'),
-                  onPressed: () => Navigator.of(dialogContext).pop(false),
-                  child: const Text('Cancel'),
-                ),
-                TextButton(
-                  key: ValueKey('$keyName.confirm'),
-                  onPressed: () => Navigator.of(dialogContext).pop(true),
-                  child: const Text('Prune', style: TextStyle(color: OmniColors.red)),
-                ),
-              ],
-            ),
-          );
-          if (confirmed ?? false) await onConfirm();
-        },
-      ),
+    return TextButton.icon(
+      key: ValueKey(keyName),
+      icon: const Icon(Icons.cleaning_services, size: 16),
+      label: Text(label, style: const TextStyle(fontSize: 12)),
+      onPressed: () async {
+        final confirmed = await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            key: ValueKey('$keyName.dialog'),
+            title: Text(label),
+            content: Text(detail),
+            actions: [
+              TextButton(
+                key: ValueKey('$keyName.cancel'),
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancel'),
+              ),
+              TextButton(
+                key: ValueKey('$keyName.confirm'),
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Prune', style: TextStyle(color: OmniColors.red)),
+              ),
+            ],
+          ),
+        );
+        if (confirmed ?? false) await onConfirm();
+      },
     );
   }
 }
+
+Future<bool> _confirmDestructive(
+  BuildContext context, {
+  required String keyName,
+  required String title,
+  required String message,
+  required String confirmLabel,
+}) async =>
+    await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: ValueKey('$keyName.dialog'),
+        title: Text(title),
+        content: Text(message),
+        actions: [
+          TextButton(
+            key: ValueKey('$keyName.cancel'),
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: ValueKey('$keyName.confirm'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: Text(confirmLabel),
+          ),
+        ],
+      ),
+    ) ??
+    false;
 
 class _Stat extends StatelessWidget {
   const _Stat({required this.label, required this.value, this.color});

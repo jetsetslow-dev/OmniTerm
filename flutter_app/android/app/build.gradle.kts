@@ -4,6 +4,9 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
+val admobTestAppId = "ca-app-pub-3940256099942544~3347511713"
+val admobAppId = System.getenv("ADMOB_APP_ID") ?: admobTestAppId
+
 android {
     namespace = "com.jetsetslow.omniterm"
     compileSdk = flutter.compileSdkVersion
@@ -25,6 +28,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        manifestPlaceholders["admobAppId"] = admobAppId
 
         // Patrol's instrumentation runner (§11). The app itself is unaffected: this only applies to
         // androidTest builds.
@@ -34,6 +38,14 @@ android {
 
     testOptions {
         execution = "ANDROIDX_TEST_ORCHESTRATOR"
+    }
+
+    packaging {
+        jniLibs {
+            // dart_smb2 is present solely for iOS/macOS. Android keeps the Kotlin app's mature
+            // smbj client, so do not ship an unused second SMB parser as native attack surface.
+            excludes += setOf("**/libsmb2.so")
+        }
     }
 
     // Release signing, taken from the environment exactly as the Android app's own build does.

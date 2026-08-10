@@ -59,6 +59,7 @@ class BroadcastTransport implements SshTransport {
     SshCredentials creds,
     String command, {
     String? stdin,
+    SshCancellationToken? cancellation,
     required Future<void> Function(String chunk) onChunk,
   }) async {
     final result = await _run(creds, command);
@@ -77,7 +78,10 @@ void main() {
 
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
-    repo = AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{})));
+    repo = AppRepository(
+      db,
+      SecretStore(storage: FakeSecureStorage(<String, String>{})),
+    );
     app = AppState(repo);
   });
 
@@ -128,8 +132,12 @@ void main() {
 
   group('the fleet summary', () {
     test('counts total, online, critical and the average score', () async {
-      await repo.insertServer(server(name: 'a', host: '10.0.0.1', healthScore: 90));
-      await repo.insertServer(server(name: 'b', host: '10.0.0.2', healthScore: 30));
+      await repo.insertServer(
+        server(name: 'a', host: '10.0.0.1', healthScore: 90),
+      );
+      await repo.insertServer(
+        server(name: 'b', host: '10.0.0.2', healthScore: 30),
+      );
       await repo.insertServer(
         server(name: 'c', host: '10.0.0.3', status: 'offline', healthScore: 60),
       );
@@ -138,7 +146,11 @@ void main() {
 
       expect(vm.totalCount, 3);
       expect(vm.onlineCount, 2);
-      expect(vm.criticalCount, 1, reason: 'only online hosts below 50 are actionable');
+      expect(
+        vm.criticalCount,
+        1,
+        reason: 'only online hosts below 50 are actionable',
+      );
       expect(vm.averageScore, 60);
       vm.dispose();
     });
@@ -163,7 +175,9 @@ void main() {
     });
 
     test('a group resolves to its online members only', () async {
-      await repo.insertServer(server(name: 'a', host: '10.0.0.1', group: 'prod'));
+      await repo.insertServer(
+        server(name: 'a', host: '10.0.0.1', group: 'prod'),
+      );
       await repo.insertServer(
         server(name: 'b', host: '10.0.0.2', group: 'prod', status: 'offline'),
       );
@@ -191,7 +205,9 @@ void main() {
         ..toggleTargetServer(bId);
       expect(vm.targetServerIds, hasLength(2));
 
-      await repo.updateServer((await repo.getServerById(aId))!.copyWith(status: 'offline'));
+      await repo.updateServer(
+        (await repo.getServerById(aId))!.copyWith(status: 'offline'),
+      );
       await Future<void>.delayed(Duration.zero);
 
       expect(vm.targetServerIds, {bId});
@@ -199,14 +215,18 @@ void main() {
     });
 
     test('a group that loses every online member is deselected', () async {
-      final id = await repo.insertServer(server(name: 'a', host: '10.0.0.1', group: 'prod'));
+      final id = await repo.insertServer(
+        server(name: 'a', host: '10.0.0.1', group: 'prod'),
+      );
       final vm = await boot();
       await Future<void>.delayed(Duration.zero);
       vm
         ..targetMode = FleetTargetMode.groups
         ..toggleTargetGroup('prod');
 
-      await repo.updateServer((await repo.getServerById(id))!.copyWith(status: 'offline'));
+      await repo.updateServer(
+        (await repo.getServerById(id))!.copyWith(status: 'offline'),
+      );
       await Future<void>.delayed(Duration.zero);
 
       expect(vm.targetGroups, isEmpty);
@@ -215,7 +235,9 @@ void main() {
 
     test('select-all picks online hosts only', () async {
       await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
-      await repo.insertServer(server(name: 'b', host: '10.0.0.2', status: 'offline'));
+      await repo.insertServer(
+        server(name: 'b', host: '10.0.0.2', status: 'offline'),
+      );
       final vm = await boot();
       await Future<void>.delayed(Duration.zero);
 
@@ -253,7 +275,11 @@ void main() {
       expect(vm.canBroadcast, isFalse);
       expect(vm.canRun, isFalse);
       await vm.runBroadcast(vm.resolvedTargets);
-      expect(vm.results, isEmpty, reason: 'never report a run that did not happen');
+      expect(
+        vm.results,
+        isEmpty,
+        reason: 'never report a run that did not happen',
+      );
       vm.dispose();
     });
 
@@ -288,7 +314,10 @@ void main() {
       await vm.runBroadcast(vm.resolvedTargets);
 
       expect(vm.results, hasLength(2));
-      expect(vm.results.every((r) => r.status == BroadcastStatus.success), isTrue);
+      expect(
+        vm.results.every((r) => r.status == BroadcastStatus.success),
+        isTrue,
+      );
       expect(vm.results.first.output.toString(), 'up 3 days');
       expect(vm.successCount, 2);
       vm.dispose();
@@ -365,7 +394,10 @@ void main() {
       await vm.runBroadcast(vm.resolvedTargets);
 
       expect(vm.results, hasLength(15));
-      expect(transport.peakInFlight, lessThanOrEqualTo(FleetViewModel.broadcastConcurrency));
+      expect(
+        transport.peakInFlight,
+        lessThanOrEqualTo(FleetViewModel.broadcastConcurrency),
+      );
       vm.dispose();
     });
 
@@ -389,7 +421,8 @@ void main() {
 
     test('a second run cannot start while one is in flight', () async {
       await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
-      final transport = BroadcastTransport()..stalls = {'10.0.0.1': Completer<void>()};
+      final transport = BroadcastTransport()
+        ..stalls = {'10.0.0.1': Completer<void>()};
       final vm = await boot(transport: transport);
       await Future<void>.delayed(Duration.zero);
       vm
@@ -402,7 +435,11 @@ void main() {
       expect(vm.canRun, isFalse);
 
       await vm.runBroadcast(vm.resolvedTargets);
-      expect(transport.commands, hasLength(1), reason: 'the second call was refused');
+      expect(
+        transport.commands,
+        hasLength(1),
+        reason: 'the second call was refused',
+      );
 
       transport.stalls['10.0.0.1']!.complete();
       await first;
@@ -411,7 +448,8 @@ void main() {
 
     test('results cannot be cleared mid-run', () async {
       await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
-      final transport = BroadcastTransport()..stalls = {'10.0.0.1': Completer<void>()};
+      final transport = BroadcastTransport()
+        ..stalls = {'10.0.0.1': Completer<void>()};
       final vm = await boot(transport: transport);
       await Future<void>.delayed(Duration.zero);
       vm
@@ -421,7 +459,11 @@ void main() {
       final run = vm.runBroadcast(vm.resolvedTargets);
       await Future<void>.delayed(Duration.zero);
       vm.clearResults();
-      expect(vm.results, hasLength(1), reason: 'clearing would hide a run still in progress');
+      expect(
+        vm.results,
+        hasLength(1),
+        reason: 'clearing would hide a run still in progress',
+      );
 
       transport.stalls['10.0.0.1']!.complete();
       await run;
@@ -430,20 +472,23 @@ void main() {
       vm.dispose();
     });
 
-    test('a host still running when the workers return is marked failed', () async {
-      // Leaving it spinning would misreport an abandoned run as one still in progress.
-      await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
-      final vm = await boot(transport: BroadcastTransport());
-      await Future<void>.delayed(Duration.zero);
-      vm
-        ..commandText = 'uptime'
-        ..selectAllTargets();
+    test(
+      'a host still running when the workers return is marked failed',
+      () async {
+        // Leaving it spinning would misreport an abandoned run as one still in progress.
+        await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
+        final vm = await boot(transport: BroadcastTransport());
+        await Future<void>.delayed(Duration.zero);
+        vm
+          ..commandText = 'uptime'
+          ..selectAllTargets();
 
-      await vm.runBroadcast(vm.resolvedTargets);
-      expect(vm.results.every((r) => r.isDone), isTrue);
-      expect(vm.executing, isFalse);
-      vm.dispose();
-    });
+        await vm.runBroadcast(vm.resolvedTargets);
+        expect(vm.results.every((r) => r.isDone), isTrue);
+        expect(vm.executing, isFalse);
+        vm.dispose();
+      },
+    );
   });
 
   group('fleet logs', () {
@@ -454,7 +499,9 @@ void main() {
     test('logs from several hosts are merged newest first', () async {
       final aId = await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
       final bId = await repo.insertServer(server(name: 'b', host: '10.0.0.2'));
-      final vm = await boot(transport: BroadcastTransport(replies: {'journalctl': journal}));
+      final vm = await boot(
+        transport: BroadcastTransport(replies: {'journalctl': journal}),
+      );
       await Future<void>.delayed(Duration.zero);
       vm
         ..toggleLogServer(aId)
@@ -522,20 +569,27 @@ void main() {
       await db.close();
       await expectLater(vm.loadLogs(), throwsA(anything));
 
-      expect(vm.logsLoading, isFalse, reason: 'the tab must be usable again after a failure');
+      expect(
+        vm.logsLoading,
+        isFalse,
+        reason: 'the tab must be usable again after a failure',
+      );
       vm.dispose();
     });
 
-    test('selecting no host clears the view rather than querying everything', () async {
-      await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
-      final transport = BroadcastTransport(replies: {'journalctl': journal});
-      final vm = await boot(transport: transport);
-      await Future<void>.delayed(Duration.zero);
+    test(
+      'selecting no host clears the view rather than querying everything',
+      () async {
+        await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
+        final transport = BroadcastTransport(replies: {'journalctl': journal});
+        final vm = await boot(transport: transport);
+        await Future<void>.delayed(Duration.zero);
 
-      await vm.loadLogs();
-      expect(transport.commands, isEmpty);
-      expect(vm.logs, isEmpty);
-      vm.dispose();
-    });
+        await vm.loadLogs();
+        expect(transport.commands, isEmpty);
+        expect(vm.logs, isEmpty);
+        vm.dispose();
+      },
+    );
   });
 }

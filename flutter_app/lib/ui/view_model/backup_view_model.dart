@@ -1,9 +1,41 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/foundation.dart';
 
 import '../../data/backup/backup_envelope.dart';
 import '../../data/backup/backup_payload.dart';
 import '../../domain/backup_selection.dart';
 import 'app_state.dart';
+import '../../platform/crash_log.dart';
+
+@immutable
+class BackupHostOption {
+  const BackupHostOption({
+    required this.oldId,
+    required this.name,
+    required this.host,
+  });
+
+  final int oldId;
+  final String name;
+  final String host;
+}
+
+@immutable
+class BackupInspection {
+  const BackupInspection({
+    required this.plainJson,
+    required this.available,
+    required this.counts,
+    required this.hosts,
+  });
+
+  final String plainJson;
+  final BackupSelection available;
+  final Map<BackupSection, int> counts;
+  final List<BackupHostOption> hosts;
+}
 
 /// The Backup tool's state and actions, split out of `BackupToolView` in `ui/ToolsScreen.kt`.
 ///
@@ -12,9 +44,11 @@ import 'app_state.dart';
 /// without a file dialog, and it is why the reporting helpers below exist — the outcome of writing
 /// the file is something only the caller knows.
 class BackupViewModel extends ChangeNotifier {
-  BackupViewModel(this._app);
+  BackupViewModel(this._app, {CrashLog? crashLog})
+    : crashLog = crashLog ?? CrashLog.instance;
 
   final AppState _app;
+  final CrashLog crashLog;
 
   bool _disposed = false;
 
@@ -28,18 +62,50 @@ class BackupViewModel extends ChangeNotifier {
 
   void toggleSection(BackupSection section, {required bool enabled}) {
     _selection = _selection.toggled(section, enabled: enabled);
+    _persistSelection();
     notifyListeners();
   }
 
   void selectAll() {
-    _selection = BackupSelection.all();
+    _selection = BackupSelection.all(includeCrashLogs: true);
+    _persistSelection();
     notifyListeners();
   }
 
   void selectNone() {
     _selection = const BackupSelection.none();
+    _persistSelection();
     notifyListeners();
   }
+
+  /// Remembers what the user chose to back up.
+  ///
+  /// Ported from Kotlin's `updateBackupExportSelection` (`AppViewModel.kt:2310`). Without it every
+  /// visit to this screen starts from "everything", so a user who deliberately excludes crash logs
+  /// or alert history has to exclude them again every single time.
+  ///
+  /// Fire-and-forget, as Kotlin does: the checkbox has already moved, and the write must not make
+  /// the UI wait on the database.
+  void _persistSelection() {
+    unawaited(
+      _app.repository.insertSetting(
+        'backup_export_selection',
+        _selection.encode(),
+      ),
+    );
+  }
+
+  /// Reads the stored selection back. Safe to call more than once.
+  Future<void> loadSelection() async {
+    if (_selectionLoaded) return;
+    _selectionLoaded = true;
+    final stored = await _app.repository.getSetting('backup_export_selection');
+    if (_disposed || stored == null || stored.trim().isEmpty) return;
+    _selection = BackupSelection.decode(stored);
+    _safeNotify();
+  }
+
+  bool _selectionLoaded = false;
 
   /// True when the current selection would carry credentials or host identities.
   ///
@@ -100,6 +166,7 @@ class BackupViewModel extends ChangeNotifier {
         activeAlerts: await repository.getActiveAlerts(),
         alertHistory: await repository.getAlertHistory(),
         networkShares: await repository.getAllNetworkShares(),
+        crashLogs: crashLog.entries,
       );
 
       // An unencrypted export is only reachable for a selection with nothing sensitive in it.
@@ -127,6 +194,23 @@ class BackupViewModel extends ChangeNotifier {
         '${two(now.hour)}${two(now.minute)}.omnibak';
   }
 
+  /// When a backup was last written, or null if never.
+  ///
+  /// Ported from Kotlin's `lastBackupExportTime` (`AppViewModel.kt:1052`, shown on the Backup screen
+  /// at `ToolsScreen.kt:2691`). The value of showing it is entirely in the "Never" case: a user who
+  /// believes they have a backup and does not is the one this screen exists for.
+  DateTime? get lastExportTime => _lastExportTime;
+  DateTime? _lastExportTime;
+
+  /// Reads the recorded time. Safe to call more than once.
+  Future<void> loadLastExportTime() async {
+    final stored = await _app.repository.getSetting('backup_last_export_time');
+    final ms = int.tryParse(stored?.trim() ?? '');
+    if (_disposed || ms == null || ms <= 0) return;
+    _lastExportTime = DateTime.fromMillisecondsSinceEpoch(ms);
+    _safeNotify();
+  }
+
   /// Report a completed save.
   ///
   /// The location is named rather than a bare "done": a backup the user cannot find is one they
@@ -134,6 +218,17 @@ class BackupViewModel extends ChangeNotifier {
   /// becomes a real, portable thing that can be lost — which is when it matters, not when the
   /// passphrase was chosen.
   void reportSaved(String? location, {required bool encrypted}) {
+    // Recorded here rather than when the JSON was built: the file dialog can still be cancelled, and
+    // a "last backup" that counts an export the user abandoned is worse than none at all. Kotlin
+    // records it on write success too (`AppViewModel.kt:11415`).
+    final now = DateTime.now();
+    _lastExportTime = now;
+    unawaited(
+      _app.repository.insertSetting(
+        'backup_last_export_time',
+        '${now.millisecondsSinceEpoch}',
+      ),
+    );
     _error = null;
     _status = [
       location == null ? 'Backup saved.' : 'Backup saved to $location',
@@ -161,7 +256,97 @@ class BackupViewModel extends ChangeNotifier {
   /// that does not have any.
   static bool looksEncrypted(String contents) {
     final trimmed = contents.trimLeft();
-    return trimmed.startsWith('{') && trimmed.contains('"iv"') && trimmed.contains('"salt"');
+    return trimmed.startsWith('{') &&
+        trimmed.contains('"iv"') &&
+        trimmed.contains('"salt"');
+  }
+
+  static const _sectionKeys = <BackupSection, String>{
+    BackupSection.servers: 'servers',
+    BackupSection.sshKeys: 'sshKeys',
+    BackupSection.credentialProfiles: 'credentialProfiles',
+    BackupSection.scripts: 'scripts',
+    BackupSection.alertRules: 'alertRules',
+    BackupSection.activeAlerts: 'activeAlerts',
+    BackupSection.alertHistory: 'alertHistory',
+    BackupSection.wolTargets: 'wolTargets',
+    BackupSection.networkShares: 'networkShares',
+    BackupSection.portForwards: 'portForwards',
+    BackupSection.settings: 'settings',
+    BackupSection.crashLogs: 'crashLogs',
+  };
+
+  /// Decrypts and inventories a backup without writing anything.
+  ///
+  /// Restore is deliberately two-phase, matching the native app: the user first sees exactly what
+  /// the file contains and chooses sections/hosts, then confirms the additive write.
+  Future<BackupInspection?> inspectBackup(
+    String contents,
+    String passphrase,
+  ) async {
+    _busy = true;
+    _error = null;
+    _status = null;
+    _safeNotify();
+    try {
+      final json = looksEncrypted(contents)
+          ? await decryptBackup(contents, passphrase)
+          : contents;
+      final decoded = jsonDecode(json);
+      if (decoded is! Map<String, dynamic>) {
+        throw const BackupException('That backup file could not be read.');
+      }
+      // Checked before anything is parsed out of it: refusing a file whole is honest, whereas
+      // reading half of an unfamiliar shape and restoring that is not.
+      final incompatible = BackupPayload.incompatibleVersionMessage(
+        decoded['v'],
+      );
+      if (incompatible != null) throw BackupException(incompatible);
+      final counts = <BackupSection, int>{};
+      final present = <BackupSection>{};
+      for (final entry in _sectionKeys.entries) {
+        final value = decoded[entry.value];
+        final count = value is List ? value.length : 0;
+        counts[entry.key] = count;
+        if (count > 0) present.add(entry.key);
+      }
+      if (present.isEmpty) {
+        throw const BackupException(
+          'That backup contains no data OmniTerm can restore.',
+        );
+      }
+      final hosts = <BackupHostOption>[];
+      final rawHosts = decoded['servers'];
+      if (rawHosts is List) {
+        for (final value in rawHosts) {
+          if (value is! Map<String, dynamic>) continue;
+          final oldId = (value['id'] as num?)?.toInt() ?? 0;
+          if (oldId <= 0) continue;
+          hosts.add(
+            BackupHostOption(
+              oldId: oldId,
+              name: value['name'] as String? ?? 'Restored host',
+              host: value['host'] as String? ?? '',
+            ),
+          );
+        }
+      }
+      return BackupInspection(
+        plainJson: json,
+        available: BackupSelection(present).withReferentialClosure(),
+        counts: Map.unmodifiable(counts),
+        hosts: List.unmodifiable(hosts),
+      );
+    } on BackupException catch (e) {
+      _error = e.message;
+      return null;
+    } catch (e) {
+      _error = 'Could not inspect that backup: $e';
+      return null;
+    } finally {
+      _busy = false;
+      _safeNotify();
+    }
   }
 
   /// Restores [contents] into the database.
@@ -169,16 +354,131 @@ class BackupViewModel extends ChangeNotifier {
   /// **Additive:** existing rows are kept and the backup's rows are added alongside them. Wiping
   /// first would make restoring the wrong file unrecoverable, and there is no undo for that. The UI
   /// says so before running.
-  Future<Map<String, int>?> importBackup(String contents, String passphrase) async {
+  Future<Map<String, int>?> importBackup(
+    String contents,
+    String passphrase, {
+    BackupSelection? selection,
+    Set<int>? selectedServerIds,
+  }) async {
     _busy = true;
     _error = null;
     _status = null;
     _safeNotify();
 
     try {
-      final json = looksEncrypted(contents) ? await decryptBackup(contents, passphrase) : contents;
+      var json = looksEncrypted(contents)
+          ? await decryptBackup(contents, passphrase)
+          : contents;
 
-      final counts = await BackupPayload.restore(RepositoryRestoreTarget(_app.repository), json);
+      if (selection != null || selectedServerIds != null) {
+        final root = jsonDecode(json) as Map<String, dynamic>;
+        final chosen = selection ?? BackupSelection.all(includeCrashLogs: true);
+        final closed = chosen.withReferentialClosure();
+        for (final entry in _sectionKeys.entries) {
+          if (!closed.contains(entry.key)) root.remove(entry.value);
+        }
+        if (selectedServerIds != null && root['servers'] is List) {
+          final ids = selectedServerIds;
+          root['servers'] = [
+            for (final value in root['servers'] as List)
+              if (value is Map<String, dynamic> &&
+                  ids.contains((value['id'] as num?)?.toInt()))
+                value,
+          ];
+          bool belongsToChosenHost(Object? value) {
+            if (value is! Map<String, dynamic>) return false;
+            final id = (value['serverId'] as num?)?.toInt() ?? 0;
+            return id == 0 || ids.contains(id);
+          }
+
+          for (final key in const [
+            'alertRules',
+            'activeAlerts',
+            'alertHistory',
+            'portForwards',
+          ]) {
+            if (root[key] is List) {
+              root[key] = (root[key] as List)
+                  .where(belongsToChosenHost)
+                  .toList();
+            }
+          }
+        }
+
+        // Match the native restore's least-secret behavior: when endpoints are part of a selective
+        // restore, only the profiles and keys those chosen endpoints actually reference travel with
+        // them. This also guarantees that a deselected host cannot leave an unused credential behind.
+        if (root['servers'] is List || root['networkShares'] is List) {
+          Iterable<Map<String, dynamic>> rows(String key) sync* {
+            final value = root[key];
+            if (value is! List) return;
+            for (final row in value) {
+              if (row is Map<String, dynamic>) yield row;
+            }
+          }
+
+          final profileIds = <int>{
+            for (final row in [...rows('servers'), ...rows('networkShares')])
+              if ((row['authProfileId'] as num?)?.toInt() case final int id
+                  when id != 0)
+                id,
+          };
+          if (root['credentialProfiles'] is List) {
+            root['credentialProfiles'] = rows('credentialProfiles')
+                .where(
+                  (row) => profileIds.contains((row['id'] as num?)?.toInt()),
+                )
+                .toList();
+          }
+
+          final keyAliases = <String>{
+            for (final row in rows('servers'))
+              for (final field in const ['authKeyAlias', 'proxyKeyAlias'])
+                if ((row[field] as String?)?.trim() case final String alias
+                    when alias.isNotEmpty)
+                  alias,
+            for (final row in rows('credentialProfiles'))
+              if ((row['keyAlias'] as String?)?.trim() case final String alias
+                  when alias.isNotEmpty)
+                alias,
+          };
+          if (root['sshKeys'] is List) {
+            root['sshKeys'] = rows(
+              'sshKeys',
+            ).where((row) => keyAliases.contains(row['alias'])).toList();
+          }
+        }
+        json = jsonEncode(root);
+      }
+
+      // Every database row is one restore operation. A malformed later section must roll the
+      // earlier sections back, otherwise the UI reports failure after silently leaving half a
+      // backup behind. Crash logs live outside Drift and are merged only after this commits.
+      final counts = await _app.repository.inTransaction(
+        () => BackupPayload.restore(
+          RepositoryRestoreTarget(_app.repository),
+          json,
+        ),
+      );
+      final root = jsonDecode(json) as Map<String, Object?>;
+      final restoredCrashes = <CrashEntry>[];
+      for (final value in (root['crashLogs'] as List<Object?>? ?? const [])) {
+        if (value case {'t': final num time, 'r': final String report}) {
+          restoredCrashes.add(
+            CrashEntry(timeMs: time.toInt(), report: redactCrashReport(report)),
+          );
+        }
+      }
+      if (restoredCrashes.isNotEmpty) {
+        counts['crashLogs'] = await crashLog.merge(restoredCrashes);
+      }
+
+      // A backup can carry far more archived incidents than this device is configured to keep, and
+      // the per-host prune only runs when a host archives something. Without this the restored
+      // excess would sit there indefinitely. Kotlin prunes here too (`AppViewModel.kt:11804`).
+      if ((counts['alertHistory'] ?? 0) > 0) {
+        await _app.repository.pruneAlertHistoryPerServer(_app.alertHistoryLimit);
+      }
 
       final restored = counts.entries
           .where((e) => !e.key.endsWith('Skipped'))
@@ -186,8 +486,14 @@ class BackupViewModel extends ChangeNotifier {
       // Naming every skip rather than hiding it: a rule silently missing after a restore is a rule
       // no longer watching anything, and a missing tunnel is a port that never opens.
       final skips = <String>[
-        if ((counts['alertRulesSkipped'] ?? 0) > 0) '${counts['alertRulesSkipped']} alert rule(s)',
-        if ((counts['portForwardsSkipped'] ?? 0) > 0) '${counts['portForwardsSkipped']} tunnel(s)',
+        if ((counts['alertRulesSkipped'] ?? 0) > 0)
+          '${counts['alertRulesSkipped']} alert rule(s)',
+        if ((counts['portForwardsSkipped'] ?? 0) > 0)
+          '${counts['portForwardsSkipped']} tunnel(s)',
+        if ((counts['activeAlertsSkipped'] ?? 0) > 0)
+          '${counts['activeAlertsSkipped']} firing alert(s)',
+        if ((counts['alertHistorySkipped'] ?? 0) > 0)
+          '${counts['alertHistorySkipped']} alert history row(s)',
       ];
 
       _status = skips.isEmpty

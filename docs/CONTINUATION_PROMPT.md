@@ -1,70 +1,50 @@
-# Continuation prompt — OmniTerm → Flutter migration
+# Continuation prompt — OmniTerm Kotlin → Flutter parity migration
 
-Paste the block below to any agent picking this work up on this machine. It carries every standing
-instruction given since the migration started; everything else lives in `MIGRATION.md`.
+Paste the block below into Claude Code. The detailed evidence and remaining-work ledger is in
+`docs/CLAUDE_HANDOFF_2026-08-09.md`.
 
-For Claude Code, prefix it with `/loop 15m ` to run it on a 15-minute repeating cycle.
+```text
+Continue the OmniTerm Kotlin → Flutter migration and full parity audit on this machine.
 
----
+Before changing anything, read these files completely:
+1. /home/sbvino/Omniterm/AGENTS.md
+2. /home/sbvino/Omniterm/docs/CLAUDE_HANDOFF_2026-08-09.md
+3. /home/sbvino/Omniterm/MIGRATION.md, treating its old status/checklist sections as historical
+   until reconciled against the current code and the dated handoff.
 
-```
-Continue the OmniTerm → Flutter migration.
+The required outcome is exact visual and functional parity for every Kotlin screen, subtab, state,
+dialog, and action on Flutter, with iOS first-class. Do a complete code-driven audit; do not merely
+finish old unchecked items, because supposedly complete work may be partial or wrong. If you find a
+Kotlin defect, fix it in both implementations.
 
-FIRST, orient yourself — do not start coding before this:
-  - Read /home/sbvino/Omniterm/MIGRATION.md §22 (where the port stands), then §21 (the cut-over
-    checklist — pick the next item from here), then §18 (per-screen gaps).
-  - Read §23 (working agreements — five code conventions and the process rules), §19 (how to
-    validate on a device here, and seven lessons about probes that lied), and §20 (the failure
-    patterns from the Kotlin history, with a verdict for each).
-  - §8 is the recovery procedure. The §14 progress log is the narrative of how things got here; it
-    is history, not a to-do list.
+Worktrees:
+- Flutter: /home/sbvino/Omniterm, branch migration-to-flutter
+- Kotlin parity fixes: /home/sbvino/Omniterm-kotlin-parity, branch fix/kotlin-parity-defects
+- Flutter SDK: /home/sbvino/sdks/flutter/bin/flutter
+- Host: x86_64 SER8, 24 GB installed RAM, KVM available; API 35 AVD omniterm-api35
 
-ENVIRONMENT
-  - Always `export PATH="/home/sbvino/sdks/flutter/bin:$PATH"` — Flutter is not on PATH.
-  - Work on branch `migration-to-flutter`, from `/home/sbvino/Omniterm/flutter_app`.
-  - The Kotlin app being replaced is at `app/` and is never deleted before cut-over; it is the
-    reference for any behaviour question.
+Both worktrees contain important uncommitted changes. Do not reset, clean, checkout, stash, rebase,
+or bulk-stage them. Preserve user-owned edits, especially the Alerts periodic timer and Settings
+AMOLED condition. Do not commit or push until the exact final code passes every required gate and
+the user asks. Never use git add -A.
 
-THE THIRTEEN REQUIREMENTS (the user's own words, recorded in MIGRATION.md §1)
-  1.  Migrate everything — no feature left behind.
-  2.  Keep the functionality, the layout and the architecture.
-  3.  Truly multiplatform, with iOS first-class rather than an afterthought.
-  4.  Research best practices before choosing an approach.
-  5.  Keep going in a loop; if a usage or rate limit is hit, resume where the log left off.
-  6.  End-to-end UI automation covering every feature.
-  7.  Port the CI/CD pipeline.
-  8.  Use the best open-source tooling.
-  9.  Fix major bugs and design flaws found in the Kotlin while porting — do not carry them across.
-  10. Modularise.
-  11. Reuse and centralise; never duplicate.
-  12. Security takes priority. The app warns rather than blocks.
-  13. Feature parity, not code parity.
+Start by inspecting both worktrees and converting the Kotlin UI/actions into a parity ledger. The
+Flutter analyzer, all 1,886 host tests, API 35 route/subtab/theme/rotation surface sweep, and the root
+full preflight are currently green. The root connected run finished 72 Kotlin tests with zero
+failures but skipped 26 opt-in E2E tests, so it is not fleet/screen evidence. Action-level parity,
+real fleet behavior, the Kotlin parity worktree's own full gate, iOS native builds, and hosted
+exact-head gates remain. Follow the dated handoff's prioritized list and update it as evidence
+changes.
 
-HOW TO WORK
-  - One coherent iteration at a time. Each ends with: `flutter analyze` clean, `flutter test`
-    passing, a §14 progress entry appended to MIGRATION.md, and a commit.
-  - Never `git add -A`. `shared/` must stay untracked — stage explicit paths.
-  - Never commit `integration_test/zz_probe_test.dart`; it is a temporary device probe and is
-    deleted after every run.
-  - Validate on a device before reporting that something works. A green host suite is not evidence
-    that a screen opens. Batch validation into ONE emulator pass per iteration — the device runs are
-    the expensive part.
-  - Say what the device run did *and did not* prove. If something shipped without a device pass, put
-    that in the progress entry so the next session knows what to check.
-  - When a probe disagrees with a test, believe neither: measure from outside (a screenshot, or the
-    server itself). Several "defects" here turned out to be the probe.
-  - A defect found in the Kotlin is not finished until it is fixed on both branches: the port, and
-    `fix/kotlin-parity-defects` (already open as PR #77 against main).
-  - CI keeps the shape it had on the Kotlin `main` branch; Play publication uses repository secrets.
-  - The debug build carries its own application id (`…app.flutter`) so it installs beside the
-    shipped Kotlin app. Do not change the release id — cut-over replaces that app.
+Docker is currently inactive because mount-all.service is stuck on the user's inaccessible personal
+NFS mounts. Do not kill/bypass/edit those mounts or use a personal lab. When Docker becomes
+legitimately available, use scripts/test-hosts.sh and the repository-controlled fleet, including
+the required Kotlin E2eAppSurfaceStressTest opt-ins and /config fixture home.
 
-WRITING
-  - Comments explain *why*, especially where this port deliberately differs from the Kotlin. If a
-    decision was between two reasonable options, the comment says which was rejected and what it
-    would have cost.
-  - Progress entries record what was built, what was decided against, and what remains unproven.
-    Do not describe something as verified unless it was.
-
-If a usage or rate limit interrupts you, simply resume from the last progress entry.
+For every claim, record the exact command, device/API, executed test count, fixture, and explicit
+skips. A plain connectedAndroidTest can skip all E2e suites and is not screen-coverage evidence.
+Re-run ./scripts/local-pr-check.sh --full after further changes and on the Kotlin parity worktree,
+plus git diff checks, full Flutter tests, both distribution/release graphs, SBOM/checksum/security
+gates, and real device flows on the exact final code. On macOS, build and exercise the unverified
+iOS native integrations. Keep MIGRATION.md and the dated handoff accurate before finishing.
 ```

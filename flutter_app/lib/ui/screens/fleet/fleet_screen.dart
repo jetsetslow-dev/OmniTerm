@@ -54,7 +54,15 @@ class _SummaryBar extends StatelessWidget {
           borderRadius: BorderRadius.circular(8),
         ),
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        child: Row(
+        // Wraps rather than clipping. At 200% text these figures need 188px more than a phone has,
+        // and a summary bar that silently drops its last stat is the one that matters — the online
+        // count. A horizontal scroll was the first attempt and is wrong here: the `Spacer` below
+        // needs a bounded width, and an unbounded one makes the row fail to lay out at all.
+        child: Wrap(
+          spacing: 12,
+          runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          alignment: WrapAlignment.spaceBetween,
           children: [
             const Text(
               'FLEET',
@@ -65,7 +73,6 @@ class _SummaryBar extends StatelessWidget {
                 letterSpacing: 1,
               ),
             ),
-            const SizedBox(width: 12),
             Text(
               'Avg Score: ${vm.averageScore}',
               style: const TextStyle(
@@ -74,7 +81,6 @@ class _SummaryBar extends StatelessWidget {
                 fontWeight: FontWeight.bold,
               ),
             ),
-            const Spacer(),
             _RefreshCountdown(vm: vm),
             Text(
               '${vm.onlineCount} / ${vm.totalCount} Online',
@@ -162,20 +168,28 @@ class _TabBar extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      child: Row(
-        key: const ValueKey('fleet.tabs'),
-        children: [
-          for (final tab in FleetTab.values)
-            Padding(
-              padding: const EdgeInsets.only(right: 8),
-              child: ChoiceChip(
-                key: ValueKey('fleet.tab.${tab.name}'),
-                label: Text(_labels[tab]!, style: const TextStyle(fontSize: 12)),
-                selected: vm.activeTab == tab,
-                onSelected: (_) => vm.activeTab = tab,
+      // Horizontally scrollable, as the SFTP and Infra tab bars already are: three chips at 200%
+      // text do not fit a phone, and an unreachable tab is a feature the user cannot open.
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          key: const ValueKey('fleet.tabs'),
+          children: [
+            for (final tab in FleetTab.values)
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: ChoiceChip(
+                  key: ValueKey('fleet.tab.${tab.name}'),
+                  label: Text(
+                    _labels[tab]!,
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                  selected: vm.activeTab == tab,
+                  onSelected: (_) => vm.activeTab = tab,
+                ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../../data/term/terminal_snapshot.dart';
+import '../theme/terminal_theme.dart';
 import '../theme/typography.dart';
 import '../view_model/shell_session.dart';
 import 'terminal_transcript_sheet.dart';
@@ -58,13 +59,13 @@ class TerminalPainter extends CustomPainter {
   TerminalPainter({
     required this.snapshot,
     required this.metrics,
-    required this.background,
+    required this.palette,
     required this.showCursor,
   });
 
   final TerminalSnapshot snapshot;
   final TerminalMetrics metrics;
-  final Color background;
+  final TerminalPalette palette;
 
   /// The block cursor is drawn only for the focused, live pane — an unfocused split pane showing a
   /// cursor invites typing into the wrong host.
@@ -72,7 +73,7 @@ class TerminalPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    canvas.drawRect(Offset.zero & size, Paint()..color = background);
+    canvas.drawRect(Offset.zero & size, Paint()..color = palette.background);
 
     final cw = metrics.cellWidth;
     final ch = metrics.cellHeight;
@@ -91,7 +92,7 @@ class TerminalPainter extends CustomPainter {
       if (row >= 0 && row < snapshot.rows.length) {
         canvas.drawRect(
           Rect.fromLTWH(snapshot.cursorCol * cw, row * ch, cw, ch),
-          Paint()..color = const Color(0xFFC8D4E8).withValues(alpha: 0.65),
+          Paint()..color = palette.cursor.withValues(alpha: 0.65),
         );
       }
     }
@@ -104,8 +105,23 @@ class TerminalPainter extends CustomPainter {
     // Inverse video is applied here rather than by the emulator, because the emulator stores what
     // the remote *said* and the swap is a presentation decision (a themed background has to swap to
     // the theme's colour, not to whatever the remote's default happened to be).
-    final fg = Color(span.inverse ? span.bg : span.fg);
-    final bg = Color(span.inverse ? span.fg : span.bg);
+    final rawFg = span.inverse ? span.bg : span.fg;
+    final rawBg = span.inverse ? span.fg : span.bg;
+    final effectiveBg = switch (rawBg) {
+      kDefaultBg => palette.background.toARGB32(),
+      kDefaultFg => palette.foreground.toARGB32(),
+      _ => rawBg,
+    };
+    var resolvedFg = rawFg == kDefaultFg ? palette.foreground.toARGB32() : rawFg;
+    final ansi = palette.ansiForeground;
+    if (ansi != null && rawFg != kDefaultFg) {
+      final index = ansi16Index(rawFg);
+      if (index >= 0) resolvedFg = ansi[index];
+    }
+    if (span.dim) resolvedFg = lerpTerminalArgb(effectiveBg, resolvedFg, 0.6);
+    resolvedFg = ensureTerminalTextLegible(resolvedFg, effectiveBg);
+    final fg = Color(resolvedFg);
+    final bg = Color(effectiveBg);
 
     final widths = span.glyphWidths;
     final glyphs = span.glyphs;
@@ -118,7 +134,7 @@ class TerminalPainter extends CustomPainter {
         ? (glyphs.isEmpty ? span.text.runes.length : glyphs.length)
         : widths.fold<int>(0, (sum, w) => sum + w.clamp(1, 2));
 
-    if (bg.toARGB32() != kDefaultBg) {
+    if (rawBg != kDefaultBg || span.inverse) {
       canvas.drawRect(Rect.fromLTWH(col * cw, y, cells * cw, ch), Paint()..color = bg);
     }
 
@@ -126,7 +142,7 @@ class TerminalPainter extends CustomPainter {
       fontFamily: OmniFonts.mono,
       fontSize: metrics.fontSize,
       height: metrics.cellHeight / metrics.fontSize,
-      color: span.dim ? fg.withValues(alpha: 0.6) : fg,
+      color: fg,
       fontWeight: span.bold ? FontWeight.bold : FontWeight.normal,
       fontStyle: span.italic ? FontStyle.italic : FontStyle.normal,
       decoration: span.underline ? TextDecoration.underline : TextDecoration.none,
@@ -160,7 +176,7 @@ class TerminalPainter extends CustomPainter {
   bool shouldRepaint(TerminalPainter old) =>
       !identical(old.snapshot, snapshot) ||
       old.metrics != metrics ||
-      old.background != background ||
+      old.palette != palette ||
       old.showCursor != showCursor;
 }
 
@@ -173,18 +189,20 @@ class TerminalSurface extends StatefulWidget {
     super.key,
     required this.session,
     this.fontSize = 13,
-    this.background = const Color(0xFF05070C),
+    required this.palette,
     this.focused = true,
     this.onGridChanged,
+    this.onTapCell,
   });
 
   final ShellSession session;
   final double fontSize;
-  final Color background;
+  final TerminalPalette palette;
   final bool focused;
 
   /// Reports the measured grid so the view model can open the *next* session at this size.
   final void Function(int cols, int rows)? onGridChanged;
+  final void Function(TerminalSnapshot snapshot, int row, int column)? onTapCell;
 
   @override
   State<TerminalSurface> createState() => _TerminalSurfaceState();
@@ -217,6 +235,11 @@ class _TerminalSurfaceState extends State<TerminalSurface> {
             behavior: HitTestBehavior.opaque,
             onVerticalDragStart: (_) => _dragRemainder = 0,
             onVerticalDragUpdate: (details) => _onDrag(details.delta.dy, metrics.cellHeight),
+            onTapUp: (details) => widget.onTapCell?.call(
+              widget.session.snapshot,
+              (details.localPosition.dy / metrics.cellHeight).floor(),
+              (details.localPosition.dx / metrics.cellWidth).floor(),
+            ),
             // A painted grid has nothing to select, which left copying output impossible. Long
             // press opens the scrollback as selectable text instead — the Kotlin's answer too.
             onLongPress: () => openTerminalTranscript(context, widget.session),
@@ -225,7 +248,7 @@ class _TerminalSurfaceState extends State<TerminalSurface> {
               painter: TerminalPainter(
                 snapshot: widget.session.snapshot,
                 metrics: metrics,
-                background: widget.background,
+                palette: widget.palette,
                 showCursor: widget.focused && widget.session.followTail,
               ),
             ),

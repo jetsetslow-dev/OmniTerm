@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../data/app_database.dart';
+import '../../../domain/host_display.dart';
 import '../../theme/colors.dart';
 import '../../widgets/omni_components.dart';
 import 'server_form_state.dart';
@@ -23,6 +24,9 @@ class ServerFormSheet extends StatefulWidget {
     this.onTestConnection,
     this.existingServers = const [],
     this.savedKeyAliases = const [],
+    this.prefillHost,
+    this.prefillPort,
+    this.suggestedName,
   });
 
   final ServerFormMode mode;
@@ -31,13 +35,22 @@ class ServerFormSheet extends StatefulWidget {
   final ConnectionTester? onTestConnection;
   final List<Server> existingServers;
   final List<String> savedKeyAliases;
+  final String? prefillHost;
+  final int? prefillPort;
+  final String? suggestedName;
 
   @override
   State<ServerFormSheet> createState() => _ServerFormSheetState();
 }
 
 class _ServerFormSheetState extends State<ServerFormSheet> {
-  late final ServerFormState _form = ServerFormState(mode: widget.mode, source: widget.source);
+  late final ServerFormState _form = ServerFormState(
+    mode: widget.mode,
+    source: widget.source,
+    prefillHost: widget.prefillHost,
+    prefillPort: widget.prefillPort,
+    suggestedName: widget.suggestedName,
+  );
 
   bool _testing = false;
   String? _testResult;
@@ -82,12 +95,69 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
     }
     if (_form.requiresConnectionTest) {
       setState(
-        () => _saveError = 'Test the connection before saving, so the host key can be verified.',
+        () => _saveError =
+            'Test the connection before saving, so the host key can be verified.',
       );
       return;
     }
+    final duplicate = _duplicateHost();
+    if (duplicate != null && !await _confirmDuplicate(duplicate)) return;
+
     await widget.onSave(_form.toServer());
     if (mounted) Navigator.of(context).pop();
+  }
+
+  /// An existing host already saved at the same address, or null.
+  ///
+  /// Only for a *new* host: editing one deliberately keeps its own address, so matching itself would
+  /// warn on every save. Duplicating counts as new, because that flow's whole purpose is a second
+  /// entry — usually a different credential on the same machine, which is exactly the case the
+  /// warning exists to let through rather than block.
+  Server? _duplicateHost() {
+    if (widget.mode == ServerFormMode.edit) return null;
+    final address = _form.toServer().host.trim().toLowerCase();
+    if (address.isEmpty) return null;
+    for (final server in widget.existingServers) {
+      if (server.id != (widget.source?.id ?? 0) &&
+          server.host.trim().toLowerCase() == address) {
+        return server;
+      }
+    }
+    return null;
+  }
+
+  /// Warns that the address is already saved, and lets the user proceed anyway.
+  ///
+  /// Deliberately not a validation error: two entries for one machine is a legitimate setup (a root
+  /// login and an unprivileged one, say), so this reports the collision and leaves the decision with
+  /// the user rather than refusing the save.
+  Future<bool> _confirmDuplicate(Server duplicate) async {
+    final display = HostDisplay.instance;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const ValueKey('serverForm.duplicate.dialog'),
+        title: const Text('Duplicate IP address'),
+        content: Text(
+          'Host ${display.name(duplicate)} already uses ${display.host(duplicate)}. '
+          'You can still save this server if it intentionally uses a different '
+          'credential profile.',
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('serverForm.duplicate.review'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Review'),
+          ),
+          FilledButton(
+            key: const ValueKey('serverForm.duplicate.saveAnyway'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Save anyway'),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
   }
 
   @override
@@ -97,7 +167,9 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
     return DefaultTabController(
       length: 3,
       child: Padding(
-        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+        ),
         child: SizedBox(
           height: MediaQuery.of(context).size.height * 0.85,
           child: Column(
@@ -106,7 +178,12 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
                 padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
                 child: Row(
                   children: [
-                    Expanded(child: Text(_title, style: Theme.of(context).textTheme.titleLarge)),
+                    Expanded(
+                      child: Text(
+                        _title,
+                        style: Theme.of(context).textTheme.titleLarge,
+                      ),
+                    ),
                     IconButton(
                       key: const ValueKey('serverForm.close'),
                       icon: const Icon(Icons.close),
@@ -128,8 +205,14 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
                   listenable: _form,
                   builder: (context, _) => TabBarView(
                     children: [
-                      _ConnectTab(form: _form, existingServers: widget.existingServers),
-                      _AuthTab(form: _form, savedKeyAliases: widget.savedKeyAliases),
+                      _ConnectTab(
+                        form: _form,
+                        existingServers: widget.existingServers,
+                      ),
+                      _AuthTab(
+                        form: _form,
+                        savedKeyAliases: widget.savedKeyAliases,
+                      ),
                       _AdvancedTab(form: _form),
                     ],
                   ),
@@ -137,7 +220,10 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
               ),
               if (_testResult != null)
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 4,
+                  ),
                   child: Text(
                     _testResult!,
                     key: const ValueKey('serverForm.testResult'),
@@ -149,7 +235,10 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
                 ),
               if (_saveError != null)
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 4,
+                  ),
                   child: Text(
                     _saveError!,
                     key: const ValueKey('serverForm.error'),
@@ -163,12 +252,16 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
                     Expanded(
                       child: OutlinedButton.icon(
                         key: const ValueKey('serverForm.test'),
-                        onPressed: _testing || widget.onTestConnection == null ? null : _test,
+                        onPressed: _testing || widget.onTestConnection == null
+                            ? null
+                            : _test,
                         icon: _testing
                             ? const SizedBox(
                                 width: 14,
                                 height: 14,
-                                child: CircularProgressIndicator(strokeWidth: 2),
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
                               )
                             : const Icon(Icons.wifi_tethering, size: 18),
                         label: Text(_testing ? 'Testing…' : 'Test connection'),
@@ -182,7 +275,9 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
                           key: const ValueKey('serverForm.save'),
                           onPressed: _save,
                           child: Text(
-                            _form.requiresConnectionTest ? 'Save (test first)' : 'Save',
+                            _form.requiresConnectionTest
+                                ? 'Save (test first)'
+                                : 'Save',
                             style: TextStyle(color: scheme.onPrimary),
                           ),
                         ),
@@ -240,7 +335,8 @@ class _ConnectTab extends StatelessWidget {
         // Offering the labels already in use stops a typo silently forking a near-duplicate group.
         DropdownButtonFormField<String>(
           key: const ValueKey('serverForm.group'),
-          initialValue: ServerFormState.groupOptions(existingServers).contains(form.group)
+          initialValue:
+              ServerFormState.groupOptions(existingServers).contains(form.group)
               ? form.group
               : 'Default',
           decoration: omniInputDecoration(context, labelText: 'Group'),
@@ -301,7 +397,8 @@ class _AuthTab extends StatelessWidget {
               for (final alias in savedKeyAliases)
                 DropdownMenuItem(value: alias, child: Text(alias)),
             ],
-            onChanged: (v) => form.update(() => form.selectedKeyAlias = v ?? ''),
+            onChanged: (v) =>
+                form.update(() => form.selectedKeyAlias = v ?? ''),
           ),
         if (form.authType == 'profile')
           Text(
@@ -354,7 +451,9 @@ class _AdvancedTab extends StatelessWidget {
           key: const ValueKey('serverForm.agentForwarding'),
           title: const Text('Agent forwarding'),
           // Worth stating plainly: this grants the remote use of the key for the session.
-          subtitle: const Text('Lets onward hops use your key. Off by default.'),
+          subtitle: const Text(
+            'Lets onward hops use your key. Off by default.',
+          ),
           value: form.agentForwarding,
           onChanged: (v) => form.update(() => form.agentForwarding = v),
         ),
@@ -365,7 +464,8 @@ class _AdvancedTab extends StatelessWidget {
           hasStored: form.hasStoredSudoPassword,
           forget: form.forgetSudoPassword,
           onChanged: (v) => form.update(() => form.sudoPassword = v),
-          onForgetChanged: (v) => form.update(() => form.forgetSudoPassword = v),
+          onForgetChanged: (v) =>
+              form.update(() => form.forgetSudoPassword = v),
         ),
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
@@ -406,7 +506,8 @@ class _AdvancedTab extends StatelessWidget {
             hasStored: form.hasStoredProxyPassword,
             forget: form.forgetProxyPassword,
             onChanged: (v) => form.update(() => form.proxyPassword = v),
-            onForgetChanged: (v) => form.update(() => form.forgetProxyPassword = v),
+            onForgetChanged: (v) =>
+                form.update(() => form.forgetProxyPassword = v),
           ),
         ],
       ],
@@ -486,7 +587,10 @@ class _SecretField extends StatelessWidget {
             dense: true,
             contentPadding: EdgeInsets.zero,
             controlAffinity: ListTileControlAffinity.leading,
-            title: Text('Forget the saved $label', style: const TextStyle(fontSize: 12)),
+            title: Text(
+              'Forget the saved $label',
+              style: const TextStyle(fontSize: 12),
+            ),
             value: forget,
             onChanged: (v) => onForgetChanged(v ?? false),
           ),

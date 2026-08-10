@@ -25,7 +25,10 @@ void main() {
 
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
-    repo = AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{})));
+    repo = AppRepository(
+      db,
+      SecretStore(storage: FakeSecureStorage(<String, String>{})),
+    );
     app = AppState(repo);
     transport = FakeShellTransport();
   });
@@ -79,8 +82,9 @@ void main() {
     return vm = ShellViewModel(app, transport: ssh ?? transport);
   }
 
-  String sent(FakeShellTransport t) =>
-      t.opened.last.writes.map((b) => utf8.decode(b, allowMalformed: true)).join();
+  String sent(FakeShellTransport t) => t.opened.last.writes
+      .map((b) => utf8.decode(b, allowMalformed: true))
+      .join();
 
   group('which host the screen is about', () {
     test('offers only online hosts for a new connection', () async {
@@ -94,15 +98,24 @@ void main() {
       expect(vm.server!.name, 'up');
     });
 
-    test('with a session open, the header names that session\'s host', () async {
-      await repo.insertServer(server(name: 'a'));
-      await repo.insertServer(server(name: 'b'));
-      await start();
+    test(
+      'with a session open, the header names that session\'s host',
+      () async {
+        await repo.insertServer(server(name: 'a'));
+        await repo.insertServer(server(name: 'b'));
+        await start();
 
-      await vm.connect(vm.connectableServers.firstWhere((s) => s.name == 'b'));
+        await vm.connect(
+          vm.connectableServers.firstWhere((s) => s.name == 'b'),
+        );
 
-      expect(vm.server!.name, 'b', reason: 'the header must name the terminal on screen');
-    });
+        expect(
+          vm.server!.name,
+          'b',
+          reason: 'the header must name the terminal on screen',
+        );
+      },
+    );
   });
 
   group('connecting', () {
@@ -132,7 +145,8 @@ void main() {
 
     test('reports the transport phase while it works', () async {
       await repo.insertServer(server(name: 'nas'));
-      transport = FakeShellTransport(phases: ['Authenticating…'])..gate = Completer<void>();
+      transport = FakeShellTransport(phases: ['Authenticating…'])
+        ..gate = Completer<void>();
       await start();
 
       final pending = vm.connect(vm.server!);
@@ -146,16 +160,21 @@ void main() {
       expect(vm.connectPhase, isNull);
     });
 
-    test('a credential problem is reported in the user\'s terms, not as a stack trace', () async {
-      await repo.insertServer(server(name: 'nas', authType: 'key', authKeyAlias: 'gone'));
-      await start();
+    test(
+      'a credential problem is reported in the user\'s terms, not as a stack trace',
+      () async {
+        await repo.insertServer(
+          server(name: 'nas', authType: 'key', authKeyAlias: 'gone'),
+        );
+        await start();
 
-      await vm.connect(vm.server!);
+        await vm.connect(vm.server!);
 
-      expect(vm.sessions, isEmpty);
-      expect(vm.error, contains('gone'));
-      expect(vm.error, isNot(contains('Exception')));
-    });
+        expect(vm.sessions, isEmpty);
+        expect(vm.error, contains('gone'));
+        expect(vm.error, isNot(contains('Exception')));
+      },
+    );
 
     test('without a transport it says the terminal is unavailable', () async {
       // Convention 4: a disabled feature says so rather than opening a screen that will never
@@ -188,12 +207,66 @@ void main() {
       }
       await Future<void>.delayed(const Duration(milliseconds: 40));
 
-      expect(session.emulator.trimmedRowCount, greaterThan(0), reason: 'a limit is in force');
+      expect(
+        session.emulator.trimmedRowCount,
+        greaterThan(0),
+        reason: 'a limit is in force',
+      );
       expect(
         session.emulator.scrollbackRowCount(),
         PreferenceLimits.terminalScrollback.min,
         reason: 'the stored 1 was raised to the floor, not obeyed',
       );
+    });
+
+    test('lowering the scrollback limit takes effect on a running session', () async {
+      // The defect: the setting was read only when *building* a session, so lowering it to reclaim
+      // memory did nothing to the sessions already holding it. Reconnecting was the only way to get
+      // the effect — the opposite of what someone reaching for that setting wants.
+      await repo.insertServer(server(name: 'nas'));
+      await repo.insertSetting('terminal_scrollback_limit', '5000');
+      await start();
+      await vm.connect(vm.server!);
+      final session = vm.current!;
+      for (var i = 0; i < 2500; i++) {
+        transport.opened.last.emit('line \$i\r\n');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 60));
+      final before = session.emulator.scrollbackRowCount();
+      expect(before, greaterThan(PreferenceLimits.terminalScrollback.min));
+
+      app.applyPreferences(
+        app.preferences.copyWith(
+          terminalScrollbackLimit: PreferenceLimits.terminalScrollback.min,
+        ),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        session.emulator.scrollbackRowCount(),
+        PreferenceLimits.terminalScrollback.min,
+        reason: 'the buffer was trimmed to the new limit, not left as it was',
+      );
+    });
+
+    test('raising the limit does not discard what is already there', () async {
+      await repo.insertServer(server(name: 'nas'));
+      await repo.insertSetting('terminal_scrollback_limit', '2000');
+      await start();
+      await vm.connect(vm.server!);
+      final session = vm.current!;
+      for (var i = 0; i < 300; i++) {
+        transport.opened.last.emit('line \$i\r\n');
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 40));
+      final before = session.emulator.scrollbackRowCount();
+
+      app.applyPreferences(
+        app.preferences.copyWith(terminalScrollbackLimit: 20000),
+      );
+      await Future<void>.delayed(Duration.zero);
+
+      expect(session.emulator.scrollbackRowCount(), before);
     });
   });
 
@@ -233,7 +306,11 @@ void main() {
 
       expect(transport.opened.last.writes, hasLength(1), reason: 'contiguous');
       expect(sent(transport), 'echo one\recho two');
-      expect(vm.ctrl, isTrue, reason: 'the modifier still belongs to the next keystroke');
+      expect(
+        vm.ctrl,
+        isTrue,
+        reason: 'the modifier still belongs to the next keystroke',
+      );
     });
 
     test('read-only refuses typing but still allows paging', () async {
@@ -266,33 +343,39 @@ void main() {
   });
 
   group('session list', () {
-    test('closing one selects another rather than leaving nothing focused', () async {
-      await repo.insertServer(server(name: 'nas'));
-      await start();
-      await vm.connect(vm.server!);
-      final first = vm.sessions.first;
-      await vm.connect(vm.server!);
+    test(
+      'closing one selects another rather than leaving nothing focused',
+      () async {
+        await repo.insertServer(server(name: 'nas'));
+        await start();
+        await vm.connect(vm.server!);
+        final first = vm.sessions.first;
+        await vm.connect(vm.server!);
 
-      vm.close(vm.current!);
+        vm.close(vm.current!);
 
-      expect(vm.sessions, hasLength(1));
-      expect(vm.current!.id, first.id);
-    });
+        expect(vm.sessions, hasLength(1));
+        expect(vm.current!.id, first.id);
+      },
+    );
 
-    test('a session that ended keeps its place until it is dismissed', () async {
-      // Its scrollback is the only record of why it died.
-      await repo.insertServer(server(name: 'nas'));
-      await start();
-      await vm.connect(vm.server!);
-      await transport.opened.last.dropConnection();
-      await Future<void>.delayed(const Duration(milliseconds: 40));
+    test(
+      'a session that ended keeps its place until it is dismissed',
+      () async {
+        // Its scrollback is the only record of why it died.
+        await repo.insertServer(server(name: 'nas'));
+        await start();
+        await vm.connect(vm.server!);
+        await transport.opened.last.dropConnection();
+        await Future<void>.delayed(const Duration(milliseconds: 40));
 
-      expect(vm.sessions, hasLength(1));
-      expect(vm.current!.endReason, ShellSessionEnd.disconnected);
+        expect(vm.sessions, hasLength(1));
+        expect(vm.current!.endReason, ShellSessionEnd.disconnected);
 
-      vm.dismissEnded(vm.current!);
-      expect(vm.sessions, isEmpty);
-    });
+        vm.dismissEnded(vm.current!);
+        expect(vm.sessions, isEmpty);
+      },
+    );
 
     test('dismissing does nothing to a live session', () async {
       await repo.insertServer(server(name: 'nas'));
@@ -314,7 +397,11 @@ void main() {
 
       await vm.connect((await repo.getAllServers()).single);
 
-      expect(sent(transport), isEmpty, reason: 'nothing should be typed into a plain shell');
+      expect(
+        sent(transport),
+        isEmpty,
+        reason: 'nothing should be typed into a plain shell',
+      );
       expect(await repo.getPersistentSessions(), isEmpty);
     });
 
@@ -411,9 +498,17 @@ void main() {
 
       final after = (await repo.getPersistentSessions()).single;
       expect(after.backgroundedAt, greaterThanOrEqualTo(closedAt));
-      expect(after.tmuxName, before.tmuxName, reason: 'the same row, not a second one');
+      expect(
+        after.tmuxName,
+        before.tmuxName,
+        reason: 'the same row, not a second one',
+      );
       expect(after.serverId, before.serverId);
-      expect(after.createdAt, before.createdAt, reason: 'when it started is not when it was left');
+      expect(
+        after.createdAt,
+        before.createdAt,
+        reason: 'when it started is not when it was left',
+      );
     });
 
     test('a non-persistent host has no clock to start', () async {
@@ -457,27 +552,34 @@ void main() {
       );
       await vm.refreshResumable();
 
-      await vm.resume(vm.resumableSessions.firstWhere((r) => r.tmuxName == 'omniterm-1-older'));
+      await vm.resume(
+        vm.resumableSessions.firstWhere(
+          (r) => r.tmuxName == 'omniterm-1-older',
+        ),
+      );
 
       expect(sent(transport), contains('attach-session -t omniterm-1-older'));
       expect(sent(transport), isNot(contains('omniterm-1-newer')));
     });
 
-    test('forgetting removes the pointer and says the server keeps running it', () async {
-      final transport = FakeShellTransport();
-      final vm = await start(ssh: transport);
-      await repo.insertServer(server(name: 'nas', persistent: true));
-      await Future<void>.delayed(Duration.zero);
-      await vm.connect((await repo.getAllServers()).single);
-      final row = (await repo.getPersistentSessions()).single;
+    test(
+      'forgetting removes the pointer and says the server keeps running it',
+      () async {
+        final transport = FakeShellTransport();
+        final vm = await start(ssh: transport);
+        await repo.insertServer(server(name: 'nas', persistent: true));
+        await Future<void>.delayed(Duration.zero);
+        await vm.connect((await repo.getAllServers()).single);
+        final row = (await repo.getPersistentSessions()).single;
 
-      await vm.forgetResumable(row);
+        await vm.forgetResumable(row);
 
-      expect(await repo.getPersistentSessions(), isEmpty);
-      // Nothing was sent to the remote: forgetting is a local act, which is why the button is not
-      // called "Close".
-      expect(sent(transport), isNot(contains('kill-session')));
-    });
+        expect(await repo.getPersistentSessions(), isEmpty);
+        // Nothing was sent to the remote: forgetting is a local act, which is why the button is not
+        // called "Close".
+        expect(sent(transport), isNot(contains('kill-session')));
+      },
+    );
 
     test('resuming a session whose host is gone says so', () async {
       final transport = FakeShellTransport();
@@ -504,7 +606,9 @@ void main() {
       // and a timestamp, but the sanitiser is what makes that safe rather than the derivation.
       final transport = FakeShellTransport();
       final vm = await start(ssh: transport);
-      await repo.insertServer(server(name: r'evil; rm -rf ~ $(id)', persistent: true));
+      await repo.insertServer(
+        server(name: r'evil; rm -rf ~ $(id)', persistent: true),
+      );
       await Future<void>.delayed(Duration.zero);
 
       await vm.connect((await repo.getAllServers()).single);
@@ -513,6 +617,165 @@ void main() {
       expect(command, isNot(contains('rm -rf')));
       expect(command, isNot(contains(r'$(')));
       expect(RegExp(r'-s ([A-Za-z0-9-]+) ').hasMatch(command), isTrue);
+    });
+  });
+
+  /// tmux availability on a persistent host, ported from `TmuxInstallDialog` and
+  /// `installTmuxAndConnect` (`ui/AppUi.kt:617`, `ui/AppViewModel.kt:5911`).
+  ///
+  /// Flutter connected regardless: the bootstrap command guards itself with `command -v tmux`, so a
+  /// host configured for persistent sessions but missing tmux quietly opened an ordinary shell. The
+  /// user believed their work survived a dropped link, and it did not.
+  group('tmux availability', () {
+    Server persistentHost({String name = 'nas'}) =>
+        server(name: name).copyWith(persistentSession: true);
+
+    test('a host without tmux is not connected, it is asked about', () async {
+      final ssh = FakeShellTransport()..execAnswers['command -v tmux'] = 'no';
+      await repo.insertServer(persistentHost());
+      final vm = await start(ssh: ssh);
+
+      await vm.connect(vm.connectableServers.single);
+
+      expect(vm.tmuxPromptServer, isNotNull);
+      expect(
+        ssh.opened,
+        isEmpty,
+        reason:
+            'silently opening a non-resumable shell is the defect being fixed',
+      );
+    });
+
+    test('a host with tmux connects without a prompt', () async {
+      final ssh = FakeShellTransport()..execAnswers['command -v tmux'] = 'yes';
+      await repo.insertServer(persistentHost());
+      final vm = await start(ssh: ssh);
+
+      await vm.connect(vm.connectableServers.single);
+
+      expect(vm.tmuxPromptServer, isNull);
+      expect(ssh.opened, hasLength(1));
+    });
+
+    test('the probe runs once per host, not per connection', () async {
+      final ssh = FakeShellTransport()..execAnswers['command -v tmux'] = 'yes';
+      await repo.insertServer(persistentHost());
+      final vm = await start(ssh: ssh);
+      final host = vm.connectableServers.single;
+
+      await vm.connect(host);
+      await vm.connect(host);
+
+      expect(
+        ssh.commands.where((c) => c.contains('command -v tmux')).length,
+        1,
+        reason: 'a round trip before every connection would be felt',
+      );
+    });
+
+    test('a non-persistent host is never probed', () async {
+      final ssh = FakeShellTransport();
+      await repo.insertServer(server(name: 'plain'));
+      final vm = await start(ssh: ssh);
+
+      await vm.connect(vm.connectableServers.single);
+
+      expect(ssh.commands, isEmpty);
+      expect(ssh.opened, hasLength(1));
+    });
+
+    test('a probe that cannot run assumes tmux is there', () async {
+      // Refusing to connect over a failed probe would be worse than the silent degradation this
+      // replaces: the bootstrap command guards itself anyway.
+      final ssh = FakeShellTransport(); // exec throws
+      await repo.insertServer(persistentHost());
+      final vm = await start(ssh: ssh);
+
+      await vm.connect(vm.connectableServers.single);
+
+      expect(vm.tmuxPromptServer, isNull);
+      expect(ssh.opened, hasLength(1));
+    });
+
+    test('connecting without persistence opens a plain shell', () async {
+      final ssh = FakeShellTransport()..execAnswers['command -v tmux'] = 'no';
+      await repo.insertServer(persistentHost());
+      final vm = await start(ssh: ssh);
+      await vm.connect(vm.connectableServers.single);
+      expect(vm.tmuxPromptServer, isNotNull);
+
+      await vm.connectWithoutPersistence();
+
+      expect(vm.tmuxPromptServer, isNull);
+      expect(ssh.opened, hasLength(1));
+      expect(
+        sent(ssh),
+        isNot(contains('tmux')),
+        reason: 'the user chose a plain shell, so no bootstrap may be written',
+      );
+    });
+
+    test('a successful install connects with persistence', () async {
+      final ssh = FakeShellTransport()
+        ..execAnswers['command -v tmux'] = 'no'
+        ..streamChunks = const ['reading package lists…\n', 'tmux installed\n'];
+      await repo.insertServer(persistentHost());
+      final vm = await start(ssh: ssh);
+      await vm.connect(vm.connectableServers.single);
+
+      // The re-probe after installing must now answer yes.
+      ssh.execAnswers['command -v tmux'] = 'yes';
+      await vm.installTmuxAndConnect();
+
+      expect(vm.tmuxPromptServer, isNull);
+      expect(ssh.opened, hasLength(1));
+      expect(sent(ssh), contains('tmux'));
+    });
+
+    test('a failed install keeps the prompt and says what to do', () async {
+      // The installer can exit 0 against a broken mirror, so the re-probe is what decides.
+      final ssh = FakeShellTransport()
+        ..execAnswers['command -v tmux'] = 'no'
+        ..streamChunks = const ['E: Unable to locate package tmux\n'];
+      await repo.insertServer(persistentHost());
+      final vm = await start(ssh: ssh);
+      await vm.connect(vm.connectableServers.single);
+
+      await vm.installTmuxAndConnect();
+
+      expect(
+        vm.tmuxPromptServer,
+        isNotNull,
+        reason: 'the user still has a decision to make',
+      );
+      expect(vm.tmuxInstallOutput, contains('Install did not complete'));
+      expect(ssh.opened, isEmpty);
+    });
+
+    test('installer output is streamed as it arrives', () async {
+      final ssh = FakeShellTransport()
+        ..execAnswers['command -v tmux'] = 'no'
+        ..streamChunks = const ['step one\n', 'step two\n'];
+      await repo.insertServer(persistentHost());
+      final vm = await start(ssh: ssh);
+      await vm.connect(vm.connectableServers.single);
+
+      await vm.installTmuxAndConnect();
+
+      expect(vm.tmuxInstallOutput, contains('step one'));
+      expect(vm.tmuxInstallOutput, contains('step two'));
+    });
+
+    test('dismissing clears the prompt without connecting', () async {
+      final ssh = FakeShellTransport()..execAnswers['command -v tmux'] = 'no';
+      await repo.insertServer(persistentHost());
+      final vm = await start(ssh: ssh);
+      await vm.connect(vm.connectableServers.single);
+
+      vm.dismissTmuxPrompt();
+
+      expect(vm.tmuxPromptServer, isNull);
+      expect(ssh.opened, isEmpty);
     });
   });
 }

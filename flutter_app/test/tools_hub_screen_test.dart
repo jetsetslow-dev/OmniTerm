@@ -41,6 +41,29 @@ void main() {
       await tester.pump();
     });
 
+    testWidgets('every tile carries the Kotlin label, verbatim', (tester) async {
+      // Sentence case on both sides. Kotlin's casing was inconsistent — "Crash history" beside
+      // "OmniTerm Utilities" — so the fix was to normalise *both* implementations rather than copy
+      // the inconsistency into Flutter; the Kotlin half is in the parity branch. Pinned here
+      // because nothing asserted these labels before, which is how they drifted unnoticed.
+      await pump(tester, const ToolsHubScreen());
+
+      for (final label in const [
+        'Alerts & rules',
+        'Scripts',
+        'Network tools',
+        'Auth & keys',
+        'App backup',
+        'Health scoring',
+        'Settings',
+        'About OmniTerm',
+      ]) {
+        expect(find.text(label), findsOneWidget, reason: '$label must match the Kotlin label exactly');
+      }
+      expect(find.text('OmniTerm utilities'), findsOneWidget);
+      await tester.pump();
+    });
+
     testWidgets('tapping a tile navigates there', (tester) async {
       await pump(tester, const ToolsHubScreen());
 
@@ -67,7 +90,8 @@ void main() {
 
       expect(find.byKey(const ValueKey('about.privacy')), findsOneWidget);
       expect(find.textContaining('stay on this device'), findsOneWidget);
-      expect(find.textContaining('no telemetry'), findsOneWidget);
+      expect(find.textContaining('usage telemetry'), findsOneWidget);
+      expect(find.textContaining('Source builds do not include billing or ads'), findsOneWidget);
       await tester.pump();
     });
 

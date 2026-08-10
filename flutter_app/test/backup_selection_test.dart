@@ -157,4 +157,108 @@ void main() {
       expect(section.label.trim(), isNotEmpty, reason: section.name);
     }
   });
+
+  /// The `backup_export_selection` wire format, byte-compatible with Kotlin's
+  /// `BackupSelection.encode()` / `decodeBackupSelection` (`AppViewModel.kt:636`-`676`).
+  group('encode / decode', () {
+    test('a selection round-trips', () {
+      final selection = const BackupSelection.none()
+          .toggled(BackupSection.scripts, enabled: true)
+          .toggled(BackupSection.settings, enabled: true);
+
+      expect(BackupSelection.decode(selection.encode()).sections, selection.sections);
+    });
+
+    test('the encoding is the Kotlin one', () {
+      final encoded = const BackupSelection.none()
+          .toggled(BackupSection.scripts, enabled: true)
+          .encode();
+
+      expect(encoded, 'v2:scripts');
+    });
+
+    test('the closure is applied before writing, not assumed on read', () {
+      // Firing alerts pull in their rule, which pulls in the host.
+      final encoded = const BackupSelection.none()
+          .toggled(BackupSection.activeAlerts, enabled: true)
+          .encode();
+
+      expect(encoded, contains('servers'));
+      expect(encoded, contains('alertRules'));
+    });
+
+    test('an empty stored value means everything, as on a fresh install', () {
+      expect(BackupSelection.decode(null).contains(BackupSection.servers), isTrue);
+      expect(BackupSelection.decode('').contains(BackupSection.servers), isTrue);
+    });
+
+    test('a v1 value inherits tunnels from hosts', () {
+      // v1 predates tunnel backup. Kotlin infers `portForwards` from `servers` for exactly this.
+      final decoded = BackupSelection.decode('servers,sshKeys');
+
+      expect(decoded.contains(BackupSection.portForwards), isTrue);
+      expect(decoded.contains(BackupSection.servers), isTrue);
+    });
+
+    test('a v1 value without hosts does not start exporting host data', () {
+      // The migration must not turn a settings-only selection into one carrying credentials.
+      final decoded = BackupSelection.decode('settings');
+
+      expect(decoded.contains(BackupSection.portForwards), isFalse);
+      expect(decoded.contains(BackupSection.servers), isFalse);
+      expect(decoded.contains(BackupSection.settings), isTrue);
+    });
+
+    test('a v2 value is taken literally, with no inheritance', () {
+      final decoded = BackupSelection.decode('v2:servers');
+
+      expect(decoded.contains(BackupSection.servers), isTrue);
+      expect(decoded.contains(BackupSection.portForwards), isFalse);
+    });
+
+    test('an unknown section name is ignored rather than failing the parse', () {
+      // A selection written by a newer build must degrade, not reset the user's choice entirely.
+      final decoded = BackupSelection.decode('v2:scripts,quantumEntanglement');
+
+      expect(decoded.contains(BackupSection.scripts), isTrue);
+    });
+  });
+
+  group('the restore host cap', () {
+    // Ported from `maxSelected` on `BackupHostSelectionList` (`ui/ToolsScreen.kt:2970`). The free
+    // Play build caps saved hosts, and that cap was enforced when adding one by hand but not on
+    // restore — so a backup was an unmetered way straight past it.
+
+    test('an unlocked or source-available build has no cap', () {
+      expect(restoreHostCap(hasHostLimit: false, hostLimit: 1), isNull);
+    });
+
+    test('a limited build caps at its limit', () {
+      expect(restoreHostCap(hasHostLimit: true, hostLimit: 1), 1);
+    });
+
+    test('with no cap every host in the file starts selected', () {
+      expect(defaultRestoreHostIds([3, 1, 2]), {3, 1, 2});
+    });
+
+    test('a backup within the cap is unaffected', () {
+      expect(defaultRestoreHostIds([7], cap: 1), {7});
+    });
+
+    test('a backup over the cap starts with the file\'s first hosts', () {
+      // The file lists hosts in the order they were saved, so the oldest survive. Choosing by
+      // anything else would be choosing for the user, who can change the selection anyway.
+      expect(defaultRestoreHostIds([5, 6, 7], cap: 1), {5});
+      expect(defaultRestoreHostIds([5, 6, 7], cap: 2), {5, 6});
+    });
+
+    test('a zero or negative cap selects nothing rather than throwing', () {
+      expect(defaultRestoreHostIds([1, 2], cap: 0), isEmpty);
+      expect(defaultRestoreHostIds([1, 2], cap: -1), isEmpty);
+    });
+
+    test('an empty backup is empty whatever the cap', () {
+      expect(defaultRestoreHostIds(const [], cap: 1), isEmpty);
+    });
+  });
 }

@@ -35,7 +35,8 @@ class AppRepository {
   /// persists a §7.10 legacy upgrade.
   void attachSecretStore(SecretStore secrets) => _secrets = secrets;
 
-  Future<T> inTransaction<T>(Future<T> Function() action) => _db.transaction(action);
+  Future<T> inTransaction<T>(Future<T> Function() action) =>
+      _db.transaction(action);
 
   // ── §7.10 legacy credential migration ──────────────────────────────────────
 
@@ -56,7 +57,9 @@ class AppRepository {
 
     /// Returns the upgraded ciphertext, or [current] unchanged when it cannot be read.
     Future<String?> lift(String? current) async {
-      if (current == null || !SecretStore.isLegacyEncrypted(current)) return current;
+      if (current == null || !SecretStore.isLegacyEncrypted(current)) {
+        return current;
+      }
       final next = await _secrets.upgradeLegacy(current);
       if (next == null) return current;
       upgraded++;
@@ -65,8 +68,10 @@ class AppRepository {
 
     for (final server in await _db.serverDao.getAllServers()) {
       final authPassword = await lift(server.authPassword);
-      final sudoPassword = await lift(server.sudoPassword) ?? server.sudoPassword;
-      final proxyPassword = await lift(server.proxyPassword) ?? server.proxyPassword;
+      final sudoPassword =
+          await lift(server.sudoPassword) ?? server.sudoPassword;
+      final proxyPassword =
+          await lift(server.proxyPassword) ?? server.proxyPassword;
       if (authPassword == server.authPassword &&
           sudoPassword == server.sudoPassword &&
           proxyPassword == server.proxyPassword) {
@@ -84,7 +89,9 @@ class AppRepository {
     for (final key in await _db.appDataDao.getAllKeys()) {
       final privateKey = await lift(key.privateKey) ?? key.privateKey;
       if (privateKey == key.privateKey) continue;
-      await _db.appDataDao.insertKey(key.copyWith(privateKey: privateKey).toCompanion(false));
+      await _db.appDataDao.insertKey(
+        key.copyWith(privateKey: privateKey).toCompanion(false),
+      );
     }
 
     for (final profile in await _db.appDataDao.getAllProfiles()) {
@@ -98,14 +105,18 @@ class AppRepository {
     for (final share in await _db.appDataDao.getAllShares()) {
       final password = await lift(share.password) ?? share.password;
       if (password == share.password) continue;
-      await _db.appDataDao.insertShare(share.copyWith(password: password).toCompanion(false));
+      await _db.appDataDao.insertShare(
+        share.copyWith(password: password).toCompanion(false),
+      );
     }
 
     for (final key in secureSettingKeys) {
       final row = await _db.appDataDao.getSetting(key);
       final value = await lift(row?.value);
       if (row == null || value == row.value) continue;
-      await _db.appDataDao.insertSetting(AppSettingsCompanion.insert(key: key, value: value ?? ''));
+      await _db.appDataDao.insertSetting(
+        AppSettingsCompanion.insert(key: key, value: value ?? ''),
+      );
     }
 
     return upgraded;
@@ -135,10 +146,15 @@ class AppRepository {
   Future<void> updateServer(Server server) async =>
       _db.serverDao.updateServer(await _encryptServer(server));
 
-  Future<void> updateConnectionState(int id, String status, int health, int latency) =>
-      _db.serverDao.updateConnectionState(id, status, health, latency);
+  Future<void> updateConnectionState(
+    int id,
+    String status,
+    int health,
+    int latency,
+  ) => _db.serverDao.updateConnectionState(id, status, health, latency);
 
-  Future<void> resetAllConnectionStates() => _db.serverDao.resetAllConnectionStates();
+  Future<void> resetAllConnectionStates() =>
+      _db.serverDao.resetAllConnectionStates();
 
   Future<void> updateAuthState(int id, String authStatus, String? authError) =>
       _db.serverDao.updateAuthState(id, authStatus, authError);
@@ -147,17 +163,18 @@ class AppRepository {
   ///
   /// Transactional because a half-deleted host is worse than either outcome: orphaned alert rules
   /// keep firing against an id that no longer resolves to anything.
-  Future<void> deleteServerAndDependents(int serverId) => _db.transaction(() async {
-    await _db.serverDao.deleteMetricsForServer(serverId);
-    await _db.alertsDao.deleteRulesForServer(serverId);
-    await _db.alertsDao.deleteAlertsForServer(serverId);
-    await _db.alertsDao.deleteHistoryForServer(serverId);
-    await _db.appDataDao.deletePortForwardsForServer(serverId);
-    await _db.appDataDao.deleteStacksForServer(serverId);
-    await _db.appDataDao.deletePersistentSessionsForServer(serverId);
-    await _db.appDataDao.deleteSetting('sftp_bookmarks_$serverId');
-    await _db.serverDao.deleteServerById(serverId);
-  });
+  Future<void> deleteServerAndDependents(int serverId) =>
+      _db.transaction(() async {
+        await _db.serverDao.deleteMetricsForServer(serverId);
+        await _db.alertsDao.deleteRulesForServer(serverId);
+        await _db.alertsDao.deleteAlertsForServer(serverId);
+        await _db.alertsDao.deleteHistoryForServer(serverId);
+        await _db.appDataDao.deletePortForwardsForServer(serverId);
+        await _db.appDataDao.deleteStacksForServer(serverId);
+        await _db.appDataDao.deletePersistentSessionsForServer(serverId);
+        await _db.appDataDao.deleteSetting('sftp_bookmarks_$serverId');
+        await _db.serverDao.deleteServerById(serverId);
+      });
 
   /// Keep only [keepServerIds] and drop every dependent row belonging to any other host.
   ///
@@ -165,7 +182,9 @@ class AppRepository {
   /// so "keep none" is made explicit with an id no auto-generated key can take. Fleet-wide rows
   /// (serverId 0) are preserved by the DAO's own `serverId != 0` guard, not by this list.
   Future<void> keepOnlyServers(Set<int> keepServerIds) async {
-    final ids = keepServerIds.isEmpty ? <int>[_impossibleServerId] : keepServerIds.toList();
+    final ids = keepServerIds.isEmpty
+        ? <int>[_impossibleServerId]
+        : keepServerIds.toList();
     await _db.transaction(() async {
       await _db.serverDao.deleteMetricsExceptServers(ids);
       await _db.alertsDao.deleteRulesExceptServers(ids);
@@ -173,7 +192,9 @@ class AppRepository {
       await _db.alertsDao.deleteHistoryExceptServers(ids);
       await _db.appDataDao.deletePortForwardsExceptServers(ids);
       await _db.appDataDao.deletePersistentSessionsExceptServers(ids);
-      await _db.appDataDao.deleteSftpBookmarksExcept([for (final id in ids) 'sftp_bookmarks_$id']);
+      await _db.appDataDao.deleteSftpBookmarksExcept([
+        for (final id in ids) 'sftp_bookmarks_$id',
+      ]);
       await _db.serverDao.deleteServersExcept(ids);
     });
   }
@@ -187,7 +208,8 @@ class AppRepository {
   /// it through — and SQLite happily accepts 0 as a literal rowid. Left as-is, every insert of a new
   /// record would write rowid 0 and, under `InsertMode.replace`, silently overwrite the previous
   /// one: adding a second host would delete the first.
-  static Value<int> _newOrExisting(int id) => id == 0 ? const Value.absent() : Value(id);
+  static Value<int> _newOrExisting(int id) =>
+      id == 0 ? const Value.absent() : Value(id);
 
   // ── metrics ────────────────────────────────────────────────────────────────
 
@@ -203,15 +225,18 @@ class AppRepository {
   Future<List<MetricHistoryRow>> getLatestMetricsForAllServers() =>
       _db.serverDao.getLatestMetricsForAllServers();
 
-  Future<void> insertMetric(MetricHistoryCompanion metric) => _db.serverDao.insertMetric(metric);
+  Future<void> insertMetric(MetricHistoryCompanion metric) =>
+      _db.serverDao.insertMetric(metric);
 
   Future<void> pruneMetrics(int cutoff) => _db.serverDao.pruneMetrics(cutoff);
 
   // ── ssh keys ───────────────────────────────────────────────────────────────
 
-  Stream<List<SshKey>> get keysStream => _db.appDataDao.watchAllKeys().asyncMap(_decryptKeys);
+  Stream<List<SshKey>> get keysStream =>
+      _db.appDataDao.watchAllKeys().asyncMap(_decryptKeys);
 
-  Future<List<SshKey>> getAllKeys() async => _decryptKeys(await _db.appDataDao.getAllKeys());
+  Future<List<SshKey>> getAllKeys() async =>
+      _decryptKeys(await _db.appDataDao.getAllKeys());
 
   Future<int> insertKey(SshKey key) async {
     final encrypted = await _encryptKey(key);
@@ -235,7 +260,9 @@ class AppRepository {
   Future<CredentialProfile?> getCredentialProfileById(int id) async {
     final profile = await _db.appDataDao.getProfileById(id);
     if (profile == null) return null;
-    return profile.copyWith(password: Value(await _secrets.decrypt(profile.password)));
+    return profile.copyWith(
+      password: Value(await _secrets.decrypt(profile.password)),
+    );
   }
 
   Future<void> deleteProfile(CredentialProfile profile) =>
@@ -248,7 +275,8 @@ class AppRepository {
     );
   }
 
-  Future<void> deleteProfileById(int id) => _db.appDataDao.deleteProfileById(id);
+  Future<void> deleteProfileById(int id) =>
+      _db.appDataDao.deleteProfileById(id);
 
   // ── alert rules, incidents, history ────────────────────────────────────────
 
@@ -256,20 +284,29 @@ class AppRepository {
   Future<List<AlertRule>> getAllRules() => _db.alertsDao.getAllRules();
   Future<List<AlertRule>> getRulesForServer(int serverId) =>
       _db.alertsDao.getRulesForServer(serverId);
-  Future<int> insertRule(AlertRulesCompanion rule) => _db.alertsDao.insertRule(rule);
+  Future<int> insertRule(AlertRulesCompanion rule) =>
+      _db.alertsDao.insertRule(rule);
   Future<void> deleteRuleById(int id) => _db.alertsDao.deleteRuleById(id);
 
-  Stream<List<ActiveAlert>> get activeAlertsStream => _db.alertsDao.watchActiveAlerts();
-  Future<List<ActiveAlert>> getActiveAlerts() => _db.alertsDao.getActiveAlerts();
-  Future<int> insertAlert(ActiveAlertsCompanion alert) => _db.alertsDao.insertAlert(alert);
+  Stream<List<ActiveAlert>> get activeAlertsStream =>
+      _db.alertsDao.watchActiveAlerts();
+  Future<List<ActiveAlert>> getActiveAlerts() =>
+      _db.alertsDao.getActiveAlerts();
+  Future<int> insertAlert(ActiveAlertsCompanion alert) =>
+      _db.alertsDao.insertAlert(alert);
   Future<void> deleteAlert(int id) => _db.alertsDao.deleteAlert(id);
-  Future<void> setAcknowledged(int id, bool ack) => _db.alertsDao.setAcknowledged(id, ack);
-  Future<void> acknowledgeAlert(int id) => _db.alertsDao.setAcknowledged(id, true);
+  Future<void> setAcknowledged(int id, bool ack) =>
+      _db.alertsDao.setAcknowledged(id, ack);
+  Future<void> acknowledgeAlert(int id) =>
+      _db.alertsDao.setAcknowledged(id, true);
   Future<void> acknowledgeAll() => _db.alertsDao.acknowledgeAll();
-  Future<void> muteAlert(int id, int mutedUntil) => _db.alertsDao.muteAlert(id, mutedUntil);
+  Future<void> muteAlert(int id, int mutedUntil) =>
+      _db.alertsDao.muteAlert(id, mutedUntil);
 
-  Stream<List<AlertHistoryRow>> get alertHistoryStream => _db.alertsDao.watchAlertHistory();
-  Future<List<AlertHistoryRow>> getAlertHistory() => _db.alertsDao.getAlertHistory();
+  Stream<List<AlertHistoryRow>> get alertHistoryStream =>
+      _db.alertsDao.watchAlertHistory();
+  Future<List<AlertHistoryRow>> getAlertHistory() =>
+      _db.alertsDao.getAlertHistory();
   Future<int> insertAlertHistory(AlertHistoryCompanion history) =>
       _db.alertsDao.insertHistory(history);
 
@@ -285,21 +322,34 @@ class AppRepository {
 
   // ── scripts, WoL, tunnels, stacks ──────────────────────────────────────────
 
-  Stream<List<QuickScript>> get scriptsStream => _db.appDataDao.watchAllScripts();
+  Stream<List<QuickScript>> get scriptsStream =>
+      _db.appDataDao.watchAllScripts();
   Future<List<QuickScript>> getAllScripts() => _db.appDataDao.getAllScripts();
-  Future<int> insertScript(QuickScriptsCompanion script) => _db.appDataDao.insertScript(script);
+  Future<int> insertScript(QuickScriptsCompanion script) =>
+      _db.appDataDao.insertScript(script);
   Future<void> deleteScriptById(int id) => _db.appDataDao.deleteScriptById(id);
 
-  Stream<List<WolTarget>> get wolTargetsStream => _db.appDataDao.watchAllWolTargets();
-  Future<List<WolTarget>> getAllWolTargets() => _db.appDataDao.getAllWolTargets();
-  Future<int> insertWolTarget(WolTargetsCompanion target) => _db.appDataDao.insertWolTarget(target);
-  Future<void> deleteWolTargetById(int id) => _db.appDataDao.deleteWolTargetById(id);
+  Stream<List<WolTarget>> get wolTargetsStream =>
+      _db.appDataDao.watchAllWolTargets();
+  Future<List<WolTarget>> getAllWolTargets() =>
+      _db.appDataDao.getAllWolTargets();
+  Future<int> insertWolTarget(WolTargetsCompanion target) =>
+      _db.appDataDao.insertWolTarget(target);
+  Future<void> deleteWolTargetById(int id) =>
+      _db.appDataDao.deleteWolTargetById(id);
+  Future<void> updateWolLastWoken(int id, int timestamp) =>
+      _db.appDataDao.updateWolLastWoken(id, timestamp);
 
-  Stream<List<PortForward>> get portForwardsStream => _db.appDataDao.watchAllPortForwards();
-  Future<List<PortForward>> getAllPortForwards() => _db.appDataDao.getAllPortForwards();
-  Future<int> insertPortForward(PortForwardsCompanion pf) => _db.appDataDao.insertPortForward(pf);
-  Future<void> updatePortForward(PortForward pf) => _db.appDataDao.updatePortForward(pf);
-  Future<void> deletePortForwardById(int id) => _db.appDataDao.deletePortForwardById(id);
+  Stream<List<PortForward>> get portForwardsStream =>
+      _db.appDataDao.watchAllPortForwards();
+  Future<List<PortForward>> getAllPortForwards() =>
+      _db.appDataDao.getAllPortForwards();
+  Future<int> insertPortForward(PortForwardsCompanion pf) =>
+      _db.appDataDao.insertPortForward(pf);
+  Future<void> updatePortForward(PortForward pf) =>
+      _db.appDataDao.updatePortForward(pf);
+  Future<void> deletePortForwardById(int id) =>
+      _db.appDataDao.deletePortForwardById(id);
 
   Future<List<StackRegistryRow>> getStacksForServer(int serverId) =>
       _db.appDataDao.getStacksForServer(serverId);
@@ -323,7 +373,8 @@ class AppRepository {
     );
   }
 
-  Future<void> deleteNetworkShareById(int id) => _db.appDataDao.deleteShareById(id);
+  Future<void> deleteNetworkShareById(int id) =>
+      _db.appDataDao.deleteShareById(id);
 
   // ── settings ───────────────────────────────────────────────────────────────
 
@@ -339,8 +390,12 @@ class AppRepository {
   }
 
   Future<void> insertSetting(String key, String value) async {
-    final stored = secureSettingKeys.contains(key) ? (await _secrets.encrypt(value) ?? '') : value;
-    await _db.appDataDao.insertSetting(AppSettingsCompanion.insert(key: key, value: stored));
+    final stored = secureSettingKeys.contains(key)
+        ? (await _secrets.encrypt(value) ?? '')
+        : value;
+    await _db.appDataDao.insertSetting(
+      AppSettingsCompanion.insert(key: key, value: stored),
+    );
   }
 
   Future<void> deleteSetting(String key) => _db.appDataDao.deleteSetting(key);
@@ -382,22 +437,30 @@ class AppRepository {
   );
 
   Future<List<SshKey>> _decryptKeys(List<SshKey> keys) async => [
-    for (final k in keys) k.copyWith(privateKey: await _secrets.decrypt(k.privateKey) ?? ''),
+    for (final k in keys)
+      k.copyWith(privateKey: await _secrets.decrypt(k.privateKey) ?? ''),
   ];
 
   Future<SshKey> _encryptKey(SshKey key) async =>
       key.copyWith(privateKey: await _secrets.encrypt(key.privateKey) ?? '');
 
-  Future<List<CredentialProfile>> _decryptProfiles(List<CredentialProfile> profiles) async => [
-    for (final p in profiles) p.copyWith(password: Value(await _secrets.decrypt(p.password))),
+  Future<List<CredentialProfile>> _decryptProfiles(
+    List<CredentialProfile> profiles,
+  ) async => [
+    for (final p in profiles)
+      p.copyWith(password: Value(await _secrets.decrypt(p.password))),
   ];
 
   Future<CredentialProfile> _encryptProfile(CredentialProfile profile) async =>
-      profile.copyWith(password: Value(await _secrets.encrypt(profile.password)));
+      profile.copyWith(
+        password: Value(await _secrets.encrypt(profile.password)),
+      );
 
-  Future<List<NetworkShare>> _decryptShares(List<NetworkShare> shares) async => [
-    for (final s in shares) s.copyWith(password: await _secrets.decrypt(s.password) ?? ''),
-  ];
+  Future<List<NetworkShare>> _decryptShares(List<NetworkShare> shares) async =>
+      [
+        for (final s in shares)
+          s.copyWith(password: await _secrets.decrypt(s.password) ?? ''),
+      ];
 
   Future<NetworkShare> _encryptShare(NetworkShare share) async =>
       share.copyWith(password: await _secrets.encrypt(share.password) ?? '');

@@ -28,6 +28,24 @@ void main() {
       expect(s1.hashCode, equals(s2.hashCode));
       expect(s1, isNot(equals(s3)));
     });
+
+    test('copyWith can clear stale store messages and prices', () {
+      const state = LicenseState(
+        productPrice: '\$4.99',
+        adRemovalPrice: '\$1.99',
+        message: 'Store unavailable',
+      );
+
+      final cleared = state.copyWith(
+        productPrice: null,
+        adRemovalPrice: null,
+        message: null,
+      );
+
+      expect(cleared.productPrice, isNull);
+      expect(cleared.adRemovalPrice, isNull);
+      expect(cleared.message, isNull);
+    });
   });
 
   group('DisabledLicenseController', () {

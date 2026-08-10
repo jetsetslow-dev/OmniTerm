@@ -7,6 +7,16 @@ import '../app_database.dart';
 import '../app_repository.dart';
 import '../script_presets.dart';
 import 'backup_envelope.dart';
+import '../../platform/crash_log.dart';
+
+const _deviceLocalSettingKeys = {
+  'app_pin',
+  'app_lock_enabled',
+  'biometrics_enabled',
+  'pin_failed_attempts',
+  'pin_locked_until',
+  'app_lock_grace_ms',
+};
 
 /// Turns the database into a backup document, and back.
 ///
@@ -24,6 +34,29 @@ class BackupPayload {
   /// The document version this app writes.
   static const version = 2;
 
+  /// Rejects a document this build is too old to understand, or null when it is safe to read.
+  ///
+  /// The version was written into every backup and **never read back**, so a file from a newer
+  /// build would be restored as though it had this build's shape. That is not hypothetical here:
+  /// `decode` already carries a v1→v2 migration for the selection format, which is exactly the kind
+  /// of change that silently misreads when the version is ignored.
+  ///
+  /// Older documents are accepted — migrating forward is the whole point of keeping that code.
+  /// Newer ones are refused, because guessing at a shape that did not exist yet is how a restore
+  /// quietly loses data it appeared to accept.
+  static String? incompatibleVersionMessage(Object? rawVersion) {
+    // A document with no version at all predates the field, which makes it v1 — the oldest shape
+    // this build already knows how to read.
+    if (rawVersion == null) return null;
+    final found = rawVersion is int ? rawVersion : int.tryParse('$rawVersion');
+    if (found == null) {
+      return 'That backup file does not say what version it is, so it cannot be read safely.';
+    }
+    if (found <= version) return null;
+    return 'That backup was written by a newer version of OmniTerm (format $found; this build '
+        'reads up to $version). Update the app, then restore it.';
+  }
+
   /// Serialises the selected sections.
   static String encode({
     required BackupSelection selection,
@@ -38,6 +71,7 @@ class BackupPayload {
     List<ActiveAlert> activeAlerts = const [],
     List<AlertHistoryRow> alertHistory = const [],
     List<NetworkShare> networkShares = const [],
+    List<CrashEntry> crashLogs = const [],
   }) {
     final closed = selection.withReferentialClosure();
 
@@ -72,6 +106,13 @@ class BackupPayload {
             'proxyPassword': server.proxyPassword,
             'proxyKeyAlias': server.proxyKeyAlias,
           },
+      ];
+    }
+
+    if (closed.contains(BackupSection.crashLogs)) {
+      document['crashLogs'] = [
+        for (final entry in crashLogs)
+          {'t': entry.timeMs, 'r': redactCrashReport(entry.report)},
       ];
     }
 
@@ -203,6 +244,9 @@ class BackupPayload {
       document['networkShares'] = [
         for (final share in networkShares)
           {
+            // Per-share settings use the row id in their key. Carry it only so restore can remap
+            // those settings to the new row; it is never written as the restored share's id.
+            'id': share.id,
             'name': share.name,
             'protocol': share.protocol,
             'address': share.address,
@@ -237,9 +281,13 @@ class BackupPayload {
 
     if (closed.contains(BackupSection.settings)) {
       document['settings'] = [
-        // The app lock PIN is a credential for *this device*, not a preference. Restoring it onto
-        // another device would carry a lock the user did not set there.
-        for (final setting in settings.where((s) => s.key != 'app_pin'))
+        // Lock state and last-open paths belong to this device. Carrying either to another phone
+        // can lock the user out or make the file browser open a path that does not exist there.
+        for (final setting in settings.where(
+          (s) =>
+              !_deviceLocalSettingKeys.contains(s.key) &&
+              !s.key.startsWith('sftp_last_path_'),
+        ))
           {'key': setting.key, 'value': setting.value},
       ];
     }
@@ -250,7 +298,9 @@ class BackupPayload {
   static bool _isPristinePreset(QuickScript script) {
     final key = script.presetKey;
     if (key == null) return false;
-    final preset = kAllScriptPresets.where((p) => p.presetKey == key).firstOrNull;
+    final preset = kAllScriptPresets
+        .where((p) => p.presetKey == key)
+        .firstOrNull;
     if (preset == null) return false;
     return isPristinePreset(preset, script.name, script.command);
   }
@@ -262,7 +312,10 @@ class BackupPayload {
   /// there is no undo for that.
   ///
   /// Returns a per-section count of what was written.
-  static Future<Map<String, int>> restore(AppRepositoryLike repository, String json) async {
+  static Future<Map<String, int>> restore(
+    AppRepositoryLike repository,
+    String json,
+  ) async {
     final Map<String, dynamic> document;
     try {
       document = jsonDecode(json) as Map<String, dynamic>;
@@ -272,23 +325,36 @@ class BackupPayload {
 
     final counts = <String, int>{};
 
-    // Old host id → new host id, so alert rules land on the right machine.
-    final serverIdMap = <int, int>{};
-    for (final raw in _list(document, 'servers')) {
-      final oldId = raw['id'] as int? ?? 0;
-      final newId = await repository.insertRestoredServer(raw);
-      if (oldId != 0) serverIdMap[oldId] = newId;
-      counts['servers'] = (counts['servers'] ?? 0) + 1;
-    }
-
     for (final raw in _list(document, 'sshKeys')) {
       await repository.insertRestoredKey(raw);
       counts['sshKeys'] = (counts['sshKeys'] ?? 0) + 1;
     }
 
+    // Profiles must be restored before anything that points at them. Source row ids are local to
+    // the device that made the backup, so writing one directly could attach a host to an unrelated
+    // credential that happens to occupy the same id on this device.
+    final profileIdMap = <int, int>{};
     for (final raw in _list(document, 'credentialProfiles')) {
-      await repository.insertRestoredProfile(raw);
+      final oldId = raw['id'] as int? ?? 0;
+      final newId = await repository.insertRestoredProfile(raw);
+      if (oldId != 0) profileIdMap[oldId] = newId;
       counts['credentialProfiles'] = (counts['credentialProfiles'] ?? 0) + 1;
+    }
+
+    // Old host id → new host id, so host-scoped rows land on the right machine. An absent
+    // profile mapping deliberately becomes null rather than guessing at a local credential id.
+    final serverIdMap = <int, int>{};
+    for (final raw in _list(document, 'servers')) {
+      final oldId = raw['id'] as int? ?? 0;
+      final oldProfileId = raw['authProfileId'] as int?;
+      final newId = await repository.insertRestoredServer({
+        ...raw,
+        'authProfileId': oldProfileId == null
+            ? null
+            : profileIdMap[oldProfileId],
+      });
+      if (oldId != 0) serverIdMap[oldId] = newId;
+      counts['servers'] = (counts['servers'] ?? 0) + 1;
     }
 
     for (final raw in _list(document, 'scripts')) {
@@ -302,7 +368,8 @@ class BackupPayload {
       // forward a port to a machine the user never chose — the same reasoning as an alert rule, with
       // a worse failure mode.
       if (mapped == null) {
-        counts['portForwardsSkipped'] = (counts['portForwardsSkipped'] ?? 0) + 1;
+        counts['portForwardsSkipped'] =
+            (counts['portForwardsSkipped'] ?? 0) + 1;
         continue;
       }
       await repository.insertRestoredPortForward({...raw, 'serverId': mapped});
@@ -320,7 +387,10 @@ class BackupPayload {
         continue;
       }
       final oldId = raw['id'] as int? ?? 0;
-      final newId = await repository.insertRestoredRule({...raw, 'serverId': mapped});
+      final newId = await repository.insertRestoredRule({
+        ...raw,
+        'serverId': mapped,
+      });
       if (oldId != 0) ruleIdMap[oldId] = newId;
       counts['alertRules'] = (counts['alertRules'] ?? 0) + 1;
     }
@@ -332,26 +402,40 @@ class BackupPayload {
       // by a particular rule. Without both, it is a red banner about a machine nobody can check
       // against a threshold nobody can see — so it is skipped and counted rather than guessed at.
       if (server == null || rule == null) {
-        counts['activeAlertsSkipped'] = (counts['activeAlertsSkipped'] ?? 0) + 1;
+        counts['activeAlertsSkipped'] =
+            (counts['activeAlertsSkipped'] ?? 0) + 1;
         continue;
       }
-      await repository.insertRestoredAlert({...raw, 'serverId': server, 'ruleId': rule});
+      await repository.insertRestoredAlert({
+        ...raw,
+        'serverId': server,
+        'ruleId': rule,
+      });
       counts['activeAlerts'] = (counts['activeAlerts'] ?? 0) + 1;
     }
 
     for (final raw in _list(document, 'alertHistory')) {
       final mapped = remapServerId(raw['serverId'] as int? ?? 0, serverIdMap);
       if (mapped == null) {
-        counts['alertHistorySkipped'] = (counts['alertHistorySkipped'] ?? 0) + 1;
+        counts['alertHistorySkipped'] =
+            (counts['alertHistorySkipped'] ?? 0) + 1;
         continue;
       }
       await repository.insertRestoredAlertHistory({...raw, 'serverId': mapped});
       counts['alertHistory'] = (counts['alertHistory'] ?? 0) + 1;
     }
 
+    final shareIdMap = <int, int>{};
     for (final raw in _list(document, 'networkShares')) {
-      // Shares reference no host, so there is nothing to remap and nothing to skip.
-      await repository.insertRestoredShare(raw);
+      final oldId = raw['id'] as int? ?? 0;
+      final oldProfileId = raw['authProfileId'] as int?;
+      final newId = await repository.insertRestoredShare({
+        ...raw,
+        'authProfileId': oldProfileId == null
+            ? null
+            : profileIdMap[oldProfileId],
+      });
+      if (oldId != 0) shareIdMap[oldId] = newId;
       counts['networkShares'] = (counts['networkShares'] ?? 0) + 1;
     }
 
@@ -361,16 +445,42 @@ class BackupPayload {
     }
 
     for (final raw in _list(document, 'settings')) {
-      final key = raw['key'] as String?;
-      if (key == null || key == 'app_pin') continue;
-      await repository.insertRestoredSetting(key, raw['value'] as String? ?? '');
+      final originalKey = raw['key'] as String?;
+      if (originalKey == null ||
+          _deviceLocalSettingKeys.contains(originalKey)) {
+        continue;
+      }
+      var key = originalKey;
+      if (originalKey.startsWith('sftp_last_path_')) continue;
+      if (originalKey.startsWith('sftp_bookmarks_')) {
+        final oldId = int.tryParse(
+          originalKey.substring('sftp_bookmarks_'.length),
+        );
+        final mapped = oldId == null ? null : serverIdMap[oldId];
+        if (mapped == null) continue;
+        key = 'sftp_bookmarks_$mapped';
+      } else if (originalKey.startsWith('share_bookmarks_')) {
+        final oldId = int.tryParse(
+          originalKey.substring('share_bookmarks_'.length),
+        );
+        final mapped = oldId == null ? null : shareIdMap[oldId];
+        if (mapped == null) continue;
+        key = 'share_bookmarks_$mapped';
+      }
+      await repository.insertRestoredSetting(
+        key,
+        raw['value'] as String? ?? '',
+      );
       counts['settings'] = (counts['settings'] ?? 0) + 1;
     }
 
     return counts;
   }
 
-  static List<Map<String, dynamic>> _list(Map<String, dynamic> document, String key) {
+  static List<Map<String, dynamic>> _list(
+    Map<String, dynamic> document,
+    String key,
+  ) {
     final value = document[key];
     if (value is! List) return const [];
     return [
@@ -387,14 +497,14 @@ class BackupPayload {
 abstract interface class AppRepositoryLike {
   Future<int> insertRestoredServer(Map<String, dynamic> row);
   Future<void> insertRestoredKey(Map<String, dynamic> row);
-  Future<void> insertRestoredProfile(Map<String, dynamic> row);
+  Future<int> insertRestoredProfile(Map<String, dynamic> row);
   Future<void> insertRestoredScript(Map<String, dynamic> row);
 
   /// Returns the new row id, so a firing alert can be re-pointed at the rule that raised it.
   Future<int> insertRestoredRule(Map<String, dynamic> row);
   Future<void> insertRestoredAlert(Map<String, dynamic> row);
   Future<void> insertRestoredAlertHistory(Map<String, dynamic> row);
-  Future<void> insertRestoredShare(Map<String, dynamic> row);
+  Future<int> insertRestoredShare(Map<String, dynamic> row);
   Future<void> insertRestoredWolTarget(Map<String, dynamic> row);
   Future<void> insertRestoredPortForward(Map<String, dynamic> row);
   Future<void> insertRestoredSetting(String key, String value);
@@ -407,7 +517,9 @@ class RepositoryRestoreTarget implements AppRepositoryLike {
   final AppRepository _repository;
 
   @override
-  Future<int> insertRestoredServer(Map<String, dynamic> row) => _repository.insertServer(
+  Future<int> insertRestoredServer(
+    Map<String, dynamic> row,
+  ) => _repository.insertServer(
     Server(
       id: 0,
       name: row['name'] as String? ?? 'Restored host',
@@ -443,63 +555,67 @@ class RepositoryRestoreTarget implements AppRepositoryLike {
   );
 
   @override
-  Future<void> insertRestoredKey(Map<String, dynamic> row) => _repository.insertKey(
-    SshKey(
-      id: 0,
-      alias: row['alias'] as String? ?? 'restored',
-      keyType: row['keyType'] as String? ?? 'SSH Key',
-      privateKey: row['privateKey'] as String? ?? '',
-      publicKey: row['publicKey'] as String? ?? '',
-      fingerprint: row['fingerprint'] as String? ?? '',
-    ),
-  );
+  Future<void> insertRestoredKey(Map<String, dynamic> row) =>
+      _repository.insertKey(
+        SshKey(
+          id: 0,
+          alias: row['alias'] as String? ?? 'restored',
+          keyType: row['keyType'] as String? ?? 'SSH Key',
+          privateKey: row['privateKey'] as String? ?? '',
+          publicKey: row['publicKey'] as String? ?? '',
+          fingerprint: row['fingerprint'] as String? ?? '',
+        ),
+      );
 
   @override
-  Future<void> insertRestoredProfile(Map<String, dynamic> row) => _repository.insertProfile(
-    CredentialProfile(
-      id: 0,
-      profileName: row['profileName'] as String? ?? 'Restored profile',
-      username: row['username'] as String? ?? '',
-      authType: row['authType'] as String? ?? 'password',
-      password: row['password'] as String?,
-      keyAlias: row['keyAlias'] as String?,
-      groupName: row['groupName'] as String? ?? 'General',
-    ),
-  );
+  Future<int> insertRestoredProfile(Map<String, dynamic> row) =>
+      _repository.insertProfile(
+        CredentialProfile(
+          id: 0,
+          profileName: row['profileName'] as String? ?? 'Restored profile',
+          username: row['username'] as String? ?? '',
+          authType: row['authType'] as String? ?? 'password',
+          password: row['password'] as String?,
+          keyAlias: row['keyAlias'] as String?,
+          groupName: row['groupName'] as String? ?? 'General',
+        ),
+      );
 
   @override
-  Future<void> insertRestoredScript(Map<String, dynamic> row) => _repository.insertScript(
-    QuickScriptsCompanion.insert(
-      emoji: row['emoji'] as String? ?? '»',
-      name: row['name'] as String? ?? 'Restored script',
-      command: row['command'] as String? ?? '',
-      color: row['color'] as String? ?? 'cyan',
-      longRunning: Value(row['longRunning'] as bool? ?? false),
-      category: Value(row['category'] as String? ?? 'General'),
-      sortOrder: Value(row['sortOrder'] as int? ?? 0),
-      availableForQuick: Value(row['availableForQuick'] as bool? ?? true),
-      availableForFleet: Value(row['availableForFleet'] as bool? ?? false),
-      targetOs: Value(row['targetOs'] as String? ?? 'Any'),
-      targetSystem: Value(row['targetSystem'] as String? ?? 'Any'),
-      notes: Value(row['notes'] as String? ?? ''),
-      presetKey: Value(row['presetKey'] as String?),
-    ),
-  );
+  Future<void> insertRestoredScript(Map<String, dynamic> row) =>
+      _repository.insertScript(
+        QuickScriptsCompanion.insert(
+          emoji: row['emoji'] as String? ?? '»',
+          name: row['name'] as String? ?? 'Restored script',
+          command: row['command'] as String? ?? '',
+          color: row['color'] as String? ?? 'cyan',
+          longRunning: Value(row['longRunning'] as bool? ?? false),
+          category: Value(row['category'] as String? ?? 'General'),
+          sortOrder: Value(row['sortOrder'] as int? ?? 0),
+          availableForQuick: Value(row['availableForQuick'] as bool? ?? true),
+          availableForFleet: Value(row['availableForFleet'] as bool? ?? false),
+          targetOs: Value(row['targetOs'] as String? ?? 'Any'),
+          targetSystem: Value(row['targetSystem'] as String? ?? 'Any'),
+          notes: Value(row['notes'] as String? ?? ''),
+          presetKey: Value(row['presetKey'] as String?),
+        ),
+      );
 
   @override
-  Future<int> insertRestoredRule(Map<String, dynamic> row) => _repository.insertRule(
-    AlertRulesCompanion.insert(
-      serverId: row['serverId'] as int? ?? 0,
-      metricName: row['metricName'] as String? ?? 'CPU Usage',
-      mountPoint: Value(row['mountPoint'] as String? ?? '/'),
-      thresholdValue: (row['thresholdValue'] as num?)?.toDouble() ?? 90,
-      severity: row['severity'] as String? ?? 'WARNING',
-      triggerWindow: Value(row['triggerWindow'] as String? ?? '5m'),
-      enabled: Value(row['enabled'] as bool? ?? true),
-      notes: Value(row['notes'] as String? ?? ''),
-      presetKey: Value(row['presetKey'] as String?),
-    ),
-  );
+  Future<int> insertRestoredRule(Map<String, dynamic> row) =>
+      _repository.insertRule(
+        AlertRulesCompanion.insert(
+          serverId: row['serverId'] as int? ?? 0,
+          metricName: row['metricName'] as String? ?? 'CPU Usage',
+          mountPoint: Value(row['mountPoint'] as String? ?? '/'),
+          thresholdValue: (row['thresholdValue'] as num?)?.toDouble() ?? 90,
+          severity: row['severity'] as String? ?? 'WARNING',
+          triggerWindow: Value(row['triggerWindow'] as String? ?? '5m'),
+          enabled: Value(row['enabled'] as bool? ?? true),
+          notes: Value(row['notes'] as String? ?? ''),
+          presetKey: Value(row['presetKey'] as String?),
+        ),
+      );
 
   @override
   Future<void> insertRestoredAlert(Map<String, dynamic> row) async {
@@ -540,44 +656,49 @@ class RepositoryRestoreTarget implements AppRepositoryLike {
   }
 
   @override
-  Future<void> insertRestoredShare(Map<String, dynamic> row) async {
-    await _repository.insertNetworkShare(
-      NetworkShare(
-        id: 0,
-        name: row['name'] as String? ?? 'Restored share',
-        protocol: row['protocol'] as String? ?? 'SMB',
-        address: row['address'] as String? ?? '',
-        port: row['port'] as int? ?? 445,
-        sharePath: row['sharePath'] as String? ?? '',
-        workgroup: row['workgroup'] as String? ?? '',
-        username: row['username'] as String? ?? '',
-        password: row['password'] as String? ?? '',
-        authProfileId: row['authProfileId'] as int?,
-        anonymous: row['anonymous'] as bool? ?? true,
-        useHttps: row['useHttps'] as bool? ?? false,
-        notes: row['notes'] as String? ?? '',
-        // Reachability is this device's observation, not the backup's: a share that answered on the
-        // old phone says nothing about this one, and restoring "online" would show a green dot for
-        // a check that never ran here.
-        lastChecked: 0,
-        lastStatus: '',
-      ),
-    );
-  }
-
-  @override
-  Future<void> insertRestoredWolTarget(Map<String, dynamic> row) => _repository.insertWolTarget(
-    WolTargetsCompanion.insert(
-      name: row['name'] as String? ?? 'Restored target',
-      macAddress: row['macAddress'] as String? ?? '',
-      broadcastIp: Value(row['broadcastIp'] as String? ?? '255.255.255.255'),
-      ipAddress: Value(row['ipAddress'] as String? ?? ''),
-      port: Value(row['port'] as int? ?? 9),
+  Future<int> insertRestoredShare(
+    Map<String, dynamic> row,
+  ) => _repository.insertNetworkShare(
+    NetworkShare(
+      id: 0,
+      name: row['name'] as String? ?? 'Restored share',
+      protocol: row['protocol'] as String? ?? 'SMB',
+      address: row['address'] as String? ?? '',
+      port: row['port'] as int? ?? 445,
+      sharePath: row['sharePath'] as String? ?? '',
+      workgroup: row['workgroup'] as String? ?? '',
+      username: row['username'] as String? ?? '',
+      password: row['password'] as String? ?? '',
+      authProfileId: row['authProfileId'] as int?,
+      anonymous: row['anonymous'] as bool? ?? true,
+      useHttps: row['useHttps'] as bool? ?? false,
+      notes: row['notes'] as String? ?? '',
+      // Reachability is this device's observation, not the backup's: a share that answered on the
+      // old phone says nothing about this one, and restoring "online" would show a green dot for
+      // a check that never ran here.
+      lastChecked: 0,
+      lastStatus: '',
     ),
   );
 
   @override
-  Future<void> insertRestoredPortForward(Map<String, dynamic> row) => _repository.insertPortForward(
+  Future<void> insertRestoredWolTarget(Map<String, dynamic> row) =>
+      _repository.insertWolTarget(
+        WolTargetsCompanion.insert(
+          name: row['name'] as String? ?? 'Restored target',
+          macAddress: row['macAddress'] as String? ?? '',
+          broadcastIp: Value(
+            row['broadcastIp'] as String? ?? '255.255.255.255',
+          ),
+          ipAddress: Value(row['ipAddress'] as String? ?? ''),
+          port: Value(row['port'] as int? ?? 9),
+        ),
+      );
+
+  @override
+  Future<void> insertRestoredPortForward(
+    Map<String, dynamic> row,
+  ) => _repository.insertPortForward(
     PortForwardsCompanion.insert(
       serverId: row['serverId'] as int? ?? 0,
       name: row['name'] as String? ?? 'Restored tunnel',

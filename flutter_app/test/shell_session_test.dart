@@ -286,6 +286,72 @@ void main() {
       expect(session.snapshot.rows.first.text.trimRight(), 'hello');
     });
 
+    /// In control mode the channel is a **command channel**, not a PTY.
+    ///
+    /// `tmux -CC` reads its stdin as tmux command lines, so raw keystrokes are parsed as commands
+    /// and the pane never receives them — typing simply did nothing. Kotlin wraps input in
+    /// `send-keys -H` at `AppViewModel.kt:6092`; this port sent the bytes straight down the channel.
+    test('keystrokes are sent as send-keys, not as raw bytes', () async {
+      build(controlMode: true);
+      // The pane id is learned from the output tmux is already streaming.
+      channel.emit('${r'%output %7 x'}\n');
+      await settle();
+      channel.writes.clear();
+
+      session.write(Uint8List.fromList('hi'.codeUnits));
+      await settle();
+
+      final sent = String.fromCharCodes(channel.writes.expand((w) => w));
+      expect(
+        sent,
+        contains('send-keys -t %7 -H'),
+        reason: 'raw bytes on a control channel are parsed as tmux commands',
+      );
+      // `send-keys -H` takes space-separated hex bytes: 'h' = 0x68, 'i' = 0x69.
+      expect(sent, contains('68 69'));
+      expect(sent, endsWith('\n'), reason: 'a command line tmux never sees is never run');
+    });
+
+    test('input before any pane is known is not addressed to a guessed pane', () async {
+      // Inventing a pane id would send the keystrokes somewhere the user is not looking.
+      build(controlMode: true);
+      channel.writes.clear();
+
+      session.write(Uint8List.fromList('x'.codeUnits));
+      await settle();
+
+      final sent = String.fromCharCodes(channel.writes.expand((w) => w));
+      expect(sent, isNot(contains('send-keys')));
+      expect(session.controlPaneId, isNull);
+    });
+
+    test('an ordinary attach still writes raw bytes', () async {
+      // The wrapping must not leak into a normal PTY session, where it would be typed literally.
+      build();
+      channel.writes.clear();
+
+      session.write(Uint8List.fromList('hi'.codeUnits));
+      await settle();
+
+      final sent = String.fromCharCodes(channel.writes.expand((w) => w));
+      expect(sent, 'hi');
+    });
+
+    test('a resize tells tmux its new client size', () async {
+      // tmux sizes a control client from refresh-client -C; without it the panes keep the geometry
+      // they were attached at and output wraps against the old width.
+      build(controlMode: true);
+      channel.emit('${r'%output %7 x'}\n');
+      await settle();
+      channel.writes.clear();
+
+      await session.resize(100, 40);
+      await settle();
+
+      final sent = String.fromCharCodes(channel.writes.expand((w) => w));
+      expect(sent, contains('refresh-client -C 100x40'));
+    });
+
     test("the protocol's own chatter is not painted into the scrollback", () async {
       // A reply, a notification or a session rename is tmux talking about itself. Feeding any of it
       // to the emulator would write tmux's bookkeeping into the user's transcript.

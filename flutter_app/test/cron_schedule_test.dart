@@ -15,12 +15,16 @@ void main() {
     });
 
     test('a command with its own spacing survives intact', () {
-      final lines = parseCrontab('*/5 * * * * sh -c "echo hi > /tmp/x" && true');
+      final lines = parseCrontab(
+        '*/5 * * * * sh -c "echo hi > /tmp/x" && true',
+      );
       expect(lines.single.command, 'sh -c "echo hi > /tmp/x" && true');
     });
 
     test('the app\'s label is recovered and kept out of the command', () {
-      final lines = parseCrontab('0 2 * * * /usr/bin/backup # OmniTerm: Nightly backup');
+      final lines = parseCrontab(
+        '0 2 * * * /usr/bin/backup # OmniTerm: Nightly backup',
+      );
 
       expect(lines.single.command, '/usr/bin/backup');
       expect(lines.single.label, 'Nightly backup');
@@ -40,7 +44,10 @@ void main() {
       test('an environment assignment', () {
         // `MAILTO=ops@example.com` has six whitespace-separated fields in some spellings and would
         // otherwise be parsed as a schedule with `MAILTO=ops@example.com` as the minute.
-        for (final raw in ['MAILTO=ops@example.com', 'PATH=/usr/local/bin:/usr/bin:/bin']) {
+        for (final raw in [
+          'MAILTO=ops@example.com',
+          'PATH=/usr/local/bin:/usr/bin:/bin',
+        ]) {
           expect(parseCrontab(raw).single.editable, isFalse, reason: raw);
         }
       });
@@ -61,7 +68,11 @@ void main() {
           '@reboot /usr/local/bin/warm-cache\n';
       final lines = parseCrontab(raw);
 
-      expect(lines, hasLength(4), reason: 'the blank line is the only thing dropped');
+      expect(
+        lines,
+        hasLength(4),
+        reason: 'the blank line is the only thing dropped',
+      );
       expect(
         renderCrontab(lines),
         'MAILTO=ops@example.com\n'
@@ -71,17 +82,25 @@ void main() {
       );
     });
 
-    test('a shorthand schedule is understood rather than shown as raw text', () {
-      final line = parseCrontab('@daily /usr/bin/backup # OmniTerm: Nightly').single;
+    test(
+      'a shorthand schedule is understood rather than shown as raw text',
+      () {
+        final line = parseCrontab(
+          '@daily /usr/bin/backup # OmniTerm: Nightly',
+        ).single;
 
-      expect(line.editable, isTrue);
-      expect(line.expression, '@daily');
-      expect(line.command, '/usr/bin/backup');
-      expect(line.label, 'Nightly');
-    });
+        expect(line.editable, isTrue);
+        expect(line.expression, '@daily');
+        expect(line.command, '/usr/bin/backup');
+        expect(line.label, 'Nightly');
+      },
+    );
 
     test('an invented shorthand is left alone', () {
-      expect(parseCrontab('@fortnightly /usr/bin/backup').single.editable, isFalse);
+      expect(
+        parseCrontab('@fortnightly /usr/bin/backup').single.editable,
+        isFalse,
+      );
     });
   });
 
@@ -89,7 +108,10 @@ void main() {
     test('the file ends with a newline', () {
       // Some cron implementations reject a crontab whose last line has none; others silently
       // truncate it.
-      expect(renderCrontab(parseCrontab('0 2 * * * /bin/true')), endsWith('\n'));
+      expect(
+        renderCrontab(parseCrontab('0 2 * * * /bin/true')),
+        endsWith('\n'),
+      );
     });
 
     test('an empty crontab renders as nothing, not as a blank line', () {
@@ -100,17 +122,28 @@ void main() {
   group('cronLineFor', () {
     test('a labelled entry carries its name in a trailing comment', () {
       expect(
-        cronLineFor(expression: '0 2 * * *', command: '/usr/bin/backup', label: 'Nightly'),
+        cronLineFor(
+          expression: '0 2 * * *',
+          command: '/usr/bin/backup',
+          label: 'Nightly',
+        ),
         '0 2 * * * /usr/bin/backup # OmniTerm: Nightly',
       );
     });
 
     test('no label means no comment', () {
-      expect(cronLineFor(expression: '0 2 * * *', command: '/bin/true'), '0 2 * * * /bin/true');
+      expect(
+        cronLineFor(expression: '0 2 * * *', command: '/bin/true'),
+        '0 2 * * * /bin/true',
+      );
     });
 
     test('what it writes is what parse reads back', () {
-      final line = cronLineFor(expression: '*/5 * * * *', command: 'echo hi', label: 'Ping');
+      final line = cronLineFor(
+        expression: '*/5 * * * *',
+        command: 'echo hi',
+        label: 'Ping',
+      );
       final parsed = parseCrontab(line).single;
 
       expect(parsed.expression, '*/5 * * * *');
@@ -147,7 +180,11 @@ void main() {
       expect(isCronExpressionValid('0 2 * * *'), isTrue);
       expect(isCronExpressionValid('@daily'), isTrue);
       expect(isCronExpressionValid('0 99 * * *'), isFalse);
-      expect(isCronExpressionValid('0 2 * *'), isFalse, reason: 'four fields is not a schedule');
+      expect(
+        isCronExpressionValid('0 2 * *'),
+        isFalse,
+        reason: 'four fields is not a schedule',
+      );
     });
   });
 
@@ -204,7 +241,9 @@ void main() {
     test('"no crontab for user" is an empty crontab, not a failure', () {
       // Every implementation prints this on stderr and exits non-zero. Treating it as a failure
       // would leave a first-time user unable to add their first entry.
-      final read = parseCrontabRead('no crontab for omniterm\n${cronExitMarker}1\n');
+      final read = parseCrontabRead(
+        'no crontab for omniterm\n${cronExitMarker}1\n',
+      );
 
       expect(read.readable, isTrue);
       expect(read.text, '');
@@ -223,7 +262,9 @@ void main() {
     });
 
     test('a host with no cron at all is reported, not treated as empty', () {
-      final read = parseCrontabRead('sh: crontab: not found\n${cronExitMarker}127\n');
+      final read = parseCrontabRead(
+        'sh: crontab: not found\n${cronExitMarker}127\n',
+      );
       expect(read.readable, isFalse);
       expect(read.error, contains('not found'));
     });
@@ -237,7 +278,9 @@ void main() {
   group('crontabWriteCommand', () {
     test('the body travels base64-encoded', () {
       // A crontab is full of %, *, quotes and $, every one of which means something to the shell.
-      final command = crontabWriteCommand('*/5 * * * * echo "50% done" > /tmp/x\n');
+      final command = crontabWriteCommand(
+        '*/5 * * * * echo "50% done" > /tmp/x\n',
+      );
 
       expect(command, isNot(contains('50%')));
       expect(command, contains('| crontab -'));
@@ -257,9 +300,67 @@ void main() {
       // from.
       for (final body in ['0 2 * * * /bin/true', '0 2 * * * /bin/true\n\n\n']) {
         final command = crontabWriteCommand(body);
-        final encoded = RegExp(r"printf %s '([A-Za-z0-9+/=]+)'").firstMatch(command)!.group(1)!;
-        expect(String.fromCharCodes(base64Decode(encoded)), '0 2 * * * /bin/true\n');
+        final encoded = RegExp(
+          r"printf %s '([A-Za-z0-9+/=]+)'",
+        ).firstMatch(command)!.group(1)!;
+        expect(
+          String.fromCharCodes(base64Decode(encoded)),
+          '0 2 * * * /bin/true\n',
+        );
       }
+    });
+  });
+
+  group('a command survives being parsed', () {
+    // Ported behaviour from `split(Regex("\\s+"), limit = 6)` (`ui/MonitorScreen.kt:422`), where
+    // the sixth element is the untouched remainder. Flutter split the whole line and rejoined with
+    // single spaces, which looks equivalent and is not.
+
+    test('runs of spaces inside a quoted argument are preserved', () {
+      // The failure this exists for: the schedule dialog seeds its command field from this value,
+      // so editing only the *schedule* rewrote the argument and changed what the job does.
+      final line = parseCrontab(
+        '0 3 * * * /usr/bin/backup --name "My  Backup"',
+      ).single;
+      expect(line.command, '/usr/bin/backup --name "My  Backup"');
+    });
+
+    test('a tab between arguments is not turned into a space', () {
+      final line = parseCrontab('0 3 * * * /usr/bin/run\t--flag').single;
+      expect(line.command, '/usr/bin/run\t--flag');
+    });
+
+    test(
+      'extra spacing between the schedule fields does not shift the command',
+      () {
+        // Crontabs written by hand are commonly column-aligned.
+        final line = parseCrontab(
+          '0   3  *  *  * /usr/bin/backup  --deep',
+        ).single;
+        expect(line.expression, '0 3 * * *');
+        expect(line.command, '/usr/bin/backup  --deep');
+      },
+    );
+
+    test('an ordinary command is unchanged', () {
+      final line = parseCrontab('*/5 * * * * /usr/bin/check').single;
+      expect(line.expression, '*/5 * * * *');
+      expect(line.command, '/usr/bin/check');
+    });
+
+    test('the label still separates from a command that has odd spacing', () {
+      final line = parseCrontab(
+        '0 3 * * * /bin/x  -a  # OmniTerm: Nightly',
+      ).single;
+      expect(line.command, '/bin/x  -a');
+      expect(line.label, 'Nightly');
+    });
+
+    test('an untouched line is written back byte for byte', () {
+      // renderCrontab emits `raw`, so this holds regardless of parsing — pinned because it is the
+      // guarantee that makes editing one line safe for the others.
+      const text = '0 3 * * * /usr/bin/backup --name "My  Backup"';
+      expect(renderCrontab(parseCrontab(text)), '$text\n');
     });
   });
 }

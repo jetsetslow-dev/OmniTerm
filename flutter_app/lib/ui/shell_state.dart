@@ -7,8 +7,12 @@ import 'package:flutter/foundation.dart';
 /// state, monetization gating). Feature ViewModels land alongside it as their screens are ported
 /// — see MIGRATION.md §5.2.
 class ShellState extends ChangeNotifier {
+  ShellState({this.keepScreenOnSetter});
+
+  final Future<void> Function(bool enabled)? keepScreenOnSetter;
   bool _isRefreshing = false;
   bool _isKeepScreenOnEnabled = false;
+  bool _showKeepScreenOnWarning = false;
   bool _showAlertsPopup = false;
   int _visibleAlertCount = 0;
 
@@ -18,9 +22,12 @@ class ShellState extends ChangeNotifier {
   bool _licenseEnabled = false;
   bool _unlocked = false;
   bool _adsRemoved = false;
+  bool _hostLimitReconciliationRequired = false;
+  String _hostLimitReconciliationReason = '';
 
   bool get isRefreshing => _isRefreshing;
   bool get isKeepScreenOnEnabled => _isKeepScreenOnEnabled;
+  bool get showKeepScreenOnWarning => _showKeepScreenOnWarning;
   bool get showAlertsPopup => _showAlertsPopup;
 
   /// Unacknowledged, unmuted alerts — 0 while alerts are disabled.
@@ -29,6 +36,8 @@ class ShellState extends ChangeNotifier {
   bool get _showMonetizationUi => _licenseEnabled && _licenseResolved;
   bool get showFreePlanBanner => _showMonetizationUi && !_unlocked;
   bool get showAdBanner => _showMonetizationUi && !_adsRemoved;
+  bool get hostLimitReconciliationRequired => _hostLimitReconciliationRequired;
+  String get hostLimitReconciliationReason => _hostLimitReconciliationReason;
 
   void openAlertsPopup() {
     if (_showAlertsPopup) return;
@@ -43,9 +52,31 @@ class ShellState extends ChangeNotifier {
   }
 
   void requestKeepScreenOnToggle() {
-    // TODO(migration): the legacy path warns before enabling on low battery, then drives
-    // wakelock_plus. Ported with SessionService (MIGRATION.md §3.1).
-    _isKeepScreenOnEnabled = !_isKeepScreenOnEnabled;
+    if (_isKeepScreenOnEnabled) {
+      _applyKeepScreenOn(false);
+      return;
+    }
+    _showKeepScreenOnWarning = true;
+    notifyListeners();
+  }
+
+  void confirmKeepScreenOn() {
+    _showKeepScreenOnWarning = false;
+    _applyKeepScreenOn(true);
+  }
+
+  void cancelKeepScreenOnWarning() {
+    if (!_showKeepScreenOnWarning) return;
+    _showKeepScreenOnWarning = false;
+    notifyListeners();
+  }
+
+  void setKeepScreenOnDirect(bool enabled) => _applyKeepScreenOn(enabled);
+
+  void _applyKeepScreenOn(bool enabled) {
+    if (_isKeepScreenOnEnabled == enabled) return;
+    _isKeepScreenOnEnabled = enabled;
+    keepScreenOnSetter?.call(enabled);
     notifyListeners();
   }
 
@@ -68,6 +99,32 @@ class ShellState extends ChangeNotifier {
     _licenseResolved = resolved;
     _unlocked = unlocked;
     _adsRemoved = adsRemoved;
+    if (!enabled || unlocked) {
+      _hostLimitReconciliationRequired = false;
+      _hostLimitReconciliationReason = '';
+    }
+    notifyListeners();
+  }
+
+  void reconcileHostLimit(int hostCount, {String? reason}) {
+    final required =
+        _licenseEnabled && _licenseResolved && !_unlocked && hostCount > 1;
+    final nextReason = required
+        ? (reason ?? 'The free Play Store build supports one saved host.')
+        : '';
+    if (_hostLimitReconciliationRequired == required &&
+        _hostLimitReconciliationReason == nextReason) {
+      return;
+    }
+    _hostLimitReconciliationRequired = required;
+    _hostLimitReconciliationReason = nextReason;
+    notifyListeners();
+  }
+
+  void completeHostLimitReconciliation() {
+    if (!_hostLimitReconciliationRequired) return;
+    _hostLimitReconciliationRequired = false;
+    _hostLimitReconciliationReason = '';
     notifyListeners();
   }
 
@@ -78,11 +135,15 @@ class ShellState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> refreshCurrentScreen() async {
-    // TODO(migration): dispatches to the active screen's reload once the feature ViewModels exist.
+  Future<void> refreshCurrentScreen([Future<void> Function()? refresh]) async {
+    if (_isRefreshing || refresh == null) return;
     _isRefreshing = true;
     notifyListeners();
-    _isRefreshing = false;
-    notifyListeners();
+    try {
+      await refresh();
+    } finally {
+      _isRefreshing = false;
+      notifyListeners();
+    }
   }
 }

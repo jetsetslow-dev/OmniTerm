@@ -91,13 +91,22 @@ void main() {
     await tester.pump(const Duration(milliseconds: 10));
   }
 
-  testWidgets('every section is offered, all selected by default', (tester) async {
+  Future<void> confirmRestore(WidgetTester tester) async {
+    expect(find.byKey(const ValueKey('backup.restore.selectionDialog')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('backup.restore.continue')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('backup.restore.confirmDialog')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('backup.restore.confirm')));
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('every section is offered, with crash logs opt-in', (tester) async {
     await pump(tester);
 
     for (final section in BackupSection.values) {
       expect(find.byKey(ValueKey('backup.section.${section.name}')), findsOneWidget);
     }
-    expect(vm.selection.sections, BackupSection.values.toSet());
+    expect(vm.selection.sections, BackupSection.values.toSet()..remove(BackupSection.crashLogs));
     await finish(tester);
   });
 
@@ -218,8 +227,46 @@ void main() {
 
     expect(files.openCalls, 1);
     expect(find.byKey(const ValueKey('backup.passphrase.dialog')), findsNothing);
+    await confirmRestore(tester);
     expect((await repo.getAllWolTargets()).single.name, 'nas');
     expect(find.textContaining('Restored'), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('restore previews sections and can exclude one', (tester) async {
+    files.openContents =
+        '{"v":2,"wolTargets":[{"name":"nas","macAddress":"aa:bb:cc:dd:ee:ff"}],'
+        '"settings":[{"key":"theme","value":"light"}]}';
+    await pump(tester);
+
+    await tester.tap(find.byKey(const ValueKey('backup.import')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('1 item(s)'), findsNWidgets(2));
+    await tester.tap(find.byKey(const ValueKey('backup.restore.section.settings')));
+    await tester.pumpAndSettle();
+    await confirmRestore(tester);
+
+    expect((await repo.getAllWolTargets()).single.name, 'nas');
+    expect(await repo.getSetting('theme'), isNull);
+    await finish(tester);
+  });
+
+  testWidgets('restore can choose individual hosts', (tester) async {
+    files.openContents =
+        '{"v":2,"servers":['
+        '{"id":10,"name":"nas","host":"10.0.0.10"},'
+        '{"id":11,"name":"pi","host":"10.0.0.11"}]}';
+    await pump(tester);
+
+    await tester.tap(find.byKey(const ValueKey('backup.import')));
+    await tester.pumpAndSettle();
+    expect(find.text('Hosts to restore'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('backup.restore.host.11')));
+    await tester.pumpAndSettle();
+    await confirmRestore(tester);
+
+    expect((await repo.getAllServers()).map((host) => host.name), ['nas']);
     await finish(tester);
   });
 
@@ -337,6 +384,120 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(vm.error, isNull);
+      await finish(tester);
+    });
+  });
+
+  /// "Last backup", ported from Kotlin's `lastBackupExportTime` (`AppViewModel.kt:1052`, shown at
+  /// `ToolsScreen.kt:2691`).
+  ///
+  /// Flutter recorded nothing, so the screen could not tell a user who had never taken a backup from
+  /// one who took a backup a year ago — which is the question this screen exists to answer.
+  group('last backup time', () {
+    Text lastExport(WidgetTester tester) =>
+        tester.widget<Text>(find.byKey(const ValueKey('backup.lastExport')));
+
+    testWidgets('a device that has never exported says so plainly', (tester) async {
+      await pump(tester);
+
+      expect(lastExport(tester).data, 'Last backup: Never');
+      await finish(tester);
+    });
+
+    testWidgets('a stored time is shown when the screen opens', (tester) async {
+      final when = DateTime(2026, 3, 4, 15, 30);
+      await repo.insertSetting(
+        'backup_last_export_time',
+        '${when.millisecondsSinceEpoch}',
+      );
+      await pump(tester);
+
+      final shown = lastExport(tester).data!;
+      expect(shown, isNot(contains('Never')));
+      expect(shown, contains('2026'));
+      await finish(tester);
+    });
+
+    testWidgets('a completed save records the time under the Kotlin key', (tester) async {
+      await pump(tester);
+
+      vm.reportSaved('/tmp/backup.omnibak', encrypted: true);
+      await tester.pumpAndSettle();
+
+      expect(lastExport(tester).data, isNot(contains('Never')));
+      final stored = int.tryParse(
+        await repo.getSetting('backup_last_export_time') ?? '',
+      );
+      expect(stored, isNotNull);
+      expect(
+        stored,
+        vm.lastExportTime!.millisecondsSinceEpoch,
+        reason: 'what is shown must be what was stored',
+      );
+      await finish(tester);
+    });
+
+    testWidgets('a zero stored value reads as never, not as 1970', (tester) async {
+      // Kotlin writes 0 for "never" and renders it as "Never"; a 1970 date would be a lie, and a
+      // confident-looking one.
+      await repo.insertSetting('backup_last_export_time', '0');
+      await pump(tester);
+
+      expect(lastExport(tester).data, 'Last backup: Never');
+      await finish(tester);
+    });
+
+    testWidgets('a malformed stored value reads as never', (tester) async {
+      await repo.insertSetting('backup_last_export_time', 'whenever');
+      await pump(tester);
+
+      expect(lastExport(tester).data, 'Last backup: Never');
+      await finish(tester);
+    });
+  });
+
+  /// Remembering what to include, ported from `updateBackupExportSelection`
+  /// (`AppViewModel.kt:2310`).
+  ///
+  /// Flutter reset to "everything" on every visit, so a user who deliberately excludes crash logs or
+  /// alert history had to exclude them again every single time.
+  group('remembered selection', () {
+    testWidgets('changing the selection writes it under the Kotlin key', (tester) async {
+      await pump(tester);
+
+      vm.selectNone();
+      await tester.pumpAndSettle();
+
+      expect(await repo.getSetting('backup_export_selection'), 'v2:');
+      await finish(tester);
+    });
+
+    testWidgets('a stored selection is restored when the screen opens', (tester) async {
+      await repo.insertSetting('backup_export_selection', 'v2:scripts');
+      await pump(tester);
+
+      expect(vm.selection.contains(BackupSection.scripts), isTrue);
+      expect(
+        vm.selection.contains(BackupSection.servers),
+        isFalse,
+        reason: 'the stored choice must win over the default of everything',
+      );
+      await finish(tester);
+    });
+
+    testWidgets('an Android-written v1 selection is honoured', (tester) async {
+      await repo.insertSetting('backup_export_selection', 'servers,sshKeys');
+      await pump(tester);
+
+      expect(vm.selection.contains(BackupSection.servers), isTrue);
+      expect(vm.selection.contains(BackupSection.portForwards), isTrue);
+      await finish(tester);
+    });
+
+    testWidgets('nothing stored leaves the default alone', (tester) async {
+      await pump(tester);
+
+      expect(vm.selection.contains(BackupSection.servers), isTrue);
       await finish(tester);
     });
   });

@@ -9,6 +9,8 @@ import '../../data/remote_parsers.dart';
 import '../../data/ssh/ssh_transport.dart';
 import '../../domain/cron_schedule.dart';
 import '../../domain/health_scoring.dart';
+import '../../domain/measurement_units.dart';
+import '../../domain/monitor_history.dart';
 import '../../domain/server_credentials.dart';
 import '../../domain/operation_generation.dart';
 import 'app_state.dart';
@@ -70,6 +72,53 @@ class MonitorViewModel extends ChangeNotifier {
   List<TimedSample> get _history {
     final server = monitoredServer;
     return server == null ? const [] : poller?.historyForServer(server.id) ?? const [];
+  }
+
+  // ── retained history ────────────────────────────────────────────────────────
+  //
+  // The charts above are the poller's in-memory samples: minutes of detail, gone on restart. This
+  // is the persisted series behind Kotlin's "7-DAY HISTORY" card — the same rows the telemetry
+  // poller writes and the pruning setting trims.
+
+  /// The unit system every temperature on this screen is shown in.
+  MeasurementSystem get measurementSystem => _app.measurementSystem;
+
+  /// Retained telemetry for the monitored host, condensed to one point per clock hour.
+  ///
+  /// Null until the first load, which is what lets the card stay absent rather than flashing an
+  /// empty chart while the query runs.
+  HourlyMetricSeries? get hourlySeries => _hourlySeries;
+  HourlyMetricSeries? _hourlySeries;
+
+  int _hourlyForServer = -1;
+
+  /// How far back the retained card looks, matching the card's title.
+  static const retainedHistoryWindow = Duration(days: 7);
+
+  /// Loads the retained series for the monitored host.
+  ///
+  /// Re-reads when the monitored host changes, because the previous host's history under this
+  /// host's name would be a straightforwardly false chart.
+  Future<void> loadHourlySeries({bool force = false}) async {
+    final server = monitoredServer;
+    if (server == null) {
+      if (_hourlySeries != null) {
+        _hourlySeries = null;
+        _hourlyForServer = -1;
+        _safeNotify();
+      }
+      return;
+    }
+    if (!force && _hourlyForServer == server.id) return;
+    _hourlyForServer = server.id;
+    final since = DateTime.now()
+        .subtract(retainedHistoryWindow)
+        .millisecondsSinceEpoch;
+    final rows = await _app.repository.getMetricsSince(server.id, since);
+    // The host can change while the query is in flight.
+    if (_disposed || monitoredServer?.id != server.id) return;
+    _hourlySeries = buildHourlyMetricSeries(rows);
+    _safeNotify();
   }
 
   /// Why the monitored host scores what it does.
@@ -201,7 +250,7 @@ class MonitorViewModel extends ChangeNotifier {
     MonitorTab.services => loadServices(),
     MonitorTab.logs => loadLogs(),
     MonitorTab.cron => loadCron(),
-    // Scripts is not ported yet (§18).
+    // Scripts are repository-backed and need no remote refresh.
     _ => Future<void>.value(),
   };
 
@@ -228,7 +277,9 @@ class MonitorViewModel extends ChangeNotifier {
         return () {
           _metrics = parsed;
           _metricsAt = DateTime.now();
-          if (parsed.os.isNotEmpty) _app.recordOsForServer(server.id, parsed.os);
+          if (parsed.os.isNotEmpty) {
+            _app.recordOsForServer(server.id, parsed.os);
+          }
         };
       },
     );

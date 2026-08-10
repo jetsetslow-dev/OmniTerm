@@ -37,10 +37,39 @@ class _TerminalKeyBarState extends State<TerminalKeyBar> {
         key: const ValueKey('shell.keyBar'),
         color: const Color(0xFF10151F),
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
-        child: Row(children: _caps(vm).map((cap) => Expanded(child: cap)).toList()),
+        child: vm.current?.readOnly ?? false
+            ? _readOnlyBar(vm)
+            : Row(
+                children: _caps(vm).map((cap) => Expanded(child: cap)).toList(),
+              ),
       ),
     );
   }
+
+  /// The read-only bar, ported from `TerminalReadOnlyNavigationBar` (`ui/ShellScreen.kt:2657`).
+  ///
+  /// **Only the keys that do something.** In read-only mode `sendKey` accepts page up and page down
+  /// and silently drops everything else, so the full bar was two dozen controls that looked live and
+  /// were not. On a terminal that is worse than it sounds: the user cannot tell whether the key was
+  /// ignored or whether the remote is simply not responding.
+  Widget _readOnlyBar(ShellViewModel vm) => Row(
+    key: const ValueKey('shell.keyBar.readOnly'),
+    children: [
+      Expanded(
+        flex: 2,
+        child: Text(
+          'READ ONLY · drag to scroll',
+          style: TextStyle(
+            fontFamily: OmniFonts.mono,
+            fontSize: 10,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ),
+      Expanded(child: _cap('PGUP', onTap: () => vm.sendKey(TermKey.pageUp))),
+      Expanded(child: _cap('PGDN', onTap: () => vm.sendKey(TermKey.pageDown))),
+    ],
+  );
 
   /// Every layer emits the same number of caps, and SYM/FN are always the last two.
   ///

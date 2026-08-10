@@ -159,12 +159,30 @@ jobs:
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || 'dryrun' }}
           BUILD_NAME: ${{ steps.version.outputs.name }}
           BUILD_NUMBER: ${{ steps.version.outputs.code }}
+          REAL_ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
+          REAL_ADMOB_BANNER_ID: ${{ secrets.ADMOB_BANNER_UNIT_ID }}
+          ADMOB_TEST_DEVICE_IDS: ${{ vars.ADMOB_TEST_DEVICE_IDS }}
         run: |
           set -euo pipefail
+          if [ "$PUBLISH" = "true" ]; then
+            test -n "$REAL_ADMOB_APP_ID" || { echo "Missing ADMOB_APP_ID" >&2; exit 1; }
+            test -n "$REAL_ADMOB_BANNER_ID" || { echo "Missing ADMOB_BANNER_UNIT_ID" >&2; exit 1; }
+            export ADMOB_APP_ID="$REAL_ADMOB_APP_ID"
+            BANNER_ID="$REAL_ADMOB_BANNER_ID"
+          else
+            export ADMOB_APP_ID="ca-app-pub-3940256099942544~3347511713"
+            BANNER_ID="ca-app-pub-3940256099942544/6300978111"
+          fi
           flutter build appbundle --release \
-            --build-name="$BUILD_NAME" --build-number="$BUILD_NUMBER"
+            --build-name="$BUILD_NAME" --build-number="$BUILD_NUMBER" \
+            --dart-define=OMNITERM_PLAY_STORE=true \
+            --dart-define=ADMOB_BANNER_UNIT_ID="$BANNER_ID" \
+            --dart-define=ADMOB_TEST_DEVICE_IDS="$ADMOB_TEST_DEVICE_IDS"
           flutter build apk --release \
-            --build-name="$BUILD_NAME" --build-number="$BUILD_NUMBER"
+            --build-name="$BUILD_NAME" --build-number="$BUILD_NUMBER" \
+            --dart-define=OMNITERM_PLAY_STORE=true \
+            --dart-define=ADMOB_BANNER_UNIT_ID="$BANNER_ID" \
+            --dart-define=ADMOB_TEST_DEVICE_IDS="$ADMOB_TEST_DEVICE_IDS"
         working-directory: flutter_app
 
       # Signing is done. Remove the key before any later step — artifact upload, third-party

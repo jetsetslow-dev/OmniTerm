@@ -17,5 +17,8 @@ import UIKit
     if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "ScreenSecurityBridge") {
       ScreenSecurityBridge.register(with: registrar, window: window)
     }
+    if let registrar = engineBridge.pluginRegistry.registrar(forPlugin: "PlatformIntegrationBridge") {
+      PlatformIntegrationBridge.register(with: registrar)
+    }
   }
 }

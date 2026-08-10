@@ -42,6 +42,35 @@ class FakeSecureStorage extends FlutterSecureStorage {
   }
 }
 
+/// The host row the servers tests build, exposed so the gate test can reuse it rather than repeat
+/// a twenty-field literal that would drift from this one.
+Server hostFixture({required String name, String host = '10.0.0.1'}) => Server(
+  id: 0,
+  name: name,
+  host: host,
+  port: 22,
+  username: 'root',
+  serverColor: 'Default',
+  authType: 'password',
+  authPassword: 'pw',
+  sudoPassword: '',
+  notes: '',
+  keepAlive: 30,
+  sshCompression: false,
+  persistentSession: false,
+  proxyCommand: '',
+  proxyType: 'none',
+  proxyHost: '',
+  proxyPort: 0,
+  proxyUser: '',
+  proxyPassword: '',
+  agentForwarding: false,
+  healthScore: 100,
+  lastLatency: 0,
+  status: 'online',
+  authStatus: 'ok',
+);
+
 void main() {
   late AppDatabase db;
   late AppRepository repo;
@@ -166,7 +195,7 @@ void main() {
 
     test('stored settings are loaded and round-trip through save', () async {
       await app.start();
-      await app.saveSetting('metrics_retention_days', '30');
+      await app.saveSetting('metrics_retention', '30');
       await app.saveSetting('measurement_system', 'imperial');
       await app.saveSetting('alerts_enabled', 'false');
 
@@ -176,7 +205,7 @@ void main() {
     });
 
     test('a malformed numeric setting falls back to its default', () async {
-      await app.saveSetting('metrics_retention_days', 'not-a-number');
+      await app.saveSetting('metrics_retention', 'not-a-number');
       await app.start();
       expect(
         app.metricsRetentionDays,
@@ -335,6 +364,78 @@ void main() {
       await app.start();
       await settle();
       expect(vm.hostLimitReached(playStoreBuild: true, unlocked: false), isFalse);
+    });
+  });
+
+  group('host limit reconciliation', () {
+    // The standing violation: hosts already saved when the entitlement does not allow them. Ported
+    // from `reconcileHostLimit` (`ui/AppViewModel.kt:966`). Blocking new hosts does nothing here.
+
+    test('an install over its limit is flagged', () async {
+      await repo.insertServer(server(name: 'a'));
+      await repo.insertServer(server(name: 'b'));
+      await app.start();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        vm.hostLimitExceededNow(playStoreBuild: true, unlocked: false),
+        isTrue,
+      );
+    });
+
+    test('an unlocked install is never flagged', () async {
+      await repo.insertServer(server(name: 'a'));
+      await repo.insertServer(server(name: 'b'));
+      await app.start();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        vm.hostLimitExceededNow(playStoreBuild: true, unlocked: true),
+        isFalse,
+      );
+      expect(
+        vm.hostLimitExceededNow(playStoreBuild: false, unlocked: false),
+        isFalse,
+      );
+    });
+
+    test('keeping one deletes the rest', () async {
+      final keep = await repo.insertServer(server(name: 'keep'));
+      await repo.insertServer(server(name: 'drop1'));
+      await repo.insertServer(server(name: 'drop2'));
+      await app.start();
+      await Future<void>.delayed(Duration.zero);
+
+      final removed = await vm.reconcileHostLimit({keep});
+      await Future<void>.delayed(Duration.zero);
+
+      expect(removed, 2);
+      expect(vm.servers.map((s) => s.name), ['keep']);
+    });
+
+    test('a selection over the limit deletes nothing', () async {
+      // Refusing beats doing something approximate: this deletes hosts, and a flow that leaves the
+      // install still over its limit has not reconciled anything.
+      final a = await repo.insertServer(server(name: 'a'));
+      final b = await repo.insertServer(server(name: 'b'));
+      await app.start();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(await vm.reconcileHostLimit({a, b}), 0);
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.servers, hasLength(2));
+    });
+
+    test('an empty selection deletes nothing', () async {
+      // Otherwise "keep none" would wipe the install.
+      await repo.insertServer(server(name: 'a'));
+      await repo.insertServer(server(name: 'b'));
+      await app.start();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(await vm.reconcileHostLimit(const {}), 0);
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.servers, hasLength(2));
     });
   });
 }

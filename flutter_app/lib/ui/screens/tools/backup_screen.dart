@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 
 import '../../../domain/backup_selection.dart';
 import '../../../platform/backup_file_store.dart';
+import '../../../platform/distribution.dart';
+import '../../../platform/license_controller.dart';
+import '../../view_model/servers_view_model.dart';
 import '../../theme/colors.dart';
 import '../../view_model/backup_view_model.dart';
 import '../../widgets/omni_components.dart';
@@ -21,6 +25,18 @@ class BackupScreen extends StatefulWidget {
 }
 
 class _BackupScreenState extends State<BackupScreen> {
+  @override
+  void initState() {
+    super.initState();
+    // Deferred: the read notifies listeners, and doing that during build throws.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final vm = context.read<BackupViewModel>();
+      vm.loadLastExportTime();
+      vm.loadSelection();
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final vm = context.watch<BackupViewModel>();
@@ -99,6 +115,21 @@ class _BackupScreenState extends State<BackupScreen> {
           label: Text(vm.busy ? 'Working…' : 'Create backup'),
           onPressed: vm.canExport ? () => _export(context, vm) : null,
         ),
+        const SizedBox(height: 6),
+        Text(
+          // The whole value of this line is the "Never" case: a user who believes they have a
+          // backup and does not is exactly who this screen is for.
+          vm.lastExportTime == null
+              ? 'Last backup: Never'
+              : 'Last backup: ${DateFormat.yMMMd().add_jm().format(vm.lastExportTime!)}',
+          key: const ValueKey('backup.lastExport'),
+          style: TextStyle(
+            fontSize: 11,
+            color: vm.lastExportTime == null
+                ? OmniColors.amber
+                : scheme.onSurfaceVariant,
+          ),
+        ),
         const SizedBox(height: 24),
         const SectionHeader(title: 'Restore'),
         Text(
@@ -120,6 +151,12 @@ class _BackupScreenState extends State<BackupScreen> {
   }
 
   Widget? _dependencyNote(BackupSection section, ColorScheme scheme) {
+    if (section == BackupSection.crashLogs) {
+      return Text(
+        'Optional diagnostics; may contain paths or command fragments and always forces encryption.',
+        style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
+      );
+    }
     final dependencies = BackupSelection.dependenciesOf(section);
     if (dependencies.isEmpty) return null;
     // Explaining the coupling before the checkbox moves on its own, which would otherwise look
@@ -186,7 +223,204 @@ class _BackupScreenState extends State<BackupScreen> {
       passphrase = entered;
     }
 
-    await vm.importBackup(contents, passphrase);
+    final inspection = await vm.inspectBackup(contents, passphrase);
+    if (inspection == null || !context.mounted) return;
+    // Read before the dialog: `context` is not safe to use across the await inside it.
+    final license = context.read<LicenseController?>();
+    final hasHostLimit =
+        isPlayStoreDistribution && !(license?.state.value.unlocked ?? true);
+    final choice = await showDialog<_RestoreChoice>(
+      context: context,
+      builder: (_) => _RestoreSelectionDialog(
+        inspection: inspection,
+        // A restore writes host rows, so it is bound by the same limit as adding one by hand.
+        hasHostLimit: hasHostLimit,
+      ),
+    );
+    if (choice == null || !context.mounted) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const ValueKey('backup.restore.confirmDialog'),
+        title: const Text('Restore selected data?'),
+        content: const Text(
+          'The selected backup contents will be added alongside existing data. This cannot be '
+          'undone.',
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('backup.restore.confirmCancel'),
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('backup.restore.confirm'),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Restore'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await vm.importBackup(
+      inspection.plainJson,
+      '',
+      selection: choice.selection,
+      selectedServerIds: choice.hostIds,
+    );
+  }
+}
+
+@immutable
+class _RestoreChoice {
+  const _RestoreChoice(this.selection, this.hostIds);
+
+  final BackupSelection selection;
+  final Set<int> hostIds;
+}
+
+class _RestoreSelectionDialog extends StatefulWidget {
+  const _RestoreSelectionDialog({
+    required this.inspection,
+    required this.hasHostLimit,
+  });
+
+  final BackupInspection inspection;
+
+  /// True on a free Play build, where saved hosts are capped.
+  final bool hasHostLimit;
+
+  @override
+  State<_RestoreSelectionDialog> createState() => _RestoreSelectionDialogState();
+}
+
+class _RestoreSelectionDialogState extends State<_RestoreSelectionDialog> {
+  late BackupSelection _selection = widget.inspection.available;
+  late final int? _hostCap = restoreHostCap(
+    hasHostLimit: widget.hasHostLimit,
+    hostLimit: ServersViewModel.freePlayStoreLimit,
+  );
+  late Set<int> _hostIds = defaultRestoreHostIds(
+    widget.inspection.hosts.map((host) => host.oldId),
+    cap: _hostCap,
+  );
+
+  /// True when no more hosts may be selected, so the remaining boxes read as unavailable rather
+  /// than silently refusing the tap.
+  bool get _atCap => _hostCap != null && _hostIds.length >= _hostCap;
+
+  @override
+  Widget build(BuildContext context) {
+    final available = widget.inspection.available;
+    final hostsEnabled = _selection.contains(BackupSection.servers);
+    return AlertDialog(
+      key: const ValueKey('backup.restore.selectionDialog'),
+      title: const Text('Restore backup'),
+      content: SizedBox(
+        width: 480,
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Choose what to restore from this file.', style: TextStyle(fontSize: 12)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  TextButton(
+                    key: const ValueKey('backup.restore.all'),
+                    onPressed: () => setState(() {
+                      _selection = available;
+                      _hostIds = defaultRestoreHostIds(
+                        widget.inspection.hosts.map((host) => host.oldId),
+                        cap: _hostCap,
+                      );
+                    }),
+                    child: const Text('All'),
+                  ),
+                  TextButton(
+                    key: const ValueKey('backup.restore.none'),
+                    onPressed: () => setState(() {
+                      _selection = const BackupSelection.none();
+                      _hostIds = {};
+                    }),
+                    child: const Text('None'),
+                  ),
+                ],
+              ),
+              for (final section in BackupSection.values)
+                if (available.contains(section))
+                  CheckboxListTile(
+                    key: ValueKey('backup.restore.section.${section.name}'),
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    title: Text(section.label, style: const TextStyle(fontSize: 13)),
+                    subtitle: Text(
+                      '${widget.inspection.counts[section] ?? 0} item(s)',
+                      style: const TextStyle(fontSize: 10),
+                    ),
+                    value: _selection.contains(section),
+                    onChanged: (value) => setState(() {
+                      _selection = _selection.toggled(section, enabled: value ?? false);
+                      if (!_selection.contains(BackupSection.servers)) _hostIds = {};
+                    }),
+                  ),
+              if (hostsEnabled && widget.inspection.hosts.isNotEmpty) ...[
+                const Divider(),
+                const Text(
+                  'Hosts to restore',
+                  style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+                if (_hostCap != null)
+                  Text(
+                    // Said before the boxes go grey, not after a tap does nothing.
+                    'This build saves $_hostCap host(s). Choose which to restore, or unlock '
+                    'OmniTerm to keep them all.',
+                    key: const ValueKey('backup.restore.hostCap'),
+                    style: const TextStyle(fontSize: 10, color: OmniColors.amber),
+                  ),
+                for (final host in widget.inspection.hosts)
+                  CheckboxListTile(
+                    key: ValueKey('backup.restore.host.${host.oldId}'),
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    controlAffinity: ListTileControlAffinity.leading,
+                    title: Text(host.name, style: const TextStyle(fontSize: 12)),
+                    subtitle: Text(host.host, style: const TextStyle(fontSize: 10)),
+                    value: _hostIds.contains(host.oldId),
+                    // Disabled rather than silently refusing: at the cap, the boxes that would go
+                    // over read as unavailable, and the ones already chosen can still be unchecked
+                    // so the user can swap one for another.
+                    onChanged: _atCap && !_hostIds.contains(host.oldId)
+                        ? null
+                        : (value) => setState(() {
+                            value == true
+                                ? _hostIds.add(host.oldId)
+                                : _hostIds.remove(host.oldId);
+                          }),
+                  ),
+              ],
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          key: const ValueKey('backup.restore.cancel'),
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const ValueKey('backup.restore.continue'),
+          onPressed:
+              _selection.isEmpty ||
+                  (hostsEnabled && widget.inspection.hosts.isNotEmpty && _hostIds.isEmpty)
+              ? null
+              : () => Navigator.pop(context, _RestoreChoice(_selection, _hostIds)),
+          child: const Text('Continue'),
+        ),
+      ],
+    );
   }
 }
 

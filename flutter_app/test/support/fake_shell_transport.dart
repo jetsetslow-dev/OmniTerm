@@ -25,6 +25,43 @@ class FakeShellTransport implements SshTransport {
   /// Completes each `openShell` only when released, so the connecting state can be observed.
   Completer<void>? gate;
 
+  /// Canned `exec` answers keyed by a substring of the command.
+  ///
+  /// Left empty by default so `exec` keeps throwing, which is what the tmux probe reads as "could
+  /// not ask" — and it deliberately treats that as "assume present", so existing tests connect
+  /// exactly as they did before.
+  final Map<String, String> execAnswers = {};
+
+  /// Every command passed to `exec` or `execStream`.
+  final List<String> commands = [];
+
+  /// Chunks each `execStream` replays to its `onChunk`.
+  List<String> streamChunks = const [];
+
+  @override
+  Future<String> exec(SshCredentials creds, String command, {String? stdin}) async {
+    commands.add(command);
+    for (final entry in execAnswers.entries) {
+      if (command.contains(entry.key)) return entry.value;
+    }
+    throw UnimplementedError('no staged answer for: $command');
+  }
+
+  @override
+  Future<String> execStream(
+    SshCredentials creds,
+    String command, {
+    String? stdin,
+    SshCancellationToken? cancellation,
+    required Future<void> Function(String chunk) onChunk,
+  }) async {
+    commands.add(command);
+    for (final chunk in streamChunks) {
+      await onChunk(chunk);
+    }
+    return streamChunks.join();
+  }
+
   @override
   Future<TerminalSession> openShell(
     SshCredentials creds,

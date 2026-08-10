@@ -1,20 +1,27 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../../data/app_database.dart';
 import '../../../data/remote_models.dart';
 import '../../../domain/host_display.dart';
+import '../../../domain/ssh_keygen.dart';
+import '../../../platform/distribution.dart';
+import '../../../platform/license_controller.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/auth_keys_view_model.dart';
 import '../../widgets/omni_components.dart';
+import '../../widgets/license_gate.dart';
 
 /// The Auth Keys tool, ported from `AuthKeysToolView` in `ui/ToolsScreen.kt`.
 ///
 /// Three sections: credential profiles, SSH keys, and the pinned host keys. They belong together
 /// because between them they answer "who am I, and who am I talking to".
 class AuthKeysScreen extends StatefulWidget {
-  const AuthKeysScreen({super.key});
+  const AuthKeysScreen({super.key, this.licenseController});
+
+  final LicenseController? licenseController;
 
   @override
   State<AuthKeysScreen> createState() => _AuthKeysScreenState();
@@ -32,7 +39,33 @@ class _AuthKeysScreenState extends State<AuthKeysScreen> {
   @override
   Widget build(BuildContext context) {
     final vm = context.watch<AuthKeysViewModel>();
+    final license = widget.licenseController;
+    if (license == null) return _buildBody(context, vm, null, false);
 
+    return ValueListenableBuilder<LicenseState>(
+      valueListenable: license.state,
+      builder: (context, state, _) {
+        final atLimit =
+            isPlayStoreDistribution && !state.unlocked && vm.profiles.length + vm.keys.length >= 1;
+        return _buildBody(context, vm, license, atLimit);
+      },
+    );
+  }
+
+  Widget _buildBody(
+    BuildContext context,
+    AuthKeysViewModel vm,
+    LicenseController? license,
+    bool atLimit,
+  ) {
+    void gate() => showPremiumGate(
+      context,
+      controller: license!,
+      title: 'Authentication method limit reached',
+      message:
+          'The free Play Store build supports one saved authentication method across '
+          'credential profiles and SSH keys. Unlock OmniTerm to save more.',
+    );
     return Stack(
       children: [
         ListView(
@@ -40,6 +73,25 @@ class _AuthKeysScreenState extends State<AuthKeysScreen> {
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 88),
           children: [
             if (vm.status != null || vm.error != null) _MessageCard(vm: vm),
+            if (atLimit)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: OmniCard(
+                  key: const ValueKey('authKeys.limit'),
+                  leftAccent: OmniColors.amber,
+                  child: Row(
+                    children: [
+                      const Expanded(
+                        child: Text(
+                          'Free plan credential limit reached',
+                          style: TextStyle(fontSize: 11),
+                        ),
+                      ),
+                      TextButton(onPressed: gate, child: const Text('Unlock')),
+                    ],
+                  ),
+                ),
+              ),
             const SectionHeader(title: 'Credential profiles'),
             if (vm.profiles.isEmpty)
               const _EmptyNote(
@@ -73,15 +125,23 @@ class _AuthKeysScreenState extends State<AuthKeysScreen> {
                 key: const ValueKey('authKeys.addProfile'),
                 heroTag: 'authKeys.addProfile',
                 tooltip: 'New credential profile',
-                onPressed: () => _openProfileEditor(context, vm),
+                onPressed: atLimit ? gate : () => _openProfileEditor(context, vm),
                 child: const Icon(Icons.badge_outlined),
+              ),
+              const SizedBox(width: 10),
+              FloatingActionButton.small(
+                key: const ValueKey('authKeys.generateKey'),
+                heroTag: 'authKeys.generateKey',
+                tooltip: 'Generate SSH key',
+                onPressed: atLimit ? gate : () => _openKeyGenerator(context, vm),
+                child: const Icon(Icons.auto_awesome),
               ),
               const SizedBox(width: 10),
               FloatingActionButton(
                 key: const ValueKey('authKeys.importKey'),
                 heroTag: 'authKeys.importKey',
                 tooltip: 'Import SSH key',
-                onPressed: () => _openKeyImport(context, vm),
+                onPressed: atLimit ? gate : () => _openKeyImport(context, vm),
                 child: const Icon(Icons.key),
               ),
             ],
@@ -349,6 +409,251 @@ class _KnownHostsSection extends StatelessWidget {
 }
 
 // ── dialogs ───────────────────────────────────────────────────────────────────
+
+Future<void> _openKeyGenerator(BuildContext context, AuthKeysViewModel vm) async {
+  final generated = await showDialog<GeneratedSshKey>(
+    context: context,
+    // Generation runs for seconds; dismissing mid-flight would strand the isolate's result with
+    // nowhere to show the private key, which is only displayable once.
+    barrierDismissible: false,
+    builder: (_) => _KeyGenerateDialog(vm: vm),
+  );
+  if (generated == null || !context.mounted) return;
+  await showDialog<void>(
+    context: context,
+    builder: (_) => _GeneratedKeyDialog(generated: generated),
+  );
+}
+
+class _KeyGenerateDialog extends StatefulWidget {
+  const _KeyGenerateDialog({required this.vm});
+
+  final AuthKeysViewModel vm;
+
+  @override
+  State<_KeyGenerateDialog> createState() => _KeyGenerateDialogState();
+}
+
+class _KeyGenerateDialogState extends State<_KeyGenerateDialog> {
+  final _alias = TextEditingController();
+  String? _failure;
+  bool _running = false;
+
+  @override
+  void dispose() {
+    _alias.dispose();
+    super.dispose();
+  }
+
+  Future<void> _generate() async {
+    setState(() {
+      _running = true;
+      _failure = null;
+    });
+    final generated = await widget.vm.generateKey(alias: _alias.text);
+    if (!mounted) return;
+    if (generated == null) {
+      setState(() {
+        _running = false;
+        _failure = widget.vm.error ?? 'Key generation failed.';
+      });
+      return;
+    }
+    Navigator.of(context).pop(generated);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      key: const ValueKey('authKeys.generate.dialog'),
+      title: const Text('Generate cryptographic keypair'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextField(
+            key: const ValueKey('authKeys.generate.alias'),
+            controller: _alias,
+            autofocus: true,
+            enabled: !_running,
+            decoration: omniInputDecoration(context, labelText: 'Key alias name'),
+            onChanged: (_) => setState(() {}),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'OmniTerm generates a real $rsaKeyBits-bit RSA keypair on this device. The private key '
+            'never leaves it — add the public key to the server to log in without a password.',
+            style: const TextStyle(fontSize: 12, color: OmniColors.textMuted),
+          ),
+          if (_failure != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: Text(
+                _failure!,
+                key: const ValueKey('authKeys.generate.error'),
+                style: const TextStyle(color: OmniColors.red, fontSize: 12),
+              ),
+            ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: _running ? null : () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          key: const ValueKey('authKeys.generate.submit'),
+          onPressed: _alias.text.trim().isEmpty || _running ? null : _generate,
+          // Keeps the dialog open with a spinner rather than dismissing, which looked like nothing
+          // had happened during the seconds RSA generation takes.
+          child: _running
+              ? const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(width: 8),
+                    Text('Generating…'),
+                  ],
+                )
+              : const Text('Generate keys'),
+        ),
+      ],
+    );
+  }
+}
+
+/// Shows the generated material once, with the command that installs it on a server.
+///
+/// This is the only screen that ever displays the private key: it is stored encrypted and never read
+/// back to the UI, so a user who does not copy it here cannot retrieve it later.
+class _GeneratedKeyDialog extends StatelessWidget {
+  const _GeneratedKeyDialog({required this.generated});
+
+  final GeneratedSshKey generated;
+
+  @override
+  Widget build(BuildContext context) {
+    final installCommand = authorizedKeysInstallCommand(generated.publicKey);
+    return AlertDialog(
+      key: const ValueKey('authKeys.generated.dialog'),
+      title: const Text('Generated key'),
+      content: SizedBox(
+        width: double.maxFinite,
+        // A scrolling Column rather than a ListView: every block must exist as soon as the dialog
+        // does, so the install command is reachable (and copyable) without scrolling it into being.
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Warning: the private key is shown only now. Copy it if you need a backup.',
+                style: TextStyle(color: OmniColors.red, fontSize: 12, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 10),
+              _CopyBlock(
+                label: 'Private key',
+                value: generated.privateKey,
+                copyLabel: 'Copy private key',
+                valueKey: 'authKeys.generated.private',
+              ),
+              const SizedBox(height: 10),
+              _CopyBlock(
+                label: 'Public key',
+                value: generated.publicKey,
+                copyLabel: 'Copy public key',
+                valueKey: 'authKeys.generated.public',
+              ),
+              const SizedBox(height: 10),
+              const Text('Install on your server', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              const Text(
+                'The server only accepts this key after the PUBLIC key is added to '
+                '~/.ssh/authorized_keys for the user you log in as. While password login still '
+                'works, the easiest way is to run this in any terminal on this host:',
+                style: TextStyle(fontSize: 12, color: OmniColors.textMuted),
+              ),
+              const SizedBox(height: 6),
+              _CopyBlock(
+                label: '',
+                value: installCommand,
+                copyLabel: 'Copy install command',
+                valueKey: 'authKeys.generated.install',
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        FilledButton(
+          key: const ValueKey('authKeys.generated.done'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Done'),
+        ),
+      ],
+    );
+  }
+}
+
+class _CopyBlock extends StatelessWidget {
+  const _CopyBlock({
+    required this.label,
+    required this.value,
+    required this.copyLabel,
+    required this.valueKey,
+  });
+
+  final String label;
+  final String value;
+  final String copyLabel;
+  final String valueKey;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (label.isNotEmpty) Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+        Container(
+          width: double.infinity,
+          constraints: const BoxConstraints(maxHeight: 130),
+          margin: const EdgeInsets.only(top: 4),
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            border: Border.all(color: Theme.of(context).dividerColor),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: SingleChildScrollView(
+            child: SelectableText(
+              value,
+              key: ValueKey(valueKey),
+              style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 10),
+            ),
+          ),
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(
+            key: ValueKey('$valueKey.copy'),
+            icon: const Icon(Icons.copy, size: 16),
+            label: Text(copyLabel),
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: value));
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(
+                context,
+              ).showSnackBar(SnackBar(content: Text('$copyLabel — copied.')));
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
 
 Future<void> _openKeyImport(BuildContext context, AuthKeysViewModel vm) async {
   await showModalBottomSheet<void>(

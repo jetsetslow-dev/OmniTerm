@@ -1,3 +1,4 @@
+import '../../widgets/omni_components.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -6,7 +7,8 @@ import '../../../domain/host_display.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/infra_view_model.dart';
-import '../../widgets/omni_components.dart';
+import '../../widgets/command_output_card.dart';
+import '../../widgets/host_selector_bar.dart';
 import 'infra_tabs.dart';
 import 'compose_builder.dart';
 
@@ -42,7 +44,9 @@ class _InfraScreenState extends State<InfraScreen> {
       children: [
         _HeaderBar(vm: vm, server: server),
         _TabBar(vm: vm),
-        if (vm.loading) const LinearProgressIndicator(minHeight: 2),
+        // Only over results already on screen; a first load gets the centred spinner below.
+        if (vm.loading && vm.hasAnyRuntimeData)
+          const LinearProgressIndicator(minHeight: 2),
         if (vm.actionOutput != null) _ActionOutput(vm: vm),
         Expanded(
           child: Padding(
@@ -51,6 +55,26 @@ class _InfraScreenState extends State<InfraScreen> {
               // The builder is the one tab that does not depend on a successful probe, so it is
               // reachable even when the runtime could not be queried.
               InfraTab.builder => const BuilderTab(),
+              // Ahead of the error branch, as Kotlin orders it: a refresh in flight must not keep
+              // showing the previous attempt's failure as though it were the current state.
+              _ when vm.loading && !vm.hasAnyRuntimeData => const Center(
+                key: ValueKey('infra.firstLoad'),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    SizedBox(height: 10),
+                    Text(
+                      'Asking this host about its containers…',
+                      style: TextStyle(fontSize: 12),
+                    ),
+                  ],
+                ),
+              ),
               _ when vm.error != null => _RuntimeError(message: vm.error!),
               InfraTab.stacks => StacksTab(vm: vm),
               InfraTab.images => ImagesTab(vm: vm),
@@ -109,28 +133,12 @@ class _HeaderBar extends StatelessWidget {
             const Icon(Icons.widgets, size: 18, color: OmniColors.cyan),
             const SizedBox(width: 8),
             Expanded(
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<int>(
-                  key: const ValueKey('infra.hostPicker'),
-                  isExpanded: true,
-                  value: server.id,
-                  items: [
-                    for (final host in vm.onlineServers)
-                      DropdownMenuItem(
-                        value: host.id,
-                        child: Text(
-                          'Containers · ${HostDisplay.instance.name(host)}',
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontFamily: OmniFonts.mono,
-                            fontSize: 13,
-                          ),
-                        ),
-                      ),
-                  ],
-                  onChanged: vm.selectServer,
-                ),
+              child: HostSelectorBar(
+                keyPrefix: 'infra.hostPicker',
+                hosts: vm.onlineServers,
+                selected: server,
+                onChanged: vm.selectServer,
+                labelPrefix: 'Containers · ',
               ),
             ),
             IconButton(
@@ -162,7 +170,7 @@ class _TabBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return SizedBox(
-      height: 40,
+      height: scaledBarHeight(context, 40),
       child: ListView(
         key: const ValueKey('infra.tabs'),
         scrollDirection: Axis.horizontal,
@@ -196,33 +204,12 @@ class _ActionOutput extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-      child: OmniCard(
-        key: const ValueKey('infra.actionOutput'),
-        leftAccent: OmniColors.cyan,
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxHeight: 140),
-                child: SingleChildScrollView(
-                  // Selectable because compose errors get pasted into issue trackers and searches.
-                  child: SelectionArea(
-                    child: Text(
-                      vm.actionOutput!,
-                      style: const TextStyle(fontSize: 11, fontFamily: OmniFonts.mono),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            IconButton(
-              key: const ValueKey('infra.actionOutput.dismiss'),
-              icon: const Icon(Icons.close, size: 16),
-              onPressed: vm.dismissActionOutput,
-            ),
-          ],
-        ),
+      child: CommandOutputCard(
+        keyPrefix: 'infra.actionOutput',
+        title: vm.actionTitle,
+        output: vm.actionOutput!,
+        running: vm.actionRunning,
+        onDismiss: vm.dismissActionOutput,
       ),
     );
   }
@@ -273,5 +260,3 @@ class _RuntimeError extends StatelessWidget {
     );
   }
 }
-
-

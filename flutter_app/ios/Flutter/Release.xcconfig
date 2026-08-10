@@ -1,1 +1,4 @@
 #include "Generated.xcconfig"
+// The unsigned PR archive uses Google's sample id. Distribution automation replaces this exact
+// value with the App Store AdMob application id before archiving a publishable build.
+ADMOB_IOS_APP_ID = ca-app-pub-3940256099942544~1458002511

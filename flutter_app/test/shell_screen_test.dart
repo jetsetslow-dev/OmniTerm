@@ -257,18 +257,59 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('read-only refuses a key and the status says so', (tester) async {
+    testWidgets('read-only says so and offers only the keys that work', (tester) async {
+      // The defect: read-only kept the full key bar, so two dozen controls looked live while
+      // `sendKey` silently dropped all but page up and page down. On a terminal that is worse than
+      // it sounds — the user cannot tell an ignored key from an unresponsive remote.
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+      expect(find.byKey(const ValueKey('shell.key.↵')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('shell.readOnly')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('shell.keyBar.readOnly')), findsOneWidget);
+      expect(find.textContaining('READ ONLY'), findsWidgets);
+      for (final gone in ['↵', 'ESC', 'TAB', '↑']) {
+        expect(
+          find.byKey(ValueKey('shell.key.$gone')),
+          findsNothing,
+          reason: '$gone does nothing in read-only and must not look live',
+        );
+      }
+      expect(find.byKey(const ValueKey('shell.key.PGUP')), findsOneWidget);
+      expect(find.byKey(const ValueKey('shell.key.PGDN')), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('read-only still writes nothing to the remote', (tester) async {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester);
       await connect(tester);
 
       await tester.tap(find.byKey(const ValueKey('shell.readOnly')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('shell.key.↵')));
+      await tester.tap(find.byKey(const ValueKey('shell.key.PGUP')));
       await tester.pumpAndSettle();
 
+      // Page up scrolls the local buffer; it is not a keystroke the remote ever sees.
       expect(transport.opened.single.writes, isEmpty);
-      expect(find.textContaining('READ ONLY'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('leaving read-only brings the full bar back', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+
+      await tester.tap(find.byKey(const ValueKey('shell.readOnly')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('shell.readOnly')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('shell.keyBar.readOnly')), findsNothing);
+      expect(find.byKey(const ValueKey('shell.key.↵')), findsOneWidget);
       await finish(tester);
     });
 

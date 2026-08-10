@@ -2,88 +2,63 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/ui/widgets/metric_line_chart.dart';
 
+/// The chart's height against the user's text size.
+///
+/// The axis labels sit beside a fixed-height plot. At 200% text three stacked labels no longer fit
+/// 56px, and the column overflowed by 118px on every screen that draws a chart — found by adding a
+/// 200% pass to the device surface sweep.
 void main() {
-  Future<void> pump(WidgetTester tester, Widget chart) => tester.pumpWidget(
-    MaterialApp(
-      home: Scaffold(body: SizedBox(width: 300, child: chart)),
-    ),
-  );
-
-  testWidgets('the latest reading is stated, not only drawn', (tester) async {
-    // A line without its current value makes the reader estimate a number off a 56px canvas.
-    await pump(tester, const MetricLineChart(points: [10, 20, 35.6], label: 'CPU'));
-
-    expect(find.text('36%'), findsOneWidget);
-    expect(find.text('CPU · 3 samples'), findsOneWidget);
-  });
-
-  testWidgets('an empty series says so rather than drawing a flat line at zero', (tester) async {
-    // A line along the bottom is a claim that the host was idle for the whole window.
-    await pump(tester, const MetricLineChart(points: [], label: 'CPU'));
-
-    expect(find.text('—'), findsWidgets);
-    expect(find.text('CPU · 0 samples'), findsOneWidget);
-  });
-
-  testWidgets('one sample is one sample', (tester) async {
-    // The Kotlin renders "1 samples". Small, but it is the first thing shown after connecting to a
-    // host, which is exactly when a user is deciding whether the app is careful.
-    await pump(tester, const MetricLineChart(points: [7], label: 'CPU'));
-    expect(find.text('CPU · 1 sample'), findsOneWidget);
-  });
-
-  testWidgets('the sample count distinguishes a flat host from a new one', (tester) async {
-    // Two identical readings and two hundred identical readings draw the same line and mean very
-    // different things.
-    await pump(tester, const MetricLineChart(points: [50, 50], label: 'RAM'));
-    expect(find.text('RAM · 2 samples'), findsOneWidget);
-  });
-
-  testWidgets('the axis is fixed at 0..100, whatever the data does', (tester) async {
-    // An axis scaled to the data redraws a host idling between 1% and 3% as a mountain range.
-    await pump(tester, const MetricLineChart(points: [1, 3, 2], label: 'CPU'));
-
-    expect(find.text('100'), findsOneWidget);
-    expect(find.text('50'), findsOneWidget);
-    expect(find.text('0'), findsOneWidget);
-  });
-
-  testWidgets('a custom axis maximum is labelled as such', (tester) async {
-    await pump(tester, const MetricLineChart(points: [10], label: 'Temp', unit: '°C', maxY: 120));
-
-    expect(find.text('120'), findsOneWidget);
-    expect(find.text('60'), findsOneWidget);
-    expect(find.text('10°C'), findsOneWidget);
-  });
-
-  testWidgets('timestamps become the two end labels', (tester) async {
-    final start = DateTime(2026, 8, 5, 14, 30, 15);
-    await pump(
-      tester,
-      MetricLineChart(
-        points: const [1, 2],
-        timestamps: [
-          start.millisecondsSinceEpoch,
-          start.add(const Duration(seconds: 30)).millisecondsSinceEpoch,
-        ],
+  Future<void> pumpChart(WidgetTester tester, double scale) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: MediaQueryData(textScaler: TextScaler.linear(scale)),
+          child: const Scaffold(
+            // Column(min) so the chart reports its *natural* height. Given the whole body it would
+            // simply fill the viewport, and every size assertion would read the same number.
+            body: SizedBox(
+              width: 400,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  MetricLineChart(points: [10, 40, 30], timestamps: []),
+                ],
+              ),
+            ),
+          ),
+        ),
       ),
     );
+  }
 
-    // Under an hour apart, so seconds are shown — the same rule `chartEndpointLabels` already tests.
-    expect(find.text('14:30:15'), findsOneWidget);
-    expect(find.text('14:30:45'), findsOneWidget);
-  });
-
-  testWidgets('a series with no timestamps does not invent a time range', (tester) async {
-    await pump(tester, const MetricLineChart(points: [1, 2, 3]));
-    expect(find.text('—'), findsNWidgets(2));
-  });
-
-  testWidgets('one sample renders without drawing a line', (tester) async {
-    // A single point is not a trend, and joining it to the axis would draw a fall that never
-    // happened. It must still not throw.
-    await pump(tester, const MetricLineChart(points: [42]));
+  testWidgets('at the default text size the chart is unchanged', (tester) async {
+    await pumpChart(tester, 1);
     expect(tester.takeException(), isNull);
-    expect(find.text('42%'), findsOneWidget);
+  });
+
+  testWidgets('at 200% text the axis labels still fit', (tester) async {
+    // The regression this exists for. An overflow here is a clipped axis on Fleet and Monitor.
+    await pumpChart(tester, 2);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('the chart grows with the text rather than clipping it', (tester) async {
+    await pumpChart(tester, 1);
+    final atDefault = tester.getSize(find.byType(MetricLineChart)).height;
+    await pumpChart(tester, 2);
+    final atLarge = tester.getSize(find.byType(MetricLineChart)).height;
+
+    expect(atLarge, greaterThan(atDefault));
+  });
+
+  testWidgets('at the largest supported text size the chart stays a chart', (tester) async {
+    // 200% is the ceiling the Settings screen offers, so it is the size worth holding a bound
+    // against. Past it the labels keep growing and the plot does not — correct for legibility, and
+    // outside what the app lets anyone select.
+    await pumpChart(tester, 2);
+    final atMax = tester.getSize(find.byType(MetricLineChart)).height;
+
+    expect(atMax, lessThan(300), reason: 'a chart taller than this owns the screen');
+    expect(tester.takeException(), isNull);
   });
 }

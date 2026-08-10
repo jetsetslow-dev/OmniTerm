@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/domain/alert_breach_tracker.dart';
+import 'package:omniterm/domain/file_edit.dart';
 import 'package:omniterm/domain/app_lock_timeout_policy.dart';
 import 'package:omniterm/domain/input_validation.dart';
 import 'package:omniterm/domain/measurement_units.dart';
@@ -590,6 +591,52 @@ void main() {
       expect(quickScriptOsOptions.first, 'Any');
       expect(quickScriptSystemOptions.first, 'Any');
       expect(quickScriptSystemOptions, contains('Home Assistant'));
+    });
+  });
+
+  /// Opening a binary in the text editor. Hardening rather than a Kotlin port: Kotlin has only a
+  /// *size* guard.
+  ///
+  /// The editor is handed an already-decoded string, because the SFTP client reads with
+  /// `utf8.decode(..., allowMalformed: true)` — so invalid bytes have already become U+FFFD before
+  /// anything here sees them. That is invisible on screen (the replacement character renders as an
+  /// ordinary glyph) and saving writes those three bytes over the original, corrupting the file.
+  group('binaryEditWarning', () {
+    test('ordinary text is safe', () {
+      expect(binaryEditWarning('#!/bin/sh\nexec true\n'), isNull);
+    });
+
+    test('valid multi-byte UTF-8 is still safe', () {
+      // Accents and emoji decode cleanly and must not be mistaken for damage.
+      expect(binaryEditWarning('cafeé — naiïve \u{1F680}'), isNull);
+    });
+
+    test('a NUL byte is reported as binary', () {
+      final warning = binaryEditWarning('MZ\u0000\u0000program');
+      expect(warning, isNotNull);
+      expect(warning, contains('NUL'));
+      expect(warning, contains('corrupt'));
+    });
+
+    test('replacement characters are reported as a lossy read', () {
+      // What a latin-1 or truly binary file looks like after allowMalformed decoding.
+      final warning = binaryEditWarning('caf\uFFFD data');
+      expect(warning, isNotNull);
+      expect(warning, contains('not valid UTF-8'));
+      expect(
+        warning,
+        contains('over the original bytes'),
+        reason: 'the user must be told saving destroys data, not merely that it looks odd',
+      );
+    });
+
+    test('NUL takes precedence over a replacement character', () {
+      // Both present: "this is a binary" is the more useful thing to say.
+      expect(binaryEditWarning('\u0000\uFFFD'), contains('NUL'));
+    });
+
+    test('an empty file is safe', () {
+      expect(binaryEditWarning(''), isNull);
     });
   });
 }

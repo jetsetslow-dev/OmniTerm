@@ -50,6 +50,50 @@ void main() {
     });
   });
 
+  group('resolveTypedPath', () {
+    // The address box, ported from the editable path field in `ui/SftpScreen.kt:1806`. Flutter had
+    // breadcrumbs and no way to type a destination at all, so a folder had to be walked to.
+    String? typed(String text, {String current = '/srv/www'}) =>
+        resolveTypedPath(current: current, typed: text);
+
+    test('an absolute path goes where it says', () {
+      expect(typed('/var/log'), '/var/log');
+    });
+
+    test('it is normalised on the way, like any other path', () {
+      expect(typed('/var//log/'), '/var/log');
+    });
+
+    test('surrounding space is not part of the path', () {
+      // Space is legal in a filename, but a leading or trailing one here is a paste artefact far
+      // more often than it is a directory the user means.
+      expect(typed('  /var/log  '), '/var/log');
+    });
+
+    test('a relative entry resolves against where you are', () {
+      // The box is prefilled with the current directory, so `docs` means the same thing it would in
+      // a shell. Sent unresolved it would list the SFTP session's working directory, which the user
+      // cannot see.
+      expect(typed('docs'), '/srv/www/docs');
+      expect(typed('docs/img'), '/srv/www/docs/img');
+    });
+
+    test('a relative entry with no current directory falls back to the root', () {
+      // Before the first listing resolves, there is nothing to resolve against.
+      expect(typed('etc', current: ''), '/etc');
+    });
+
+    test('an emptied box is a change of mind, not a jump to the root', () {
+      // Going to `/` from deep in a tree is a surprising way to lose your place.
+      expect(typed(''), isNull);
+      expect(typed('   '), isNull);
+    });
+
+    test('the root itself is still reachable by typing it', () {
+      expect(typed('/'), '/');
+    });
+  });
+
   group('breadcrumbs', () {
     test('start at the root and end at the path itself', () {
       final crumbs = breadcrumbs('/srv/www/html');

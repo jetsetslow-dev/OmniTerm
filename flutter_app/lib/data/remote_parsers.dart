@@ -160,19 +160,28 @@ final _journalRe = RegExp(r'^(\S+)\s+(\S+)\s+([^:]+?):\s?(.*)$');
 /// True when the host exposes no readable log source, so the UI can explain rather than show empty.
 bool journalUnsupported(String output) => output.contains('---NOLOGS---');
 
-/// Parse `RemoteCommands.compareForConflicts` output.
+/// Parse [compareForConflicts] output against the [sources] that produced it.
+///
+/// The scan's first field is the **index** into [sources], not a filename: tabs and newlines are
+/// legal in filenames and would otherwise split into extra fields and shift every verdict along by
+/// one. Resolving the index back to a basename is therefore the parser's job, and a row whose index
+/// does not address [sources] is dropped rather than guessed at.
 ///
 /// Anything unrecognised maps to [ConflictVerdict.unknown] rather than being dropped or assumed
 /// benign: a clash we failed to classify must still be shown to the user as unverified, never
 /// silently treated as identical.
-List<TransferConflict> parseTransferConflicts(String output) {
+List<TransferConflict> parseTransferConflicts(String output, List<String> sources) {
   final out = <TransferConflict>[];
   for (final raw in output.lines) {
-    final line = raw.trim();
+    // Only the line ends are trimmed: a leading or trailing space is legal in a filename, and the
+    // fields are positional, so trimming the whole line could corrupt the last one.
+    final line = raw.replaceAll('\r', '');
     if (line.isEmpty || !line.contains('\t')) continue;
     final f = line.split('\t');
     if (f.length < 6) continue;
-    final name = f[0];
+    final index = int.tryParse(f[0].trim());
+    if (index == null || index < 0 || index >= sources.length) continue;
+    final name = _basename(sources[index]);
     if (name.isBlankString) continue;
 
     final verdict = switch (f[1].toUpperCase()) {
@@ -198,6 +207,17 @@ List<TransferConflict> parseTransferConflicts(String output) {
     );
   }
   return out;
+}
+
+/// The last path segment, matching the `basename` the scan script uses to build its destination
+/// path. A trailing slash is ignored so `/tmp/dir/` and `/tmp/dir` agree.
+String _basename(String path) {
+  var end = path.length;
+  while (end > 1 && path[end - 1] == '/') {
+    end--;
+  }
+  final slash = path.lastIndexOf('/', end - 1);
+  return path.substring(slash + 1, end);
 }
 
 List<SimLog> parseJournal(String output) {

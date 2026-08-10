@@ -49,6 +49,26 @@ bool isPinThrottled(int lockedUntilMs, int nowMs) => nowMs < lockedUntilMs;
 int pinLockoutAfterFailure(int failedAttempts, int nowMs) =>
     failedAttempts >= pinMaxAttempts ? nowMs + pinLockoutMs : 0;
 
+/// The lockout deadline to restore from storage, given the wall clock now reads [nowMs].
+///
+/// A lockout has to outlive the process. Keeping it in memory only means force-stopping the app —
+/// the easiest thing in the world to do to a phone you have picked up — clears the wait, and the
+/// throttle stops rate-limiting anything: restart, try one PIN, restart, try another.
+///
+/// **Clamped, because the deadline is wall-clock and the wall clock can move.** Persisting an
+/// absolute time means a device whose clock jumps forward would come back locked for what looks like
+/// years. A stored deadline further out than one full lockout cannot have been written by this app
+/// against the current clock, so it is treated as one full lockout from now — still honouring the
+/// throttle, without a device that is effectively bricked.
+///
+/// Moving the clock *backwards* shortens the wait, and that is accepted: the alternative is storing
+/// monotonic time, which does not survive the reboot this exists to cover.
+int restoredPinLockout(int? storedMs, int nowMs) {
+  if (storedMs == null || storedMs <= nowMs) return 0;
+  final ceiling = nowMs + pinLockoutMs;
+  return storedMs > ceiling ? ceiling : storedMs;
+}
+
 /// The PIN's length as recorded alongside its hash, or null when unknown.
 ///
 /// Stored so the entry screen can show the right number of slots without holding the PIN itself.

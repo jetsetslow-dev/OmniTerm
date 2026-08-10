@@ -49,6 +49,7 @@ void main() {
     Server? source,
     String? testFailure,
     bool withTester = true,
+    List<Server> existingServers = const [],
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -57,6 +58,7 @@ void main() {
           body: ServerFormSheet(
             mode: mode,
             source: source,
+            existingServers: existingServers,
             onSave: (s) async => savedRows.add(s),
             onTestConnection: withTester
                 ? (candidate) async {
@@ -266,5 +268,107 @@ void main() {
     await pump(tester, withTester: false);
     final button = tester.widget<OutlinedButton>(find.byKey(const ValueKey('serverForm.test')));
     expect(button.onPressed, isNull);
+  });
+
+  /// The duplicate-address warning, ported from `confirmDuplicateHost` in `ui/AppUi.kt:2782`.
+  ///
+  /// Deliberately a warning and not a validation error: two entries for one machine is a legitimate
+  /// setup — a root login and an unprivileged one, say — so the collision is reported and the
+  /// decision left with the user.
+  group('duplicate address', () {
+    /// A host already saved at the address `fillNewHost` types.
+    Server existingAt(String address) => saved().copyWith(id: 7, name: 'web-prod', host: address);
+
+    testWidgets('saving a second host at one address warns before storing it', (tester) async {
+      await pump(tester, existingServers: [existingAt('10.0.0.9')]);
+      await fillNewHost(tester);
+      await tester.tap(find.byKey(const ValueKey('serverForm.test')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('serverForm.save')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('serverForm.duplicate.dialog')), findsOneWidget);
+      // Naming the clashing host is the point: "duplicate address" alone does not say which one.
+      expect(find.textContaining('web-prod'), findsOneWidget);
+      expect(find.textContaining('10.0.0.9'), findsWidgets);
+      expect(savedRows, isEmpty, reason: 'nothing may be stored before the user answers');
+    });
+
+    testWidgets('Review returns to the form without saving', (tester) async {
+      await pump(tester, existingServers: [existingAt('10.0.0.9')]);
+      await fillNewHost(tester);
+      await tester.tap(find.byKey(const ValueKey('serverForm.test')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('serverForm.save')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('serverForm.duplicate.review')));
+      await tester.pumpAndSettle();
+
+      expect(savedRows, isEmpty);
+      expect(
+        find.byKey(const ValueKey('serverForm.save')),
+        findsOneWidget,
+        reason: 'the sheet stays open so the address can be corrected',
+      );
+    });
+
+    testWidgets('Save anyway stores the host', (tester) async {
+      await pump(tester, existingServers: [existingAt('10.0.0.9')]);
+      await fillNewHost(tester);
+      await tester.tap(find.byKey(const ValueKey('serverForm.test')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('serverForm.save')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('serverForm.duplicate.saveAnyway')));
+      await tester.pumpAndSettle();
+
+      expect(savedRows, hasLength(1));
+      expect(savedRows.single.host, '10.0.0.9');
+    });
+
+    testWidgets('the match ignores case and surrounding space', (tester) async {
+      await pump(tester, existingServers: [existingAt('  NAS.LOCAL ')]);
+      await tester.enterText(find.byKey(const ValueKey('serverForm.name')), 'second');
+      await tester.enterText(find.byKey(const ValueKey('serverForm.host')), 'nas.local');
+      await tester.enterText(find.byKey(const ValueKey('serverForm.username')), 'root');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('serverForm.test')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('serverForm.save')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('serverForm.duplicate.dialog')), findsOneWidget);
+    });
+
+    testWidgets('a distinct address saves without a warning', (tester) async {
+      await pump(tester, existingServers: [existingAt('10.0.0.2')]);
+      await fillNewHost(tester);
+      await tester.tap(find.byKey(const ValueKey('serverForm.test')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('serverForm.save')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('serverForm.duplicate.dialog')), findsNothing);
+      expect(savedRows, hasLength(1));
+    });
+
+    testWidgets('editing a host does not warn about its own address', (tester) async {
+      // Otherwise every edit of an existing host would warn about itself.
+      final existing = saved();
+      await pump(
+        tester,
+        mode: ServerFormMode.edit,
+        source: existing,
+        existingServers: [existing],
+      );
+      await tester.tap(find.byKey(const ValueKey('serverForm.save')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('serverForm.duplicate.dialog')), findsNothing);
+      expect(savedRows, hasLength(1));
+    });
   });
 }

@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../../../data/remote_models.dart';
+import '../../../domain/code_highlighter.dart';
 import '../../theme/colors.dart';
-import '../../theme/typography.dart';
+import '../../widgets/omni_components.dart';
+import '../../view_model/app_state.dart';
 import '../../view_model/sftp_view_model.dart';
+import '../../widgets/code_editor.dart';
 
 /// The remote text editor, ported from the Files editor in `ui/SftpScreen.kt`.
 ///
@@ -37,7 +41,11 @@ class _FileEditorSheet extends StatefulWidget {
 }
 
 class _FileEditorSheetState extends State<_FileEditorSheet> {
-  late final TextEditingController _text = TextEditingController(text: widget.initial);
+  late final HighlightEditingController _text = HighlightEditingController(
+    text: widget.initial,
+    language: languageForFileName(widget.entry.name),
+    maxChars: 100000,
+  );
   bool _editing = false;
   bool _saving = false;
   String? _failure;
@@ -94,9 +102,13 @@ class _FileEditorSheetState extends State<_FileEditorSheet> {
     if (mounted) Navigator.of(context).pop();
   }
 
+  static int _lineCount(String text) =>
+      text.isEmpty ? 0 : '\n'.allMatches(text).length + 1;
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final sudo = widget.vm.sudoWritesApply;
 
     return Padding(
       padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
@@ -119,10 +131,21 @@ class _FileEditorSheetState extends State<_FileEditorSheet> {
                         ),
                         Text(
                           // Saying which mode it is in, because the difference is the whole
-                          // safety of the screen.
-                          _editing ? 'Editing' : 'Read-only — tap the pencil to edit',
+                          // safety of the screen — and whether the save will be a root write,
+                          // which is a bigger difference still. Kotlin puts the same `· sudo` in
+                          // its subtitle and colours it red (`ui/SftpScreen.kt:3114`).
+                          [
+                            _editing
+                                ? 'Editing'
+                                : 'Read-only — tap the pencil to edit',
+                            '${_lineCount(_text.text)} lines',
+                            if (sudo) 'sudo',
+                          ].join(' · '),
                           key: const ValueKey('fileEditor.mode'),
-                          style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: sudo ? OmniColors.red : scheme.onSurfaceVariant,
+                          ),
                         ),
                       ],
                     ),
@@ -144,24 +167,40 @@ class _FileEditorSheetState extends State<_FileEditorSheet> {
                 ],
               ),
             ),
+            if (widget.vm.editorBinaryWarning != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                child: OmniCard(
+                  key: const ValueKey('fileEditor.binaryWarning'),
+                  leftAccent: OmniColors.amber,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.warning_amber, size: 16, color: OmniColors.amber),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          widget.vm.editorBinaryWarning!,
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             Expanded(
               child: Padding(
                 padding: const EdgeInsets.all(12),
-                child: TextField(
-                  key: const ValueKey('fileEditor.text'),
+                child: CodeEditor(
                   controller: _text,
-                  // Read-only rather than disabled: the text stays selectable and copyable, which
-                  // is most of why anyone opens a file on a server in the first place.
+                  language: languageForFileName(widget.entry.name),
                   readOnly: !_editing,
-                  maxLines: null,
-                  expands: true,
-                  textAlignVertical: TextAlignVertical.top,
-                  style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 12),
-                  decoration: InputDecoration(
-                    border: const OutlineInputBorder(),
-                    filled: true,
-                    fillColor: scheme.surfaceContainer,
-                  ),
+                  enabled: !_saving,
+                  maxHighlightChars:
+                      (context.watch<AppState>().preferences.editorHighlightLimitKb * 1024).clamp(
+                        0,
+                        highlightMaxCharsCap,
+                      ),
+                  textKey: const ValueKey('fileEditor.text'),
                   onChanged: (_) => setState(() {}),
                 ),
               ),
@@ -185,7 +224,15 @@ class _FileEditorSheetState extends State<_FileEditorSheet> {
                   // the file back unchanged still rewrites its mtime, which is a real edit to
                   // anything watching the file.
                   onPressed: _editing && _dirty && !_saving ? _save : null,
-                  child: Text(_saving ? 'Saving…' : 'Save'),
+                  child: Text(
+                    _saving
+                        ? 'Saving…'
+                        // Named, not implied: "Save" on a file being written as root understates
+                        // what the button does.
+                        : sudo
+                        ? 'Save as root'
+                        : 'Save',
+                  ),
                 ),
               ),
             ),

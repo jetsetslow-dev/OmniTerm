@@ -46,7 +46,13 @@ class OmniCard extends StatelessWidget {
         children: [
           Padding(padding: const EdgeInsets.all(12), child: child),
           if (leftAccent != null)
-            Positioned(left: 0, top: 0, bottom: 0, width: 3, child: ColoredBox(color: leftAccent!)),
+            Positioned(
+              left: 0,
+              top: 0,
+              bottom: 0,
+              width: 3,
+              child: ColoredBox(color: leftAccent!),
+            ),
         ],
       ),
     );
@@ -54,7 +60,12 @@ class OmniCard extends StatelessWidget {
     if (onTap != null || onLongPress != null) {
       card = Material(
         color: Colors.transparent,
-        child: InkWell(onTap: onTap, onLongPress: onLongPress, borderRadius: radius, child: card),
+        child: InkWell(
+          onTap: onTap,
+          onLongPress: onLongPress,
+          borderRadius: radius,
+          child: card,
+        ),
       );
     }
     if (semanticLabel != null) {
@@ -171,8 +182,12 @@ InputDecoration omniInputDecoration(
     filled: true,
     fillColor: scheme.surfaceContainer,
     isDense: true,
-    enabledBorder: OutlineInputBorder(borderSide: BorderSide(color: scheme.outline)),
-    focusedBorder: const OutlineInputBorder(borderSide: BorderSide(color: OmniColors.cyan)),
+    enabledBorder: OutlineInputBorder(
+      borderSide: BorderSide(color: scheme.outline),
+    ),
+    focusedBorder: const OutlineInputBorder(
+      borderSide: BorderSide(color: OmniColors.cyan),
+    ),
     labelStyle: const TextStyle(color: OmniColors.cyan),
   );
 }
@@ -204,12 +219,29 @@ String formatUptime(int seconds) {
   return '${m}m';
 }
 
+/// A fixed bar height, grown with the user's text size.
+///
+/// Tab strips, chip rows and toolbars are laid out at a constant height so they do not jitter as
+/// their contents change. That constant is a clipping bug at large text: a chip whose label doubles
+/// needs roughly double the height, and the row simply overflows — Monitor's 40px tab bar lost 44px
+/// at 200%, which is the whole strip.
+///
+/// Capped at 2x for the same reason the chart is: past that the bar starts owning the screen it is
+/// supposed to sit above.
+double scaledBarHeight(BuildContext context, double base) =>
+    base * MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0);
+
 /// A horizontal utilisation bar, ported from `GaugeBar` in `ui/OmniComponents.kt`.
 ///
 /// [value] is a percentage. It is clamped rather than trusted: a remote host can report a CPU figure
 /// above 100 (multi-core `top` output does) and an unclamped bar would paint outside its track.
 class GaugeBar extends StatelessWidget {
-  const GaugeBar({super.key, required this.value, required this.color, this.height = 6});
+  const GaugeBar({
+    super.key,
+    required this.value,
+    required this.color,
+    this.height = 6,
+  });
 
   final double value;
   final Color color;
@@ -247,7 +279,11 @@ class OmniTag extends StatelessWidget {
       ),
       child: Text(
         label,
-        style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold),
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.bold,
+        ),
       ),
     );
   }

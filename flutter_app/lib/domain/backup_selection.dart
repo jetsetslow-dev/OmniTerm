@@ -18,7 +18,8 @@ enum BackupSection {
   wolTargets('Wake-on-LAN targets'),
   networkShares('Network shares'),
   portForwards('Port forwards'),
-  settings('Settings');
+  settings('Settings'),
+  crashLogs('Crash logs *');
 
   const BackupSection(this.label);
 
@@ -30,7 +31,12 @@ class BackupSelection {
   const BackupSelection(this._selected);
 
   /// Everything, which is what a user almost always wants from a backup.
-  BackupSelection.all() : _selected = BackupSection.values.toSet();
+  BackupSelection.all({bool includeCrashLogs = false})
+    : _selected = BackupSection.values
+          .where(
+            (section) => includeCrashLogs || section != BackupSection.crashLogs,
+          )
+          .toSet();
 
   const BackupSelection.none() : _selected = const {};
 
@@ -47,13 +53,17 @@ class BackupSelection {
   /// Alert rules, incidents, history and port forwards are all scoped to a host; an incident is
   /// additionally scoped to the rule that raised it. Restoring any of them without its parent would
   /// produce a row pointing at an id that no longer exists.
-  static Set<BackupSection> dependenciesOf(BackupSection section) => switch (section) {
-    BackupSection.alertRules => {BackupSection.servers},
-    BackupSection.activeAlerts => {BackupSection.servers, BackupSection.alertRules},
-    BackupSection.alertHistory => {BackupSection.servers},
-    BackupSection.portForwards => {BackupSection.servers},
-    _ => const {},
-  };
+  static Set<BackupSection> dependenciesOf(BackupSection section) =>
+      switch (section) {
+        BackupSection.alertRules => {BackupSection.servers},
+        BackupSection.activeAlerts => {
+          BackupSection.servers,
+          BackupSection.alertRules,
+        },
+        BackupSection.alertHistory => {BackupSection.servers},
+        BackupSection.portForwards => {BackupSection.servers},
+        _ => const {},
+      };
 
   /// Sections that cannot survive without [section].
   static Set<BackupSection> dependentsOf(BackupSection section) => {
@@ -81,6 +91,52 @@ class BackupSelection {
   ///
   /// Both directions matter: enabling incidents without their rules gives an unrestorable backup,
   /// and disabling hosts while leaving alert rules selected gives the same thing from the other end.
+  /// Wire prefix for the current encoding, matching Kotlin's `BACKUP_SELECTION_V2_PREFIX`.
+  static const _v2Prefix = 'v2:';
+
+  /// Serialises the selection for `backup_export_selection`.
+  ///
+  /// Byte-compatible with Kotlin's `BackupSelection.encode()`: the `v2:` prefix followed by the
+  /// enabled section names, comma-separated. The names are the enum's own, which already match
+  /// Kotlin's keys exactly, so a selection written by the Android app is read back unchanged here.
+  String encode() {
+    final closed = withReferentialClosure();
+    return _v2Prefix +
+        BackupSection.values
+            .where(closed.contains)
+            .map((section) => section.name)
+            .join(',');
+  }
+
+  /// Reads a stored selection back, defaulting to everything but crash logs.
+  ///
+  /// **A v1 value — one with no `v2:` prefix — predates tunnel backup.** Kotlin inherits
+  /// `portForwards` from `servers` in that case, and this does the same: a legacy settings-only
+  /// selection must not silently start exporting host data on first launch after an upgrade.
+  ///
+  /// An unrecognised name is ignored rather than failing the whole parse, so a selection written by
+  /// a newer build degrades to the sections this one understands instead of resetting entirely.
+  static BackupSelection decode(String? value) {
+    final raw = value?.trim() ?? '';
+    if (raw.isEmpty) return BackupSelection.all();
+    final isV2 = raw.startsWith(_v2Prefix);
+    final body = isV2 ? raw.substring(_v2Prefix.length) : raw;
+    final names = body
+        .split(',')
+        .map((name) => name.trim())
+        .where((name) => name.isNotEmpty)
+        .toSet();
+
+    final selected = <BackupSection>{
+      for (final section in BackupSection.values)
+        if (names.contains(section.name)) section,
+    };
+    if (!isV2 && names.contains(BackupSection.servers.name)) {
+      selected.add(BackupSection.portForwards);
+    }
+    return BackupSelection(selected).withReferentialClosure();
+  }
+
   BackupSelection toggled(BackupSection section, {required bool enabled}) {
     if (enabled) {
       return BackupSelection({..._selected, section}).withReferentialClosure();
@@ -116,6 +172,7 @@ class BackupSelection {
       BackupSection.alertHistory ||
       BackupSection.networkShares ||
       BackupSection.portForwards => true,
+      BackupSection.crashLogs => true,
       BackupSection.wolTargets || BackupSection.settings => false,
     },
   );
@@ -138,3 +195,25 @@ class BackupSelection {
 /// somewhere arbitrary.
 int? remapServerId(int oldServerId, Map<int, int> serverIdMap) =>
     oldServerId == 0 ? 0 : serverIdMap[oldServerId];
+
+/// How many hosts a restore may bring in, given the build's entitlement.
+///
+/// Ported from `maxSelected` on `BackupHostSelectionList` (`ui/ToolsScreen.kt:2970`).
+///
+/// The free Play build caps *saved hosts*, and that cap is enforced when adding one by hand. A
+/// restore writes host rows too, so without the same cap a backup is an unmetered way straight past
+/// it — the same shape as Kotlin's note that ad-hoc connections must not bypass the saved-host
+/// limit. Null means no cap, which is the source-available build and any unlocked install.
+int? restoreHostCap({required bool hasHostLimit, required int hostLimit}) =>
+    hasHostLimit ? hostLimit : null;
+
+/// The hosts a restore should start with selected.
+///
+/// **The first [cap] in the file's own order**, not an arbitrary subset: the order a backup lists
+/// hosts in is the order they were saved, so the oldest survive a capped restore. Choosing by
+/// anything else would be choosing for the user, and they can change the selection anyway.
+Set<int> defaultRestoreHostIds(Iterable<int> hostIds, {int? cap}) {
+  final all = hostIds.toList();
+  if (cap == null || all.length <= cap) return all.toSet();
+  return all.take(cap < 0 ? 0 : cap).toSet();
+}

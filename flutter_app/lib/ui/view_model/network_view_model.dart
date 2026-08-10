@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math';
 
 import 'package:drift/drift.dart' show Value;
@@ -7,6 +6,9 @@ import 'package:flutter/foundation.dart';
 
 import '../../data/app_database.dart';
 import '../../data/network/network_probe.dart';
+import '../../data/network/lan_hostname.dart';
+import '../../data/network/device_network_command.dart';
+import '../../data/network/speed_test_client.dart';
 import '../../data/network/whois_client.dart';
 import '../../data/ssh/ssh_tunnel_manager.dart';
 import '../../domain/network_tools.dart';
@@ -15,7 +17,17 @@ import '../../domain/server_credentials.dart';
 import 'app_state.dart';
 
 /// The Network tool's tabs, in the Kotlin's order.
-enum NetworkTab { hostScan, wakeOnLan, ping, traceroute, portScan, dnsLookup, whois, tunnels }
+enum NetworkTab {
+  hostScan,
+  wakeOnLan,
+  ping,
+  traceroute,
+  portScan,
+  dnsLookup,
+  whois,
+  speedTest,
+  tunnels,
+}
 
 /// One port probe's outcome.
 class PortResult {
@@ -28,21 +40,21 @@ class PortResult {
   String? get label => portLabel(port);
 }
 
-/// One ping attempt.
-class PingResult {
-  const PingResult({required this.sequence, required this.latency});
-
-  final int sequence;
-
-  /// Null when the attempt timed out.
-  final Duration? latency;
-}
-
 /// The Network tool's state and actions, split out of `NetworkToolView` in `ui/ToolsScreen.kt`.
 class NetworkViewModel extends ChangeNotifier {
-  NetworkViewModel(this._app, {NetworkProbe? probe, WhoisClient? whois, this.tunnels})
-    : probe = probe ?? const SocketNetworkProbe(),
-      whois = whois ?? const SocketWhoisClient();
+  NetworkViewModel(
+    this._app, {
+    NetworkProbe? probe,
+    WhoisClient? whois,
+    SpeedTestClient? speedTest,
+    DeviceNetworkCommandRunner? deviceCommands,
+    Future<Map<String, String>> Function()? arpReader,
+    this.tunnels,
+  }) : probe = probe ?? const SocketNetworkProbe(),
+       whois = whois ?? const SocketWhoisClient(),
+       speedTest = speedTest ?? DioSpeedTestClient(),
+       deviceCommands = deviceCommands ?? const IoDeviceNetworkCommandRunner(),
+       arpReader = arpReader ?? readSystemArpTable;
 
   final AppState _app;
 
@@ -57,6 +69,16 @@ class NetworkViewModel extends ChangeNotifier {
   /// The WHOIS transport, injected for the same reason as [probe]: a test that queries a real
   /// registry fails on a train.
   final WhoisClient whois;
+
+  final SpeedTestClient speedTest;
+  final DeviceNetworkCommandRunner deviceCommands;
+
+  /// Neighbour-cache reader used to enrich scan results with MAC/vendor data.
+  ///
+  /// Injected separately from [probe] because it is file I/O on Android/Linux rather than socket
+  /// I/O. Widget tests use a deterministic empty table instead of accidentally reading the host's
+  /// own `/proc/net/arp`.
+  final Future<Map<String, String>> Function() arpReader;
 
   bool _disposed = false;
 
@@ -140,17 +162,29 @@ class NetworkViewModel extends ChangeNotifier {
       final found = await sweepSubnet(
         probe,
         prefix,
+        arpReader: arpReader,
         onProgress: (done, total) {
           _scanDone = done;
           _scanTotal = total;
           _safeNotify();
         },
       );
-      // Names are resolved after the sweep, not during: a slow or absent PTR server would otherwise
-      // hold up the whole scan behind lookups nobody asked for.
-      for (final host in found) {
-        host.hostname = await probe.reverseLookup(host.address);
+      // Resolve all live hosts concurrently with strict per-scheme bounds. Consumer routers rarely
+      // publish PTR records, so falling back to mDNS and NetBIOS is what makes names appear for
+      // Apple/Linux/IoT and Windows/Samba/NAS devices respectively.
+      var nextHost = 0;
+      Future<void> resolveWorker() async {
+        while (nextHost < found.length) {
+          final host = found[nextHost++];
+          final name = await _resolveLanHostname(host.address);
+          host.hostname = name.isEmpty ? null : name;
+        }
       }
+
+      // Each unnamed host opens an mDNS and NetBIOS socket. Keep that bounded on a crowded /24;
+      // hundreds of simultaneous UDP sockets can exceed a phone's descriptor limit.
+      final workers = found.length < 16 ? found.length : 16;
+      await Future.wait([for (var i = 0; i < workers; i++) resolveWorker()]);
       _scanResults = found;
     } catch (e) {
       _error = e.toString();
@@ -158,6 +192,26 @@ class NetworkViewModel extends ChangeNotifier {
       _scanning = false;
       _safeNotify();
     }
+  }
+
+  Future<String> _resolveLanHostname(String address) async {
+    final reverse = await probe
+        .reverseLookup(address)
+        .timeout(const Duration(milliseconds: 1200), onTimeout: () => null);
+    final normalizedReverse = LanHostnameWire.normalize(reverse, address);
+    if (normalizedReverse.isNotEmpty) return normalizedReverse;
+
+    final fallbacks = await Future.wait([
+      probe.mdnsReverseLookup(
+        address,
+        timeout: const Duration(milliseconds: 900),
+      ),
+      probe.netbiosName(address, timeout: const Duration(milliseconds: 900)),
+    ]);
+    final mdns = LanHostnameWire.normalize(fallbacks[0], address);
+    if (mdns.isNotEmpty) return mdns;
+    final netbios = LanHostnameWire.normalize(fallbacks[1], address);
+    return netbios.isEmpty ? '' : LanHostnameWire.prettifyNetbios(netbios);
   }
 
   // ── wake on LAN ─────────────────────────────────────────────────────────────
@@ -186,8 +240,12 @@ class NetworkViewModel extends ChangeNotifier {
     String broadcastIp = '',
     String ipAddress = '',
     int port = 9,
+    String notes = '',
   }) async {
     if (name.trim().isEmpty) return 'Name is required.';
+    if (port < 1 || port > 65535) {
+      return 'UDP port must be between 1 and 65535.';
+    }
     final mac = parseMacAddress(macAddress);
     // Refusing here rather than at send time: a saved target with an unusable MAC would look fine
     // in the list and silently do nothing every time it was tapped.
@@ -212,12 +270,17 @@ class NetworkViewModel extends ChangeNotifier {
         broadcastIp: Value(broadcast),
         ipAddress: Value(ipAddress.trim()),
         port: Value(port),
+        notes: Value(notes.trim()),
+        lastWokenTime: existing == null
+            ? const Value.absent()
+            : Value(existing.lastWokenTime),
       ),
     );
     return null;
   }
 
-  Future<void> deleteWolTarget(WolTarget target) => _app.repository.deleteWolTargetById(target.id);
+  Future<void> deleteWolTarget(WolTarget target) =>
+      _app.repository.deleteWolTargetById(target.id);
 
   // ── whois ───────────────────────────────────────────────────────────────────
 
@@ -279,7 +342,9 @@ class NetworkViewModel extends ChangeNotifier {
 
       _whoisResult = text;
       _whoisServers = servers;
-      if (text.trim().isEmpty) _error = 'No registration records came back for $target.';
+      if (text.trim().isEmpty) {
+        _error = 'No registration records came back for $target.';
+      }
     } on WhoisException catch (e) {
       _error = 'WHOIS lookup failed: ${e.message}';
     } catch (e) {
@@ -288,6 +353,121 @@ class NetworkViewModel extends ChangeNotifier {
       _whoisRunning = false;
       _safeNotify();
     }
+  }
+
+  // ── speed test ─────────────────────────────────────────────────────────────
+
+  static const speedTestServers = <(String, String)>[
+    (
+      'Cloudflare — global anycast (50 MB)',
+      'https://speed.cloudflare.com/__down?bytes=52428800',
+    ),
+    (
+      'Cloudflare — global anycast (200 MB)',
+      'https://speed.cloudflare.com/__down?bytes=209715200',
+    ),
+    (
+      'Hetzner — Falkenstein, Germany (100 MB)',
+      'https://fsn1-speed.hetzner.com/100MB.bin',
+    ),
+    (
+      'Hetzner — Helsinki, Finland (100 MB)',
+      'https://hel1-speed.hetzner.com/100MB.bin',
+    ),
+    (
+      'Hetzner — Ashburn, US East (100 MB)',
+      'https://ash-speed.hetzner.com/100MB.bin',
+    ),
+    (
+      'OVH — Gravelines, France (100 MB)',
+      'https://proof.ovh.net/files/100Mb.dat',
+    ),
+    (
+      'Linode — Newark, US East (100 MB)',
+      'https://speedtest.newark.linode.com/100MB-newark.bin',
+    ),
+    (
+      'Linode — Fremont, US West (100 MB)',
+      'https://speedtest.fremont.linode.com/100MB-fremont.bin',
+    ),
+    (
+      'Linode — London, UK (100 MB)',
+      'https://speedtest.london.linode.com/100MB-london.bin',
+    ),
+    (
+      'Linode — Singapore (100 MB)',
+      'https://speedtest.singapore.linode.com/100MB-singapore.bin',
+    ),
+    (
+      'Linode — Mumbai, India (100 MB)',
+      'https://speedtest.mumbai1.linode.com/100MB-mumbai1.bin',
+    ),
+  ];
+
+  String speedTestUrl = speedTestServers.first.$2;
+  bool _speedTestRunning = false;
+  String? _speedTestError;
+  double? _speedTestMbps;
+  int _speedTestBytes = 0;
+  Duration? _speedTestLatency;
+  SpeedTestOperation? _speedTestOperation;
+
+  bool get speedTestRunning => _speedTestRunning;
+  String? get speedTestError => _speedTestError;
+  double? get speedTestMbps => _speedTestMbps;
+  int get speedTestBytes => _speedTestBytes;
+  Duration? get speedTestLatency => _speedTestLatency;
+
+  Future<void> runSpeedTest() async {
+    if (_speedTestRunning) return;
+    final url = speedTestUrl.trim();
+    if (url.isEmpty) {
+      _speedTestError = 'Enter a download URL.';
+      _safeNotify();
+      return;
+    }
+    final parsed = Uri.tryParse(url);
+    if (parsed == null || parsed.scheme != 'https' || parsed.host.isEmpty) {
+      _speedTestError = 'Enter a valid HTTPS download URL.';
+      _safeNotify();
+      return;
+    }
+
+    _speedTestRunning = true;
+    _speedTestError = null;
+    _speedTestMbps = null;
+    _speedTestBytes = 0;
+    _speedTestLatency = null;
+    _safeNotify();
+
+    try {
+      final operation = speedTest.download(
+        url,
+        onProgress: (sample) {
+          _speedTestBytes = sample.bytes;
+          _speedTestMbps = sample.mbps;
+          _safeNotify();
+        },
+      );
+      _speedTestOperation = operation;
+      final result = await operation.result;
+      _speedTestBytes = result.bytes;
+      _speedTestMbps = result.mbps;
+      _speedTestLatency = result.latency;
+    } catch (e) {
+      if (_speedTestRunning) _speedTestError = 'Speed test failed: $e';
+    } finally {
+      _speedTestOperation = null;
+      _speedTestRunning = false;
+      _safeNotify();
+    }
+  }
+
+  void cancelSpeedTest() {
+    _speedTestRunning = false;
+    _speedTestOperation?.cancel();
+    _speedTestOperation = null;
+    _safeNotify();
   }
 
   // ── tunnels ─────────────────────────────────────────────────────────────────
@@ -342,11 +522,14 @@ class NetworkViewModel extends ChangeNotifier {
       if (manager.isActive(pf.id)) {
         await manager.stop(pf.id);
       } else {
-        final server = _app.servers.where((s) => s.id == pf.serverId).firstOrNull;
+        final server = _app.servers
+            .where((s) => s.id == pf.serverId)
+            .firstOrNull;
         if (server == null) {
           // The host was deleted out from under the tunnel. Saying so beats a connection error
           // that blames the network.
-          _tunnelErrors[pf.id] = 'The host this tunnel runs over no longer exists.';
+          _tunnelErrors[pf.id] =
+              'The host this tunnel runs over no longer exists.';
           return;
         }
         final creds = resolveCredentials(
@@ -387,77 +570,106 @@ class NetworkViewModel extends ChangeNotifier {
         target.broadcastIp.isEmpty ? '255.255.255.255' : target.broadcastIp,
         target.port,
       );
+      await _app.repository.updateWolLastWoken(
+        target.id,
+        DateTime.now().millisecondsSinceEpoch,
+      );
       return 'Magic packet sent to ${target.name}. It may take a moment to boot.';
     } catch (e) {
       return 'Could not send the packet: $e';
     }
   }
 
+  /// Best-effort online status for a WOL target without raw-socket privileges.
+  Future<bool?> wolOnlineStatus(WolTarget target) async {
+    final address = target.ipAddress.trim();
+    if (address.isEmpty) return null;
+    for (final port in const [22, 80, 443, 445]) {
+      if (await probe.tcpPing(
+            address,
+            port,
+            timeout: const Duration(milliseconds: 450),
+          ) !=
+          null) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // ── ping ────────────────────────────────────────────────────────────────────
 
   String pingTarget = '';
-  int pingPort = 22;
-  List<PingResult> _pingResults = const [];
+  int pingCount = 4;
+  List<String> _pingLines = const [];
   bool _pinging = false;
+  DeviceNetworkCommand? _pingCommand;
 
-  List<PingResult> get pingResults => List.unmodifiable(_pingResults);
+  List<String> get pingLines => List.unmodifiable(_pingLines);
   bool get pinging => _pinging;
-
-  /// How many attempts one run makes.
-  static const pingAttempts = 4;
-
-  /// Successful attempts as a percentage, or null before a run.
-  double? get pingSuccessRate {
-    if (_pingResults.isEmpty) return null;
-    final ok = _pingResults.where((r) => r.latency != null).length;
-    return ok * 100 / _pingResults.length;
-  }
-
-  /// Mean round trip of the successful attempts, or null when none answered.
-  Duration? get pingAverage {
-    final ok = _pingResults.where((r) => r.latency != null).toList();
-    if (ok.isEmpty) return null;
-    final total = ok.fold<int>(0, (sum, r) => sum + r.latency!.inMicroseconds);
-    return Duration(microseconds: total ~/ ok.length);
-  }
 
   Future<void> runPing() async {
     if (_pinging) return;
     final target = pingTarget.trim();
-    if (target.isEmpty) {
-      _error = 'Enter a host to ping.';
+    if (!isValidNetworkCommandTarget(target)) {
+      _error = 'Enter a valid hostname or IP address.';
+      _safeNotify();
+      return;
+    }
+    if (pingCount < 0 || pingCount > 9999) {
+      _error = 'Tries must be between 0 and 9999.';
       _safeNotify();
       return;
     }
 
     _pinging = true;
     _error = null;
-    _pingResults = const [];
+    _pingLines = const [];
     _safeNotify();
 
     try {
-      final results = <PingResult>[];
-      for (var attempt = 1; attempt <= pingAttempts; attempt++) {
-        final latency = await probe.tcpPing(target, pingPort);
-        results.add(PingResult(sequence: attempt, latency: latency));
-        // Published as they arrive: watching the first reply land is the point of a ping, and a
-        // four-second wait for all of them at once is not.
-        _pingResults = List.of(results);
+      final command = await deviceCommands.startPing(target, count: pingCount);
+      if (command == null) {
+        _pingLines = const ['ICMP ping is not available on this platform.'];
+        return;
+      }
+      _pingCommand = command;
+      if (!_pinging) {
+        command.stop();
+        return;
+      }
+      await for (final line in command.lines) {
+        if (!_pinging) break;
+        if (line.trim().isEmpty) continue;
+        _pingLines = ([
+          ..._pingLines,
+          line,
+        ]).reversed.take(200).toList().reversed.toList(growable: false);
         _safeNotify();
       }
+      await command.exitCode;
     } catch (e) {
-      _error = e.toString();
+      _pingLines = [..._pingLines, 'ping failed: $e'];
     } finally {
+      _pingCommand?.stop();
+      _pingCommand = null;
       _pinging = false;
       _safeNotify();
     }
   }
+
+  void stopPing() {
+    _pinging = false;
+    _pingCommand?.stop();
+    _safeNotify();
+  }
+
   // ── traceroute ──────────────────────────────────────────────────────────────
 
   String tracerouteTarget = '';
   List<String> _tracerouteLines = const [];
   bool _tracerouteRunning = false;
-  Process? _tracerouteProcess;
+  DeviceNetworkCommand? _tracerouteCommand;
 
   List<String> get tracerouteLines => List.unmodifiable(_tracerouteLines);
   bool get tracerouteRunning => _tracerouteRunning;
@@ -465,7 +677,7 @@ class NetworkViewModel extends ChangeNotifier {
   Future<void> runTraceroute() async {
     if (_tracerouteRunning) return;
     final target = tracerouteTarget.trim();
-    if (target.isEmpty) {
+    if (!isValidNetworkCommandTarget(target)) {
       _error = 'Enter a valid hostname or IP address.';
       _safeNotify();
       return;
@@ -473,66 +685,123 @@ class NetworkViewModel extends ChangeNotifier {
 
     _tracerouteRunning = true;
     _error = null;
-    _tracerouteLines = ['ICMP trace via TTL-stepped ping (no traceroute binary on this device)'];
+    _tracerouteLines = const [];
     _safeNotify();
 
-    bool reached = false;
-    for (var ttl = 1; ttl <= 30; ttl++) {
-      if (!_tracerouteRunning) break;
-      final startedNs = DateTime.now().microsecondsSinceEpoch;
-      String output = '';
-
-      try {
-        _tracerouteProcess = await Process.start(
-          'ping',
-          ['-c', '1', '-W', '2', '-t', ttl.toString(), target],
-        );
-        output = await systemEncoding.decodeStream(_tracerouteProcess!.stdout);
-        await _tracerouteProcess!.exitCode;
-      } catch (e) {
-        _tracerouteLines = List.of(_tracerouteLines)..add('ping is not available on this device — cannot trace.');
-        _safeNotify();
-        break;
-      } finally {
-        _tracerouteProcess?.kill();
-        _tracerouteProcess = null;
-      }
-
-      if (ttl == 1 && (output.toLowerCase().contains('unknown host') || output.toLowerCase().contains('name or service not known'))) {
-        _tracerouteLines = List.of(_tracerouteLines)..add('Cannot resolve $target.');
-        _safeNotify();
-        break;
-      }
-
-      final elapsedMs = (DateTime.now().microsecondsSinceEpoch - startedNs) / 1000.0;
-      final replyMatch = RegExp(r'bytes from ([0-9a-fA-F.:]*[0-9a-fA-F])[:\s].*time=([\d.]+)').firstMatch(output);
-      String hopLine = '';
-
-      if (replyMatch != null) {
-        hopLine = '${ttl.toString().padLeft(2)}  ${replyMatch.group(1)}  ${replyMatch.group(2)} ms';
-        reached = true;
-      } else {
-        final hopMatch = RegExp(r'[Ff]rom ([0-9a-fA-F.:]*[0-9a-fA-F])[:\s]').firstMatch(output);
-        if (hopMatch != null) {
-          hopLine = '${ttl.toString().padLeft(2)}  ${hopMatch.group(1)}  ~${elapsedMs.toStringAsFixed(0)} ms';
-        } else {
-          hopLine = '${ttl.toString().padLeft(2)}  *';
+    try {
+      final native = await deviceCommands.startTraceroute(target);
+      if (native != null) {
+        _tracerouteCommand = native;
+        if (!_tracerouteRunning) {
+          native.stop();
+          return;
         }
+        await for (final line in native.lines) {
+          if (!_tracerouteRunning) break;
+          _appendTraceLine(line);
+        }
+        await native.exitCode;
+        return;
       }
-
-      _tracerouteLines = (List.of(_tracerouteLines)..add(hopLine)).reversed.take(200).toList().reversed.toList();
+      await _runTtlTraceroute(target);
+    } catch (e) {
+      if (_tracerouteRunning) _appendTraceLine('traceroute failed: $e');
+    } finally {
+      _tracerouteCommand?.stop();
+      _tracerouteCommand = null;
+      _tracerouteRunning = false;
       _safeNotify();
-      if (reached) break;
     }
-
-    _tracerouteLines = List.of(_tracerouteLines)..add(reached ? 'Trace complete.' : 'Stopped after 30 hops without reaching $target.');
-    _tracerouteRunning = false;
-    _safeNotify();
   }
 
   void stopTraceroute() {
-    _tracerouteProcess?.kill();
     _tracerouteRunning = false;
+    _tracerouteCommand?.stop();
+    _safeNotify();
+  }
+
+  Future<void> _runTtlTraceroute(String target) async {
+    _appendTraceLine(
+      'ICMP trace via TTL-stepped ping (no traceroute binary on this device)',
+    );
+    var reached = false;
+    var completed = true;
+    for (var ttl = 1; ttl <= 30 && _tracerouteRunning; ttl++) {
+      final startedUs = DateTime.now().microsecondsSinceEpoch;
+      final command = await deviceCommands.startPing(
+        target,
+        count: 1,
+        ttl: ttl,
+      );
+      if (command == null) {
+        _appendTraceLine(
+          'ping is not available on this device — cannot trace.',
+        );
+        completed = false;
+        break;
+      }
+      _tracerouteCommand = command;
+      if (!_tracerouteRunning) {
+        command.stop();
+        completed = false;
+        break;
+      }
+      final output = StringBuffer();
+      await for (final line in command.lines) {
+        output.writeln(line);
+      }
+      await command.exitCode;
+      command.stop();
+      if (!_tracerouteRunning) {
+        completed = false;
+        break;
+      }
+      final text = output.toString();
+      final lower = text.toLowerCase();
+      if (ttl == 1 &&
+          (lower.contains('unknown host') ||
+              lower.contains('name or service not known'))) {
+        _appendTraceLine('Cannot resolve $target.');
+        completed = false;
+        break;
+      }
+      final elapsedMs =
+          (DateTime.now().microsecondsSinceEpoch - startedUs) / 1000.0;
+      final reply = RegExp(
+        r'bytes from ([0-9a-fA-F.:]*[0-9a-fA-F])[:\s].*time=([\d.]+)',
+        caseSensitive: false,
+      ).firstMatch(text);
+      if (reply != null) {
+        _appendTraceLine(
+          '${ttl.toString().padLeft(2)}  ${reply.group(1)}  ${reply.group(2)} ms',
+        );
+        reached = true;
+        break;
+      }
+      final hop = RegExp(
+        r'from ([0-9a-fA-F.:]*[0-9a-fA-F])[:\s]',
+        caseSensitive: false,
+      ).firstMatch(text);
+      _appendTraceLine(
+        hop == null
+            ? '${ttl.toString().padLeft(2)}  *'
+            : '${ttl.toString().padLeft(2)}  ${hop.group(1)}  ~${elapsedMs.toStringAsFixed(0)} ms',
+      );
+    }
+    if (!completed || !_tracerouteRunning) return;
+    _appendTraceLine(
+      reached
+          ? 'Trace complete.'
+          : 'Stopped after 30 hops without reaching $target.',
+    );
+  }
+
+  void _appendTraceLine(String line) {
+    if (line.trim().isEmpty) return;
+    _tracerouteLines = ([
+      ..._tracerouteLines,
+      line,
+    ]).reversed.take(200).toList().reversed.toList(growable: false);
     _safeNotify();
   }
 
@@ -559,7 +828,8 @@ class NetworkViewModel extends ChangeNotifier {
     }
     final ports = parsePortSpec(portSpec);
     if (ports.isEmpty) {
-      _error = 'Enter ports like 22,80,443 or 8000-8100 (up to $maxPortsPerScan at a time).';
+      _error =
+          'Enter ports like 22,80,443 or 8000-8100 (up to $maxPortsPerScan at a time).';
       _safeNotify();
       return;
     }
@@ -575,16 +845,25 @@ class NetworkViewModel extends ChangeNotifier {
       Future<void> worker() async {
         while (queue.isNotEmpty) {
           final port = queue.removeAt(0);
-          final latency = await probe.tcpPing(target, port, timeout: const Duration(seconds: 1));
-          results.add(PortResult(port: port, open: latency != null, latency: latency));
-          _portResults = List.of(results)..sort((a, b) => a.port.compareTo(b.port));
+          final latency = await probe.tcpPing(
+            target,
+            port,
+            timeout: const Duration(seconds: 1),
+          );
+          results.add(
+            PortResult(port: port, open: latency != null, latency: latency),
+          );
+          _portResults = List.of(results)
+            ..sort((a, b) => a.port.compareTo(b.port));
           _safeNotify();
         }
       }
 
       // Bounded fan-out: opening a socket per port at once exhausts a mobile process's descriptors
       // and makes the scan slower, not faster.
-      await Future.wait([for (var i = 0; i < min(32, ports.length); i++) worker()]);
+      await Future.wait([
+        for (var i = 0; i < min(32, ports.length); i++) worker(),
+      ]);
     } catch (e) {
       _error = e.toString();
     } finally {
@@ -622,13 +901,20 @@ class NetworkViewModel extends ChangeNotifier {
     final transactionId = Random().nextInt(0xFFFF);
 
     try {
-      final query = buildDnsQuery(target, dnsTypeCode(dnsType), transactionId: transactionId);
+      final query = buildDnsQuery(
+        target,
+        dnsTypeCode(dnsType),
+        transactionId: transactionId,
+      );
       Object? lastFailure;
 
       for (final resolver in fallbackResolvers) {
         try {
           final response = await probe.resolve(query, resolver: resolver);
-          _dnsResults = parseDnsResponse(response, expectTransactionId: transactionId);
+          _dnsResults = parseDnsResponse(
+            response,
+            expectTransactionId: transactionId,
+          );
           if (_dnsResults.isEmpty) {
             _error = 'No ${dnsType.toUpperCase()} records for $target.';
           }
@@ -666,6 +952,7 @@ class NetworkViewModel extends ChangeNotifier {
       case NetworkTab.wakeOnLan:
       case NetworkTab.whois:
         whoisTarget = address;
+      case NetworkTab.speedTest:
       case NetworkTab.tunnels:
         return;
     }
@@ -673,11 +960,49 @@ class NetworkViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Sends a discovered address to an existing tool and starts that tool immediately.
+  ///
+  /// The native scan sheet is a one-tap action surface, not merely a field prefill. Keeping the
+  /// dispatch here also makes the behaviour testable without driving the modal sheet.
+  Future<void> runForHost(
+    String address,
+    NetworkTab tool, {
+    List<int> knownOpenPorts = const [],
+  }) async {
+    if (tool == NetworkTab.portScan && knownOpenPorts.isNotEmpty) {
+      portSpec = ({
+        ...parsePortSpec(portSpec),
+        ...knownOpenPorts,
+      }.toList()..sort()).join(',');
+    }
+    useHost(address, tool);
+    switch (tool) {
+      case NetworkTab.ping:
+        await runPing();
+      case NetworkTab.traceroute:
+        await runTraceroute();
+      case NetworkTab.portScan:
+        await runPortScan();
+      case NetworkTab.dnsLookup:
+        await runDnsLookup();
+      case NetworkTab.whois:
+        await runWhois();
+      case NetworkTab.hostScan ||
+          NetworkTab.wakeOnLan ||
+          NetworkTab.speedTest ||
+          NetworkTab.tunnels:
+        return;
+    }
+  }
+
   @override
   void dispose() {
     _disposed = true;
+    _pingCommand?.stop();
+    _tracerouteCommand?.stop();
     _wolSub?.cancel();
     _tunnelSub?.cancel();
+    _speedTestOperation?.cancel();
     super.dispose();
   }
 }

@@ -2,8 +2,13 @@ import 'package:drift/drift.dart' show Value;
 import 'package:flutter/foundation.dart';
 
 import '../../data/app_database.dart';
+import '../../data/remote_models.dart';
 import '../../data/ssh/ssh_transport.dart';
+import '../../domain/host_limit.dart';
+import '../../domain/health_scoring.dart';
+import '../../domain/measurement_units.dart';
 import '../../domain/server_credentials.dart';
+import '../../platform/shortcut_helper.dart';
 import 'app_state.dart';
 
 /// The Servers screen's state and actions, split out of `ui/AppViewModel.kt` per §5.2.
@@ -11,7 +16,7 @@ import 'app_state.dart';
 /// Owns only what the Servers screen needs — search text, the group filter, multi-select — and reads
 /// the host list from the shared [AppState] rather than holding a second copy that could drift.
 class ServersViewModel extends ChangeNotifier {
-  ServersViewModel(this._app, {this.transport}) {
+  ServersViewModel(this._app, {this.transport, this.shortcuts}) {
     _app.addListener(notifyListeners);
   }
 
@@ -20,6 +25,7 @@ class ServersViewModel extends ChangeNotifier {
   /// Null in tests and in any build without a transport wired; Test Connection is then unavailable
   /// rather than silently reporting success.
   final SshTransport? transport;
+  final ShortcutHelper? shortcuts;
 
   bool get canTestConnections => transport != null;
 
@@ -33,8 +39,18 @@ class ServersViewModel extends ChangeNotifier {
 
   List<Server> get servers => _app.servers;
   Server? get selectedServer => _app.selectedServer;
+  MeasurementSystem get measurementSystem => _app.measurementSystem;
   int? get selectedServerId => _app.selectedServerId;
   set selectedServerId(int? value) => _app.selectedServerId = value;
+
+  HealthBreakdown healthBreakdown(Server server, HostMetrics? metrics) =>
+      _app.healthScoring.breakdown(
+        metrics?.cpuPercent ?? 0,
+        metrics?.memPercent ?? 0,
+        metrics?.diskPercent ?? 0,
+        server.lastLatency,
+        online: server.status == 'online',
+      );
 
   String get serverSearchText => _serverSearchText;
 
@@ -63,7 +79,8 @@ class ServersViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  List<int> get selectedServerIdsForBulk => List.unmodifiable(_selectedServerIdsForBulk);
+  List<int> get selectedServerIdsForBulk =>
+      List.unmodifiable(_selectedServerIdsForBulk);
 
   /// The aliases of every stored SSH key, for the form's key picker.
   Future<List<String>> savedKeyAliases() async =>
@@ -76,7 +93,9 @@ class ServersViewModel extends ChangeNotifier {
   /// written rather than what is currently stored.
   Future<String?> testConnection(Server candidate) async {
     final transport = this.transport;
-    if (transport == null) return 'Connection testing is unavailable in this build.';
+    if (transport == null) {
+      return 'Connection testing is unavailable in this build.';
+    }
     try {
       final creds = resolveCredentials(
         candidate,
@@ -114,6 +133,13 @@ class ServersViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  void selectAllServers() {
+    _selectedServerIdsForBulk
+      ..clear()
+      ..addAll(filteredServers.map((server) => server.id));
+    notifyListeners();
+  }
+
   /// The filter chips: "All" plus every distinct group name actually in use.
   ///
   /// Derived from the live list rather than stored, so a group disappears from the bar as soon as
@@ -137,7 +163,8 @@ class ServersViewModel extends ChangeNotifier {
       for (final server in servers)
         if ((server.name.toLowerCase().contains(needle) ||
                 server.host.toLowerCase().contains(needle)) &&
-            (_selectedGroupChip == 'All' || server.groupName == _selectedGroupChip))
+            (_selectedGroupChip == 'All' ||
+                server.groupName == _selectedGroupChip))
           server,
     ];
   }
@@ -146,14 +173,52 @@ class ServersViewModel extends ChangeNotifier {
   ///
   /// [unlocked] comes from the billing controller; the source-available build passes true because it
   /// carries no billing code at all.
-  bool hostLimitReached({required bool playStoreBuild, required bool unlocked}) =>
-      playStoreBuild && !unlocked && servers.length >= freePlayStoreLimit;
+  bool hostLimitReached({
+    required bool playStoreBuild,
+    required bool unlocked,
+  }) => playStoreBuild && !unlocked && servers.length >= freePlayStoreLimit;
+
+  /// True when the install already holds **more** hosts than its entitlement allows.
+  ///
+  /// Distinct from [hostLimitReached], which stops a *new* host being added. This is the standing
+  /// violation: a restore on an older build, a lapsed unlock or a refund all leave hosts already
+  /// saved, and blocking additions does nothing about those.
+  bool hostLimitExceededNow({
+    required bool playStoreBuild,
+    required bool unlocked,
+  }) => hostLimitExceeded(
+    hasHostLimit: playStoreBuild && !unlocked,
+    hostLimit: freePlayStoreLimit,
+    hostCount: servers.length,
+  );
+
+  /// Keeps [keepIds] and deletes every other saved host.
+  ///
+  /// Refuses a selection that is not exactly the limit rather than doing something approximate:
+  /// this deletes hosts, and a flow that deletes more than the user chose — or leaves the install
+  /// still over its limit — is worse than one that declines. Returns how many were removed.
+  Future<int> reconcileHostLimit(Set<int> keepIds) async {
+    if (!isValidHostKeepSelection(
+      selectedCount: keepIds.length,
+      hostLimit: freePlayStoreLimit,
+    )) {
+      return 0;
+    }
+    final doomed = servers.where((s) => !keepIds.contains(s.id)).toList();
+    for (final server in doomed) {
+      await deleteServer(server.id);
+    }
+    return doomed.length;
+  }
 
   // ── actions ────────────────────────────────────────────────────────────────
 
   Future<int> saveServer(Server server) => _app.repository.insertServer(server);
 
-  Future<void> updateServer(Server server) => _app.repository.updateServer(server);
+  Future<void> updateServer(Server server) async {
+    await _app.repository.updateServer(server);
+    await shortcuts?.pushServer(server);
+  }
 
   /// Delete a host and everything that referenced it.
   ///
@@ -161,6 +226,7 @@ class ServersViewModel extends ChangeNotifier {
   /// keep operating against an id that no longer resolves.
   Future<void> deleteServer(int serverId) async {
     await _app.repository.deleteServerAndDependents(serverId);
+    await shortcuts?.removeServer(serverId);
     if (_app.selectedServerId == serverId) _app.selectedServerId = null;
     _selectedServerIdsForBulk.remove(serverId);
     notifyListeners();
@@ -170,6 +236,7 @@ class ServersViewModel extends ChangeNotifier {
     final ids = List<int>.from(_selectedServerIdsForBulk);
     for (final id in ids) {
       await _app.repository.deleteServerAndDependents(id);
+      await shortcuts?.removeServer(id);
       if (_app.selectedServerId == id) _app.selectedServerId = null;
     }
     _selectedServerIdsForBulk.clear();
@@ -184,7 +251,9 @@ class ServersViewModel extends ChangeNotifier {
       final matches = servers.where((s) => s.id == id);
       final server = matches.isEmpty ? null : matches.first;
       if (server == null) continue;
-      await _app.repository.updateServer(server.copyWith(groupName: Value(groupName)));
+      await _app.repository.updateServer(
+        server.copyWith(groupName: Value(groupName)),
+      );
     }
     notifyListeners();
   }

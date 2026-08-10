@@ -65,6 +65,11 @@ dependencies:
   sqlite3: ^3.5.0
   crypto: ^3.0.7
   in_app_purchase: ^3.3.0
+  uuid: ^4.6.0
+  xml: ^6.6.1
+  battery_plus: ^7.1.1
+  google_mobile_ads: ^9.0.0
+  dart_smb2: 0.1.1
 
 
 dev_dependencies:

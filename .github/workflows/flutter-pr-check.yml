@@ -159,10 +159,20 @@ jobs:
       # verification build: `KEYSTORE_PATH` is unset, which `app/build.gradle.kts` handles by
       # signing debug rather than by pretending it produced something distributable.
       - name: Build release APK
-        run: flutter build apk --release
+        env:
+          ADMOB_APP_ID: ca-app-pub-3940256099942544~3347511713
+        run: >-
+          flutter build apk --release
+          --dart-define=OMNITERM_PLAY_STORE=true
+          --dart-define=ADMOB_BANNER_UNIT_ID=ca-app-pub-3940256099942544/6300978111
 
       - name: Build release App Bundle
-        run: flutter build appbundle --release
+        env:
+          ADMOB_APP_ID: ca-app-pub-3940256099942544~3347511713
+        run: >-
+          flutter build appbundle --release
+          --dart-define=OMNITERM_PLAY_STORE=true
+          --dart-define=ADMOB_BANNER_UNIT_ID=ca-app-pub-3940256099942544/6300978111
 
       - name: Report artifact sizes
         run: |
@@ -208,8 +218,13 @@ jobs:
       - name: Resolve dependencies
         run: flutter pub get
 
-      - name: Build iOS without code signing
-        run: flutter build ios --release --no-codesign
+      # Archive, rather than only compiling Runner.app: the archive path embeds and validates the
+      # WidgetKit extension and catches bundle-version/entitlement mistakes an app-only build can
+      # miss. It remains unsigned because pull requests do not receive distribution credentials.
+      - name: Build unsigned iOS archive
+        run: >-
+          flutter build ipa --release --no-codesign
+          --dart-define=OMNITERM_PLAY_STORE=true
 
   build-ios-skip:
     name: Build iOS

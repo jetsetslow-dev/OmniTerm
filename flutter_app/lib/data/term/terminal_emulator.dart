@@ -147,10 +147,8 @@ class TerminalEmulator implements TerminalSink {
 
   /// Resize the grid.
   ///
-  /// **Reflow is not yet implemented** — see MIGRATION.md §18. The Kotlin re-joins soft-wrapped runs
-  /// and re-wraps them at the new width so a narrowed window does not truncate history. This port
-  /// currently preserves content top-left and clamps the cursor, which is correct but loses the
-  /// re-wrap. Tracked as a parity gap rather than left silent.
+  /// Soft-wrapped logical lines are re-joined and wrapped to the new width, matching the Kotlin
+  /// emulator. The alternate screen remains a canvas and is resized without transcript reflow.
   void resize(int newCols, int newRows) {
     final nc = newCols < 1 ? 1 : newCols;
     final nr = newRows < 1 ? 1 : newRows;
@@ -515,7 +513,9 @@ class TerminalEmulator implements TerminalSink {
     if (_wrapPending) {
       // The previous glyph filled the last column and more text follows: this row continues onto
       // the next (a soft wrap). Recorded so a later reflow re-joins the logical line.
-      if (_curRow >= 0 && _curRow < _rows) _softWrapped[_screen[_curRow]] = _cols;
+      if (_curRow >= 0 && _curRow < _rows) {
+        _softWrapped[_screen[_curRow]] = _cols;
+      }
       _curCol = 0;
       _lineFeed();
       _wrapPending = false;
@@ -525,11 +525,15 @@ class TerminalEmulator implements TerminalSink {
     if (width == 2 && _cols == 1) width = 1;
     if (width == 2 && _curCol == _cols - 1) {
       // A wide glyph cannot be split; wrap before it when only one column remains.
-      if (_curRow >= 0 && _curRow < _rows) _softWrapped[_screen[_curRow]] = _curCol;
+      if (_curRow >= 0 && _curRow < _rows) {
+        _softWrapped[_screen[_curRow]] = _curCol;
+      }
       _curCol = 0;
       _lineFeed();
     }
-    if (_curRow < 0 || _curRow >= _rows || _curCol < 0 || _curCol >= _cols) return;
+    if (_curRow < 0 || _curRow >= _rows || _curCol < 0 || _curCol >= _cols) {
+      return;
+    }
 
     _clearWideGlyphAt(_screen[_curRow], _curCol);
     _screen[_curRow][_curCol].set(
@@ -670,7 +674,9 @@ class TerminalEmulator implements TerminalSink {
     switch (row[column].width) {
       case 0:
         row[column].blank(bg: _penBg);
-        if (column > 0 && row[column - 1].width == 2) row[column - 1].blank(bg: _penBg);
+        if (column > 0 && row[column - 1].width == 2) {
+          row[column - 1].blank(bg: _penBg);
+        }
       case 2:
         row[column].blank(bg: _penBg);
         if (column + 1 < row.length && row[column + 1].width == 0) {

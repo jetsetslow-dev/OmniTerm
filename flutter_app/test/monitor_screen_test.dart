@@ -11,8 +11,11 @@ import 'package:omniterm/domain/health_scoring.dart';
 import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/monitor/monitor_screen.dart';
+import 'package:omniterm/data/remote_models.dart';
 import 'package:omniterm/ui/theme/theme.dart';
+import 'package:omniterm/ui/theme/typography.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
+import 'package:omniterm/ui/view_model/app_lock_controller.dart';
 import 'package:omniterm/ui/view_model/monitor_view_model.dart';
 import 'package:omniterm/ui/view_model/scripts_view_model.dart';
 import 'package:omniterm/ui/view_model/telemetry_poller.dart';
@@ -38,7 +41,12 @@ void main() {
     await db.close();
   });
 
-  Server server({required String name, String status = 'online', int healthScore = 100}) => Server(
+  Server server({
+    required String name,
+    String status = 'online',
+    int healthScore = 100,
+    String sudoPassword = '',
+  }) => Server(
     id: 0,
     name: name,
     host: '10.0.0.1',
@@ -47,7 +55,7 @@ void main() {
     serverColor: 'Default',
     authType: 'password',
     authPassword: 'pw',
-    sudoPassword: '',
+    sudoPassword: sudoPassword,
     notes: '',
     keepAlive: 30,
     sshCompression: false,
@@ -67,6 +75,7 @@ void main() {
 
   late MonitorViewModel vm;
   late ScriptsViewModel scriptsVm;
+  late AppLockController lock;
 
   Future<void> pump(
     WidgetTester tester, {
@@ -76,6 +85,11 @@ void main() {
     await app.start();
     vm = MonitorViewModel(app, transport: transport, poller: poller);
     scriptsVm = ScriptsViewModel(app);
+    // Reboot and service actions re-authenticate before using a stored sudo password, so the lock
+    // is in scope here as it is in the real app. Left unconfigured — no PIN, no biometrics — so the
+    // gate is inert and these tests still exercise the actions themselves.
+    lock = AppLockController(repo);
+    await lock.load();
     await tester.pumpWidget(
       MultiProvider(
         providers: [
@@ -83,6 +97,7 @@ void main() {
           ChangeNotifierProvider<MonitorViewModel>.value(value: vm),
           // The Scripts tab offers the saved quick scripts, so the store is in scope.
           ChangeNotifierProvider<ScriptsViewModel>.value(value: scriptsVm),
+          ChangeNotifierProvider<AppLockController>.value(value: lock),
         ],
         child: MaterialApp(
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
@@ -130,7 +145,9 @@ void main() {
     );
 
     for (final (tab, probe) in [
-      (MonitorTab.processes, 'monitor.processes.list'),
+      // The sort chip rather than the list: this test is about the tab *rendering*, and the list
+      // is legitimately absent when the fixture host returns no processes.
+      (MonitorTab.processes, 'monitor.processes.sortCpu'),
       (MonitorTab.services, 'monitor.services.list'),
       (MonitorTab.logs, 'monitor.logs.list'),
       (MonitorTab.overview, 'monitor.overview'),
@@ -898,5 +915,162 @@ void main() {
       scriptsVm.dispose();
       await tester.pump(const Duration(milliseconds: 10));
     });
+  });
+
+  /// Re-authentication before a stored sudo password is used, ported from `withSudoAuth`
+  /// (`ui/AppViewModel.kt:2521`).
+  ///
+  /// Confirming a reboot answers "did you mean this". It does not answer "are you the person who
+  /// saved that password" — and on a host with one saved, the action needs no credential at all.
+  group('privileged actions', () {
+    testWidgets('rebooting a host with a stored sudo password asks to authenticate', (tester) async {
+      await repo.insertSetting('app_pin', '1234');
+      await repo.insertSetting('app_lock_enabled', 'true');
+      await repo.insertServer(server(name: 'nas', sudoPassword: 'hunter2'));
+      final transport = RecordingTransport();
+      await pump(tester, transport: transport);
+      await lock.load();
+
+      await tester.tap(find.byKey(const ValueKey('monitor.reboot')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('monitor.reboot.confirm')));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('sudoAuth.dialog')),
+        findsOneWidget,
+        reason: 'the stored password must not be used on a bare confirmation',
+      );
+      expect(
+        transport.commands.any((c) => c.contains('reboot')),
+        isFalse,
+        reason: 'nothing may run before the user is re-identified',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('sudoAuth.cancel')));
+      await tester.pumpAndSettle();
+      expect(transport.commands.any((c) => c.contains('reboot')), isFalse);
+      vm.dispose();
+    });
+
+    testWidgets('a host with no stored sudo password is not gated', (tester) async {
+      // Nothing extra to protect: the user supplies the password themselves.
+      await repo.insertSetting('app_pin', '1234');
+      await repo.insertSetting('app_lock_enabled', 'true');
+      await repo.insertServer(server(name: 'nas'));
+      final transport = RecordingTransport();
+      await pump(tester, transport: transport);
+      await lock.load();
+
+      await tester.tap(find.byKey(const ValueKey('monitor.reboot')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('monitor.reboot.confirm')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('sudoAuth.dialog')), findsNothing);
+      vm.dispose();
+    });
+
+    testWidgets('the correct PIN lets the reboot through', (tester) async {
+      await repo.insertSetting('app_pin', '1234');
+      await repo.insertSetting('app_lock_enabled', 'true');
+      await repo.insertServer(server(name: 'nas', sudoPassword: 'hunter2'));
+      final transport = RecordingTransport();
+      await pump(tester, transport: transport);
+      await lock.load();
+
+      await tester.tap(find.byKey(const ValueKey('monitor.reboot')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('monitor.reboot.confirm')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('sudoAuth.pin')), '1234');
+      await tester.tap(find.byKey(const ValueKey('sudoAuth.confirm')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('sudoAuth.dialog')), findsNothing);
+      expect(transport.commands.any((c) => c.contains('reboot')), isTrue);
+      vm.dispose();
+    });
+
+    testWidgets('a wrong PIN keeps the dialog open and runs nothing', (tester) async {
+      await repo.insertSetting('app_pin', '1234');
+      await repo.insertSetting('app_lock_enabled', 'true');
+      await repo.insertServer(server(name: 'nas', sudoPassword: 'hunter2'));
+      final transport = RecordingTransport();
+      await pump(tester, transport: transport);
+      await lock.load();
+
+      await tester.tap(find.byKey(const ValueKey('monitor.reboot')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('monitor.reboot.confirm')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('sudoAuth.pin')), '9999');
+      await tester.tap(find.byKey(const ValueKey('sudoAuth.confirm')));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('sudoAuth.error')), findsOneWidget);
+      expect(find.byKey(const ValueKey('sudoAuth.dialog')), findsOneWidget);
+      expect(transport.commands.any((c) => c.contains('reboot')), isFalse);
+      vm.dispose();
+    });
+  });
+
+  /// Service-action output, ported from `ActionStreamDialog` (`ui/AppUi.kt:263`).
+  ///
+  /// It was a bare proportional-font `Text` with no copy button and no height bound. `systemctl`
+  /// returns a page of text on a failure, so a unit that would not start pushed the service list off
+  /// the screen and the error could not be pasted anywhere.
+  testWidgets('service output is copyable and monospace', (tester) async {
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester, transport: RecordingTransport());
+    vm.activeTab = MonitorTab.services;
+    await tester.pumpAndSettle();
+
+    await vm.runServiceAction(
+      SimService(name: 'nginx', desc: '', status: 'active', subState: 'running'),
+      'restart',
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('monitor.services.feedback')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('monitor.services.feedback.copy')),
+      findsOneWidget,
+      reason: 'this is the text an operator pastes into a search or a bug report',
+    );
+    final text = tester.widget<Text>(
+      find.byKey(const ValueKey('monitor.services.feedback.text')),
+    );
+    expect(text.style?.fontFamily, OmniFonts.mono);
+    vm.dispose();
+  });
+
+  testWidgets('a first process load says it is loading, not that there are none', (tester) async {
+    // The defect: a 2px bar above an empty list is indistinguishable from a host with nothing
+    // running. Kotlin splits first-load from refresh for exactly this reason.
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester, transport: RecordingTransport(replies: const {}));
+    await tester.tap(find.byKey(const ValueKey('monitor.tab.processes')));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('monitor.processes.list')), findsNothing);
+    vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
+  });
+
+  testWidgets('an empty process list blames the read, not the host', (tester) async {
+    // Every host runs something, so an empty list after a successful read is the parse failing.
+    // "No processes" would be a confident false statement about the machine.
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester, transport: RecordingTransport(replies: const {}));
+    await tester.tap(find.byKey(const ValueKey('monitor.tab.processes')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('monitor.processes.empty')), findsOneWidget);
+    expect(find.textContaining('not understood'), findsOneWidget);
+    vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 }

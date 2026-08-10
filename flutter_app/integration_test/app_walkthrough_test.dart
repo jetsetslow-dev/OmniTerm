@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:omniterm/main.dart' as app;
 import 'package:omniterm/ui/navigation.dart';
+import 'package:omniterm/ui/view_model/app_state.dart';
+import 'package:provider/provider.dart';
 
 /// End-to-end flows against the real app, on a device (requirement 6, §11).
 ///
@@ -27,12 +29,63 @@ void main() {
   }
 
   Future<void> goTo(WidgetTester tester, Screen screen) async {
-    await tester.tap(find.byKey(ValueKey('nav.${screen.name}')));
+    final destination = find.byKey(ValueKey('nav.${screen.name}'));
+    await tester.ensureVisible(destination);
+    await tester.tap(destination);
     await tester.pumpAndSettle();
+    expect(
+      find.byKey(ValueKey('screen.${screen.name}')),
+      findsOneWidget,
+      reason: 'navigation did not reach ${screen.name}',
+    );
   }
 
+  group('a fresh install', () {
+    testWidgets('every destination renders with no hosts saved at all', (
+      tester,
+    ) async {
+      // Nothing covered this. Both device suites seeded a host first, so every screen was only ever
+      // exercised with data — and the two empty-state defects (53, 54) were both found on paths
+      // that only appear when there is none.
+      await launch(tester);
+      final appState = tester
+          .element(find.byKey(const ValueKey('screen.servers')))
+          .read<AppState>();
+
+      // The precondition is *created*, not assumed. Integration tests in one `flutter test`
+      // invocation share a single app install, so whatever ran before may have left rows behind —
+      // and the surface sweep does exactly that. Clearing here keeps this test independent of the
+      // order the files happen to run in, which is not something a suite should depend on.
+      for (final server in await appState.repository.getAllServers()) {
+        await appState.repository.deleteServerAndDependents(server.id);
+      }
+      await tester.pumpAndSettle(const Duration(seconds: 1));
+      expect(
+        appState.servers,
+        isEmpty,
+        reason: 'this test is only meaningful on a genuinely empty install',
+      );
+
+      // The primary destinations only — `Screen.values` also carries the Tools sub-screens, which
+      // have no nav-bar entry and are reached from the hub.
+      for (final screen in [
+        Screen.servers,
+        Screen.fleet,
+        Screen.monitor,
+        Screen.shell,
+        Screen.sftp,
+        Screen.infra,
+        Screen.tools,
+      ]) {
+        await goTo(tester, screen);
+      }
+    });
+  });
+
   group('the app comes up', () {
-    testWidgets('every primary destination renders without throwing', (tester) async {
+    testWidgets('every primary destination renders without throwing', (
+      tester,
+    ) async {
       // The manual walk that found §15.9 was exactly this, done by hand with adb taps.
       await launch(tester);
 
@@ -46,7 +99,11 @@ void main() {
         Screen.tools,
       ]) {
         await goTo(tester, screen);
-        expect(tester.takeException(), isNull, reason: '${screen.name} threw while rendering');
+        expect(
+          tester.takeException(),
+          isNull,
+          reason: '${screen.name} threw while rendering',
+        );
       }
     });
 
@@ -59,7 +116,12 @@ void main() {
       // the device equivalent of the host-dependence trap in §19.
       await launch(tester);
 
-      for (final screen in [Screen.servers, Screen.shell, Screen.monitor, Screen.fleet]) {
+      for (final screen in [
+        Screen.servers,
+        Screen.shell,
+        Screen.monitor,
+        Screen.fleet,
+      ]) {
         await goTo(tester, screen);
         expect(
           find.byType(Text),
@@ -86,13 +148,26 @@ void main() {
         (Screen.about, '', ''),
       ]) {
         await goTo(tester, Screen.tools);
+        final grid = find.byKey(const ValueKey('tools.grid'));
+        expect(grid, findsOneWidget);
+        final routeSize = tester.getSize(
+          find.byKey(const ValueKey('screen.tools')),
+        );
+        final gridSize = tester.getSize(grid);
+        expect(
+          gridSize.height,
+          greaterThan(0),
+          reason: 'Tools route was $routeSize but its grid was $gridSize',
+        );
         await tester.tap(find.byKey(ValueKey('tools.${screen.name}')));
         await tester.pumpAndSettle();
         expect(tester.takeException(), isNull, reason: '${screen.name} threw');
       }
     });
 
-    testWidgets('About reports a real version, not the fallback', (tester) async {
+    testWidgets('About reports a real version, not the fallback', (
+      tester,
+    ) async {
       // `PackageInfo` needs a platform channel. In widget tests it always throws and the screen
       // shows "Version …", so the *working* path had never once been executed before a device run.
       await launch(tester);
@@ -100,12 +175,31 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('tools.about')));
       await tester.pumpAndSettle();
 
-      final version = tester.widget<Text>(find.byKey(const ValueKey('about.version'))).data!;
-      expect(version, isNot(contains('…')), reason: 'PackageInfo did not resolve');
+      // `pumpAndSettle` cannot wait for this: the version arrives on a platform channel, whose
+      // future completes outside the frame pipeline, so settling proves only that no animation is
+      // running. It usually lands within one frame — but not when the channel is cold or the device
+      // is still busy after a heavy sweep, which made this assertion fail intermittently depending
+      // on what ran before it. Waiting for the value itself is the synchronisation this needs.
+      String currentVersion() =>
+          tester.widget<Text>(find.byKey(const ValueKey('about.version'))).data!;
+
+      final deadline = DateTime.now().add(const Duration(seconds: 10));
+      while (currentVersion().contains('…') && DateTime.now().isBefore(deadline)) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+
+      final version = currentVersion();
+      expect(
+        version,
+        isNot(contains('…')),
+        reason: 'PackageInfo did not resolve within 10s',
+      );
       expect(version, contains('build'));
     });
 
-    testWidgets('the diagnostics block carries nothing identifying', (tester) async {
+    testWidgets('the diagnostics block carries nothing identifying', (
+      tester,
+    ) async {
       // Asserted on a real device because that is where the platform strings actually come from —
       // the host-test version can only check a stub.
       await launch(tester);
@@ -113,14 +207,18 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('tools.about')));
       await tester.pumpAndSettle();
 
-      final text = tester.widget<Text>(find.byKey(const ValueKey('about.diagnostics.text'))).data!;
+      final text = tester
+          .widget<Text>(find.byKey(const ValueKey('about.diagnostics.text')))
+          .data!;
       expect(text, contains('Platform:'));
       expect(text, isNot(contains('@')), reason: 'no user@host may appear');
     });
   });
 
   group('adding a host', () {
-    testWidgets('an untested host is not offered as ready to save', (tester) async {
+    testWidgets('an untested host is not offered as ready to save', (
+      tester,
+    ) async {
       // Driving this by hand is what put a password into a display-name field twice; a flow does
       // not mis-tap.
       await launch(tester);
@@ -134,14 +232,22 @@ void main() {
       // Typed through the framework rather than `adb shell input text`, which mangles anything with
       // a space or a newline and lands it in whichever field happens to hold focus — how a password
       // ended up in a display-name field during the manual walk.
-      await tester.enterText(find.byKey(const ValueKey('serverForm.name')), 'flow-host');
-      await tester.enterText(find.byKey(const ValueKey('serverForm.host')), '203.0.113.1');
+      await tester.enterText(
+        find.byKey(const ValueKey('serverForm.name')),
+        'flow-host',
+      );
+      await tester.enterText(
+        find.byKey(const ValueKey('serverForm.host')),
+        '203.0.113.1',
+      );
       await tester.pumpAndSettle();
 
       // The button's own label is the gate: an untested host reads "Save (test first)", and only
       // a passing connection test turns it into a plain "Save". That is the behaviour worth
       // pinning — a host saved without ever having connected is the thing this prevents.
-      final save = tester.widget<FilledButton>(find.byKey(const ValueKey('serverForm.save')));
+      final save = tester.widget<FilledButton>(
+        find.byKey(const ValueKey('serverForm.save')),
+      );
       expect(
         (save.child! as Text).data,
         'Save (test first)',

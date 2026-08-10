@@ -197,6 +197,7 @@ void main() {
 
     test('opening a session tells the platform about it', () async {
       await repo.insertServer(server(name: 'nas'));
+      await repo.insertSetting('background_keep_alive', 'true');
       await boot();
 
       await vm.connect(vm.server!);

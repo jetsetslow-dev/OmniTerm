@@ -1,6 +1,7 @@
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/alert_presets.dart';
+import 'package:omniterm/domain/app_preferences.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/data/remote_models.dart';
@@ -817,6 +818,117 @@ void main() {
       await vm.setAlertsEnabled(true);
 
       expect(vm.notificationsAllowed, isFalse);
+      vm.dispose();
+    });
+  });
+
+  /// The "Alert history limit" setting, applied at the three points Kotlin applies it.
+  ///
+  /// It had no effect at all: the preference was stored and shown, `pruneAlertHistoryPerServer` and
+  /// `pruneAlertHistoryForServer` both existed on the repository, and nothing ever called either —
+  /// so a monitoring app archived an incident every time one resolved and never trimmed the table.
+  group('history retention', () {
+    /// Writes [count] archived incidents for [serverId] directly, oldest first.
+    Future<void> seedHistory(int serverId, int count, {String name = 'nas'}) async {
+      for (var i = 0; i < count; i++) {
+        await repo.insertAlertHistory(
+          AlertHistoryCompanion.insert(
+            activeAlertId: i,
+            serverId: serverId,
+            serverName: name,
+            metricName: 'CPU Usage',
+            currentValue: 90,
+            thresholdValue: 80,
+            severity: 'WARNING',
+            triggeredTime: 1000 + i,
+            historyTime: 1000 + i,
+            status: 'resolved',
+          ),
+        );
+      }
+    }
+
+    Future<void> setLimit(int limit) async {
+      await repo.insertSetting('alert_history_limit', '$limit');
+      app.applyPreferences(
+        AppPreferences.defaults.copyWith(alertHistoryLimit: limit),
+      );
+    }
+
+    test('archiving trims the host back to the configured limit', () async {
+      final id = await repo.insertServer(server(name: 'nas'));
+      await setLimit(10);
+      await seedHistory(id, 40);
+      final vm = await boot();
+      await vm.saveRule(
+        metricName: 'CPU Usage',
+        thresholdValue: 80,
+        severity: 'WARNING',
+        triggerWindow: '2m',
+      );
+      await settle();
+      final host = (await repo.getServerById(id))!;
+
+      await sustain(vm, host, const AlertSample(cpuPercent: 95), to: 130000);
+      await fire(vm, host, const AlertSample(cpuPercent: 10), nowMs: 140000);
+      await fire(vm, host, const AlertSample(cpuPercent: 10), nowMs: 150000);
+      await settle();
+
+      final rows = await repo.getAlertHistory();
+      expect(
+        rows.length,
+        lessThanOrEqualTo(10),
+        reason: 'the cap must bite on insert, not merely be stored in settings',
+      );
+      vm.dispose();
+    });
+
+    test('the newest rows are the ones kept', () async {
+      final id = await repo.insertServer(server(name: 'nas'));
+      await setLimit(10);
+      await seedHistory(id, 40);
+      final vm = await boot();
+
+      await vm.applyHistoryRetention();
+
+      final rows = await repo.getAlertHistory();
+      expect(rows.length, 10);
+      // Seeded historyTime ascends with the index, so the survivors must be the highest.
+      final times = rows.map((r) => r.historyTime).toList()..sort();
+      expect(times.first, greaterThanOrEqualTo(1030));
+      vm.dispose();
+    });
+
+    test('each host keeps its own allowance', () async {
+      // A per-host cap, not a global one: a noisy host must not evict a quiet host's archive.
+      final a = await repo.insertServer(server(name: 'a'));
+      final b = await repo.insertServer(server(name: 'b'));
+      await setLimit(10);
+      await seedHistory(a, 30, name: 'a');
+      await seedHistory(b, 5, name: 'b');
+      final vm = await boot();
+
+      await vm.applyHistoryRetention();
+
+      final rows = await repo.getAlertHistory();
+      expect(rows.where((r) => r.serverId == a).length, 10);
+      expect(
+        rows.where((r) => r.serverId == b).length,
+        5,
+        reason: 'a host under its limit must not be trimmed',
+      );
+      vm.dispose();
+    });
+
+    test('a history already within the limit is left alone', () async {
+      final id = await repo.insertServer(server(name: 'nas'));
+      await setLimit(50);
+      await seedHistory(id, 12);
+      final vm = await boot();
+
+      await vm.applyHistoryRetention();
+
+      expect((await repo.getAlertHistory()).length, 12);
       vm.dispose();
     });
   });

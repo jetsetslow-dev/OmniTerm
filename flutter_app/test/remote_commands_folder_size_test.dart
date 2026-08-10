@@ -175,6 +175,50 @@ void main() {
     });
   });
 
+  group('searchSudoFailure', () {
+    // The marker list is ported from `sftpReadError` (`ui/AppViewModel.kt:9676`) and shared with
+    // every other privileged exec on the SFTP screen, so a marker cannot be added to one call site
+    // and missed by another.
+
+    test('a refusal is returned as the complaint to show', () {
+      expect(
+        searchSudoFailure('sudo: 3 incorrect password attempts\n'),
+        'sudo: 3 incorrect password attempts',
+      );
+      expect(
+        searchSudoFailure('sam is not in the sudoers file.\n'),
+        'sam is not in the sudoers file.',
+      );
+    });
+
+    test('a search that simply ran is not a failure', () {
+      expect(searchSudoFailure('f\t/etc/passwd\n'), isNull);
+      expect(searchSudoFailure(''), isNull);
+    });
+
+    test('leading blank lines do not hide the complaint', () {
+      // sudo's lecture and prompt suppression both leave blank lines ahead of the real message.
+      expect(searchSudoFailure('\n\n  permission denied\n'), 'permission denied');
+    });
+
+    test('a tagged hit is data, however much its name reads like an error', () {
+      // The whole result set would otherwise vanish behind one unluckily named file, and the first
+      // hit is exactly where that would bite.
+      expect(searchSudoFailure('f\t/srv/no such thing.txt\nf\t/srv/b.txt\n'), isNull);
+      expect(searchSudoFailure('d\t/srv/permission denied\n'), isNull);
+    });
+
+    test('the case the host chose does not matter', () {
+      expect(searchSudoFailure('Permission Denied\n'), 'Permission Denied');
+    });
+
+    test('the whole-output check is available where output is not path data', () {
+      // Compression and archive scripts fail several lines in, after their own progress output.
+      expect(hasSudoFailureMarker('adding a\nadding b\npermission denied\n'), isTrue);
+      expect(hasSudoFailureMarker('adding a\nadding b\n'), isFalse);
+    });
+  });
+
   group('sudo file access', () {
     // Real output shape, captured from the lab on sudo's first use in a session.
     const lecture =

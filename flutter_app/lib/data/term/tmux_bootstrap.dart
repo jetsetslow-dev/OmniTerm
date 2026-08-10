@@ -98,7 +98,11 @@ String tmuxAttachCommand(String name, {int historyLimit = 10000}) {
 /// control-mode `attach` that also creates: `tmuxControlAttachCommand` fails on a vanished session
 /// and would leave an ordinary shell whose bytes the control-mode parser reads as a protocol and
 /// renders as nothing — a worse failure than the plain one this function exists to prevent.
-String tmuxResumeCommand(String name, {int historyLimit = 10000, bool controlMode = false}) {
+String tmuxResumeCommand(
+  String name, {
+  int historyLimit = 10000,
+  bool controlMode = false,
+}) {
   final safe = tmuxSafeName(name);
   final limit = _boundedHistory(historyLimit);
   return 'command -v tmux >/dev/null 2>&1 && '
@@ -125,4 +129,10 @@ String tmuxControlAttachCommand(String name, {int historyLimit = 10000}) {
 String tmuxControlCreateAttachCommand(String name, {int historyLimit = 10000}) {
   final safe = tmuxSafeName(name);
   return '${_createBootstrap(safe, historyLimit)}exec tmux -C attach-session -t $safe\n';
+}
+
+/// Stops one persistent session from a separate SSH exec channel.
+String tmuxKillCommand(String name) {
+  final safe = tmuxSafeName(name);
+  return 'tmux kill-session -t $safe 2>/dev/null';
 }

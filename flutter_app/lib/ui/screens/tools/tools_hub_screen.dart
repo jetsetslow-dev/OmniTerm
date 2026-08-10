@@ -38,7 +38,12 @@ class ToolsHubScreen extends StatelessWidget {
             crossAxisSpacing: 12,
             mainAxisSpacing: 12,
             padding: const EdgeInsets.all(12),
-            childAspectRatio: 1.6,
+            // Tiles get taller as the text grows. A fixed ratio means a fixed height, and at 200%
+            // the label no longer fits beside the icon — the column overflowed by 17px, which on a
+            // navigation grid is a clipped tool name.
+            childAspectRatio:
+                1.6 /
+                MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0),
             children: [
               for (final (screen, label, icon) in tools)
                 OmniCard(

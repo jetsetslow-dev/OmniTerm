@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import '../../domain/network_tools.dart';
+import 'lan_hostname.dart';
 
 /// The socket work behind the Network tools.
 ///
@@ -22,10 +23,20 @@ abstract interface class NetworkProbe {
   Future<void> sendMagicPacket(Uint8List packet, String broadcast, int port);
 
   /// Sends [query] to a DNS resolver and returns the raw response.
-  Future<Uint8List> resolve(Uint8List query, {required String resolver, Duration timeout});
+  Future<Uint8List> resolve(
+    Uint8List query, {
+    required String resolver,
+    Duration timeout,
+  });
 
   /// Reverse-resolves [address] to a hostname, or null.
   Future<String?> reverseLookup(String address);
+
+  /// Reverse mDNS PTR lookup for LANs whose DHCP server publishes no ordinary PTR records.
+  Future<String?> mdnsReverseLookup(String address, {Duration timeout});
+
+  /// NetBIOS node-status name for Windows, Samba and NAS devices.
+  Future<String?> netbiosName(String address, {Duration timeout});
 
   /// The device's own IPv4 address on a local interface, used to guess the subnet to sweep.
   Future<String?> localAddress();
@@ -58,7 +69,11 @@ class SocketNetworkProbe implements NetworkProbe {
   }
 
   @override
-  Future<void> sendMagicPacket(Uint8List packet, String broadcast, int port) async {
+  Future<void> sendMagicPacket(
+    Uint8List packet,
+    String broadcast,
+    int port,
+  ) async {
     final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
     try {
       // Without this the OS refuses a datagram addressed to a broadcast address, and the packet
@@ -113,6 +128,66 @@ class SocketNetworkProbe implements NetworkProbe {
   }
 
   @override
+  Future<String?> mdnsReverseLookup(
+    String address, {
+    Duration timeout = const Duration(milliseconds: 900),
+  }) async {
+    final query = LanHostnameWire.buildReversePtrQuery(address);
+    if (query == null) return null;
+    final response = await _udpQuery(
+      query,
+      destination: '224.0.0.251',
+      port: 5353,
+      timeout: timeout,
+    );
+    return response == null ? null : LanHostnameWire.parsePtrAnswer(response);
+  }
+
+  @override
+  Future<String?> netbiosName(
+    String address, {
+    Duration timeout = const Duration(milliseconds: 900),
+  }) async {
+    final response = await _udpQuery(
+      LanHostnameWire.buildNetbiosNodeStatusQuery(),
+      destination: address,
+      port: 137,
+      timeout: timeout,
+    );
+    return response == null
+        ? null
+        : LanHostnameWire.parseNetbiosNodeStatus(response);
+  }
+
+  Future<Uint8List?> _udpQuery(
+    Uint8List query, {
+    required String destination,
+    required int port,
+    required Duration timeout,
+  }) async {
+    RawDatagramSocket? socket;
+    StreamSubscription<RawSocketEvent>? subscription;
+    final answer = Completer<Uint8List?>();
+    try {
+      socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
+      subscription = socket.listen((event) {
+        if (event != RawSocketEvent.read) return;
+        final packet = socket?.receive();
+        if (packet != null && !answer.isCompleted) {
+          answer.complete(Uint8List.fromList(packet.data));
+        }
+      });
+      socket.send(query, InternetAddress(destination), port);
+      return await answer.future.timeout(timeout, onTimeout: () => null);
+    } catch (_) {
+      return null;
+    } finally {
+      await subscription?.cancel();
+      socket?.close();
+    }
+  }
+
+  @override
   Future<String?> localAddress() async {
     try {
       final interfaces = await NetworkInterface.list(
@@ -133,12 +208,75 @@ class SocketNetworkProbe implements NetworkProbe {
 
 /// A host found by a subnet sweep.
 class ScannedHost {
-  ScannedHost({required this.address, this.hostname, this.latency, this.openPorts = const []});
+  ScannedHost({
+    required this.address,
+    this.hostname,
+    this.macAddress = '',
+    this.vendor = '',
+    this.latency,
+    this.openPorts = const [],
+  });
 
   final String address;
   String? hostname;
+  String macAddress;
+  String vendor;
   Duration? latency;
   List<int> openPorts;
+}
+
+const _ouiVendors = <String, String>{
+  'B8:27:EB': 'Raspberry Pi',
+  'DC:A6:32': 'Raspberry Pi',
+  'E4:5F:01': 'Raspberry Pi',
+  '28:CD:C1': 'Raspberry Pi',
+  '00:1A:11': 'Google',
+  'F4:F5:E8': 'Google',
+  'DA:A1:19': 'Google',
+  'EC:FA:BC': 'Espressif',
+  '24:0A:C4': 'Espressif',
+  'A0:20:A6': 'Espressif',
+  'FC:FB:FB': 'Apple',
+  'AC:DE:48': 'Apple',
+  'F0:18:98': 'Apple',
+  'A4:83:E7': 'Apple',
+  '00:1B:63': 'Apple',
+  '3C:15:C2': 'Apple',
+  '44:D9:E7': 'Ubiquiti',
+  'FC:EC:DA': 'Ubiquiti',
+  '78:8A:20': 'Ubiquiti',
+  '00:50:56': 'VMware',
+  '08:00:27': 'VirtualBox',
+  '52:54:00': 'QEMU/KVM',
+  '00:15:5D': 'Microsoft Hyper-V',
+};
+
+String vendorForMac(String mac) =>
+    mac.length < 8 ? '' : _ouiVendors[mac.substring(0, 8).toUpperCase()] ?? '';
+
+/// Best-effort Android/Linux neighbour-cache reader.
+///
+/// Recent Android versions may deny this file. An empty map is expected there; the active TCP
+/// sweep still works, while platforms that expose it gain MAC addresses and ping-only neighbours.
+Future<Map<String, String>> readSystemArpTable() async {
+  final result = <String, String>{};
+  try {
+    final file = File('/proc/net/arp');
+    if (!await file.exists()) return result;
+    final lines = await file.readAsLines();
+    for (final line in lines.skip(1)) {
+      final parts = line.trim().split(RegExp(r'\s+'));
+      if (parts.length < 4) continue;
+      final mac = parts[3].toUpperCase();
+      if (RegExp(r'^[0-9A-F]{2}(?::[0-9A-F]{2}){5}$').hasMatch(mac) &&
+          mac != '00:00:00:00:00:00') {
+        result[parts[0]] = mac;
+      }
+    }
+  } catch (_) {
+    // Sandboxed platforms commonly reject the read; MAC enrichment is optional.
+  }
+  return result;
 }
 
 /// Sweeps a `/24` for hosts that answer on any of [ports].
@@ -148,9 +286,10 @@ class ScannedHost {
 Future<List<ScannedHost>> sweepSubnet(
   NetworkProbe probe,
   String prefix, {
-  List<int> ports = const [22, 80, 443, 445],
+  List<int> ports = const [22, 80, 443, 445, 3389, 5900, 8080],
   int concurrency = 32,
   Duration timeout = const Duration(milliseconds: 400),
+  Future<Map<String, String>> Function()? arpReader,
   void Function(int done, int total)? onProgress,
 }) async {
   final addresses = hostsInSubnet(prefix);
@@ -170,13 +309,30 @@ Future<List<ScannedHost>> sweepSubnet(
         if (best == null || rtt < best) best = rtt;
       }
       if (open.isNotEmpty) {
-        found.add(ScannedHost(address: address, latency: best, openPorts: open));
+        found.add(
+          ScannedHost(address: address, latency: best, openPorts: open),
+        );
       }
       onProgress?.call(++done, addresses.length);
     }
   }
 
   await Future.wait([for (var i = 0; i < concurrency; i++) worker()]);
+
+  final arp = await arpReader?.call() ?? const <String, String>{};
+  final byAddress = {for (final host in found) host.address: host};
+  for (final entry in arp.entries) {
+    if (subnetPrefixOf(entry.key) != prefix) continue;
+    final host = byAddress.putIfAbsent(
+      entry.key,
+      () => ScannedHost(address: entry.key),
+    );
+    host.macAddress = entry.value;
+    host.vendor = vendorForMac(entry.value);
+  }
+  found
+    ..clear()
+    ..addAll(byAddress.values);
 
   // Sorted numerically by last octet, not lexically: otherwise .10 sorts before .9 and the list
   // reads as though addresses are missing.

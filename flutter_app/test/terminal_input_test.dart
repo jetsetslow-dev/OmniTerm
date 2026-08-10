@@ -15,7 +15,9 @@ void main() {
 
     test('Ctrl produces the control byte', () {
       expect(encodeTypedText('c', ctrl: true), [0x03]);
-      expect(encodeTypedText('C', ctrl: true), [0x03], reason: 'case-insensitive');
+      expect(encodeTypedText('C', ctrl: true), [
+        0x03,
+      ], reason: 'case-insensitive');
       expect(encodeTypedText('d', ctrl: true), [0x04]);
     });
 
@@ -57,6 +59,30 @@ void main() {
     test('the whole block is kept', () {
       final lines = List.generate(50, (i) => 'line$i').join('\n');
       expect(decode(encodePastedText(lines)).split('\r'), hasLength(50));
+    });
+  });
+
+  group('smart swipe line edit', () {
+    test('autocorrect replaces the changed tail', () {
+      expect(terminalLineEdit('git statsu', 'git status'), (
+        backspaces: 2,
+        insert: 'us',
+      ));
+    });
+
+    test('emoji count as one remote backspace', () {
+      expect(terminalLineEdit('echo 😀', 'echo 😁'), (
+        backspaces: 1,
+        insert: '😁',
+      ));
+      expect(insertedTerminalRuneDelta('a😀z', 'a😁z'), 1);
+    });
+
+    test('an unchanged affix is excluded from the paste delta', () {
+      expect(
+        insertedTerminalRuneDelta('prefix old suffix', 'prefix new suffix'),
+        3,
+      );
     });
   });
 

@@ -4,8 +4,8 @@ import 'package:flutter/foundation.dart';
 
 import '../../data/app_database.dart';
 import '../../data/app_repository.dart';
+import '../../domain/app_preferences.dart';
 import '../../domain/health_scoring.dart';
-import '../../domain/measurement_units.dart';
 
 /// The state every feature shares: the host list, which host is selected, and the persisted app
 /// settings.
@@ -28,6 +28,9 @@ class AppState extends ChangeNotifier {
   List<Server> _servers = const [];
 
   List<Server> get servers => _servers;
+
+  bool _loaded = false;
+  bool get isLoaded => _loaded;
 
   int? _selectedServerId;
 
@@ -62,7 +65,19 @@ class AppState extends ChangeNotifier {
 
   // ── settings ───────────────────────────────────────────────────────────────
 
-  int metricsRetentionDays = 7;
+  AppPreferences _preferences = AppPreferences.defaults;
+
+  /// The one live preference snapshot shared by every feature.
+  ///
+  /// Settings previously decoded a private copy while this class decoded a smaller subset under
+  /// partly different keys. That made most controls write-only. Keeping one typed snapshot means
+  /// the theme, poller, terminal and transfer guards all observe the same saved values.
+  AppPreferences get preferences => _preferences;
+
+  int get metricsRetentionDays => _preferences.metricsRetentionDays;
+
+  /// How many archived incidents to keep per host.
+  int get alertHistoryLimit => _preferences.alertHistoryLimit;
 
   /// The health-scoring thresholds every score in the app is computed from.
   ///
@@ -71,21 +86,22 @@ class AppState extends ChangeNotifier {
   /// reading it from the database on their own schedule is how a user's edited thresholds end up
   /// applied to the score but not to the explanation of the score.
   HealthScoringConfig healthScoring = HealthScoringConfig.defaults;
-  MeasurementSystem measurementSystem = MeasurementSystem.metric;
+  MeasurementSystem get measurementSystem => _preferences.measurementSystem;
   bool alertsEnabled = true;
   bool homelabPresetsEnabled = false;
   bool alertPresetsEnabled = false;
   bool fleetPresetsEnabled = false;
-  bool batterySaverEnabled = false;
-  int batterySaverThresholdPct = 20;
-  int sftpLargeBatchFileThreshold = 50;
-  int sftpLargeBatchBytesThreshold = 1000000000;
-  bool hideSensitiveInfo = false;
+  bool get batterySaverEnabled => _preferences.batterySaverEnabled;
+  int get batterySaverThresholdPct => _preferences.batterySaverThresholdPercent;
+  int get sftpLargeBatchFileThreshold => _preferences.sftpWarnFileCount;
+  int get sftpLargeBatchBytesThreshold =>
+      _preferences.sftpWarnGigabytes * 1000000000;
+  bool get hideSensitiveInfo => _preferences.hideSensitiveInfo;
 
   /// Whether the app asks the platform to keep its contents out of screenshots, recordings and the
   /// task-switcher thumbnail. Read here rather than by the Settings screen alone, because it has to
   /// be applied for the whole app, not while one screen happens to be open.
-  bool flagSecure = false;
+  bool get flagSecure => _preferences.blockScreenshots;
 
   /// Begin observing the database and load persisted settings.
   Future<void> start() async {
@@ -100,27 +116,29 @@ class AppState extends ChangeNotifier {
       if (_selectedServerId == null && list.isNotEmpty) {
         _selectedServerId = list.first.id;
       }
+      _loaded = true;
       notifyListeners();
     });
   }
 
   Future<void> loadSettings() async {
-    Future<String?> read(String key) => _repository.getSetting(key);
+    final rows = await _repository.getAllSettings();
+    final values = {for (final row in rows) row.key: row.value};
+    _preferences = AppPreferences.decode(values);
+    healthScoring = HealthScoringConfig.decode(
+      values[HealthScoringConfig.settingKey],
+    );
+    alertsEnabled = values['alerts_enabled'] != 'false';
+    homelabPresetsEnabled = values['homelab_presets'] == 'true';
+    alertPresetsEnabled = values['alert_presets'] == 'true';
+    fleetPresetsEnabled = values['fleet_presets'] == 'true';
+    notifyListeners();
+  }
 
-    metricsRetentionDays = int.tryParse(await read('metrics_retention_days') ?? '') ?? 7;
-    healthScoring = HealthScoringConfig.decode(await read(HealthScoringConfig.settingKey));
-    measurementSystem = MeasurementSystem.fromSetting(await read('measurement_system'));
-    alertsEnabled = (await read('alerts_enabled')) != 'false';
-    homelabPresetsEnabled = (await read('homelab_presets')) == 'true';
-    alertPresetsEnabled = (await read('alert_presets')) == 'true';
-    fleetPresetsEnabled = (await read('fleet_presets')) == 'true';
-    batterySaverEnabled = (await read('battery_saver_enabled')) == 'true';
-    batterySaverThresholdPct = int.tryParse(await read('battery_saver_threshold') ?? '') ?? 20;
-    sftpLargeBatchFileThreshold = int.tryParse(await read('sftp_large_batch_files') ?? '') ?? 50;
-    sftpLargeBatchBytesThreshold =
-        int.tryParse(await read('sftp_large_batch_bytes') ?? '') ?? 1000000000;
-    hideSensitiveInfo = (await read('hide_sensitive_info')) == 'true';
-    flagSecure = (await read('flag_secure')) == 'true';
+  /// Publishes a settings save without waiting for a restart or another database read.
+  void applyPreferences(AppPreferences value) {
+    if (_preferences == value) return;
+    _preferences = value;
     notifyListeners();
   }
 

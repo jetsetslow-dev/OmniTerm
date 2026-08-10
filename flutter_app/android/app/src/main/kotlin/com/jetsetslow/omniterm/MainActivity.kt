@@ -1,5 +1,6 @@
 package com.jetsetslow.omniterm
 
+import android.content.Intent
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 
@@ -15,5 +16,27 @@ class MainActivity : FlutterActivity() {
         SmbBridge.register(flutterEngine)
         // Keeps the process — and with it the Dart isolate's SSH sessions — alive in the background.
         SessionServiceBridge.register(flutterEngine, this)
+        // Launcher/widget/notification entry points must be consumed once and then held behind the
+        // Dart app-lock gate. Keeping this at the Activity boundary also handles warm singleTop
+        // launches, which do not recreate the Flutter engine.
+        ExternalLaunchBridge.register(flutterEngine, this)
+        ShortcutBridge.register(flutterEngine, this)
+        PlatformPermissionsBridge.register(flutterEngine, this)
+        DeviceInfoBridge.register(flutterEngine, this)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        ExternalLaunchBridge.onNewIntent(intent)
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<out String>,
+        grantResults: IntArray,
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        PlatformPermissionsBridge.onRequestPermissionsResult(requestCode, grantResults)
     }
 }

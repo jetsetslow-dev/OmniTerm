@@ -160,9 +160,34 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('infra.stack.web.down')));
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('infra.stack.down.removeOrphans')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('infra.stack.down.confirm')));
     await tester.pumpAndSettle();
     expect(transport.commands.any((c) => c.contains(r'$OT_COMPOSE') && c.contains('down')), isTrue);
+    expect(
+      transport.commands.any((c) => c.contains(r'$OT_COMPOSE') && c.contains('--remove-orphans')),
+      isTrue,
+    );
+    vm.dispose();
+  });
+
+  testWidgets('a remembered downed stack can be edited or forgotten', (tester) async {
+    await repo.insertServer(server(name: 'nas'));
+    final transport = withStack();
+    await pump(tester, transport: transport);
+    transport.replies = {'ps -a --no-trunc': ''};
+    await vm.load();
+    await tester.pumpAndSettle();
+
+    expect(vm.downedStacks.single.project, 'web');
+    await tester.tap(find.byKey(const ValueKey('infra.downedStack.web.editBuilder')));
+    await tester.pumpAndSettle();
+
+    expect(vm.activeTab, InfraTab.builder);
+    expect(vm.requestedComposeStack?.name, 'web');
+    expect(vm.requestedComposeStack?.workingDir, '/srv/web');
+    expect(find.byKey(const ValueKey('infra.builder')), findsOneWidget);
     vm.dispose();
   });
 
@@ -183,14 +208,19 @@ void main() {
     vm.dispose();
   });
 
-  testWidgets('an in-use image offers no delete button', (tester) async {
+  testWidgets('an in-use image can be force-removed, but asks first', (tester) async {
     await repo.insertServer(server(name: 'nas'));
     await pump(tester, transport: withStack());
     await tester.tap(find.byKey(const ValueKey('infra.tab.images')));
     await tester.pumpAndSettle();
 
     expect(find.text('IN USE'), findsOneWidget);
-    expect(find.byKey(const ValueKey('infra.image.sha256:abc.remove')), findsNothing);
+    await tester.tap(find.byTooltip('Remove image'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('infra.image.remove.dialog')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('infra.image.remove.cancel')));
+    await tester.pumpAndSettle();
+    expect(vm.actionOutput, isNull);
     vm.dispose();
   });
 
@@ -253,7 +283,8 @@ void main() {
     // The builder does not depend on a successful probe.
     await tester.tap(find.byKey(const ValueKey('infra.tab.builder')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('infra.builder.notPorted')), findsOneWidget);
+    expect(find.byKey(const ValueKey('infra.builder')), findsOneWidget);
+    expect(find.byKey(const ValueKey('infra.builder.deploy')), findsOneWidget);
     vm.dispose();
   });
 
@@ -291,8 +322,11 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('infra.stack.web.restart')));
     await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(FilledButton, 'Restart'));
+    await tester.pumpAndSettle();
 
     expect(find.textContaining('no such container'), findsOneWidget);
+    expect(find.byKey(const ValueKey('infra.actionOutput.copy')), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('infra.actionOutput.dismiss')));
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('infra.actionOutput')), findsNothing);
@@ -426,7 +460,7 @@ void main() {
       await pump(tester, transport: transport);
       await openServiceMenu(tester);
 
-      await tester.tap(find.text('Logs'));
+      await tester.tap(find.widgetWithText(PopupMenuItem<String>, 'Logs'));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('infra.logs.text')), findsOneWidget);
@@ -445,7 +479,7 @@ void main() {
       await pump(tester, transport: transport);
       await openServiceMenu(tester);
 
-      await tester.tap(find.text('Logs'));
+      await tester.tap(find.widgetWithText(PopupMenuItem<String>, 'Logs'));
       await tester.pumpAndSettle();
 
       expect(find.textContaining('logged nothing'), findsOneWidget);
@@ -453,5 +487,17 @@ void main() {
       await tester.pumpAndSettle();
       vm.dispose();
     });
+  });
+
+  testWidgets('a settled probe with nothing found shows the empty state, not a spinner', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester, transport: RecordingTransport(replies: const {}));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('infra.firstLoad')), findsNothing);
+    vm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
   });
 }

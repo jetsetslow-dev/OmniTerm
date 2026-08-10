@@ -559,15 +559,33 @@ void main() {
     });
   });
 
+  /// The wire format keys on the **source index**, not the basename — tabs and newlines are legal
+  /// in filenames and would otherwise corrupt the line protocol. These tests therefore feed indices
+  /// and the source list they address, which is what `compareForConflicts` really emits.
   group('parseTransferConflicts', () {
+    const sources = [
+      '/src/same.txt',
+      '/src/diff.txt',
+      '/src/folder',
+      '/src/mystery.txt',
+    ];
+
     test('classifies verdicts and defaults the safe way round', () {
       const out =
-          'same.txt\tIDENTICAL\t100\t100\t1000\t2000\n'
-          'diff.txt\tDIFFERENT\t100\t200\t1000\t2000\n'
-          'folder\tDIR\t0\t0\t1000\t2000\n'
-          'mystery.txt\tWHO_KNOWS\t100\t100\t1000\t2000';
-      final conflicts = parseTransferConflicts(out);
+          '0\tIDENTICAL\t100\t100\t1000\t2000\n'
+          '1\tDIFFERENT\t100\t200\t1000\t2000\n'
+          '2\tDIR\t0\t0\t1000\t2000\n'
+          '3\tWHO_KNOWS\t100\t100\t1000\t2000';
+      final conflicts = parseTransferConflicts(out, sources);
       expect(conflicts, hasLength(4));
+
+      // The index is resolved back to the basename the user will recognise.
+      expect(conflicts.map((c) => c.name), [
+        'same.txt',
+        'diff.txt',
+        'folder',
+        'mystery.txt',
+      ]);
 
       expect(conflicts[0].verdict, ConflictVerdict.identical);
       expect(
@@ -591,17 +609,33 @@ void main() {
     });
 
     test('sizes and mtimes are carried through', () {
-      final c = parseTransferConflicts('a\tDIFFERENT\t10\t20\t111\t222').single;
+      final c = parseTransferConflicts(
+        '0\tDIFFERENT\t10\t20\t111\t222',
+        const ['/src/a'],
+      ).single;
       expect(c.sourceSize, 10);
       expect(c.destSize, 20);
       expect(c.sourceMtimeSeconds, 111);
       expect(c.destMtimeSeconds, 222);
     });
 
-    test('short or unnamed rows are dropped', () {
-      expect(parseTransferConflicts('a\tIDENTICAL\t1\t1'), isEmpty);
-      expect(parseTransferConflicts('\tIDENTICAL\t1\t1\t1\t1'), isEmpty);
-      expect(parseTransferConflicts('no tabs here'), isEmpty);
+    test('short, unindexed or out-of-range rows are dropped', () {
+      const one = ['/src/a'];
+      expect(parseTransferConflicts('0\tIDENTICAL\t1\t1', one), isEmpty);
+      expect(parseTransferConflicts('\tIDENTICAL\t1\t1\t1\t1', one), isEmpty);
+      expect(parseTransferConflicts('no tabs here', one), isEmpty);
+      // An index nothing addresses is dropped, never guessed at.
+      expect(parseTransferConflicts('7\tIDENTICAL\t1\t1\t1\t1', one), isEmpty);
+      expect(parseTransferConflicts('-1\tIDENTICAL\t1\t1\t1\t1', one), isEmpty);
+    });
+
+    test('a filename containing a tab is reported whole', () {
+      // It arrives via the source list, so the tab never reaches the line protocol.
+      final c = parseTransferConflicts(
+        '0\tDIFFERENT\t1\t2\t3\t4',
+        const ['/src/we\tird.txt'],
+      ).single;
+      expect(c.name, 'we\tird.txt');
     });
   });
 

@@ -101,7 +101,7 @@ List<CronLine> parseCrontab(String text) {
       continue;
     }
 
-    final rest = parts.sublist(5).join(' ');
+    final rest = _remainderAfter(trimmed, 5);
     out.add(
       CronLine(
         index: index,
@@ -115,6 +115,30 @@ List<CronLine> parseCrontab(String text) {
   }
   return out;
 }
+
+/// Everything after the first [count] whitespace-separated fields of [line], **verbatim**.
+///
+/// Splitting the whole line and rejoining with single spaces looks equivalent and is not: it
+/// rewrites the command's own spacing. `--name "My  Backup"` becomes `--name "My Backup"`, which is
+/// a different argument — and because the schedule dialog seeds its command field from this value,
+/// editing only the *schedule* would silently change what the job does.
+///
+/// Kotlin gets this free from `split(Regex("\\s+"), limit = 6)` (`ui/MonitorScreen.kt:422`), where
+/// the sixth element is the untouched remainder.
+String _remainderAfter(String line, int count) {
+  var index = 0;
+  for (var field = 0; field < count; field++) {
+    while (index < line.length && !_isSpace(line.codeUnitAt(index))) {
+      index++;
+    }
+    while (index < line.length && _isSpace(line.codeUnitAt(index))) {
+      index++;
+    }
+  }
+  return line.substring(index);
+}
+
+bool _isSpace(int code) => code == 0x20 || code == 0x09;
 
 String _commandOf(String rest) {
   final marker = rest.indexOf(_labelMarker);

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import '../../data/app_database.dart';
 import '../../data/network/network_probe.dart';
 import '../../domain/network_share_form.dart';
+import '../../domain/share_scan.dart';
 import 'app_state.dart';
 
 /// The Network Shares tab's state and actions, ported from `NetworkSharesTab` in `ui/SftpScreen.kt`.
@@ -185,6 +186,132 @@ class SharesViewModel extends ChangeNotifier {
       ),
     );
     if (!_disposed) _status = 'Checked ${pending.length} share(s).';
+    _safeNotify();
+  }
+
+  // ── finding shares on the network ───────────────────────────────────────────
+
+  List<String> _scanProtocols = allScanProtocols;
+  final List<ShareScanHit> _scanHits = [];
+  bool _scanning = false;
+  String? _scanStatus;
+  int _scanDone = 0;
+  int _scanTotal = 0;
+
+  List<String> get scanProtocols => List.unmodifiable(_scanProtocols);
+  List<ShareScanHit> get scanHits => List.unmodifiable(_scanHits);
+  bool get scanning => _scanning;
+  String? get scanStatus => _scanStatus;
+
+  /// Sweep progress from 0 to 1, or null before one starts.
+  double? get scanProgress =>
+      _scanTotal == 0 ? null : (_scanDone / _scanTotal).clamp(0.0, 1.0);
+
+  bool isScanProtocolEnabled(String protocol) =>
+      _scanProtocols.contains(protocol);
+
+  /// Loads the stored protocol selection. Called by the screen on first build.
+  Future<void> loadScanSettings() async {
+    _scanProtocols = decodeScanProtocols(
+      await _app.repository.getSetting(shareScanProtocolsKey),
+    );
+    _safeNotify();
+  }
+
+  /// Turns a protocol on or off for the next sweep.
+  ///
+  /// **The last one cannot be turned off**, matching `toggleNetworkShareScanProtocol`
+  /// (`ui/AppViewModel.kt:1181`): a scan with no protocols probes no ports and reports nothing
+  /// found, which is indistinguishable from a quiet network.
+  Future<void> toggleScanProtocol(String protocol) async {
+    if (!shareScanPorts.containsKey(protocol)) return;
+    if (_scanProtocols.contains(protocol)) {
+      if (_scanProtocols.length <= 1) return;
+      _scanProtocols = _scanProtocols.where((p) => p != protocol).toList();
+    } else {
+      // Rebuilt from the canonical order so the stored value does not depend on the order the user
+      // happened to tap the chips in.
+      _scanProtocols = allScanProtocols
+          .where((p) => p == protocol || _scanProtocols.contains(p))
+          .toList();
+    }
+    _safeNotify();
+    await _app.repository.insertSetting(
+      shareScanProtocolsKey,
+      encodeScanProtocols(_scanProtocols),
+    );
+  }
+
+  /// Sweeps [cidr] for hosts offering the selected protocols.
+  ///
+  /// A single /24. The sweep is 254 addresses times the chosen ports, which is already a lot of
+  /// sockets for a phone; a wider mask would promise a scan that should not be attempted.
+  Future<void> scanForShares(String cidr) async {
+    if (_scanning) return;
+    final prefix = scanPrefixOf(cidr);
+    if (prefix == null) {
+      _scanStatus = 'Enter a subnet like 192.168.1.0/24.';
+      _safeNotify();
+      return;
+    }
+
+    _scanning = true;
+    _scanHits.clear();
+    _scanDone = 0;
+    _scanTotal = 0;
+    _error = null;
+    _scanStatus = 'Scanning $prefix.0/24 for ${_scanProtocols.join(', ')}.';
+    _safeNotify();
+
+    try {
+      final hosts = await sweepSubnet(
+        probe,
+        prefix,
+        ports: portsForProtocols(_scanProtocols),
+        onProgress: (done, total) {
+          _scanDone = done;
+          _scanTotal = total;
+          _safeNotify();
+        },
+      );
+      if (_disposed) return;
+      _scanHits.addAll(hitsFromScan(hosts, _scanProtocols));
+      _scanStatus = _scanHits.isEmpty
+          ? 'No share services answered on $prefix.0/24.'
+          : 'Found ${_scanHits.length} share service(s).';
+    } catch (e) {
+      _scanStatus = null;
+      _error = 'Scan failed: $e';
+    } finally {
+      _scanning = false;
+      _safeNotify();
+    }
+  }
+
+  void clearScanHits() {
+    if (_scanHits.isEmpty && _scanStatus == null) return;
+    _scanHits.clear();
+    _scanStatus = null;
+    _scanDone = 0;
+    _scanTotal = 0;
+    _safeNotify();
+  }
+
+  /// Opens the add-share form prefilled from [hit].
+  ///
+  /// The share **path and credentials are left blank on purpose**: a port probe says a service is
+  /// listening, not what it exports or who may read it. Guessing either would produce a saved share
+  /// that fails on first use with no clue why.
+  void startAddFromScan(ShareScanHit hit) {
+    final protocol = ShareProtocol.fromId(hit.protocol);
+    _draft = NetworkShareDraft(
+      name: hit.address,
+      protocol: protocol,
+      address: hit.address,
+      port: '${hit.port}',
+      useHttps: hit.port == 443,
+    );
+    _error = null;
     _safeNotify();
   }
 

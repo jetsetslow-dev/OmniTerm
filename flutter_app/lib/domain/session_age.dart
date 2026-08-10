@@ -28,3 +28,29 @@ String describeSessionAge(PersistentSession row, {DateTime? now}) {
   if (elapsed.inDays < 1) return 'left running ${elapsed.inHours}h ago';
   return 'left running ${elapsed.inDays}d ago';
 }
+
+/// How long ago a shell session was opened, ported from `formatSessionAge`
+/// (`ui/OmniComponents.kt:504`).
+///
+/// Distinct from `formatUptime`, which reports a *duration the host told us*. This measures against
+/// the clock, so it has two cases uptime does not: a session with no recorded start, and one whose
+/// start is in the future — which a clock adjustment during a long-lived session can produce, and
+/// which must not render as a negative age.
+///
+/// Zero-padded minutes and hours (`2h 05m`) so the width does not jitter as the number ticks over,
+/// matching the Kotlin.
+String formatSessionAge(DateTime? startedAt, {DateTime? now}) {
+  if (startedAt == null) return '—';
+  final elapsed = (now ?? DateTime.now()).difference(startedAt);
+  if (elapsed.isNegative) return '—';
+  final totalMinutes = elapsed.inMinutes;
+  // Under a minute is "just now" rather than "0m": a session opened this second has not been
+  // running for zero minutes, it has barely started.
+  if (totalMinutes < 1) return 'just now';
+  final days = totalMinutes ~/ 1440;
+  final hours = (totalMinutes % 1440) ~/ 60;
+  final minutes = totalMinutes % 60;
+  if (days > 0) return '${days}d ${hours.toString().padLeft(2, '0')}h';
+  if (hours > 0) return '${hours}h ${minutes.toString().padLeft(2, '0')}m';
+  return '${minutes}m';
+}

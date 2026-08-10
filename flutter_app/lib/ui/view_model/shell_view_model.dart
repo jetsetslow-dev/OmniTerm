@@ -7,7 +7,10 @@ import 'package:flutter/foundation.dart';
 import '../../data/app_database.dart';
 import '../../data/ssh/dartssh_transport.dart' show SshHostKeyException;
 import '../../data/ssh/ssh_host_key_trust.dart';
+import '../../data/remote_commands.dart';
+import '../../domain/host_display.dart';
 import '../../data/ssh/ssh_transport.dart';
+import '../../platform/review_prompt.dart';
 import '../../data/term/terminal_emulator.dart';
 import '../../data/term/tmux_bootstrap.dart';
 import '../../domain/app_preferences.dart';
@@ -23,18 +26,41 @@ import 'shell_session.dart';
 /// keystroke takes to the remote. Splitting input through here rather than through the widgets is
 /// what makes the read-only guard and the modifier rules testable without a terminal on screen.
 class ShellViewModel extends ChangeNotifier {
-  ShellViewModel(this._app, {this.transport, this.sessionService}) {
+  ShellViewModel(
+    this._app, {
+    this.transport,
+    this.sessionService,
+    this.reviewPrompt,
+    this.hasProbed,
+  }) {
+    _useControlMode = _app.preferences.tmuxControlMode;
+    _lastPreferenceControlMode = _useControlMode;
     _app.addListener(_onAppChanged);
     // Read once at construction rather than watched: rows change only when this view model writes
     // them, and it reloads itself when it does.
     unawaited(_reloadSaved());
     final service = sessionService;
     if (service != null) {
-      _actionsSub = service.actions.listen(_onServiceAction, onError: (Object _) {});
+      _actionsSub = service.actions.listen(
+        _onServiceAction,
+        onError: (Object _) {},
+      );
     }
   }
 
   final AppState _app;
+
+  /// Counts successful sessions and asks for a store review once, ported from Kotlin's
+  /// `noteSuccessfulSshSession`. Nullable: a build with no store SDK simply never prompts.
+  final ReviewPromptController? reviewPrompt;
+
+  /// Whether a host's reachability has actually been checked this run.
+  ///
+  /// Nullable, and a null answer means "not probed" — which suppresses the offline warning rather
+  /// than raising it. A build that cannot tell must not invent an alarm.
+  final bool Function(int serverId)? hasProbed;
+
+  AppPreferences get preferences => _app.preferences;
 
   /// Null in tests and in any build without a transport wired. Connecting then reports that the
   /// terminal is unavailable rather than opening a screen that will never receive a byte
@@ -49,6 +75,13 @@ class ShellViewModel extends ChangeNotifier {
   final SessionService? sessionService;
 
   StreamSubscription<SessionServiceAction>? _actionsSub;
+  bool _terminalVisible = true;
+
+  void setTerminalVisible(bool visible) {
+    if (_terminalVisible == visible) return;
+    _terminalVisible = visible;
+    _syncBackgroundSessions();
+  }
 
   /// The shade acts on the sessions this view model owns, so its buttons come back here rather
   /// than being handled natively — the service has no way to close a channel living in Dart.
@@ -71,11 +104,20 @@ class ShellViewModel extends ChangeNotifier {
   /// Called after every change to the list rather than only on backgrounding: the notification is
   /// the user's view of what this app is holding open, and one that lags reality is worse than none.
   void _syncBackgroundSessions() {
+    final live = [
+      for (final session in _sessions)
+        if (session.isOpen)
+          BackgroundSession(id: session.id, serverName: session.serverName),
+    ];
+    // An explicit "Send to background" navigation keeps the session alive even when the general
+    // preference is off. Otherwise the preference mirrors Kotlin's TerminalSessionManager: when
+    // enabled, protection starts as soon as a session opens, before the lifecycle can race the app
+    // into the background.
+    final shouldKeepAlive =
+        live.isNotEmpty &&
+        (!_terminalVisible || preferences.backgroundKeepAlive);
     unawaited(
-      sessionService?.sync([
-        for (final session in _sessions)
-          if (session.isOpen) BackgroundSession(id: session.id, serverName: session.serverName),
-      ]),
+      shouldKeepAlive ? sessionService?.sync(live) : sessionService?.stop(),
     );
   }
 
@@ -85,7 +127,40 @@ class ShellViewModel extends ChangeNotifier {
     if (!_disposed) notifyListeners();
   }
 
-  void _onAppChanged() => _safeNotify();
+  void _onAppChanged() {
+    final savedControlMode = preferences.tmuxControlMode;
+    // Settings supplies the default for a new connection, while the checkbox remains a genuine
+    // per-connection override. Only follow a changed default when the user has not diverged from
+    // the previous one in this Shell visit.
+    if (_useControlMode == _lastPreferenceControlMode) {
+      _useControlMode = savedControlMode;
+    }
+    _lastPreferenceControlMode = savedControlMode;
+    _applyScrollbackLimit();
+    _syncBackgroundSessions();
+    _safeNotify();
+  }
+
+  /// The scrollback limit currently applied to live sessions.
+  ///
+  /// Tracked so the emulators are only walked when the setting actually changed, rather than on
+  /// every unrelated notification from [AppState] — of which there are many.
+  int? _appliedScrollbackLimit;
+
+  /// Pushes a changed scrollback limit into every running session.
+  ///
+  /// Ported from `saveTerminalScrollbackLimit` (`ui/AppViewModel.kt:1900`). Flutter read the setting
+  /// only when *building* a session, so lowering the limit to reclaim memory did nothing to the
+  /// sessions already holding it — the user had to reconnect to get the effect they had asked for,
+  /// which is the opposite of what someone reaching for that setting wants.
+  void _applyScrollbackLimit() {
+    final limit = preferences.terminalScrollbackLimit;
+    if (limit == _appliedScrollbackLimit) return;
+    _appliedScrollbackLimit = limit;
+    for (final session in _sessions) {
+      session.emulator.setScrollbackLimit(limit);
+    }
+  }
 
   // ── the host this screen is about ───────────────────────────────────────────
 
@@ -94,7 +169,8 @@ class ShellViewModel extends ChangeNotifier {
   /// Online only, matching the other live tabs. Forcing SSH to a host the app believes is down is
   /// done from the Hosts tab's connect button, which warns first — offering it here as an ordinary
   /// choice would hide that warning.
-  List<Server> get connectableServers => _app.servers.where((s) => s.status == 'online').toList();
+  List<Server> get connectableServers =>
+      _app.servers.where((s) => s.status == 'online').toList();
 
   /// The host the screen is showing.
   ///
@@ -103,7 +179,9 @@ class ShellViewModel extends ChangeNotifier {
   Server? get server {
     final session = current;
     if (session != null) {
-      final owner = _app.servers.where((s) => s.id == session.serverId).firstOrNull;
+      final owner = _app.servers
+          .where((s) => s.id == session.serverId)
+          .firstOrNull;
       if (owner != null) return owner;
     }
     final online = connectableServers;
@@ -119,7 +197,8 @@ class ShellViewModel extends ChangeNotifier {
   bool get hasAnyHost => _app.servers.isNotEmpty;
 
   /// True when there is nothing to show and nothing to connect to.
-  bool get hasNothingToShow => server == null && sessions.isEmpty && !isConnecting;
+  bool get hasNothingToShow =>
+      server == null && sessions.isEmpty && !isConnecting;
 
   // ── sessions ────────────────────────────────────────────────────────────────
 
@@ -151,13 +230,16 @@ class ShellViewModel extends ChangeNotifier {
   bool _splitStacked = true;
   bool get splitStacked => _splitStacked;
 
-  ShellSession? get splitSession =>
-      _splitId == null ? null : _sessions.where((s) => s.id == _splitId).firstOrNull;
+  ShellSession? get splitSession => _splitId == null
+      ? null
+      : _sessions.where((s) => s.id == _splitId).firstOrNull;
 
-  bool get isSplit => splitSession != null && current != null && splitSession != current;
+  bool get isSplit =>
+      splitSession != null && current != null && splitSession != current;
 
   /// Sessions that could occupy the second pane: everything except the one already in the first.
-  List<ShellSession> get splitCandidates => _sessions.where((s) => s.id != current?.id).toList();
+  List<ShellSession> get splitCandidates =>
+      _sessions.where((s) => s.id != current?.id).toList();
 
   /// Shows [id] in the second pane.
   void splitWith(String id) {
@@ -193,7 +275,16 @@ class ShellViewModel extends ChangeNotifier {
   }
 
   bool _connecting = false;
+  int _connectGeneration = 0;
   bool get isConnecting => _connecting;
+
+  void cancelConnect() {
+    if (!_connecting) return;
+    _connectGeneration++;
+    _connecting = false;
+    _phase = null;
+    _safeNotify();
+  }
 
   String? _phase;
 
@@ -231,11 +322,17 @@ class ShellViewModel extends ChangeNotifier {
       // attach to a session that is gone silently leaves an ordinary, non-persistent shell.
       return (
         existing,
-        tmuxResumeCommand(existing, historyLimit: scrollback, controlMode: controlMode),
+        tmuxResumeCommand(
+          existing,
+          historyLimit: scrollback,
+          controlMode: controlMode,
+        ),
       );
     }
 
-    final name = tmuxSafeName('omniterm-${server.id}-${DateTime.now().millisecondsSinceEpoch}');
+    final name = tmuxSafeName(
+      'omniterm-${server.id}-${DateTime.now().millisecondsSinceEpoch}',
+    );
     await _app.repository.upsertPersistentSession(
       PersistentSessionsCompanion.insert(
         tmuxName: name,
@@ -263,8 +360,9 @@ class ShellViewModel extends ChangeNotifier {
   ///
   /// The filter is the point: offering to resume a session the user is currently looking at would
   /// be nonsense, and hiding one they left running would lose it.
-  List<PersistentSession> get resumableSessions =>
-      List.unmodifiable(_saved.where((row) => _sessions.every((s) => s.tmuxName != row.tmuxName)));
+  List<PersistentSession> get resumableSessions => List.unmodifiable(
+    _saved.where((row) => _sessions.every((s) => s.tmuxName != row.tmuxName)),
+  );
 
   /// Removes a saved session from this device.
   ///
@@ -325,6 +423,7 @@ class ShellViewModel extends ChangeNotifier {
   /// A per-connection choice rather than a stored host setting: it changes how this app reads the
   /// channel, not anything about the server, and a wrong guess is undone by reconnecting.
   bool _useControlMode = false;
+  bool _lastPreferenceControlMode = false;
 
   bool get useControlMode => _useControlMode;
 
@@ -341,16 +440,180 @@ class ShellViewModel extends ChangeNotifier {
   /// layout events are parsed and ignored, so a session that is split *inside* tmux would show only
   /// the pane whose output arrives. For a single pane it is strictly better — every byte is
   /// delivered as an event rather than folded into a redraw — which is why it is offered at all.
-  Future<void> connect(Server server, {String? resumeName, bool controlMode = false}) async {
+  // ── offline confirmation ────────────────────────────────────────────────────
+  //
+  // Ported from the gate in `connectTerminal` and `OfflineConnectDialog` (`ui/AppViewModel.kt:4496`,
+  // `ui/AppUi.kt:671`). It lives here rather than on a screen because a host is connected from the
+  // host list, the Infra tab's container shell, a quick-connect sheet, a shortcut and a quick
+  // action — a gate on one of those covers one of those.
+
+  /// The host waiting on an "connect anyway?" decision, or null.
+  Server? get offlineConnectPromptServer => _offlineConnectPromptServer;
+  Server? _offlineConnectPromptServer;
+
+  void dismissOfflineConnectPrompt() {
+    if (_offlineConnectPromptServer == null) return;
+    _offlineConnectPromptServer = null;
+    _safeNotify();
+  }
+
+  /// Re-enters [connect] with the offline gate bypassed.
+  Future<void> connectConfirmedOffline() async {
+    final server = _offlineConnectPromptServer;
+    if (server == null) return;
+    _offlineConnectPromptServer = null;
+    _safeNotify();
+    await connect(server, confirmedOffline: true);
+  }
+
+  // ── tmux availability ───────────────────────────────────────────────────────
+  //
+  // Ported from `TmuxInstallDialog` and `installTmuxAndConnect` (`ui/AppUi.kt:617`,
+  // `ui/AppViewModel.kt:5911`).
+
+  /// The host waiting on a tmux decision, or null.
+  Server? get tmuxPromptServer => _tmuxPromptServer;
+  Server? _tmuxPromptServer;
+
+  /// Streamed installer output while it runs, or null when nothing has been attempted.
+  String? get tmuxInstallOutput => _tmuxInstallOutput;
+  String? _tmuxInstallOutput;
+
+  bool get tmuxInstalling => _tmuxInstalling;
+  bool _tmuxInstalling = false;
+
+  /// Hosts already confirmed to have tmux, so the probe runs once per host per session rather than
+  /// before every connection.
+  final Set<int> _tmuxVerified = <int>{};
+
+  void dismissTmuxPrompt() {
+    if (_tmuxPromptServer == null) return;
+    _tmuxPromptServer = null;
+    _tmuxInstallOutput = null;
+    _safeNotify();
+  }
+
+  /// Connects anyway, accepting an ordinary non-resumable shell.
+  Future<void> connectWithoutPersistence() async {
+    final server = _tmuxPromptServer;
+    if (server == null) return;
+    dismissTmuxPrompt();
+    await connect(server, forcePlainShell: true);
+  }
+
+  /// Installs tmux on the prompted host, then connects with persistence.
+  Future<void> installTmuxAndConnect() async {
+    final server = _tmuxPromptServer;
+    final ssh = transport;
+    if (server == null || ssh == null || _tmuxInstalling) return;
+    _tmuxInstalling = true;
+    _tmuxInstallOutput = '';
+    _safeNotify();
+
+    var installed = false;
+    try {
+      final creds = resolveCredentials(
+        server,
+        keys: await _app.repository.getAllKeys(),
+        profiles: await _app.repository.getAllProfiles(),
+      );
+      await ssh.execStream(
+        creds,
+        tmuxInstallCommand(),
+        stdin: sudoStdin(server.sudoPassword),
+        onChunk: (chunk) async {
+          if (_disposed) return;
+          _tmuxInstallOutput = (_tmuxInstallOutput ?? '') + chunk;
+          _safeNotify();
+        },
+      );
+      // Re-probed rather than trusting the installer's exit code, for the same reason the script
+      // re-checks itself: a package manager can report success against a broken mirror.
+      installed = await _hasTmux(server);
+    } catch (e) {
+      _tmuxInstallOutput = '${_tmuxInstallOutput ?? ''}\n\n$e';
+    }
+    if (_disposed) return;
+    _tmuxInstalling = false;
+
+    if (!installed) {
+      _tmuxInstallOutput =
+          '${_tmuxInstallOutput ?? ''}\n\nInstall did not complete. You can retry, '
+          'connect non-resumable, or install tmux manually.';
+      _safeNotify();
+      return;
+    }
+    _tmuxVerified.add(server.id);
+    dismissTmuxPrompt();
+    await connect(server);
+  }
+
+  Future<bool> _hasTmux(Server server) async {
+    final ssh = transport;
+    if (ssh == null) return false;
+    try {
+      final creds = resolveCredentials(
+        server,
+        keys: await _app.repository.getAllKeys(),
+        profiles: await _app.repository.getAllProfiles(),
+      );
+      final answer = await ssh.exec(creds, tmuxCheckCommand);
+      return answer.trim().endsWith('yes');
+    } catch (_) {
+      // A probe that could not run is not evidence tmux is missing, and refusing to connect over it
+      // would be worse than the silent degradation this replaces. Treat it as present and let the
+      // self-guarding bootstrap command decide.
+      return true;
+    }
+  }
+
+  Future<void> connect(
+    Server server, {
+    String? resumeName,
+    bool controlMode = false,
+    String? initialCommand,
+    bool forcePlainShell = false,
+    bool confirmedOffline = false,
+  }) async {
     if (_connecting) return;
+
+    // Checked before the tmux probe, which costs a round trip: there is no point asking a host
+    // whether it has tmux when the last check said it was not answering at all.
+    if (!confirmedOffline &&
+        shouldWarnHostOffline(
+          probed: hasProbed?.call(server.id) ?? false,
+          status: server.status,
+        )) {
+      _offlineConnectPromptServer = server;
+      _safeNotify();
+      return;
+    }
     final ssh = transport;
     if (ssh == null) {
-      _error = 'The terminal is unavailable in this build: no SSH transport is wired.';
+      _error =
+          'The terminal is unavailable in this build: no SSH transport is wired.';
       _safeNotify();
       return;
     }
 
+    // A host configured for persistent sessions but missing tmux used to connect as an ordinary
+    // shell with no notice: the user believed their work survived a dropped link, and it did not.
+    // Probed once per host per session; the answer is only acted on when it is a definite "no".
+    if (server.persistentSession &&
+        !forcePlainShell &&
+        !_tmuxVerified.contains(server.id)) {
+      if (await _hasTmux(server)) {
+        _tmuxVerified.add(server.id);
+      } else {
+        _tmuxPromptServer = server;
+        _tmuxInstallOutput = null;
+        _safeNotify();
+        return;
+      }
+    }
+
     _connecting = true;
+    final generation = ++_connectGeneration;
     _phase = 'Connecting…';
     _error = null;
     _safeNotify();
@@ -374,12 +637,12 @@ class ShellViewModel extends ChangeNotifier {
         _preferredCols,
         _preferredRows,
         onPhaseChange: (phase) {
-          if (_disposed) return;
+          if (_disposed || generation != _connectGeneration) return;
           _phase = phase;
           _safeNotify();
         },
       );
-      if (_disposed) {
+      if (_disposed || generation != _connectGeneration) {
         channel.close();
         return;
       }
@@ -390,9 +653,17 @@ class ShellViewModel extends ChangeNotifier {
       );
       // Resolved before the session is built so it can carry its own tmux name — that is what
       // lets the resumable list tell "open in a tab" from "running with nobody watching".
-      final persistent = server.persistentSession
-          ? await _persistentTarget(server, resumeName: resumeName, controlMode: controlMode)
+      final persistent = server.persistentSession && !forcePlainShell
+          ? await _persistentTarget(
+              server,
+              resumeName: resumeName,
+              controlMode: controlMode,
+            )
           : null;
+      if (_disposed || generation != _connectGeneration) {
+        channel.close();
+        return;
+      }
 
       final session = ShellSession(
         id: '${DateTime.now().microsecondsSinceEpoch}-${server.id}',
@@ -410,6 +681,11 @@ class ShellViewModel extends ChangeNotifier {
       _sessions.add(session);
       _currentId = session.id;
 
+      // A session that reached this point authenticated and opened a channel, which is the only
+      // definition of "it worked" worth counting. Fire-and-forget: the terminal must not wait on a
+      // settings write, and a failed nudge is never the user's problem.
+      unawaited(reviewPrompt?.noteSuccessfulSession() ?? Future<void>.value());
+
       // A host marked "persistent" is put inside tmux immediately, which is the whole point: a
       // dropped link then leaves the work running on the server instead of killing it. Written as
       // the shell's first input rather than run as a channel command, so a host without tmux is
@@ -418,30 +694,41 @@ class ShellViewModel extends ChangeNotifier {
         session.write(Uint8List.fromList(utf8.encode(persistent.$2)));
         await _reloadSaved();
       }
+      if (initialCommand != null && initialCommand.trim().isNotEmpty) {
+        session.write(
+          Uint8List.fromList(utf8.encode('${initialCommand.trim()}\r')),
+        );
+      }
       _syncBackgroundSessions();
     } on CredentialResolutionException catch (e) {
-      _error = e.message;
+      if (generation == _connectGeneration) _error = e.message;
     } on SshHostKeyException catch (e) {
       // Named separately from an auth failure because the fix is different and the stakes are
       // different: "wrong password" is a nuisance, "this host's key changed" is either a rebuilt
       // server or someone standing between you and it, and the app must not blur the two.
-      _error = switch (e.verdict) {
-        HostKeyVerdict.changed =>
-          'The host key for ${server.name} has CHANGED. This is what a machine-in-the-middle looks '
-              'like. If you rebuilt or replaced this server, remove its pinned key under '
-              'Tools › Auth & keys and connect again — otherwise do not.',
-        _ =>
-          'The host key for ${server.name} was not accepted, so the connection was refused. '
-              'Connect again to see the fingerprint prompt.',
-      };
+      if (generation == _connectGeneration) {
+        _error = switch (e.verdict) {
+          HostKeyVerdict.changed =>
+            'The host key for ${server.name} has CHANGED. This is what a machine-in-the-middle looks '
+                'like. If you rebuilt or replaced this server, remove its pinned key under '
+                'Tools › Auth & keys and connect again — otherwise do not.',
+          _ =>
+            'The host key for ${server.name} was not accepted, so the connection was refused. '
+                'Connect again to see the fingerprint prompt.',
+        };
+      }
     } on SshConnectException catch (e) {
-      _error = e.message;
+      if (generation == _connectGeneration) _error = e.message;
     } catch (e) {
-      _error = 'Could not open a shell on ${server.name}: $e';
+      if (generation == _connectGeneration) {
+        _error = 'Could not open a shell on ${server.name}: $e';
+      }
     } finally {
-      _connecting = false;
-      _phase = null;
-      _safeNotify();
+      if (generation == _connectGeneration) {
+        _connecting = false;
+        _phase = null;
+        _safeNotify();
+      }
     }
   }
 
@@ -459,10 +746,59 @@ class ShellViewModel extends ChangeNotifier {
     session.removeListener(_syncBackgroundSessions);
     _sessions.remove(session);
     if (_splitId == session.id) _splitId = null;
-    if (_currentId == session.id) _currentId = _sessions.isEmpty ? null : _sessions.last.id;
+    if (_currentId == session.id) {
+      _currentId = _sessions.isEmpty ? null : _sessions.last.id;
+    }
     session.dispose();
     _syncBackgroundSessions();
     _safeNotify();
+  }
+
+  /// Terminates a persistent tmux session on the host, then closes its local SSH channel.
+  Future<void> terminate(ShellSession session) async {
+    final tmuxName = session.tmuxName;
+    if (tmuxName == null) {
+      close(session);
+      return;
+    }
+    final server = _app.servers
+        .where((server) => server.id == session.serverId)
+        .firstOrNull;
+    try {
+      if (server == null || transport == null) {
+        throw StateError('The host or SSH transport is no longer available.');
+      }
+      final creds = resolveCredentials(
+        server,
+        keys: await _app.repository.getAllKeys(),
+        profiles: await _app.repository.getAllProfiles(),
+      );
+      await transport!.exec(creds, tmuxKillCommand(tmuxName));
+      await _app.repository.deletePersistentSession(tmuxName);
+    } catch (e) {
+      _error =
+          'Disconnected locally, but the remote tmux session could not be confirmed stopped. '
+          'It remains available for recovery: $e';
+    }
+    close(session);
+  }
+
+  Future<void> disconnectAll({bool terminatePersistent = true}) async {
+    cancelConnect();
+    for (final session in _sessions.toList()) {
+      if (terminatePersistent && session.tmuxName != null) {
+        await terminate(session);
+      } else {
+        close(session);
+      }
+    }
+  }
+
+  /// Detaches persistent sessions so tmux can be resumed; ordinary sessions stay connected.
+  void leaveOrBackgroundAll() {
+    for (final session in _sessions.toList()) {
+      if (session.tmuxName != null) close(session);
+    }
   }
 
   /// Drop a session that ended on its own.
@@ -567,6 +903,22 @@ class ShellViewModel extends ChangeNotifier {
     // Modifiers are deliberately not consumed: a stuck Ctrl must not rewrite the paste's first byte,
     // and silently swallowing the modifier here would surprise the very next keystroke.
     return session.write(encodePastedText(text));
+  }
+
+  /// Mirrors an editor-style swipe/autocorrect edit as one ordered terminal write.
+  bool applyLineEdit({required int backspaces, required String insert}) {
+    final session = current;
+    if (session == null ||
+        session.readOnly ||
+        (backspaces <= 0 && insert.isEmpty)) {
+      return false;
+    }
+    return session.write(
+      Uint8List.fromList([
+        ...List.filled(backspaces, 0x7f),
+        ...utf8.encode(insert),
+      ]),
+    );
   }
 
   void _scrollByPage(ShellSession session, int direction) =>

@@ -12,6 +12,8 @@
 ///   callers actually used it for)
 library;
 
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 /// Resolved connection credentials.
@@ -181,6 +183,7 @@ abstract interface class SshTransport {
     SshCredentials creds,
     String command, {
     String? stdin,
+    SshCancellationToken? cancellation,
     required Future<void> Function(String chunk) onChunk,
   });
 
@@ -208,4 +211,21 @@ abstract interface class SshTransport {
 
   /// Forget cached authenticated transport state for one credential set.
   void forgetCredentials(SshCredentials creds);
+}
+
+/// Cooperative cancellation for a long-lived exec channel such as `compose logs -f`.
+class SshCancellationToken {
+  final StreamController<void> _controller = StreamController<void>.broadcast();
+  bool _cancelled = false;
+
+  bool get isCancelled => _cancelled;
+  Stream<void> get onCancel => _controller.stream;
+
+  void cancel() {
+    if (_cancelled) return;
+    _cancelled = true;
+    _controller.add(null);
+  }
+
+  Future<void> close() => _controller.close();
 }

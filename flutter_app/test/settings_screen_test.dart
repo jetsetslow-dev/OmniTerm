@@ -22,7 +22,10 @@ void main() {
 
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
-    repo = AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{})));
+    repo = AppRepository(
+      db,
+      SecretStore(storage: FakeSecureStorage(<String, String>{})),
+    );
     app = AppState(repo);
     HostDisplay.instance.hideSensitiveInfo = false;
   });
@@ -31,6 +34,7 @@ void main() {
     app.dispose();
     await db.close();
   });
+
 
   Future<void> pump(WidgetTester tester) async {
     // Thirty-odd rows across five sections; the default surface would leave most of them unlaid-out.
@@ -64,22 +68,33 @@ void main() {
   testWidgets('the sections and their controls render', (tester) async {
     await pump(tester);
 
-    for (final section in ['Appearance', 'Monitoring', 'Terminal', 'File transfers']) {
+    for (final section in [
+      'Appearance',
+      'Monitoring',
+      'Terminal',
+      'File transfers',
+    ]) {
       expect(find.text(section), findsOneWidget, reason: section);
     }
     expect(find.byKey(const ValueKey('settings.darkMode')), findsOneWidget);
-    expect(find.byKey(const ValueKey('settings.telemetryInterval.value')), findsOneWidget);
-    expect(find.byKey(const ValueKey('settings.terminalTheme')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('settings.telemetryInterval.value')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('settings.terminalTheme')),
+      findsOneWidget,
+    );
     await finish(tester);
   });
 
   testWidgets('values come from the store', (tester) async {
     await repo.insertSetting('telemetry_interval', '60');
-    await repo.insertSetting('terminal_theme', 'Nord');
+    await repo.insertSetting('terminal_theme', 'light');
     await pump(tester);
 
     expect(find.text('60s'), findsOneWidget);
-    expect(vm.draft.terminalTheme, 'Nord');
+    expect(vm.draft.terminalTheme, 'light');
     await finish(tester);
   });
 
@@ -87,7 +102,9 @@ void main() {
     // Applying per keystroke would restart the telemetry poller on the way from "1" to "15".
     await pump(tester);
 
-    await tester.tap(find.byKey(const ValueKey('settings.telemetryInterval.up')));
+    await tester.tap(
+      find.byKey(const ValueKey('settings.telemetryInterval.up')),
+    );
     await tester.pumpAndSettle();
 
     expect(vm.isDirty, isTrue);
@@ -103,21 +120,29 @@ void main() {
 
   testWidgets('save is disabled until something changes', (tester) async {
     await pump(tester);
-    var save = tester.widget<FilledButton>(find.byKey(const ValueKey('settings.save')));
+    var save = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('settings.save')),
+    );
     expect(save.onPressed, isNull);
 
     await tester.tap(find.byKey(const ValueKey('settings.accessibility')));
     await tester.pumpAndSettle();
-    save = tester.widget<FilledButton>(find.byKey(const ValueKey('settings.save')));
+    save = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('settings.save')),
+    );
     expect(save.onPressed, isNotNull);
     await finish(tester);
   });
 
-  testWidgets('discard appears only when dirty and puts values back', (tester) async {
+  testWidgets('discard appears only when dirty and puts values back', (
+    tester,
+  ) async {
     await pump(tester);
     expect(find.byKey(const ValueKey('settings.revert')), findsNothing);
 
-    await tester.tap(find.byKey(const ValueKey('settings.telemetryInterval.up')));
+    await tester.tap(
+      find.byKey(const ValueKey('settings.telemetryInterval.up')),
+    );
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('settings.revert')), findsOneWidget);
 
@@ -132,7 +157,10 @@ void main() {
   group('bounds are visible, not silent', () {
     testWidgets('a stepper disables at its floor and ceiling', (tester) async {
       // A button that does nothing when tapped is worse than one that is plainly unavailable.
-      await repo.insertSetting('telemetry_interval', '${PreferenceLimits.telemetryInterval.min}');
+      await repo.insertSetting(
+        'telemetry_interval',
+        '${PreferenceLimits.telemetryInterval.min}',
+      );
       await pump(tester);
 
       final down = tester.widget<IconButton>(
@@ -141,7 +169,9 @@ void main() {
       expect(down.onPressed, isNull);
 
       vm.update(
-        (p) => p.copyWith(telemetryIntervalSeconds: PreferenceLimits.telemetryInterval.max),
+        (p) => p.copyWith(
+          telemetryIntervalSeconds: PreferenceLimits.telemetryInterval.max,
+        ),
       );
       await tester.pumpAndSettle();
       final up = tester.widget<IconButton>(
@@ -155,7 +185,9 @@ void main() {
       await repo.insertSetting('terminal_scrollback_limit', '600');
       await pump(tester);
 
-      await tester.tap(find.byKey(const ValueKey('settings.terminalScrollbackLimit.down')));
+      await tester.tap(
+        find.byKey(const ValueKey('settings.terminalScrollbackLimit.down')),
+      );
       await tester.pumpAndSettle();
 
       expect(
@@ -186,18 +218,30 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('the battery threshold appears only when the saver is on', (tester) async {
+    testWidgets('the battery threshold appears only when the saver is on', (
+      tester,
+    ) async {
       await pump(tester);
-      expect(find.byKey(const ValueKey('settings.batterySaverThreshold.value')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('settings.batterySaverThreshold.value')),
+        findsOneWidget,
+      );
 
-      await tester.tap(find.byKey(const ValueKey('settings.batterySaverEnabled')));
+      await tester.tap(
+        find.byKey(const ValueKey('settings.batterySaverEnabled')),
+      );
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('settings.batterySaverThreshold.value')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('settings.batterySaverThreshold.value')),
+        findsNothing,
+      );
       await finish(tester);
     });
   });
 
-  testWidgets('a contradictory combination is warned about, not blocked', (tester) async {
+  testWidgets('a contradictory combination is warned about, not blocked', (
+    tester,
+  ) async {
     // Refusing a legal combination outright would be the app overruling the user.
     await pump(tester);
     expect(find.byKey(const ValueKey('settings.warning.0')), findsNothing);
@@ -206,28 +250,48 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('settings.warning.0')), findsOneWidget);
-    expect(find.textContaining('does nothing while the app lock is off'), findsOneWidget);
+    expect(
+      find.textContaining('does nothing while the app lock is off'),
+      findsOneWidget,
+    );
 
-    final save = tester.widget<FilledButton>(find.byKey(const ValueKey('settings.save')));
-    expect(save.onPressed, isNotNull, reason: 'a warning is advice, not a veto');
+    final save = tester.widget<FilledButton>(
+      find.byKey(const ValueKey('settings.save')),
+    );
+    expect(
+      save.onPressed,
+      isNotNull,
+      reason: 'a warning is advice, not a veto',
+    );
     await finish(tester);
   });
 
-  testWidgets('hide-addresses explains when it is for, and takes effect on save', (tester) async {
-    await pump(tester);
-    expect(find.textContaining('sharing a screen'), findsOneWidget);
+  testWidgets(
+    'hide-addresses explains when it is for, and takes effect on save',
+    (tester) async {
+      await pump(tester);
+      expect(find.textContaining('sharing a screen'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('settings.hideSensitiveInfo')));
-    await tester.pumpAndSettle();
-    expect(HostDisplay.instance.hideSensitiveInfo, isFalse, reason: 'not saved yet');
+      await tester.tap(
+        find.byKey(const ValueKey('settings.hideSensitiveInfo')),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        HostDisplay.instance.hideSensitiveInfo,
+        isFalse,
+        reason: 'not saved yet',
+      );
 
-    await tester.tap(find.byKey(const ValueKey('settings.save')));
-    await tester.pumpAndSettle();
-    expect(HostDisplay.instance.hideSensitiveInfo, isTrue);
-    await finish(tester);
-  });
+      await tester.tap(find.byKey(const ValueKey('settings.save')));
+      await tester.pumpAndSettle();
+      expect(HostDisplay.instance.hideSensitiveInfo, isTrue);
+      await finish(tester);
+    },
+  );
 
-  testWidgets('resetting asks first and says what it does not touch', (tester) async {
+  testWidgets('resetting asks first and says what it does not touch', (
+    tester,
+  ) async {
     await repo.insertSetting('telemetry_interval', '120');
     await pump(tester);
 
@@ -248,7 +312,9 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('saving does not disturb unrelated stored settings', (tester) async {
+  testWidgets('saving does not disturb unrelated stored settings', (
+    tester,
+  ) async {
     await repo.insertSetting('sftp_bookmarks_1', '/srv|||/etc');
     await pump(tester);
 
@@ -272,19 +338,26 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('settings.appLockEnabled')));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('settings.lockTimeout')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('settings.lockTimeout')),
+        findsOneWidget,
+      );
       expect(find.text('Immediately'), findsOneWidget);
       await finish(tester);
     });
 
-    testWidgets('a preset is saved under the key the Android app already writes', (tester) async {
+    testWidgets('a preset is saved under the key the Android app already writes', (
+      tester,
+    ) async {
       // `app_lock_grace_ms` is not a spelling choice: an install upgrading from the Kotlin build
       // must keep the interval it configured, and reading anything else silently reverts it.
       await pump(tester);
       await tester.tap(find.byKey(const ValueKey('settings.appLockEnabled')));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('settings.lockTimeout.300000')));
+      await tester.tap(
+        find.byKey(const ValueKey('settings.lockTimeout.300000')),
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('settings.save')));
       await tester.pumpAndSettle();
@@ -293,7 +366,9 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('a stored interval is read back into the chips', (tester) async {
+    testWidgets('a stored interval is read back into the chips', (
+      tester,
+    ) async {
       await repo.insertSetting('app_lock_enabled', 'true');
       await repo.insertSetting('app_lock_grace_ms', '60000');
       await pump(tester);
@@ -301,71 +376,128 @@ void main() {
       final chip = tester.widget<ChoiceChip>(
         find.byKey(const ValueKey('settings.lockTimeout.60000')),
       );
-      expect(chip.selected, isTrue, reason: 'the saved interval must be the selected chip');
+      expect(
+        chip.selected,
+        isTrue,
+        reason: 'the saved interval must be the selected chip',
+      );
       await finish(tester);
     });
 
-    testWidgets('editing a custom duration down to nothing does not snap to a preset', (
+    testWidgets(
+      'editing a custom duration down to nothing does not snap to a preset',
+      (tester) async {
+        // The Kotlin bug (its PR #62): deleting the trailing zero from `10` momentarily gives `1`,
+        // which matches the "1 min" preset. Recomputing the mode from the value alone took the text
+        // field away mid-edit, so the value could not be finished.
+        await pump(tester);
+        await tester.tap(find.byKey(const ValueKey('settings.appLockEnabled')));
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(const ValueKey('settings.lockTimeout.custom')),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.enterText(
+          find.byKey(const ValueKey('settings.lockTimeout.value')),
+          '1',
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('settings.lockTimeout.value')),
+          findsOneWidget,
+          reason:
+              'the field must survive a transient value that happens to match a preset',
+        );
+
+        await tester.enterText(
+          find.byKey(const ValueKey('settings.lockTimeout.value')),
+          '15',
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('settings.save')));
+        await tester.pumpAndSettle();
+
+        expect(await repo.getSetting('app_lock_grace_ms'), '${15 * 60 * 1000}');
+        await finish(tester);
+      },
+    );
+
+    testWidgets('an empty custom duration blocks Save and says why', (
       tester,
     ) async {
-      // The Kotlin bug (its PR #62): deleting the trailing zero from `10` momentarily gives `1`,
-      // which matches the "1 min" preset. Recomputing the mode from the value alone took the text
-      // field away mid-edit, so the value could not be finished.
-      await pump(tester);
-      await tester.tap(find.byKey(const ValueKey('settings.appLockEnabled')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('settings.lockTimeout.custom')));
-      await tester.pumpAndSettle();
-
-      await tester.enterText(find.byKey(const ValueKey('settings.lockTimeout.value')), '1');
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('settings.lockTimeout.value')),
-        findsOneWidget,
-        reason: 'the field must survive a transient value that happens to match a preset',
-      );
-
-      await tester.enterText(find.byKey(const ValueKey('settings.lockTimeout.value')), '15');
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('settings.save')));
-      await tester.pumpAndSettle();
-
-      expect(await repo.getSetting('app_lock_grace_ms'), '${15 * 60 * 1000}');
-      await finish(tester);
-    });
-
-    testWidgets('an empty custom duration blocks Save and says why', (tester) async {
       // Saving here would keep the previous interval while the screen showed the new one.
       await pump(tester);
       await tester.tap(find.byKey(const ValueKey('settings.appLockEnabled')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('settings.lockTimeout.custom')));
+      await tester.tap(
+        find.byKey(const ValueKey('settings.lockTimeout.custom')),
+      );
       await tester.pumpAndSettle();
 
-      await tester.enterText(find.byKey(const ValueKey('settings.lockTimeout.value')), '');
+      await tester.enterText(
+        find.byKey(const ValueKey('settings.lockTimeout.value')),
+        '',
+      );
       await tester.pumpAndSettle();
 
-      final save = tester.widget<FilledButton>(find.byKey(const ValueKey('settings.save')));
+      final save = tester.widget<FilledButton>(
+        find.byKey(const ValueKey('settings.save')),
+      );
       expect(save.onPressed, isNull);
       expect(find.textContaining('up to 24 hours'), findsOneWidget);
       await finish(tester);
     });
 
-    testWidgets('non-digits are rejected in the field, not silently dropped later', (tester) async {
+    testWidgets(
+      'non-digits are rejected in the field, not silently dropped later',
+      (tester) async {
+        await pump(tester);
+        await tester.tap(find.byKey(const ValueKey('settings.appLockEnabled')));
+        await tester.pumpAndSettle();
+        await tester.tap(
+          find.byKey(const ValueKey('settings.lockTimeout.custom')),
+        );
+        await tester.pumpAndSettle();
+
+        await tester.enterText(
+          find.byKey(const ValueKey('settings.lockTimeout.value')),
+          '1o',
+        );
+        await tester.pumpAndSettle();
+
+        final field = tester.widget<TextField>(
+          find.byKey(const ValueKey('settings.lockTimeout.value')),
+        );
+        expect(
+          field.controller!.text,
+          '1',
+          reason: 'the filtering must be visible in the field',
+        );
+        await finish(tester);
+      },
+    );
+  });
+
+  group('saving is gated behind the PIN', () {
+    // Only the ungated path is covered here. Providing a live `AppLockController` stops the harness
+    // settling at all — it keeps a timer for the background lock — so the gated path cannot be
+    // driven through this screen without a harness rewrite larger than the fix. The gate's inputs
+    // (`hasStoredPin`) are covered in `app_lock_test.dart`; the wiring is not.
+    // Ported from `ui/ToolsScreen.kt:3902`. Without it, anyone holding a briefly-unlocked phone
+    // could turn the app lock *off* — which clears the stored PIN outright — along with screenshot
+    // blocking and sensitive-info masking. None of those should be reachable without proving you
+    // can already pass the lock.
+
+    testWidgets('with no PIN configured, Save applies straight away', (tester) async {
       await pump(tester);
-      await tester.tap(find.byKey(const ValueKey('settings.appLockEnabled')));
+      await tester.tap(find.byKey(const ValueKey('settings.amoled')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('settings.lockTimeout.custom')));
-      await tester.pumpAndSettle();
-
-      await tester.enterText(find.byKey(const ValueKey('settings.lockTimeout.value')), '1o');
+      await tester.tap(find.byKey(const ValueKey('settings.save')));
       await tester.pumpAndSettle();
 
-      final field = tester.widget<TextField>(
-        find.byKey(const ValueKey('settings.lockTimeout.value')),
-      );
-      expect(field.controller!.text, '1', reason: 'the filtering must be visible in the field');
-      await finish(tester);
+      expect(vm.saved.amoled, isTrue);
     });
+
   });
 }

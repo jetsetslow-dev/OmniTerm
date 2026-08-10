@@ -28,10 +28,14 @@ class TelemetryPoller extends ChangeNotifier {
   TelemetryPoller(
     this._app, {
     this.transport,
-    this.interval = const Duration(seconds: 15),
+    Duration? interval,
     this.onSample,
     DateTime Function()? clock,
-  }) : _clock = clock ?? DateTime.now;
+  }) : _intervalOverride = interval,
+       _clock = clock ?? DateTime.now {
+    _lastConfiguredInterval = effectiveInterval;
+    _app.addListener(_onAppChanged);
+  }
 
   final AppState _app;
 
@@ -40,7 +44,24 @@ class TelemetryPoller extends ChangeNotifier {
   /// that look live.
   final SshTransport? transport;
 
-  final Duration interval;
+  final Duration? _intervalOverride;
+
+  /// Tests can pin a cadence; production follows the live Settings value.
+  Duration get effectiveInterval =>
+      _intervalOverride ??
+      Duration(seconds: _app.preferences.telemetryIntervalSeconds);
+
+  Duration? _lastConfiguredInterval;
+
+  void _onAppChanged() {
+    if (_intervalOverride != null || _timer == null || _disposed) return;
+    final next = effectiveInterval;
+    if (next == _lastConfiguredInterval) return;
+    _lastConfiguredInterval = next;
+    _timer?.cancel();
+    _timer = Timer.periodic(next, (_) => unawaited(cycle()));
+    _safeNotify();
+  }
 
   /// Called with every sample this poller takes, before it returns.
   ///
@@ -70,7 +91,8 @@ class TelemetryPoller extends ChangeNotifier {
   HostMetrics? metricsForServer(int serverId) => _metrics[serverId];
 
   /// The recent samples for [serverId], oldest first, for the sparklines.
-  List<TimedSample> historyForServer(int serverId) => _history[serverId] ?? const [];
+  List<TimedSample> historyForServer(int serverId) =>
+      _history[serverId] ?? const [];
 
   /// When [serverId]'s newest sample was taken, so a screen can say how old its numbers are rather
   /// than presenting a reading from four minutes ago as the current state of the machine.
@@ -92,7 +114,7 @@ class TelemetryPoller extends ChangeNotifier {
   DateTime? get lastCycleStart => _lastCycleStart;
 
   /// When the next cycle is due, or null before the first has run.
-  DateTime? get nextCycleAt => _lastCycleStart?.add(interval);
+  DateTime? get nextCycleAt => _lastCycleStart?.add(effectiveInterval);
 
   bool _cycling = false;
 
@@ -101,12 +123,14 @@ class TelemetryPoller extends ChangeNotifier {
 
   // ── the loop ───────────────────────────────────────────────────────────────
 
-  /// Poll now, then keep polling every [interval].
+  /// Poll now, then keep polling at [effectiveInterval].
   void start() {
     if (!canPoll) return;
     _timer?.cancel();
     unawaited(cycle());
-    _timer = Timer.periodic(interval, (_) => unawaited(cycle()));
+    final cadence = effectiveInterval;
+    _lastConfiguredInterval = cadence;
+    _timer = Timer.periodic(cadence, (_) => unawaited(cycle()));
   }
 
   void stop() {
@@ -203,7 +227,9 @@ class TelemetryPoller extends ChangeNotifier {
       _metrics[server.id] = sample.metrics;
       if (sample.baseline != null) _baselines[server.id] = sample.baseline!;
       _recordHistory(server.id, sample.metrics, now);
-      if (sample.metrics.os.isNotEmpty) _app.recordOsForServer(server.id, sample.metrics.os);
+      if (sample.metrics.os.isNotEmpty) {
+        _app.recordOsForServer(server.id, sample.metrics.os);
+      }
 
       await _persist(server, sample.metrics, now);
       _safeNotify();
@@ -217,7 +243,10 @@ class TelemetryPoller extends ChangeNotifier {
   }
 
   void _recordHistory(int serverId, HostMetrics metrics, DateTime at) {
-    final samples = [..._history[serverId] ?? const <TimedSample>[], TimedSample(at, metrics)];
+    final samples = [
+      ..._history[serverId] ?? const <TimedSample>[],
+      TimedSample(at, metrics),
+    ];
     _history[serverId] = samples.length <= historyLength
         ? samples
         : samples.sublist(samples.length - historyLength);
@@ -271,6 +300,7 @@ class TelemetryPoller extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     stop();
+    _app.removeListener(_onAppChanged);
     super.dispose();
   }
 }

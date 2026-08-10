@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -21,12 +23,25 @@ class AlertsScreen extends StatefulWidget {
 }
 
 class _AlertsScreenState extends State<AlertsScreen> {
+  /// Kotlin's `LaunchedEffect` runs a 60-second ticker updating `now` so muted alerts auto-expire
+  /// visually. Without this, a muted alert stays tagged "MUTED" until the user triggers a rebuild.
+  Timer? _muteExpiryTicker;
+
   @override
   void initState() {
     super.initState();
+    _muteExpiryTicker = Timer.periodic(const Duration(seconds: 60), (_) {
+      if (mounted) setState(() {});
+    });
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) context.read<AlertsViewModel>().start();
     });
+  }
+
+  @override
+  void dispose() {
+    _muteExpiryTicker?.cancel();
+    super.dispose();
   }
 
   @override
@@ -49,7 +64,12 @@ class _AlertsScreenState extends State<AlertsScreen> {
                   leftAccent: OmniColors.green,
                   child: Row(
                     children: [
-                      Expanded(child: Text(vm.status!, style: const TextStyle(fontSize: 12))),
+                      Expanded(
+                        child: Text(
+                          vm.status!,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
                       IconButton(
                         key: const ValueKey('alerts.status.dismiss'),
                         icon: const Icon(Icons.close, size: 16),
@@ -113,7 +133,10 @@ class _MasterSwitch extends StatelessWidget {
                     vm.alertsEnabled
                         ? 'Rules are evaluated on every telemetry poll.'
                         : 'Off — no rules are evaluated and nothing new will fire.',
-                    style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
@@ -163,10 +186,17 @@ class _NotificationWarning extends StatelessWidget {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(Icons.notifications_off, size: 16, color: OmniColors.amber),
+            const Icon(
+              Icons.notifications_off,
+              size: 16,
+              color: OmniColors.amber,
+            ),
             const SizedBox(width: 8),
             Expanded(
-              child: Text(message, style: const TextStyle(fontSize: 11, color: OmniColors.amber)),
+              child: Text(
+                message,
+                style: const TextStyle(fontSize: 11, color: OmniColors.amber),
+              ),
             ),
           ],
         ),
@@ -215,7 +245,10 @@ class _TabBar extends StatelessWidget {
                         ),
                         child: Text(
                           '${vm.unmutedCount}',
-                          style: TextStyle(fontSize: 9, color: scheme.onPrimary),
+                          style: TextStyle(
+                            fontSize: 9,
+                            color: scheme.onPrimary,
+                          ),
                         ),
                       ),
                     ],
@@ -247,7 +280,11 @@ class _RefreshButtonState extends State<_RefreshButton> {
     return TextButton.icon(
       key: ValueKey('alerts.active.refresh.${widget.serverId}'),
       icon: _busy
-          ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2))
+          ? const SizedBox(
+              width: 12,
+              height: 12,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
           : const Icon(Icons.refresh, size: 12),
       label: const Text('Refresh', style: TextStyle(fontSize: 12)),
       onPressed: _busy
@@ -287,7 +324,11 @@ class _ActiveTab extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              const Icon(Icons.check_circle_outline, size: 36, color: OmniColors.green),
+              const Icon(
+                Icons.check_circle_outline,
+                size: 36,
+                color: OmniColors.green,
+              ),
               const SizedBox(height: 10),
               Text(
                 vm.rules.isEmpty
@@ -327,7 +368,10 @@ class _ActiveTab extends StatelessWidget {
                     child: Text(
                       '${alert.metricName} · ${vm.scopeLabel(alert.serverId)}',
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
                     ),
                   ),
                   if (muted) ...[
@@ -362,12 +406,18 @@ class _ActiveTab extends StatelessWidget {
                     TextButton(
                       key: ValueKey('alerts.active.${alert.id}.ack'),
                       onPressed: () => vm.acknowledge(alert),
-                      child: const Text('Acknowledge', style: TextStyle(fontSize: 12)),
+                      child: const Text(
+                        'Acknowledge',
+                        style: TextStyle(fontSize: 12),
+                      ),
                     ),
                   TextButton(
                     key: ValueKey('alerts.active.${alert.id}.mute'),
                     onPressed: () => _openMuteMenu(context, vm, alert),
-                    child: Text(muted ? 'Muted' : 'Mute', style: const TextStyle(fontSize: 12)),
+                    child: Text(
+                      muted ? 'Muted' : 'Mute',
+                      style: const TextStyle(fontSize: 12),
+                    ),
                   ),
                   const Spacer(),
                   TextButton(
@@ -388,7 +438,11 @@ class _ActiveTab extends StatelessWidget {
   }
 }
 
-Future<void> _openMuteMenu(BuildContext context, AlertsViewModel vm, ActiveAlert alert) async {
+Future<void> _openMuteMenu(
+  BuildContext context,
+  AlertsViewModel vm,
+  ActiveAlert alert,
+) async {
   final duration = await showModalBottomSheet<Duration>(
     context: context,
     builder: (sheetContext) => SafeArea(
@@ -446,11 +500,17 @@ class _RulesTab extends StatelessWidget {
                   children: [
                     const Text(
                       'Default rules',
-                      style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 14,
+                      ),
                     ),
                     Text(
                       'CPU, memory and disk at 90%, latency at 250ms, temperature at 80°.',
-                      style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                   ],
                 ),
@@ -458,7 +518,9 @@ class _RulesTab extends StatelessWidget {
               Switch(
                 key: const ValueKey('alerts.presets.switch'),
                 value: vm.presetsEnabled,
-                onChanged: vm.busy ? null : (on) => _confirmPresets(context, vm, on),
+                onChanged: vm.busy
+                    ? null
+                    : (on) => _confirmPresets(context, vm, on),
               ),
             ],
           ),
@@ -479,7 +541,11 @@ class _RulesTab extends StatelessWidget {
     );
   }
 
-  Future<void> _confirmPresets(BuildContext context, AlertsViewModel vm, bool on) async {
+  Future<void> _confirmPresets(
+    BuildContext context,
+    AlertsViewModel vm,
+    bool on,
+  ) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -543,18 +609,27 @@ class _RuleCard extends StatelessWidget {
                         child: Text(
                           describeRule(rule),
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 13,
+                          ),
                         ),
                       ),
                       if (vm.isPristinePresetRule(rule)) ...[
                         const SizedBox(width: 6),
-                        const OmniTag(label: 'DEFAULT', color: OmniColors.textMuted),
+                        const OmniTag(
+                          label: 'DEFAULT',
+                          color: OmniColors.textMuted,
+                        ),
                       ],
                     ],
                   ),
                   Text(
                     '${vm.scopeLabel(rule.serverId)} · ${rule.severity}',
-                    style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: scheme.onSurfaceVariant,
+                    ),
                   ),
                 ],
               ),
@@ -567,7 +642,11 @@ class _RuleCard extends StatelessWidget {
             IconButton(
               key: ValueKey('alerts.rule.${rule.id}.delete'),
               tooltip: 'Delete rule',
-              icon: const Icon(Icons.delete_outline, size: 18, color: OmniColors.red),
+              icon: const Icon(
+                Icons.delete_outline,
+                size: 18,
+                color: OmniColors.red,
+              ),
               onPressed: () => _confirmDeleteRule(context, vm, rule),
             ),
           ],
@@ -577,7 +656,11 @@ class _RuleCard extends StatelessWidget {
   }
 }
 
-Future<void> _confirmDeleteRule(BuildContext context, AlertsViewModel vm, AlertRule rule) async {
+Future<void> _confirmDeleteRule(
+  BuildContext context,
+  AlertsViewModel vm,
+  AlertRule rule,
+) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
@@ -644,7 +727,9 @@ class _HistoryTab extends StatelessWidget {
               final entry = vm.history[index];
               return OmniCard(
                 key: ValueKey('alerts.history.${entry.id}'),
-                leftAccent: entry.status == 'resolved' ? OmniColors.green : OmniColors.textMuted,
+                leftAccent: entry.status == 'resolved'
+                    ? OmniColors.green
+                    : OmniColors.textMuted,
                 child: Row(
                   children: [
                     Expanded(
@@ -656,7 +741,10 @@ class _HistoryTab extends StatelessWidget {
                             // readable after the host is deleted.
                             '${entry.metricName} · ${entry.serverName}',
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
                           ),
                           Text(
                             '${entry.currentValue.round()}${unitFor(entry.metricName)} '
@@ -672,7 +760,9 @@ class _HistoryTab extends StatelessWidget {
                     ),
                     OmniTag(
                       label: entry.status.toUpperCase(),
-                      color: entry.status == 'resolved' ? OmniColors.green : OmniColors.textMuted,
+                      color: entry.status == 'resolved'
+                          ? OmniColors.green
+                          : OmniColors.textMuted,
                     ),
                   ],
                 ),
@@ -716,7 +806,9 @@ class _RuleSheetState extends State<_RuleSheet> {
   late final _threshold = TextEditingController(
     text: (widget.existing?.thresholdValue ?? 90).round().toString(),
   );
-  late final _mount = TextEditingController(text: widget.existing?.mountPoint ?? '/');
+  late final _mount = TextEditingController(
+    text: widget.existing?.mountPoint ?? '/',
+  );
   String? _failure;
 
   @override
@@ -767,7 +859,9 @@ class _RuleSheetState extends State<_RuleSheet> {
     final hosts = widget.vm.hosts;
 
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
       child: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(16),
@@ -844,7 +938,10 @@ class _RuleSheetState extends State<_RuleSheet> {
               DropdownButtonFormField<int>(
                 key: const ValueKey('alerts.editor.scope'),
                 initialValue: _serverId,
-                decoration: omniInputDecoration(context, labelText: 'Applies to'),
+                decoration: omniInputDecoration(
+                  context,
+                  labelText: 'Applies to',
+                ),
                 items: [
                   const DropdownMenuItem(value: 0, child: Text('All hosts')),
                   for (final host in hosts)
@@ -868,8 +965,11 @@ class _RuleSheetState extends State<_RuleSheet> {
                     id: 0,
                     serverId: _serverId,
                     metricName: _metric,
-                    mountPoint: _mount.text.trim().isEmpty ? '/' : _mount.text.trim(),
-                    thresholdValue: double.tryParse(_threshold.text.trim()) ?? 0,
+                    mountPoint: _mount.text.trim().isEmpty
+                        ? '/'
+                        : _mount.text.trim(),
+                    thresholdValue:
+                        double.tryParse(_threshold.text.trim()) ?? 0,
                     severity: _severity,
                     triggerWindow: _window,
                     enabled: true,

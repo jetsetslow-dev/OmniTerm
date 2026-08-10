@@ -38,15 +38,18 @@ class AppDataDao extends DatabaseAccessor<AppDatabase> with _$AppDataDaoMixin {
   Future<int> insertKey(SshKeysCompanion key) =>
       into(sshKeys).insert(key, mode: InsertMode.replace);
 
-  Future<void> deleteKeyById(int id) => (delete(sshKeys)..where((k) => k.id.equals(id))).go();
+  Future<void> deleteKeyById(int id) =>
+      (delete(sshKeys)..where((k) => k.id.equals(id))).go();
 
   // ── credential profiles ────────────────────────────────────────────────────
 
-  Stream<List<CredentialProfile>> watchAllProfiles() =>
-      (select(credentialProfiles)..orderBy([(p) => OrderingTerm.asc(p.profileName)])).watch();
+  Stream<List<CredentialProfile>> watchAllProfiles() => (select(
+    credentialProfiles,
+  )..orderBy([(p) => OrderingTerm.asc(p.profileName)])).watch();
 
-  Future<List<CredentialProfile>> getAllProfiles() =>
-      (select(credentialProfiles)..orderBy([(p) => OrderingTerm.asc(p.profileName)])).get();
+  Future<List<CredentialProfile>> getAllProfiles() => (select(
+    credentialProfiles,
+  )..orderBy([(p) => OrderingTerm.asc(p.profileName)])).get();
 
   Future<CredentialProfile?> getProfileById(int id) =>
       (select(credentialProfiles)
@@ -87,8 +90,9 @@ class AppDataDao extends DatabaseAccessor<AppDatabase> with _$AppDataDaoMixin {
 
   // ── port forwards ──────────────────────────────────────────────────────────
 
-  Stream<List<PortForward>> watchAllPortForwards() =>
-      (select(portForwards)..orderBy([(p) => OrderingTerm.asc(p.name)])).watch();
+  Stream<List<PortForward>> watchAllPortForwards() => (select(
+    portForwards,
+  )..orderBy([(p) => OrderingTerm.asc(p.name)])).watch();
 
   Future<List<PortForward>> getAllPortForwards() =>
       (select(portForwards)..orderBy([(p) => OrderingTerm.asc(p.name)])).get();
@@ -96,7 +100,8 @@ class AppDataDao extends DatabaseAccessor<AppDatabase> with _$AppDataDaoMixin {
   Future<int> insertPortForward(PortForwardsCompanion pf) =>
       into(portForwards).insert(pf, mode: InsertMode.replace);
 
-  Future<bool> updatePortForward(PortForward pf) => update(portForwards).replace(pf);
+  Future<bool> updatePortForward(PortForward pf) =>
+      update(portForwards).replace(pf);
 
   Future<void> deletePortForwardById(int id) =>
       (delete(portForwards)..where((p) => p.id.equals(id))).go();
@@ -105,7 +110,9 @@ class AppDataDao extends DatabaseAccessor<AppDatabase> with _$AppDataDaoMixin {
       (delete(portForwards)..where((p) => p.serverId.equals(serverId))).go();
 
   Future<void> deletePortForwardsExceptServers(List<int> keepServerIds) =>
-      (delete(portForwards)..where((p) => p.serverId.isNotIn(keepServerIds))).go();
+      (delete(
+        portForwards,
+      )..where((p) => p.serverId.isNotIn(keepServerIds))).go();
 
   // ── wake-on-lan targets ────────────────────────────────────────────────────
 
@@ -121,10 +128,16 @@ class AppDataDao extends DatabaseAccessor<AppDatabase> with _$AppDataDaoMixin {
   Future<void> deleteWolTargetById(int id) =>
       (delete(wolTargets)..where((w) => w.id.equals(id))).go();
 
+  Future<void> updateWolLastWoken(int id, int timestamp) =>
+      (update(wolTargets)..where((w) => w.id.equals(id))).write(
+        WolTargetsCompanion(lastWokenTime: Value(timestamp)),
+      );
+
   // ── network shares ─────────────────────────────────────────────────────────
 
-  Stream<List<NetworkShare>> watchAllShares() =>
-      (select(networkShares)..orderBy([(s) => OrderingTerm.asc(s.name)])).watch();
+  Stream<List<NetworkShare>> watchAllShares() => (select(
+    networkShares,
+  )..orderBy([(s) => OrderingTerm.asc(s.name)])).watch();
 
   Future<List<NetworkShare>> getAllShares() =>
       (select(networkShares)..orderBy([(s) => OrderingTerm.asc(s.name)])).get();
@@ -160,7 +173,9 @@ class AppDataDao extends DatabaseAccessor<AppDatabase> with _$AppDataDaoMixin {
   Future<void> deleteStack(int serverId, String runtime, String project) =>
       (delete(stackRegistry)..where(
             (s) =>
-                s.serverId.equals(serverId) & s.runtime.equals(runtime) & s.project.equals(project),
+                s.serverId.equals(serverId) &
+                s.runtime.equals(runtime) &
+                s.project.equals(project),
           ))
           .go();
 
@@ -187,24 +202,31 @@ class AppDataDao extends DatabaseAccessor<AppDatabase> with _$AppDataDaoMixin {
 
   /// SFTP bookmarks are stored as one settings row per endpoint; a restore that keeps a subset of
   /// hosts must drop the orphans without touching any other setting.
-  Future<void> deleteSftpBookmarksExcept(List<String> keepKeys) => (delete(
-    appSettings,
-  )..where((s) => s.key.like('sftp_bookmarks_%') & s.key.isNotIn(keepKeys))).go();
+  Future<void> deleteSftpBookmarksExcept(List<String> keepKeys) =>
+      (delete(appSettings)..where(
+            (s) => s.key.like('sftp_bookmarks_%') & s.key.isNotIn(keepKeys),
+          ))
+          .go();
 
   // ── persistent (tmux) sessions ─────────────────────────────────────────────
 
-  Future<List<PersistentSession>> getAllPersistentSessions() =>
-      (select(persistentSessions)..orderBy([(s) => OrderingTerm.asc(s.createdAt)])).get();
+  Future<List<PersistentSession>> getAllPersistentSessions() => (select(
+    persistentSessions,
+  )..orderBy([(s) => OrderingTerm.asc(s.createdAt)])).get();
 
   Future<int> upsertPersistentSession(PersistentSessionsCompanion session) =>
       into(persistentSessions).insert(session, mode: InsertMode.replace);
 
-  Future<void> deletePersistentSession(String tmuxName) =>
-      (delete(persistentSessions)..where((s) => s.tmuxName.equals(tmuxName))).go();
+  Future<void> deletePersistentSession(String tmuxName) => (delete(
+    persistentSessions,
+  )..where((s) => s.tmuxName.equals(tmuxName))).go();
 
-  Future<void> deletePersistentSessionsForServer(int serverId) =>
-      (delete(persistentSessions)..where((s) => s.serverId.equals(serverId))).go();
+  Future<void> deletePersistentSessionsForServer(int serverId) => (delete(
+    persistentSessions,
+  )..where((s) => s.serverId.equals(serverId))).go();
 
   Future<void> deletePersistentSessionsExceptServers(List<int> keepServerIds) =>
-      (delete(persistentSessions)..where((s) => s.serverId.isNotIn(keepServerIds))).go();
+      (delete(
+        persistentSessions,
+      )..where((s) => s.serverId.isNotIn(keepServerIds))).go();
 }

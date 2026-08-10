@@ -34,6 +34,28 @@ bool looksBinary(Uint8List bytes) {
   return false;
 }
 
+/// Why editing [text] as text would damage it, or null when it is safe.
+///
+/// The editor receives an already-decoded string: the SFTP client reads with
+/// `utf8.decode(..., allowMalformed: true)`, so bytes that are not valid UTF-8 have **already become
+/// U+FFFD** by the time anything here sees them. That is the dangerous case, and it is invisible on
+/// screen — the replacement character renders as an ordinary glyph, and saving writes those three
+/// bytes back over whatever was there, corrupting the file for good.
+///
+/// A warning rather than a refusal (§17), matching [looksBinary]: an operator who knows what they
+/// are doing may still want to look at the file.
+String? binaryEditWarning(String text) {
+  if (text.contains('\u0000')) {
+    return 'This file contains NUL bytes, so it is binary rather than text. '
+        'Saving it from the editor will corrupt it.';
+  }
+  if (text.contains('\uFFFD')) {
+    return 'Parts of this file are not valid UTF-8 text and were replaced with "�" when it '
+        'was read. Saving will write those replacements over the original bytes.';
+  }
+  return null;
+}
+
 /// What a save attempt amounted to.
 enum FileSaveOutcome {
   /// The remote reported exactly the bytes that were sent.

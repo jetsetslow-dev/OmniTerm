@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
 
 import '../../data/ssh/ssh_transport.dart';
 import '../../data/term/terminal_emulator.dart';
+import '../../data/term/tmux_control_commands.dart';
 import '../../data/term/tmux_control_event.dart';
 import '../../data/term/tmux_control_parser.dart';
 import '../../data/term/terminal_snapshot.dart';
@@ -43,7 +45,9 @@ class ShellSession extends ChangeNotifier {
     required this.emulator,
     this.tmuxName,
     this.controlMode = false,
+    DateTime? startedAt,
   }) : _channel = channel,
+       startedAt = startedAt ?? DateTime.now(),
        _control = controlMode ? TmuxControlParser() : null {
     _subscription = channel.output.listen(
       _onOutput,
@@ -57,6 +61,12 @@ class ShellSession extends ChangeNotifier {
   final String id;
   final int serverId;
   final String serverName;
+
+  /// When this session was opened, for the age shown beside it.
+  ///
+  /// Injectable so a test can pin it: an age derived from `DateTime.now()` at construction is
+  /// otherwise untestable without waiting real minutes.
+  final DateTime startedAt;
 
   /// The tmux session this terminal is attached to, when the host is persistent.
   ///
@@ -119,7 +129,11 @@ class ShellSession extends ChangeNotifier {
         // Only pane output is terminal content. A reply, a notification or a session change is the
         // protocol talking about itself, and feeding it to the emulator would paint tmux's own
         // bookkeeping into the user's scrollback.
-        case TmuxOutput(:final data):
+        case TmuxOutput(:final paneId, :final data):
+          // The pane tmux is streaming is also the pane keystrokes must be addressed to. Learning it
+          // from the output rather than from a `list-panes` round trip means input works from the
+          // first byte the session receives.
+          _controlPaneId ??= paneId;
           emulator.feed(data);
         case TmuxExit(:final reason):
           controlExitReason = reason;
@@ -246,6 +260,18 @@ class ShellSession extends ChangeNotifier {
     while (true) {
       try {
         await _channel.resize(next.$1, next.$2);
+        // Control mode also needs telling explicitly: tmux sizes a control client from
+        // `refresh-client -C`, so without this the panes keep the geometry they were attached at
+        // and output wraps against the old width. Kotlin does the same at `AppViewModel.kt:5970`.
+        if (controlMode && _controlPaneId != null) {
+          await _channel.write(
+            Uint8List.fromList(
+              utf8.encode(
+                '${TmuxControlCommands.refreshClientSize(next.$1, next.$2)}\n',
+              ),
+            ),
+          );
+        }
       } catch (_) {
         // A failed resize must not stop the consumer: the next layout change can still recover, and
         // the local grid is already correct either way.
@@ -301,12 +327,35 @@ class ShellSession extends ChangeNotifier {
     return true;
   }
 
+  /// The pane tmux is streaming, in control mode. Null until the first `%output`.
+  String? _controlPaneId;
+
+  /// The pane keystrokes are addressed to, exposed for tests.
+  @visibleForTesting
+  String? get controlPaneId => _controlPaneId;
+
   Future<void> _write(Uint8List bytes) async {
     try {
-      await _channel.write(bytes);
+      await _channel.write(_encodeForChannel(bytes));
     } catch (_) {
       // The channel's own close signal decides the session's fate; a failed write is a symptom.
     }
+  }
+
+  /// What actually goes down the channel.
+  ///
+  /// **In control mode the channel is a command channel, not a PTY.** `tmux -CC` reads its stdin as
+  /// tmux command lines, so raw keystrokes are parsed as commands and the pane never receives them —
+  /// typing simply does nothing. Input has to be wrapped in `send-keys -H`, which is what
+  /// [TmuxControlCommands.sendKeysHex] builds, chunked so a long paste cannot exceed tmux's
+  /// command-line limit.
+  Uint8List _encodeForChannel(Uint8List bytes) {
+    final paneId = _controlPaneId;
+    if (!controlMode || paneId == null) return bytes;
+    final commands = TmuxControlCommands.sendKeysHex(paneId, bytes);
+    return Uint8List.fromList(
+      utf8.encode(commands.map((line) => '$line\n').join()),
+    );
   }
 
   // ── lifecycle ───────────────────────────────────────────────────────────────

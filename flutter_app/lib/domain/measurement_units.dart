@@ -2,13 +2,14 @@ import 'package:intl/intl.dart';
 
 /// Temperature unit handling, ported from `ui/MeasurementUnits.kt`.
 enum MeasurementSystem {
-  metric('metric'),
-  imperial('imperial');
+  metric('metric', 'Metric (°C)'),
+  imperial('imperial', 'Imperial (°F)');
 
-  const MeasurementSystem(this.settingValue);
+  const MeasurementSystem(this.settingValue, this.label);
 
   /// The value persisted in `app_settings`; must not change.
   final String settingValue;
+  final String label;
 
   static MeasurementSystem fromSetting(String? value) {
     for (final system in MeasurementSystem.values) {

@@ -7,7 +7,37 @@ import '../../data/app_database.dart';
 import '../../data/remote_models.dart';
 import '../../data/ssh/ssh_host_key_trust.dart';
 import '../../domain/ssh_key_import.dart';
+import '../../domain/ssh_keygen.dart';
 import 'app_state.dart';
+
+/// Produces a keypair for [AuthKeysViewModel.generateKey].
+typedef SshKeyGenerator =
+    Future<GeneratedSshKey> Function({
+      required String alias,
+      required String keyType,
+      required Set<String> existingAliases,
+    });
+
+/// Generates on a background isolate.
+///
+/// A 4096-bit modulus takes seconds of solid CPU; doing it inline would freeze the frame loop, which
+/// reads to the user as the app having hung.
+Future<GeneratedSshKey> _generateOnIsolate({
+  required String alias,
+  required String keyType,
+  required Set<String> existingAliases,
+}) => compute(_generateInIsolate, <String, Object>{
+  'alias': alias,
+  'keyType': keyType,
+  'existingAliases': existingAliases.toList(),
+});
+
+/// Runs on the spawned isolate, so it must be a top-level function over plain data.
+GeneratedSshKey _generateInIsolate(Map<String, Object> request) => generateSshKeyPair(
+  alias: request['alias']! as String,
+  keyType: request['keyType']! as String,
+  existingAliases: (request['existingAliases']! as List<dynamic>).cast<String>().toSet(),
+);
 
 /// The Auth Keys tool's state and actions, split out of `AuthKeysToolView` in `ui/ToolsScreen.kt`.
 ///
@@ -15,9 +45,14 @@ import 'app_state.dart';
 /// records. They sit together because they are the app's whole answer to "who am I, and who am I
 /// talking to".
 class AuthKeysViewModel extends ChangeNotifier {
-  AuthKeysViewModel(this._app, {this.hostKeyTrust});
+  AuthKeysViewModel(this._app, {this.hostKeyTrust, SshKeyGenerator? keyGenerator})
+    : _keyGenerator = keyGenerator ?? _generateOnIsolate;
 
   final AppState _app;
+
+  /// How a keypair is produced. Overridden in tests so they can generate a throwaway modulus in
+  /// milliseconds instead of waiting seconds for a production-strength one.
+  final SshKeyGenerator _keyGenerator;
 
   /// Null in tests and in any build without a trust store wired; the trusted-hosts section then
   /// reports that rather than showing an empty list, which would read as "nothing is trusted".
@@ -142,6 +177,58 @@ class AuthKeysViewModel extends ChangeNotifier {
       _error = message;
       _safeNotify();
       return message;
+    }
+  }
+
+  /// True while a keypair is being generated.
+  ///
+  /// Kotlin guards on the same flag: RSA generation runs for seconds, and without it a second tap
+  /// would start a competing generation whose result overwrites the first.
+  bool get keygenRunning => _keygenRunning;
+  bool _keygenRunning = false;
+
+  /// Generates a keypair, stores it, and returns it for display.
+  ///
+  /// The caller is handed the material because this is the *only* moment the private key can be
+  /// shown: it is stored encrypted and never read back out to the UI afterwards. Returns null when
+  /// generation was refused, with the reason in [error].
+  Future<GeneratedSshKey?> generateKey({
+    required String alias,
+    String keyType = 'RSA',
+  }) async {
+    if (_keygenRunning) return null;
+    _keygenRunning = true;
+    _error = null;
+    _safeNotify();
+    try {
+      final trimmed = alias.trim();
+      final generated = await _keyGenerator(
+        alias: trimmed,
+        keyType: keyType,
+        existingAliases: _keys.map((k) => k.alias).toSet(),
+      );
+      await _app.repository.insertKey(
+        SshKey(
+          id: 0,
+          alias: trimmed,
+          keyType: generated.keyType,
+          privateKey: generated.privateKey,
+          publicKey: generated.publicKey,
+          fingerprint: generated.fingerprint,
+        ),
+      );
+      _status = "Generated ${generated.keyType} key '$trimmed'.";
+      return generated;
+    } on KeyGenerationException catch (e) {
+      _error = e.message;
+      return null;
+    } catch (e) {
+      _error = 'Key generation failed: $e';
+      return null;
+    } finally {
+      // Must clear on failure too, or the button stays disabled for the rest of the session.
+      _keygenRunning = false;
+      _safeNotify();
     }
   }
 

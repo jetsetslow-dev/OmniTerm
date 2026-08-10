@@ -121,6 +121,10 @@ class NavigationController extends ChangeNotifier {
   }
 
   void navigateTo(Screen screen) {
+    // Compose's mutableStateOf does not recompose when the same enum value is assigned. Mirror
+    // that here: rebuilding the active route from a bottom-nav re-tap can briefly give lazily laid
+    // out grids a zero viewport on a real device, even though no navigation occurred.
+    if (screen == _current) return;
     for (final guard in guards) {
       if (guard(_current, screen)) return;
     }

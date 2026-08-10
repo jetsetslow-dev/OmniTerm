@@ -41,8 +41,15 @@ class MetricLineChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final axisColor = Theme.of(context).colorScheme.onSurfaceVariant;
-    final axisStyle = TextStyle(fontSize: 10, fontFamily: OmniFonts.mono, color: axisColor);
+    final axisStyle = TextStyle(
+      fontSize: 10,
+      fontFamily: OmniFonts.mono,
+      color: axisColor,
+    );
     final labels = chartEndpointLabels(timestamps);
+    // One scale for the whole chart so the plot, the gutter and the endpoint labels stay in step.
+    final scale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.5);
+    final gutter = 28.0 * scale;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -59,17 +66,25 @@ class MetricLineChart extends StatelessWidget {
             Text(
               points.isEmpty ? '—' : '${points.last.round()}$unit',
               key: ValueKey('chart.$label.latest'),
-              style: axisStyle.copyWith(color: color, fontWeight: FontWeight.bold),
+              style: axisStyle.copyWith(
+                color: color,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ],
         ),
         const SizedBox(height: 2),
-        SizedBox(
-          height: height,
+        // `IntrinsicHeight` rather than a fixed height, so the row is as tall as whichever side
+        // needs more and the labels *cannot* overflow at any text size. A fixed height was the bug:
+        // at 200% text `100` no longer fitted the 28px gutter, wrapped onto three lines, and
+        // overflowed by 118px on every screen that draws a chart. Chasing it with a bigger constant
+        // only moves the size at which it breaks.
+        IntrinsicHeight(
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               SizedBox(
-                width: 28,
+                width: gutter,
                 child: Padding(
                   padding: const EdgeInsets.only(right: 4),
                   child: Column(
@@ -85,15 +100,23 @@ class MetricLineChart extends StatelessWidget {
               ),
               Expanded(
                 child: CustomPaint(
-                  painter: _ChartPainter(points: points, color: color, maxY: maxY),
-                  child: const SizedBox.expand(),
+                  painter: _ChartPainter(
+                    points: points,
+                    color: color,
+                    maxY: maxY,
+                  ),
+                  // The plot keeps its own height and grows with the text; the labels beside it now
+                  // size themselves, and the row takes the larger of the two.
+                  child: SizedBox(height: height * scale),
                 ),
               ),
             ],
           ),
         ),
         Padding(
-          padding: const EdgeInsets.only(left: 28),
+          // Kept level with the gutter above, so the endpoint labels stay under the plot rather
+          // than sliding out from beneath it as the text grows.
+          padding: EdgeInsets.only(left: gutter),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -108,7 +131,11 @@ class MetricLineChart extends StatelessWidget {
 }
 
 class _ChartPainter extends CustomPainter {
-  const _ChartPainter({required this.points, required this.color, required this.maxY});
+  const _ChartPainter({
+    required this.points,
+    required this.color,
+    required this.maxY,
+  });
 
   final List<double> points;
   final Color color;
@@ -133,7 +160,9 @@ class _ChartPainter extends CustomPainter {
       // percentages cannot be redrawn at a different scale by one bad sample.
       final value = (points[i] / maxY).clamp(0.0, 1.0);
       final offset = Offset(i * dx, size.height - value * size.height);
-      i == 0 ? path.moveTo(offset.dx, offset.dy) : path.lineTo(offset.dx, offset.dy);
+      i == 0
+          ? path.moveTo(offset.dx, offset.dy)
+          : path.lineTo(offset.dx, offset.dy);
     }
 
     canvas.drawPath(
@@ -147,7 +176,9 @@ class _ChartPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_ChartPainter old) =>
-      old.color != color || old.maxY != maxY || !_sameSeries(old.points, points);
+      old.color != color ||
+      old.maxY != maxY ||
+      !_sameSeries(old.points, points);
 
   static bool _sameSeries(List<double> a, List<double> b) {
     if (a.length != b.length) return false;

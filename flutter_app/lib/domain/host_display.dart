@@ -46,3 +46,14 @@ class HostDisplay extends ChangeNotifier {
   /// Generic mask for sensitive values with no name to substitute (MACs, tunnel endpoints).
   String sensitive(String value) => _hideSensitiveInfo ? '•••' : value;
 }
+
+/// Whether to warn that a host looks offline before connecting to it.
+///
+/// Ported from the gate in `connectTerminal` (`ui/AppViewModel.kt:4496`).
+///
+/// [probed] is the part that matters. A host's stored status is `offline` until the first
+/// reachability check answers, so status alone cannot tell "we looked, and it is down" from "nobody
+/// has looked yet" — and warning about a host the user has just added is a false alarm at the exact
+/// moment they first connect, which teaches people to dismiss the warning that matters.
+bool shouldWarnHostOffline({required bool probed, required String status}) =>
+    probed && status != 'online';

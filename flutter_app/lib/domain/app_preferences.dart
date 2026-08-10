@@ -10,23 +10,21 @@
 library;
 
 import 'app_lock_timeout_policy.dart';
+import 'measurement_units.dart';
 
-/// How distances and temperatures are shown.
-enum MeasurementSystem {
-  metric('metric', 'Metric (°C)'),
-  imperial('imperial', 'Imperial (°F)');
+export 'measurement_units.dart' show MeasurementSystem;
 
-  const MeasurementSystem(this.settingValue, this.label);
-
-  final String settingValue;
-  final String label;
-
-  static MeasurementSystem fromSetting(String? value) =>
-      values.where((s) => s.settingValue == value).firstOrNull ?? metric;
-}
-
-/// The terminal colour schemes offered.
-const terminalThemes = ['OmniTerm', 'Solarized Dark', 'Solarized Light', 'Dracula', 'Nord'];
+/// The terminal colour schemes offered, keyed exactly as the Kotlin app persists them.
+///
+/// Labels are presentation only. Persisting labels here previously made every upgraded Kotlin
+/// value fail validation and silently reset the terminal to a Flutter-only default.
+const terminalThemes = <String, String>{
+  'system': 'App theme',
+  'omni_dark': 'Omni Dark',
+  'solarized_dark': 'Solarized',
+  'matrix': 'Matrix',
+  'light': 'Light',
+};
 
 /// Bounds for a preference, with the default used when a stored value is missing or unusable.
 ///
@@ -96,9 +94,9 @@ class AppPreferences {
     this.batterySaverEnabled = true,
     this.batterySaverThresholdPercent = 20,
     this.terminalFontSize = 13,
-    this.terminalTheme = 'OmniTerm',
+    this.terminalTheme = 'system',
     this.terminalScrollbackLimit = 5000,
-    this.smartSwipeInput = true,
+    this.smartSwipeInput = false,
     this.terminalLinkDetection = true,
     this.linkOpenInApp = true,
     this.tmuxControlMode = false,
@@ -211,9 +209,13 @@ class AppPreferences {
     return AppPreferences(
       darkMode: nullableFlag('darkMode'),
       amoled: flag('amoled', fallback: defaults.amoled),
-      textScalePercent: PreferenceLimits.textScalePercent.parse(settings[keys['textScale']]),
+      textScalePercent: PreferenceLimits.textScalePercent.parse(
+        settings[keys['textScale']],
+      ),
       accessibility: flag('accessibility', fallback: defaults.accessibility),
-      measurementSystem: MeasurementSystem.fromSetting(settings[keys['measurementSystem']]),
+      measurementSystem: MeasurementSystem.fromSetting(
+        settings[keys['measurementSystem']],
+      ),
       telemetryIntervalSeconds: PreferenceLimits.telemetryInterval.parse(
         settings[keys['telemetryInterval']],
       ),
@@ -224,22 +226,35 @@ class AppPreferences {
         settings[keys['alertHistoryLimit']],
       ),
       keepScreenOn: flag('keepScreenOn', fallback: defaults.keepScreenOn),
-      backgroundKeepAlive: flag('backgroundKeepAlive', fallback: defaults.backgroundKeepAlive),
-      batterySaverEnabled: flag('batterySaverEnabled', fallback: defaults.batterySaverEnabled),
-      batterySaverThresholdPercent: PreferenceLimits.batterySaverThreshold.parse(
-        settings[keys['batterySaverThreshold']],
+      backgroundKeepAlive: flag(
+        'backgroundKeepAlive',
+        fallback: defaults.backgroundKeepAlive,
       ),
-      terminalFontSize: PreferenceLimits.terminalFontSize.parse(settings[keys['terminalFontSize']]),
-      terminalTheme: terminalThemes.contains(settings[keys['terminalTheme']])
+      batterySaverEnabled: flag(
+        'batterySaverEnabled',
+        fallback: defaults.batterySaverEnabled,
+      ),
+      batterySaverThresholdPercent: PreferenceLimits.batterySaverThreshold
+          .parse(settings[keys['batterySaverThreshold']]),
+      terminalFontSize: PreferenceLimits.terminalFontSize.parse(
+        settings[keys['terminalFontSize']],
+      ),
+      terminalTheme: terminalThemes.containsKey(settings[keys['terminalTheme']])
           ? settings[keys['terminalTheme']]!
           : defaults.terminalTheme,
       terminalScrollbackLimit: PreferenceLimits.terminalScrollback.parse(
         settings[keys['terminalScrollbackLimit']],
       ),
       smartSwipeInput: flag('smartSwipe', fallback: defaults.smartSwipeInput),
-      terminalLinkDetection: flag('linkDetection', fallback: defaults.terminalLinkDetection),
+      terminalLinkDetection: flag(
+        'linkDetection',
+        fallback: defaults.terminalLinkDetection,
+      ),
       linkOpenInApp: flag('linkOpenInApp', fallback: defaults.linkOpenInApp),
-      tmuxControlMode: flag('tmuxControlMode', fallback: defaults.tmuxControlMode),
+      tmuxControlMode: flag(
+        'tmuxControlMode',
+        fallback: defaults.tmuxControlMode,
+      ),
       editorHighlightLimitKb: PreferenceLimits.editorHighlightLimit.parse(
         settings[keys['editorHighlightLimit']],
       ),
@@ -248,8 +263,14 @@ class AppPreferences {
         int.tryParse(settings[keys['appLockTimeout']] ?? ''),
       ),
       useBiometrics: flag('biometrics', fallback: defaults.useBiometrics),
-      blockScreenshots: flag('blockScreenshots', fallback: defaults.blockScreenshots),
-      hideSensitiveInfo: flag('hideSensitiveInfo', fallback: defaults.hideSensitiveInfo),
+      blockScreenshots: flag(
+        'blockScreenshots',
+        fallback: defaults.blockScreenshots,
+      ),
+      hideSensitiveInfo: flag(
+        'hideSensitiveInfo',
+        fallback: defaults.hideSensitiveInfo,
+      ),
       sftpWarnFileCount: PreferenceLimits.sftpWarnFileCount.parse(
         settings[keys['sftpWarnFileCount']],
       ),
@@ -323,21 +344,25 @@ class AppPreferences {
     textScalePercent: textScalePercent ?? this.textScalePercent,
     accessibility: accessibility ?? this.accessibility,
     measurementSystem: measurementSystem ?? this.measurementSystem,
-    telemetryIntervalSeconds: telemetryIntervalSeconds ?? this.telemetryIntervalSeconds,
+    telemetryIntervalSeconds:
+        telemetryIntervalSeconds ?? this.telemetryIntervalSeconds,
     metricsRetentionDays: metricsRetentionDays ?? this.metricsRetentionDays,
     alertHistoryLimit: alertHistoryLimit ?? this.alertHistoryLimit,
     keepScreenOn: keepScreenOn ?? this.keepScreenOn,
     backgroundKeepAlive: backgroundKeepAlive ?? this.backgroundKeepAlive,
     batterySaverEnabled: batterySaverEnabled ?? this.batterySaverEnabled,
-    batterySaverThresholdPercent: batterySaverThresholdPercent ?? this.batterySaverThresholdPercent,
+    batterySaverThresholdPercent:
+        batterySaverThresholdPercent ?? this.batterySaverThresholdPercent,
     terminalFontSize: terminalFontSize ?? this.terminalFontSize,
     terminalTheme: terminalTheme ?? this.terminalTheme,
-    terminalScrollbackLimit: terminalScrollbackLimit ?? this.terminalScrollbackLimit,
+    terminalScrollbackLimit:
+        terminalScrollbackLimit ?? this.terminalScrollbackLimit,
     smartSwipeInput: smartSwipeInput ?? this.smartSwipeInput,
     terminalLinkDetection: terminalLinkDetection ?? this.terminalLinkDetection,
     linkOpenInApp: linkOpenInApp ?? this.linkOpenInApp,
     tmuxControlMode: tmuxControlMode ?? this.tmuxControlMode,
-    editorHighlightLimitKb: editorHighlightLimitKb ?? this.editorHighlightLimitKb,
+    editorHighlightLimitKb:
+        editorHighlightLimitKb ?? this.editorHighlightLimitKb,
     appLockEnabled: appLockEnabled ?? this.appLockEnabled,
     appLockTimeoutMs: appLockTimeoutMs ?? this.appLockTimeoutMs,
     useBiometrics: useBiometrics ?? this.useBiometrics,
@@ -363,10 +388,12 @@ class AppPreferences {
   ];
 
   @override
-  bool operator ==(Object other) => other is AppPreferences && _mapEquals(other.encode(), encode());
+  bool operator ==(Object other) =>
+      other is AppPreferences && _mapEquals(other.encode(), encode());
 
   @override
-  int get hashCode => Object.hashAll(encode().entries.map((e) => '${e.key}=${e.value}'));
+  int get hashCode =>
+      Object.hashAll(encode().entries.map((e) => '${e.key}=${e.value}'));
 
   static bool _mapEquals(Map<String, String> a, Map<String, String> b) {
     if (a.length != b.length) return false;

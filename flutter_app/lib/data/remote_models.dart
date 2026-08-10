@@ -256,6 +256,18 @@ class TransferConflict {
   final int sourceMtimeSeconds;
   final int destMtimeSeconds;
   final ConflictAction action;
+
+  /// Only [action] varies once a conflict has been classified: the verdict is a measured fact about
+  /// the two files, whereas the action is the user's answer to it.
+  TransferConflict copyWith({ConflictAction? action}) => TransferConflict(
+    name: name,
+    verdict: verdict,
+    sourceSize: sourceSize,
+    destSize: destSize,
+    sourceMtimeSeconds: sourceMtimeSeconds,
+    destMtimeSeconds: destMtimeSeconds,
+    action: action ?? this.action,
+  );
 }
 
 /// One hit from a recursive SFTP search — [path] is the full remote path.

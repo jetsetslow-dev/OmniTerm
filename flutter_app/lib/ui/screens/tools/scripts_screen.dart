@@ -42,22 +42,31 @@ class _ScriptsScreenState extends State<ScriptsScreen> {
           children: [
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-              child: Row(
-                children: [
-                  for (final tab in ScriptsTab.values)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        key: ValueKey('scripts.tab.${tab.name}'),
-                        label: Text(
-                          tab == ScriptsTab.quick ? 'Quick scripts' : 'Fleet commands',
-                          style: const TextStyle(fontSize: 12),
+              // Scrollable, as the SFTP and Infra tab strips are. "Quick scripts" and "Fleet
+              // commands" do not fit a phone at 200% text, and a tab the user cannot reach is a
+              // screen they cannot open. Safe as a scroll view here — unlike Fleet's summary bar,
+              // this row has no `Spacer` needing a bounded width.
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (final tab in ScriptsTab.values)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: ChoiceChip(
+                          key: ValueKey('scripts.tab.${tab.name}'),
+                          label: Text(
+                            tab == ScriptsTab.quick
+                                ? 'Quick scripts'
+                                : 'Fleet commands',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                          selected: vm.activeTab == tab,
+                          onSelected: (_) => vm.activeTab = tab,
                         ),
-                        selected: vm.activeTab == tab,
-                        onSelected: (_) => vm.activeTab = tab,
                       ),
-                    ),
-                ],
+                  ],
+                ),
               ),
             ),
             Padding(
@@ -86,7 +95,12 @@ class _ScriptsScreenState extends State<ScriptsScreen> {
                   leftAccent: OmniColors.green,
                   child: Row(
                     children: [
-                      Expanded(child: Text(vm.status!, style: const TextStyle(fontSize: 12))),
+                      Expanded(
+                        child: Text(
+                          vm.status!,
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
                       IconButton(
                         key: const ValueKey('scripts.status.dismiss'),
                         icon: const Icon(Icons.close, size: 16),
@@ -110,7 +124,10 @@ class _ScriptsScreenState extends State<ScriptsScreen> {
                               : 'No fleet commands yet. Add one, or turn on the default commands '
                                     'above.',
                           textAlign: TextAlign.center,
-                          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: scheme.onSurfaceVariant,
+                          ),
                         ),
                       ),
                     )
@@ -131,8 +148,8 @@ class _ScriptsScreenState extends State<ScriptsScreen> {
                             // would fight that gesture and swallow the list's own scroll. The grip
                             // on the right is the only thing that starts a drag.
                             buildDefaultDragHandles: false,
-                            onReorderItem: (oldIndex, newIndex) =>
-                                vm.reorderCategory(entry.key, oldIndex, newIndex),
+                            onReorderItem: (oldIndex, newIndex) => vm
+                                .reorderCategory(entry.key, oldIndex, newIndex),
                             children: [
                               for (final (index, script) in entry.value.indexed)
                                 _ScriptCard(
@@ -156,7 +173,8 @@ class _ScriptsScreenState extends State<ScriptsScreen> {
           child: FloatingActionButton(
             key: const ValueKey('scripts.add'),
             tooltip: isQuick ? 'New quick script' : 'New fleet command',
-            onPressed: () => showScriptEditorSheet(context, vm, forFleet: !isQuick),
+            onPressed: () =>
+                showScriptEditorSheet(context, vm, forFleet: !isQuick),
             child: const Icon(Icons.add),
           ),
         ),
@@ -187,21 +205,31 @@ class _PresetToggle extends StatelessWidget {
               children: [
                 Text(
                   fleet ? 'Fleet default commands' : 'Homelab preset scripts',
-                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
                 ),
                 Text(
                   fleet
                       ? 'CPU, RAM, disk, services, logs, containers, ports, kernel.'
                       : 'Proxmox, CasaOS, Home Assistant, Linux and general homelab.',
-                  style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: scheme.onSurfaceVariant,
+                  ),
                 ),
               ],
             ),
           ),
           Switch(
-            key: ValueKey('scripts.presets.${fleet ? 'fleet' : 'homelab'}.switch'),
+            key: ValueKey(
+              'scripts.presets.${fleet ? 'fleet' : 'homelab'}.switch',
+            ),
             value: enabled,
-            onChanged: vm.busy ? null : (on) => _confirm(context, vm, fleet: fleet, on: on),
+            onChanged: vm.busy
+                ? null
+                : (on) => _confirm(context, vm, fleet: fleet, on: on),
           ),
         ],
       ),
@@ -251,7 +279,12 @@ class _PresetToggle extends StatelessWidget {
 }
 
 class _ScriptCard extends StatelessWidget {
-  const _ScriptCard({super.key, required this.vm, required this.script, required this.dragIndex});
+  const _ScriptCard({
+    super.key,
+    required this.vm,
+    required this.script,
+    required this.dragIndex,
+  });
 
   final ScriptsViewModel vm;
   final QuickScript script;
@@ -291,25 +324,38 @@ class _ScriptCard extends StatelessWidget {
                         child: Text(
                           script.name,
                           overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
                         ),
                       ),
                       if (vm.isPristinePresetScript(script)) ...[
                         const SizedBox(width: 6),
                         // Marked so it is obvious that turning the family off takes it away — and
                         // that editing it makes it permanently yours.
-                        const OmniTag(label: 'PRESET', color: OmniColors.textMuted),
+                        const OmniTag(
+                          label: 'PRESET',
+                          color: OmniColors.textMuted,
+                        ),
                       ],
                       // Why this script will not appear on some hosts, said here rather than only
                       // inside the editor.
-                      if (script.targetOs.isNotEmpty && script.targetOs.toLowerCase() != 'any') ...[
+                      if (script.targetOs.isNotEmpty &&
+                          script.targetOs.toLowerCase() != 'any') ...[
                         const SizedBox(width: 6),
-                        OmniTag(label: script.targetOs, color: OmniColors.amber),
+                        OmniTag(
+                          label: script.targetOs,
+                          color: OmniColors.amber,
+                        ),
                       ],
                       if (script.targetSystem.isNotEmpty &&
                           script.targetSystem.toLowerCase() != 'any') ...[
                         const SizedBox(width: 6),
-                        OmniTag(label: script.targetSystem, color: OmniColors.purple),
+                        OmniTag(
+                          label: script.targetSystem,
+                          color: OmniColors.purple,
+                        ),
                       ],
                     ],
                   ),
@@ -329,7 +375,11 @@ class _ScriptCard extends StatelessWidget {
             IconButton(
               key: ValueKey('scripts.card.${script.id}.delete'),
               tooltip: 'Delete script',
-              icon: const Icon(Icons.delete_outline, size: 18, color: OmniColors.red),
+              icon: const Icon(
+                Icons.delete_outline,
+                size: 18,
+                color: OmniColors.red,
+              ),
               onPressed: () => _confirmDelete(context, vm, script),
             ),
             ReorderableDragStartListener(
@@ -337,7 +387,11 @@ class _ScriptCard extends StatelessWidget {
               index: dragIndex,
               child: const Padding(
                 padding: EdgeInsets.symmetric(horizontal: 4),
-                child: Icon(Icons.drag_handle, size: 18, color: OmniColors.textMuted),
+                child: Icon(
+                  Icons.drag_handle,
+                  size: 18,
+                  color: OmniColors.textMuted,
+                ),
               ),
             ),
           ],
@@ -347,7 +401,11 @@ class _ScriptCard extends StatelessWidget {
   }
 }
 
-Future<void> _confirmDelete(BuildContext context, ScriptsViewModel vm, QuickScript script) async {
+Future<void> _confirmDelete(
+  BuildContext context,
+  ScriptsViewModel vm,
+  QuickScript script,
+) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
@@ -416,9 +474,13 @@ class ScriptEditorSheet extends StatefulWidget {
 
 class _ScriptEditorSheetState extends State<ScriptEditorSheet> {
   late final _name = TextEditingController(text: widget.existing?.name ?? '');
-  late final _command = TextEditingController(text: widget.existing?.command ?? widget.initialCommand ?? '');
+  late final _command = TextEditingController(
+    text: widget.existing?.command ?? widget.initialCommand ?? '',
+  );
   late final _emoji = TextEditingController(text: widget.existing?.emoji ?? '');
-  late final _category = TextEditingController(text: widget.existing?.category ?? 'General');
+  late final _category = TextEditingController(
+    text: widget.existing?.category ?? 'General',
+  );
   late final _notes = TextEditingController(text: widget.existing?.notes ?? '');
 
   late String _color = widget.existing?.color ?? 'cyan';
@@ -465,10 +527,13 @@ class _ScriptEditorSheetState extends State<ScriptEditorSheet> {
   @override
   Widget build(BuildContext context) {
     final existing = widget.existing;
-    final editingPreset = existing != null && widget.vm.isPristinePresetScript(existing);
+    final editingPreset =
+        existing != null && widget.vm.isPristinePresetScript(existing);
 
     return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+      ),
       child: SizedBox(
         height: MediaQuery.of(context).size.height * 0.85,
         child: Column(
@@ -504,7 +569,10 @@ class _ScriptEditorSheetState extends State<ScriptEditorSheet> {
                         'Editing a preset makes it yours — but re-enabling the preset family will '
                         'overwrite it again.',
                         key: const ValueKey('scripts.editor.presetNote'),
-                        style: const TextStyle(fontSize: 11, color: OmniColors.amber),
+                        style: const TextStyle(
+                          fontSize: 11,
+                          color: OmniColors.amber,
+                        ),
                       ),
                     ),
                   TextField(
@@ -517,8 +585,14 @@ class _ScriptEditorSheetState extends State<ScriptEditorSheet> {
                     key: const ValueKey('scripts.editor.command'),
                     controller: _command,
                     maxLines: 6,
-                    style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 12),
-                    decoration: omniInputDecoration(context, labelText: 'Command'),
+                    style: const TextStyle(
+                      fontFamily: OmniFonts.mono,
+                      fontSize: 12,
+                    ),
+                    decoration: omniInputDecoration(
+                      context,
+                      labelText: 'Command',
+                    ),
                   ),
                   const SizedBox(height: 12),
                   Row(
@@ -527,7 +601,10 @@ class _ScriptEditorSheetState extends State<ScriptEditorSheet> {
                         child: TextField(
                           key: const ValueKey('scripts.editor.emoji'),
                           controller: _emoji,
-                          decoration: omniInputDecoration(context, labelText: 'Badge'),
+                          decoration: omniInputDecoration(
+                            context,
+                            labelText: 'Badge',
+                          ),
                         ),
                       ),
                       const SizedBox(width: 12),
@@ -536,7 +613,10 @@ class _ScriptEditorSheetState extends State<ScriptEditorSheet> {
                         child: TextField(
                           key: const ValueKey('scripts.editor.category'),
                           controller: _category,
-                          decoration: omniInputDecoration(context, labelText: 'Category'),
+                          decoration: omniInputDecoration(
+                            context,
+                            labelText: 'Category',
+                          ),
                         ),
                       ),
                     ],
@@ -545,7 +625,10 @@ class _ScriptEditorSheetState extends State<ScriptEditorSheet> {
                   DropdownButtonFormField<String>(
                     key: const ValueKey('scripts.editor.color'),
                     initialValue: _color,
-                    decoration: omniInputDecoration(context, labelText: 'Colour'),
+                    decoration: omniInputDecoration(
+                      context,
+                      labelText: 'Colour',
+                    ),
                     items: [
                       for (final name in const [
                         'cyan',
@@ -576,7 +659,9 @@ class _ScriptEditorSheetState extends State<ScriptEditorSheet> {
                   // script written by hand was offered on every host whatever it was for.
                   DropdownButtonFormField<String>(
                     key: const ValueKey('scripts.editor.targetOs'),
-                    initialValue: quickScriptOsOptions.contains(_targetOs) ? _targetOs : 'Any',
+                    initialValue: quickScriptOsOptions.contains(_targetOs)
+                        ? _targetOs
+                        : 'Any',
                     decoration: omniInputDecoration(
                       context,
                       labelText: 'Runs on',
@@ -591,19 +676,22 @@ class _ScriptEditorSheetState extends State<ScriptEditorSheet> {
                   const SizedBox(height: 12),
                   DropdownButtonFormField<String>(
                     key: const ValueKey('scripts.editor.targetSystem'),
-                    initialValue: quickScriptSystemOptions.contains(_targetSystem)
+                    initialValue:
+                        quickScriptSystemOptions.contains(_targetSystem)
                         ? _targetSystem
                         : 'Any',
                     decoration: omniInputDecoration(
                       context,
                       labelText: 'Platform',
-                      helperText: 'Hidden unless the host reports this platform',
+                      helperText:
+                          'Hidden unless the host reports this platform',
                     ),
                     items: [
                       for (final system in quickScriptSystemOptions)
                         DropdownMenuItem(value: system, child: Text(system)),
                     ],
-                    onChanged: (v) => setState(() => _targetSystem = v ?? 'Any'),
+                    onChanged: (v) =>
+                        setState(() => _targetSystem = v ?? 'Any'),
                   ),
                   SwitchListTile(
                     key: const ValueKey('scripts.editor.quick'),
@@ -623,7 +711,9 @@ class _ScriptEditorSheetState extends State<ScriptEditorSheet> {
                     key: const ValueKey('scripts.editor.longRunning'),
                     title: const Text('Long running'),
                     // Streams output rather than waiting for the command to finish.
-                    subtitle: const Text('Stream output instead of waiting for it to finish'),
+                    subtitle: const Text(
+                      'Stream output instead of waiting for it to finish',
+                    ),
                     value: _longRunning,
                     onChanged: (v) => setState(() => _longRunning = v),
                   ),

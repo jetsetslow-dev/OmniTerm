@@ -35,6 +35,7 @@ class SettingsViewModel extends ChangeNotifier {
   List<String> get warnings => _draft.warnings;
 
   String? _status;
+  bool _started = false;
 
   String? get status => _status;
 
@@ -44,10 +45,15 @@ class SettingsViewModel extends ChangeNotifier {
   }
 
   Future<void> start() async {
+    if (_started) return;
+    _started = true;
     final rows = await _app.repository.getAllSettings();
-    _saved = AppPreferences.decode({for (final row in rows) row.key: row.value});
+    _saved = AppPreferences.decode({
+      for (final row in rows) row.key: row.value,
+    });
     _draft = _saved;
     _applyImmediate(_saved);
+    _app.applyPreferences(_saved);
     _safeNotify();
   }
 
@@ -65,6 +71,12 @@ class SettingsViewModel extends ChangeNotifier {
     }
     _saved = _draft;
     _applyImmediate(_saved);
+    _app.applyPreferences(_saved);
+    // A retention cap the user has just *lowered* has to bite now. Waiting for the next incident to
+    // archive would leave the excess in place indefinitely on a quiet fleet — and "keep the newest
+    // 20" that still shows 300 reads as the setting being broken. Kotlin prunes on save too
+    // (`AppViewModel.kt:10536`).
+    await _app.repository.pruneAlertHistoryPerServer(_saved.alertHistoryLimit);
     _status = 'Settings saved.';
     _safeNotify();
   }

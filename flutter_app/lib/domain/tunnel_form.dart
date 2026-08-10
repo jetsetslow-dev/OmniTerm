@@ -16,7 +16,7 @@ import 'input_validation.dart';
 const tunnelKinds = <String, String>{
   'local': '-L  local → remote',
   'remote': '-R  remote → local',
-  'dynamic': '-D  SOCKS5 proxy',
+  'dynamic': '-D  SOCKS4/4a/5 proxy',
 };
 
 /// True when [kind] carries traffic to a named destination.
@@ -41,7 +41,7 @@ String tunnelSummary({
   final dest = maskHost?.call(destHost) ?? destHost;
   return switch (kind) {
     'remote' => '-R $bindHost:$bindPort → $dest:$destPort',
-    'dynamic' => '-D $bindHost:$bindPort (SOCKS5)',
+    'dynamic' => '-D $bindHost:$bindPort (SOCKS4/4a/5)',
     _ => '-L $bindHost:$bindPort → $dest:$destPort',
   };
 }

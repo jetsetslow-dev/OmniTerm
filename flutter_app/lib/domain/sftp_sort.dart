@@ -14,6 +14,21 @@ enum SftpSortOption {
   const SftpSortOption(this.label);
 
   final String label;
+
+  /// Reads a persisted sort order, falling back to [nameAsc].
+  ///
+  /// **Matched case-insensitively on purpose.** Kotlin stored `option.name`, which its enum spells
+  /// `NameAsc`; Dart's `.name` is `nameAsc`. An exact comparison would silently reset the sort order
+  /// of every user upgrading from the Android app — the setting would still be theirs, and simply
+  /// not be the one in force.
+  static SftpSortOption fromStored(String? stored) {
+    final trimmed = stored?.trim().toLowerCase();
+    if (trimmed == null || trimmed.isEmpty) return nameAsc;
+    for (final option in values) {
+      if (option.name.toLowerCase() == trimmed) return option;
+    }
+    return nameAsc;
+  }
 }
 
 /// Orders a directory listing, ported from `sortEntriesBy`.
