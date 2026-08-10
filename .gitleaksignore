@@ -1,3 +1,30 @@
-# Historical false positive: a deliberately fake PEM marker in CrashLogRedactionTest.
+# Findings are suppressed here only when the underlying cause has been removed from the working
+# tree. Every entry below names a commit that is already in history and therefore cannot be
+# un-scanned: `secret-scan.yml` runs `gitleaks git` over the full history by design, so a fix in the
+# tree silences future commits but never past ones. Rewriting history to drop them was rejected —
+# it would break every existing clone and open PR to erase throwaway keys that authenticate to
+# nothing.
+#
+# Nothing here is a live credential. Before adding an entry, remove the cause first; a suppression
+# whose cause is still in the tree will simply reappear under a new fingerprint on the next commit
+# that touches the file.
+
+# ── Historical false positive: a deliberately fake PEM marker in CrashLogRedactionTest. ──
 # The current test assembles this marker at runtime instead of committing a secret-shaped line.
 747e7e2fdc6db815ba506dc419ea145069004eac:app/src/test/java/com/jetsetslow/omniterm/CrashLogRedactionTest.kt:private-key:16
+
+# ── Throwaway Ed25519 test keys, committed 2026-08-03/04, now generated at test setup instead. ──
+# These were real Ed25519 private keys, generated for the test suite and never used to authenticate
+# to anything. They have been replaced by `flutter_app/test/support/ed25519_fixture.dart`, which
+# generates a fresh keypair per run, so no key material remains in the tree.
+9def68b1cd13078dfb9e4caf4f7afb5fdae26873:flutter_app/integration_test/key_import_test.dart:private-key:20
+0cb189dd9d75c18298d875db86dea73ad0e39656:flutter_app/test/ssh_key_import_test.dart:private-key:12
+0cb189dd9d75c18298d875db86dea73ad0e39656:flutter_app/test/auth_keys_view_model_test.dart:private-key:14
+
+# ── Historical PEM markers with no key material, committed 2026-08-03/04. ──
+# Assertions about how a *banner* is classified: `detectKeyType('-----BEGIN RSA PRIVATE KEY-----')`
+# and a corrupt-PEM rejection case. These now build the banner via `pemBegin`/`pemEnd` in
+# `flutter_app/test/support/ed25519_fixture.dart`, so they cannot match again.
+0cb189dd9d75c18298d875db86dea73ad0e39656:flutter_app/test/ssh_key_import_test.dart:private-key:180
+0cb189dd9d75c18298d875db86dea73ad0e39656:flutter_app/test/ssh_key_import_test.dart:private-key:182
+107a051d9c10ac7744a2b8cb48b9858083579bbe:flutter_app/test/ssh_private_key_test.dart:private-key:50
