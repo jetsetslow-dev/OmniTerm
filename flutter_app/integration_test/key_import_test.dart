@@ -1,7 +1,12 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:omniterm/main.dart' as app;
+
+import '../test/support/ed25519_fixture.dart';
 
 /// The SSH-key import sheet, end to end on a device.
 ///
@@ -11,27 +16,33 @@ import 'package:omniterm/main.dart' as app;
 /// private key into the app was the last piece of the port never exercised on a device, even though
 /// key authentication itself was proven at the transport level.
 ///
-/// The key below is a throwaway generated for this file with `ssh-keygen -t ed25519`. It is a *real*
-/// key, so the parser is exercised for real, and it authenticates to nothing.
+/// The key is generated fresh at setup (see `test/support/ed25519_fixture.dart`) rather than
+/// committed. It is a *real* Ed25519 key, so the parser is exercised for real, and it authenticates
+/// to nothing.
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  const privateKey = '''
------BEGIN OPENSSH PRIVATE KEY-----
-b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
-QyNTUxOQAAACD/DC1nUfSsET25C6qvDOcq0cjnn9rScwAeStiXe2SueAAAAKDLM+ztyzPs
-7QAAAAtzc2gtZWQyNTUxOQAAACD/DC1nUfSsET25C6qvDOcq0cjnn9rScwAeStiXe2SueA
-AAAEDeMizvL4STYWYAG+8DUTwk2lbLStAAUoPlBmoRE1mNdv8MLWdR9KwRPbkLqq8M5yrR
-yOef2tJzAB5K2Jd7ZK54AAAAFm9tbml0ZXJtLWUyZS10aHJvd2F3YXkBAgMEBQYH
------END OPENSSH PRIVATE KEY-----''';
+  late final String privateKey;
+  late final String publicKey;
 
-  const publicKey =
-      'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP8MLWdR9KwRPbkLqq8M5yrRyOef2tJzAB5K2Jd7ZK54 omniterm-e2e-throwaway';
+  /// What `ssh-keygen -lf` would print for [publicKey].
+  ///
+  /// Computed here from the wire blob rather than read back from the app, and deliberately not via
+  /// `sshPublicKeyFingerprint`: the point of showing a fingerprint is that it can be compared with
+  /// what the *host* reports, so an expectation built from the app's own implementation would agree
+  /// with any bug it happens to contain.
+  late final String fingerprint;
 
-  /// Exactly what `ssh-keygen -lf` prints for the public line above. Asserting on this rather than
-  /// on "some fingerprint appeared" is the whole reason the app shows one: it exists to be compared
-  /// against what the host reports, so a value only this app can produce would be useless.
-  const fingerprint = 'SHA256:a9bHeBwcxdH8Y1RVQQQOAhysoRaDlOoMs+0kolWECxU';
+  setUpAll(() async {
+    final keys = await generateEd25519Fixture(
+      comment: 'omniterm-e2e-throwaway',
+    );
+    privateKey = keys.privateKey;
+    publicKey = keys.publicKey;
+    final blob = base64.decode(publicKey.split(RegExp(r'\s+'))[1]);
+    fingerprint =
+        'SHA256:${base64.encode(sha256.convert(blob).bytes).replaceAll('=', '')}';
+  });
 
   /// The alias every test here uses. Fixed rather than randomised so a run that dies half way leaves
   /// something the next run can recognise and clear, instead of accumulating debris.
@@ -88,14 +99,22 @@ yOef2tJzAB5K2Jd7ZK54AAAAFm9tbml0ZXJtLWUyZS10aHJvd2F3YXkBAgMEBQYH
     await tester.pumpAndSettle();
   }
 
-  testWidgets('the sheet opens and offers the fields a key needs', (tester) async {
+  testWidgets('the sheet opens and offers the fields a key needs', (
+    tester,
+  ) async {
     await launch(tester);
     await openAuthKeys(tester);
     await openImportSheet(tester);
 
     expect(find.byKey(const ValueKey('authKeys.import.alias')), findsOneWidget);
-    expect(find.byKey(const ValueKey('authKeys.import.private')), findsOneWidget);
-    expect(find.byKey(const ValueKey('authKeys.import.public')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('authKeys.import.private')),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('authKeys.import.public')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('authKeys.import.save')), findsOneWidget);
     expect(tester.takeException(), isNull);
 
@@ -104,16 +123,27 @@ yOef2tJzAB5K2Jd7ZK54AAAAFm9tbml0ZXJtLWUyZS10aHJvd2F3YXkBAgMEBQYH
     expect(find.byKey(const ValueKey('authKeys.import.save')), findsNothing);
   });
 
-  testWidgets('a real PEM is accepted, and the key it produces is the right one', (tester) async {
+  testWidgets('a real PEM is accepted, and the key it produces is the right one', (
+    tester,
+  ) async {
     // The whole point: multi-line key material typed through the framework, which `adb` cannot do.
     await launch(tester);
     await openAuthKeys(tester);
     await removeKeyIfPresent(tester);
 
     await openImportSheet(tester);
-    await tester.enterText(find.byKey(const ValueKey('authKeys.import.alias')), alias);
-    await tester.enterText(find.byKey(const ValueKey('authKeys.import.private')), privateKey);
-    await tester.enterText(find.byKey(const ValueKey('authKeys.import.public')), publicKey);
+    await tester.enterText(
+      find.byKey(const ValueKey('authKeys.import.alias')),
+      alias,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('authKeys.import.private')),
+      privateKey,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('authKeys.import.public')),
+      publicKey,
+    );
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey('authKeys.import.save')));
@@ -125,7 +155,11 @@ yOef2tJzAB5K2Jd7ZK54AAAAFm9tbml0ZXJtLWUyZS10aHJvd2F3YXkBAgMEBQYH
       findsNothing,
       reason: 'a valid ed25519 key was refused',
     );
-    expect(keyCard(alias), findsOneWidget, reason: 'the imported key must be listed');
+    expect(
+      keyCard(alias),
+      findsOneWidget,
+      reason: 'the imported key must be listed',
+    );
 
     // Not just "a key appeared" — the *right* key. The type comes from the public line and the
     // fingerprint is the one `ssh-keygen -lf` prints for it, which is the only reason showing a
@@ -138,21 +172,31 @@ yOef2tJzAB5K2Jd7ZK54AAAAFm9tbml0ZXJtLWUyZS10aHJvd2F3YXkBAgMEBQYH
     expect(
       find.descendant(of: keyCard(alias), matching: find.text(fingerprint)),
       findsOneWidget,
-      reason: 'the fingerprint shown must be the one ssh-keygen -lf prints for this key',
+      reason:
+          'the fingerprint shown must be the one ssh-keygen -lf prints for this key',
     );
 
     await removeKeyIfPresent(tester);
-    expect(keyCard(alias), findsNothing, reason: 'the flow must leave the device as it found it');
+    expect(
+      keyCard(alias),
+      findsNothing,
+      reason: 'the flow must leave the device as it found it',
+    );
   });
 
-  testWidgets('rubbish is rejected with a reason, not silently stored', (tester) async {
+  testWidgets('rubbish is rejected with a reason, not silently stored', (
+    tester,
+  ) async {
     // A key that fails to parse must be refused at import. Storing it would turn one bad paste into
     // an auth failure on every host that later selects it, with nothing pointing back at the cause.
     await launch(tester);
     await openAuthKeys(tester);
     await openImportSheet(tester);
 
-    await tester.enterText(find.byKey(const ValueKey('authKeys.import.alias')), 'not-a-key');
+    await tester.enterText(
+      find.byKey(const ValueKey('authKeys.import.alias')),
+      'not-a-key',
+    );
     await tester.enterText(
       find.byKey(const ValueKey('authKeys.import.private')),
       'this is not a private key',
@@ -163,12 +207,18 @@ yOef2tJzAB5K2Jd7ZK54AAAAFm9tbml0ZXJtLWUyZS10aHJvd2F3YXkBAgMEBQYH
     await tester.pumpAndSettle(const Duration(seconds: 2));
 
     // The sheet stays open, carrying the parser's own reason — not a shrug, and not silence.
-    final error = tester.widget<Text>(find.byKey(const ValueKey('authKeys.import.error'))).data!;
+    final error = tester
+        .widget<Text>(find.byKey(const ValueKey('authKeys.import.error')))
+        .data!;
     expect(error, isNotEmpty);
     expect(error.toLowerCase(), isNot(contains('null')));
 
     await tester.tap(find.byKey(const ValueKey('authKeys.import.close')));
     await tester.pumpAndSettle();
-    expect(keyCard('not-a-key'), findsNothing, reason: 'it must not have been stored');
+    expect(
+      keyCard('not-a-key'),
+      findsNothing,
+      reason: 'it must not have been stored',
+    );
   });
 }
