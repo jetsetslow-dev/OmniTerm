@@ -1813,15 +1813,15 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                             leadingIcon = { Icon(Icons.Filled.FolderOpen, contentDescription = null, tint = OmniColors.amber) },
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
                             keyboardActions = KeyboardActions(onGo = {
-                                val target = pathInput.trim()
-                                if (target.isNotEmpty()) viewModel.loadSftp(target)
+                                RemoteCommands.resolveTypedPath(viewModel.sftpPath, pathInput)
+                                    ?.let { viewModel.loadSftp(it) }
                                 editingPath = false
                             }),
                             trailingIcon = {
                                 Row {
                                     IconButton(onClick = {
-                                        val target = pathInput.trim()
-                                        if (target.isNotEmpty()) viewModel.loadSftp(target)
+                                        RemoteCommands.resolveTypedPath(viewModel.sftpPath, pathInput)
+                                            ?.let { viewModel.loadSftp(it) }
                                         editingPath = false
                                     }) { Icon(Icons.Filled.Check, contentDescription = "Go to path", tint = OmniColors.cyan) }
                                     IconButton(onClick = { editingPath = false }) {
@@ -3256,7 +3256,7 @@ fun SftpBookmarksTab(viewModel: AppViewModel) {
                             Icon(Icons.Filled.ContentCopy, contentDescription = "Clone bookmark", tint = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         IconButton(onClick = {
-                            confirm.ask("Remove Bookmark?", "Remove ${bmk.path} on ${bmk.endpointName}?", confirmLabel = "Remove") {
+                            confirm.ask("Remove bookmark?", "Remove ${bmk.path} on ${bmk.endpointName}?", confirmLabel = "Remove") {
                                 viewModel.removeEndpointBookmark(bmk)
                             }
                         }) {
@@ -3296,9 +3296,9 @@ private fun BookmarkEditDialog(
         title = {
             Text(
                 when {
-                    state.replacing != null -> "Edit Bookmark"
-                    state.prefill != null -> "Clone Bookmark"
-                    else -> "Add Bookmark"
+                    state.replacing != null -> "Edit bookmark"
+                    state.prefill != null -> "Clone bookmark"
+                    else -> "Add bookmark"
                 }
             )
         },

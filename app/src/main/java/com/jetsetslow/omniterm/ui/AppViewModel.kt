@@ -806,7 +806,6 @@ class AppViewModel @JvmOverloads constructor(
     private var pinLockedUntilMs by mutableStateOf(0L)
     var isAppLockEnabled by mutableStateOf(false)
     var useBiometrics by mutableStateOf(false); private set
-    var isFirstRun by mutableStateOf(false); private set
     var isAppLocked by mutableStateOf(false)
     var currentPinInput by mutableStateOf("")
     var lockScreenError by mutableStateOf<String?>(null)
@@ -1789,13 +1788,7 @@ class AppViewModel @JvmOverloads constructor(
     private var sshSuccessCount = 0
     private var reviewPromptShown = false
 
-    // Gates the first-run notification/battery prompts: they are deferred until the user has
-    // gotten value from the app (first successful connection) instead of interrupting onboarding.
-    var hasConnectedOnce by mutableStateOf(false)
-        private set
-
     private fun noteSuccessfulSshSession() {
-        hasConnectedOnce = true
         val count = ++sshSuccessCount
         viewModelScope.launch { repository.insertSetting("ssh_success_count", count.toString()) }
         if (count >= 3 && !reviewPromptShown) {
@@ -2114,9 +2107,6 @@ class AppViewModel @JvmOverloads constructor(
             drainPendingExternalLaunches()
         }
         viewModelScope.launch {
-            isFirstRun = repository.getSetting("first_run_complete") != "true"
-        }
-        viewModelScope.launch {
             // NOTE: allSettings is a StateFlow, so this collect body runs its first iteration
             // synchronously inside the ViewModel constructor (Main.immediate launches undispatched).
             // Every property assigned in here must be declared ABOVE the init block, or its
@@ -2137,9 +2127,6 @@ class AppViewModel @JvmOverloads constructor(
                     ?.value?.toIntOrNull()?.coerceIn(1, 10_000) ?: 50
                 sftpLargeBatchBytesThreshold = list.find { it.key == "sftp_large_batch_bytes_threshold" }
                     ?.value?.toLongOrNull()?.coerceAtLeast(1_000_000_000L) ?: 1_000_000_000L
-                if (list.isNotEmpty()) {
-                    isFirstRun = list.find { it.key == "first_run_complete" }?.value != "true"
-                }
                 list.find { it.key == "terminal_font_size" }?.value?.toIntOrNull()?.let { terminalFontSize = it.coerceIn(8, 28) }
                 terminalTheme = list.find { it.key == "terminal_theme" }?.value
                     ?.takeIf { it in setOf("system", "omni_dark", "solarized_dark", "matrix", "light") }
@@ -2188,7 +2175,6 @@ class AppViewModel @JvmOverloads constructor(
                     telemetryIntervalMs = it.coerceIn(5, 300) * 1000L
                 }
                 sshSuccessCount = list.find { it.key == "ssh_success_count" }?.value?.toIntOrNull() ?: sshSuccessCount
-                if (sshSuccessCount > 0) hasConnectedOnce = true
                 reviewPromptShown = reviewPromptShown || list.find { it.key == "review_prompt_shown" }?.value == "true"
                 homelabPresetsEnabled = list.find { it.key == "homelab_presets" }?.value == "true"
                 alertsEnabled = list.find { it.key == "alerts_enabled" }?.value != "false"
@@ -3146,13 +3132,6 @@ class AppViewModel @JvmOverloads constructor(
             pinLockoutAfterFailure(failedPinAttempts, now).takeIf { it > 0L }?.let { pinLockedUntilMs = it }
             persistPinThrottle()
             if (failedPinAttempts >= PIN_MAX_ATTEMPTS) "Too many attempts — wait 30 seconds" else "Incorrect PIN"
-        }
-    }
-
-    fun completeFirstRun() {
-        isFirstRun = false
-        viewModelScope.launch {
-            repository.insertSetting("first_run_complete", "true")
         }
     }
 
@@ -9018,7 +8997,7 @@ class AppViewModel @JvmOverloads constructor(
                 else
                     executeSshCommand(srv, script)
                 if (out.startsWith("SSH Error")) { sftpError = out; return@launch }
-                sftpReadError(out)?.let { sftpError = it; return@launch }
+                RemoteCommands.searchSudoFailure(out)?.let { sftpError = it; return@launch }
                 val hits = out.lineSequence()
                     .mapNotNull { line ->
                         val tab = line.indexOf('\t')
@@ -9719,12 +9698,7 @@ class AppViewModel @JvmOverloads constructor(
      */
     private fun sftpReadError(out: String): String? {
         val first = out.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: return null
-        val markers = listOf(
-            "permission denied", "no such file", "sudo:", "a password is required",
-            "incorrect password", "not in the sudoers", "operation not permitted",
-            "command not found", "not installed", "unsupported archive",
-        )
-        return if (markers.any { first.contains(it, ignoreCase = true) }) first else null
+        return if (RemoteCommands.sudoFailureMarkers.any { first.contains(it, ignoreCase = true) }) first else null
     }
 
     /** Download [remoteName] from the current remote dir into the SAF-provided [uri]. */
@@ -10512,13 +10486,6 @@ class AppViewModel @JvmOverloads constructor(
             } finally {
                 isSpeedTestRunning = false
             }
-        }
-    }
-
-    // APPS SETTINGS ENGINE SAVE
-    fun saveThemeOption(isDark: Boolean) {
-        viewModelScope.launch {
-            repository.insertSetting("theme_dark", isDark.toString())
         }
     }
 

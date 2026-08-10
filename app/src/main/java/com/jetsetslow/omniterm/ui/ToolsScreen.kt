@@ -144,18 +144,18 @@ private fun copySensitiveClipboard(
 @Composable
 fun ToolsScreen(viewModel: AppViewModel) {
     val toolsItems = listOf(
-        Triple(Screen.Alerts, "Alerts & Rules", Icons.Filled.Notifications),
+        Triple(Screen.Alerts, "Alerts & rules", Icons.Filled.Notifications),
         Triple(Screen.QuickScripts, "Scripts", Icons.Filled.Code),
-        Triple(Screen.Network, "Network Tools", Icons.Filled.Lan),
-        Triple(Screen.AuthKeys, "Auth & Keys", Icons.Filled.Key),
-        Triple(Screen.Backup, "App Backup", Icons.Filled.Backup),
-        Triple(Screen.HealthScoring, "Health Scoring", Icons.Filled.MonitorHeart),
+        Triple(Screen.Network, "Network tools", Icons.Filled.Lan),
+        Triple(Screen.AuthKeys, "Auth & keys", Icons.Filled.Key),
+        Triple(Screen.Backup, "App backup", Icons.Filled.Backup),
+        Triple(Screen.HealthScoring, "Health scoring", Icons.Filled.MonitorHeart),
         Triple(Screen.Settings, "Settings", Icons.Filled.Settings),
         Triple(Screen.About, "About OmniTerm", Icons.Filled.Info)
     )
 
     Column(modifier = Modifier.fillMaxSize()) {
-        SectionHeader("OmniTerm Utilities")
+        SectionHeader("OmniTerm utilities")
 
         LazyVerticalGrid(
             columns = GridCells.Fixed(2),
@@ -1288,7 +1288,7 @@ fun NetworkToolView(viewModel: AppViewModel) {
     val tab = viewModel.activeNetworkTab
     val tabs = listOf("Host Scan", "Wake-on-LAN", "Ping", "Traceroute", "Port Scan", "DNS Lookup", "WHOIS", "Speed Test", "Tunnels")
 
-    ToolScaffold(viewModel, "Network Tools") {
+    ToolScaffold(viewModel, "Network tools") {
         Column(modifier = Modifier.fillMaxSize()) {
             PrimaryScrollableTabRow(selectedTabIndex = tab, edgePadding = 0.dp, containerColor = Color.Transparent) {
                 tabs.forEachIndexed { i, label ->
@@ -2204,7 +2204,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                 item {
                     val hosts = viewModel.knownHosts
                     Column {
-                        SectionHeader("Trusted Host Keys", modifier = Modifier.padding(top = 16.dp, bottom = 4.dp))
+                        SectionHeader("Trusted host keys", modifier = Modifier.padding(top = 16.dp, bottom = 4.dp))
                         if (hosts.isEmpty()) {
                             Text(stringResource(R.string.no_trusted_host_keys_yet), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp))
                         } else {
@@ -2597,56 +2597,6 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
     }
 }
 
-// 7.6 CRON JOBS PANEL
-@Composable
-fun CronJobsToolView(viewModel: AppViewModel) {
-    val srv = viewModel.selectedServer
-    LaunchedEffect(viewModel.selectedServerId) { viewModel.loadCron() }
-    ToolScaffold(viewModel, "Cron schedules · ${srv?.name ?: "—"}") {
-        // Wrap in a scrollable Column so the host picker and the crontab card stack vertically
-        // (ToolScaffold hands its content a bare Box, which would otherwise overlap them).
-        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp)) {
-            // Let the user choose which host's crontab to inspect.
-            ServerSelectorBar(viewModel, onServerChange = { viewModel.loadCron() })
-            when {
-                srv == null ->
-                    Text(stringResource(R.string.select_a_server_first), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                viewModel.cronLoading && viewModel.cronText.isEmpty() ->
-                    CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
-                else -> {
-                    val lines = viewModel.cronText.lines().filter { it.isNotBlank() }
-                    OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.amber) {
-                        Column(modifier = Modifier.padding(12.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(srv.name, fontWeight = FontWeight.Bold)
-                                Text(stringResource(R.string.reload), color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, modifier = Modifier.clickable { viewModel.loadCron() })
-                            }
-                            Spacer(modifier = Modifier.height(6.dp))
-                            if (lines.isEmpty()) {
-                                Text("No crontab entries for ${srv.username}.", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
-                            } else {
-                                lines.forEach { cron ->
-                                    Text(
-                                        cron,
-                                        fontFamily = OmniFonts.mono,
-                                        fontSize = 12.sp,
-                                        color = if (cron.startsWith("#")) Color.Gray else MaterialTheme.colorScheme.onSurface,
-                                        modifier = Modifier.padding(vertical = 2.dp)
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 // 7.7 BACKUPS SCHEDULERS PANEL
 @Composable
 fun BackupToolView(viewModel: AppViewModel) {
@@ -2673,7 +2623,7 @@ fun BackupToolView(viewModel: AppViewModel) {
         viewModel.updateBackupExportSelection(selection)
     }
 
-    ToolScaffold(viewModel, "App Backup") {
+    ToolScaffold(viewModel, "App backup") {
         Column(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -4085,7 +4035,12 @@ fun AboutToolView(viewModel: AppViewModel) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
             )
             Text(
-                "${com.jetsetslow.omniterm.BuildConfig.DISTRIBUTION_NAME} build. Source available for noncommercial use under the PolyForm Noncommercial License 1.0.0. OmniTerm talks directly to your hosts over SSH/SFTP and keeps SSH keys and credentials on-device: no telemetry, no third-party servers.",
+                "${com.jetsetslow.omniterm.BuildConfig.DISTRIBUTION_NAME} build. Source available for noncommercial use under the PolyForm Noncommercial License 1.0.0. OmniTerm connects directly to your hosts and keeps SSH keys and credentials on-device. There is no OmniTerm account or usage telemetry. " +
+                    if (com.jetsetslow.omniterm.BuildConfig.FLAVOR == "playStore") {
+                        "Play Store builds may contact Google for billing, consent, ads, and in-app review."
+                    } else {
+                        "Source builds do not include Google billing, ads, consent, or in-app review services."
+                    },
                 fontSize = 14.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
