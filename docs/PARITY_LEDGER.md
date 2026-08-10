@@ -99,6 +99,9 @@ implementations decides whether a feature is missing.
 | 59 | Launcher shortcuts | **A shortcut into a host failed on a cold start, and said nothing when its target was gone.** `connect_server` and `open_split` resolved the host from the *in-memory* list, which has not emitted yet on a cold start, so a working shortcut looked like a deleted host. Kotlin reads the row from the repository for exactly that reason and shows a toast when it is really missing (`ui/AppViewModel.kt:4533`, `:4537`). | **Closed** — see below |
 | 60 | Home widget | **A widget that could not read its data told the user they had no hosts.** The receiver's `runCatching { … }.getOrElse { JSONArray() }` turned any unreadable payload into an empty one, and empty renders as "Open OmniTerm to add a host". Kotlin has three layouts — rows, empty, and `omniterm_widget_error`; Flutter had two. | **Closed** — see below |
 | 61 | Permission prompt (**consent**) | **The local-network prompt explained the upside and not the cost.** Kotlin's explanation ends "If you choose Not now, internet hosts remain available but nearby-device features may not work" (`strings.xml:33`); the Flutter port dropped that sentence, leaving "Not now" looking free on a prompt the user cannot easily get back to. | **Closed** — see below |
+| 66 | File editor Back (**data loss**) | **Back closed the remote file editor without the discard prompt its own close button enforces.** A modal sheet is popped by the system without consulting anything inside it, so the guarded path was the ✕ and the unguarded one was Back. Kotlin routes Back through the same check (`CodeEditor` installs `BackHandler { onClose() }`; the SFTP host passes `attemptDismiss`, `ui/SftpScreen.kt:3112`). A second defect in the same guard: it required edit mode as well as a changed buffer, so disarming the pencil with unsaved edits skipped the prompt. | **Closed** — back axis complete |
+| 65 | Compose Builder Back (**navigation**) | **Back on the Builder tab discarded an edited stack with no prompt, and could not leave the tab.** Kotlin confirms first (`ui/ComposeBuilder.kt:1236`) and then returns to Stacks, because clearing alone leaves the user on a tab that immediately rebuilds an empty draft — a press that appears to do nothing. Flutter had neither half. | **Closed** — completes the back axis for the builder |
+| 64 | Compose Builder (**data loss**) | **An unsaved compose draft was destroyed by a glance at another tab.** The draft lived in `BuilderTab`'s `State`, and `InfraScreen` builds that tab only while it is selected — so switching to Stacks, or leaving Infra, discarded it silently with nothing to undo. Kotlin holds the equivalent on the view model (`AppViewModel.activeComposeDraft`) with a comment saying it exists "so edits survive a tab switch". | **Closed** — see below |
 | 63 | Android Back (**navigation**) | **The whole layer of screen-level Back handling was never ported.** Kotlin installs five `BackHandler`s — image preview, code editor, the SFTP browser, the share browser and the compose builder — and *disables* its app-level one while any overlay is up (`ui/AppUi.kt:482`). Flutter shipped only the root `PopScope`, so Back from three folders deep left the SFTP screen entirely instead of walking up one, and Back with an image preview open navigated away while leaving the preview loaded underneath it. | **Closed for SFTP and the preview** — builder and editor noted below |
 | 62 | Settings save (**security**) | **Saving Settings never re-authenticated, so the app lock could be turned off without knowing the PIN.** Kotlin gates the whole save behind the PIN whenever one is stored (`ui/ToolsScreen.kt:3902`). Flutter applied the draft directly — and disabling the lock *clears the stored PIN outright*, so a briefly-unlocked phone was enough to remove it, along with screenshot blocking and sensitive-info masking. | **Closed** — see below |
 
@@ -2551,6 +2554,173 @@ adjudicated: `crash_*` (58), `shortcut_*` (59), `widget_*` (60) and `local_netwo
 the four named a missing *feature* rather than missing copy, which is the pattern worth carrying
 into any future string diff — a cluster of related strings is a feature the port did not finish.
 
+### 66 — Back skipped the file editor's discard prompt (closed)
+
+This is the item defect 65 left recorded as **unverified**: I had inferred that Flutter's editor was
+"a sheet the platform already pops, so it is likely parity by construction". The inference was right
+about the mechanism and wrong about the consequence — the platform popping it *is* the bug, because
+popping is exactly what bypasses the guard.
+
+`openFileEditor` presents `_FileEditorSheet` via `showModalBottomSheet`. Its ✕ calls `_close`, which
+asks before discarding unsaved edits. The system Back button pops the modal route directly and never
+reaches `_close`. So the only path that could lose work was the only path that did not ask.
+
+Kotlin has no such split: `CodeEditor` installs `BackHandler(enabled = true) { onClose() }`
+(`ui/CodeEditor.kt:398`), and the SFTP host passes `attemptDismiss`, which runs the same dirty check
+as the toolbar's close. One guard, both entrances.
+
+**The fix.** A `PopScope(canPop: false)` inside the sheet routes Back through `_close`. `_close`
+ends in `Navigator.pop()`, which is unconditional and so still closes once the user confirms.
+
+**A second defect found in the same guard.** The condition was `_dirty && _editing`. The pencil can
+be switched back off with unsaved edits still in the buffer, and in that state the editor closed
+without asking. Kotlin gates on the buffer alone — `dirty = buffer != file.content`
+(`ui/SftpScreen.kt:3095`) — so this is now `_dirty`.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| Full host suite | **2,364 passed** (+3) |
+| `sftp_screen_test.dart` | 56 (+3) |
+| Surface sweep + walkthrough, API 35 `emulator-5554` | **8 passed** |
+
+The tests deliver a real Back through `tester.binding.handlePopRoute()` rather than calling `_close`
+directly, since the whole defect was that the two entrances differed.
+
+**Negative controls.** Each mutation fails exactly the tests that name its behaviour:
+
+| Mutation | Result |
+|---|---|
+| `canPop: true` — sheet pops on Back unguarded | the Back-asks test and the pencil test fail |
+| `_dirty && _editing` — guard requires edit mode again | the pencil test alone fails |
+
+**Back axis complete.** All six Kotlin `BackHandler`s now have a Flutter counterpart: SFTP browser,
+share browser and image preview (63), compose builder (65), file editor (66), and the app-level
+handler that was ported originally. The lesson worth carrying is the one this entry opens with —
+"likely parity by construction" was a guess dressed as a conclusion, and writing it down as
+unverified is what made it get checked instead of quietly inherited.
+
+### 65 — Back on the Builder tab neither asked nor escaped (closed)
+
+The last item left open by defects 63 and 64. With the draft now preserved (64), Back no longer
+destroyed work by navigating away — but it still did the wrong thing in two ways, both of which
+Kotlin had already found and commented.
+
+**The confirmation.** `attemptClearOrExit` asks "Discard changes?" whenever the draft is dirty and
+only clears on confirmation. Flutter had no such prompt.
+
+**The escape.** Kotlin's comment at `ui/ComposeBuilder.kt:1248` is worth quoting, because it records
+a bug rather than a design:
+
+> Back must end in a VISIBLE navigation, never in state mutation alone. Clearing the draft leaves
+> the user on the Builder tab, and this composable recreates an empty draft the moment it sees
+> `activeComposeDraft == null` … A handler that only cleared therefore made the tab inescapable.
+
+Flutter reaches the identical trap from the other direction: after defect 64 the tab restores from
+the memento on mount, so a handler that only cleared would also rebuild and appear to do nothing.
+`_exitToStacks` clears *and* switches to Stacks, which unmounts the handler, so a second Back
+reaches app navigation and leaves the screen.
+
+**What "dirty" means, and what it deliberately does not.** `composeDraftIsDirty` compares the
+rendered YAML against the imported stack's original text, or against an empty draft's rendering when
+nothing was imported — Kotlin's `isDirty` (`ui/ComposeBuilder.kt:1222`), including its exact-string
+comparison. Two consequences, both inherited rather than chosen:
+
+* **The project and top-level name fields do not make a draft dirty.** They are deploy parameters
+  (`-p`), not document content, so they never reach the YAML. My first test edited the project name
+  and saw no prompt; the code was right and the test was wrong.
+* **A trailing-whitespace difference counts as dirty.** That errs towards asking before discarding,
+  which is the safe direction for a prompt whose other branch destroys work.
+
+Kotlin also disables its handler while a full-screen code editor is open, to stop two handlers
+racing. Flutter's raw editor is inline on the tab rather than an overlay, so there is no second
+handler and no condition to port; this is noted at the call site so a future reader does not think
+it was missed.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| Full host suite | **2,361 passed** (+4) |
+| `infra_screen_test.dart` | 30 (+4) |
+| Surface sweep + walkthrough, API 35 `emulator-5554` | **8 passed** |
+
+**Negative control.** Replacing `_handleBack` with an unconditional `_exitToStacks()` fails both the
+Cancel test and the Discard test, and leaves the untouched-draft test passing — the right shape,
+since that one asserts no prompt appears.
+
+**Back axis status.** SFTP browser, share browser and image preview (63); compose builder (65). The
+remaining Kotlin handler is `ui/CodeEditor.kt:398`, which closes the full-screen editor. Flutter
+presents that editor as a sheet the platform already pops, so it is likely parity by construction —
+but that is an inference from the widget type, not an observation, and it is recorded here as
+unverified rather than closed.
+
+### 64 — an unsaved compose draft was destroyed by a tab switch (closed)
+
+Found while investigating the leftover from defect 63, and it corrected that entry: see the
+withdrawal note there.
+
+`InfraScreen` builds the Builder tab from a `switch` on the active sub-tab:
+
+```dart
+InfraTab.builder => const BuilderTab(),
+```
+
+so the tab's `State` — which held `_draft`, `_baseline`, `_rawMode` and both editor controllers —
+was discarded the moment the user looked at Stacks. There is no `AutomaticKeepAlive` above it.
+Kotlin holds the same data on the view model and says why in a comment: *"so edits survive a tab
+switch"*.
+
+**What the user lost.** A compose stack is not a quick form. Building one means a project name, a
+working directory, services, images, ports, volumes and Podman modifiers — minutes of typing that
+vanished on a glance at another tab, with no confirmation and nothing to undo. Leaving the Infra
+screen did the same.
+
+**The fix.** `ComposeDraftMemento` (in `compose_builder_logic.dart`, alongside the draft types) is
+parked on `InfraViewModel.composeDraft` in `dispose` and read back on first attach. Three details
+are deliberate:
+
+* **Only what was typed is captured.** Validation issues and the editor rebuild counter are
+  recomputed on restore, so a restored draft cannot disagree with a fresh one about whether it is
+  valid.
+* **The memento is captured before the controllers are disposed**, since their text is part of what
+  has to survive.
+* **`New` clears the memento as well as the draft.** Otherwise the draft the user explicitly threw
+  away returns on the next visit — the same class of bug, pointing the other way.
+
+`InfraViewModel` now imports `compose_builder_logic.dart`. That file is widget-free — pure data and
+logic that happens to sit under `ui/screens` — so this is a directory-layout wrinkle rather than a
+layering inversion, and it is commented as such at the import.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| Full host suite | **2,357 passed** (+3) |
+| `infra_screen_test.dart` | 26 (+3) |
+| Surface sweep + walkthrough, API 35 `emulator-5554` | **8 passed** |
+
+**Negative control.** Disabling the restore call (`_restore(vm.composeDraft)`) fails both
+persistence tests and leaves the `New` test passing — which is the right shape, since that one
+asserts the *absence* of a restored draft.
+
+**A test that lied, and how it was caught.** The first version of "leaving the screen entirely"
+failed. The cause was the test, not the code: the file's `pump` helper constructs a *new*
+`InfraViewModel`, so the second pump threw away the very object the draft was parked on. In the app
+the provider lives above the route and the view model outlives the screen. Rewritten to re-mount
+`InfraScreen` against the same view model. Worth recording because the failure looked exactly like
+a real defect and would have been "fixed" wrongly by making the memento static.
+
+**Still open from the back-handling axis (63):** Kotlin also *confirms* before discarding the draft
+on Back (`ui/ComposeBuilder.kt:1236`), and returns to the Stacks tab rather than mutating state
+invisibly — its comment explains that a handler which only cleared made the tab inescapable. With
+the draft now preserved, Back loses nothing, so what remains is the confirmation and the
+intermediate navigation step, not a safeguard.
+
 ### 63 — Back had no meaning inside a screen (closed for SFTP and the image preview)
 
 Found by sweeping an axis rather than a string list. The handoff still lists "back behaviour" as
@@ -2637,9 +2807,15 @@ defect was.
 
 **Still open, and deliberately not fixed in this slice:**
 
-* `ui/ComposeBuilder.kt:1260` — Back offers to discard the compose draft. Flutter navigates away
+* ~~`ui/ComposeBuilder.kt:1260` — Back offers to discard the compose draft. Flutter navigates away
   and *keeps* the draft in the view model, so it loses no data; this is a missing confirmation, not
-  a missing safeguard, and is lower severity than it first looks.
+  a missing safeguard, and is lower severity than it first looks.~~
+  **Withdrawn — this was wrong, and wrong in the direction that matters.** I inferred "keeps the
+  draft in the view model" from Kotlin's design instead of reading `compose_builder.dart`. Flutter
+  kept the draft in the *widget's* `State`, so leaving the screen destroyed it. That is data loss,
+  not a missing confirmation, and it is **defect 64**. The rule this breaks is the one at the top of
+  this ledger: a claim about the port is only worth what the code says, and I asserted a
+  reassuring one without opening the file.
 * `ui/CodeEditor.kt:398` — Back closes the full-screen editor. Flutter's editor is a sheet, which
   the platform already pops; needs checking on device before assuming parity either way.
 

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -15,7 +17,11 @@ import '../../widgets/code_editor.dart';
 /// keeping: most visits to a config file on a server are to *read* it, and an editor that is armed
 /// by default turns a stray tap on a phone into an edit to `/etc/ssh/sshd_config`. Save is gated on
 /// edit mode for the same reason.
-Future<void> openFileEditor(BuildContext context, SftpViewModel vm, SftpFile entry) async {
+Future<void> openFileEditor(
+  BuildContext context,
+  SftpViewModel vm,
+  SftpFile entry,
+) async {
   final contents = await vm.readForEditing(entry);
   // A failure has already put its reason on the screen; opening an empty editor over it would hide
   // the explanation behind a blank page.
@@ -30,7 +36,11 @@ Future<void> openFileEditor(BuildContext context, SftpViewModel vm, SftpFile ent
 }
 
 class _FileEditorSheet extends StatefulWidget {
-  const _FileEditorSheet({required this.vm, required this.entry, required this.initial});
+  const _FileEditorSheet({
+    required this.vm,
+    required this.entry,
+    required this.initial,
+  });
 
   final SftpViewModel vm;
   final SftpFile entry;
@@ -76,13 +86,18 @@ class _FileEditorSheetState extends State<_FileEditorSheet> {
   }
 
   Future<void> _close() async {
-    if (_dirty && _editing) {
+    // Deliberately not `_dirty && _editing`: the pencil can be switched back off with unsaved edits
+    // still in the buffer, and requiring edit mode meant that state closed without asking. Kotlin
+    // gates on the buffer alone — `dirty = buffer != file.content` (`ui/SftpScreen.kt:3095`).
+    if (_dirty) {
       final discard = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
           key: const ValueKey('fileEditor.discard.dialog'),
           title: const Text('Discard changes?'),
-          content: Text('Your edits to "${widget.entry.name}" have not been saved.'),
+          content: Text(
+            'Your edits to "${widget.entry.name}" have not been saved.',
+          ),
           actions: [
             TextButton(
               key: const ValueKey('fileEditor.discard.cancel'),
@@ -92,7 +107,10 @@ class _FileEditorSheetState extends State<_FileEditorSheet> {
             TextButton(
               key: const ValueKey('fileEditor.discard.confirm'),
               onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('Discard', style: TextStyle(color: OmniColors.red)),
+              child: const Text(
+                'Discard',
+                style: TextStyle(color: OmniColors.red),
+              ),
             ),
           ],
         ),
@@ -110,133 +128,157 @@ class _FileEditorSheetState extends State<_FileEditorSheet> {
     final scheme = Theme.of(context).colorScheme;
     final sudo = widget.vm.sudoWritesApply;
 
-    return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: SizedBox(
-        height: MediaQuery.of(context).size.height * 0.9,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
+    // A modal sheet is popped by the system Back button without consulting anything in it, so
+    // without this the close button asked before discarding and Back did not — the one path that
+    // loses work being the one that never prompts. Kotlin routes Back through the same check
+    // (`CodeEditor` installs `BackHandler { onClose() }`, and the SFTP host passes `attemptDismiss`,
+    // `ui/SftpScreen.kt:3112`).
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) return;
+        unawaited(_close());
+      },
+      child: Padding(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.of(context).viewInsets.bottom,
+        ),
+        child: SizedBox(
+          height: MediaQuery.of(context).size.height * 0.9,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            widget.entry.name,
+                            overflow: TextOverflow.ellipsis,
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          Text(
+                            // Saying which mode it is in, because the difference is the whole
+                            // safety of the screen — and whether the save will be a root write,
+                            // which is a bigger difference still. Kotlin puts the same `· sudo` in
+                            // its subtitle and colours it red (`ui/SftpScreen.kt:3114`).
+                            [
+                              _editing
+                                  ? 'Editing'
+                                  : 'Read-only — tap the pencil to edit',
+                              '${_lineCount(_text.text)} lines',
+                              if (sudo) 'sudo',
+                            ].join(' · '),
+                            key: const ValueKey('fileEditor.mode'),
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: sudo
+                                  ? OmniColors.red
+                                  : scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      key: const ValueKey('fileEditor.editToggle'),
+                      tooltip: _editing ? 'Stop editing' : 'Edit this file',
+                      icon: Icon(
+                        _editing ? Icons.lock_open : Icons.edit,
+                        color: _editing ? OmniColors.amber : OmniColors.cyan,
+                      ),
+                      onPressed: _saving
+                          ? null
+                          : () => setState(() => _editing = !_editing),
+                    ),
+                    IconButton(
+                      key: const ValueKey('fileEditor.close'),
+                      icon: const Icon(Icons.close),
+                      onPressed: _saving ? null : _close,
+                    ),
+                  ],
+                ),
+              ),
+              if (widget.vm.editorBinaryWarning != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                  child: OmniCard(
+                    key: const ValueKey('fileEditor.binaryWarning'),
+                    leftAccent: OmniColors.amber,
+                    child: Row(
                       children: [
-                        Text(
-                          widget.entry.name,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.titleMedium,
+                        const Icon(
+                          Icons.warning_amber,
+                          size: 16,
+                          color: OmniColors.amber,
                         ),
-                        Text(
-                          // Saying which mode it is in, because the difference is the whole
-                          // safety of the screen — and whether the save will be a root write,
-                          // which is a bigger difference still. Kotlin puts the same `· sudo` in
-                          // its subtitle and colours it red (`ui/SftpScreen.kt:3114`).
-                          [
-                            _editing
-                                ? 'Editing'
-                                : 'Read-only — tap the pencil to edit',
-                            '${_lineCount(_text.text)} lines',
-                            if (sudo) 'sudo',
-                          ].join(' · '),
-                          key: const ValueKey('fileEditor.mode'),
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: sudo ? OmniColors.red : scheme.onSurfaceVariant,
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            widget.vm.editorBinaryWarning!,
+                            style: const TextStyle(fontSize: 11),
                           ),
                         ),
                       ],
                     ),
                   ),
-                  IconButton(
-                    key: const ValueKey('fileEditor.editToggle'),
-                    tooltip: _editing ? 'Stop editing' : 'Edit this file',
-                    icon: Icon(
-                      _editing ? Icons.lock_open : Icons.edit,
-                      color: _editing ? OmniColors.amber : OmniColors.cyan,
-                    ),
-                    onPressed: _saving ? null : () => setState(() => _editing = !_editing),
-                  ),
-                  IconButton(
-                    key: const ValueKey('fileEditor.close'),
-                    icon: const Icon(Icons.close),
-                    onPressed: _saving ? null : _close,
-                  ),
-                ],
-              ),
-            ),
-            if (widget.vm.editorBinaryWarning != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-                child: OmniCard(
-                  key: const ValueKey('fileEditor.binaryWarning'),
-                  leftAccent: OmniColors.amber,
-                  child: Row(
-                    children: [
-                      const Icon(Icons.warning_amber, size: 16, color: OmniColors.amber),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          widget.vm.editorBinaryWarning!,
-                          style: const TextStyle(fontSize: 11),
-                        ),
-                      ),
-                    ],
+                ),
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: CodeEditor(
+                    controller: _text,
+                    language: languageForFileName(widget.entry.name),
+                    readOnly: !_editing,
+                    enabled: !_saving,
+                    maxHighlightChars:
+                        (context
+                                    .watch<AppState>()
+                                    .preferences
+                                    .editorHighlightLimitKb *
+                                1024)
+                            .clamp(0, highlightMaxCharsCap),
+                    textKey: const ValueKey('fileEditor.text'),
+                    onChanged: (_) => setState(() {}),
                   ),
                 ),
               ),
-            Expanded(
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: CodeEditor(
-                  controller: _text,
-                  language: languageForFileName(widget.entry.name),
-                  readOnly: !_editing,
-                  enabled: !_saving,
-                  maxHighlightChars:
-                      (context.watch<AppState>().preferences.editorHighlightLimitKb * 1024).clamp(
-                        0,
-                        highlightMaxCharsCap,
-                      ),
-                  textKey: const ValueKey('fileEditor.text'),
-                  onChanged: (_) => setState(() {}),
-                ),
-              ),
-            ),
-            if (_failure != null)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: Text(
-                  _failure!,
-                  key: const ValueKey('fileEditor.error'),
-                  style: const TextStyle(color: OmniColors.red, fontSize: 12),
-                ),
-              ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
-              child: SizedBox(
-                width: double.infinity,
-                child: FilledButton(
-                  key: const ValueKey('fileEditor.save'),
-                  // Gated on edit mode *and* on there being something to save: a Save that writes
-                  // the file back unchanged still rewrites its mtime, which is a real edit to
-                  // anything watching the file.
-                  onPressed: _editing && _dirty && !_saving ? _save : null,
+              if (_failure != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                   child: Text(
-                    _saving
-                        ? 'Saving…'
-                        // Named, not implied: "Save" on a file being written as root understates
-                        // what the button does.
-                        : sudo
-                        ? 'Save as root'
-                        : 'Save',
+                    _failure!,
+                    key: const ValueKey('fileEditor.error'),
+                    style: const TextStyle(color: OmniColors.red, fontSize: 12),
+                  ),
+                ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: FilledButton(
+                    key: const ValueKey('fileEditor.save'),
+                    // Gated on edit mode *and* on there being something to save: a Save that writes
+                    // the file back unchanged still rewrites its mtime, which is a real edit to
+                    // anything watching the file.
+                    onPressed: _editing && _dirty && !_saving ? _save : null,
+                    child: Text(
+                      _saving
+                          ? 'Saving…'
+                          // Named, not implied: "Save" on a file being written as root understates
+                          // what the button does.
+                          : sudo
+                          ? 'Save as root'
+                          : 'Save',
+                    ),
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

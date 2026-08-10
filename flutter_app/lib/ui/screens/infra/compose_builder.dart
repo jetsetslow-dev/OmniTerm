@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -7,6 +9,7 @@ import '../../theme/colors.dart';
 import '../../theme/typography.dart';
 import '../../view_model/app_state.dart';
 import '../../view_model/infra_view_model.dart';
+import '../../widgets/back_interceptor.dart';
 import '../../widgets/code_editor.dart';
 import '../../widgets/omni_components.dart';
 import 'compose_builder_logic.dart';
@@ -33,19 +36,109 @@ class _BuilderTabState extends State<BuilderTab> {
   List<String> _issues = const [];
   int _handledEditRequest = 0;
 
+  /// Captured on first attach so [dispose] can park the draft without touching `context`, which is
+  /// no longer safe to read by then.
+  InfraViewModel? _vm;
+
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final serverId = context.read<InfraViewModel>().inspectedServer?.id;
+    final vm = context.read<InfraViewModel>();
+    if (!identical(vm, _vm)) {
+      _vm = vm;
+      // Assigned rather than setState-ed: this runs before the first build, so there is nothing on
+      // screen yet to update.
+      _restore(vm.composeDraft);
+    }
+    final serverId = vm.inspectedServer?.id;
     if (_serverId != null && serverId != _serverId) _newDraft();
     _serverId = serverId;
   }
 
   @override
   void dispose() {
+    // Parked before the controllers are torn down — their text is part of what has to survive.
+    _vm?.composeDraft = ComposeDraftMemento(
+      draft: _draft,
+      baseline: _baseline,
+      rawMode: _rawMode,
+      rawText: _raw.text,
+      pathText: _path.text,
+    );
     _path.dispose();
     _raw.dispose();
     super.dispose();
+  }
+
+  void _restore(ComposeDraftMemento? memento) {
+    if (memento == null) return;
+    _draft = memento.draft;
+    _baseline = memento.baseline;
+    _rawMode = memento.rawMode;
+    _raw.text = memento.rawText;
+    _path.text = memento.pathText;
+    // Recomputed rather than stored, so a restored draft cannot disagree with a fresh one about
+    // whether it is valid.
+    _issues = _rawMode ? const [] : validateComposeDraft(_draft);
+    _generation++;
+  }
+
+  /// True when the draft differs from what it started as.
+  bool get _isDirty =>
+      composeDraftIsDirty(rendered: _rendered, baseline: _baseline);
+
+  /// Back on the Builder tab, ported from `ui/ComposeBuilder.kt:1260`.
+  ///
+  /// Kotlin's comment there records a bug worth not repeating: **Back must end in a visible
+  /// navigation, never in state mutation alone.** Clearing the draft leaves the user on the Builder
+  /// tab, which immediately rebuilds an empty one — so every press appeared to do nothing and the
+  /// tab could not be left. Returning to Stacks breaks that, and also unmounts this handler, so a
+  /// second Back reaches app navigation and leaves the screen as expected.
+  ///
+  /// Kotlin additionally disables its handler while a full-screen code editor is open. Flutter's
+  /// raw editor is inline on this tab rather than an overlay, so there is no second handler to race
+  /// and no equivalent condition to port.
+  bool _handleBack() {
+    if (!_isDirty) {
+      _exitToStacks();
+      return true;
+    }
+    unawaited(_confirmDiscard());
+    return true;
+  }
+
+  void _exitToStacks() {
+    setState(_newDraft);
+    _vm?.activeTab = InfraTab.stacks;
+  }
+
+  Future<void> _confirmDiscard() async {
+    final discard = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const ValueKey('infra.builder.discardConfirm'),
+        title: const Text('Discard changes?'),
+        content: const Text(
+          'You have unsaved changes to this stack. Discard them?',
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('infra.builder.discardConfirm.cancel'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            key: const ValueKey('infra.builder.discardConfirm.discard'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text(
+              'Discard',
+              style: TextStyle(color: OmniColors.red),
+            ),
+          ),
+        ],
+      ),
+    );
+    if (discard == true && mounted) _exitToStacks();
   }
 
   void _newDraft() {
@@ -56,6 +149,8 @@ class _BuilderTabState extends State<BuilderTab> {
     _rawMode = false;
     _issues = const [];
     _generation++;
+    // "New" has to mean new on the next mount too, or the discarded draft comes straight back.
+    _vm?.composeDraft = null;
   }
 
   String get _rendered =>
@@ -217,130 +312,133 @@ class _BuilderTabState extends State<BuilderTab> {
     final stacks = vm.stacks
         .where((stack) => stack.canRunComposeActions)
         .toList();
-    return ListView(
-      key: const ValueKey('infra.builder'),
-      children: [
-        Row(
-          children: [
-            const Expanded(
-              child: Text(
-                'Compose Builder',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-              ),
-            ),
-            TextButton.icon(
-              key: const ValueKey('infra.builder.new'),
-              onPressed: () => setState(_newDraft),
-              icon: const Icon(Icons.note_add_outlined),
-              label: const Text('New'),
-            ),
-            TextButton.icon(
-              onPressed: _preview,
-              icon: const Icon(Icons.preview),
-              label: const Text('Preview'),
-            ),
-            FilledButton.icon(
-              key: const ValueKey('infra.builder.deploy'),
-              onPressed: vm.composeBusy ? null : _deploy,
-              icon: const Icon(Icons.rocket_launch, size: 17),
-              label: Text(vm.composeBusy ? 'Working…' : 'Deploy'),
-            ),
-          ],
-        ),
-        const SizedBox(height: 8),
-        OmniCard(
-          leftAccent: OmniColors.purple,
-          child: Column(
+    return BackInterceptor(
+      onBack: _handleBack,
+      child: ListView(
+        key: const ValueKey('infra.builder'),
+        children: [
+          Row(
             children: [
-              if (stacks.isNotEmpty)
-                DropdownButtonFormField<StackSummary>(
-                  key: const ValueKey('infra.builder.existingStack'),
-                  decoration: const InputDecoration(
-                    labelText: 'Edit running stack',
-                  ),
-                  items: [
-                    for (final stack in stacks)
-                      DropdownMenuItem(
-                        value: stack,
-                        child: Text('${stack.name} · ${stack.runtime}'),
-                      ),
-                  ],
-                  onChanged: vm.composeBusy
-                      ? null
-                      : (stack) => stack == null ? null : _load(stack: stack),
+              const Expanded(
+                child: Text(
+                  'Compose Builder',
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
                 ),
-              Row(
-                children: [
-                  Expanded(
-                    child: TextField(
-                      key: const ValueKey('infra.builder.path'),
-                      controller: _path,
-                      decoration: const InputDecoration(
-                        labelText: 'Absolute compose file path',
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton.icon(
-                    key: const ValueKey('infra.builder.load'),
-                    onPressed: vm.composeBusy ? null : _load,
-                    icon: const Icon(Icons.download, size: 17),
-                    label: const Text('Load'),
-                  ),
-                ],
               ),
-              Row(
-                children: [
-                  const Expanded(
-                    child: Text(
-                      'Raw YAML',
-                      style: TextStyle(fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                  Switch(
-                    key: const ValueKey('infra.builder.rawToggle'),
-                    value: _rawMode,
-                    onChanged: _toggleRaw,
-                  ),
-                ],
+              TextButton.icon(
+                key: const ValueKey('infra.builder.new'),
+                onPressed: () => setState(_newDraft),
+                icon: const Icon(Icons.note_add_outlined),
+                label: const Text('New'),
+              ),
+              TextButton.icon(
+                onPressed: _preview,
+                icon: const Icon(Icons.preview),
+                label: const Text('Preview'),
+              ),
+              FilledButton.icon(
+                key: const ValueKey('infra.builder.deploy'),
+                onPressed: vm.composeBusy ? null : _deploy,
+                icon: const Icon(Icons.rocket_launch, size: 17),
+                label: Text(vm.composeBusy ? 'Working…' : 'Deploy'),
               ),
             ],
           ),
-        ),
-        if (vm.composeError != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: Text(
-              vm.composeError!,
-              style: const TextStyle(color: OmniColors.red),
+          const SizedBox(height: 8),
+          OmniCard(
+            leftAccent: OmniColors.purple,
+            child: Column(
+              children: [
+                if (stacks.isNotEmpty)
+                  DropdownButtonFormField<StackSummary>(
+                    key: const ValueKey('infra.builder.existingStack'),
+                    decoration: const InputDecoration(
+                      labelText: 'Edit running stack',
+                    ),
+                    items: [
+                      for (final stack in stacks)
+                        DropdownMenuItem(
+                          value: stack,
+                          child: Text('${stack.name} · ${stack.runtime}'),
+                        ),
+                    ],
+                    onChanged: vm.composeBusy
+                        ? null
+                        : (stack) => stack == null ? null : _load(stack: stack),
+                  ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextField(
+                        key: const ValueKey('infra.builder.path'),
+                        controller: _path,
+                        decoration: const InputDecoration(
+                          labelText: 'Absolute compose file path',
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    OutlinedButton.icon(
+                      key: const ValueKey('infra.builder.load'),
+                      onPressed: vm.composeBusy ? null : _load,
+                      icon: const Icon(Icons.download, size: 17),
+                      label: const Text('Load'),
+                    ),
+                  ],
+                ),
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'Raw YAML',
+                        style: TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    Switch(
+                      key: const ValueKey('infra.builder.rawToggle'),
+                      value: _rawMode,
+                      onChanged: _toggleRaw,
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
-        if (_issues.isNotEmpty) _IssueCard(issues: _issues),
-        const SizedBox(height: 10),
-        if (_rawMode)
-          SizedBox(
-            height: MediaQuery.sizeOf(context).height * 0.62,
-            child: CodeEditor(
-              controller: _raw,
-              language: CodeLanguage.yaml,
-              maxHighlightChars:
-                  (context
-                              .watch<AppState>()
-                              .preferences
-                              .editorHighlightLimitKb *
-                          1024)
-                      .clamp(0, highlightMaxCharsCap),
-              textKey: const ValueKey('infra.builder.raw'),
-              onChanged: (_) => setState(() {}),
+          if (vm.composeError != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                vm.composeError!,
+                style: const TextStyle(color: OmniColors.red),
+              ),
             ),
-          )
-        else
-          _VisualEditor(
-            key: ValueKey(_generation),
-            draft: _draft,
-            onChanged: _changed,
-          ),
-      ],
+          if (_issues.isNotEmpty) _IssueCard(issues: _issues),
+          const SizedBox(height: 10),
+          if (_rawMode)
+            SizedBox(
+              height: MediaQuery.sizeOf(context).height * 0.62,
+              child: CodeEditor(
+                controller: _raw,
+                language: CodeLanguage.yaml,
+                maxHighlightChars:
+                    (context
+                                .watch<AppState>()
+                                .preferences
+                                .editorHighlightLimitKb *
+                            1024)
+                        .clamp(0, highlightMaxCharsCap),
+                textKey: const ValueKey('infra.builder.raw'),
+                onChanged: (_) => setState(() {}),
+              ),
+            )
+          else
+            _VisualEditor(
+              key: ValueKey(_generation),
+              draft: _draft,
+              onChanged: _changed,
+            ),
+        ],
+      ),
     );
   }
 }
@@ -499,7 +597,10 @@ class _PodmanModifiersCard extends StatelessWidget {
         children: [
           const Text(
             'Podman modifiers',
-            style: TextStyle(fontWeight: FontWeight.bold, fontFamily: OmniFonts.mono),
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontFamily: OmniFonts.mono,
+            ),
           ),
           const SizedBox(height: 6),
           const Text(
@@ -510,7 +611,10 @@ class _PodmanModifiersCard extends StatelessWidget {
           Row(
             children: [
               const Expanded(
-                child: Text('Rootless keep-ID mapping', style: TextStyle(fontSize: 12)),
+                child: Text(
+                  'Rootless keep-ID mapping',
+                  style: TextStyle(fontSize: 12),
+                ),
               ),
               Switch(
                 key: const ValueKey('infra.builder.podman.keepId'),
@@ -528,10 +632,16 @@ class _PodmanModifiersCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Group services in a pod', style: TextStyle(fontSize: 12)),
+                    Text(
+                      'Group services in a pod',
+                      style: TextStyle(fontSize: 12),
+                    ),
                     Text(
                       'Services share Podman pod namespaces using x-podman.in_pod.',
-                      style: TextStyle(fontSize: 10, color: OmniColors.textMuted),
+                      style: TextStyle(
+                        fontSize: 10,
+                        color: OmniColors.textMuted,
+                      ),
                     ),
                   ],
                 ),
@@ -556,7 +666,8 @@ class _PodmanModifiersCard extends StatelessWidget {
               decoration: const InputDecoration(
                 labelText: 'Pod name (optional)',
                 hintText: 'pod_<project>',
-                helperText: "Blank uses Podman Compose's default pod_<project>.",
+                helperText:
+                    "Blank uses Podman Compose's default pod_<project>.",
               ),
               onChanged: (value) {
                 draft.podmanPodName = value.trim();

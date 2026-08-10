@@ -1,5 +1,53 @@
 import 'package:uuid/uuid.dart';
 
+/// Whether the draft still says what it said when it was opened.
+///
+/// [rendered] is the YAML the builder would deploy right now. The comparison is against the
+/// imported stack's *original text* when there is one, and against an empty draft's rendering
+/// otherwise — so opening an existing stack and changing nothing is not "dirty", and neither is an
+/// untouched new draft.
+///
+/// Ported from `isDirty` (`ui/ComposeBuilder.kt:1222`), including its exact-string comparison. A
+/// difference in trailing whitespace therefore counts as dirty, which errs towards asking before
+/// discarding — the safe direction for a prompt whose other branch destroys work.
+bool composeDraftIsDirty({
+  required String rendered,
+  required ComposeStackDraft? baseline,
+}) {
+  final initial =
+      baseline?.originalText ?? renderComposeYaml(ComposeStackDraft(), null);
+  return rendered != initial;
+}
+
+/// Everything the Builder tab needs to come back looking untouched.
+///
+/// The tab's editing state used to live entirely in its `State`, which Flutter discards the moment
+/// the tab stops being built — so switching to Stacks and back, or leaving the screen, silently
+/// destroyed an unsaved stack. Kotlin keeps the equivalent on the view model
+/// (`AppViewModel.activeComposeDraft`) precisely so edits survive a tab switch.
+///
+/// Only what the user actually typed is captured. Derived state (validation issues, the editor
+/// rebuild counter) is recomputed on restore, so there is one place for it to be wrong rather than
+/// two.
+class ComposeDraftMemento {
+  const ComposeDraftMemento({
+    required this.draft,
+    required this.baseline,
+    required this.rawMode,
+    required this.rawText,
+    required this.pathText,
+  });
+
+  final ComposeStackDraft draft;
+
+  /// The parsed original when a stack was imported, used to render only what changed.
+  final ComposeStackDraft? baseline;
+
+  final bool rawMode;
+  final String rawText;
+  final String pathText;
+}
+
 class ComposeServiceDraft {
   String id;
   String serviceName;

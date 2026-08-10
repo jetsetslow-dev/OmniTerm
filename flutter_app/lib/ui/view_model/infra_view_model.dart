@@ -9,6 +9,9 @@ import '../../data/remote_parsers.dart';
 import '../../data/ssh/ssh_transport.dart';
 import '../../domain/server_credentials.dart';
 import '../../domain/stack_summary.dart';
+// Widget-free data and logic that happens to live under ui/screens; importing it here is a
+// directory-layout wrinkle, not a layering inversion.
+import '../screens/infra/compose_builder_logic.dart';
 import 'app_state.dart';
 
 /// The Infra screen's five sub-tabs, in the Kotlin's order (`ui/InfraScreen.kt` line 71).
@@ -87,6 +90,14 @@ class InfraViewModel extends ChangeNotifier {
     _activeTab = value;
     notifyListeners();
   }
+
+  /// The Builder tab's in-progress edit, parked here while the tab is not built.
+  ///
+  /// Held by the view model rather than the tab because the tab is destroyed on every sub-tab
+  /// switch and on leaving the screen; see [ComposeDraftMemento]. Assigned without notifying: the
+  /// tab reads it when it next mounts, and nothing else observes it, so a notification here would
+  /// only rebuild the screen during another widget's dispose.
+  ComposeDraftMemento? composeDraft;
 
   StackSummary? _requestedComposeStack;
   int _composeEditRequest = 0;
