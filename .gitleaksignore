@@ -28,3 +28,12 @@
 0cb189dd9d75c18298d875db86dea73ad0e39656:flutter_app/test/ssh_key_import_test.dart:private-key:180
 0cb189dd9d75c18298d875db86dea73ad0e39656:flutter_app/test/ssh_key_import_test.dart:private-key:182
 107a051d9c10ac7744a2b8cb48b9858083579bbe:flutter_app/test/ssh_private_key_test.dart:private-key:50
+
+# ── Banners introduced by the fix itself, 2026-08-10. ──
+# Four PEM banners with no key material: two doc comments, one assertion pair, and the fixture's own
+# serialiser. All four now build the banner through `pemBegin`/`pemEnd` instead, so they cannot match
+# again — these entries cover only the commits that already carried them.
+743acae170d55b1cc69df9dbb32ec16528b0fd3d:flutter_app/lib/domain/ssh_keygen.dart:private-key:30
+743acae170d55b1cc69df9dbb32ec16528b0fd3d:flutter_app/test/ssh_keygen_test.dart:private-key:58
+78845145d1db39561b587882bc498bfeb4b1c107:flutter_app/test/support/ed25519_fixture.dart:private-key:31
+78845145d1db39561b587882bc498bfeb4b1c107:flutter_app/test/support/ed25519_fixture.dart:private-key:131
