@@ -740,7 +740,14 @@ fun MetricLineChart(
     val endpointLabels = remember(timestamps) { chartEndpointLabels(timestamps) }
     Column(modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text("$label · ${points.size} samples", fontSize = 10.sp, color = axisColor, fontFamily = OmniFonts.mono)
+            // "1 samples" is the first thing shown after connecting to a host, which is exactly
+            // when someone is deciding whether this app is careful.
+            Text(
+                "$label · ${points.size} ${if (points.size == 1) "sample" else "samples"}",
+                fontSize = 10.sp,
+                color = axisColor,
+                fontFamily = OmniFonts.mono,
+            )
             Text(
                 points.lastOrNull()?.let { "${it.toInt()}$unit" } ?: "—",
                 fontSize = 10.sp, color = color, fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold,

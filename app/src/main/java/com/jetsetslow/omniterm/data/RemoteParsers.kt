@@ -885,8 +885,71 @@ object RemoteCommands {
             "Write-Output '@WINPROC'; (Get-Process).Count" +
             "\""
 
+    /**
+     * Output that means a privileged command was refused rather than run.
+     *
+     * One list rather than a copy per call site: a marker added to one and not the other is a
+     * failure that quietly stops being reported on exactly one screen.
+     */
+    val sudoFailureMarkers = listOf(
+        "permission denied", "no such file", "sudo:", "a password is required",
+        "incorrect password", "not in the sudoers", "operation not permitted",
+        "command not found", "not installed", "unsupported archive",
+        // Missing here but present in the Flutter port: an extract or compress into a read-only
+        // mount failed silently, because nothing in this list matched what the host said.
+        "read-only file system",
+    )
+
+    /**
+     * The refusal a privileged SFTP search met, or null when it ran.
+     *
+     * Needed because the search sends `find`'s own errors to `/dev/null`: without it, a search of a
+     * tree the login cannot read comes back empty and reads as "nothing matched" — a wrong answer
+     * wearing the clothes of a right one.
+     *
+     * **A type-tagged line is a result, never a complaint.** Matching on the text alone lets a file
+     * legitimately named `no such thing.txt` blank out the entire result set it appears in, and the
+     * first hit is exactly where that bites. Anything sudo has to say arrives ahead of the
+     * command's output, so the first line settles it either way.
+     */
+    fun searchSudoFailure(output: String): String? {
+        for (line in output.lineSequence()) {
+            if (line.isBlank()) continue
+            if (line.startsWith("d\t") || line.startsWith("f\t")) return null
+            val trimmed = line.trim()
+            return if (sudoFailureMarkers.any { trimmed.contains(it, ignoreCase = true) }) trimmed else null
+        }
+        return null
+    }
+
     /** Quote a string for safe single-quoted shell use. */
     fun shellQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
+
+    /**
+     * Where a path typed into the SFTP address box should navigate to, or null when there is
+     * nothing to go to.
+     *
+     * Blank is null rather than the root: clearing the box and pressing Go is a change of mind, and
+     * jumping to `/` from a folder deep in the tree is a surprising way to lose your place.
+     *
+     * A **relative** entry resolves against [current], because the box is prefilled with the
+     * directory you are in — so typing `docs` means what it would in a shell. Sent unresolved it
+     * would list whatever the SFTP session's working directory happens to be, which is not
+     * something the user can see.
+     */
+    fun resolveTypedPath(current: String, typed: String): String? {
+        val trimmed = typed.trim()
+        if (trimmed.isEmpty()) return null
+        if (trimmed.startsWith("/")) return normalizeSlashes(trimmed)
+        val base = if (current.isBlank()) "/" else current
+        return normalizeSlashes("$base/$trimmed")
+    }
+
+    /** Collapse duplicate separators and strip a trailing one, so one directory has one spelling. */
+    private fun normalizeSlashes(path: String): String {
+        val collapsed = path.replace(Regex("/+"), "/")
+        return if (collapsed.length > 1 && collapsed.endsWith("/")) collapsed.dropLast(1) else collapsed
+    }
 
     /**
      * Compare each clipboard source against the same-named entry in [destDir], one round trip.
