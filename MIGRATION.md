@@ -1,72 +1,27 @@
 # OmniTerm → Flutter Migration (running log)
 
-> ## ▶ NEXT ACTION (read this first)
+> ## ▶ STATUS (read this first)
 >
-> **Task #9 is running: 11 Dart-only flows + 5 Patrol native flows, green on the emulator** (sessions 50-54). The key-import sheet
-> and the app-lock cycle are both done — the two flows the manual walk could not drive at all.
+> **This running log is historical.** Its task numbering and "next action" notes describe sessions
+> 50–56 and were overtaken by the parity audit that followed. Read them as a record of how the port
+> was built and what it cost to learn, not as a to-do list.
 >
-> ⚠️ **Read §19.1 and §19.2 before writing another flow.** §19.2 is the expensive one: a live-binding
-> probe reported three false failures in a row, and two "fixes" were written for a defect that did
-> not exist. When a device probe disagrees with a widget test, believe neither — measure from
-> outside the app.
+> **Current status and pending work: `docs/HANDOVER.md`.**
+> **Per-defect evidence: `docs/PARITY_LEDGER.md`** — 66 parity defects found and closed.
 >
-> ⚠️ **Original §19.1 note:** `pumpAndSettle` near a focused field, fixed frame
-> counts instead of observable outcomes, and `enterText` without focus each cost a ten-minute device
-> run and each looked like an app bug first.
->
-> **Patrol's native half runs: 5 flows** (sessions 53-54) — the notification-permission dialog and
-> the system document picker. Layout and commands are in §11.1; the two runners cannot share a
-> directory.
->
-> **Immediate task: keep growing the suite.** The remaining native target is the
-> **foreground-service notification** in the shade, which needs a live session and therefore the
-> lab. The biometric prompt needs an enrolled fingerprint the emulator does not have. **SFTP
-> upload/download** over a real transport needs the lab too, so it is opt-in by nature — see §19.
-> Then Maestro as the CI smoke suite.
->
-> **Task #10 is largely done** (sessions 55-56): `flutter-pr-check.yml` gates format, analyze,
-> tests, the **release** APK/AAB, an unsigned iOS build and both device suites;
-> `flutter-release.yml` builds signed, version-identified artifacts from a tag, reusing
-> `scripts/release-version.sh`, and smoke-tests the APK it produced (`maestro/smoke.yaml`). Both are
-> in §12.1. **Left in #10:** Play publication only — it needs a service-account secret and a track
-> decision, and the build is nowhere near ready for a store.
->
-> **Remaining #8 work:** iOS SMB (§18).
->
-> The lab: `./scripts/test-hosts.sh up|fleet|keys|status`. §19 has the emulator recipe.
-> Run the flows with `flutter test integration_test/ -d emulator-5554`.
->
-> ⚠️ **Lab probes must not be committed as tests** — §19. Nor may a flow assume device state:
-> the emulator carries hosts from earlier sessions, and a flow that assumes a pristine install
-> passes once and fails for whoever runs it next.
->
-> **The Kotlin app is maintained in parallel** on `fix/kotlin-parity-defects` — see §15.6. A §15
-> entry is not finished until it is fixed on both branches.
->
-> ⚠️ **This blockquote is history.** It was the "what next" note written around session 23 and is
-> kept because its warnings still hold, not because its status does. **For current state read §22**,
-> for what remains read §21, and for the working conventions read §23.
->
-> ⚠️ **Read §16.4 before porting anything else** — port the feature set, not the code set.
->
-> ⚠️ **§20 is the lessons ledger from all 42 Kotlin commits.** Read it before writing a ViewModel or
-> touching an async path: it lists the failure shapes this codebase actually hits, with the verdict
-> for each. Two of its patterns are preconditions on work **not yet started** — **O on task #8** (no
-> widget, shortcut or notification may act before the app-lock state has loaded) and **L on task
-> #10** (CI must build the configuration that ships, not a debug approximation).
->
-> Working rules that are easy to lose: never `git add -A` (`shared/` must stay untracked, stage
-> explicit paths); `export PATH="/home/sbvino/sdks/flutter/bin:$PATH"`; run `flutter analyze` and
-> `flutter test` from `flutter_app/` before every commit; append a §14 progress entry and commit
-> each iteration.
+> The sections below are still worth reading for their hard-won specifics: §19.1 and §19.2 on
+> device-test technique (a live-binding probe reported three false failures in a row, and two
+> "fixes" were written for a defect that did not exist), §11.1 on the two runners, §12.1 on the
+> release workflows, and §15.6 on keeping the Kotlin app in step.
 
-**This file is the single source of truth for the migration.** If context is lost, compacted, or
-the session restarts, read this file top-to-bottom first — it is written so that work can resume
-without re-deriving anything.
+**This file records how the port was built.** For where things stand now, read `docs/HANDOVER.md`
+first; come here for the reasoning behind a decision, or for the device-testing technique that took
+several expensive runs to work out.
 
 - **Branch:** `migration-to-flutter` (created from `origin/main` at `7a4e836`… see `git merge-base`)
 - **Started:** 2026-08-03
-- **Status:** Phase 7 — first screen rendering end-to-end; remaining ViewModels + screens next — see [Progress log](#14-progress-log)
+- **Status:** superseded — see `docs/HANDOVER.md`. The phase numbering below stops at the point the
+  parity audit took over; 66 defects have been closed since, recorded in `docs/PARITY_LEDGER.md`.
 
 ---
 

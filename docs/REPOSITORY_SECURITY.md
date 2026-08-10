@@ -10,6 +10,29 @@ The repository contains policy and automation, but several protections are GitHu
 - Dependency Review rejects newly introduced moderate-or-higher vulnerable dependencies; Dependabot checks Gradle and Actions weekly while keeping major upgrades isolated for review.
 - Gradle dependency verification pins artifact and metadata SHA-256 checksums, including release-SBOM tooling; unexpected repository bytes fail the build.
 - Gitleaks scans for committed credentials, OpenSSF Scorecard reports supply-chain posture, and Gradle dependency submission keeps GitHub's dependency graph complete.
+
+### How the secret gate behaves, and one consequence worth knowing
+
+`secret-scan.yml` runs `gitleaks git` over the **full history**, deliberately: the action's
+push-event default narrows `--log-opts` to the pushed range, which is not a complete-history gate.
+Two consequences follow, and both caused a five-day CI outage in August 2026 before they were
+understood:
+
+- **A finding is permanent until suppressed.** Removing a secret from the working tree silences
+  future commits and never past ones. `.gitleaksignore` entries are commit-pinned fingerprints, so
+  the fix and the suppression are separate acts — remove the cause first, then baseline the history.
+- **Every branch sees every other branch.** `actions/checkout` with `fetch-depth: 0` fetches all
+  refs, so a finding introduced on any branch is reported by scans running on all of them. A branch
+  can be red for a secret that has never existed in its own history.
+
+Because CodeQL runs after the secret scan, a failure there also silently withholds the CodeQL,
+release-gate and Room-migration results. A red secret scan should be read as "no security scanning
+ran at all", not as one failing check.
+
+**Test key material must be generated, never committed.** `flutter_app/test/support/ed25519_fixture.dart`
+generates a throwaway Ed25519 keypair per run and serialises it in OpenSSH's container format;
+`pemBegin`/`pemEnd` assemble PEM banners at runtime for tests that only assert on how a banner is
+classified. Both exist so that no secret-shaped literal enters history in the first place.
 - Release APK/AAB/SBOM artifacts receive GitHub build-provenance attestations; each release includes a CycloneDX JSON SBOM and checksums.
 - Release tags and entries are treated as immutable. GitHub Releases stay drafts until Play accepts the AAB.
 - `SECURITY.md`, CODEOWNERS, contribution guidance, and issue/PR templates define the disclosure and review path.

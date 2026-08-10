@@ -1,6 +1,6 @@
 # Kotlin → Flutter parity ledger
 
-Started 2026-08-09. Companion to `CLAUDE_HANDOFF_2026-08-09.md` (priority 1: "build a screen/subtab/
+Started 2026-08-09. Companion to `HANDOVER.md` (priority 1: "build a screen/subtab/
 action/state ledger directly from Kotlin code and compare it to Flutter").
 
 This file records what was **verified against code**, not what a checklist claims. Every "closed" row
