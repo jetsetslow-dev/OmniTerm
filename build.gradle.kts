@@ -62,8 +62,20 @@ allprojects {
           useVersion("4.1.135.Final")
           because("align the Netty family to the patched security baseline")
         }
+        // bcprov diverges from its siblings on purpose: 1.85.2 is a security patch that exists
+        // only for bcprov (bcpkix and bcutil have no 1.85.2 on Maven Central, verified 2026-08-11).
+        // It fixes an AES-256/CBC cipher obtained via the id_aes256_CBC OID silently deriving a
+        // 192-bit key from a password-based key -- an unannounced downgrade to AES-192.
+        //
+        // This rule is why the version catalog alone is not enough: a bump there is inert while
+        // `useVersion` pins the resolved version, so the two must be changed together or the app
+        // ships the old artifact while libs.versions.toml claims otherwise.
+        requested.group == "org.bouncycastle" && requested.name == "bcprov-jdk18on" -> {
+          useVersion("1.85.2")
+          because("AES-256/CBC via the id_aes256_CBC OID derived a 192-bit key before 1.85.2")
+        }
         requested.group == "org.bouncycastle" && requested.name in setOf(
-          "bcprov-jdk18on", "bcpkix-jdk18on", "bcutil-jdk18on"
+          "bcpkix-jdk18on", "bcutil-jdk18on"
         ) -> {
           useVersion("1.85")
           because("align Bouncy Castle runtime and Android build tooling to patched releases")
