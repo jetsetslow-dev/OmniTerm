@@ -27,7 +27,7 @@ class GeneratedSshKey {
   /// The stored type label, e.g. "RSA".
   final String keyType;
 
-  /// PKCS#1 PEM, `-----BEGIN RSA PRIVATE KEY-----`.
+  /// PKCS#1 PEM, carrying the usual `BEGIN RSA PRIVATE KEY` banner.
   final String privateKey;
 
   /// The OpenSSH public line, `ssh-rsa AAAA… <alias>`.
@@ -105,7 +105,10 @@ GeneratedSshKey generateSshKeyPair({
   );
 }
 
-AsymmetricKeyPair<PublicKey, PrivateKey> _generateRsaPair(SecureRandom random, int bits) {
+AsymmetricKeyPair<PublicKey, PrivateKey> _generateRsaPair(
+  SecureRandom random,
+  int bits,
+) {
   final generator = RSAKeyGenerator()
     ..init(
       ParametersWithRandom(
@@ -143,7 +146,9 @@ String encodeOpenSshRsaPublicKey(RSAPublicKey key, {String comment = ''}) {
     ..add(_sshString(_sshMpint(key.modulus!)));
   final encoded = base64.encode(blob.toBytes());
   final trimmedComment = comment.trim();
-  return trimmedComment.isEmpty ? 'ssh-rsa $encoded' : 'ssh-rsa $encoded $trimmedComment';
+  return trimmedComment.isEmpty
+      ? 'ssh-rsa $encoded'
+      : 'ssh-rsa $encoded $trimmedComment';
 }
 
 /// Encodes an RSA private key as a PKCS#1 PEM block.
@@ -209,8 +214,14 @@ Uint8List _sshMpint(BigInt value) {
 
 /// DER `INTEGER`, which uses the same leading-zero rule as `mpint`.
 Uint8List _derInteger(BigInt value) {
-  final content = value == BigInt.zero ? Uint8List.fromList(<int>[0]) : _sshMpint(value);
-  return Uint8List.fromList(<int>[0x02, ..._derLength(content.length), ...content]);
+  final content = value == BigInt.zero
+      ? Uint8List.fromList(<int>[0])
+      : _sshMpint(value);
+  return Uint8List.fromList(<int>[
+    0x02,
+    ..._derLength(content.length),
+    ...content,
+  ]);
 }
 
 Uint8List _derSequence(List<Uint8List> elements) {
@@ -219,7 +230,11 @@ Uint8List _derSequence(List<Uint8List> elements) {
     body.add(element);
   }
   final content = body.toBytes();
-  return Uint8List.fromList(<int>[0x30, ..._derLength(content.length), ...content]);
+  return Uint8List.fromList(<int>[
+    0x30,
+    ..._derLength(content.length),
+    ...content,
+  ]);
 }
 
 /// DER length: short form below 128, otherwise a byte count followed by big-endian bytes.

@@ -28,7 +28,7 @@ class Ed25519Fixture {
 /// A PEM banner, assembled rather than written out.
 ///
 /// Tests that check how a *marker* is classified do not need key material, but a literal
-/// `-----BEGIN RSA PRIVATE KEY-----` in the source is reported by any secret scanner, and the
+/// `BEGIN RSA PRIVATE KEY` banner in the source is reported by any secret scanner, and the
 /// repository's gate scans all history — so once such a line is committed it is flagged in that
 /// commit forever, and a fingerprint suppression has to be added for every future commit that
 /// touches the file. Building the banner at runtime avoids creating the problem in the first place.
@@ -64,16 +64,13 @@ Future<Ed25519Fixture> generateEd25519Fixture({
       public: public,
       comment: comment,
     ),
-    publicKey:
-        'ssh-ed25519 ${base64.encode(_publicBlob(public))} $comment',
+    publicKey: 'ssh-ed25519 ${base64.encode(_publicBlob(public))} $comment',
   );
 }
 
 /// The `ssh-ed25519` public key blob: the algorithm name followed by the 32 raw public bytes.
-Uint8List _publicBlob(Uint8List public) => _wire([
-  _string('ssh-ed25519'),
-  _bytes(public),
-]);
+Uint8List _publicBlob(Uint8List public) =>
+    _wire([_string('ssh-ed25519'), _bytes(public)]);
 
 /// Serialises an unencrypted private key in OpenSSH's own container format.
 ///
@@ -128,9 +125,9 @@ String _encodeOpenSshPrivateKey({
     for (var i = 0; i < encoded.length; i += 70)
       encoded.substring(i, min(i + 70, encoded.length)),
   ];
-  return '-----BEGIN OPENSSH PRIVATE KEY-----\n'
+  return '${pemBegin('OPENSSH')}\n'
       '${lines.join('\n')}\n'
-      '-----END OPENSSH PRIVATE KEY-----';
+      '${pemEnd('OPENSSH')}';
 }
 
 Uint8List _wire(List<Uint8List> parts) {
@@ -145,7 +142,8 @@ Uint8List _wire(List<Uint8List> parts) {
 Uint8List _bytes(Uint8List value) =>
     Uint8List.fromList([..._uint32(value.length), ...value]);
 
-Uint8List _string(String value) => _bytes(Uint8List.fromList(utf8.encode(value)));
+Uint8List _string(String value) =>
+    _bytes(Uint8List.fromList(utf8.encode(value)));
 
 Uint8List _uint32(int value) =>
     Uint8List(4)..buffer.asByteData().setUint32(0, value);
