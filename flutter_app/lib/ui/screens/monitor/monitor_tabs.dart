@@ -67,14 +67,8 @@ class _RefreshCountdownState extends State<_RefreshCountdown> {
       padding: const EdgeInsets.only(bottom: 6),
       child: Text(
         [
-          if (age == null)
-            'Waiting for the first sample'
-          else
-            'Sampled ${_ago(age)}',
-          if (!remaining.isNegative)
-            'next in ${remaining.inSeconds + 1}s'
-          else
-            'refreshing…',
+          if (age == null) 'Waiting for the first sample' else 'Sampled ${_ago(age)}',
+          if (!remaining.isNegative) 'next in ${remaining.inSeconds + 1}s' else 'refreshing…',
         ].join(' · '),
         style: TextStyle(
           fontSize: 10,
@@ -110,9 +104,7 @@ class _OverviewTabState extends State<OverviewTab> {
     super.initState();
     // The tab is built before its first frame, so the fetch is deferred rather than run during
     // build — notifying listeners mid-build throws.
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => widget.vm.loadHostMetrics(),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => widget.vm.loadHostMetrics());
   }
 
   @override
@@ -120,10 +112,7 @@ class _OverviewTabState extends State<OverviewTab> {
     final vm = widget.vm;
     final m = vm.metrics;
     final scheme = Theme.of(context).colorScheme;
-    final accent = OmniColors.serverAccent(
-      widget.server.serverColor,
-      widget.server.name,
-    );
+    final accent = OmniColors.serverAccent(widget.server.serverColor, widget.server.name);
 
     return ListView(
       key: const ValueKey('monitor.overview'),
@@ -144,10 +133,7 @@ class _OverviewTabState extends State<OverviewTab> {
                       _CardLabel(text: 'CPU UTILISATION'),
                       Text(
                         'Load: ${m.load1} · ${m.load5} · ${m.load15}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: scheme.onSurfaceVariant,
-                        ),
+                        style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                       ),
                       if (m.cpuTempC != null)
                         Text(
@@ -158,9 +144,7 @@ class _OverviewTabState extends State<OverviewTab> {
                             fontSize: 12,
                             // A hot CPU is the one number here worth colouring — it predicts
                             // throttling and hardware failure, not just load.
-                            color: m.cpuTempC! >= 80
-                                ? OmniColors.red
-                                : scheme.onSurfaceVariant,
+                            color: m.cpuTempC! >= 80 ? OmniColors.red : scheme.onSurfaceVariant,
                           ),
                         ),
                     ],
@@ -215,10 +199,7 @@ class _OverviewTabState extends State<OverviewTab> {
                           child: Text(
                             '${v.round()}%',
                             textAlign: TextAlign.end,
-                            style: const TextStyle(
-                              fontSize: 10,
-                              fontFamily: OmniFonts.mono,
-                            ),
+                            style: const TextStyle(fontSize: 10, fontFamily: OmniFonts.mono),
                           ),
                         ),
                       ],
@@ -263,10 +244,7 @@ class _OverviewTabState extends State<OverviewTab> {
           child: Row(
             children: [
               Expanded(
-                child: OmniStatBox(
-                  value: formatUptime(m.uptimeSeconds),
-                  label: 'Uptime',
-                ),
+                child: OmniStatBox(value: formatUptime(m.uptimeSeconds), label: 'Uptime'),
               ),
               Expanded(
                 child: OmniStatBox(value: '${m.procCount}', label: 'Procs'),
@@ -305,18 +283,14 @@ class _RetainedHistoryCardState extends State<_RetainedHistoryCard> {
   void initState() {
     super.initState();
     // Deferred: the query notifies listeners, and doing that during build throws.
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => widget.vm.loadHourlySeries(),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => widget.vm.loadHourlySeries());
   }
 
   @override
   void didUpdateWidget(_RetainedHistoryCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     // Picks up a change of monitored host; the load itself is a no-op when the host is unchanged.
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => widget.vm.loadHourlySeries(),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => widget.vm.loadHourlySeries());
   }
 
   @override
@@ -326,8 +300,7 @@ class _RetainedHistoryCardState extends State<_RetainedHistoryCard> {
 
     final system = widget.vm.measurementSystem;
     final temperatures = [
-      for (final point in series.temperature)
-        celsiusToDisplay(point.value, system),
+      for (final point in series.temperature) celsiusToDisplay(point.value, system),
     ];
 
     return Padding(
@@ -361,9 +334,7 @@ class _RetainedHistoryCardState extends State<_RetainedHistoryCard> {
               MetricLineChart(
                 key: const ValueKey('monitor.overview.hourlyTemp'),
                 points: temperatures,
-                timestamps: [
-                  for (final point in series.temperature) point.timestamp,
-                ],
+                timestamps: [for (final point in series.temperature) point.timestamp],
                 color: OmniColors.red,
                 label: 'Temperature (hourly avg)',
                 unit: temperatureUnit(system),
@@ -427,10 +398,7 @@ class _DiskCard extends StatelessWidget {
             ],
           ),
           if (mounts.isEmpty)
-            Text(
-              '—',
-              style: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant),
-            )
+            Text('—', style: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant))
           else
             for (final disk in mounts)
               Padding(
@@ -445,18 +413,12 @@ class _DiskCard extends StatelessWidget {
                           child: Text(
                             disk.mount,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontFamily: OmniFonts.mono,
-                            ),
+                            style: const TextStyle(fontSize: 12, fontFamily: OmniFonts.mono),
                           ),
                         ),
                         Text(
                           '${formatBytes(disk.usedBytes)} / ${formatBytes(disk.totalBytes)}',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: scheme.onSurfaceVariant,
-                          ),
+                          style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
                         ),
                       ],
                     ),
@@ -464,9 +426,7 @@ class _DiskCard extends StatelessWidget {
                     GaugeBar(
                       value: disk.percent,
                       // A nearly full filesystem is the failure this card exists to warn about.
-                      color: disk.percent >= 90
-                          ? OmniColors.red
-                          : OmniColors.cyan,
+                      color: disk.percent >= 90 ? OmniColors.red : OmniColors.cyan,
                       height: 5,
                     ),
                   ],
@@ -527,9 +487,7 @@ class _ProcessesTabState extends State<ProcessesTab> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => widget.vm.loadProcesses(),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => widget.vm.loadProcesses());
   }
 
   @override
@@ -588,10 +546,7 @@ class _ProcessesTabState extends State<ProcessesTab> {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         ),
                         SizedBox(height: 10),
-                        Text(
-                          'Reading the process list…',
-                          style: TextStyle(fontSize: 12),
-                        ),
+                        Text('Reading the process list…', style: TextStyle(fontSize: 12)),
                       ],
                     )
                   : Text(
@@ -602,10 +557,7 @@ class _ProcessesTabState extends State<ProcessesTab> {
                       'command, or its output was not understood.',
                       key: const ValueKey('monitor.processes.empty'),
                       textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: scheme.onSurfaceVariant,
-                      ),
+                      style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                     ),
             ),
           )
@@ -639,19 +591,13 @@ class _ProcessesTabState extends State<ProcessesTab> {
                           ),
                           Text(
                             '${proc.cpu.toStringAsFixed(1)}%  ${proc.mem.toStringAsFixed(1)}%',
-                            style: const TextStyle(
-                              fontFamily: OmniFonts.mono,
-                              fontSize: 12,
-                            ),
+                            style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 12),
                           ),
                         ],
                       ),
                       Text(
                         'pid ${proc.pid} · ${proc.owner} · ${proc.state}',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: scheme.onSurfaceVariant,
-                        ),
+                        style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
                       ),
                       if (expanded) ...[
                         const SizedBox(height: 8),
@@ -660,19 +606,20 @@ class _ProcessesTabState extends State<ProcessesTab> {
                             Expanded(
                               child: Text(
                                 'vms ${proc.vms} · up ${proc.uptime}',
-                                style: TextStyle(
-                                  fontSize: 11,
-                                  color: scheme.onSurfaceVariant,
-                                ),
+                                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
                               ),
                             ),
                             TextButton(
                               key: ValueKey('monitor.process.${proc.pid}.kill'),
-                              onPressed: () => _confirmKill(context, vm, proc),
-                              child: const Text(
-                                'Kill',
-                                style: TextStyle(color: OmniColors.red),
-                              ),
+                              onPressed: () => _confirmKill(context, vm, proc, force: false),
+                              child: const Text('Kill', style: TextStyle(color: OmniColors.red)),
+                            ),
+                            // SIGTERM is exactly the signal a wedged process ignores, so an app
+                            // that only sends it cannot end the one case you reach for it.
+                            TextButton(
+                              key: ValueKey('monitor.process.${proc.pid}.forceKill'),
+                              onPressed: () => _confirmKill(context, vm, proc, force: true),
+                              child: const Text('Force', style: TextStyle(color: OmniColors.red)),
                             ),
                           ],
                         ),
@@ -687,19 +634,34 @@ class _ProcessesTabState extends State<ProcessesTab> {
     );
   }
 
+  /// Confirms, then signals [proc].
+  ///
+  /// [force] selects SIGKILL over SIGTERM. Kotlin offers both as separate actions with separate
+  /// prompts (`ui/MonitorScreen.kt:920` and `:934`); the port wired only the graceful one, leaving
+  /// `killProcess`'s `signal` parameter with no caller that ever changed it.
+  ///
+  /// They are deliberately not one dialog with a checkbox: the two differ in whether the process
+  /// gets to save anything, which is a choice to make before confirming, not while confirming.
   Future<void> _confirmKill(
     BuildContext context,
     MonitorViewModel vm,
-    SimProcess proc,
-  ) async {
+    SimProcess proc, {
+    required bool force,
+  }) async {
     // Killing the wrong pid can take a host offline, and the list is sorted live — a row can move
     // under the finger between reading and tapping. So the dialog names what will be killed.
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         key: const ValueKey('monitor.kill.dialog'),
-        title: Text('Kill ${proc.name}?'),
-        content: Text('Sends SIGTERM to pid ${proc.pid} (${proc.owner}).'),
+        title: Text(force ? 'Force kill (SIGKILL)?' : 'Kill ${proc.name}?'),
+        content: Text(
+          force
+              // Kotlin's warning, kept: the consequence is the whole difference between the two.
+              ? 'Forcibly kills pid ${proc.pid} (${proc.name}) with kill -9. '
+                    'Unsaved work in that process is lost.'
+              : 'Sends SIGTERM to pid ${proc.pid} (${proc.owner}).',
+        ),
         actions: [
           TextButton(
             key: const ValueKey('monitor.kill.cancel'),
@@ -709,12 +671,17 @@ class _ProcessesTabState extends State<ProcessesTab> {
           TextButton(
             key: const ValueKey('monitor.kill.confirm'),
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Kill', style: TextStyle(color: OmniColors.red)),
+            child: Text(
+              force ? 'Force kill' : 'Kill',
+              style: const TextStyle(color: OmniColors.red),
+            ),
           ),
         ],
       ),
     );
-    if (confirmed ?? false) await vm.killProcess(proc.pid);
+    if (confirmed ?? false) {
+      await vm.killProcess(proc.pid, signal: force ? 9 : 15);
+    }
   }
 }
 
@@ -732,9 +699,7 @@ class _ServicesTabState extends State<ServicesTab> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback(
-      (_) => widget.vm.loadServices(),
-    );
+    WidgetsBinding.instance.addPostFrameCallback((_) => widget.vm.loadServices());
   }
 
   @override
@@ -799,30 +764,17 @@ class _ServicesTabState extends State<ServicesTab> {
                             Text(
                               svc.desc,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                fontSize: 11,
-                                color: scheme.onSurfaceVariant,
-                              ),
+                              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
                             ),
                         ],
                       ),
                     ),
-                    OmniTag(
-                      label: svc.subState,
-                      color: _subStateColor(svc.subState),
-                    ),
+                    OmniTag(label: svc.subState, color: _subStateColor(svc.subState)),
                     PopupMenuButton<String>(
                       key: ValueKey('monitor.service.${svc.name}.menu'),
-                      onSelected: (action) =>
-                          _runServiceAction(context, vm, svc, action),
+                      onSelected: (action) => _runServiceAction(context, vm, svc, action),
                       itemBuilder: (_) => [
-                        for (final action in [
-                          'start',
-                          'stop',
-                          'restart',
-                          'enable',
-                          'disable',
-                        ])
+                        for (final action in ['start', 'stop', 'restart', 'enable', 'disable'])
                           PopupMenuItem(value: action, child: Text(action)),
                       ],
                     ),
@@ -889,20 +841,14 @@ class _LogsTabState extends State<LogsTab> {
                     for (final filter in MonitorViewModel.logFilters)
                       ChoiceChip(
                         key: ValueKey('monitor.logs.filter.$filter'),
-                        label: Text(
-                          filter,
-                          style: const TextStyle(fontSize: 11),
-                        ),
+                        label: Text(filter, style: const TextStyle(fontSize: 11)),
                         selected: vm.logFilter == filter,
                         onSelected: (_) => vm.logFilter = filter,
                       ),
                   ],
                 ),
               ),
-              Text(
-                'LIVE',
-                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-              ),
+              Text('LIVE', style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
               Switch(
                 key: const ValueKey('monitor.logs.live'),
                 value: vm.logsLive,
@@ -918,9 +864,7 @@ class _LogsTabState extends State<LogsTab> {
             child: lines.isEmpty && !vm.logsLoading
                 ? Center(
                     key: ValueKey(
-                      vm.logsUnsupported
-                          ? 'monitor.logs.unsupported'
-                          : 'monitor.logs.empty',
+                      vm.logsUnsupported ? 'monitor.logs.unsupported' : 'monitor.logs.empty',
                     ),
                     child: Padding(
                       padding: const EdgeInsets.all(24),
@@ -934,10 +878,7 @@ class _LogsTabState extends State<LogsTab> {
                             ? 'No log entries on this host yet.'
                             : 'No ${vm.logFilter} entries. Choose ALL to see everything.',
                         textAlign: TextAlign.center,
-                        style: const TextStyle(
-                          color: Color(0xFF9CA3AF),
-                          fontSize: 12,
-                        ),
+                        style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 12),
                       ),
                     ),
                   )

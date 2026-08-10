@@ -61,4 +61,37 @@ void main() {
       );
     });
   });
+
+  group('terminalSemanticsLabel', () {
+    // Defect 73. The terminal surface is a CustomPaint, so without a label it contributes nothing
+    // to the semantics tree — the app's primary content was unreadable to TalkBack. Kotlin puts a
+    // contentDescription on the same surface (`ui/ShellScreen.kt:2047`).
+
+    test('announces the output, prefixed so the node is identifiable', () {
+      final label = terminalSemanticsLabel([row('uptime'), row('load average: 0.14')]);
+      expect(label, startsWith('Terminal output: '));
+      expect(label, contains('uptime'));
+      expect(label, contains('load average: 0.14'));
+    });
+
+    test('an empty grid is named, not left blank', () {
+      // A blank label makes the surface an *unlabelled* node rather than an empty one, which reads
+      // as a bug to a screen-reader user rather than as an idle terminal.
+      expect(terminalSemanticsLabel([]), 'Terminal output: empty');
+    });
+
+    test('long output is capped, keeping the newest', () {
+      // The label is re-announced whenever it changes, so an uncapped terminal would read its whole
+      // grid on every arriving character. Kotlin caps at the same 2000.
+      final rows = [for (var i = 0; i < 500; i++) row('line $i padded out to some width')];
+      final label = terminalSemanticsLabel(rows);
+
+      expect(
+        label.length,
+        lessThanOrEqualTo(terminalSemanticsMaxChars + 'Terminal output: '.length),
+      );
+      expect(label, contains('line 499'), reason: 'the newest output is what is being read');
+      expect(label, isNot(contains('line 0 ')), reason: 'the oldest is what gets dropped');
+    });
+  });
 }

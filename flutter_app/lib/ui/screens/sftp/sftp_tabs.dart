@@ -40,10 +40,7 @@ class _SftpBookmarksTabState extends State<SftpBookmarksTab> {
     });
   }
 
-  Future<void> _edit({
-    EndpointBookmark? prefill,
-    EndpointBookmark? replacing,
-  }) async {
+  Future<void> _edit({EndpointBookmark? prefill, EndpointBookmark? replacing}) async {
     final vm = widget.vm;
     final result = await showDialog<_BookmarkDraft>(
       context: context,
@@ -127,10 +124,7 @@ class _SftpBookmarksTabState extends State<SftpBookmarksTab> {
                   child: Text(
                     'No bookmarks yet — star a folder while browsing, or add one here.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: scheme.onSurfaceVariant,
-                      fontSize: 12,
-                    ),
+                    style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
                   ),
                 )
               : ListView.separated(
@@ -157,9 +151,7 @@ class _BookmarkRow extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final vm = tab.widget.vm;
     final available = vm.bookmarkIsAvailable(bookmark);
-    final key = bookmark.isShare
-        ? 'share:${bookmark.shareId}'
-        : 'host:${bookmark.serverId}';
+    final key = bookmark.isShare ? 'share:${bookmark.shareId}' : 'host:${bookmark.serverId}';
 
     return Opacity(
       // Dimmed rather than hidden: a bookmark on an offline host is still worth seeing, and
@@ -192,15 +184,11 @@ class _BookmarkRow extends StatelessWidget {
                   Text(
                     // The endpoint is named on every row because the same path exists on several
                     // machines and opening the wrong one is the mistake this tab invites.
-                    available
-                        ? bookmark.endpointName
-                        : '${bookmark.endpointName} · offline',
+                    available ? bookmark.endpointName : '${bookmark.endpointName} · offline',
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 11,
-                      color: bookmark.isShare
-                          ? OmniColors.purple
-                          : OmniColors.cyan,
+                      color: bookmark.isShare ? OmniColors.purple : OmniColors.cyan,
                     ),
                   ),
                 ],
@@ -263,9 +251,7 @@ class _BookmarkEditorDialog extends StatefulWidget {
 }
 
 class _BookmarkEditorDialogState extends State<_BookmarkEditorDialog> {
-  late final TextEditingController _path = TextEditingController(
-    text: widget.prefill?.path ?? '',
-  );
+  late final TextEditingController _path = TextEditingController(text: widget.prefill?.path ?? '');
   late int? _serverId = widget.prefill?.serverId;
   late int? _shareId = widget.prefill?.shareId;
 
@@ -293,8 +279,7 @@ class _BookmarkEditorDialogState extends State<_BookmarkEditorDialog> {
     return 'Select server or share…';
   }
 
-  bool get _canSave =>
-      (_serverId != null || _shareId != null) && _path.text.trim().isNotEmpty;
+  bool get _canSave => (_serverId != null || _shareId != null) && _path.text.trim().isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
@@ -339,9 +324,7 @@ class _BookmarkEditorDialogState extends State<_BookmarkEditorDialog> {
                     children: [
                       const Icon(Icons.lan, size: 16),
                       const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(SftpViewModel.shareEndpointLabel(share)),
-                      ),
+                      Expanded(child: Text(SftpViewModel.shareEndpointLabel(share))),
                     ],
                   ),
                 ),
@@ -355,12 +338,7 @@ class _BookmarkEditorDialogState extends State<_BookmarkEditorDialog> {
                 children: [
                   Icon(_shareId != null ? Icons.lan : Icons.dns, size: 16),
                   const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      _endpointLabel,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
+                  Expanded(child: Text(_endpointLabel, overflow: TextOverflow.ellipsis)),
                 ],
               ),
             ),
@@ -370,29 +348,19 @@ class _BookmarkEditorDialogState extends State<_BookmarkEditorDialog> {
             key: const ValueKey('sftp.bookmark.editor.path'),
             controller: _path,
             autofocus: true,
-            decoration: const InputDecoration(
-              labelText: 'Path',
-              border: OutlineInputBorder(),
-            ),
+            decoration: const InputDecoration(labelText: 'Path', border: OutlineInputBorder()),
             style: const TextStyle(fontFamily: OmniFonts.mono),
             onChanged: (_) => setState(() {}),
           ),
         ],
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
+        TextButton(onPressed: () => Navigator.of(context).pop(), child: const Text('Cancel')),
         FilledButton(
           key: const ValueKey('sftp.bookmark.editor.save'),
           onPressed: _canSave
               ? () => Navigator.of(context).pop(
-                  _BookmarkDraft(
-                    serverId: _serverId,
-                    shareId: _shareId,
-                    path: _path.text.trim(),
-                  ),
+                  _BookmarkDraft(serverId: _serverId, shareId: _shareId, path: _path.text.trim()),
                 )
               : null,
           child: const Text('Save'),
@@ -426,13 +394,9 @@ class SftpFilesTab extends StatelessWidget {
               leftAccent: OmniColors.green,
               child: Row(
                 children: [
-                  Expanded(
-                    child: Text(
-                      vm.status!,
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ),
+                  Expanded(child: Text(vm.status!, style: const TextStyle(fontSize: 12))),
                   IconButton(
+                    tooltip: 'Dismiss',
                     key: const ValueKey('sftp.status.dismiss'),
                     icon: const Icon(Icons.close, size: 16),
                     onPressed: vm.dismissStatus,
@@ -450,10 +414,7 @@ class SftpFilesTab extends StatelessWidget {
               child: SelectionArea(
                 child: Text(
                   vm.error!,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontFamily: OmniFonts.mono,
-                  ),
+                  style: const TextStyle(fontSize: 11, fontFamily: OmniFonts.mono),
                 ),
               ),
             ),
@@ -480,10 +441,7 @@ class SftpFilesTab extends StatelessWidget {
                           : vm.searchText.trim().isNotEmpty
                           ? 'Nothing matches your search'
                           : 'This directory is empty',
-                      style: TextStyle(
-                        color: scheme.onSurfaceVariant,
-                        fontSize: 12,
-                      ),
+                      style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
                     ),
                   )
                 : ListView.separated(
@@ -565,11 +523,7 @@ class _BreadcrumbsState extends State<_Breadcrumbs> {
           style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13),
           decoration: InputDecoration(
             isDense: true,
-            prefixIcon: const Icon(
-              Icons.folder_open,
-              size: 16,
-              color: OmniColors.amber,
-            ),
+            prefixIcon: const Icon(Icons.folder_open, size: 16, color: OmniColors.amber),
             prefixIconConstraints: const BoxConstraints(minWidth: 30),
             border: const OutlineInputBorder(),
             contentPadding: const EdgeInsets.symmetric(vertical: 8),
@@ -646,12 +600,8 @@ class _BreadcrumbsState extends State<_Breadcrumbs> {
                       style: TextStyle(
                         fontSize: 12,
                         fontFamily: OmniFonts.mono,
-                        fontWeight: isCurrent
-                            ? FontWeight.bold
-                            : FontWeight.normal,
-                        color: isCurrent
-                            ? scheme.onSurface
-                            : scheme.onSurfaceVariant,
+                        fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+                        color: isCurrent ? scheme.onSurface : scheme.onSurfaceVariant,
                       ),
                     ),
                   ),
@@ -669,9 +619,7 @@ class _BreadcrumbsState extends State<_Breadcrumbs> {
           ),
           IconButton(
             key: const ValueKey('sftp.bookmarkToggle'),
-            tooltip: vm.isBookmarked(vm.path)
-                ? 'Remove bookmark'
-                : 'Bookmark this folder',
+            tooltip: vm.isBookmarked(vm.path) ? 'Remove bookmark' : 'Bookmark this folder',
             padding: EdgeInsets.zero,
             constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
             icon: Icon(
@@ -679,9 +627,7 @@ class _BreadcrumbsState extends State<_Breadcrumbs> {
               size: 16,
               color: vm.isBookmarked(vm.path) ? OmniColors.amber : null,
             ),
-            onPressed: vm.path.isEmpty
-                ? null
-                : () => vm.toggleBookmark(vm.path),
+            onPressed: vm.path.isEmpty ? null : () => vm.toggleBookmark(vm.path),
           ),
         ],
       ),
@@ -699,9 +645,7 @@ class _Toolbar extends StatefulWidget {
 }
 
 class _ToolbarState extends State<_Toolbar> {
-  late final TextEditingController _search = TextEditingController(
-    text: widget.vm.searchText,
-  );
+  late final TextEditingController _search = TextEditingController(text: widget.vm.searchText);
 
   @override
   void dispose() {
@@ -738,11 +682,7 @@ class _ToolbarState extends State<_Toolbar> {
           IconButton(
             key: const ValueKey('sftp.searchHost'),
             tooltip: 'Search this host',
-            icon: const Icon(
-              Icons.travel_explore,
-              size: 18,
-              color: OmniColors.cyan,
-            ),
+            icon: const Icon(Icons.travel_explore, size: 18, color: OmniColors.cyan),
             onPressed: vm.isSearching || _search.text.trim().isEmpty
                 ? null
                 : () => vm.searchHost(_search.text),
@@ -757,9 +697,7 @@ class _ToolbarState extends State<_Toolbar> {
         if (vm.canUseSudo)
           IconButton(
             key: const ValueKey('sftp.sudo'),
-            tooltip: vm.sudoMode
-                ? 'Reading and writing as root'
-                : 'Read and write as root',
+            tooltip: vm.sudoMode ? 'Reading and writing as root' : 'Read and write as root',
             icon: Icon(
               vm.sudoMode ? Icons.shield : Icons.shield_outlined,
               size: 18,
@@ -767,8 +705,7 @@ class _ToolbarState extends State<_Toolbar> {
               // someone else's machine.
               color: vm.sudoMode ? OmniColors.red : null,
             ),
-            onPressed: () =>
-                vm.sudoMode ? vm.sudoMode = false : _confirmSudo(context, vm),
+            onPressed: () => vm.sudoMode ? vm.sudoMode = false : _confirmSudo(context, vm),
           ),
         IconButton(
           key: const ValueKey('sftp.toggleHidden'),
@@ -786,9 +723,7 @@ class _ToolbarState extends State<_Toolbar> {
           icon: Icon(
             Icons.sort,
             size: 18,
-            color: vm.sortOption != SftpSortOption.nameAsc
-                ? OmniColors.cyan
-                : null,
+            color: vm.sortOption != SftpSortOption.nameAsc ? OmniColors.cyan : null,
           ),
           onSelected: (option) => vm.sortOption = option,
           itemBuilder: (_) => [
@@ -835,13 +770,8 @@ class _ToolbarState extends State<_Toolbar> {
           PopupMenuButton<String>(
             key: const ValueKey('sftp.clipboard.stage'),
             tooltip: 'Copy or move selected',
-            icon: const Icon(
-              Icons.content_copy,
-              size: 18,
-              color: OmniColors.cyan,
-            ),
-            onSelected: (action) =>
-                _stageClipboard(context, vm, move: action == 'move'),
+            icon: const Icon(Icons.content_copy, size: 18, color: OmniColors.cyan),
+            onSelected: (action) => _stageClipboard(context, vm, move: action == 'move'),
             itemBuilder: (_) => const [
               PopupMenuItem(value: 'copy', child: Text('Copy selected')),
               PopupMenuItem(value: 'move', child: Text('Move selected')),
@@ -851,11 +781,7 @@ class _ToolbarState extends State<_Toolbar> {
           IconButton(
             key: const ValueKey('sftp.clipboard.paste'),
             tooltip: '${vm.clipboardSummary} into this folder',
-            icon: const Icon(
-              Icons.content_paste,
-              size: 18,
-              color: OmniColors.green,
-            ),
+            icon: const Icon(Icons.content_paste, size: 18, color: OmniColors.green),
             onPressed: vm.loading ? null : () => _pasteClipboard(context, vm),
           ),
         if (vm.hasSelection && vm.canArchive)
@@ -866,26 +792,16 @@ class _ToolbarState extends State<_Toolbar> {
             onSelected: (format) => _createArchive(context, vm, format),
             itemBuilder: (_) => const [
               PopupMenuItem(value: 'zip', child: Text('ZIP (.zip)')),
-              PopupMenuItem(
-                value: 'tar.gz',
-                child: Text('Gzipped tar (.tar.gz)'),
-              ),
+              PopupMenuItem(value: 'tar.gz', child: Text('Gzipped tar (.tar.gz)')),
               PopupMenuItem(value: 'tar', child: Text('Tar (.tar)')),
-              PopupMenuItem(
-                value: '7z',
-                child: Text('7-Zip (.7z, needs 7z on host)'),
-              ),
+              PopupMenuItem(value: '7z', child: Text('7-Zip (.7z, needs 7z on host)')),
             ],
           ),
         if (vm.hasSelection)
           IconButton(
             key: const ValueKey('sftp.deleteSelected'),
             tooltip: 'Delete selected',
-            icon: const Icon(
-              Icons.delete_outline,
-              size: 18,
-              color: OmniColors.red,
-            ),
+            icon: const Icon(Icons.delete_outline, size: 18, color: OmniColors.red),
             onPressed: () => _confirmDelete(context, vm, vm.selectedEntries),
           ),
       ],
@@ -893,11 +809,7 @@ class _ToolbarState extends State<_Toolbar> {
   }
 }
 
-Future<void> _stageClipboard(
-  BuildContext context,
-  SftpViewModel vm, {
-  required bool move,
-}) async {
+Future<void> _stageClipboard(BuildContext context, SftpViewModel vm, {required bool move}) async {
   if (vm.selectedTransferNeedsWarning) {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1046,9 +958,7 @@ class _PasteConflictDialogState extends State<_PasteConflictDialog> {
                       minimumSize: const Size(0, 32),
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
-                    onPressed: () => setState(
-                      () => widget.vm.setAllPasteConflictActions(action),
-                    ),
+                    onPressed: () => setState(() => widget.vm.setAllPasteConflictActions(action)),
                     child: Text(_actionLabel(action), style: const TextStyle(fontSize: 11)),
                   ),
               ],
@@ -1097,10 +1007,7 @@ class _PasteConflictDialogState extends State<_PasteConflictDialog> {
                         ],
                         selected: {conflict.action},
                         onSelectionChanged: (selection) => setState(
-                          () => widget.vm.setPasteConflictAction(
-                            conflict.name,
-                            selection.first,
-                          ),
+                          () => widget.vm.setPasteConflictAction(conflict.name, selection.first),
                         ),
                       ),
                     ],
@@ -1152,9 +1059,7 @@ class _NameDialog extends StatefulWidget {
 }
 
 class _NameDialogState extends State<_NameDialog> {
-  late final TextEditingController _controller = TextEditingController(
-    text: widget.initial,
-  );
+  late final TextEditingController _controller = TextEditingController(text: widget.initial);
 
   @override
   void dispose() {
@@ -1205,17 +1110,11 @@ Future<void> _promptNewFolder(BuildContext context, SftpViewModel vm) async {
   final failure = await vm.createDirectory(name);
   // The view model validates, so an invalid name never reaches the server; report it here.
   if (failure != null && context.mounted) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(failure)));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(failure)));
   }
 }
 
-Future<void> _confirmDelete(
-  BuildContext context,
-  SftpViewModel vm,
-  List<SftpFile> entries,
-) async {
+Future<void> _confirmDelete(BuildContext context, SftpViewModel vm, List<SftpFile> entries) async {
   if (entries.isEmpty) return;
   final directories = entries.where((e) => e.isDirectory).length;
 
@@ -1223,9 +1122,7 @@ Future<void> _confirmDelete(
     context: context,
     builder: (dialogContext) => AlertDialog(
       key: const ValueKey('sftp.delete.dialog'),
-      title: Text(
-        'Delete ${entries.length} item${entries.length == 1 ? '' : 's'}?',
-      ),
+      title: Text('Delete ${entries.length} item${entries.length == 1 ? '' : 's'}?'),
       content: Text(
         // A directory delete takes everything under it, which is the part users misjudge.
         directories > 0
@@ -1288,9 +1185,7 @@ class _EntryRow extends StatelessWidget {
           Icon(
             entry.isDirectory ? Icons.folder : Icons.insert_drive_file_outlined,
             size: 18,
-            color: entry.isDirectory
-                ? OmniColors.cyan
-                : scheme.onSurfaceVariant,
+            color: entry.isDirectory ? OmniColors.cyan : scheme.onSurfaceVariant,
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -1300,10 +1195,7 @@ class _EntryRow extends StatelessWidget {
                 Text(
                   entry.name,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontFamily: OmniFonts.mono,
-                    fontSize: 13,
-                  ),
+                  style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13),
                 ),
                 Text(
                   [
@@ -1312,10 +1204,7 @@ class _EntryRow extends StatelessWidget {
                     if (!entry.isDirectory) formatBytes(entry.size),
                     if (entry.modDate.isNotEmpty) entry.modDate,
                   ].join(' · '),
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: scheme.onSurfaceVariant,
-                  ),
+                  style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
                 ),
               ],
             ),
@@ -1328,23 +1217,12 @@ class _EntryRow extends StatelessWidget {
               // already shows its real size, and a network share has nothing to ask.
               if (entry.isDirectory && vm.canMeasureSize)
                 const PopupMenuItem(value: 'size', child: Text('Measure size')),
-              if (!entry.isDirectory &&
-                  vm.canArchive &&
-                  SftpViewModel.isArchiveFile(entry.name))
-                const PopupMenuItem(
-                  value: 'extract',
-                  child: Text('Extract here'),
-                ),
+              if (!entry.isDirectory && vm.canArchive && SftpViewModel.isArchiveFile(entry.name))
+                const PopupMenuItem(value: 'extract', child: Text('Extract here')),
               if (vm.canArchive)
-                const PopupMenuItem(
-                  value: 'compress',
-                  child: Text('Compress to tar.gz'),
-                ),
+                const PopupMenuItem(value: 'compress', child: Text('Compress to tar.gz')),
               if (!entry.isDirectory)
-                const PopupMenuItem(
-                  value: 'download',
-                  child: Text('Download to device'),
-                ),
+                const PopupMenuItem(value: 'download', child: Text('Download to device')),
               const PopupMenuItem(value: 'rename', child: Text('Rename')),
               const PopupMenuItem(value: 'delete', child: Text('Delete')),
             ],
@@ -1501,8 +1379,7 @@ Future<void> _createArchive(
   SftpFile? only,
 }) async {
   final target = vm.plannedArchiveName(format, only: only);
-  if (target != null &&
-      vm.visibleEntries.any((entry) => entry.name == target)) {
+  if (target != null && vm.visibleEntries.any((entry) => entry.name == target)) {
     final replace = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -1519,10 +1396,7 @@ Future<void> _createArchive(
           TextButton(
             key: const ValueKey('sftp.archive.replace'),
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text(
-              'Replace',
-              style: TextStyle(color: OmniColors.red),
-            ),
+            child: const Text('Replace', style: TextStyle(color: OmniColors.red)),
           ),
         ],
       ),
@@ -1532,11 +1406,7 @@ Future<void> _createArchive(
   await vm.createArchive(format, only: only);
 }
 
-Future<void> _extractArchive(
-  BuildContext context,
-  SftpViewModel vm,
-  SftpFile entry,
-) async {
+Future<void> _extractArchive(BuildContext context, SftpViewModel vm, SftpFile entry) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
@@ -1562,11 +1432,7 @@ Future<void> _extractArchive(
   if (confirmed == true) await vm.extractArchive(entry);
 }
 
-Future<void> _promptRename(
-  BuildContext context,
-  SftpViewModel vm,
-  SftpFile entry,
-) async {
+Future<void> _promptRename(BuildContext context, SftpViewModel vm, SftpFile entry) async {
   final name = await showDialog<String>(
     context: context,
     builder: (_) => _NameDialog(
@@ -1581,9 +1447,7 @@ Future<void> _promptRename(
 
   final failure = await vm.rename(entry, name);
   if (failure != null && context.mounted) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(failure)));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(failure)));
   }
 }
 
@@ -1655,10 +1519,7 @@ class SftpTransfersTab extends StatelessWidget {
                           child: Text(
                             transfer.name,
                             overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontFamily: OmniFonts.mono,
-                              fontSize: 12,
-                            ),
+                            style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 12),
                           ),
                         ),
                         OmniTag(label: label, color: color),
@@ -1668,20 +1529,14 @@ class SftpTransfersTab extends StatelessWidget {
                       const SizedBox(height: 6),
                       // A null value renders an indeterminate bar — honest when the size is
                       // unknown, rather than a made-up fraction.
-                      LinearProgressIndicator(
-                        value: transfer.progress,
-                        minHeight: 3,
-                      ),
+                      LinearProgressIndicator(value: transfer.progress, minHeight: 3),
                     ],
                     if (transfer.error != null)
                       Padding(
                         padding: const EdgeInsets.only(top: 4),
                         child: Text(
                           transfer.error!,
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: OmniColors.red,
-                          ),
+                          style: const TextStyle(fontSize: 11, color: OmniColors.red),
                         ),
                       ),
                   ],
@@ -1700,11 +1555,7 @@ class SftpTransfersTab extends StatelessWidget {
 /// A dialog rather than a value written into the row: `du` walks the whole tree, so the number is a
 /// point-in-time answer to a question that was asked, not a property of the listing. Putting it in
 /// the row would imply the browser keeps it current.
-Future<void> _measureSize(
-  BuildContext context,
-  SftpViewModel vm,
-  SftpFile entry,
-) async {
+Future<void> _measureSize(BuildContext context, SftpViewModel vm, SftpFile entry) async {
   final size = await vm.folderSize(entry);
   if (!context.mounted) return;
   // A failure has already put its reason on the screen; a second dialog saying nothing useful over
@@ -1769,23 +1620,15 @@ class _SearchResults extends StatelessWidget {
           children: [
             Expanded(
               child: Text(
-                hits.isEmpty
-                    ? 'Nothing found on this host'
-                    : '${hits.length} found',
+                hits.isEmpty ? 'Nothing found on this host' : '${hits.length} found',
                 key: const ValueKey('sftp.search.summary'),
-                style: const TextStyle(
-                  fontWeight: FontWeight.bold,
-                  fontSize: 13,
-                ),
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
               ),
             ),
             TextButton(
               key: const ValueKey('sftp.search.clear'),
               onPressed: vm.clearSearchHits,
-              child: const Text(
-                'Back to folder',
-                style: TextStyle(fontSize: 12),
-              ),
+              child: const Text('Back to folder', style: TextStyle(fontSize: 12)),
             ),
           ],
         ),
@@ -1809,28 +1652,21 @@ class _SearchResults extends StatelessWidget {
               final hit = hits[index];
               return OmniCard(
                 key: ValueKey('sftp.search.hit.$index'),
-                leftAccent: hit.isDirectory
-                    ? OmniColors.cyan
-                    : OmniColors.purple,
+                leftAccent: hit.isDirectory ? OmniColors.cyan : OmniColors.purple,
                 onTap: () => vm.openSearchHit(hit),
                 child: Row(
                   children: [
                     Icon(
                       hit.isDirectory ? Icons.folder : Icons.insert_drive_file,
                       size: 16,
-                      color: hit.isDirectory
-                          ? OmniColors.cyan
-                          : scheme.onSurfaceVariant,
+                      color: hit.isDirectory ? OmniColors.cyan : scheme.onSurfaceVariant,
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         hit.path,
                         overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontFamily: OmniFonts.mono,
-                        ),
+                        style: const TextStyle(fontSize: 12, fontFamily: OmniFonts.mono),
                       ),
                     ),
                   ],
@@ -1870,10 +1706,7 @@ Future<void> _confirmSudo(BuildContext context, SftpViewModel vm) async {
         TextButton(
           key: const ValueKey('sftp.sudo.confirm'),
           onPressed: () => Navigator.of(dialogContext).pop(true),
-          child: const Text(
-            'Authenticate',
-            style: TextStyle(color: OmniColors.red),
-          ),
+          child: const Text('Authenticate', style: TextStyle(color: OmniColors.red)),
         ),
       ],
     ),

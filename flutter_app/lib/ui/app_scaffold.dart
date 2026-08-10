@@ -53,30 +53,15 @@ import 'widgets/omni_components.dart';
 /// Shell shows "Term", SFTP shows "Files" (the screen covers transfers, bookmarks and SMB/FTP/
 /// WebDAV shares now, not just SFTP), and Infra shows "Containers".
 final _navItems = <OmniNavItem<Screen>>[
-  const OmniNavItem(
-    key: Screen.servers,
-    label: 'Servers',
-    icon: Icons.dns,
-    color: OmniColors.cyan,
-  ),
-  const OmniNavItem(
-    key: Screen.fleet,
-    label: 'Fleet',
-    icon: Icons.hub,
-    color: OmniColors.green,
-  ),
+  const OmniNavItem(key: Screen.servers, label: 'Servers', icon: Icons.dns, color: OmniColors.cyan),
+  const OmniNavItem(key: Screen.fleet, label: 'Fleet', icon: Icons.hub, color: OmniColors.green),
   const OmniNavItem(
     key: Screen.monitor,
     label: 'Monitor',
     icon: Icons.speed,
     color: OmniColors.amber,
   ),
-  const OmniNavItem(
-    key: Screen.shell,
-    label: 'Term',
-    icon: Icons.terminal,
-    color: OmniColors.cyan,
-  ),
+  const OmniNavItem(key: Screen.shell, label: 'Term', icon: Icons.terminal, color: OmniColors.cyan),
   const OmniNavItem(
     key: Screen.sftp,
     label: 'Files',
@@ -89,12 +74,7 @@ final _navItems = <OmniNavItem<Screen>>[
     icon: Icons.layers,
     color: OmniColors.purple,
   ),
-  const OmniNavItem(
-    key: Screen.tools,
-    label: 'Tools',
-    icon: Icons.build,
-    color: OmniColors.red,
-  ),
+  const OmniNavItem(key: Screen.tools, label: 'Tools', icon: Icons.build, color: OmniColors.red),
 ];
 
 /// The app's root scaffold, ported from `AppCoreScaffold` in `ui/AppUi.kt`.
@@ -115,8 +95,7 @@ class AppCoreScaffold extends StatelessWidget {
         key == current || (key == Screen.tools && isToolSubScreen(current));
 
     final activeColor =
-        _navItems.where((i) => activeFor(i.key)).firstOrNull?.color ??
-        OmniColors.cyan;
+        _navItems.where((i) => activeFor(i.key)).firstOrNull?.color ?? OmniColors.cyan;
 
     final media = MediaQuery.of(context);
     // A landscape software keyboard can consume over half of the physical display. Keeping both
@@ -144,9 +123,7 @@ class AppCoreScaffold extends StatelessWidget {
           nav.swipeNavigate(forward: v < 0);
         },
         child: RefreshIndicator(
-          onRefresh: () => shell.refreshCurrentScreen(
-            () => _refreshScreen(context, current),
-          ),
+          onRefresh: () => shell.refreshCurrentScreen(() => _refreshScreen(context, current)),
           backgroundColor: Theme.of(context).colorScheme.surface,
           color: Theme.of(context).colorScheme.primary,
           child: body,
@@ -172,9 +149,7 @@ class AppCoreScaffold extends StatelessWidget {
               height: 44,
               child: FloatingActionButton(
                 onPressed: shell.openAlertsPopup,
-                backgroundColor: Theme.of(
-                  context,
-                ).colorScheme.surfaceContainerHighest,
+                backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
                 child: Badge(
                   isLabelVisible: shell.visibleAlertCount > 0,
                   label: Text(shell.visibleAlertCount.clamp(0, 99).toString()),
@@ -189,19 +164,12 @@ class AppCoreScaffold extends StatelessWidget {
             ),
           ),
         if (shell.showAlertsPopup)
-          _AlertsPopup(
-            vm: context.watch<AlertsViewModel>(),
-            onDismiss: shell.closeAlertsPopup,
-          ),
+          _AlertsPopup(vm: context.watch<AlertsViewModel>(), onDismiss: shell.closeAlertsPopup),
         if (shell.showKeepScreenOnWarning) _KeepScreenOnWarning(shell: shell),
         if (context.watch<BatterySaverController>().showDialog)
-          _BatterySaverDialog(
-            controller: context.read<BatterySaverController>(),
-          ),
+          _BatterySaverDialog(controller: context.read<BatterySaverController>()),
         if (shell.hostLimitReconciliationRequired)
-          _HostLimitReconciliationDialog(
-            reason: shell.hostLimitReconciliationReason,
-          ),
+          _HostLimitReconciliationDialog(reason: shell.hostLimitReconciliationReason),
         const _PermissionPromptHost(),
       ],
     );
@@ -272,8 +240,7 @@ class AppCoreScaffold extends StatelessWidget {
                     onAlerts: shell.openAlertsPopup,
                     onToggleKeepScreenOn: shell.requestKeepScreenOnToggle,
                   ),
-                  if (shell.showFreePlanBanner)
-                    _FreePlanBanner(controller: license),
+                  if (shell.showFreePlanBanner) _FreePlanBanner(controller: license),
                 ],
               ),
             ),
@@ -411,18 +378,14 @@ class _LandscapeNav extends StatelessWidget {
             ),
           const Divider(height: 8),
           _LandscapeAction(
-            tooltip: keepScreenOn
-                ? 'Disable keep screen on'
-                : 'Enable keep screen on',
+            tooltip: keepScreenOn ? 'Disable keep screen on' : 'Enable keep screen on',
             label: 'Awake',
             icon: Icons.lightbulb,
             color: keepScreenOn ? OmniColors.amber : scheme.onSurfaceVariant,
             onTap: onToggleKeepScreenOn,
           ),
           _LandscapeAction(
-            tooltip: alertCount > 0
-                ? 'Open alerts, $alertCount active'
-                : 'Open alerts',
+            tooltip: alertCount > 0 ? 'Open alerts, $alertCount active' : 'Open alerts',
             label: 'Alerts',
             icon: Icons.notifications,
             color: alertCount > 0 ? OmniColors.red : scheme.onSurfaceVariant,
@@ -444,11 +407,7 @@ class _LandscapeNav extends StatelessWidget {
 }
 
 class _LandscapeNavItem extends StatelessWidget {
-  const _LandscapeNavItem({
-    required this.item,
-    required this.active,
-    required this.onTap,
-  });
+  const _LandscapeNavItem({required this.item, required this.active, required this.onTap});
 
   final OmniNavItem<Screen> item;
   final bool active;
@@ -456,9 +415,7 @@ class _LandscapeNavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = active
-        ? item.color
-        : Theme.of(context).colorScheme.onSurfaceVariant;
+    final color = active ? item.color : Theme.of(context).colorScheme.onSurfaceVariant;
     return Tooltip(
       message: item.label,
       child: InkWell(
@@ -468,10 +425,7 @@ class _LandscapeNavItem extends StatelessWidget {
           height: 48,
           decoration: BoxDecoration(
             border: Border(
-              left: BorderSide(
-                color: active ? item.color : Colors.transparent,
-                width: 3,
-              ),
+              left: BorderSide(color: active ? item.color : Colors.transparent, width: 3),
             ),
           ),
           child: Column(
@@ -553,12 +507,10 @@ class _HostLimitReconciliationDialog extends StatefulWidget {
   final String reason;
 
   @override
-  State<_HostLimitReconciliationDialog> createState() =>
-      _HostLimitReconciliationDialogState();
+  State<_HostLimitReconciliationDialog> createState() => _HostLimitReconciliationDialogState();
 }
 
-class _HostLimitReconciliationDialogState
-    extends State<_HostLimitReconciliationDialog> {
+class _HostLimitReconciliationDialogState extends State<_HostLimitReconciliationDialog> {
   int? _selectedId;
   bool _busy = false;
 
@@ -588,16 +540,12 @@ class _HostLimitReconciliationDialogState
                     const SizedBox(height: 10),
                     RadioGroup<int>(
                       groupValue: _selectedId,
-                      onChanged: _busy
-                          ? (_) {}
-                          : (value) => setState(() => _selectedId = value),
+                      onChanged: _busy ? (_) {} : (value) => setState(() => _selectedId = value),
                       child: Column(
                         children: [
                           for (final server in servers)
                             RadioListTile<int>(
-                              key: ValueKey(
-                                'license.hostReconciliation.${server.id}',
-                              ),
+                              key: ValueKey('license.hostReconciliation.${server.id}'),
                               value: server.id,
                               enabled: !_busy,
                               title: Text(
@@ -645,9 +593,7 @@ class _HostLimitReconciliationDialogState
         .toSet();
 
     for (final session
-        in shell.sessions
-            .where((session) => removedIds.contains(session.serverId))
-            .toList()) {
+        in shell.sessions.where((session) => removedIds.contains(session.serverId)).toList()) {
       if (session.tmuxName != null) {
         await shell.terminate(session);
       } else {
@@ -655,9 +601,7 @@ class _HostLimitReconciliationDialogState
       }
     }
     for (final tunnel
-        in network.portForwards
-            .where((tunnel) => removedIds.contains(tunnel.serverId))
-            .toList()) {
+        in network.portForwards.where((tunnel) => removedIds.contains(tunnel.serverId)).toList()) {
       await network.deleteTunnel(tunnel);
     }
     for (final id in removedIds) {
@@ -677,8 +621,7 @@ class _PermissionPromptHost extends StatefulWidget {
   State<_PermissionPromptHost> createState() => _PermissionPromptHostState();
 }
 
-class _PermissionPromptHostState extends State<_PermissionPromptHost>
-    with WidgetsBindingObserver {
+class _PermissionPromptHostState extends State<_PermissionPromptHost> with WidgetsBindingObserver {
   bool _checking = false;
   bool _localRequired = false;
   bool _localGranted = true;
@@ -745,17 +688,8 @@ class _PermissionPromptHostState extends State<_PermissionPromptHost>
     final screen = context.watch<NavigationController>().currentScreen;
     final needsLanForContext =
         app.servers.isNotEmpty ||
-        const {
-          Screen.network,
-          Screen.sftp,
-          Screen.fleet,
-          Screen.monitor,
-        }.contains(screen);
-    final needsLocal =
-        _localRequired &&
-        !_localGranted &&
-        needsLanForContext &&
-        !_localDismissed;
+        const {Screen.network, Screen.sftp, Screen.fleet, Screen.monitor}.contains(screen);
+    final needsLocal = _localRequired && !_localGranted && needsLanForContext && !_localDismissed;
     final needsBackground =
         app.preferences.backgroundKeepAlive &&
         shell.sessions.any((session) => session.isOpen) &&
@@ -771,9 +705,7 @@ class _PermissionPromptHostState extends State<_PermissionPromptHost>
               ? AlertDialog(
                   key: const ValueKey('permissions.localNetwork'),
                   title: const Text('Connect to devices on your network'),
-                  content: const Text(
-                    localNetworkPermissionExplanation,
-                  ),
+                  content: const Text(localNetworkPermissionExplanation),
                   actions: [
                     TextButton(
                       onPressed: () => setState(() => _localDismissed = true),
@@ -801,19 +733,15 @@ class _PermissionPromptHostState extends State<_PermissionPromptHost>
                   ),
                   actions: [
                     TextButton(
-                      onPressed: () =>
-                          setState(() => _backgroundDismissed = true),
+                      onPressed: () => setState(() => _backgroundDismissed = true),
                       child: const Text('Not now'),
                     ),
                     FilledButton(
-                      key: const ValueKey(
-                        'permissions.backgroundSessions.grant',
-                      ),
+                      key: const ValueKey('permissions.backgroundSessions.grant'),
                       onPressed: () async {
                         final permissions = context.read<PlatformPermissions>();
                         if (!_notificationGranted) {
-                          final granted = await permissions
-                              .requestNotifications();
+                          final granted = await permissions.requestNotifications();
                           if (!granted) {
                             await permissions.openAppSettings();
                             return;
@@ -900,18 +828,14 @@ class _ScreenBody extends StatelessWidget {
         ),
         Screen.fleet => const FleetScreen(),
         Screen.monitor => const MonitorScreen(),
-        Screen.shell => ShellScreen(
-          licenseController: context.read<LicenseController>(),
-        ),
+        Screen.shell => ShellScreen(licenseController: context.read<LicenseController>()),
         Screen.sftp => const SftpScreen(),
         Screen.infra => const InfraScreen(),
         Screen.tools => const ToolsHubScreen(),
         Screen.alerts => const AlertsScreen(),
         Screen.quickScripts => const ScriptsScreen(),
         Screen.network => const NetworkScreen(),
-        Screen.authKeys => AuthKeysScreen(
-          licenseController: context.read<LicenseController>(),
-        ),
+        Screen.authKeys => AuthKeysScreen(licenseController: context.read<LicenseController>()),
         Screen.backup => const BackupScreen(),
         Screen.healthScoring => const HealthScoringScreen(),
         Screen.settings => const SettingsScreen(),
@@ -944,21 +868,14 @@ class _FreePlanBanner extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(
-                Icons.workspace_premium,
-                size: 18,
-                color: OmniColors.cyan,
-              ),
+              const Icon(Icons.workspace_premium, size: 18, color: OmniColors.cyan),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   state.adsRemoved
                       ? 'Free Play Store build: 1 host & 1 credential'
                       : 'Free, ad-supported build: 1 host & 1 credential',
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                  ),
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
                 ),
               ),
             ],
@@ -975,19 +892,14 @@ class _FreePlanBanner extends StatelessWidget {
               if (!state.adsRemoved)
                 TextButton(
                   key: const ValueKey('license.removeAds'),
-                  onPressed: state.loading
-                      ? null
-                      : controller.launchAdRemovalPurchase,
+                  onPressed: state.loading ? null : controller.launchAdRemovalPurchase,
                   child: Text(
                     state.loading
                         ? 'Checking…'
                         : state.adRemovalPrice == null
                         ? 'Remove ads'
                         : 'Remove ads ${state.adRemovalPrice}',
-                    style: const TextStyle(
-                      fontSize: 11,
-                      color: OmniColors.green,
-                    ),
+                    style: const TextStyle(fontSize: 11, color: OmniColors.green),
                   ),
                 ),
               TextButton(
@@ -1086,9 +998,7 @@ class _AlertsPopupState extends State<_AlertsPopup> {
     final active = widget.vm.activeAlerts
         .where((alert) => !alert.acknowledged && alert.mutedUntil < now)
         .toList();
-    final muted = widget.vm.activeAlerts
-        .where((alert) => alert.mutedUntil >= now)
-        .toList();
+    final muted = widget.vm.activeAlerts.where((alert) => alert.mutedUntil >= now).toList();
     return Positioned.fill(
       child: Material(
         color: Colors.black54,
@@ -1106,11 +1016,7 @@ class _AlertsPopupState extends State<_AlertsPopup> {
                   children: [
                     Row(
                       children: [
-                        const Icon(
-                          Icons.notifications_active,
-                          size: 20,
-                          color: OmniColors.red,
-                        ),
+                        const Icon(Icons.notifications_active, size: 20, color: OmniColors.red),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Column(
@@ -1128,6 +1034,7 @@ class _AlertsPopupState extends State<_AlertsPopup> {
                           ),
                         ),
                         IconButton(
+                          tooltip: 'Dismiss',
                           key: const ValueKey('alerts.popup.close'),
                           onPressed: widget.onDismiss,
                           icon: const Icon(Icons.close),
@@ -1147,20 +1054,14 @@ class _AlertsPopupState extends State<_AlertsPopup> {
                       child: active.isEmpty && muted.isEmpty
                           ? const SizedBox(
                               height: 140,
-                              child: Center(
-                                child: Text('No active alert incidents.'),
-                              ),
+                              child: Center(child: Text('No active alert incidents.')),
                             )
                           : ListView(
                               key: const ValueKey('alerts.popup.list'),
                               shrinkWrap: true,
                               children: [
                                 for (final alert in active)
-                                  _PopupIncident(
-                                    vm: widget.vm,
-                                    alert: alert,
-                                    muted: false,
-                                  ),
+                                  _PopupIncident(vm: widget.vm, alert: alert, muted: false),
                                 if (muted.isNotEmpty)
                                   const Padding(
                                     padding: EdgeInsets.fromLTRB(4, 8, 4, 4),
@@ -1173,11 +1074,7 @@ class _AlertsPopupState extends State<_AlertsPopup> {
                                     ),
                                   ),
                                 for (final alert in muted)
-                                  _PopupIncident(
-                                    vm: widget.vm,
-                                    alert: alert,
-                                    muted: true,
-                                  ),
+                                  _PopupIncident(vm: widget.vm, alert: alert, muted: true),
                               ],
                             ),
                     ),
@@ -1201,11 +1098,7 @@ class _AlertsPopupState extends State<_AlertsPopup> {
 }
 
 class _PopupIncident extends StatelessWidget {
-  const _PopupIncident({
-    required this.vm,
-    required this.alert,
-    required this.muted,
-  });
+  const _PopupIncident({required this.vm, required this.alert, required this.muted});
 
   final AlertsViewModel vm;
   final ActiveAlert alert;
@@ -1215,9 +1108,7 @@ class _PopupIncident extends StatelessWidget {
   Widget build(BuildContext context) => Padding(
     padding: const EdgeInsets.only(bottom: 6),
     child: OmniCard(
-      leftAccent: alert.severity == 'CRITICAL'
-          ? OmniColors.red
-          : OmniColors.amber,
+      leftAccent: alert.severity == 'CRITICAL' ? OmniColors.red : OmniColors.amber,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -1238,9 +1129,8 @@ class _PopupIncident extends StatelessWidget {
                   child: const Text('Acknowledge'),
                 ),
               TextButton(
-                onPressed: () => muted
-                    ? vm.unmute(alert)
-                    : vm.mute(alert, const Duration(hours: 1)),
+                onPressed: () =>
+                    muted ? vm.unmute(alert) : vm.mute(alert, const Duration(hours: 1)),
                 child: Text(muted ? 'Unmute' : 'Mute 1h'),
               ),
             ],

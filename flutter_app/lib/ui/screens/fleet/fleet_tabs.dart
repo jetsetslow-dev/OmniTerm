@@ -46,8 +46,7 @@ class FleetDashboardTab extends StatelessWidget {
         key: const ValueKey('fleet.dashboard.list'),
         itemCount: ordered.length,
         separatorBuilder: (_, _) => const SizedBox(height: 8),
-        itemBuilder: (context, index) =>
-            _HostCard(vm: vm, server: ordered[index]),
+        itemBuilder: (context, index) => _HostCard(vm: vm, server: ordered[index]),
       ),
     );
   }
@@ -89,10 +88,7 @@ class _HostCard extends StatelessWidget {
                     Text(
                       display.name(server),
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 14,
-                      ),
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                     ),
                     Text(
                       display.userAtHost(server),
@@ -118,10 +114,7 @@ class _HostCard extends StatelessWidget {
                     breakdown: vm.healthBreakdownFor(server),
                   ),
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 4,
-                      vertical: 2,
-                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                     child: Text(
                       '${server.healthScore}',
                       key: ValueKey('fleet.host.${server.id}.score'),
@@ -169,9 +162,7 @@ class FleetBroadcastTab extends StatefulWidget {
 }
 
 class _FleetBroadcastTabState extends State<FleetBroadcastTab> {
-  late final TextEditingController _controller = TextEditingController(
-    text: widget.vm.commandText,
-  );
+  late final TextEditingController _controller = TextEditingController(text: widget.vm.commandText);
 
   @override
   void dispose() {
@@ -193,14 +184,8 @@ class _FleetBroadcastTabState extends State<FleetBroadcastTab> {
             SegmentedButton<FleetTargetMode>(
               key: const ValueKey('fleet.targetMode'),
               segments: const [
-                ButtonSegment(
-                  value: FleetTargetMode.servers,
-                  label: Text('Hosts'),
-                ),
-                ButtonSegment(
-                  value: FleetTargetMode.groups,
-                  label: Text('Groups'),
-                ),
+                ButtonSegment(value: FleetTargetMode.servers, label: Text('Hosts')),
+                ButtonSegment(value: FleetTargetMode.groups, label: Text('Groups')),
               ],
               selected: {vm.targetMode},
               onSelectionChanged: (s) => vm.targetMode = s.first,
@@ -235,20 +220,13 @@ class _FleetBroadcastTabState extends State<FleetBroadcastTab> {
                 padding: const EdgeInsets.only(top: 6),
                 child: Row(
                   children: [
-                    const Icon(
-                      Icons.warning_amber,
-                      size: 16,
-                      color: OmniColors.amber,
-                    ),
+                    const Icon(Icons.warning_amber, size: 16, color: OmniColors.amber),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
                         vm.dangerWarning!,
                         key: const ValueKey('fleet.dangerWarning'),
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: OmniColors.amber,
-                        ),
+                        style: const TextStyle(fontSize: 11, color: OmniColors.amber),
                       ),
                     ),
                   ],
@@ -260,10 +238,7 @@ class _FleetBroadcastTabState extends State<FleetBroadcastTab> {
                 Text(
                   '${targets.length} target${targets.length == 1 ? '' : 's'}',
                   key: const ValueKey('fleet.targetCount'),
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: scheme.onSurfaceVariant,
-                  ),
+                  style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                 ),
                 const Spacer(),
                 if (vm.results.isNotEmpty && !vm.executing)
@@ -275,9 +250,7 @@ class _FleetBroadcastTabState extends State<FleetBroadcastTab> {
                 const SizedBox(width: 8),
                 FilledButton.icon(
                   key: const ValueKey('fleet.run'),
-                  onPressed: vm.canRun
-                      ? () => _confirmAndRun(context, vm)
-                      : null,
+                  onPressed: vm.canRun ? () => _confirmAndRun(context, vm) : null,
                   icon: vm.executing
                       ? const SizedBox(
                           width: 14,
@@ -295,10 +268,7 @@ class _FleetBroadcastTabState extends State<FleetBroadcastTab> {
             // with a floor: the results list scrolls internally, and a pane too short to show one row
             // is worse than a form the user has to scroll to.
             SizedBox(
-              height: (constraints.maxHeight * 0.35).clamp(
-                120.0,
-                constraints.maxHeight,
-              ),
+              height: (constraints.maxHeight * 0.35).clamp(120.0, constraints.maxHeight),
               child: vm.results.isEmpty
                   ? Center(
                       key: const ValueKey('fleet.broadcast.idle'),
@@ -306,18 +276,14 @@ class _FleetBroadcastTabState extends State<FleetBroadcastTab> {
                         vm.canBroadcast
                             ? 'Pick targets, type a command, and Run.'
                             : 'Broadcasting is unavailable in this build.',
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant,
-                          fontSize: 12,
-                        ),
+                        style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
                       ),
                     )
                   : ListView.separated(
                       key: const ValueKey('fleet.results'),
                       itemCount: vm.results.length,
                       separatorBuilder: (_, _) => const SizedBox(height: 8),
-                      itemBuilder: (context, index) =>
-                          _ResultCard(result: vm.results[index]),
+                      itemBuilder: (context, index) => _ResultCard(result: vm.results[index]),
                     ),
             ),
           ],
@@ -356,10 +322,7 @@ class _HostTargets extends StatelessWidget {
         key: const ValueKey('fleet.targets.none'),
         child: Text(
           'No online hosts to target',
-          style: TextStyle(
-            fontSize: 12,
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
+          style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
       );
     }
@@ -407,10 +370,7 @@ class _GroupTargets extends StatelessWidget {
         key: const ValueKey('fleet.targets.noGroups'),
         child: Text(
           'No groups among online hosts',
-          style: TextStyle(
-            fontSize: 12,
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
+          style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
       );
     }
@@ -472,10 +432,7 @@ class _ResultCardState extends State<_ResultCard> {
                 child: Text(
                   result.serverName,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                  ),
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                 ),
               ),
               if (result.status == BroadcastStatus.running)
@@ -510,10 +467,7 @@ class _ResultCardState extends State<_ResultCard> {
                 child: SelectionArea(
                   child: Text(
                     body,
-                    style: const TextStyle(
-                      fontSize: 11,
-                      fontFamily: OmniFonts.mono,
-                    ),
+                    style: const TextStyle(fontSize: 11, fontFamily: OmniFonts.mono),
                   ),
                 ),
               ),
@@ -545,10 +499,7 @@ class FleetLogsTab extends StatelessWidget {
               ? Center(
                   child: Text(
                     'No online hosts',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: scheme.onSurfaceVariant,
-                    ),
+                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                   ),
                 )
               : ListView(
@@ -561,10 +512,7 @@ class FleetLogsTab extends StatelessWidget {
                         child: Center(
                           child: FilterChip(
                             key: ValueKey('fleet.logs.host.${server.id}'),
-                            label: Text(
-                              server.name,
-                              style: const TextStyle(fontSize: 11),
-                            ),
+                            label: Text(server.name, style: const TextStyle(fontSize: 11)),
                             selected: vm.logServerIds.contains(server.id),
                             onSelected: (_) => vm.toggleLogServer(server.id),
                           ),
@@ -611,10 +559,7 @@ class FleetLogsTab extends StatelessWidget {
                       vm.logServerIds.isEmpty
                           ? 'Pick hosts, then fetch their logs.'
                           : 'No matching log lines.',
-                      style: const TextStyle(
-                        color: Color(0xFF9CA3AF),
-                        fontSize: 12,
-                      ),
+                      style: const TextStyle(color: Color(0xFF9CA3AF), fontSize: 12),
                     ),
                   )
                 : SelectionArea(
@@ -730,8 +675,7 @@ class _PresetRowState extends State<_PresetRow> {
         : all
               .where(
                 (s) =>
-                    s.name.toLowerCase().contains(query) ||
-                    s.command.toLowerCase().contains(query),
+                    s.name.toLowerCase().contains(query) || s.command.toLowerCase().contains(query),
               )
               .toList();
 
@@ -751,6 +695,7 @@ class _PresetRowState extends State<_PresetRow> {
                 suffixIcon: query.isEmpty
                     ? null
                     : IconButton(
+                        tooltip: 'Clear search',
                         key: const ValueKey('fleet.presets.search.clear'),
                         icon: const Icon(Icons.close, size: 14),
                         onPressed: () => setState(_search.clear),
@@ -768,10 +713,7 @@ class _PresetRowState extends State<_PresetRow> {
               // handled by the early return above.
               'No saved command matches "${_search.text.trim()}".',
               key: const ValueKey('fleet.presets.noMatch'),
-              style: TextStyle(
-                fontSize: 11,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+              style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
           )
         else
@@ -795,15 +737,9 @@ class _PresetRowState extends State<_PresetRow> {
                   key: ValueKey('fleet.preset.${script.id}'),
                   avatar: Text(
                     script.emoji,
-                    style: const TextStyle(
-                      fontSize: 10,
-                      fontFamily: OmniFonts.mono,
-                    ),
+                    style: const TextStyle(fontSize: 10, fontFamily: OmniFonts.mono),
                   ),
-                  label: Text(
-                    script.name,
-                    style: const TextStyle(fontSize: 11),
-                  ),
+                  label: Text(script.name, style: const TextStyle(fontSize: 11)),
                   // Fills the field rather than running immediately: the confirmation dialog is
                   // where a broadcast gets approved, and a preset must not skip it.
                   onPressed: () => widget.onPick(script.command),

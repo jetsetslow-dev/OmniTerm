@@ -13,11 +13,7 @@ import '../theme/typography.dart';
 /// Full-screen and modal: an image is worth the whole screen on a phone, and the browser underneath
 /// would be unusable behind it anyway.
 class ImagePreviewOverlay extends StatelessWidget {
-  const ImagePreviewOverlay({
-    super.key,
-    required this.preview,
-    required this.onClose,
-  });
+  const ImagePreviewOverlay({super.key, required this.preview, required this.onClose});
 
   final RemoteImagePreview preview;
   final VoidCallback onClose;
@@ -50,15 +46,13 @@ class ImagePreviewOverlay extends StatelessWidget {
                       if (preview.sizeBytes > 0)
                         Text(
                           humanBytes(preview.sizeBytes),
-                          style: const TextStyle(
-                            fontSize: 11,
-                            color: OmniColors.textSecondary,
-                          ),
+                          style: const TextStyle(fontSize: 11, color: OmniColors.textSecondary),
                         ),
                     ],
                   ),
                 ),
                 IconButton(
+                  tooltip: 'Close image preview',
                   key: const ValueKey('sftp.imagePreview.close'),
                   icon: const Icon(Icons.close, color: Colors.white),
                   onPressed: onClose,
@@ -99,10 +93,7 @@ class ImagePreviewOverlay extends StatelessWidget {
             child: LinearProgressIndicator(value: preview.progress, minHeight: 3),
           ),
           const SizedBox(height: 10),
-          const Text(
-            'Loading…',
-            style: TextStyle(fontSize: 12, color: OmniColors.textSecondary),
-          ),
+          const Text('Loading…', style: TextStyle(fontSize: 12, color: OmniColors.textSecondary)),
         ],
       );
     }

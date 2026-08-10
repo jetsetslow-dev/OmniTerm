@@ -71,10 +71,7 @@ class _NetworkScreenState extends State<NetworkScreen> {
                   child: Center(
                     child: ChoiceChip(
                       key: ValueKey('network.tab.${tab.name}'),
-                      label: Text(
-                        _labels[tab]!,
-                        style: const TextStyle(fontSize: 12),
-                      ),
+                      label: Text(_labels[tab]!, style: const TextStyle(fontSize: 12)),
                       selected: vm.activeTab == tab,
                       onSelected: (_) => vm.activeTab = tab,
                     ),
@@ -94,13 +91,11 @@ class _NetworkScreenState extends State<NetworkScreen> {
                   Expanded(
                     child: Text(
                       vm.error!,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        color: OmniColors.red,
-                      ),
+                      style: const TextStyle(fontSize: 12, color: OmniColors.red),
                     ),
                   ),
                   IconButton(
+                    tooltip: 'Dismiss',
                     key: const ValueKey('network.error.dismiss'),
                     icon: const Icon(Icons.close, size: 16),
                     onPressed: vm.dismissError,
@@ -159,11 +154,7 @@ class _SpeedTestTab extends StatelessWidget {
             for (final server in NetworkViewModel.speedTestServers)
               DropdownMenuItem(
                 value: server.$2,
-                child: Text(
-                  server.$1,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
+                child: Text(server.$1, maxLines: 1, overflow: TextOverflow.ellipsis),
               ),
           ],
           onChanged: vm.speedTestRunning
@@ -190,23 +181,15 @@ class _SpeedTestTab extends StatelessWidget {
                   fontSize: 44,
                   fontWeight: FontWeight.bold,
                   fontFamily: OmniFonts.mono,
-                  color: vm.speedTestRunning
-                      ? OmniColors.cyan
-                      : OmniColors.green,
+                  color: vm.speedTestRunning ? OmniColors.cyan : OmniColors.green,
                 ),
               ),
-              Text(
-                'Mbps',
-                style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant),
-              ),
+              Text('Mbps', style: TextStyle(fontSize: 13, color: scheme.onSurfaceVariant)),
               const SizedBox(height: 8),
               Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  _SpeedMetric(
-                    value: _formatBytes(vm.speedTestBytes),
-                    label: 'Downloaded',
-                  ),
+                  _SpeedMetric(value: _formatBytes(vm.speedTestBytes), label: 'Downloaded'),
                   if (vm.speedTestLatency != null) ...[
                     const SizedBox(width: 28),
                     _SpeedMetric(
@@ -237,11 +220,7 @@ class _SpeedTestTab extends StatelessWidget {
           Text(
             vm.speedTestError!,
             key: const ValueKey('network.speedTest.error'),
-            style: const TextStyle(
-              color: OmniColors.red,
-              fontFamily: OmniFonts.mono,
-              fontSize: 13,
-            ),
+            style: const TextStyle(color: OmniColors.red, fontFamily: OmniFonts.mono, fontSize: 13),
           ),
         ],
       ],
@@ -268,10 +247,7 @@ class _SpeedMetric extends StatelessWidget {
       ),
       Text(
         label,
-        style: TextStyle(
-          fontSize: 10,
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-        ),
+        style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant),
       ),
     ],
   );
@@ -335,14 +311,8 @@ class _ToolFieldState extends State<_ToolField> {
       key: ValueKey(widget.fieldKey),
       controller: _controller,
       onChanged: widget.onChanged,
-      style: widget.mono
-          ? const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13)
-          : null,
-      decoration: omniInputDecoration(
-        context,
-        labelText: widget.label,
-        hintText: widget.hint,
-      ),
+      style: widget.mono ? const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13) : null,
+      decoration: omniInputDecoration(context, labelText: widget.label, hintText: widget.hint),
     );
   }
 }
@@ -395,10 +365,7 @@ class _HostScanTab extends StatelessWidget {
                         : 'Sweeps the subnet for hosts answering on 22, 80, 443, 445, 3389, 5900 '
                               'or 8080.',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: scheme.onSurfaceVariant,
-                    ),
+                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                   ),
                 )
               : ListView.separated(
@@ -433,14 +400,9 @@ class _HostScanTab extends StatelessWidget {
                                       host.vendor.isEmpty
                                           ? host.macAddress
                                           : '${host.macAddress} · ${host.vendor}',
-                                    host.openPorts
-                                        .map((p) => portLabel(p) ?? '$p')
-                                        .join(', '),
+                                    host.openPorts.map((p) => portLabel(p) ?? '$p').join(', '),
                                   ].join(' · '),
-                                  style: TextStyle(
-                                    fontSize: 11,
-                                    color: scheme.onSurfaceVariant,
-                                  ),
+                                  style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
                                 ),
                               ],
                             ),
@@ -465,17 +427,11 @@ class _HostScanTab extends StatelessWidget {
   }
 }
 
-Future<void> _openHostActions(
-  BuildContext context,
-  NetworkViewModel vm,
-  ScannedHost host,
-) async {
+Future<void> _openHostActions(BuildContext context, NetworkViewModel vm, ScannedHost host) async {
   // A scan result is not yet bound to any tool — the user has just found a device. So the sheet
   // offers the tools that take an address rather than guessing which one was meant.
   final app = context.read<AppState>();
-  final saved = app.servers
-      .where((server) => server.host == host.address)
-      .firstOrNull;
+  final saved = app.servers.where((server) => server.host == host.address).firstOrNull;
   final action = await showModalBottomSheet<String>(
     context: context,
     isScrollControlled: true,
@@ -483,9 +439,7 @@ Future<void> _openHostActions(
     builder: (sheetContext) => SafeArea(
       child: ListView(
         shrinkWrap: true,
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.viewPaddingOf(sheetContext).bottom,
-        ),
+        padding: EdgeInsets.only(bottom: MediaQuery.viewPaddingOf(sheetContext).bottom),
         children: [
           Padding(
             padding: const EdgeInsets.all(16),
@@ -554,17 +508,9 @@ Future<void> _openHostActions(
     case 'traceroute':
       unawaited(vm.runForHost(host.address, NetworkTab.traceroute));
     case 'portScan':
-      unawaited(
-        vm.runForHost(
-          host.address,
-          NetworkTab.portScan,
-          knownOpenPorts: host.openPorts,
-        ),
-      );
+      unawaited(vm.runForHost(host.address, NetworkTab.portScan, knownOpenPorts: host.openPorts));
     case 'dnsLookup':
-      unawaited(
-        vm.runForHost(host.hostname ?? host.address, NetworkTab.dnsLookup),
-      );
+      unawaited(vm.runForHost(host.hostname ?? host.address, NetworkTab.dnsLookup));
     case 'whois':
       unawaited(vm.runForHost(host.address, NetworkTab.whois));
     case 'wol':
@@ -612,10 +558,7 @@ class _WolTab extends StatelessWidget {
                       'No targets yet. Wake-on-LAN needs the machine to have it enabled in its '
                       'BIOS and network card.',
                       textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: scheme.onSurfaceVariant,
-                      ),
+                      style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                     ),
                   ),
                 )
@@ -650,9 +593,7 @@ class _WolTab extends StatelessWidget {
                                       'MAC: ${HostDisplay.instance.sensitive(target.macAddress)}',
                                       'Port ${target.port}',
                                       if (target.ipAddress.isNotEmpty &&
-                                          !HostDisplay
-                                              .instance
-                                              .hideSensitiveInfo)
+                                          !HostDisplay.instance.hideSensitiveInfo)
                                         target.ipAddress,
                                     ].join(' · '),
                                     style: TextStyle(
@@ -677,19 +618,14 @@ class _WolTab extends StatelessWidget {
                             ),
                             TextButton(
                               key: ValueKey('network.wol.${target.id}.wake'),
-                              onPressed: () =>
-                                  _confirmWake(context, vm, target),
-                              child: const Text(
-                                'Wake',
-                                style: TextStyle(fontSize: 12),
-                              ),
+                              onPressed: () => _confirmWake(context, vm, target),
+                              child: const Text('Wake', style: TextStyle(fontSize: 12)),
                             ),
                             IconButton(
                               key: ValueKey('network.wol.${target.id}.edit'),
                               tooltip: 'Edit target',
                               icon: const Icon(Icons.edit_outlined, size: 18),
-                              onPressed: () =>
-                                  _openWolEditor(context, vm, existing: target),
+                              onPressed: () => _openWolEditor(context, vm, existing: target),
                             ),
                             IconButton(
                               key: ValueKey('network.wol.${target.id}.delete'),
@@ -699,8 +635,7 @@ class _WolTab extends StatelessWidget {
                                 size: 18,
                                 color: OmniColors.red,
                               ),
-                              onPressed: () =>
-                                  _confirmDeleteWol(context, vm, target),
+                              onPressed: () => _confirmDeleteWol(context, vm, target),
                             ),
                           ],
                         ),
@@ -714,11 +649,7 @@ class _WolTab extends StatelessWidget {
   }
 }
 
-Future<void> _confirmWake(
-  BuildContext context,
-  NetworkViewModel vm,
-  WolTarget target,
-) async {
+Future<void> _confirmWake(BuildContext context, NetworkViewModel vm, WolTarget target) async {
   final accepted = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
@@ -744,9 +675,7 @@ Future<void> _confirmWake(
   if (accepted != true) return;
   final message = await vm.wake(target);
   if (context.mounted) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
   }
 }
 
@@ -770,9 +699,7 @@ Future<void> _pickWolFromScan(BuildContext context, NetworkViewModel vm) async {
             : ListView(
                 shrinkWrap: true,
                 children: [
-                  for (final host in vm.scanResults.where(
-                    (host) => host.macAddress.isNotEmpty,
-                  ))
+                  for (final host in vm.scanResults.where((host) => host.macAddress.isNotEmpty))
                     ListTile(
                       key: ValueKey('network.wol.scan.${host.address}'),
                       title: Text(host.hostname ?? host.address),
@@ -783,10 +710,7 @@ Future<void> _pickWolFromScan(BuildContext context, NetworkViewModel vm) async {
               ),
       ),
       actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(dialogContext),
-          child: const Text('Close'),
-        ),
+        TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Close')),
       ],
     ),
   );
@@ -795,11 +719,7 @@ Future<void> _pickWolFromScan(BuildContext context, NetworkViewModel vm) async {
   }
 }
 
-Future<void> _confirmDeleteWol(
-  BuildContext context,
-  NetworkViewModel vm,
-  WolTarget target,
-) async {
+Future<void> _confirmDeleteWol(BuildContext context, NetworkViewModel vm, WolTarget target) async {
   final accepted = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
@@ -831,8 +751,7 @@ Future<void> _openWolEditor(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    builder: (_) =>
-        _WolSheet(vm: vm, existing: existing, scannedHost: scannedHost),
+    builder: (_) => _WolSheet(vm: vm, existing: existing, scannedHost: scannedHost),
   );
 }
 
@@ -886,11 +805,7 @@ class _WolStatusDotState extends State<_WolStatusDot> {
 }
 
 class _WolSheet extends StatefulWidget {
-  const _WolSheet({
-    required this.vm,
-    required this.existing,
-    required this.scannedHost,
-  });
+  const _WolSheet({required this.vm, required this.existing, required this.scannedHost});
 
   final NetworkViewModel vm;
   final WolTarget? existing;
@@ -903,23 +818,16 @@ class _WolSheet extends StatefulWidget {
 class _WolSheetState extends State<_WolSheet> {
   late final _name = TextEditingController(
     text:
-        widget.existing?.name ??
-        widget.scannedHost?.hostname ??
-        widget.scannedHost?.address ??
-        '',
+        widget.existing?.name ?? widget.scannedHost?.hostname ?? widget.scannedHost?.address ?? '',
   );
   late final _mac = TextEditingController(
     text: widget.existing?.macAddress ?? widget.scannedHost?.macAddress ?? '',
   );
-  late final _broadcast = TextEditingController(
-    text: widget.existing?.broadcastIp ?? '',
-  );
+  late final _broadcast = TextEditingController(text: widget.existing?.broadcastIp ?? '');
   late final _ip = TextEditingController(
     text: widget.existing?.ipAddress ?? widget.scannedHost?.address ?? '',
   );
-  late final _port = TextEditingController(
-    text: '${widget.existing?.port ?? 9}',
-  );
+  late final _port = TextEditingController(text: '${widget.existing?.port ?? 9}');
   late final _notes = TextEditingController(text: widget.existing?.notes ?? '');
   String? _failure;
 
@@ -955,9 +863,7 @@ class _WolSheetState extends State<_WolSheet> {
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-      ),
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: SafeArea(
         child: Padding(
           padding: const EdgeInsets.all(16),
@@ -966,9 +872,7 @@ class _WolSheetState extends State<_WolSheet> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Text(
-                widget.existing == null
-                    ? 'New Wake-on-LAN target'
-                    : 'Edit Wake-on-LAN target',
+                widget.existing == null ? 'New Wake-on-LAN target' : 'Edit Wake-on-LAN target',
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               const SizedBox(height: 12),
@@ -1009,8 +913,7 @@ class _WolSheetState extends State<_WolSheet> {
                   labelText: 'Host address (optional)',
                   // Explaining what it buys: a directed broadcast actually reaches a sleeping
                   // machine, where 255.255.255.255 is dropped by many routers.
-                  helperText:
-                      'Used to aim the packet at the right subnet broadcast.',
+                  helperText: 'Used to aim the packet at the right subnet broadcast.',
                 ),
               ),
               const SizedBox(height: 10),
@@ -1187,10 +1090,7 @@ class _TracerouteTab extends StatelessWidget {
                   padding: const EdgeInsets.symmetric(vertical: 2),
                   child: Text(
                     line,
-                    style: const TextStyle(
-                      fontFamily: OmniFonts.mono,
-                      fontSize: 12,
-                    ),
+                    style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 12),
                   ),
                 ),
             ],
@@ -1256,10 +1156,7 @@ class _PortScanTab extends StatelessWidget {
                     vm.portResults.isEmpty
                         ? 'Probes each port with a TCP connect.'
                         : 'No open ports found.',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: scheme.onSurfaceVariant,
-                    ),
+                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                   ),
                 )
               : ListView.separated(
@@ -1279,10 +1176,7 @@ class _PortScanTab extends StatelessWidget {
                               result.label == null
                                   ? '${result.port}'
                                   : '${result.port} · ${result.label}',
-                              style: const TextStyle(
-                                fontFamily: OmniFonts.mono,
-                                fontSize: 13,
-                              ),
+                              style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13),
                             ),
                           ),
                           const OmniTag(label: 'OPEN', color: OmniColors.green),
@@ -1359,10 +1253,7 @@ class _WhoisTab extends StatelessWidget {
                   key: const ValueKey('network.whois.empty'),
                   child: Text(
                     'Registration records for a domain or an IP address.',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: scheme.onSurfaceVariant,
-                    ),
+                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                   ),
                 )
               : SingleChildScrollView(
@@ -1413,10 +1304,7 @@ class _DnsTab extends StatelessWidget {
               child: DropdownButtonFormField<String>(
                 key: const ValueKey('network.dns.type'),
                 initialValue: vm.dnsType,
-                decoration: omniInputDecoration(
-                  context,
-                  labelText: 'Record type',
-                ),
+                decoration: omniInputDecoration(context, labelText: 'Record type'),
                 items: [
                   for (final type in dnsRecordTypes)
                     DropdownMenuItem(value: type, child: Text(type)),
@@ -1439,10 +1327,7 @@ class _DnsTab extends StatelessWidget {
                   key: const ValueKey('network.dns.empty'),
                   child: Text(
                     'Queries ${fallbackResolvers.join(' then ')} directly.',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: scheme.onSurfaceVariant,
-                    ),
+                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                   ),
                 )
               : ListView.separated(
@@ -1460,19 +1345,13 @@ class _DnsTab extends StatelessWidget {
                             child: SelectionArea(
                               child: Text(
                                 record.value,
-                                style: const TextStyle(
-                                  fontFamily: OmniFonts.mono,
-                                  fontSize: 13,
-                                ),
+                                style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13),
                               ),
                             ),
                           ),
                           Text(
                             'TTL ${record.ttl}',
-                            style: TextStyle(
-                              fontSize: 10,
-                              color: scheme.onSurfaceVariant,
-                            ),
+                            style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
                           ),
                           const SizedBox(width: 8),
                           OmniTag(label: record.type, color: OmniColors.cyan),
@@ -1528,9 +1407,7 @@ class _TunnelsTab extends StatelessWidget {
               icon: const Icon(Icons.add, size: 18),
               label: const Text('Add'),
               // A tunnel runs *over* a host, so there is nothing to add before there is one.
-              onPressed: servers.isEmpty
-                  ? null
-                  : () => _openTunnelEditor(context, vm, servers),
+              onPressed: servers.isEmpty ? null : () => _openTunnelEditor(context, vm, servers),
             ),
           ],
         ),
@@ -1541,10 +1418,7 @@ class _TunnelsTab extends StatelessWidget {
                   child: Text(
                     'Add an SSH host first — a tunnel runs over one.',
                     key: const ValueKey('tunnels.noHosts'),
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: scheme.onSurfaceVariant,
-                    ),
+                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                   ),
                 )
               : vm.portForwards.isEmpty
@@ -1552,17 +1426,13 @@ class _TunnelsTab extends StatelessWidget {
                   child: Text(
                     'No tunnels yet. Add one to forward a port over SSH.',
                     key: const ValueKey('tunnels.empty'),
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: scheme.onSurfaceVariant,
-                    ),
+                    style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                   ),
                 )
               : ListView(
                   key: const ValueKey('tunnels.list'),
                   children: [
-                    for (final pf in vm.portForwards)
-                      _TunnelCard(vm: vm, pf: pf, servers: servers),
+                    for (final pf in vm.portForwards) _TunnelCard(vm: vm, pf: pf, servers: servers),
                   ],
                 ),
         ),
@@ -1572,11 +1442,7 @@ class _TunnelsTab extends StatelessWidget {
 }
 
 class _TunnelCard extends StatelessWidget {
-  const _TunnelCard({
-    required this.vm,
-    required this.pf,
-    required this.servers,
-  });
+  const _TunnelCard({required this.vm, required this.pf, required this.servers});
 
   final NetworkViewModel vm;
   final PortForward pf;
@@ -1613,10 +1479,7 @@ class _TunnelCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        pf.name,
-                        style: const TextStyle(fontWeight: FontWeight.bold),
-                      ),
+                      Text(pf.name, style: const TextStyle(fontWeight: FontWeight.bold)),
                       Text(
                         tunnelSummary(
                           kind: pf.kind,
@@ -1636,14 +1499,10 @@ class _TunnelCard extends StatelessWidget {
                       Text(
                         // Naming the missing host rather than letting the row look fine and fail
                         // on toggle.
-                        host == null
-                            ? 'host no longer exists'
-                            : 'via ${host.name}',
+                        host == null ? 'host no longer exists' : 'via ${host.name}',
                         style: TextStyle(
                           fontSize: 10,
-                          color: host == null
-                              ? OmniColors.amber
-                              : scheme.onSurfaceVariant,
+                          color: host == null ? OmniColors.amber : scheme.onSurfaceVariant,
                         ),
                       ),
                     ],
@@ -1680,9 +1539,7 @@ class _TunnelCard extends StatelessWidget {
                   key: ValueKey('tunnels.card.${pf.id}.edit'),
                   // Editing a running tunnel would change the row under a live forward, so the
                   // switch has to come down first.
-                  onPressed: active
-                      ? null
-                      : () => _openTunnelEditor(context, vm, servers, pf),
+                  onPressed: active ? null : () => _openTunnelEditor(context, vm, servers, pf),
                   child: const Text('Edit', style: TextStyle(fontSize: 12)),
                 ),
                 TextButton(
@@ -1702,11 +1559,7 @@ class _TunnelCard extends StatelessWidget {
   }
 }
 
-Future<void> _confirmDeleteTunnel(
-  BuildContext context,
-  NetworkViewModel vm,
-  PortForward pf,
-) async {
+Future<void> _confirmDeleteTunnel(BuildContext context, NetworkViewModel vm, PortForward pf) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
@@ -1740,16 +1593,11 @@ Future<void> _openTunnelEditor(
   context: context,
   isScrollControlled: true,
   useSafeArea: true,
-  builder: (_) =>
-      _TunnelEditorSheet(vm: vm, servers: servers, existing: existing),
+  builder: (_) => _TunnelEditorSheet(vm: vm, servers: servers, existing: existing),
 );
 
 class _TunnelEditorSheet extends StatefulWidget {
-  const _TunnelEditorSheet({
-    required this.vm,
-    required this.servers,
-    this.existing,
-  });
+  const _TunnelEditorSheet({required this.vm, required this.servers, this.existing});
 
   final NetworkViewModel vm;
   final List<Server> servers;
@@ -1761,21 +1609,12 @@ class _TunnelEditorSheet extends StatefulWidget {
 
 class _TunnelEditorSheetState extends State<_TunnelEditorSheet> {
   late final _name = TextEditingController(text: widget.existing?.name ?? '');
-  late final _bindHost = TextEditingController(
-    text: widget.existing?.bindHost ?? '127.0.0.1',
-  );
-  late final _bindPort = TextEditingController(
-    text: '${widget.existing?.bindPort ?? ''}',
-  );
-  late final _destHost = TextEditingController(
-    text: widget.existing?.destHost ?? '',
-  );
-  late final _destPort = TextEditingController(
-    text: '${widget.existing?.destPort ?? ''}',
-  );
+  late final _bindHost = TextEditingController(text: widget.existing?.bindHost ?? '127.0.0.1');
+  late final _bindPort = TextEditingController(text: '${widget.existing?.bindPort ?? ''}');
+  late final _destHost = TextEditingController(text: widget.existing?.destHost ?? '');
+  late final _destPort = TextEditingController(text: '${widget.existing?.destPort ?? ''}');
   late String _kind = widget.existing?.kind ?? 'local';
-  late int? _serverId =
-      widget.existing?.serverId ?? widget.servers.firstOrNull?.id;
+  late int? _serverId = widget.existing?.serverId ?? widget.servers.firstOrNull?.id;
   bool _autoStart = false;
 
   @override
@@ -1814,12 +1653,8 @@ class _TunnelEditorSheetState extends State<_TunnelEditorSheet> {
         bindPort: int.parse(_bindPort.text.trim()),
         // A dynamic forward has no destination; storing whatever was typed before the mode changed
         // would put a dead address on the card.
-        destHost: Value(
-          tunnelHasDestination(_kind) ? _destHost.text.trim() : '',
-        ),
-        destPort: Value(
-          tunnelHasDestination(_kind) ? int.parse(_destPort.text.trim()) : 0,
-        ),
+        destHost: Value(tunnelHasDestination(_kind) ? _destHost.text.trim() : ''),
+        destPort: Value(tunnelHasDestination(_kind) ? int.parse(_destPort.text.trim()) : 0),
         autoStart: Value(_autoStart),
       ),
     );
@@ -1831,9 +1666,7 @@ class _TunnelEditorSheetState extends State<_TunnelEditorSheet> {
     final failure = _failure;
 
     return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-      ),
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -1857,8 +1690,7 @@ class _TunnelEditorSheetState extends State<_TunnelEditorSheet> {
               initialValue: _serverId,
               decoration: omniInputDecoration(context, labelText: 'Over host'),
               items: [
-                for (final s in widget.servers)
-                  DropdownMenuItem(value: s.id, child: Text(s.name)),
+                for (final s in widget.servers) DropdownMenuItem(value: s.id, child: Text(s.name)),
               ],
               onChanged: (v) => setState(() => _serverId = v),
             ),
@@ -1880,8 +1712,7 @@ class _TunnelEditorSheetState extends State<_TunnelEditorSheet> {
               decoration: omniInputDecoration(
                 context,
                 labelText: 'Bind address',
-                helperText:
-                    '127.0.0.1 keeps it on this device; 0.0.0.0 exposes it to the network',
+                helperText: '127.0.0.1 keeps it on this device; 0.0.0.0 exposes it to the network',
               ),
               onChanged: (_) => setState(() {}),
             ),
@@ -1898,10 +1729,7 @@ class _TunnelEditorSheetState extends State<_TunnelEditorSheet> {
               TextField(
                 key: const ValueKey('tunnelEditor.destHost'),
                 controller: _destHost,
-                decoration: omniInputDecoration(
-                  context,
-                  labelText: 'Destination host',
-                ),
+                decoration: omniInputDecoration(context, labelText: 'Destination host'),
                 onChanged: (_) => setState(() {}),
               ),
               const SizedBox(height: 10),
@@ -1909,10 +1737,7 @@ class _TunnelEditorSheetState extends State<_TunnelEditorSheet> {
                 key: const ValueKey('tunnelEditor.destPort'),
                 controller: _destPort,
                 keyboardType: TextInputType.number,
-                decoration: omniInputDecoration(
-                  context,
-                  labelText: 'Destination port',
-                ),
+                decoration: omniInputDecoration(context, labelText: 'Destination port'),
                 onChanged: (_) => setState(() {}),
               ),
             ],
@@ -1932,19 +1757,13 @@ class _TunnelEditorSheetState extends State<_TunnelEditorSheet> {
                       'reachable from the SSH host.',
               },
               key: const ValueKey('tunnelEditor.explain'),
-              style: TextStyle(
-                fontSize: 11,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+              style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
             SwitchListTile(
               key: const ValueKey('tunnelEditor.autoStart'),
               dense: true,
               contentPadding: EdgeInsets.zero,
-              title: const Text(
-                'Start when OmniTerm opens',
-                style: TextStyle(fontSize: 13),
-              ),
+              title: const Text('Start when OmniTerm opens', style: TextStyle(fontSize: 13)),
               subtitle: Text(
                 // Saying the lifetime plainly: a tunnel is not a system service, and a user who
                 // expects it to survive the app being closed would be wrong in a way that matters.

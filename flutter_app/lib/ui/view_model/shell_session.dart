@@ -241,6 +241,21 @@ class ShellSession extends ChangeNotifier {
   bool _resizing = false;
   (int, int)? _pendingResize;
 
+  /// Drops the buffered scrollback, keeping the live screen.
+  ///
+  /// Ported from `clearTerminalScrollbackFor` (`ui/ShellScreen.kt:2513`). The emulator has always
+  /// been able to do this, but nothing in the port called it except the DECSTR escape handler, so
+  /// the only way to drop buffered output was to end the session — and with a persistent tmux
+  /// session, not even that.
+  ///
+  /// The viewport is snapped back to the tail because every row it might have been anchored to is
+  /// gone; leaving it where it was would show a blank region above the live screen.
+  void clearScrollback() {
+    emulator.clearScrollback();
+    scrollToTail();
+    publishNow();
+  }
+
   /// Tell the session the surface is now [cols]×[rows] cells.
   Future<void> resize(int cols, int rows) async {
     if (cols < 1 || rows < 1) return;
@@ -266,9 +281,7 @@ class ShellSession extends ChangeNotifier {
         if (controlMode && _controlPaneId != null) {
           await _channel.write(
             Uint8List.fromList(
-              utf8.encode(
-                '${TmuxControlCommands.refreshClientSize(next.$1, next.$2)}\n',
-              ),
+              utf8.encode('${TmuxControlCommands.refreshClientSize(next.$1, next.$2)}\n'),
             ),
           );
         }
@@ -353,9 +366,7 @@ class ShellSession extends ChangeNotifier {
     final paneId = _controlPaneId;
     if (!controlMode || paneId == null) return bytes;
     final commands = TmuxControlCommands.sendKeysHex(paneId, bytes);
-    return Uint8List.fromList(
-      utf8.encode(commands.map((line) => '$line\n').join()),
-    );
+    return Uint8List.fromList(utf8.encode(commands.map((line) => '$line\n').join()));
   }
 
   // ── lifecycle ───────────────────────────────────────────────────────────────

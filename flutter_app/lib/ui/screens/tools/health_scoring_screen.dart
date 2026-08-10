@@ -56,6 +56,7 @@ class _HealthScoringScreenState extends State<HealthScoringScreen> {
                     children: [
                       Expanded(child: Text(vm.status!, style: const TextStyle(fontSize: 12))),
                       IconButton(
+                        tooltip: 'Dismiss',
                         key: const ValueKey('healthScoring.status.dismiss'),
                         icon: const Icon(Icons.close, size: 16),
                         onPressed: vm.dismissStatus,

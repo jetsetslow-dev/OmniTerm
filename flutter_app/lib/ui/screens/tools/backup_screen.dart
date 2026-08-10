@@ -64,6 +64,7 @@ class _BackupScreenState extends State<BackupScreen> {
                     ),
                   ),
                   IconButton(
+                    tooltip: 'Dismiss',
                     key: const ValueKey('backup.message.dismiss'),
                     icon: const Icon(Icons.close, size: 16),
                     onPressed: vm.dismissMessages,
@@ -125,9 +126,7 @@ class _BackupScreenState extends State<BackupScreen> {
           key: const ValueKey('backup.lastExport'),
           style: TextStyle(
             fontSize: 11,
-            color: vm.lastExportTime == null
-                ? OmniColors.amber
-                : scheme.onSurfaceVariant,
+            color: vm.lastExportTime == null ? OmniColors.amber : scheme.onSurfaceVariant,
           ),
         ),
         const SizedBox(height: 24),
@@ -227,8 +226,7 @@ class _BackupScreenState extends State<BackupScreen> {
     if (inspection == null || !context.mounted) return;
     // Read before the dialog: `context` is not safe to use across the await inside it.
     final license = context.read<LicenseController?>();
-    final hasHostLimit =
-        isPlayStoreDistribution && !(license?.state.value.unlocked ?? true);
+    final hasHostLimit = isPlayStoreDistribution && !(license?.state.value.unlocked ?? true);
     final choice = await showDialog<_RestoreChoice>(
       context: context,
       builder: (_) => _RestoreSelectionDialog(
@@ -280,10 +278,7 @@ class _RestoreChoice {
 }
 
 class _RestoreSelectionDialog extends StatefulWidget {
-  const _RestoreSelectionDialog({
-    required this.inspection,
-    required this.hasHostLimit,
-  });
+  const _RestoreSelectionDialog({required this.inspection, required this.hasHostLimit});
 
   final BackupInspection inspection;
 
@@ -394,9 +389,7 @@ class _RestoreSelectionDialogState extends State<_RestoreSelectionDialog> {
                     onChanged: _atCap && !_hostIds.contains(host.oldId)
                         ? null
                         : (value) => setState(() {
-                            value == true
-                                ? _hostIds.add(host.oldId)
-                                : _hostIds.remove(host.oldId);
+                            value == true ? _hostIds.add(host.oldId) : _hostIds.remove(host.oldId);
                           }),
                   ),
               ],

@@ -308,6 +308,7 @@ class _RunPanel extends StatelessWidget {
                   ),
                 ),
                 IconButton(
+                  tooltip: 'Close output',
                   key: const ValueKey('monitor.scripts.output.close'),
                   icon: const Icon(Icons.close, size: 16),
                   onPressed: vm.clearScriptRun,

@@ -45,11 +45,7 @@ class ShellScreen extends StatelessWidget {
             child: session == null
                 ? _ConnectPane(vm: vm, licenseController: licenseController)
                 : vm.isSplit
-                ? _SplitTerminals(
-                    vm: vm,
-                    first: session,
-                    second: vm.splitSession!,
-                  )
+                ? _SplitTerminals(vm: vm, first: session, second: vm.splitSession!)
                 : _ActiveTerminal(vm: vm, session: session),
           ),
           if (session != null) TerminalKeyBar(viewModel: vm),
@@ -91,17 +87,13 @@ Future<void> _quickConnect(
             const SizedBox(height: 16),
             Text(
               'Quick Connect Requires Premium',
-              style: Theme.of(
-                ctx,
-              ).textTheme.titleMedium?.copyWith(color: OmniColors.textPrimary),
+              style: Theme.of(ctx).textTheme.titleMedium?.copyWith(color: OmniColors.textPrimary),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 8),
             Text(
               'Upgrade to OmniTerm Premium to use Quick Connect for one-off sessions.',
-              style: Theme.of(
-                ctx,
-              ).textTheme.bodyMedium?.copyWith(color: OmniColors.textSecondary),
+              style: Theme.of(ctx).textTheme.bodyMedium?.copyWith(color: OmniColors.textSecondary),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
@@ -111,10 +103,7 @@ Future<void> _quickConnect(
                 Navigator.pop(ctx);
                 licenseController.launchPurchase();
               },
-              child: Text(
-                licenseController.state.value.productPrice ??
-                    'Upgrade to Premium',
-              ),
+              child: Text(licenseController.state.value.productPrice ?? 'Upgrade to Premium'),
             ),
           ],
         ),
@@ -176,9 +165,7 @@ class _QuickConnectSheetState extends State<_QuickConnectSheet> {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     return Padding(
-      padding: EdgeInsets.only(
-        bottom: MediaQuery.of(context).viewInsets.bottom,
-      ),
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -194,6 +181,7 @@ class _QuickConnectSheetState extends State<_QuickConnectSheet> {
                   ),
                 ),
                 IconButton(
+                  tooltip: 'Close',
                   key: const ValueKey('shell.quick.close'),
                   icon: const Icon(Icons.close, size: 18),
                   onPressed: () => Navigator.of(context).pop(),
@@ -255,9 +243,7 @@ class _QuickConnectSheetState extends State<_QuickConnectSheet> {
               alignment: Alignment.centerRight,
               child: FilledButton(
                 key: const ValueKey('shell.quick.connect'),
-                onPressed: _valid
-                    ? () => Navigator.of(context).pop(_build())
-                    : null,
+                onPressed: _valid ? () => Navigator.of(context).pop(_build()) : null,
                 child: const Text('Connect'),
               ),
             ),
@@ -296,11 +282,7 @@ class _ConnectPane extends StatelessWidget {
     return Column(
       children: [
         Expanded(
-          child: _ConnectPrompt(
-            vm: vm,
-            server: server,
-            licenseController: licenseController,
-          ),
+          child: _ConnectPrompt(vm: vm, server: server, licenseController: licenseController),
         ),
         // Below the connect prompt rather than instead of it: a session left running on a server is
         // something to *come back to*, so it belongs where the user arrives looking for a terminal.
@@ -328,10 +310,7 @@ class _ResumableSessions extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Text(
-            'Left running',
-            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-          ),
+          const Text('Left running', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
           Text(
             // Saying where they are, because "resumable" alone reads as a local draft rather than
             // work still executing on someone else's machine.
@@ -355,10 +334,7 @@ class _ResumableSessions extends StatelessWidget {
                             children: [
                               Text(
                                 row.serverName,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 13,
-                                ),
+                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                               ),
                               Text(
                                 // The name alone cannot be acted on: "left running 4m ago" and
@@ -376,28 +352,16 @@ class _ResumableSessions extends StatelessWidget {
                           ),
                         ),
                         TextButton(
-                          key: ValueKey(
-                            'shell.resumable.${row.tmuxName}.resume',
-                          ),
-                          onPressed: vm.isConnecting
-                              ? null
-                              : () => vm.resume(row),
-                          child: const Text(
-                            'Resume',
-                            style: TextStyle(fontSize: 12),
-                          ),
+                          key: ValueKey('shell.resumable.${row.tmuxName}.resume'),
+                          onPressed: vm.isConnecting ? null : () => vm.resume(row),
+                          child: const Text('Resume', style: TextStyle(fontSize: 12)),
                         ),
                         TextButton(
-                          key: ValueKey(
-                            'shell.resumable.${row.tmuxName}.forget',
-                          ),
+                          key: ValueKey('shell.resumable.${row.tmuxName}.forget'),
                           onPressed: () => _confirmForget(context, vm, row),
                           child: Text(
                             'Forget',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: scheme.onSurfaceVariant,
-                            ),
+                            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                           ),
                         ),
                       ],
@@ -412,11 +376,7 @@ class _ResumableSessions extends StatelessWidget {
   }
 }
 
-Future<void> _confirmForget(
-  BuildContext context,
-  ShellViewModel vm,
-  PersistentSession row,
-) async {
+Future<void> _confirmForget(BuildContext context, ShellViewModel vm, PersistentSession row) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
@@ -482,11 +442,7 @@ class _EmptyState extends StatelessWidget {
 }
 
 class _ConnectPrompt extends StatelessWidget {
-  const _ConnectPrompt({
-    required this.vm,
-    required this.server,
-    this.licenseController,
-  });
+  const _ConnectPrompt({required this.vm, required this.server, this.licenseController});
 
   final ShellViewModel vm;
   final Server server;
@@ -552,25 +508,16 @@ class _ConnectPrompt extends StatelessWidget {
                   Checkbox(
                     key: const ValueKey('shell.controlMode'),
                     value: vm.useControlMode,
-                    onChanged: vm.canConnect
-                        ? (v) => vm.useControlMode = v ?? false
-                        : null,
+                    onChanged: vm.canConnect ? (v) => vm.useControlMode = v ?? false : null,
                   ),
-                  const Text(
-                    'Attach in control mode',
-                    style: TextStyle(fontSize: 11),
-                  ),
+                  const Text('Attach in control mode', style: TextStyle(fontSize: 11)),
                   const SizedBox(width: 4),
                   Tooltip(
                     message:
                         'tmux sends every byte as an event instead of redrawing, so fast output '
                         'cannot be lost. This app draws one pane: splits made inside tmux will '
                         'not all be visible.',
-                    child: const Icon(
-                      Icons.info_outline,
-                      size: 14,
-                      color: OmniColors.textMuted,
-                    ),
+                    child: const Icon(Icons.info_outline, size: 14, color: OmniColors.textMuted),
                   ),
                 ],
               ),
@@ -581,11 +528,7 @@ class _ConnectPrompt extends StatelessWidget {
             icon: const Icon(Icons.bolt, size: 16),
             label: const Text('Quick connect', style: TextStyle(fontSize: 12)),
             onPressed: vm.canConnect
-                ? () => _quickConnect(
-                    context,
-                    vm,
-                    licenseController: licenseController,
-                  )
+                ? () => _quickConnect(context, vm, licenseController: licenseController)
                 : null,
           ),
           if (!vm.canConnect)
@@ -628,10 +571,7 @@ class _ConnectingView extends StatelessWidget {
         const SizedBox(
           width: 28,
           height: 28,
-          child: CircularProgressIndicator(
-            strokeWidth: 2,
-            color: OmniColors.cyan,
-          ),
+          child: CircularProgressIndicator(strokeWidth: 2, color: OmniColors.cyan),
         ),
         const SizedBox(height: 14),
         Text(
@@ -720,9 +660,7 @@ Future<void> _requestCloseSession(
     context: context,
     builder: (dialogContext) => AlertDialog(
       key: ValueKey('shell.session.${session.id}.closeDialog'),
-      title: Text(
-        persistent ? 'Close persistent session?' : 'Disconnect session?',
-      ),
+      title: Text(persistent ? 'Close persistent session?' : 'Disconnect session?'),
       content: Text(
         persistent
             ? 'Leave it resumable to close only this SSH connection, or terminate the remote tmux session and stop anything running inside it.'
@@ -801,19 +739,14 @@ class _SessionChip extends StatelessWidget {
               decoration: BoxDecoration(
                 color: selected ? const Color(0xFF16202F) : Colors.transparent,
                 borderRadius: BorderRadius.circular(4),
-                border: Border.all(
-                  color: selected ? OmniColors.cyan : const Color(0xFF243044),
-                ),
+                border: Border.all(color: selected ? OmniColors.cyan : const Color(0xFF243044)),
               ),
               child: Row(
                 children: [
                   Container(
                     width: 6,
                     height: 6,
-                    decoration: BoxDecoration(
-                      color: colour,
-                      shape: BoxShape.circle,
-                    ),
+                    decoration: BoxDecoration(color: colour, shape: BoxShape.circle),
                   ),
                   const SizedBox(width: 6),
                   Text(
@@ -828,11 +761,7 @@ class _SessionChip extends StatelessWidget {
                   InkWell(
                     key: ValueKey('shell.session.${session.id}.close'),
                     onTap: onClose,
-                    child: const Icon(
-                      Icons.close,
-                      size: 13,
-                      color: Color(0xFF7C8AA5),
-                    ),
+                    child: const Icon(Icons.close, size: 13, color: Color(0xFF7C8AA5)),
                   ),
                 ],
               ),
@@ -902,15 +831,10 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
       if (newline >= 0) {
         final before = text.substring(0, newline);
         final edit = terminalLineEdit(old, before);
-        widget.vm.applyLineEdit(
-          backspaces: edit.backspaces,
-          insert: edit.insert,
-        );
+        widget.vm.applyLineEdit(backspaces: edit.backspaces, insert: edit.insert);
         widget.vm.sendKey(TermKey.enter);
         var remainderAt = newline + 1;
-        if (text[newline] == '\r' &&
-            remainderAt < text.length &&
-            text[remainderAt] == '\n') {
+        if (text[newline] == '\r' && remainderAt < text.length && text[remainderAt] == '\n') {
           remainderAt++;
         }
         final remainder = text.substring(remainderAt);
@@ -973,9 +897,7 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
       return KeyEventResult.handled;
     }
     final character = event.character;
-    if (character != null &&
-        character.isNotEmpty &&
-        character.codeUnitAt(0) >= 0x20) {
+    if (character != null && character.isNotEmpty && character.codeUnitAt(0) >= 0x20) {
       widget.vm.typeText(character);
       return KeyEventResult.handled;
     }
@@ -1019,9 +941,7 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
                         );
                         if (!opened && context.mounted) {
                           ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-                            const SnackBar(
-                              content: Text('No app could open that link.'),
-                            ),
+                            const SnackBar(content: Text('No app could open that link.')),
                           );
                         }
                         return;
@@ -1061,11 +981,7 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
                         key: const ValueKey('shell.jumpToBottom'),
                         backgroundColor: OmniColors.cyan,
                         onPressed: session.scrollToTail,
-                        child: const Icon(
-                          Icons.arrow_downward,
-                          size: 18,
-                          color: Colors.black,
-                        ),
+                        child: const Icon(Icons.arrow_downward, size: 18, color: Colors.black),
                       ),
                     ),
                 ],
@@ -1196,13 +1112,9 @@ class _Toggle extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
         decoration: BoxDecoration(
-          color: active
-              ? OmniColors.amber.withValues(alpha: 0.2)
-              : Colors.transparent,
+          color: active ? OmniColors.amber.withValues(alpha: 0.2) : Colors.transparent,
           borderRadius: BorderRadius.circular(3),
-          border: Border.all(
-            color: active ? OmniColors.amber : const Color(0xFF243044),
-          ),
+          border: Border.all(color: active ? OmniColors.amber : const Color(0xFF243044)),
         ),
         child: Text(
           label,
@@ -1224,11 +1136,7 @@ class _Toggle extends StatelessWidget {
 /// position and read-only flag since it was first ported, so the surface reports its real grid to
 /// the remote per pane and neither terminal learns the other exists.
 class _SplitTerminals extends StatelessWidget {
-  const _SplitTerminals({
-    required this.vm,
-    required this.first,
-    required this.second,
-  });
+  const _SplitTerminals({required this.vm, required this.first, required this.second});
 
   final ShellViewModel vm;
   final ShellSession first;
@@ -1251,9 +1159,7 @@ class _SplitTerminals extends StatelessWidget {
       children: [
         _SplitControls(vm: vm),
         Expanded(
-          child: vm.splitStacked
-              ? Column(children: panes)
-              : Row(children: panes),
+          child: vm.splitStacked ? Column(children: panes) : Row(children: panes),
         ),
       ],
     );
@@ -1264,8 +1170,7 @@ class _SplitDivider extends StatelessWidget {
   const _SplitDivider();
 
   @override
-  Widget build(BuildContext context) =>
-      Container(width: 1, height: 1, color: OmniColors.cyan);
+  Widget build(BuildContext context) => Container(width: 1, height: 1, color: OmniColors.cyan);
 }
 
 /// A pane that takes focus when tapped, and shows which one has it.
@@ -1274,11 +1179,7 @@ class _SplitDivider extends StatelessWidget {
 /// targets the focused pane, so a split with no visible focus would leave the user guessing which
 /// terminal is about to receive what they type.
 class _FocusablePane extends StatelessWidget {
-  const _FocusablePane({
-    required this.vm,
-    required this.session,
-    required this.focused,
-  });
+  const _FocusablePane({required this.vm, required this.session, required this.focused});
 
   final ShellViewModel vm;
   final ShellSession session;
@@ -1291,9 +1192,7 @@ class _FocusablePane extends StatelessWidget {
     return DecoratedBox(
       key: ValueKey('shell.pane.${session.id}'),
       decoration: BoxDecoration(
-        border: Border.all(
-          color: focused ? OmniColors.cyan : Colors.transparent,
-        ),
+        border: Border.all(color: focused ? OmniColors.cyan : Colors.transparent),
       ),
       child: _ActiveTerminal(vm: vm, session: session),
     );
@@ -1333,10 +1232,7 @@ class _SplitControls extends StatelessWidget {
           TextButton(
             key: const ValueKey('shell.split.single'),
             onPressed: vm.unsplit,
-            child: const Text(
-              'SINGLE',
-              style: TextStyle(fontSize: 11, color: OmniColors.cyan),
-            ),
+            child: const Text('SINGLE', style: TextStyle(fontSize: 11, color: OmniColors.cyan)),
           ),
         ],
       ),
@@ -1356,10 +1252,7 @@ Future<void> _openSplitPicker(BuildContext context, ShellViewModel vm) async {
         children: [
           const Padding(
             padding: EdgeInsets.all(16),
-            child: Text(
-              'Show alongside',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
+            child: Text('Show alongside', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
           if (candidates.isEmpty)
             const Padding(
@@ -1376,10 +1269,7 @@ Future<void> _openSplitPicker(BuildContext context, ShellViewModel vm) async {
               ListTile(
                 key: ValueKey('shell.split.pick.${session.id}'),
                 dense: true,
-                title: Text(
-                  session.serverName,
-                  style: const TextStyle(fontSize: 13),
-                ),
+                title: Text(session.serverName, style: const TextStyle(fontSize: 13)),
                 onTap: () {
                   vm.splitWith(session.id);
                   Navigator.of(sheetContext).pop();

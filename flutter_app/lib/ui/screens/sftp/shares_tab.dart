@@ -40,6 +40,7 @@ class SharesTab extends StatelessWidget {
                     ),
                   ),
                   IconButton(
+                    tooltip: 'Dismiss',
                     key: const ValueKey('shares.message.dismiss'),
                     icon: const Icon(Icons.close, size: 16),
                     onPressed: vm.dismissMessages,
@@ -193,10 +194,7 @@ class _ScanPanelState extends State<_ScanPanel> {
       // Prefilled from an address the user already saved, because the subnet they want is almost
       // always the one their existing shares are on. Left blank when there is nothing to infer
       // from, rather than guessing at 192.168.1.
-      final prefix = vm.shares
-          .map((s) => scanPrefixOf(s.address))
-          .whereType<String>()
-          .firstOrNull;
+      final prefix = vm.shares.map((s) => scanPrefixOf(s.address)).whereType<String>().firstOrNull;
       if (prefix != null) setState(() => _cidr.text = '$prefix.0/24');
       _loaded = true;
     });
@@ -245,6 +243,7 @@ class _ScanPanelState extends State<_ScanPanel> {
                   ),
                 ),
                 IconButton(
+                  tooltip: 'Close scan',
                   key: const ValueKey('shares.scan.close'),
                   icon: const Icon(Icons.close, size: 16),
                   onPressed: () {
@@ -262,9 +261,7 @@ class _ScanPanelState extends State<_ScanPanel> {
                     key: ValueKey('shares.scan.protocol.$protocol'),
                     label: Text(protocol, style: const TextStyle(fontSize: 11)),
                     selected: vm.isScanProtocolEnabled(protocol),
-                    onSelected: vm.scanning
-                        ? null
-                        : (_) => vm.toggleScanProtocol(protocol),
+                    onSelected: vm.scanning ? null : (_) => vm.toggleScanProtocol(protocol),
                   ),
               ],
             ),

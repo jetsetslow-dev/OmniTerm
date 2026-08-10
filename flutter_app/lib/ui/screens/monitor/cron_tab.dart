@@ -59,27 +59,19 @@ class _CronTabState extends State<CronTab> {
               label: const Text('Add', style: TextStyle(fontSize: 12)),
               // Nothing to add to until a crontab has actually been read: writing one now would
               // replace a file nobody has seen.
-              onPressed: vm.cronReadable && !vm.cronLoading
-                  ? () => _edit(context, vm, null)
-                  : null,
+              onPressed: vm.cronReadable && !vm.cronLoading ? () => _edit(context, vm, null) : null,
             ),
           ],
         ),
         if (vm.cronStatus != null)
           OmniCard(
             key: const ValueKey('cron.status'),
-            leftAccent: vm.cronStatus == 'Crontab saved.'
-                ? OmniColors.green
-                : OmniColors.amber,
+            leftAccent: vm.cronStatus == 'Crontab saved.' ? OmniColors.green : OmniColors.amber,
             child: Row(
               children: [
-                Expanded(
-                  child: Text(
-                    vm.cronStatus!,
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                ),
+                Expanded(child: Text(vm.cronStatus!, style: const TextStyle(fontSize: 12))),
                 IconButton(
+                  tooltip: 'Dismiss',
                   key: const ValueKey('cron.status.dismiss'),
                   icon: const Icon(Icons.close, size: 14),
                   onPressed: vm.dismissCronStatus,
@@ -109,19 +101,12 @@ class _CronTabState extends State<CronTab> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Icon(
-                  Icons.lock_clock,
-                  size: 32,
-                  color: OmniColors.textMuted,
-                ),
+                const Icon(Icons.lock_clock, size: 32, color: OmniColors.textMuted),
                 const SizedBox(height: 8),
                 Text(
                   'This host would not show its crontab, so nothing here can be changed.',
                   textAlign: TextAlign.center,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: scheme.onSurfaceVariant,
-                  ),
+                  style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
                 ),
                 if (vm.cronError != null) ...[
                   const SizedBox(height: 8),
@@ -129,10 +114,7 @@ class _CronTabState extends State<CronTab> {
                     child: Text(
                       vm.cronError!,
                       textAlign: TextAlign.center,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontFamily: OmniFonts.mono,
-                      ),
+                      style: const TextStyle(fontSize: 11, fontFamily: OmniFonts.mono),
                     ),
                   ),
                 ],
@@ -157,8 +139,7 @@ class _CronTabState extends State<CronTab> {
       key: const ValueKey('cron.list'),
       itemCount: vm.cronLines.length,
       separatorBuilder: (_, _) => const SizedBox(height: 6),
-      itemBuilder: (context, index) =>
-          _CronCard(vm: vm, line: vm.cronLines[index]),
+      itemBuilder: (context, index) => _CronCard(vm: vm, line: vm.cronLines[index]),
     );
   }
 }
@@ -186,16 +167,11 @@ class _CronCard extends StatelessWidget {
               children: [
                 Text(
                   line.editable
-                      ? (line.label.isEmpty
-                            ? cronSummary(line.expression)
-                            : line.label)
+                      ? (line.label.isEmpty ? cronSummary(line.expression) : line.label)
                       // Said plainly, because the alternative is a row that looks broken. A line
                       // this app does not understand is still the user's line and still runs.
                       : 'Kept as written',
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                  ),
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 3),
                 Text(
@@ -205,9 +181,7 @@ class _CronCard extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 11,
                     fontFamily: OmniFonts.mono,
-                    color: comment
-                        ? OmniColors.textMuted
-                        : scheme.onSurfaceVariant,
+                    color: comment ? OmniColors.textMuted : scheme.onSurfaceVariant,
                   ),
                 ),
                 if (line.editable)
@@ -233,11 +207,7 @@ class _CronCard extends StatelessWidget {
           IconButton(
             key: ValueKey('cron.line.${line.index}.delete'),
             tooltip: 'Delete',
-            icon: const Icon(
-              Icons.delete_outline,
-              size: 16,
-              color: OmniColors.red,
-            ),
+            icon: const Icon(Icons.delete_outline, size: 16, color: OmniColors.red),
             onPressed: () => _confirmDelete(context, vm, line),
           ),
         ],
@@ -246,11 +216,7 @@ class _CronCard extends StatelessWidget {
   }
 }
 
-Future<void> _confirmDelete(
-  BuildContext context,
-  MonitorViewModel vm,
-  CronLine line,
-) async {
+Future<void> _confirmDelete(BuildContext context, MonitorViewModel vm, CronLine line) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (context) => AlertDialog(
@@ -279,18 +245,12 @@ Future<void> _confirmDelete(
   );
 
   if (confirmed ?? false) {
-    await vm.saveCron(
-      vm.cronLines.where((l) => l.index != line.index).toList(),
-    );
+    await vm.saveCron(vm.cronLines.where((l) => l.index != line.index).toList());
   }
 }
 
 /// Opens the schedule editor for [existing], or for a new entry when it is null.
-Future<void> _edit(
-  BuildContext context,
-  MonitorViewModel vm,
-  CronLine? existing,
-) async {
+Future<void> _edit(BuildContext context, MonitorViewModel vm, CronLine? existing) async {
   final result = await showDialog<String>(
     context: context,
     builder: (_) => _ScheduleDialog(initial: existing),
@@ -311,14 +271,7 @@ Future<void> _edit(
       else
         line,
     if (existing == null)
-      CronLine(
-        index: 1 << 30,
-        raw: result,
-        expression: '',
-        command: '',
-        label: '',
-        editable: true,
-      ),
+      CronLine(index: 1 << 30, raw: result, expression: '', command: '', label: '', editable: true),
   ];
   await vm.saveCron(next);
 }
@@ -334,9 +287,7 @@ class _ScheduleDialog extends StatefulWidget {
 
 class _ScheduleDialogState extends State<_ScheduleDialog> {
   late final _label = TextEditingController(text: widget.initial?.label ?? '');
-  late final _command = TextEditingController(
-    text: widget.initial?.command ?? '',
-  );
+  late final _command = TextEditingController(text: widget.initial?.command ?? '');
   late final List<TextEditingController> _parts;
   late String _preset;
 
@@ -354,13 +305,10 @@ class _ScheduleDialogState extends State<_ScheduleDialog> {
     final expression = widget.initial?.expression ?? cronPresets['daily']!;
     // A shorthand has no five fields to show, so the editor starts from the equivalent it can
     // express and the user sees exactly what will be written.
-    final source = cronShorthands.containsKey(expression)
-        ? cronPresets['daily']!
-        : expression;
+    final source = cronShorthands.containsKey(expression) ? cronPresets['daily']! : expression;
     final values = source.split(RegExp(r'\s+'));
     _parts = [
-      for (var i = 0; i < 5; i++)
-        TextEditingController(text: i < values.length ? values[i] : '*'),
+      for (var i = 0; i < 5; i++) TextEditingController(text: i < values.length ? values[i] : '*'),
     ];
     _preset = cronPresetFor(source);
   }
@@ -377,8 +325,7 @@ class _ScheduleDialogState extends State<_ScheduleDialog> {
 
   String get _expression => _parts.map((c) => c.text.trim()).join(' ');
 
-  bool get _valid =>
-      _command.text.trim().isNotEmpty && isCronExpressionValid(_expression);
+  bool get _valid => _command.text.trim().isNotEmpty && isCronExpressionValid(_expression);
 
   void _applyPreset(String preset) {
     final values = cronPresets[preset]!.split(' ');
@@ -394,9 +341,7 @@ class _ScheduleDialogState extends State<_ScheduleDialog> {
 
     return AlertDialog(
       key: const ValueKey('cron.editor'),
-      title: Text(
-        widget.initial == null ? 'Add scheduled job' : 'Edit scheduled job',
-      ),
+      title: Text(widget.initial == null ? 'Add scheduled job' : 'Edit scheduled job'),
       content: SizedBox(
         width: 400,
         child: SingleChildScrollView(
@@ -414,9 +359,7 @@ class _ScheduleDialogState extends State<_ScheduleDialog> {
                       selected: _preset == preset,
                       // "Custom" is not a schedule, so selecting it changes nothing: it is what the
                       // chips show once the fields stop matching a preset.
-                      onSelected: preset == 'custom'
-                          ? null
-                          : (_) => _applyPreset(preset),
+                      onSelected: preset == 'custom' ? null : (_) => _applyPreset(preset),
                     ),
                 ],
               ),
@@ -429,17 +372,12 @@ class _ScheduleDialogState extends State<_ScheduleDialog> {
                     labelText: field.$1,
                     hintText: field.$2,
                     isDense: true,
-                    errorText:
-                        isCronPartValid(_parts[index].text, field.$3, field.$4)
+                    errorText: isCronPartValid(_parts[index].text, field.$3, field.$4)
                         ? null
                         : 'Not a ${field.$1.toLowerCase()} cron accepts',
                   ),
-                  style: const TextStyle(
-                    fontFamily: OmniFonts.mono,
-                    fontSize: 13,
-                  ),
-                  onChanged: (_) =>
-                      setState(() => _preset = cronPresetFor(_expression)),
+                  style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13),
+                  onChanged: (_) => setState(() => _preset = cronPresetFor(_expression)),
                 ),
                 const SizedBox(height: 6),
               ],
@@ -474,14 +412,8 @@ class _ScheduleDialogState extends State<_ScheduleDialog> {
                 controller: _command,
                 minLines: 2,
                 maxLines: 4,
-                decoration: const InputDecoration(
-                  labelText: 'Command',
-                  isDense: true,
-                ),
-                style: const TextStyle(
-                  fontFamily: OmniFonts.mono,
-                  fontSize: 12,
-                ),
+                decoration: const InputDecoration(labelText: 'Command', isDense: true),
+                style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 12),
                 onChanged: (_) => setState(() {}),
               ),
             ],
@@ -498,11 +430,7 @@ class _ScheduleDialogState extends State<_ScheduleDialog> {
           key: const ValueKey('cron.editor.save'),
           onPressed: _valid
               ? () => Navigator.of(context).pop(
-                  cronLineFor(
-                    expression: _expression,
-                    command: _command.text,
-                    label: _label.text,
-                  ),
+                  cronLineFor(expression: _expression, command: _command.text, label: _label.text),
                 )
               : null,
           child: const Text('Save'),

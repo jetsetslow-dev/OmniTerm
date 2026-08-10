@@ -95,8 +95,7 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
     }
     if (_form.requiresConnectionTest) {
       setState(
-        () => _saveError =
-            'Test the connection before saving, so the host key can be verified.',
+        () => _saveError = 'Test the connection before saving, so the host key can be verified.',
       );
       return;
     }
@@ -118,8 +117,7 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
     final address = _form.toServer().host.trim().toLowerCase();
     if (address.isEmpty) return null;
     for (final server in widget.existingServers) {
-      if (server.id != (widget.source?.id ?? 0) &&
-          server.host.trim().toLowerCase() == address) {
+      if (server.id != (widget.source?.id ?? 0) && server.host.trim().toLowerCase() == address) {
         return server;
       }
     }
@@ -167,9 +165,7 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
     return DefaultTabController(
       length: 3,
       child: Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
-        ),
+        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
         child: SizedBox(
           height: MediaQuery.of(context).size.height * 0.85,
           child: Column(
@@ -178,13 +174,9 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
                 padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
                 child: Row(
                   children: [
-                    Expanded(
-                      child: Text(
-                        _title,
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                    ),
+                    Expanded(child: Text(_title, style: Theme.of(context).textTheme.titleLarge)),
                     IconButton(
+                      tooltip: 'Close',
                       key: const ValueKey('serverForm.close'),
                       icon: const Icon(Icons.close),
                       onPressed: () => Navigator.of(context).pop(),
@@ -205,14 +197,8 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
                   listenable: _form,
                   builder: (context, _) => TabBarView(
                     children: [
-                      _ConnectTab(
-                        form: _form,
-                        existingServers: widget.existingServers,
-                      ),
-                      _AuthTab(
-                        form: _form,
-                        savedKeyAliases: widget.savedKeyAliases,
-                      ),
+                      _ConnectTab(form: _form, existingServers: widget.existingServers),
+                      _AuthTab(form: _form, savedKeyAliases: widget.savedKeyAliases),
                       _AdvancedTab(form: _form),
                     ],
                   ),
@@ -220,10 +206,7 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
               ),
               if (_testResult != null)
                 Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 4,
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                   child: Text(
                     _testResult!,
                     key: const ValueKey('serverForm.testResult'),
@@ -235,10 +218,7 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
                 ),
               if (_saveError != null)
                 Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 4,
-                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                   child: Text(
                     _saveError!,
                     key: const ValueKey('serverForm.error'),
@@ -252,16 +232,12 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
                     Expanded(
                       child: OutlinedButton.icon(
                         key: const ValueKey('serverForm.test'),
-                        onPressed: _testing || widget.onTestConnection == null
-                            ? null
-                            : _test,
+                        onPressed: _testing || widget.onTestConnection == null ? null : _test,
                         icon: _testing
                             ? const SizedBox(
                                 width: 14,
                                 height: 14,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
+                                child: CircularProgressIndicator(strokeWidth: 2),
                               )
                             : const Icon(Icons.wifi_tethering, size: 18),
                         label: Text(_testing ? 'Testing…' : 'Test connection'),
@@ -275,9 +251,7 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
                           key: const ValueKey('serverForm.save'),
                           onPressed: _save,
                           child: Text(
-                            _form.requiresConnectionTest
-                                ? 'Save (test first)'
-                                : 'Save',
+                            _form.requiresConnectionTest ? 'Save (test first)' : 'Save',
                             style: TextStyle(color: scheme.onPrimary),
                           ),
                         ),
@@ -335,8 +309,7 @@ class _ConnectTab extends StatelessWidget {
         // Offering the labels already in use stops a typo silently forking a near-duplicate group.
         DropdownButtonFormField<String>(
           key: const ValueKey('serverForm.group'),
-          initialValue:
-              ServerFormState.groupOptions(existingServers).contains(form.group)
+          initialValue: ServerFormState.groupOptions(existingServers).contains(form.group)
               ? form.group
               : 'Default',
           decoration: omniInputDecoration(context, labelText: 'Group'),
@@ -397,8 +370,7 @@ class _AuthTab extends StatelessWidget {
               for (final alias in savedKeyAliases)
                 DropdownMenuItem(value: alias, child: Text(alias)),
             ],
-            onChanged: (v) =>
-                form.update(() => form.selectedKeyAlias = v ?? ''),
+            onChanged: (v) => form.update(() => form.selectedKeyAlias = v ?? ''),
           ),
         if (form.authType == 'profile')
           Text(
@@ -451,9 +423,7 @@ class _AdvancedTab extends StatelessWidget {
           key: const ValueKey('serverForm.agentForwarding'),
           title: const Text('Agent forwarding'),
           // Worth stating plainly: this grants the remote use of the key for the session.
-          subtitle: const Text(
-            'Lets onward hops use your key. Off by default.',
-          ),
+          subtitle: const Text('Lets onward hops use your key. Off by default.'),
           value: form.agentForwarding,
           onChanged: (v) => form.update(() => form.agentForwarding = v),
         ),
@@ -464,8 +434,7 @@ class _AdvancedTab extends StatelessWidget {
           hasStored: form.hasStoredSudoPassword,
           forget: form.forgetSudoPassword,
           onChanged: (v) => form.update(() => form.sudoPassword = v),
-          onForgetChanged: (v) =>
-              form.update(() => form.forgetSudoPassword = v),
+          onForgetChanged: (v) => form.update(() => form.forgetSudoPassword = v),
         ),
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
@@ -506,8 +475,7 @@ class _AdvancedTab extends StatelessWidget {
             hasStored: form.hasStoredProxyPassword,
             forget: form.forgetProxyPassword,
             onChanged: (v) => form.update(() => form.proxyPassword = v),
-            onForgetChanged: (v) =>
-                form.update(() => form.forgetProxyPassword = v),
+            onForgetChanged: (v) => form.update(() => form.forgetProxyPassword = v),
           ),
         ],
       ],
@@ -587,10 +555,7 @@ class _SecretField extends StatelessWidget {
             dense: true,
             contentPadding: EdgeInsets.zero,
             controlAffinity: ListTileControlAffinity.leading,
-            title: Text(
-              'Forget the saved $label',
-              style: const TextStyle(fontSize: 12),
-            ),
+            title: Text('Forget the saved $label', style: const TextStyle(fontSize: 12)),
             value: forget,
             onChanged: (v) => onForgetChanged(v ?? false),
           ),

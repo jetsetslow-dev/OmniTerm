@@ -26,10 +26,7 @@ class _BuilderTabState extends State<BuilderTab> {
   ComposeStackDraft _draft = ComposeStackDraft();
   ComposeStackDraft? _baseline;
   final _path = TextEditingController();
-  final _raw = HighlightEditingController(
-    language: CodeLanguage.yaml,
-    maxChars: 100000,
-  );
+  final _raw = HighlightEditingController(language: CodeLanguage.yaml, maxChars: 100000);
   bool _rawMode = false;
   int? _serverId;
   int _generation = 0;
@@ -84,8 +81,7 @@ class _BuilderTabState extends State<BuilderTab> {
   }
 
   /// True when the draft differs from what it started as.
-  bool get _isDirty =>
-      composeDraftIsDirty(rendered: _rendered, baseline: _baseline);
+  bool get _isDirty => composeDraftIsDirty(rendered: _rendered, baseline: _baseline);
 
   /// Back on the Builder tab, ported from `ui/ComposeBuilder.kt:1260`.
   ///
@@ -118,9 +114,7 @@ class _BuilderTabState extends State<BuilderTab> {
       builder: (dialogContext) => AlertDialog(
         key: const ValueKey('infra.builder.discardConfirm'),
         title: const Text('Discard changes?'),
-        content: const Text(
-          'You have unsaved changes to this stack. Discard them?',
-        ),
+        content: const Text('You have unsaved changes to this stack. Discard them?'),
         actions: [
           TextButton(
             key: const ValueKey('infra.builder.discardConfirm.cancel'),
@@ -130,10 +124,7 @@ class _BuilderTabState extends State<BuilderTab> {
           TextButton(
             key: const ValueKey('infra.builder.discardConfirm.discard'),
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text(
-              'Discard',
-              style: TextStyle(color: OmniColors.red),
-            ),
+            child: const Text('Discard', style: TextStyle(color: OmniColors.red)),
           ),
         ],
       ),
@@ -153,8 +144,7 @@ class _BuilderTabState extends State<BuilderTab> {
     _vm?.composeDraft = null;
   }
 
-  String get _rendered =>
-      _rawMode ? _raw.text : renderComposeYaml(_draft, _baseline);
+  String get _rendered => _rawMode ? _raw.text : renderComposeYaml(_draft, _baseline);
 
   void _changed() {
     setState(() => _issues = validateComposeDraft(_draft));
@@ -164,10 +154,7 @@ class _BuilderTabState extends State<BuilderTab> {
     final first = stack.configFiles
         .split(',')
         .map((file) => file.trim())
-        .firstWhere(
-          (file) => file.isNotEmpty,
-          orElse: () => 'docker-compose.yml',
-        );
+        .firstWhere((file) => file.isNotEmpty, orElse: () => 'docker-compose.yml');
     if (first.startsWith('/') || first.startsWith('~/')) return first;
     return '${stack.workingDir.replaceFirst(RegExp(r'/+$'), '')}/$first';
   }
@@ -179,8 +166,7 @@ class _BuilderTabState extends State<BuilderTab> {
     if (!mounted || text == null) return;
     final path = _path.text.trim();
     final slash = path.lastIndexOf('/');
-    final workingDir =
-        stack?.workingDir ?? (slash > 0 ? path.substring(0, slash) : '');
+    final workingDir = stack?.workingDir ?? (slash > 0 ? path.substring(0, slash) : '');
     final fileName = slash >= 0 ? path.substring(slash + 1) : path;
     final parsed = parseDockerComposeYaml(
       text,
@@ -234,18 +220,10 @@ class _BuilderTabState extends State<BuilderTab> {
       content: SizedBox(
         width: 720,
         child: SingleChildScrollView(
-          child: SelectableText(
-            _rendered,
-            style: const TextStyle(fontFamily: OmniFonts.mono),
-          ),
+          child: SelectableText(_rendered, style: const TextStyle(fontFamily: OmniFonts.mono)),
         ),
       ),
-      actions: [
-        TextButton(
-          onPressed: Navigator.of(context).pop,
-          child: const Text('Close'),
-        ),
-      ],
+      actions: [TextButton(onPressed: Navigator.of(context).pop, child: const Text('Close'))],
     ),
   );
 
@@ -259,11 +237,7 @@ class _BuilderTabState extends State<BuilderTab> {
         ? '${_draft.workingDir.replaceFirst(RegExp(r'/+$'), '')}/${_draft.fileName}'
         : _path.text.trim();
     if (!path.startsWith('/') && !path.startsWith('~/')) {
-      setState(
-        () => _issues = const [
-          'Compose file path must be absolute (or start with ~/).',
-        ],
-      );
+      setState(() => _issues = const ['Compose file path must be absolute (or start with ~/).']);
       return;
     }
     final confirmed = await showDialog<bool>(
@@ -276,14 +250,8 @@ class _BuilderTabState extends State<BuilderTab> {
           'If startup fails, the previous file is restored.',
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Deploy'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Deploy')),
         ],
       ),
     );
@@ -301,17 +269,14 @@ class _BuilderTabState extends State<BuilderTab> {
   @override
   Widget build(BuildContext context) {
     final vm = context.watch<InfraViewModel>();
-    if (vm.composeEditRequest != _handledEditRequest &&
-        vm.requestedComposeStack != null) {
+    if (vm.composeEditRequest != _handledEditRequest && vm.requestedComposeStack != null) {
       _handledEditRequest = vm.composeEditRequest;
       final requested = vm.requestedComposeStack!;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) _load(stack: requested);
       });
     }
-    final stacks = vm.stacks
-        .where((stack) => stack.canRunComposeActions)
-        .toList();
+    final stacks = vm.stacks.where((stack) => stack.canRunComposeActions).toList();
     return BackInterceptor(
       onBack: _handleBack,
       child: ListView(
@@ -352,9 +317,7 @@ class _BuilderTabState extends State<BuilderTab> {
                 if (stacks.isNotEmpty)
                   DropdownButtonFormField<StackSummary>(
                     key: const ValueKey('infra.builder.existingStack'),
-                    decoration: const InputDecoration(
-                      labelText: 'Edit running stack',
-                    ),
+                    decoration: const InputDecoration(labelText: 'Edit running stack'),
                     items: [
                       for (final stack in stacks)
                         DropdownMenuItem(
@@ -372,9 +335,7 @@ class _BuilderTabState extends State<BuilderTab> {
                       child: TextField(
                         key: const ValueKey('infra.builder.path'),
                         controller: _path,
-                        decoration: const InputDecoration(
-                          labelText: 'Absolute compose file path',
-                        ),
+                        decoration: const InputDecoration(labelText: 'Absolute compose file path'),
                       ),
                     ),
                     const SizedBox(width: 8),
@@ -389,10 +350,7 @@ class _BuilderTabState extends State<BuilderTab> {
                 Row(
                   children: [
                     const Expanded(
-                      child: Text(
-                        'Raw YAML',
-                        style: TextStyle(fontWeight: FontWeight.w600),
-                      ),
+                      child: Text('Raw YAML', style: TextStyle(fontWeight: FontWeight.w600)),
                     ),
                     Switch(
                       key: const ValueKey('infra.builder.rawToggle'),
@@ -407,10 +365,7 @@ class _BuilderTabState extends State<BuilderTab> {
           if (vm.composeError != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                vm.composeError!,
-                style: const TextStyle(color: OmniColors.red),
-              ),
+              child: Text(vm.composeError!, style: const TextStyle(color: OmniColors.red)),
             ),
           if (_issues.isNotEmpty) _IssueCard(issues: _issues),
           const SizedBox(height: 10),
@@ -421,22 +376,16 @@ class _BuilderTabState extends State<BuilderTab> {
                 controller: _raw,
                 language: CodeLanguage.yaml,
                 maxHighlightChars:
-                    (context
-                                .watch<AppState>()
-                                .preferences
-                                .editorHighlightLimitKb *
-                            1024)
-                        .clamp(0, highlightMaxCharsCap),
+                    (context.watch<AppState>().preferences.editorHighlightLimitKb * 1024).clamp(
+                      0,
+                      highlightMaxCharsCap,
+                    ),
                 textKey: const ValueKey('infra.builder.raw'),
                 onChanged: (_) => setState(() {}),
               ),
             )
           else
-            _VisualEditor(
-              key: ValueKey(_generation),
-              draft: _draft,
-              onChanged: _changed,
-            ),
+            _VisualEditor(key: ValueKey(_generation), draft: _draft, onChanged: _changed),
         ],
       ),
     );
@@ -458,13 +407,9 @@ class _IssueCard extends StatelessWidget {
         children: [
           const Text(
             'Fix before deploy',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              color: OmniColors.red,
-            ),
+            style: TextStyle(fontWeight: FontWeight.bold, color: OmniColors.red),
           ),
-          for (final issue in issues)
-            Text('• $issue', style: const TextStyle(fontSize: 12)),
+          for (final issue in issues) Text('• $issue', style: const TextStyle(fontSize: 12)),
         ],
       ),
     ),
@@ -472,11 +417,7 @@ class _IssueCard extends StatelessWidget {
 }
 
 class _VisualEditor extends StatelessWidget {
-  const _VisualEditor({
-    super.key,
-    required this.draft,
-    required this.onChanged,
-  });
+  const _VisualEditor({super.key, required this.draft, required this.onChanged});
   final ComposeStackDraft draft;
   final VoidCallback onChanged;
 
@@ -488,21 +429,13 @@ class _VisualEditor extends StatelessWidget {
         leftAccent: OmniColors.cyan,
         child: Column(
           children: [
-            _field(
-              'Project / -p name',
-              draft.projectName,
-              (value) => draft.projectName = value,
-            ),
+            _field('Project / -p name', draft.projectName, (value) => draft.projectName = value),
             _field(
               'Top-level name (optional)',
               draft.stackName,
               (value) => draft.stackName = value,
             ),
-            _field(
-              'Working directory',
-              draft.workingDir,
-              (value) => draft.workingDir = value,
-            ),
+            _field('Working directory', draft.workingDir, (value) => draft.workingDir = value),
             DropdownButtonFormField<String>(
               key: const ValueKey('infra.builder.runtime'),
               initialValue: draft.runtime,
@@ -528,17 +461,12 @@ class _VisualEditor extends StatelessWidget {
       Row(
         children: [
           const Expanded(
-            child: Text(
-              'Services',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            ),
+            child: Text('Services', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           ),
           OutlinedButton.icon(
             key: const ValueKey('infra.builder.addService'),
             onPressed: () {
-              draft.services.add(
-                ComposeServiceDraft(serviceName: 'new_service'),
-              );
+              draft.services.add(ComposeServiceDraft(serviceName: 'new_service'));
               onChanged();
             },
             icon: const Icon(Icons.add, size: 17),
@@ -562,15 +490,14 @@ class _VisualEditor extends StatelessWidget {
     ],
   );
 
-  Widget _field(String label, String value, ValueChanged<String> write) =>
-      TextFormField(
-        initialValue: value,
-        decoration: InputDecoration(labelText: label),
-        onChanged: (value) {
-          write(value);
-          onChanged();
-        },
-      );
+  Widget _field(String label, String value, ValueChanged<String> write) => TextFormField(
+    initialValue: value,
+    decoration: InputDecoration(labelText: label),
+    onChanged: (value) {
+      write(value);
+      onChanged();
+    },
+  );
 }
 
 /// Podman-only composition controls, ported from `PodmanModifiersEditor` in `ui/ComposeBuilder.kt`.
@@ -597,10 +524,7 @@ class _PodmanModifiersCard extends StatelessWidget {
         children: [
           const Text(
             'Podman modifiers',
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontFamily: OmniFonts.mono,
-            ),
+            style: TextStyle(fontWeight: FontWeight.bold, fontFamily: OmniFonts.mono),
           ),
           const SizedBox(height: 6),
           const Text(
@@ -611,10 +535,7 @@ class _PodmanModifiersCard extends StatelessWidget {
           Row(
             children: [
               const Expanded(
-                child: Text(
-                  'Rootless keep-ID mapping',
-                  style: TextStyle(fontSize: 12),
-                ),
+                child: Text('Rootless keep-ID mapping', style: TextStyle(fontSize: 12)),
               ),
               Switch(
                 key: const ValueKey('infra.builder.podman.keepId'),
@@ -632,16 +553,10 @@ class _PodmanModifiersCard extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      'Group services in a pod',
-                      style: TextStyle(fontSize: 12),
-                    ),
+                    Text('Group services in a pod', style: TextStyle(fontSize: 12)),
                     Text(
                       'Services share Podman pod namespaces using x-podman.in_pod.',
-                      style: TextStyle(
-                        fontSize: 10,
-                        color: OmniColors.textMuted,
-                      ),
+                      style: TextStyle(fontSize: 10, color: OmniColors.textMuted),
                     ),
                   ],
                 ),
@@ -666,8 +581,7 @@ class _PodmanModifiersCard extends StatelessWidget {
               decoration: const InputDecoration(
                 labelText: 'Pod name (optional)',
                 hintText: 'pod_<project>',
-                helperText:
-                    "Blank uses Podman Compose's default pod_<project>.",
+                helperText: "Blank uses Podman Compose's default pod_<project>.",
               ),
               onChanged: (value) {
                 draft.podmanPodName = value.trim();
@@ -704,26 +618,19 @@ class _ServiceCardState extends State<_ServiceCard> {
     return Padding(
       padding: const EdgeInsets.only(top: 8),
       child: OmniCard(
-        leftAccent: service.isCommentedOut
-            ? OmniColors.textMuted
-            : OmniColors.green,
+        leftAccent: service.isCommentedOut ? OmniColors.textMuted : OmniColors.green,
         child: Column(
           children: [
             Row(
               children: [
                 IconButton(
                   tooltip: service.isExpanded ? 'Collapse' : 'Expand',
-                  onPressed: () =>
-                      setState(() => service.isExpanded = !service.isExpanded),
-                  icon: Icon(
-                    service.isExpanded ? Icons.expand_less : Icons.expand_more,
-                  ),
+                  onPressed: () => setState(() => service.isExpanded = !service.isExpanded),
+                  icon: Icon(service.isExpanded ? Icons.expand_less : Icons.expand_more),
                 ),
                 Expanded(
                   child: Text(
-                    service.serviceName.isEmpty
-                        ? 'Unnamed service'
-                        : service.serviceName,
+                    service.serviceName.isEmpty ? 'Unnamed service' : service.serviceName,
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
@@ -745,11 +652,7 @@ class _ServiceCardState extends State<_ServiceCard> {
               ],
             ),
             if (service.isExpanded) ...[
-              _field(
-                'Service name',
-                service.serviceName,
-                (value) => service.serviceName = value,
-              ),
+              _field('Service name', service.serviceName, (value) => service.serviceName = value),
               _field('Image', service.image, (value) => service.image = value),
               _field(
                 'Container name',
@@ -772,25 +675,15 @@ class _ServiceCardState extends State<_ServiceCard> {
                   DropdownMenuItem(value: '', child: Text('Not set')),
                   DropdownMenuItem(value: 'no', child: Text('No')),
                   DropdownMenuItem(value: 'always', child: Text('Always')),
-                  DropdownMenuItem(
-                    value: 'on-failure',
-                    child: Text('On failure'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'unless-stopped',
-                    child: Text('Unless stopped'),
-                  ),
+                  DropdownMenuItem(value: 'on-failure', child: Text('On failure')),
+                  DropdownMenuItem(value: 'unless-stopped', child: Text('Unless stopped')),
                 ],
                 onChanged: (value) {
                   service.restart = value ?? '';
                   widget.onChanged();
                 },
               ),
-              _field(
-                'Command',
-                service.command,
-                (value) => service.command = value,
-              ),
+              _field('Command', service.command, (value) => service.command = value),
               if (widget.podman)
                 _field(
                   'userns_mode (for rootless: keep-id)',
@@ -814,15 +707,14 @@ class _ServiceCardState extends State<_ServiceCard> {
     );
   }
 
-  Widget _field(String label, String value, ValueChanged<String> write) =>
-      TextFormField(
-        initialValue: value,
-        decoration: InputDecoration(labelText: label),
-        onChanged: (value) {
-          write(value);
-          widget.onChanged();
-        },
-      );
+  Widget _field(String label, String value, ValueChanged<String> write) => TextFormField(
+    initialValue: value,
+    decoration: InputDecoration(labelText: label),
+    onChanged: (value) {
+      write(value);
+      widget.onChanged();
+    },
+  );
 
   Widget _list(String label, List<String> values) => TextFormField(
     initialValue: values.join('\n'),
@@ -833,12 +725,7 @@ class _ServiceCardState extends State<_ServiceCard> {
     onChanged: (value) {
       values
         ..clear()
-        ..addAll(
-          value
-              .split('\n')
-              .map((item) => item.trim())
-              .where((item) => item.isNotEmpty),
-        );
+        ..addAll(value.split('\n').map((item) => item.trim()).where((item) => item.isNotEmpty));
       widget.onChanged();
     },
   );
@@ -862,13 +749,7 @@ class _TopLevelEditor extends StatelessWidget {
         for (final volume in [...draft.topVolumes])
           Row(
             children: [
-              Expanded(
-                child: _field(
-                  'Volume name',
-                  volume.name,
-                  (value) => volume.name = value,
-                ),
-              ),
+              Expanded(child: _field('Volume name', volume.name, (value) => volume.name = value)),
               const Text('External'),
               Checkbox(
                 value: volume.external,
@@ -878,6 +759,7 @@ class _TopLevelEditor extends StatelessWidget {
                 },
               ),
               IconButton(
+                tooltip: 'Remove volume',
                 onPressed: () {
                   draft.topVolumes.remove(volume);
                   onChanged();
@@ -895,19 +777,9 @@ class _TopLevelEditor extends StatelessWidget {
           Row(
             children: [
               Expanded(
-                child: _field(
-                  'Network name',
-                  network.name,
-                  (value) => network.name = value,
-                ),
+                child: _field('Network name', network.name, (value) => network.name = value),
               ),
-              Expanded(
-                child: _field(
-                  'Driver',
-                  network.driver,
-                  (value) => network.driver = value,
-                ),
-              ),
+              Expanded(child: _field('Driver', network.driver, (value) => network.driver = value)),
               const Text('External'),
               Checkbox(
                 value: network.external,
@@ -917,6 +789,7 @@ class _TopLevelEditor extends StatelessWidget {
                 },
               ),
               IconButton(
+                tooltip: 'Remove network',
                 onPressed: () {
                   draft.topNetworks.remove(network);
                   onChanged();
@@ -942,13 +815,12 @@ class _TopLevelEditor extends StatelessWidget {
     ],
   );
 
-  Widget _field(String label, String value, ValueChanged<String> write) =>
-      TextFormField(
-        initialValue: value,
-        decoration: InputDecoration(labelText: label),
-        onChanged: (value) {
-          write(value);
-          onChanged();
-        },
-      );
+  Widget _field(String label, String value, ValueChanged<String> write) => TextFormField(
+    initialValue: value,
+    decoration: InputDecoration(labelText: label),
+    onChanged: (value) {
+      write(value);
+      onChanged();
+    },
+  );
 }

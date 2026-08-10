@@ -99,6 +99,13 @@ implementations decides whether a feature is missing.
 | 59 | Launcher shortcuts | **A shortcut into a host failed on a cold start, and said nothing when its target was gone.** `connect_server` and `open_split` resolved the host from the *in-memory* list, which has not emitted yet on a cold start, so a working shortcut looked like a deleted host. Kotlin reads the row from the repository for exactly that reason and shows a toast when it is really missing (`ui/AppViewModel.kt:4533`, `:4537`). | **Closed** — see below |
 | 60 | Home widget | **A widget that could not read its data told the user they had no hosts.** The receiver's `runCatching { … }.getOrElse { JSONArray() }` turned any unreadable payload into an empty one, and empty renders as "Open OmniTerm to add a host". Kotlin has three layouts — rows, empty, and `omniterm_widget_error`; Flutter had two. | **Closed** — see below |
 | 61 | Permission prompt (**consent**) | **The local-network prompt explained the upside and not the cost.** Kotlin's explanation ends "If you choose Not now, internet hosts remain available but nearby-device features may not work" (`strings.xml:33`); the Flutter port dropped that sentence, leaving "Not now" looking free on a prompt the user cannot easily get back to. | **Closed** — see below |
+| 73 | Terminal accessibility (**regression**) | **The terminal output was invisible to a screen reader.** The surface is a `CustomPaint`, so it contributed nothing to the semantics tree at all — on an SSH client, the app's primary content. Kotlin puts a `contentDescription` on the same surface (`ui/ShellScreen.kt:2047`). | **Closed** — see below |
+| 71 | Accessibility (**regression**) | **Thirty icon-only controls had no accessible name.** Every dismiss and close, the find-bar arrows and the numeric steppers announced to TalkBack as "button" and nothing else. Kotlin labels them — 179 `contentDescription`s, with its 59 nulls being decorative icons, which is correct usage. | **Closed** — guarded by a source scan |
+| 72 | Formatting (**self-inflicted**) | **The branch would have failed CI's format gate.** `flutter-pr-check.yml` formats with `--line-length 100`; I had been running `dart format` at the default 80 all session, including on files that were then committed. | **Closed** — 163 files corrected |
+| 70 | App Lock off (**security**) | **Turning App Lock off never said what it destroys.** Doing so deletes the stored PIN and the biometric enrolment with it; Kotlin confirms first and names both (`ui/ToolsScreen.kt:3905`). The port went straight to the save, so the destructive half of the switch was the silent one. | **Closed** — dialog axis complete |
+| 69 | Clear scrollback (**capability**) | **Buffered terminal output could never be dropped.** `TerminalEmulator.clearScrollback()` existed, but its only caller was the DECSTR escape handler — no user action reached it. Kotlin offers it beside the copy ranges (`ui/ShellScreen.kt:2508`). With a persistent tmux session, ending the session does not drop the buffer either, so there was no way at all. | **Closed** — see below |
+| 68 | Process kill (**capability**) | **A wedged process could not be killed.** `killProcess` has always taken a `signal`, but the only caller used the default 15, so the app could send SIGTERM and nothing else — precisely the signal a stuck process ignores. Kotlin offers graceful and force kill as separate actions with separate prompts (`ui/MonitorScreen.kt:920` and `:934`). | **Closed** — see below |
+| 67 | Terminal transcript (**capability**) | **The terminal could only be copied in full, never just what was on screen.** Kotlin's long press opens the *visible screen* and offers the full buffer as a second choice (`ui/ShellScreen.kt:2086`, chooser at `:2491`). The port built only the full buffer, so the common case — copy the error currently on screen — was impossible, and every long press rendered the whole scrollback into selectable text. | **Closed** — see below |
 | 66 | File editor Back (**data loss**) | **Back closed the remote file editor without the discard prompt its own close button enforces.** A modal sheet is popped by the system without consulting anything inside it, so the guarded path was the ✕ and the unguarded one was Back. Kotlin routes Back through the same check (`CodeEditor` installs `BackHandler { onClose() }`; the SFTP host passes `attemptDismiss`, `ui/SftpScreen.kt:3112`). A second defect in the same guard: it required edit mode as well as a changed buffer, so disarming the pencil with unsaved edits skipped the prompt. | **Closed** — back axis complete |
 | 65 | Compose Builder Back (**navigation**) | **Back on the Builder tab discarded an edited stack with no prompt, and could not leave the tab.** Kotlin confirms first (`ui/ComposeBuilder.kt:1236`) and then returns to Stacks, because clearing alone leaves the user on a tab that immediately rebuilds an empty draft — a press that appears to do nothing. Flutter had neither half. | **Closed** — completes the back axis for the builder |
 | 64 | Compose Builder (**data loss**) | **An unsaved compose draft was destroyed by a glance at another tab.** The draft lived in `BuilderTab`'s `State`, and `InfraScreen` builds that tab only while it is selected — so switching to Stacks, or leaving Infra, discarded it silently with nothing to undo. Kotlin holds the equivalent on the view model (`AppViewModel.activeComposeDraft`) with a comment saying it exists "so edits survive a tab switch". | **Closed** — see below |
@@ -2553,6 +2560,316 @@ wording would break on every edit while catching nothing that matters.
 adjudicated: `crash_*` (58), `shortcut_*` (59), `widget_*` (60) and `local_network_*` (61). Three of
 the four named a missing *feature* rather than missing copy, which is the pattern worth carrying
 into any future string diff — a cluster of related strings is a feature the port did not finish.
+
+### 73 — the terminal output was invisible to a screen reader (closed)
+
+Continuing the accessibility axis that defect 71 left part-swept. 71 covered icon-only *buttons*;
+this is the content itself.
+
+The terminal surface paints its grid with a `CustomPaint`, which puts **nothing** in the semantics
+tree. Not a wrong label — no node at all. On an SSH client that is the primary content of the
+primary screen: a screen-reader user could reach the terminal, type into it, and never hear a word
+of what came back.
+
+Kotlin labels the same surface, and the port simply dropped it:
+
+```kotlin
+.semantics {
+    contentDescription = "Terminal output: " + snapshot.rows
+        .joinToString("\n") { row -> row.spans.joinToString("") { it.text } }
+        .takeLast(2_000)
+}
+```
+
+**The fix** adds `Semantics(label: terminalSemanticsLabel(...), readOnly: true)` around the painter.
+Three decisions, all inherited or forced:
+
+* **The cap is 2,000 characters**, as Kotlin's is. A cap is needed because the label is re-announced
+  whenever it changes; uncapped, a terminal would read its whole grid on every arriving character.
+* **The tail is kept, not the head** — a terminal's newest output is the part being read.
+* **The label is built from the viewport snapshot**, not the full buffer, so it costs a short string
+  per publish rather than a walk of the scrollback. `session.snapshot` is already the viewport
+  window the surface paints, so this is free.
+* **An empty grid is named `Terminal output: empty`** rather than left blank, because a blank label
+  makes the node *unlabelled* rather than *empty* — which reads as a bug rather than an idle
+  terminal.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `dart format --set-exit-if-changed --line-length 100 .` | passes |
+| Full host suite | **2,373 passed** (+4) |
+| Surface sweep + walkthrough, API 35 `emulator-5554` | **8 passed** |
+
+Three unit tests on the pure `terminalSemanticsLabel`, plus one end-to-end test that reads the real
+`SemanticsNode` off the live surface — the pure function being right proves nothing about whether it
+reaches the tree, which for a `CustomPaint` is the entire question.
+
+**Negative control.** Removing the label leaves the node without one and fails the end-to-end test.
+
+**Accessibility axis, still open:** non-interactive `Icon`s that convey state, `Semantics` grouping
+on composite rows (a host card announces as its separate fragments), focus order, and announced
+state changes (`liveRegion`). Icon-only buttons (71) and terminal content (73) are done.
+
+### 71 — thirty icon-only controls had no accessible name (closed)
+
+Sweeping the accessibility axis. Kotlin carries 179 `contentDescription`s; the 59 that are `null`
+are decorative icons, which is the correct use of null rather than an omission. The port dropped the
+names on every icon-only *button*:
+
+```
+IconButtons with neither `tooltip:` nor `semanticLabel`: 30
+```
+
+To a screen-reader user each announced as "button" with no indication of what it does — every
+dismiss and close, the find bar's previous/next arrows, the numeric steppers. The controls worked;
+they were simply unnameable, which for a blind user is the same as not working.
+
+**The fix** adds `tooltip:` to all thirty, which supplies the semantic label and a long-press label
+in one. Wording follows Kotlin where it has some ("Dismiss", "Clear", "Close image preview", "Close
+editor"), and otherwise plainly describes the effect.
+
+**The guard matters more than the fix.** `test/accessibility_labels_test.dart` scans `lib/` and
+fails with the file, line and widget key of any icon button lacking a name. A per-screen widget test
+would only cover screens someone remembered to write a test for, and the defect here was not that
+one screen was wrong — it was that nothing stopped the next one being wrong.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| Full host suite | **2,369 passed** (+1) |
+| Surface sweep + walkthrough, API 35 `emulator-5554` | **8 passed** |
+
+**Negative control.** Removing a single tooltip fails the guard and names it exactly:
+`lib/ui/widgets/terminal_transcript_sheet.dart:168 (transcript.close)`.
+
+**Not swept here:** non-interactive `Icon`s, `Semantics` on composite rows, focus order, and
+announced state changes. This entry closes icon-only *buttons* only, and the rest of the
+accessibility axis remains open.
+
+### 72 — the branch would have failed CI's format gate (closed)
+
+Not a parity defect. A mistake of mine, recorded because it was committed and would have failed the
+first PR check that ran.
+
+`flutter-pr-check.yml` formats with an explicit width:
+
+```yaml
+run: dart format --output=none --set-exit-if-changed --line-length 100 .
+```
+
+I had been running plain `dart format` — default width **80** — after every slice this session, and
+those files went into the commits. Verified against HEAD rather than assumed: formatting three
+committed files at width 100 changes all three, so the branch as pushed does not satisfy the gate.
+
+Found only because a careless `dart format lib` reformatted 122 files at once and the size of the
+diff was obviously wrong. The narrower per-file commands had been making the same error quietly all
+along — the visible mistake exposed the invisible one.
+
+**The fix** reformats `lib`, `test` and `integration_test` at width 100; 163 files changed, and the
+tree now passes CI's exact command. Two consequences worth knowing:
+
+* **The diff is large and almost entirely mechanical.** Reviewing it line by line is not useful;
+  `dart format --output=none --set-exit-if-changed --line-length 100 .` returning 0 is the check
+  that matters.
+* **Always pass `--line-length 100` in this repository.** The default is not the project's style,
+  and nothing local catches the difference — `flutter analyze` is silent on formatting, and the
+  branch has no PR, so the gate that would have caught it never ran.
+
+### 70 — turning App Lock off never said what it destroys (closed)
+
+The last item from the confirmation-dialog sweep. Unlike 68 and 69, the capability was present and
+reachable — only the warning was missing, which is what I had expected all three to be.
+
+Defect 62 already made the *save* re-authenticate, so this switch could not be flipped by someone
+who could not already pass the lock. What was still missing is that the switch does more than it
+says: it deletes the stored PIN and the biometric enrolment, and there is no undo — turning the lock
+back on means enrolling from scratch.
+
+**Ordering is the part worth getting right.** The confirmation runs **before** the
+re-authentication, as Kotlin orders it (`:3903` then `:3902`). The other way round would collect the
+user's PIN and *then* reveal that passing the prompt is what deletes it — asking someone to
+authenticate before telling them what they are authorising.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| Full host suite | **2,368 passed** (+1) |
+| `settings_screen_test.dart` | 21 (+1) |
+| Surface sweep + walkthrough, API 35 `emulator-5554` | **8 passed** |
+
+**Negative controls.** Two, because the branch has two ways to fail open:
+
+| Mutation | Result |
+|---|---|
+| Skip the confirmation entirely | the new test fails |
+| Ignore Cancel and save anyway | the new test fails |
+
+**This one is testable where defect 62's gate was not**, which is worth recording. The prompt fires
+*before* the `AppLockController` gate and keys off saved-versus-draft state, so it needs no live
+controller — and it is the live controller's background-lock timer that stops `pumpAndSettle`
+quieting and left 62's wiring uncovered. The test also asserts that turning the lock *on* does not
+ask, so a prompt attached to the switch rather than to the disabling direction would not pass.
+
+**Dialog axis complete.** Kotlin's 70 `confirm.ask` sites, compared by concept rather than by
+string, left four gaps: force kill (68), clear scrollback (69), this one, and "Remove trusted key?",
+which turned out to be present with different wording. Two of the four were missing *capabilities*
+rather than missing prompts — the sweep was worth running for that reason alone.
+
+### 69 — the scrollback could be read but never dropped (closed)
+
+The second of the three confirmations defect 68 left open, and — like 68 — the missing dialog turned
+out to be the smaller half. The capability itself was unreachable:
+
+```dart
+void clearScrollback() { _scrollback.clear(); _scrollbackSpanCache.clear(); }   // one caller:
+if (mode == 3) clearScrollback();                                              // the DECSTR handler
+```
+
+So the only thing that could clear the buffer was the remote sending an escape sequence. Nothing the
+user could tap reached it. Kotlin puts the action beside the copy ranges (`ui/ShellScreen.kt:2508`),
+which is where defect 67 had just built the same sheet.
+
+**Why it matters more than housekeeping.** A long session's scrollback holds up to 2,000 rows of
+whatever was printed — credentials echoed by a careless script, customer data from a query, a token
+in a log line. Clearing it is a privacy action, not just a memory one. And with a **persistent tmux
+session** the buffer survives leaving the session, so there was no way to drop it short of
+uninstalling.
+
+**The fix.** `ShellSession.clearScrollback()` clears the emulator and snaps the viewport back to the
+tail — every row it might have been anchored to is gone, and leaving it anchored would render a
+blank region above the live screen. The sheet asks first, in Kotlin's words.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| Full host suite | **2,367 passed** (+1) |
+| `shell_screen_test.dart` | 36 (+1) |
+| Surface sweep + walkthrough, API 35 `emulator-5554` | **8 passed** |
+
+**Negative control.** Making the confirmed path skip `emulator.clearScrollback()` fails the new
+test. The test also asserts Cancel keeps the buffer, and that the live screen survives — a clear
+that took the screen with it would pass a weaker assertion.
+
+### Correction to defect 68's open list
+
+**"Remove trusted key?" is not a defect.** I listed it as possibly missing, and speculated that if
+host-key revocation did not exist it would be a security defect. It does exist: the Auth Keys screen
+has a trusted-hosts section with a per-host revoke button (`authKeys.trust.<host>.revoke`) that goes
+through `_confirmRevoke`, and `AuthKeysViewModel.revokeKnownHost` removes the pin. Only the wording
+differs from Kotlin's. Recorded because the speculation was published in the ledger and would
+otherwise be inherited as a finding.
+
+That leaves **"Turn off App Lock?"** as the one item still open from the dialog sweep — a missing
+confirmation, with the serious half (re-authentication before the save that clears the PIN) already
+closed by defect 62.
+
+### 68 — SIGKILL was implemented but unreachable (closed)
+
+Found by sweeping the confirmation-dialog axis: Kotlin has 70 `confirm.ask` sites, Flutter had 32
+`?`-titled dialogs. Comparing the *destructive* ones by concept rather than by string left four with
+no Flutter counterpart — clear scrollback, remove trusted key, turn off App Lock, and force kill.
+This entry closes the fourth; the other three are recorded below as still open.
+
+This is the session's dominant defect class in its purest form. The capability was fully
+implemented:
+
+```dart
+Future<void> killProcess(int pid, {int signal = 15}) async { … }   // signal honoured throughout
+String killProcessCommand(int pid, {int signal = 15}) => 'kill -$signal $pid 2>&1';
+```
+
+and the one call site was `vm.killProcess(proc.pid)`. Nothing ever passed a signal, so the parameter
+— and the command builder's support for it — existed, was tested, and could not be reached.
+
+**What it cost the user.** SIGTERM is *the signal a wedged process ignores*, so the single situation
+that makes you open a process list and reach for Kill was the one the app could not resolve. The
+workaround is a shell session and `kill -9` typed by hand, which is exactly what the Monitor screen
+exists to avoid.
+
+**The fix.** A second action per row, and `_confirmKill(force:)` selecting the signal. Kotlin's
+warning is kept verbatim in substance — *"Unsaved work in that process is lost"* — because the
+consequence is the whole difference between the two actions.
+
+They are deliberately **not** one dialog with a checkbox: whether the process gets to save its work
+is a choice to make *before* confirming, not while confirming.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| Full host suite | **2,366 passed** (+1) |
+| `monitor_screen_test.dart` | 42 (+1) |
+| Surface sweep + walkthrough, API 35 `emulator-5554` | **8 passed** |
+
+**Negative control.** Reverting the call to `vm.killProcess(proc.pid)` — the old behaviour — fails
+the new test. The test also asserts the *absence* of `kill -15`, so a force action that sent both
+signals would not pass.
+
+**Still open from this axis**, each a Kotlin confirmation with no Flutter counterpart, and each
+needing its underlying action checked before assuming the dialog is all that is missing:
+
+* **"Clear scrollback?"** — `TerminalEmulator.clearScrollback()` exists and is called only by the
+  DECSTR escape handler (`mode == 3`). There appears to be no user-facing action at all, so this is
+  probably a missing feature rather than a missing prompt.
+* **"Remove trusted key?"** — no match anywhere in `lib/`. Host-key trust can be granted; whether it
+  can be revoked needs checking. If it cannot, that is a security defect, not a copy one.
+* **"Turn off App Lock?"** — disabling the lock clears the stored PIN (see defect 62) and Kotlin
+  confirms before doing it. Flutter's settings save is now re-authenticated, which covers the
+  serious half, but the explicit confirmation is absent.
+
+### 67 — the terminal offered one copy range where Kotlin offers two (closed)
+
+Found by sweeping the long-press axis, which the handover still listed as unswept. The axis itself
+was nearly clean — Kotlin has five long-press sites and Flutter had counterparts for four, the fifth
+being a Tools card whose `onLongClick` is identical to its `onClick` and so carries no behaviour.
+The defect was not a *missing* handler but a handler doing something different.
+
+| | Kotlin | Flutter (before) |
+|---|---|---|
+| Long press | Visible screen | Full buffer |
+| Second range | Full buffer, via the chooser at `:2491` | *none* |
+
+So the port had exactly one of the two ranges, and it was the wrong one to default to:
+
+* **The common case was unreachable.** Copying the error currently on screen — the reason to reach
+  for this at all — could only be done by copying thousands of lines and finding it again.
+* **Every long press did the expensive thing.** `session.snapshot` is already the viewport window
+  the surface paints, but the sheet called `session.emulator.snapshot()`, building spans for the
+  entire scrollback (limit 2,000 rows) on each open. Kotlin defaults to the cheap range for this
+  reason.
+
+**The fix.** `TranscriptRange` and `transcriptTextFor` make both ranges explicit; the sheet opens on
+`visibleScreen` and a button switches to `fullBuffer` and back. The title, the copy tooltip and the
+confirmation snackbar all name the range, because "Transcript copied" after copying 2,000 lines when
+you wanted 12 is a silent wrong answer.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| Full host suite | **2,365 passed** (+1) |
+| `shell_screen_test.dart` | 35 (+1) |
+| Surface sweep + walkthrough, API 35 `emulator-5554` | **8 passed** |
+
+**An existing test was changed, deliberately.** `output that scrolled out of view is still in the
+transcript` asserted that a long press shows `line 0` — the behaviour this defect corrects. It is
+replaced by a test asserting the visible screen excludes `line 0`, and that the full buffer still
+contains it, so the capability it protected is still covered rather than dropped. A second test
+switches back, since a one-way toggle would trade one missing range for the other.
+
+**Negative control.** Defaulting `_range` to `fullBuffer` — the old behaviour — fails both new
+tests.
 
 ### 66 — Back skipped the file editor's discard prompt (closed)
 

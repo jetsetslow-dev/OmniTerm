@@ -62,10 +62,7 @@ class CommandOutputCard extends StatelessWidget {
                     Expanded(
                       child: Text(
                         title.isEmpty ? 'Action output' : title,
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontSize: 11,
-                        ),
+                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
                       ),
                     ),
                     if (running)
@@ -81,9 +78,9 @@ class CommandOutputCard extends StatelessWidget {
                       onPressed: () async {
                         await Clipboard.setData(ClipboardData(text: output));
                         if (!context.mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Output copied')),
-                        );
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(const SnackBar(content: Text('Output copied')));
                       },
                     ),
                   ],
@@ -96,10 +93,7 @@ class CommandOutputCard extends StatelessWidget {
                       child: Text(
                         output,
                         key: ValueKey('$keyPrefix.text'),
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontFamily: OmniFonts.mono,
-                        ),
+                        style: const TextStyle(fontSize: 11, fontFamily: OmniFonts.mono),
                       ),
                     ),
                   ),
@@ -108,6 +102,7 @@ class CommandOutputCard extends StatelessWidget {
             ),
           ),
           IconButton(
+            tooltip: 'Dismiss',
             key: ValueKey('$keyPrefix.dismiss'),
             icon: const Icon(Icons.close, size: 16),
             onPressed: onDismiss,

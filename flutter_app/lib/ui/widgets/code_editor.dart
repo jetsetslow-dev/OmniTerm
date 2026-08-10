@@ -6,11 +6,7 @@ import '../theme/typography.dart';
 import 'omni_components.dart';
 
 class HighlightEditingController extends TextEditingController {
-  HighlightEditingController({
-    super.text,
-    required this.language,
-    required this.maxChars,
-  });
+  HighlightEditingController({super.text, required this.language, required this.maxChars});
 
   CodeLanguage language;
   int maxChars;
@@ -24,9 +20,7 @@ class HighlightEditingController extends TextEditingController {
   }) {
     final source = text;
     final colors = palette;
-    if (colors == null ||
-        language == CodeLanguage.none ||
-        source.length > maxChars) {
+    if (colors == null || language == CodeLanguage.none || source.length > maxChars) {
       return TextSpan(text: source, style: style);
     }
     final children = <InlineSpan>[];
@@ -159,25 +153,14 @@ class _CodeEditorState extends State<CodeEditor> {
   void _selectMatch({required bool previous}) {
     final matches = _matches;
     if (matches.isEmpty) return;
-    final cursor = widget.controller.selection.isValid
-        ? widget.controller.selection.start
-        : 0;
+    final cursor = widget.controller.selection.isValid ? widget.controller.selection.start : 0;
     RegExpMatch match;
     if (previous) {
-      match = matches.lastWhere(
-        (item) => item.end < cursor,
-        orElse: () => matches.last,
-      );
+      match = matches.lastWhere((item) => item.end < cursor, orElse: () => matches.last);
     } else {
-      match = matches.firstWhere(
-        (item) => item.start > cursor,
-        orElse: () => matches.first,
-      );
+      match = matches.firstWhere((item) => item.start > cursor, orElse: () => matches.first);
     }
-    widget.controller.selection = TextSelection(
-      baseOffset: match.start,
-      extentOffset: match.end,
-    );
+    widget.controller.selection = TextSelection(baseOffset: match.start, extentOffset: match.end);
     setState(() {});
   }
 
@@ -192,9 +175,7 @@ class _CodeEditorState extends State<CodeEditor> {
     );
     widget.controller.value = TextEditingValue(
       text: next,
-      selection: TextSelection.collapsed(
-        offset: selection.start + _replacement.text.length,
-      ),
+      selection: TextSelection.collapsed(offset: selection.start + _replacement.text.length),
     );
     widget.onChanged?.call(next);
     setState(() {});
@@ -230,19 +211,12 @@ class _CodeEditorState extends State<CodeEditor> {
           controller: field,
           autofocus: true,
           keyboardType: TextInputType.number,
-          decoration: omniInputDecoration(
-            dialogContext,
-            labelText: 'Line number',
-          ),
+          decoration: omniInputDecoration(dialogContext, labelText: 'Line number'),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Cancel'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
           FilledButton(
-            onPressed: () =>
-                Navigator.pop(dialogContext, int.tryParse(field.text)),
+            onPressed: () => Navigator.pop(dialogContext, int.tryParse(field.text)),
             child: const Text('Go'),
           ),
         ],
@@ -313,18 +287,17 @@ class _CodeEditorState extends State<CodeEditor> {
                       child: TextField(
                         key: const ValueKey('codeEditor.query'),
                         controller: _query,
-                        decoration: omniInputDecoration(
-                          context,
-                          hintText: 'Find',
-                        ),
+                        decoration: omniInputDecoration(context, hintText: 'Find'),
                         onChanged: (_) => setState(() {}),
                       ),
                     ),
                     IconButton(
+                      tooltip: 'Previous match',
                       onPressed: () => _selectMatch(previous: true),
                       icon: const Icon(Icons.keyboard_arrow_up),
                     ),
                     IconButton(
+                      tooltip: 'Next match',
                       onPressed: () => _selectMatch(previous: false),
                       icon: const Icon(Icons.keyboard_arrow_down),
                     ),
@@ -338,20 +311,11 @@ class _CodeEditorState extends State<CodeEditor> {
                         child: TextField(
                           key: const ValueKey('codeEditor.replacement'),
                           controller: _replacement,
-                          decoration: omniInputDecoration(
-                            context,
-                            hintText: 'Replace with',
-                          ),
+                          decoration: omniInputDecoration(context, hintText: 'Replace with'),
                         ),
                       ),
-                      TextButton(
-                        onPressed: _replaceCurrent,
-                        child: const Text('Replace'),
-                      ),
-                      TextButton(
-                        onPressed: _replaceAll,
-                        child: const Text('All'),
-                      ),
+                      TextButton(onPressed: _replaceCurrent, child: const Text('Replace')),
+                      TextButton(onPressed: _replaceAll, child: const Text('All')),
                     ],
                   ),
                 Row(
@@ -359,8 +323,7 @@ class _CodeEditorState extends State<CodeEditor> {
                     FilterChip(
                       label: const Text('Aa'),
                       selected: _caseSensitive,
-                      onSelected: (value) =>
-                          setState(() => _caseSensitive = value),
+                      onSelected: (value) => setState(() => _caseSensitive = value),
                     ),
                     const SizedBox(width: 6),
                     FilterChip(
@@ -373,10 +336,7 @@ class _CodeEditorState extends State<CodeEditor> {
                         padding: const EdgeInsets.only(left: 8),
                         child: Text(
                           _patternError!,
-                          style: const TextStyle(
-                            color: OmniColors.red,
-                            fontSize: 11,
-                          ),
+                          style: const TextStyle(color: OmniColors.red, fontSize: 11),
                         ),
                       ),
                   ],
@@ -412,11 +372,7 @@ class _CodeEditorState extends State<CodeEditor> {
     maxLines: expands ? null : null,
     scrollController: scrollController,
     textAlignVertical: TextAlignVertical.top,
-    style: const TextStyle(
-      fontFamily: OmniFonts.mono,
-      fontSize: _fontSize,
-      height: 1.35,
-    ),
+    style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: _fontSize, height: 1.35),
     decoration: InputDecoration(
       border: const OutlineInputBorder(),
       filled: true,
@@ -444,23 +400,14 @@ class _CodeEditorState extends State<CodeEditor> {
             child: AnimatedBuilder(
               animation: _verticalScroll,
               builder: (context, child) => Transform.translate(
-                offset: Offset(
-                  0,
-                  -(_verticalScroll.hasClients ? _verticalScroll.offset : 0.0),
-                ),
+                offset: Offset(0, -(_verticalScroll.hasClients ? _verticalScroll.offset : 0.0)),
                 child: child,
               ),
               child: _lineNumbers(controller.text, wrapColumns: columns),
             ),
           ),
         ),
-        Expanded(
-          child: _editorField(
-            controller,
-            expands: true,
-            scrollController: _verticalScroll,
-          ),
-        ),
+        Expanded(child: _editorField(controller, expands: true, scrollController: _verticalScroll)),
       ],
     );
   }
@@ -469,16 +416,9 @@ class _CodeEditorState extends State<CodeEditor> {
     final gutterWidth = _gutterWidth(controller.text);
     final longest = controller.text
         .split('\n')
-        .fold<int>(
-          1,
-          (value, line) =>
-              line.runes.length > value ? line.runes.length : value,
-        );
+        .fold<int>(1, (value, line) => line.runes.length > value ? line.runes.length : value);
     final editorWidth = (longest * _fontSize * 0.62 + 30)
-        .clamp(
-          (width - gutterWidth).clamp(40.0, double.infinity),
-          double.infinity,
-        )
+        .clamp((width - gutterWidth).clamp(40.0, double.infinity), double.infinity)
         .toDouble();
     return Scrollbar(
       controller: _verticalScroll,
@@ -492,18 +432,13 @@ class _CodeEditorState extends State<CodeEditor> {
               width: width - gutterWidth,
               child: Scrollbar(
                 controller: _horizontalScroll,
-                notificationPredicate: (notification) =>
-                    notification.depth == 0,
+                notificationPredicate: (notification) => notification.depth == 0,
                 child: SingleChildScrollView(
                   controller: _horizontalScroll,
                   scrollDirection: Axis.horizontal,
                   child: SizedBox(
                     width: editorWidth,
-                    child: _editorField(
-                      controller,
-                      expands: false,
-                      scrollController: null,
-                    ),
+                    child: _editorField(controller, expands: false, scrollController: null),
                   ),
                 ),
               ),
@@ -532,9 +467,10 @@ class _CodeEditorState extends State<CodeEditor> {
                   _lineHeight *
                   (wrapColumns == null
                       ? 1
-                      : ((lines[index].runes.length + wrapColumns - 1) ~/
-                                wrapColumns)
-                            .clamp(1, 100000)),
+                      : ((lines[index].runes.length + wrapColumns - 1) ~/ wrapColumns).clamp(
+                          1,
+                          100000,
+                        )),
               child: Text(
                 '${index + 1}',
                 key: ValueKey('codeEditor.line.${index + 1}'),

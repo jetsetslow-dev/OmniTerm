@@ -382,6 +382,32 @@ void main() {
     });
   });
 
+  testWidgets('the terminal grid is readable by a screen reader', (tester) async {
+    // Defect 73, end to end. The pure label is unit-tested in terminal_transcript_test.dart; this is
+    // the wiring — that it reaches the semantics tree at all, which a painted grid does not do by
+    // itself. Without it TalkBack finds nothing on the app's primary screen.
+    final handle = tester.ensureSemantics();
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester);
+    await connect(tester);
+
+    transport.opened.single.emit('uptime\r\n');
+    transport.opened.single.emit('load average: 0.14\r\n');
+    await tester.pump(const Duration(milliseconds: 30));
+
+    final node = tester.getSemantics(find.byKey(const ValueKey('shell.surface')));
+    // `dotAll`, because the label carries the grid's own newlines between rows.
+    expect(node.label, matches(RegExp(r'^Terminal output: .*load average: 0\.14', dotAll: true)));
+    expect(
+      node.flagsCollection.isReadOnly,
+      isTrue,
+      reason: 'output is not an editable field, and announcing it as one would invite editing',
+    );
+
+    handle.dispose();
+    await finish(tester);
+  });
+
   group('the transcript', () {
     testWidgets('a long press opens the scrollback as selectable text', (tester) async {
       // The surface paints a grid, so there is nothing on it to select — which left the one thing
@@ -413,8 +439,11 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('output that scrolled out of view is still in the transcript', (tester) async {
-      // The reason to reach for this is usually an error that has already scrolled past.
+    testWidgets('it opens on the visible screen, not the whole scrollback', (tester) async {
+      // Defect 67. Kotlin's long press copies the visible screen and offers the full buffer as a
+      // second choice (`ui/ShellScreen.kt:2086` and `:2491`). The port only ever built the full
+      // buffer, so the common case — copy the error currently on screen — could not be done, and
+      // every long press rendered the entire scrollback into selectable text.
       await repo.insertServer(server(name: 'nas'));
       await pump(tester);
       await connect(tester);
@@ -427,11 +456,115 @@ void main() {
       await tester.longPress(find.byKey(const ValueKey('shell.surface')));
       await tester.pumpAndSettle();
 
-      final text = tester
-          .widget<SelectableText>(find.byKey(const ValueKey('transcript.text')))
-          .data!;
-      expect(text, contains('line 0'), reason: 'the scrollback, not the viewport');
-      expect(text, contains('line 199'));
+      String shown() =>
+          tester.widget<SelectableText>(find.byKey(const ValueKey('transcript.text'))).data!;
+
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('transcript.title'))).data,
+        'Visible screen',
+      );
+      expect(shown(), contains('line 199'));
+      expect(
+        shown(),
+        isNot(contains('line 0')),
+        reason: 'line 0 scrolled off, so it is not on the visible screen',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('transcript.toggleRange')));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('transcript.title'))).data,
+        'Full buffer',
+      );
+      expect(
+        shown(),
+        contains('line 0'),
+        reason: 'the error that already scrolled past must still be reachable',
+      );
+      expect(shown(), contains('line 199'));
+
+      await tester.tap(find.byKey(const ValueKey('transcript.close')));
+      await tester.pumpAndSettle();
+      await finish(tester);
+    });
+
+    testWidgets('the scrollback can be cleared, after confirming', (tester) async {
+      // Defect 69. TerminalEmulator.clearScrollback() existed but its only caller was the DECSTR
+      // escape handler, so there was no way for a user to drop buffered output at all — and with a
+      // persistent tmux session, ending the session does not drop it either.
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+
+      for (var i = 0; i < 200; i++) {
+        transport.opened.single.emit('line $i\r\n');
+      }
+      await tester.pump(const Duration(milliseconds: 30));
+
+      await tester.longPress(find.byKey(const ValueKey('shell.surface')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('transcript.toggleRange')));
+      await tester.pumpAndSettle();
+
+      String shown() =>
+          tester.widget<SelectableText>(find.byKey(const ValueKey('transcript.text'))).data!;
+      expect(shown(), contains('line 0'));
+
+      // Cancelling keeps the buffer: this is not recoverable, so it must not happen by mistake.
+      await tester.tap(find.byKey(const ValueKey('transcript.clearScrollback')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('transcript.clear.cancel')));
+      await tester.pumpAndSettle();
+      expect(shown(), contains('line 0'));
+
+      await tester.tap(find.byKey(const ValueKey('transcript.clearScrollback')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('transcript.clear.confirm')));
+      await tester.pumpAndSettle();
+
+      expect(
+        shown(),
+        isNot(contains('line 0')),
+        reason: 'the scrollback is gone, even on the full-buffer range',
+      );
+      expect(
+        shown(),
+        contains('line 199'),
+        reason: 'the live screen survives — only the scrollback is dropped',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('transcript.close')));
+      await tester.pumpAndSettle();
+      await finish(tester);
+    });
+
+    testWidgets('the range can be switched back again', (tester) async {
+      // A one-way toggle would trade one missing range for the other.
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+
+      for (var i = 0; i < 200; i++) {
+        transport.opened.single.emit('line $i\r\n');
+      }
+      await tester.pump(const Duration(milliseconds: 30));
+
+      await tester.longPress(find.byKey(const ValueKey('shell.surface')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('transcript.toggleRange')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('transcript.toggleRange')));
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('transcript.title'))).data,
+        'Visible screen',
+      );
+      expect(
+        tester.widget<SelectableText>(find.byKey(const ValueKey('transcript.text'))).data!,
+        isNot(contains('line 0')),
+      );
 
       await tester.tap(find.byKey(const ValueKey('transcript.close')));
       await tester.pumpAndSettle();

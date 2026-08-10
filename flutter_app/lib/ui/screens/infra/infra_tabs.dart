@@ -666,6 +666,7 @@ Future<void> _showServiceLogs(
                       ),
                     ),
                     IconButton(
+                      tooltip: 'Close logs',
                       key: const ValueKey('infra.logs.close'),
                       icon: const Icon(Icons.close, size: 18),
                       onPressed: () => Navigator.of(context).pop(),

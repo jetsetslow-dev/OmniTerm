@@ -17,11 +17,7 @@ import '../../widgets/code_editor.dart';
 /// keeping: most visits to a config file on a server are to *read* it, and an editor that is armed
 /// by default turns a stray tap on a phone into an edit to `/etc/ssh/sshd_config`. Save is gated on
 /// edit mode for the same reason.
-Future<void> openFileEditor(
-  BuildContext context,
-  SftpViewModel vm,
-  SftpFile entry,
-) async {
+Future<void> openFileEditor(BuildContext context, SftpViewModel vm, SftpFile entry) async {
   final contents = await vm.readForEditing(entry);
   // A failure has already put its reason on the screen; opening an empty editor over it would hide
   // the explanation behind a blank page.
@@ -36,11 +32,7 @@ Future<void> openFileEditor(
 }
 
 class _FileEditorSheet extends StatefulWidget {
-  const _FileEditorSheet({
-    required this.vm,
-    required this.entry,
-    required this.initial,
-  });
+  const _FileEditorSheet({required this.vm, required this.entry, required this.initial});
 
   final SftpViewModel vm;
   final SftpFile entry;
@@ -95,9 +87,7 @@ class _FileEditorSheetState extends State<_FileEditorSheet> {
         builder: (dialogContext) => AlertDialog(
           key: const ValueKey('fileEditor.discard.dialog'),
           title: const Text('Discard changes?'),
-          content: Text(
-            'Your edits to "${widget.entry.name}" have not been saved.',
-          ),
+          content: Text('Your edits to "${widget.entry.name}" have not been saved.'),
           actions: [
             TextButton(
               key: const ValueKey('fileEditor.discard.cancel'),
@@ -107,10 +97,7 @@ class _FileEditorSheetState extends State<_FileEditorSheet> {
             TextButton(
               key: const ValueKey('fileEditor.discard.confirm'),
               onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text(
-                'Discard',
-                style: TextStyle(color: OmniColors.red),
-              ),
+              child: const Text('Discard', style: TextStyle(color: OmniColors.red)),
             ),
           ],
         ),
@@ -120,8 +107,7 @@ class _FileEditorSheetState extends State<_FileEditorSheet> {
     if (mounted) Navigator.of(context).pop();
   }
 
-  static int _lineCount(String text) =>
-      text.isEmpty ? 0 : '\n'.allMatches(text).length + 1;
+  static int _lineCount(String text) => text.isEmpty ? 0 : '\n'.allMatches(text).length + 1;
 
   @override
   Widget build(BuildContext context) {
@@ -140,9 +126,7 @@ class _FileEditorSheetState extends State<_FileEditorSheet> {
         unawaited(_close());
       },
       child: Padding(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(context).viewInsets.bottom,
-        ),
+        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
         child: SizedBox(
           height: MediaQuery.of(context).size.height * 0.9,
           child: Column(
@@ -166,18 +150,14 @@ class _FileEditorSheetState extends State<_FileEditorSheet> {
                             // which is a bigger difference still. Kotlin puts the same `· sudo` in
                             // its subtitle and colours it red (`ui/SftpScreen.kt:3114`).
                             [
-                              _editing
-                                  ? 'Editing'
-                                  : 'Read-only — tap the pencil to edit',
+                              _editing ? 'Editing' : 'Read-only — tap the pencil to edit',
                               '${_lineCount(_text.text)} lines',
                               if (sudo) 'sudo',
                             ].join(' · '),
                             key: const ValueKey('fileEditor.mode'),
                             style: TextStyle(
                               fontSize: 11,
-                              color: sudo
-                                  ? OmniColors.red
-                                  : scheme.onSurfaceVariant,
+                              color: sudo ? OmniColors.red : scheme.onSurfaceVariant,
                             ),
                           ),
                         ],
@@ -190,11 +170,10 @@ class _FileEditorSheetState extends State<_FileEditorSheet> {
                         _editing ? Icons.lock_open : Icons.edit,
                         color: _editing ? OmniColors.amber : OmniColors.cyan,
                       ),
-                      onPressed: _saving
-                          ? null
-                          : () => setState(() => _editing = !_editing),
+                      onPressed: _saving ? null : () => setState(() => _editing = !_editing),
                     ),
                     IconButton(
+                      tooltip: 'Close editor',
                       key: const ValueKey('fileEditor.close'),
                       icon: const Icon(Icons.close),
                       onPressed: _saving ? null : _close,
@@ -210,11 +189,7 @@ class _FileEditorSheetState extends State<_FileEditorSheet> {
                     leftAccent: OmniColors.amber,
                     child: Row(
                       children: [
-                        const Icon(
-                          Icons.warning_amber,
-                          size: 16,
-                          color: OmniColors.amber,
-                        ),
+                        const Icon(Icons.warning_amber, size: 16, color: OmniColors.amber),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
@@ -235,12 +210,10 @@ class _FileEditorSheetState extends State<_FileEditorSheet> {
                     readOnly: !_editing,
                     enabled: !_saving,
                     maxHighlightChars:
-                        (context
-                                    .watch<AppState>()
-                                    .preferences
-                                    .editorHighlightLimitKb *
-                                1024)
-                            .clamp(0, highlightMaxCharsCap),
+                        (context.watch<AppState>().preferences.editorHighlightLimitKb * 1024).clamp(
+                          0,
+                          highlightMaxCharsCap,
+                        ),
                     textKey: const ValueKey('fileEditor.text'),
                     onChanged: (_) => setState(() {}),
                   ),

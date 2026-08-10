@@ -274,6 +274,55 @@ void main() {
     await tester.pump(const Duration(milliseconds: 10));
   });
 
+  testWidgets('a wedged process can be force killed with SIGKILL', (tester) async {
+    // Defect 68. `killProcess` has always taken a signal, but the only caller used the default, so
+    // the app could send SIGTERM and nothing else — precisely the signal a stuck process ignores.
+    // Kotlin offers both as separate actions (`ui/MonitorScreen.kt:920` and `:934`).
+    await repo.insertServer(server(name: 'nas'));
+    final transport = RecordingTransport(
+      replies: {
+        'ps -eo':
+            '  PID USER     %CPU %MEM    VSZ     ELAPSED STAT COMMAND\n'
+            '  102 root     90.0  1.0 100000    01:00:00 S    runaway\n',
+      },
+    );
+    await pump(tester, transport: transport);
+    await tester.tap(find.byKey(const ValueKey('monitor.tab.processes')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('monitor.process.102')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('monitor.process.102.forceKill')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Force kill (SIGKILL)?'), findsOneWidget);
+    expect(
+      find.textContaining('Unsaved work in that process is lost'),
+      findsOneWidget,
+      reason: 'the consequence is the whole difference between the two actions',
+    );
+
+    // Cancelling sends nothing, as with the graceful path.
+    await tester.tap(find.byKey(const ValueKey('monitor.kill.cancel')));
+    await tester.pumpAndSettle();
+    expect(transport.commands.any((c) => c.contains('kill -')), isFalse);
+
+    await tester.tap(find.byKey(const ValueKey('monitor.process.102.forceKill')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('monitor.kill.confirm')));
+    await tester.pumpAndSettle();
+
+    expect(transport.commands.any((c) => c.contains('kill -9 102')), isTrue);
+    expect(
+      transport.commands.any((c) => c.contains('kill -15 102')),
+      isFalse,
+      reason: 'force must not also send the graceful signal',
+    );
+    vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
+  });
+
   testWidgets('rebooting asks first and says what it will run', (tester) async {
     await repo.insertServer(server(name: 'nas'));
     final transport = RecordingTransport();
@@ -923,7 +972,9 @@ void main() {
   /// Confirming a reboot answers "did you mean this". It does not answer "are you the person who
   /// saved that password" — and on a host with one saved, the action needs no credential at all.
   group('privileged actions', () {
-    testWidgets('rebooting a host with a stored sudo password asks to authenticate', (tester) async {
+    testWidgets('rebooting a host with a stored sudo password asks to authenticate', (
+      tester,
+    ) async {
       await repo.insertSetting('app_pin', '1234');
       await repo.insertSetting('app_lock_enabled', 'true');
       await repo.insertServer(server(name: 'nas', sudoPassword: 'hunter2'));
@@ -1038,9 +1089,7 @@ void main() {
       findsOneWidget,
       reason: 'this is the text an operator pastes into a search or a bug report',
     );
-    final text = tester.widget<Text>(
-      find.byKey(const ValueKey('monitor.services.feedback.text')),
-    );
+    final text = tester.widget<Text>(find.byKey(const ValueKey('monitor.services.feedback.text')));
     expect(text.style?.fontFamily, OmniFonts.mono);
     vm.dispose();
   });

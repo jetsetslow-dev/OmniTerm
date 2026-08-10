@@ -162,8 +162,7 @@ class _ExternalAddServerRequest extends StatefulWidget {
   final ExternalUiRequests requests;
 
   @override
-  State<_ExternalAddServerRequest> createState() =>
-      _ExternalAddServerRequestState();
+  State<_ExternalAddServerRequest> createState() => _ExternalAddServerRequestState();
 }
 
 class _ExternalAddServerRequestState extends State<_ExternalAddServerRequest> {
@@ -220,12 +219,7 @@ class _LimitNotice extends StatelessWidget {
     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
     child: Row(
       children: [
-        const Expanded(
-          child: Text(
-            'Free plan host limit reached',
-            style: TextStyle(fontSize: 11),
-          ),
-        ),
+        const Expanded(child: Text('Free plan host limit reached', style: TextStyle(fontSize: 11))),
         TextButton(onPressed: onUnlock, child: const Text('Unlock')),
       ],
     ),
@@ -261,9 +255,8 @@ Future<void> openServerForm(
       suggestedName: suggestedName,
       existingServers: vm.servers,
       savedKeyAliases: aliases,
-      onSave: (server) => mode == ServerFormMode.edit
-          ? vm.updateServer(server)
-          : vm.saveServer(server),
+      onSave: (server) =>
+          mode == ServerFormMode.edit ? vm.updateServer(server) : vm.saveServer(server),
       onTestConnection: vm.canTestConnections ? vm.testConnection : null,
     ),
   );
@@ -280,11 +273,7 @@ class _SummaryBanner extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final online = servers.where((s) => s.status == 'online').length;
     final offline = servers.where((s) => s.status == 'offline').length;
-    final groups = servers
-        .map((s) => s.groupName)
-        .whereType<String>()
-        .toSet()
-        .length;
+    final groups = servers.map((s) => s.groupName).whereType<String>().toSet().length;
 
     return OmniCard(
       key: const ValueKey('servers.summary'),
@@ -295,11 +284,7 @@ class _SummaryBanner extends StatelessWidget {
             child: OmniStatBox(value: '${servers.length}', label: 'Total'),
           ),
           Expanded(
-            child: OmniStatBox(
-              value: '$online',
-              label: 'Online',
-              color: OmniColors.green,
-            ),
+            child: OmniStatBox(value: '$online', label: 'Online', color: OmniColors.green),
           ),
           Expanded(
             child: OmniStatBox(
@@ -311,11 +296,7 @@ class _SummaryBanner extends StatelessWidget {
             ),
           ),
           Expanded(
-            child: OmniStatBox(
-              value: '$groups',
-              label: 'Groups',
-              color: OmniColors.cyan,
-            ),
+            child: OmniStatBox(value: '$groups', label: 'Groups', color: OmniColors.cyan),
           ),
         ],
       ),
@@ -362,6 +343,7 @@ class _SearchRowState extends State<_SearchRow> {
                 suffixIcon: vm.serverSearchText.isEmpty
                     ? null
                     : IconButton(
+                        tooltip: 'Clear search',
                         key: const ValueKey('servers.search.clear'),
                         icon: const Icon(Icons.close, size: 18),
                         onPressed: () {
@@ -375,9 +357,7 @@ class _SearchRowState extends State<_SearchRow> {
           const SizedBox(width: 8),
           IconButton(
             key: const ValueKey('servers.multiSelect.toggle'),
-            tooltip: vm.isMultiSelectMode
-                ? 'Exit multi-select'
-                : 'Select multiple hosts',
+            tooltip: vm.isMultiSelectMode ? 'Exit multi-select' : 'Select multiple hosts',
             onPressed: () => vm.isMultiSelectMode = !vm.isMultiSelectMode,
             icon: Icon(
               vm.isMultiSelectMode ? Icons.close : Icons.checklist,
@@ -439,9 +419,7 @@ class _BulkActions extends StatelessWidget {
     ),
     child: Row(
       children: [
-        Expanded(
-          child: Text('${vm.selectedServerIdsForBulk.length} servers selected'),
-        ),
+        Expanded(child: Text('${vm.selectedServerIdsForBulk.length} servers selected')),
         TextButton(
           key: const ValueKey('servers.bulk.selectAll'),
           onPressed: vm.selectAllServers,
@@ -449,17 +427,13 @@ class _BulkActions extends StatelessWidget {
         ),
         TextButton(
           key: const ValueKey('servers.bulk.group'),
-          onPressed: vm.selectedServerIdsForBulk.isEmpty
-              ? null
-              : () => _showGroupDialog(context),
+          onPressed: vm.selectedServerIdsForBulk.isEmpty ? null : () => _showGroupDialog(context),
           child: const Text('Group'),
         ),
         IconButton(
           key: const ValueKey('servers.bulk.delete'),
           tooltip: 'Delete selected',
-          onPressed: vm.selectedServerIdsForBulk.isEmpty
-              ? null
-              : () => _confirmBulkDelete(context),
+          onPressed: vm.selectedServerIdsForBulk.isEmpty ? null : () => _confirmBulkDelete(context),
           icon: const Icon(Icons.delete_outline, color: OmniColors.red),
         ),
       ],
@@ -485,10 +459,7 @@ class _BulkActions extends StatelessWidget {
           ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
           FilledButton(
             key: const ValueKey('servers.bulk.groupSave'),
             onPressed: () => Navigator.pop(context, controller.text.trim()),
@@ -512,10 +483,7 @@ class _BulkActions extends StatelessWidget {
           'This does not affect the remote machines and cannot be undone here.',
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
           FilledButton(
             key: const ValueKey('servers.bulk.deleteConfirm'),
             onPressed: () => Navigator.pop(context, true),
@@ -620,10 +588,7 @@ class _ServerCard extends StatelessWidget {
                       : server.status == 'connecting'
                       ? '…'
                       : 'Offline',
-                  style: TextStyle(
-                    color: scheme.onSurfaceVariant,
-                    fontSize: 12,
-                  ),
+                  style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
                 ),
                 const SizedBox(width: 8),
                 InkWell(
@@ -633,9 +598,7 @@ class _ServerCard extends StatelessWidget {
                     name: server.name,
                     breakdown: vm.healthBreakdown(server, metrics),
                   ),
-                  child: _HealthRing(
-                    score: server.status == 'online' ? server.healthScore : 0,
-                  ),
+                  child: _HealthRing(score: server.status == 'online' ? server.healthScore : 0),
                 ),
                 IconButton(
                   key: ValueKey('servers.card.${server.id}.actions'),
@@ -655,27 +618,18 @@ class _ServerCard extends StatelessWidget {
                           display.userAtHost(server),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: TextStyle(
-                            color: scheme.onSurfaceVariant,
-                            fontSize: 13,
-                          ),
+                          style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
                         ),
                       ),
                       Text(
                         ':${server.port}',
-                        style: TextStyle(
-                          color: scheme.onSurfaceVariant,
-                          fontSize: 13,
-                        ),
+                        style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 13),
                       ),
                     ],
                   ),
                 ),
                 if (server.groupName?.trim().isNotEmpty == true)
-                  OmniTag(
-                    label: server.groupName!,
-                    color: scheme.onSurfaceVariant,
-                  ),
+                  OmniTag(label: server.groupName!, color: scheme.onSurfaceVariant),
               ],
             ),
             if (server.notes.trim().isNotEmpty) ...[
@@ -693,32 +647,20 @@ class _ServerCard extends StatelessWidget {
             ],
             const SizedBox(height: 8),
             if (server.status == 'online' && server.authStatus == 'failed')
-              _AuthFailure(
-                server: server,
-                onRetry: () => hostProbe?.probeOne(server),
-              )
+              _AuthFailure(server: server, onRetry: () => hostProbe?.probeOne(server))
             else if (server.status == 'online') ...[
               Row(
                 children: [
                   Expanded(
-                    child: _MiniMetric(
-                      label: 'CPU',
-                      value: metrics?.cpuPercent ?? 0,
-                    ),
+                    child: _MiniMetric(label: 'CPU', value: metrics?.cpuPercent ?? 0),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: _MiniMetric(
-                      label: 'RAM',
-                      value: metrics?.memPercent ?? 0,
-                    ),
+                    child: _MiniMetric(label: 'RAM', value: metrics?.memPercent ?? 0),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: _MiniMetric(
-                      label: 'DISK',
-                      value: metrics?.diskPercent ?? 0,
-                    ),
+                    child: _MiniMetric(label: 'DISK', value: metrics?.diskPercent ?? 0),
                   ),
                   if (metrics?.cpuTempC case final temp?) ...[
                     const SizedBox(width: 8),
@@ -744,11 +686,7 @@ class _ServerCard extends StatelessWidget {
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(
-                        Icons.circle,
-                        size: 6,
-                        color: OmniColors.green,
-                      ),
+                      const Icon(Icons.circle, size: 6, color: OmniColors.green),
                       const SizedBox(width: 5),
                       // Flexible so the row can give way. It sits in a `Wrap` with
                       // `mainAxisSize: min`, which asks for the text's full width — at 200% text
@@ -761,9 +699,7 @@ class _ServerCard extends StatelessWidget {
                               : 'online · ssh not verified yet',
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: server.authStatus == 'ok'
-                                ? OmniColors.green
-                                : OmniColors.amber,
+                            color: server.authStatus == 'ok' ? OmniColors.green : OmniColors.amber,
                             fontFamily: OmniFonts.mono,
                             fontSize: 10,
                           ),
@@ -776,20 +712,12 @@ class _ServerCard extends StatelessWidget {
                     children: [
                       _CardAction(
                         label: 'SSH',
-                        onPressed: shell == null
-                            ? null
-                            : () => _connect(context),
+                        onPressed: shell == null ? null : () => _connect(context),
                       ),
                       const SizedBox(width: 5),
-                      _CardAction(
-                        label: 'SFTP',
-                        onPressed: sftp == null ? null : _openSftp,
-                      ),
+                      _CardAction(label: 'SFTP', onPressed: sftp == null ? null : _openSftp),
                       const SizedBox(width: 5),
-                      _CardAction(
-                        label: 'DOCKER',
-                        onPressed: () => _navigate(Screen.infra),
-                      ),
+                      _CardAction(label: 'DOCKER', onPressed: () => _navigate(Screen.infra)),
                     ],
                   ),
                 ],
@@ -802,10 +730,7 @@ class _ServerCard extends StatelessWidget {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   ),
                   const SizedBox(width: 8),
-                  Text(
-                    'Checking host…',
-                    style: TextStyle(color: scheme.onSurfaceVariant),
-                  ),
+                  Text('Checking host…', style: TextStyle(color: scheme.onSurfaceVariant)),
                 ],
               )
             else
@@ -825,10 +750,7 @@ class _ServerCard extends StatelessWidget {
                         ),
                         Text(
                           'No TCP route to ${display.host(server)}:${server.port}',
-                          style: TextStyle(
-                            color: scheme.onSurfaceVariant,
-                            fontSize: 10,
-                          ),
+                          style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 10),
                         ),
                       ],
                     ),
@@ -836,9 +758,7 @@ class _ServerCard extends StatelessWidget {
                   _CardAction(
                     label: 'Retry',
                     color: OmniColors.red,
-                    onPressed: hostProbe == null
-                        ? null
-                        : () => hostProbe!.probeOne(server),
+                    onPressed: hostProbe == null ? null : () => hostProbe!.probeOne(server),
                   ),
                 ],
               ),
@@ -876,38 +796,18 @@ class _ServerCard extends StatelessWidget {
       builder: (context) => SimpleDialog(
         title: Text(server.name),
         children: [
-          _DialogAction(
-            value: 'edit',
-            icon: Icons.edit,
-            label: 'Edit server configuration',
-          ),
+          _DialogAction(value: 'edit', icon: Icons.edit, label: 'Edit server configuration'),
           _DialogAction(
             value: 'duplicate',
             icon: Icons.content_copy,
             label: 'Duplicate host · reuse credentials',
           ),
           if (shortcuts != null)
-            _DialogAction(
-              value: 'pin',
-              icon: Icons.push_pin,
-              label: 'Pin to home screen',
-            ),
+            _DialogAction(value: 'pin', icon: Icons.push_pin, label: 'Pin to home screen'),
           if (shell != null)
-            _DialogAction(
-              value: 'shell',
-              icon: Icons.terminal,
-              label: 'Open terminal console',
-            ),
-          _DialogAction(
-            value: 'monitor',
-            icon: Icons.speed,
-            label: 'Monitor live metrics',
-          ),
-          _DialogAction(
-            value: 'infra',
-            icon: Icons.layers,
-            label: 'Infrastructure / containers',
-          ),
+            _DialogAction(value: 'shell', icon: Icons.terminal, label: 'Open terminal console'),
+          _DialogAction(value: 'monitor', icon: Icons.speed, label: 'Monitor live metrics'),
+          _DialogAction(value: 'infra', icon: Icons.layers, label: 'Infrastructure / containers'),
           const _DialogAction(
             value: 'delete',
             icon: Icons.delete,
@@ -920,26 +820,14 @@ class _ServerCard extends StatelessWidget {
     if (!context.mounted || action == null) return;
     switch (action) {
       case 'edit':
-        await openServerForm(
-          context,
-          vm,
-          mode: ServerFormMode.edit,
-          source: server,
-        );
+        await openServerForm(context, vm, mode: ServerFormMode.edit, source: server);
       case 'duplicate':
-        await openServerForm(
-          context,
-          vm,
-          mode: ServerFormMode.duplicate,
-          source: server,
-        );
+        await openServerForm(context, vm, mode: ServerFormMode.duplicate, source: server);
       case 'pin':
         final pinned = await shortcuts?.pinServer(server) ?? false;
         if (context.mounted && !pinned) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('This launcher does not support pinned shortcuts.'),
-            ),
+            const SnackBar(content: Text('This launcher does not support pinned shortcuts.')),
           );
         }
       case 'shell':
@@ -963,10 +851,7 @@ class _ServerCard extends StatelessWidget {
           'This does not affect the remote machine, but cannot be undone here.',
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
           FilledButton(
             onPressed: () => Navigator.pop(context, true),
             style: FilledButton.styleFrom(backgroundColor: OmniColors.red),
@@ -1007,10 +892,7 @@ class _DialogAction extends StatelessWidget {
         Icon(icon, color: destructive ? OmniColors.red : null),
         const SizedBox(width: 10),
         Expanded(
-          child: Text(
-            label,
-            style: TextStyle(color: destructive ? OmniColors.red : null),
-          ),
+          child: Text(label, style: TextStyle(color: destructive ? OmniColors.red : null)),
         ),
       ],
     ),
@@ -1018,11 +900,7 @@ class _DialogAction extends StatelessWidget {
 }
 
 class _CardAction extends StatelessWidget {
-  const _CardAction({
-    required this.label,
-    required this.onPressed,
-    this.color = OmniColors.cyan,
-  });
+  const _CardAction({required this.label, required this.onPressed, this.color = OmniColors.cyan});
 
   final String label;
   final VoidCallback? onPressed;
@@ -1057,14 +935,8 @@ class _MiniMetric extends StatelessWidget {
       Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Text(
-            label,
-            style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold),
-          ),
-          Text(
-            display ?? '${value.round()}%',
-            style: const TextStyle(fontSize: 9),
-          ),
+          Text(label, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
+          Text(display ?? '${value.round()}%', style: const TextStyle(fontSize: 9)),
         ],
       ),
       const SizedBox(height: 3),
@@ -1091,11 +963,7 @@ class _AuthFailure extends StatelessWidget {
           children: [
             const Text(
               'Online · SSH authentication failed',
-              style: TextStyle(
-                color: OmniColors.red,
-                fontWeight: FontWeight.bold,
-                fontSize: 11,
-              ),
+              style: TextStyle(color: OmniColors.red, fontWeight: FontWeight.bold, fontSize: 11),
             ),
             if (server.authError?.isNotEmpty == true)
               Text(
@@ -1194,11 +1062,7 @@ class _EmptyState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              hasServers ? Icons.search_off : Icons.dns,
-              size: 40,
-              color: OmniColors.textMuted,
-            ),
+            Icon(hasServers ? Icons.search_off : Icons.dns, size: 40, color: OmniColors.textMuted),
             const SizedBox(height: 12),
             Text(
               hasServers ? 'No hosts match your filter' : 'No servers yet',

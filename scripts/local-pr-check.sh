@@ -81,6 +81,31 @@ fi
   lintOpenSourceDebug lintPlayStoreDebug \
   "${GRADLE_ARGS[@]}"
 
+# The secret gate, run the way CI runs it. Two properties of that job are easy to get wrong locally
+# and both cost this repository real time:
+#
+#   1. It scans ALL refs, not the current branch. `actions/checkout` with fetch-depth 0 fetches every
+#      ref, so a finding on any branch fails the scan on all of them. A plain `gitleaks git` walks
+#      HEAD's ancestry only, which can report clean while CI reports six.
+#   2. It scans history, so removing a secret from the working tree never clears a past commit.
+#      Fix the cause first, then baseline the fingerprint in .gitleaksignore.
+run_secret_scan() {
+  local -a cmd
+  if command -v gitleaks >/dev/null 2>&1; then
+    cmd=(gitleaks)
+  elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    cmd=(docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:latest)
+  else
+    echo "WARNING: neither gitleaks nor a working docker found — the secret gate was NOT run." >&2
+    echo "         CI will still run it over every ref. Install gitleaks to catch this locally." >&2
+    return 0
+  fi
+  echo "Scanning every ref for committed secrets"
+  "${cmd[@]}" git --log-opts="--all" --redact --no-banner --no-color .
+}
+
+run_secret_scan
+
 if [[ "$MODE" == "--full" ]]; then
   if [[ "$LINUX_ARM64" == "true" ]]; then
     OMNITERM_DEPENDENCY_JVMARGS="-Xmx2g -Dfile.encoding=UTF-8" \

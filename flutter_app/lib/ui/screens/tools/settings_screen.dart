@@ -85,24 +85,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
               Padding(
                 padding: const EdgeInsets.only(bottom: 6),
                 child: Row(
-                  key: ValueKey(
-                    'settings.warning.${vm.warnings.indexOf(warning)}',
-                  ),
+                  key: ValueKey('settings.warning.${vm.warnings.indexOf(warning)}'),
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Icon(
-                      Icons.info_outline,
-                      size: 14,
-                      color: OmniColors.amber,
-                    ),
+                    const Icon(Icons.info_outline, size: 14, color: OmniColors.amber),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
                         warning,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          color: OmniColors.amber,
-                        ),
+                        style: const TextStyle(fontSize: 11, color: OmniColors.amber),
                       ),
                     ),
                   ],
@@ -114,20 +105,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
               settingKey: 'darkMode',
               title: 'Theme',
               value: draft.darkMode,
-              options: const {
-                null: 'System Default',
-                true: 'Dark Theme',
-                false: 'Light Theme',
-              },
-              onChanged: (v) => vm.update(
-                (p) => p.copyWith(darkMode: v, clearDarkMode: v == null),
-              ),
+              options: const {null: 'System Default', true: 'Dark Theme', false: 'Light Theme'},
+              onChanged: (v) => vm.update((p) => p.copyWith(darkMode: v, clearDarkMode: v == null)),
             ),
             _Switch(
               settingKey: 'amoled',
               title: 'AMOLED black',
-              subtitle:
-                  'True black backgrounds, which save power on OLED screens',
+              subtitle: 'True black backgrounds, which save power on OLED screens',
               value: draft.amoled,
               // Kotlin: `enabled = draftDark != false`. The toggle is available whenever the
               // theme is Dark or System Default — the user should be able to pre-enable AMOLED
@@ -149,19 +133,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               value: draft.textScalePercent,
               limits: PreferenceLimits.textScalePercent,
               step: 10,
-              onChanged: (v) =>
-                  vm.update((p) => p.copyWith(textScalePercent: v)),
+              onChanged: (v) => vm.update((p) => p.copyWith(textScalePercent: v)),
             ),
             _Choice<MeasurementSystem>(
               settingKey: 'measurementSystem',
               title: 'Units',
               value: draft.measurementSystem,
-              options: {
-                for (final system in MeasurementSystem.values)
-                  system: system.label,
-              },
-              onChanged: (v) =>
-                  vm.update((p) => p.copyWith(measurementSystem: v)),
+              options: {for (final system in MeasurementSystem.values) system: system.label},
+              onChanged: (v) => vm.update((p) => p.copyWith(measurementSystem: v)),
             ),
 
             const SectionHeader(title: 'Monitoring'),
@@ -172,8 +151,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               value: draft.telemetryIntervalSeconds,
               limits: PreferenceLimits.telemetryInterval,
               step: 5,
-              onChanged: (v) =>
-                  vm.update((p) => p.copyWith(telemetryIntervalSeconds: v)),
+              onChanged: (v) => vm.update((p) => p.copyWith(telemetryIntervalSeconds: v)),
             ),
             _Stepper(
               settingKey: 'metricsRetention',
@@ -182,8 +160,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               value: draft.metricsRetentionDays,
               limits: PreferenceLimits.metricsRetention,
               step: 1,
-              onChanged: (v) =>
-                  vm.update((p) => p.copyWith(metricsRetentionDays: v)),
+              onChanged: (v) => vm.update((p) => p.copyWith(metricsRetentionDays: v)),
             ),
             _Stepper(
               settingKey: 'alertHistoryLimit',
@@ -191,23 +168,20 @@ class _SettingsScreenState extends State<SettingsScreen> {
               value: draft.alertHistoryLimit,
               limits: PreferenceLimits.alertHistoryLimit,
               step: 10,
-              onChanged: (v) =>
-                  vm.update((p) => p.copyWith(alertHistoryLimit: v)),
+              onChanged: (v) => vm.update((p) => p.copyWith(alertHistoryLimit: v)),
             ),
             _Switch(
               settingKey: 'backgroundKeepAlive',
               title: 'Keep polling in the background',
               subtitle: 'Uses more battery, and the system may still stop it',
               value: draft.backgroundKeepAlive,
-              onChanged: (v) =>
-                  vm.update((p) => p.copyWith(backgroundKeepAlive: v)),
+              onChanged: (v) => vm.update((p) => p.copyWith(backgroundKeepAlive: v)),
             ),
             _Switch(
               settingKey: 'batterySaverEnabled',
               title: 'Back off on low battery',
               value: draft.batterySaverEnabled,
-              onChanged: (v) =>
-                  vm.update((p) => p.copyWith(batterySaverEnabled: v)),
+              onChanged: (v) => vm.update((p) => p.copyWith(batterySaverEnabled: v)),
             ),
             if (draft.batterySaverEnabled)
               _Stepper(
@@ -217,9 +191,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 value: draft.batterySaverThresholdPercent,
                 limits: PreferenceLimits.batterySaverThreshold,
                 step: 5,
-                onChanged: (v) => vm.update(
-                  (p) => p.copyWith(batterySaverThresholdPercent: v),
-                ),
+                onChanged: (v) => vm.update((p) => p.copyWith(batterySaverThresholdPercent: v)),
               ),
 
             const SectionHeader(title: 'Terminal'),
@@ -229,8 +201,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               value: draft.terminalFontSize,
               limits: PreferenceLimits.terminalFontSize,
               step: 1,
-              onChanged: (v) =>
-                  vm.update((p) => p.copyWith(terminalFontSize: v)),
+              onChanged: (v) => vm.update((p) => p.copyWith(terminalFontSize: v)),
             ),
             _Choice<String>(
               settingKey: 'terminalTheme',
@@ -242,27 +213,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _Stepper(
               settingKey: 'terminalScrollbackLimit',
               title: 'Scrollback lines',
-              subtitle:
-                  'Higher uses more memory; the cap is a device limit, not a preference',
+              subtitle: 'Higher uses more memory; the cap is a device limit, not a preference',
               value: draft.terminalScrollbackLimit,
               limits: PreferenceLimits.terminalScrollback,
               step: 500,
-              onChanged: (v) =>
-                  vm.update((p) => p.copyWith(terminalScrollbackLimit: v)),
+              onChanged: (v) => vm.update((p) => p.copyWith(terminalScrollbackLimit: v)),
             ),
             _Switch(
               settingKey: 'smartSwipe',
               title: 'Swipe gestures for keys',
               value: draft.smartSwipeInput,
-              onChanged: (v) =>
-                  vm.update((p) => p.copyWith(smartSwipeInput: v)),
+              onChanged: (v) => vm.update((p) => p.copyWith(smartSwipeInput: v)),
             ),
             _Switch(
               settingKey: 'linkDetection',
               title: 'Detect links in output',
               value: draft.terminalLinkDetection,
-              onChanged: (v) =>
-                  vm.update((p) => p.copyWith(terminalLinkDetection: v)),
+              onChanged: (v) => vm.update((p) => p.copyWith(terminalLinkDetection: v)),
             ),
             _Switch(
               settingKey: 'linkOpenInApp',
@@ -274,11 +241,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _Switch(
               settingKey: 'tmuxControlMode',
               title: 'tmux control mode',
-              subtitle:
-                  'Renders tmux windows natively where the host supports it',
+              subtitle: 'Renders tmux windows natively where the host supports it',
               value: draft.tmuxControlMode,
-              onChanged: (v) =>
-                  vm.update((p) => p.copyWith(tmuxControlMode: v)),
+              onChanged: (v) => vm.update((p) => p.copyWith(tmuxControlMode: v)),
             ),
             _Stepper(
               settingKey: 'editorHighlightLimit',
@@ -289,8 +254,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               value: draft.editorHighlightLimitKb,
               limits: PreferenceLimits.editorHighlightLimit,
               step: 64,
-              onChanged: (v) =>
-                  vm.update((p) => p.copyWith(editorHighlightLimitKb: v)),
+              onChanged: (v) => vm.update((p) => p.copyWith(editorHighlightLimitKb: v)),
             ),
 
             const SectionHeader(title: 'Privacy and security'),
@@ -318,18 +282,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   'Hides the app in the recent-apps preview. Screenshots are blocked on '
                   'Android; iOS does not allow that.',
               value: draft.blockScreenshots,
-              onChanged: (v) =>
-                  vm.update((p) => p.copyWith(blockScreenshots: v)),
+              onChanged: (v) => vm.update((p) => p.copyWith(blockScreenshots: v)),
             ),
             _Switch(
               settingKey: 'hideSensitiveInfo',
               title: 'Hide addresses',
               // Naming the situation this is for, since the setting reads as vague otherwise.
-              subtitle:
-                  'Masks host addresses on screen — useful when sharing a screen or a photo',
+              subtitle: 'Masks host addresses on screen — useful when sharing a screen or a photo',
               value: draft.hideSensitiveInfo,
-              onChanged: (v) =>
-                  vm.update((p) => p.copyWith(hideSensitiveInfo: v)),
+              onChanged: (v) => vm.update((p) => p.copyWith(hideSensitiveInfo: v)),
             ),
 
             const SectionHeader(title: 'File transfers'),
@@ -340,8 +301,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
               value: draft.sftpWarnFileCount,
               limits: PreferenceLimits.sftpWarnFileCount,
               step: 10,
-              onChanged: (v) =>
-                  vm.update((p) => p.copyWith(sftpWarnFileCount: v)),
+              onChanged: (v) => vm.update((p) => p.copyWith(sftpWarnFileCount: v)),
             ),
             _Stepper(
               settingKey: 'sftpWarnGigabytes',
@@ -350,18 +310,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               value: draft.sftpWarnGigabytes,
               limits: PreferenceLimits.sftpWarnGigabytes,
               step: 1,
-              onChanged: (v) =>
-                  vm.update((p) => p.copyWith(sftpWarnGigabytes: v)),
+              onChanged: (v) => vm.update((p) => p.copyWith(sftpWarnGigabytes: v)),
             ),
 
             const SizedBox(height: 16),
             TextButton(
               key: const ValueKey('settings.reset'),
               onPressed: () => _confirmReset(context, vm),
-              child: const Text(
-                'Reset all settings',
-                style: TextStyle(fontSize: 12),
-              ),
+              child: const Text('Reset all settings', style: TextStyle(fontSize: 12)),
             ),
           ],
         ),
@@ -405,11 +361,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// Without this the interval was fixed at its 30-second default with no way to reach it, and a
   /// PIN once set could only be changed by turning the lock off — which deletes it. Both are
   /// available in the Android app, so both belong here.
-  Widget _lockTimeoutSection(
-    BuildContext context,
-    SettingsViewModel vm,
-    AppPreferences draft,
-  ) {
+  Widget _lockTimeoutSection(BuildContext context, SettingsViewModel vm, AppPreferences draft) {
     if (!draft.appLockEnabled) return const SizedBox.shrink();
 
     final scheme = Theme.of(context).colorScheme;
@@ -432,10 +384,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Lock when returning after',
-            style: TextStyle(fontSize: 13),
-          ),
+          const Text('Lock when returning after', style: TextStyle(fontSize: 13)),
           Text(
             // Saying exactly when the countdown starts, because "after" alone invites the guess
             // that it means idle time inside the app.
@@ -453,15 +402,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   key: ValueKey('settings.lockTimeout.$ms'),
                   label: Text(label, style: const TextStyle(fontSize: 12)),
                   selected: !timeout.customSelected && timeout.timeoutMs == ms,
-                  onSelected: (_) =>
-                      _applyLockTimeout(vm, timeout.selectPreset(ms)),
+                  onSelected: (_) => _applyLockTimeout(vm, timeout.selectPreset(ms)),
                 ),
               ChoiceChip(
                 key: const ValueKey('settings.lockTimeout.custom'),
                 label: const Text('Custom', style: TextStyle(fontSize: 12)),
                 selected: timeout.customSelected,
-                onSelected: (_) =>
-                    _applyLockTimeout(vm, timeout.selectCustom()),
+                onSelected: (_) => _applyLockTimeout(vm, timeout.selectCustom()),
               ),
             ],
           ),
@@ -477,12 +424,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     decoration: omniInputDecoration(
                       context,
                       labelText: 'Custom duration',
-                      errorText: timeout.isValid
-                          ? null
-                          : 'Choose a duration up to 24 hours',
+                      errorText: timeout.isValid ? null : 'Choose a duration up to 24 hours',
                     ),
-                    onChanged: (input) =>
-                        _applyLockTimeout(vm, timeout.editCustomValue(input)),
+                    onChanged: (input) => _applyLockTimeout(vm, timeout.editCustomValue(input)),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -493,9 +437,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     for (final unit in appLockTimeoutUnits)
                       DropdownMenuItem(value: unit, child: Text(unit)),
                   ],
-                  onChanged: (unit) => unit == null
-                      ? null
-                      : _applyLockTimeout(vm, timeout.selectCustomUnit(unit)),
+                  onChanged: (unit) =>
+                      unit == null ? null : _applyLockTimeout(vm, timeout.selectCustomUnit(unit)),
                 ),
               ],
             ),
@@ -528,6 +471,38 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final wantsLock = vm.draft.appLockEnabled;
     final hadLock = vm.saved.appLockEnabled;
 
+    // Turning App Lock off destroys the stored PIN and the biometric enrolment with it. Say so
+    // before asking for the PIN, not after: authenticating first would collect the credential and
+    // *then* reveal that passing the prompt is what deletes it. Kotlin orders it the same way
+    // (`ui/ToolsScreen.kt:3903`).
+    if (hadLock && !wantsLock) {
+      final turnOff = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          key: const ValueKey('settings.appLockOff.dialog'),
+          title: const Text('Turn off App Lock?'),
+          content: const Text(
+            'This deletes your saved PIN and disables biometric unlock. '
+            "You'll need to set a new PIN to turn App Lock back on.",
+          ),
+          actions: [
+            TextButton(
+              key: const ValueKey('settings.appLockOff.cancel'),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              key: const ValueKey('settings.appLockOff.confirm'),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Turn off', style: TextStyle(color: OmniColors.red)),
+            ),
+          ],
+        ),
+      );
+      if (turnOff != true) return;
+      if (!context.mounted) return;
+    }
+
     // Saving is gated behind the PIN whenever one exists, matching Kotlin
     // (`ui/ToolsScreen.kt:3902`). Without it, anyone holding a briefly-unlocked phone could turn
     // the app lock *off* — which clears the stored PIN outright below — along with screenshot
@@ -547,9 +522,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       final pin = await _askForPin(context);
       if (pin == null) {
         // Cancelling must not leave the switch on and unbacked; put it back where it was.
-        vm.update(
-          (p) => p.copyWith(appLockEnabled: false, useBiometrics: false),
-        );
+        vm.update((p) => p.copyWith(appLockEnabled: false, useBiometrics: false));
         return;
       }
       await lock.setPin(pin);
@@ -613,10 +586,9 @@ class _StatusCard extends StatelessWidget {
         leftAccent: OmniColors.green,
         child: Row(
           children: [
-            Expanded(
-              child: Text(vm.status!, style: const TextStyle(fontSize: 12)),
-            ),
+            Expanded(child: Text(vm.status!, style: const TextStyle(fontSize: 12))),
             IconButton(
+              tooltip: 'Dismiss',
               key: const ValueKey('settings.status.dismiss'),
               icon: const Icon(Icons.close, size: 16),
               onPressed: vm.dismissStatus,
@@ -650,10 +622,7 @@ class _Switch extends StatelessWidget {
     // Settings the running platform cannot honour are shown, disabled, saying why — not hidden. A
     // row that vanishes reads as the app having forgotten the setting, and the value is still
     // carried in backups taken on a platform where it does work.
-    final unavailable = settingUnavailableReason(
-      settingKey,
-      isIOS: !kIsWeb && Platform.isIOS,
-    );
+    final unavailable = settingUnavailableReason(settingKey, isIOS: !kIsWeb && Platform.isIOS);
     final detail = unavailable ?? subtitle;
     return SwitchListTile(
       key: ValueKey('settings.$settingKey'),
@@ -713,17 +682,12 @@ class _Stepper extends StatelessWidget {
               children: [
                 Text(title, style: const TextStyle(fontSize: 13)),
                 if (subtitle != null)
-                  Text(
-                    subtitle!,
-                    style: TextStyle(
-                      fontSize: 11,
-                      color: scheme.onSurfaceVariant,
-                    ),
-                  ),
+                  Text(subtitle!, style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
               ],
             ),
           ),
           IconButton(
+            tooltip: 'Decrease',
             key: ValueKey('settings.$settingKey.down'),
             icon: const Icon(Icons.remove, size: 18),
             // Disabled at the bound rather than silently doing nothing, so the limit is visible.
@@ -741,6 +705,7 @@ class _Stepper extends StatelessWidget {
             ),
           ),
           IconButton(
+            tooltip: 'Increase',
             key: ValueKey('settings.$settingKey.up'),
             icon: const Icon(Icons.add, size: 18),
             onPressed: value >= limits.max
@@ -839,11 +804,7 @@ class _PinDialogState extends State<_PinDialog> {
         const SizedBox(height: 12),
         _pinField(_first, 'PIN', const ValueKey('settings.pin.first')),
         const SizedBox(height: 8),
-        _pinField(
-          _second,
-          'Confirm PIN',
-          const ValueKey('settings.pin.second'),
-        ),
+        _pinField(_second, 'Confirm PIN', const ValueKey('settings.pin.second')),
         if (_error != null)
           Padding(
             padding: const EdgeInsets.only(top: 10),
@@ -869,16 +830,15 @@ class _PinDialogState extends State<_PinDialog> {
     ],
   );
 
-  Widget _pinField(TextEditingController controller, String label, Key key) =>
-      TextField(
-        key: key,
-        controller: controller,
-        obscureText: true,
-        enableSuggestions: false,
-        autocorrect: false,
-        keyboardType: TextInputType.number,
-        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-        maxLength: 12,
-        decoration: InputDecoration(labelText: label, counterText: ''),
-      );
+  Widget _pinField(TextEditingController controller, String label, Key key) => TextField(
+    key: key,
+    controller: controller,
+    obscureText: true,
+    enableSuggestions: false,
+    autocorrect: false,
+    keyboardType: TextInputType.number,
+    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+    maxLength: 12,
+    decoration: InputDecoration(labelText: label, counterText: ''),
+  );
 }

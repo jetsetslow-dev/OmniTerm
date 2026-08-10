@@ -45,3 +45,27 @@ String _trimTrailing(String line) {
   }
   return line.substring(0, end);
 }
+
+/// The most a screen reader is given in one go.
+///
+/// Kotlin caps at the same figure (`takeLast(2_000)`, `ui/ShellScreen.kt:2049`). A cap is needed at
+/// all because the label is re-announced whenever it changes, and an uncapped terminal would read
+/// its entire visible grid every time a character arrived.
+const int terminalSemanticsMaxChars = 2000;
+
+/// What a screen reader announces for the painted terminal grid.
+///
+/// The surface is a `CustomPaint`, so without this there is nothing in the semantics tree at all —
+/// the app's primary content is invisible to TalkBack and VoiceOver. Ported from the
+/// `contentDescription` Kotlin puts on the same surface (`ui/ShellScreen.kt:2047`), including its
+/// prefix and its cap.
+///
+/// The **tail** is kept rather than the head: a terminal's newest output is the part being read.
+String terminalSemanticsLabel(List<TermRow> rows) {
+  final text = transcriptText(rows);
+  final tail = text.length > terminalSemanticsMaxChars
+      ? text.substring(text.length - terminalSemanticsMaxChars)
+      : text;
+  // An empty grid still needs a name, or the surface is an unlabelled node rather than an empty one.
+  return tail.isEmpty ? 'Terminal output: empty' : 'Terminal output: $tail';
+}

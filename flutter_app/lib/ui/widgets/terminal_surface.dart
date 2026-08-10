@@ -8,6 +8,7 @@ import '../theme/terminal_theme.dart';
 import '../theme/typography.dart';
 import '../view_model/shell_session.dart';
 import 'terminal_transcript_sheet.dart';
+import '../../domain/terminal_transcript.dart';
 
 /// The size of one terminal cell for a given font size.
 ///
@@ -243,13 +244,21 @@ class _TerminalSurfaceState extends State<TerminalSurface> {
             // A painted grid has nothing to select, which left copying output impossible. Long
             // press opens the scrollback as selectable text instead — the Kotlin's answer too.
             onLongPress: () => openTerminalTranscript(context, widget.session),
-            child: CustomPaint(
-              size: Size(constraints.maxWidth, constraints.maxHeight),
-              painter: TerminalPainter(
-                snapshot: widget.session.snapshot,
-                metrics: metrics,
-                palette: widget.palette,
-                showCursor: widget.focused && widget.session.followTail,
+            // The grid is painted, so it puts nothing in the semantics tree by itself — the app's
+            // primary content was unreadable to a screen reader. The label is built from the
+            // *viewport* snapshot, which is bounded by the visible rows, so this costs a short
+            // string per publish rather than a walk of the scrollback.
+            child: Semantics(
+              label: terminalSemanticsLabel(widget.session.snapshot.rows),
+              readOnly: true,
+              child: CustomPaint(
+                size: Size(constraints.maxWidth, constraints.maxHeight),
+                painter: TerminalPainter(
+                  snapshot: widget.session.snapshot,
+                  metrics: metrics,
+                  palette: widget.palette,
+                  showCursor: widget.focused && widget.session.followTail,
+                ),
               ),
             ),
           ),

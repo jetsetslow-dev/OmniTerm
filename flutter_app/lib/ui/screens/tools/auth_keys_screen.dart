@@ -176,6 +176,7 @@ class _MessageCard extends StatelessWidget {
               ),
             ),
             IconButton(
+              tooltip: 'Dismiss',
               key: const ValueKey('authKeys.message.dismiss'),
               icon: const Icon(Icons.close, size: 16),
               onPressed: vm.dismissMessages,
@@ -722,6 +723,7 @@ class _KeyImportSheetState extends State<_KeyImportSheet> {
                     child: Text('Import SSH key', style: Theme.of(context).textTheme.titleLarge),
                   ),
                   IconButton(
+                    tooltip: 'Close',
                     key: const ValueKey('authKeys.import.close'),
                     icon: const Icon(Icons.close),
                     onPressed: () => Navigator.of(context).pop(),
