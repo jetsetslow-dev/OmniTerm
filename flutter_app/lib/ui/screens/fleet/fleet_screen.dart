@@ -180,10 +180,7 @@ class _TabBar extends StatelessWidget {
                 padding: const EdgeInsets.only(right: 8),
                 child: ChoiceChip(
                   key: ValueKey('fleet.tab.${tab.name}'),
-                  label: Text(
-                    _labels[tab]!,
-                    style: const TextStyle(fontSize: 12),
-                  ),
+                  label: Text(_labels[tab]!, style: const TextStyle(fontSize: 12)),
                   selected: vm.activeTab == tab,
                   onSelected: (_) => vm.activeTab = tab,
                 ),

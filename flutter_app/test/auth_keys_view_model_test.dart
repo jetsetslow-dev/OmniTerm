@@ -21,10 +21,7 @@ void main() {
 
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
-    repo = AppRepository(
-      db,
-      SecretStore(storage: FakeSecureStorage(<String, String>{})),
-    );
+    repo = AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{})));
     app = AppState(repo);
   });
 
@@ -33,39 +30,35 @@ void main() {
     await db.close();
   });
 
-  Server server({
-    required String name,
-    String? keyAlias,
-    String? proxyKeyAlias,
-    int? profileId,
-  }) => Server(
-    id: 0,
-    name: name,
-    host: '10.0.0.1',
-    port: 22,
-    username: 'root',
-    serverColor: 'Default',
-    authType: keyAlias != null ? 'key' : 'password',
-    authKeyAlias: keyAlias,
-    authProfileId: profileId,
-    sudoPassword: '',
-    notes: '',
-    keepAlive: 30,
-    sshCompression: false,
-    persistentSession: false,
-    proxyCommand: '',
-    proxyType: 'none',
-    proxyHost: '',
-    proxyPort: 0,
-    proxyUser: '',
-    proxyPassword: '',
-    proxyKeyAlias: proxyKeyAlias,
-    agentForwarding: false,
-    healthScore: 100,
-    lastLatency: 0,
-    status: 'offline',
-    authStatus: 'unknown',
-  );
+  Server server({required String name, String? keyAlias, String? proxyKeyAlias, int? profileId}) =>
+      Server(
+        id: 0,
+        name: name,
+        host: '10.0.0.1',
+        port: 22,
+        username: 'root',
+        serverColor: 'Default',
+        authType: keyAlias != null ? 'key' : 'password',
+        authKeyAlias: keyAlias,
+        authProfileId: profileId,
+        sudoPassword: '',
+        notes: '',
+        keepAlive: 30,
+        sshCompression: false,
+        persistentSession: false,
+        proxyCommand: '',
+        proxyType: 'none',
+        proxyHost: '',
+        proxyPort: 0,
+        proxyUser: '',
+        proxyPassword: '',
+        proxyKeyAlias: proxyKeyAlias,
+        agentForwarding: false,
+        healthScore: 100,
+        lastLatency: 0,
+        status: 'offline',
+        authStatus: 'unknown',
+      );
 
   Future<AuthKeysViewModel> boot({SshHostKeyTrust? trust}) async {
     await app.start();
@@ -80,11 +73,7 @@ void main() {
       final vm = await boot();
 
       expect(
-        await vm.importKey(
-          alias: 'laptop',
-          privateKey: keys.privateKey,
-          publicKey: keys.publicKey,
-        ),
+        await vm.importKey(alias: 'laptop', privateKey: keys.privateKey, publicKey: keys.publicKey),
         isNull,
       );
       await Future<void>.delayed(Duration.zero);
@@ -112,16 +101,9 @@ void main() {
     test('a bad key is rejected with the parser\'s own reason', () async {
       final vm = await boot();
 
-      final failure = await vm.importKey(
-        alias: 'oops',
-        privateKey: keys.publicKey,
-      );
+      final failure = await vm.importKey(alias: 'oops', privateKey: keys.publicKey);
       expect(failure, contains('public key'));
-      expect(
-        await repo.getAllKeys(),
-        isEmpty,
-        reason: 'nothing unusable reaches the store',
-      );
+      expect(await repo.getAllKeys(), isEmpty, reason: 'nothing unusable reaches the store');
       vm.dispose();
     });
 
@@ -193,11 +175,7 @@ void main() {
 
     test('a profile reports its dependent hosts too', () async {
       final vm = await boot();
-      await vm.saveProfile(
-        profileName: 'shared',
-        username: 'deploy',
-        authType: 'password',
-      );
+      await vm.saveProfile(profileName: 'shared', username: 'deploy', authType: 'password');
       await Future<void>.delayed(Duration.zero);
       final profile = (await repo.getAllProfiles()).single;
       await repo.insertServer(server(name: 'web', profileId: profile.id));
@@ -250,19 +228,11 @@ void main() {
     test('validation refuses incomplete profiles', () async {
       final vm = await boot();
       expect(
-        await vm.saveProfile(
-          profileName: '',
-          username: 'u',
-          authType: 'password',
-        ),
+        await vm.saveProfile(profileName: '', username: 'u', authType: 'password'),
         contains('required'),
       );
       expect(
-        await vm.saveProfile(
-          profileName: 'p',
-          username: ' ',
-          authType: 'password',
-        ),
+        await vm.saveProfile(profileName: 'p', username: ' ', authType: 'password'),
         contains('required'),
       );
       expect(
@@ -273,41 +243,30 @@ void main() {
       vm.dispose();
     });
 
-    test(
-      'a duplicate name is refused, but editing one keeps its own',
-      () async {
-        final vm = await boot();
+    test('a duplicate name is refused, but editing one keeps its own', () async {
+      final vm = await boot();
+      await vm.saveProfile(profileName: 'shared', username: 'a', authType: 'password');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(
+        await vm.saveProfile(profileName: 'shared', username: 'b', authType: 'password'),
+        contains('already exists'),
+      );
+
+      final existing = (await repo.getAllProfiles()).single;
+      expect(
         await vm.saveProfile(
+          existing: existing,
           profileName: 'shared',
-          username: 'a',
+          username: 'renamed',
           authType: 'password',
-        );
-        await Future<void>.delayed(Duration.zero);
-
-        expect(
-          await vm.saveProfile(
-            profileName: 'shared',
-            username: 'b',
-            authType: 'password',
-          ),
-          contains('already exists'),
-        );
-
-        final existing = (await repo.getAllProfiles()).single;
-        expect(
-          await vm.saveProfile(
-            existing: existing,
-            profileName: 'shared',
-            username: 'renamed',
-            authType: 'password',
-          ),
-          isNull,
-        );
-        await Future<void>.delayed(Duration.zero);
-        expect((await repo.getAllProfiles()).single.username, 'renamed');
-        vm.dispose();
-      },
-    );
+        ),
+        isNull,
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect((await repo.getAllProfiles()).single.username, 'renamed');
+      vm.dispose();
+    });
 
     test('an edit with a blank password keeps the stored one', () async {
       final vm = await boot();
@@ -352,11 +311,7 @@ void main() {
 
       await vm.revokeKnownHost(vm.knownHosts.single);
       expect(vm.knownHosts, isEmpty);
-      expect(
-        await store.readAll(),
-        isEmpty,
-        reason: 'the next connection must ask again',
-      );
+      expect(await store.readAll(), isEmpty, reason: 'the next connection must ask again');
       vm.dispose();
     });
 
@@ -370,10 +325,7 @@ void main() {
 
   group('splitHostPort', () {
     test('splits a host and port', () {
-      expect(AuthKeysViewModel.splitHostPort('10.0.0.1:2222'), (
-        '10.0.0.1',
-        2222,
-      ));
+      expect(AuthKeysViewModel.splitHostPort('10.0.0.1:2222'), ('10.0.0.1', 2222));
     });
 
     test('defaults to 22 when there is no port', () {
@@ -383,14 +335,8 @@ void main() {
     test('the bracketed form is what the store actually writes', () {
       // Pins for a non-default port are stored as `[host]:port`; keeping the brackets would make
       // the revoke match nothing.
-      expect(AuthKeysViewModel.splitHostPort('[10.0.0.1]:2222'), (
-        '10.0.0.1',
-        2222,
-      ));
-      expect(AuthKeysViewModel.splitHostPort('[fe80::1]:2222'), (
-        'fe80::1',
-        2222,
-      ));
+      expect(AuthKeysViewModel.splitHostPort('[10.0.0.1]:2222'), ('10.0.0.1', 2222));
+      expect(AuthKeysViewModel.splitHostPort('[fe80::1]:2222'), ('fe80::1', 2222));
     });
 
     test('a bare IPv6 address is not split on one of its own colons', () {
@@ -399,10 +345,7 @@ void main() {
     });
 
     test('a non-numeric suffix is part of the host', () {
-      expect(AuthKeysViewModel.splitHostPort('nas:notaport'), (
-        'nas:notaport',
-        22,
-      ));
+      expect(AuthKeysViewModel.splitHostPort('nas:notaport'), ('nas:notaport', 22));
     });
   });
 }

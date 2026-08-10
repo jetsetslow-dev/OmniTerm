@@ -192,10 +192,7 @@ class AuthKeysViewModel extends ChangeNotifier {
   /// The caller is handed the material because this is the *only* moment the private key can be
   /// shown: it is stored encrypted and never read back out to the UI afterwards. Returns null when
   /// generation was refused, with the reason in [error].
-  Future<GeneratedSshKey?> generateKey({
-    required String alias,
-    String keyType = 'RSA',
-  }) async {
+  Future<GeneratedSshKey?> generateKey({required String alias, String keyType = 'RSA'}) async {
     if (_keygenRunning) return null;
     _keygenRunning = true;
     _error = null;

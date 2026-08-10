@@ -10,33 +10,21 @@ void main() {
   group('hostLimitExceeded', () {
     test('an unlimited build never reconciles', () {
       // The source-available build and every unlocked install.
-      expect(
-        hostLimitExceeded(hasHostLimit: false, hostLimit: 1, hostCount: 99),
-        isFalse,
-      );
+      expect(hostLimitExceeded(hasHostLimit: false, hostLimit: 1, hostCount: 99), isFalse);
     });
 
     test('at the limit is not over it', () {
-      expect(
-        hostLimitExceeded(hasHostLimit: true, hostLimit: 1, hostCount: 1),
-        isFalse,
-      );
+      expect(hostLimitExceeded(hasHostLimit: true, hostLimit: 1, hostCount: 1), isFalse);
     });
 
     test('over the limit reconciles', () {
-      expect(
-        hostLimitExceeded(hasHostLimit: true, hostLimit: 1, hostCount: 2),
-        isTrue,
-      );
+      expect(hostLimitExceeded(hasHostLimit: true, hostLimit: 1, hostCount: 2), isTrue);
     });
 
     test('an empty install does not reconcile', () {
       // A fresh limited install has nothing to choose between, and a dialog demanding a choice
       // would be unanswerable.
-      expect(
-        hostLimitExceeded(hasHostLimit: true, hostLimit: 1, hostCount: 0),
-        isFalse,
-      );
+      expect(hostLimitExceeded(hasHostLimit: true, hostLimit: 1, hostCount: 0), isFalse);
     });
   });
 
@@ -60,10 +48,7 @@ void main() {
 
   group('the wording', () {
     test('a lapsed unlock says something changed', () {
-      expect(
-        HostLimitReason.unlockEnded.message(1),
-        contains('no longer active'),
-      );
+      expect(HostLimitReason.unlockEnded.message(1), contains('no longer active'));
     });
 
     test('the free tier says what it allows', () {

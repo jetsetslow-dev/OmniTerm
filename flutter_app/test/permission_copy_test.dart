@@ -29,10 +29,7 @@ void main() {
     test('does not overstate the cost', () {
       // Internet hosts keep working. A prompt that implied the app stops functioning would be
       // pressuring the user into a permission they may not want to give.
-      expect(
-        localNetworkPermissionExplanation,
-        contains('internet hosts remain available'),
-      );
+      expect(localNetworkPermissionExplanation, contains('internet hosts remain available'));
     });
   });
 }

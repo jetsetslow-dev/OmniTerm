@@ -204,17 +204,13 @@ class SharesViewModel extends ChangeNotifier {
   String? get scanStatus => _scanStatus;
 
   /// Sweep progress from 0 to 1, or null before one starts.
-  double? get scanProgress =>
-      _scanTotal == 0 ? null : (_scanDone / _scanTotal).clamp(0.0, 1.0);
+  double? get scanProgress => _scanTotal == 0 ? null : (_scanDone / _scanTotal).clamp(0.0, 1.0);
 
-  bool isScanProtocolEnabled(String protocol) =>
-      _scanProtocols.contains(protocol);
+  bool isScanProtocolEnabled(String protocol) => _scanProtocols.contains(protocol);
 
   /// Loads the stored protocol selection. Called by the screen on first build.
   Future<void> loadScanSettings() async {
-    _scanProtocols = decodeScanProtocols(
-      await _app.repository.getSetting(shareScanProtocolsKey),
-    );
+    _scanProtocols = decodeScanProtocols(await _app.repository.getSetting(shareScanProtocolsKey));
     _safeNotify();
   }
 
@@ -236,10 +232,7 @@ class SharesViewModel extends ChangeNotifier {
           .toList();
     }
     _safeNotify();
-    await _app.repository.insertSetting(
-      shareScanProtocolsKey,
-      encodeScanProtocols(_scanProtocols),
-    );
+    await _app.repository.insertSetting(shareScanProtocolsKey, encodeScanProtocols(_scanProtocols));
   }
 
   /// Sweeps [cidr] for hosts offering the selected protocols.

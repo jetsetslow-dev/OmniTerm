@@ -10,26 +10,14 @@ import 'package:omniterm/ui/theme/theme.dart';
 void main() {
   group('themeModeFor', () {
     test('the ordinary pair', () {
-      expect(
-        themeModeFor(isDark: false, highContrast: false, amoled: false),
-        OmniThemeMode.light,
-      );
-      expect(
-        themeModeFor(isDark: true, highContrast: false, amoled: false),
-        OmniThemeMode.dark,
-      );
+      expect(themeModeFor(isDark: false, highContrast: false, amoled: false), OmniThemeMode.light);
+      expect(themeModeFor(isDark: true, highContrast: false, amoled: false), OmniThemeMode.dark);
     });
 
     test('AMOLED applies in dark mode only', () {
-      expect(
-        themeModeFor(isDark: true, highContrast: false, amoled: true),
-        OmniThemeMode.amoled,
-      );
+      expect(themeModeFor(isDark: true, highContrast: false, amoled: true), OmniThemeMode.amoled);
       // Pure-black surfaces in light mode would be neither AMOLED nor light.
-      expect(
-        themeModeFor(isDark: false, highContrast: false, amoled: true),
-        OmniThemeMode.light,
-      );
+      expect(themeModeFor(isDark: false, highContrast: false, amoled: true), OmniThemeMode.light);
     });
 
     test('high contrast is selected in both brightnesses', () {

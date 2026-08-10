@@ -68,18 +68,10 @@ void main() {
   });
 
   group('identity', () {
-    const onHost = EndpointBookmark(
-      serverId: 1,
-      endpointName: 'nas',
-      path: '/etc',
-    );
+    const onHost = EndpointBookmark(serverId: 1, endpointName: 'nas', path: '/etc');
 
     test('the same path on a different endpoint is a different bookmark', () {
-      const onShare = EndpointBookmark(
-        shareId: 1,
-        endpointName: 'media (SMB)',
-        path: '/etc',
-      );
+      const onShare = EndpointBookmark(shareId: 1, endpointName: 'media (SMB)', path: '/etc');
       expect(onHost == onShare, isFalse);
     });
 
@@ -99,11 +91,7 @@ void main() {
     test('a share bookmark knows it is one', () {
       expect(onHost.isShare, isFalse);
       expect(
-        const EndpointBookmark(
-          shareId: 2,
-          endpointName: 'media (SMB)',
-          path: '/',
-        ).isShare,
+        const EndpointBookmark(shareId: 2, endpointName: 'media (SMB)', path: '/').isShare,
         isTrue,
       );
     });

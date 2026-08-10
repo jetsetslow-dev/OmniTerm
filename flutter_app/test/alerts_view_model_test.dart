@@ -850,9 +850,7 @@ void main() {
 
     Future<void> setLimit(int limit) async {
       await repo.insertSetting('alert_history_limit', '$limit');
-      app.applyPreferences(
-        AppPreferences.defaults.copyWith(alertHistoryLimit: limit),
-      );
+      app.applyPreferences(AppPreferences.defaults.copyWith(alertHistoryLimit: limit));
     }
 
     test('archiving trims the host back to the configured limit', () async {

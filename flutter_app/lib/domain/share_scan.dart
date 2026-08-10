@@ -73,10 +73,7 @@ String? scanPrefixOf(String input) {
   final trimmed = input.trim();
   if (trimmed.isEmpty) return null;
   final withoutMask = trimmed.split('/').first;
-  final octets = withoutMask
-      .split('.')
-      .where((o) => o.trim().isNotEmpty)
-      .toList();
+  final octets = withoutMask.split('.').where((o) => o.trim().isNotEmpty).toList();
   if (octets.length < 3) return null;
   for (final octet in octets.take(3)) {
     final value = int.tryParse(octet);
@@ -87,11 +84,7 @@ String? scanPrefixOf(String input) {
 
 /// One share service found on the network.
 class ShareScanHit {
-  const ShareScanHit({
-    required this.address,
-    required this.protocol,
-    required this.port,
-  });
+  const ShareScanHit({required this.address, required this.protocol, required this.port});
 
   final String address;
   final String protocol;
@@ -118,10 +111,7 @@ class ShareScanHit {
 /// Kotlin makes. It is a **probe, not a handshake** — an open port is evidence a service is
 /// listening, not proof it will accept these credentials, which is what the existing per-share test
 /// action is for.
-List<ShareScanHit> hitsFromScan(
-  Iterable<ScannedHost> hosts,
-  Iterable<String> enabled,
-) {
+List<ShareScanHit> hitsFromScan(Iterable<ScannedHost> hosts, Iterable<String> enabled) {
   final chosen = enabled.toSet();
   final hits = <ShareScanHit>[];
   for (final host in hosts) {
@@ -129,11 +119,7 @@ List<ShareScanHit> hitsFromScan(
       if (!chosen.contains(entry.key)) continue;
       for (final port in entry.value) {
         if (!host.openPorts.contains(port)) continue;
-        final hit = ShareScanHit(
-          address: host.address,
-          protocol: entry.key,
-          port: port,
-        );
+        final hit = ShareScanHit(address: host.address, protocol: entry.key, port: port);
         if (!hits.contains(hit)) hits.add(hit);
       }
     }

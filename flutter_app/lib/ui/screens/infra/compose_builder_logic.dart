@@ -10,12 +10,8 @@ import 'package:uuid/uuid.dart';
 /// Ported from `isDirty` (`ui/ComposeBuilder.kt:1222`), including its exact-string comparison. A
 /// difference in trailing whitespace therefore counts as dirty, which errs towards asking before
 /// discarding — the safe direction for a prompt whose other branch destroys work.
-bool composeDraftIsDirty({
-  required String rendered,
-  required ComposeStackDraft? baseline,
-}) {
-  final initial =
-      baseline?.originalText ?? renderComposeYaml(ComposeStackDraft(), null);
+bool composeDraftIsDirty({required String rendered, required ComposeStackDraft? baseline}) {
+  final initial = baseline?.originalText ?? renderComposeYaml(ComposeStackDraft(), null);
   return rendered != initial;
 }
 
@@ -199,88 +195,80 @@ class ComposeStackDraft {
 }
 
 /// Mutable working copy with source identity preserved for surgical rendering.
-ComposeStackDraft cloneComposeDraft(ComposeStackDraft source) =>
-    ComposeStackDraft(
-      projectName: source.projectName,
-      stackName: source.stackName,
-      stackNameSrcLine: source.stackNameSrcLine,
-      services: [
-        for (final service in source.services)
-          ComposeServiceDraft(
-            id: service.id,
-            serviceName: service.serviceName,
-            image: service.image,
-            containerName: service.containerName,
-            restart: service.restart,
-            command: service.command,
-            usernsMode: service.usernsMode,
-            isCommentedOut: service.isCommentedOut,
-            isExpanded: service.isExpanded,
-            ports: [...service.ports],
-            environment: [...service.environment],
-            volumes: [...service.volumes],
-            networks: [...service.networks],
-            dependsOn: [...service.dependsOn],
-            srcStart: service.srcStart,
-            srcEnd: service.srcEnd,
-            bodyIndent: service.bodyIndent,
-            scalarLine: {...service.scalarLine},
-            arraySpan: {
-              for (final entry in service.arraySpan.entries)
-                entry.key: [...entry.value],
-            },
-            anchorName: service.anchorName,
-            inheritsImage: service.inheritsImage,
-            aliasRefs: [...service.aliasRefs],
-            dependsOnRefs: [...service.dependsOnRefs],
-            unmodeledArrayKeys: {...service.unmodeledArrayKeys},
-          ),
-      ],
-      topVolumes: [
-        for (final volume in source.topVolumes)
-          TopLevelVolumeDraft(
-            id: volume.id,
-            name: volume.name,
-            external: volume.external,
-            isCommentedOut: volume.isCommentedOut,
-            srcStart: volume.srcStart,
-            srcEnd: volume.srcEnd,
-          ),
-      ],
-      topNetworks: [
-        for (final network in source.topNetworks)
-          TopLevelNetworkDraft(
-            id: network.id,
-            name: network.name,
-            driver: network.driver,
-            external: network.external,
-            isCommentedOut: network.isCommentedOut,
-            srcStart: network.srcStart,
-            srcEnd: network.srcEnd,
-          ),
-      ],
-      volumesSrcHeader: source.volumesSrcHeader,
-      networksSrcHeader: source.networksSrcHeader,
-      hasServicesSection: source.hasServicesSection,
-      originalText: source.originalText,
-      workingDir: source.workingDir,
-      fileName: source.fileName,
-      composeFilePath: source.composeFilePath,
-      composeConfigFiles: source.composeConfigFiles,
-      runtime: source.runtime,
-      podmanPodEnabled: source.podmanPodEnabled,
-      podmanPodName: source.podmanPodName,
-      xPodmanSrcHeader: source.xPodmanSrcHeader,
-      xPodmanInPodSrcLine: source.xPodmanInPodSrcLine,
-    );
+ComposeStackDraft cloneComposeDraft(ComposeStackDraft source) => ComposeStackDraft(
+  projectName: source.projectName,
+  stackName: source.stackName,
+  stackNameSrcLine: source.stackNameSrcLine,
+  services: [
+    for (final service in source.services)
+      ComposeServiceDraft(
+        id: service.id,
+        serviceName: service.serviceName,
+        image: service.image,
+        containerName: service.containerName,
+        restart: service.restart,
+        command: service.command,
+        usernsMode: service.usernsMode,
+        isCommentedOut: service.isCommentedOut,
+        isExpanded: service.isExpanded,
+        ports: [...service.ports],
+        environment: [...service.environment],
+        volumes: [...service.volumes],
+        networks: [...service.networks],
+        dependsOn: [...service.dependsOn],
+        srcStart: service.srcStart,
+        srcEnd: service.srcEnd,
+        bodyIndent: service.bodyIndent,
+        scalarLine: {...service.scalarLine},
+        arraySpan: {
+          for (final entry in service.arraySpan.entries) entry.key: [...entry.value],
+        },
+        anchorName: service.anchorName,
+        inheritsImage: service.inheritsImage,
+        aliasRefs: [...service.aliasRefs],
+        dependsOnRefs: [...service.dependsOnRefs],
+        unmodeledArrayKeys: {...service.unmodeledArrayKeys},
+      ),
+  ],
+  topVolumes: [
+    for (final volume in source.topVolumes)
+      TopLevelVolumeDraft(
+        id: volume.id,
+        name: volume.name,
+        external: volume.external,
+        isCommentedOut: volume.isCommentedOut,
+        srcStart: volume.srcStart,
+        srcEnd: volume.srcEnd,
+      ),
+  ],
+  topNetworks: [
+    for (final network in source.topNetworks)
+      TopLevelNetworkDraft(
+        id: network.id,
+        name: network.name,
+        driver: network.driver,
+        external: network.external,
+        isCommentedOut: network.isCommentedOut,
+        srcStart: network.srcStart,
+        srcEnd: network.srcEnd,
+      ),
+  ],
+  volumesSrcHeader: source.volumesSrcHeader,
+  networksSrcHeader: source.networksSrcHeader,
+  hasServicesSection: source.hasServicesSection,
+  originalText: source.originalText,
+  workingDir: source.workingDir,
+  fileName: source.fileName,
+  composeFilePath: source.composeFilePath,
+  composeConfigFiles: source.composeConfigFiles,
+  runtime: source.runtime,
+  podmanPodEnabled: source.podmanPodEnabled,
+  podmanPodName: source.podmanPodName,
+  xPodmanSrcHeader: source.xPodmanSrcHeader,
+  xPodmanInPodSrcLine: source.xPodmanInPodSrcLine,
+);
 
-const _modeledArrays = {
-  'ports',
-  'environment',
-  'volumes',
-  'networks',
-  'depends_on',
-};
+const _modeledArrays = {'ports', 'environment', 'volumes', 'networks', 'depends_on'};
 const _serviceKeys = {
   'build',
   'command',
@@ -322,16 +310,12 @@ String? _blockKey(String content) {
   if (content.startsWith('-') || !content.contains(':')) return null;
   final key = content.substring(0, content.indexOf(':')).trim();
   if (key.isEmpty || key.contains(' ')) return null;
-  final rest = _withoutInlineComment(
-    content.substring(content.indexOf(':') + 1).trim(),
-  );
+  final rest = _withoutInlineComment(content.substring(content.indexOf(':') + 1).trim());
   return rest.isEmpty || RegExp(r'^&\S+$').hasMatch(rest) ? key : null;
 }
 
 String _anchor(String content) {
-  final rest = _withoutInlineComment(
-    content.substring(content.indexOf(':') + 1).trim(),
-  );
+  final rest = _withoutInlineComment(content.substring(content.indexOf(':') + 1).trim());
   return rest.startsWith('&') ? rest.substring(1) : '';
 }
 
@@ -433,8 +417,7 @@ ComposeStackDraft parseDockerComposeYaml(
 
     if (section == 'volumes') {
       final key = _blockKey(content);
-      if (key != null &&
-          (itemIndent < 0 || indent == itemIndent || commented)) {
+      if (key != null && (itemIndent < 0 || indent == itemIndent || commented)) {
         if (!commented && itemIndent < 0) itemIndent = indent;
         finishVolume();
         volume = TopLevelVolumeDraft(
@@ -456,8 +439,7 @@ ComposeStackDraft parseDockerComposeYaml(
 
     if (section == 'networks') {
       final key = _blockKey(content);
-      if (key != null &&
-          (itemIndent < 0 || indent == itemIndent || commented)) {
+      if (key != null && (itemIndent < 0 || indent == itemIndent || commented)) {
         if (!commented && itemIndent < 0) itemIndent = indent;
         finishNetwork();
         network = TopLevelNetworkDraft(
@@ -480,8 +462,7 @@ ComposeStackDraft parseDockerComposeYaml(
     if (section != 'services') continue;
     final blockKey = _blockKey(content);
     final canBeHeader = blockKey != null && !_serviceKeys.contains(blockKey);
-    if (canBeHeader &&
-        (serviceIndent < 0 || indent == serviceIndent || commented)) {
+    if (canBeHeader && (serviceIndent < 0 || indent == serviceIndent || commented)) {
       if (!commented && serviceIndent < 0) serviceIndent = indent;
       finishService();
       service = ComposeServiceDraft(
@@ -499,9 +480,7 @@ ComposeStackDraft parseDockerComposeYaml(
     final current = service;
     if (current == null || (commented && !current.isCommentedOut)) continue;
     current.srcEnd = index;
-    if (current.bodyIndent < 0 &&
-        indent > serviceIndent &&
-        !content.startsWith('-')) {
+    if (current.bodyIndent < 0 && indent > serviceIndent && !content.startsWith('-')) {
       current.bodyIndent = indent;
     }
     if (content.startsWith('-')) {
@@ -552,13 +531,7 @@ ComposeStackDraft parseDockerComposeYaml(
         current.inheritsImage = true;
         if (value.startsWith('*')) current.aliasRefs.add(value.substring(1));
     }
-    if (const {
-      'image',
-      'container_name',
-      'restart',
-      'command',
-      'userns_mode',
-    }.contains(key)) {
+    if (const {'image', 'container_name', 'restart', 'command', 'userns_mode'}.contains(key)) {
       current.scalarLine[key] = index;
     }
   }
@@ -569,22 +542,20 @@ ComposeStackDraft parseDockerComposeYaml(
     draft.podmanPodEnabled = true;
   }
   draft.hasServicesSection =
-      draft.originalText == null ||
-      lines.any((line) => line.trim() == 'services:');
+      draft.originalText == null || lines.any((line) => line.trim() == 'services:');
   if (draft.services.isEmpty && draft.originalText == null) {
     draft.services.add(ComposeServiceDraft());
   }
   return draft;
 }
 
-List<String> _arrayFor(ComposeServiceDraft service, String key) =>
-    switch (key) {
-      'ports' => service.ports,
-      'environment' => service.environment,
-      'volumes' => service.volumes,
-      'networks' => service.networks,
-      _ => service.dependsOn,
-    };
+List<String> _arrayFor(ComposeServiceDraft service, String key) => switch (key) {
+  'ports' => service.ports,
+  'environment' => service.environment,
+  'volumes' => service.volumes,
+  'networks' => service.networks,
+  _ => service.dependsOn,
+};
 
 extension on String {
   String substringBefore(String pattern) {
@@ -604,10 +575,7 @@ bool _validPort(String value) {
   if (ports.isEmpty) return false;
   for (final part in ports) {
     final numeric = part.split('/').first.split('-');
-    if (numeric.any(
-      (p) =>
-          int.tryParse(p) == null || int.parse(p) < 1 || int.parse(p) > 65535,
-    )) {
+    if (numeric.any((p) => int.tryParse(p) == null || int.parse(p) < 1 || int.parse(p) > 65535)) {
       return false;
     }
   }
@@ -617,20 +585,14 @@ bool _validPort(String value) {
 List<String> validateComposeDraft(ComposeStackDraft draft) {
   final issues = <String>[];
   if (!draft.hasServicesSection) {
-    issues.add(
-      'No services: section. Convert this legacy Compose v1 file in Raw YAML.',
-    );
+    issues.add('No services: section. Convert this legacy Compose v1 file in Raw YAML.');
   }
-  final active = draft.services
-      .where((service) => !service.isCommentedOut)
-      .toList();
+  final active = draft.services.where((service) => !service.isCommentedOut).toList();
   final names = <String, int>{};
   for (var index = 0; index < draft.services.length; index++) {
     final service = draft.services[index];
     if (service.isCommentedOut) continue;
-    final label = service.serviceName.trim().isEmpty
-        ? 'Service ${index + 1}'
-        : service.serviceName;
+    final label = service.serviceName.trim().isEmpty ? 'Service ${index + 1}' : service.serviceName;
     if (!_composeName.hasMatch(service.serviceName.trim())) {
       issues.add('$label has an invalid service name.');
     }
@@ -639,22 +601,14 @@ List<String> validateComposeDraft(ComposeStackDraft draft) {
         '$label needs an image in the visual editor. Use Raw YAML for build-only services.',
       );
     }
-    for (final port in service.ports.where(
-      (value) => value.trim().isNotEmpty,
-    )) {
+    for (final port in service.ports.where((value) => value.trim().isNotEmpty)) {
       if (!_validPort(port)) {
         issues.add('$label has an invalid port mapping: $port');
       }
     }
-    names.update(
-      service.serviceName.trim(),
-      (count) => count + 1,
-      ifAbsent: () => 1,
-    );
+    names.update(service.serviceName.trim(), (count) => count + 1, ifAbsent: () => 1);
   }
-  for (final entry in names.entries.where(
-    (entry) => entry.key.isNotEmpty && entry.value > 1,
-  )) {
+  for (final entry in names.entries.where((entry) => entry.key.isNotEmpty && entry.value > 1)) {
     issues.add('Duplicate active service name: ${entry.key}');
   }
   final commented = draft.services
@@ -664,16 +618,12 @@ List<String> validateComposeDraft(ComposeStackDraft draft) {
   for (final service in active) {
     for (final dependency in {...service.dependsOn, ...service.dependsOnRefs}) {
       if (commented.contains(dependency)) {
-        issues.add(
-          '${service.serviceName} depends on $dependency, which is commented out.',
-        );
+        issues.add('${service.serviceName} depends on $dependency, which is commented out.');
       }
     }
   }
   final volumeNames = <String>{};
-  for (final entry in draft.topVolumes.where(
-    (entry) => !entry.isCommentedOut,
-  )) {
+  for (final entry in draft.topVolumes.where((entry) => !entry.isCommentedOut)) {
     final name = entry.name.trim();
     if (!_composeName.hasMatch(name)) {
       issues.add('Top-level volume has an invalid name: $name');
@@ -683,9 +633,7 @@ List<String> validateComposeDraft(ComposeStackDraft draft) {
     }
   }
   final networkNames = <String>{};
-  for (final entry in draft.topNetworks.where(
-    (entry) => !entry.isCommentedOut,
-  )) {
+  for (final entry in draft.topNetworks.where((entry) => !entry.isCommentedOut)) {
     final name = entry.name.trim();
     if (!_composeName.hasMatch(name)) {
       issues.add('Top-level network has an invalid name: $name');
@@ -695,9 +643,7 @@ List<String> validateComposeDraft(ComposeStackDraft draft) {
     }
   }
   for (final network in draft.topNetworks) {
-    if (!network.isCommentedOut &&
-        network.external &&
-        network.driver.isNotEmpty) {
+    if (!network.isCommentedOut && network.external && network.driver.isNotEmpty) {
       issues.add('${network.name} cannot set both external: true and driver.');
     }
   }
@@ -742,9 +688,7 @@ String _serviceBlock(ComposeServiceDraft service, {required bool podman}) {
     if (present.isEmpty) return;
     out.add('$comment    $key:');
     for (final value in present) {
-      final rendered = quote
-          ? '"${value.replaceAll('"', r'\"')}"'
-          : _yamlScalar(value);
+      final rendered = quote ? '"${value.replaceAll('"', r'\"')}"' : _yamlScalar(value);
       out.add('$comment      - $rendered');
     }
   }
@@ -772,13 +716,9 @@ String generateDockerComposeYaml(ComposeStackDraft draft) {
   }
   out.add('services:');
   out.addAll(
-    draft.services.map(
-      (service) => _serviceBlock(service, podman: draft.runtime == 'podman'),
-    ),
+    draft.services.map((service) => _serviceBlock(service, podman: draft.runtime == 'podman')),
   );
-  final volumes = draft.topVolumes
-      .where((entry) => entry.name.trim().isNotEmpty)
-      .toList();
+  final volumes = draft.topVolumes.where((entry) => entry.name.trim().isNotEmpty).toList();
   if (volumes.isNotEmpty) {
     out.add('');
     out.add('volumes:');
@@ -788,9 +728,7 @@ String generateDockerComposeYaml(ComposeStackDraft draft) {
       if (volume.external) out.add('$comment    external: true');
     }
   }
-  final networks = draft.topNetworks
-      .where((entry) => entry.name.trim().isNotEmpty)
-      .toList();
+  final networks = draft.topNetworks.where((entry) => entry.name.trim().isNotEmpty).toList();
   if (networks.isNotEmpty) {
     out.add('');
     out.add('networks:');
@@ -816,15 +754,10 @@ String renderComposeYaml(ComposeStackDraft draft, ComposeStackDraft? baseline) {
   final slots = <String?>[...lines];
   final after = <int, List<String>>{};
   final before = <String>[];
-  void insertAfter(int index, String value) =>
-      after.putIfAbsent(index, () => []).add(value);
-  final oldServices = {
-    for (final service in baseline.services) service.id: service,
-  };
+  void insertAfter(int index, String value) => after.putIfAbsent(index, () => []).add(value);
+  final oldServices = {for (final service in baseline.services) service.id: service};
   final kept = draft.services.map((service) => service.id).toSet();
-  for (final old in baseline.services.where(
-    (service) => !kept.contains(service.id),
-  )) {
+  for (final old in baseline.services.where((service) => !kept.contains(service.id))) {
     for (var line = old.srcStart; line <= old.srcEnd; line++) {
       if (line >= 0 && line < slots.length) slots[line] = null;
     }
@@ -834,10 +767,7 @@ String renderComposeYaml(ComposeStackDraft draft, ComposeStackDraft? baseline) {
     if (old == null) continue;
     if (old.srcStart >= 0 && service.serviceName != old.serviceName) {
       final source = slots[old.srcStart] ?? '';
-      slots[old.srcStart] = source.replaceFirst(
-        old.serviceName,
-        service.serviceName,
-      );
+      slots[old.srcStart] = source.replaceFirst(old.serviceName, service.serviceName);
     }
     if (old.srcStart >= 0 && service.isCommentedOut != old.isCommentedOut) {
       for (var line = old.srcStart; line <= old.srcEnd; line++) {
@@ -857,10 +787,7 @@ String renderComposeYaml(ComposeStackDraft draft, ComposeStackDraft? baseline) {
             ? null
             : '${_spaces(bodyIndent)}$key: ${_yamlScalar(value)}';
       } else if (value.trim().isNotEmpty) {
-        insertAfter(
-          old.srcStart,
-          '${_spaces(bodyIndent)}$key: ${_yamlScalar(value)}',
-        );
+        insertAfter(old.srcStart, '${_spaces(bodyIndent)}$key: ${_yamlScalar(value)}');
       }
     }
 
@@ -870,19 +797,11 @@ String renderComposeYaml(ComposeStackDraft draft, ComposeStackDraft? baseline) {
     scalar('command', service.command, old.command);
     scalar(
       'userns_mode',
-      draft.runtime == 'docker' && service.usernsMode == 'keep-id'
-          ? ''
-          : service.usernsMode,
+      draft.runtime == 'docker' && service.usernsMode == 'keep-id' ? '' : service.usernsMode,
       old.usernsMode,
     );
-    void array(
-      String key,
-      List<String> values,
-      List<String> oldValues, {
-      bool quote = false,
-    }) {
-      if (old.unmodeledArrayKeys.contains(key) ||
-          _sameStrings(values, oldValues)) {
+    void array(String key, List<String> values, List<String> oldValues, {bool quote = false}) {
+      if (old.unmodeledArrayKeys.contains(key) || _sameStrings(values, oldValues)) {
         return;
       }
       final cleaned = values.where((value) => value.trim().isNotEmpty).toList();
@@ -890,9 +809,7 @@ String renderComposeYaml(ComposeStackDraft draft, ComposeStackDraft? baseline) {
       if (cleaned.isNotEmpty) {
         block.add('${_spaces(bodyIndent)}$key:');
         for (final value in cleaned) {
-          block.add(
-            '${_spaces(bodyIndent + 2)}- ${quote ? '"$value"' : _yamlScalar(value)}',
-          );
+          block.add('${_spaces(bodyIndent + 2)}- ${quote ? '"$value"' : _yamlScalar(value)}');
         }
       }
       final span = old.arraySpan[key];
@@ -927,9 +844,7 @@ String renderComposeYaml(ComposeStackDraft draft, ComposeStackDraft? baseline) {
         lines.indexWhere((line) => line.trim() == 'services:'),
         (end, service) => service.srcEnd > end ? service.srcEnd : end,
       );
-  for (final service in draft.services.where(
-    (service) => !oldServices.containsKey(service.id),
-  )) {
+  for (final service in draft.services.where((service) => !oldServices.containsKey(service.id))) {
     insertAfter(
       servicesEnd < 0 ? 0 : servicesEnd,
       _serviceBlock(service, podman: draft.runtime == 'podman'),
@@ -954,15 +869,9 @@ String renderComposeYaml(ComposeStackDraft draft, ComposeStackDraft? baseline) {
 
 bool _sameStrings(List<String> first, List<String> second) =>
     first.length == second.length &&
-    List.generate(
-      first.length,
-      (i) => first[i] == second[i],
-    ).every((value) => value);
+    List.generate(first.length, (i) => first[i] == second[i]).every((value) => value);
 
-bool _sameTopVolumes(
-  List<TopLevelVolumeDraft> first,
-  List<TopLevelVolumeDraft> second,
-) =>
+bool _sameTopVolumes(List<TopLevelVolumeDraft> first, List<TopLevelVolumeDraft> second) =>
     first.length == second.length &&
     List.generate(
       first.length,
@@ -972,10 +881,7 @@ bool _sameTopVolumes(
           first[i].isCommentedOut == second[i].isCommentedOut,
     ).every((value) => value);
 
-bool _sameTopNetworks(
-  List<TopLevelNetworkDraft> first,
-  List<TopLevelNetworkDraft> second,
-) =>
+bool _sameTopNetworks(List<TopLevelNetworkDraft> first, List<TopLevelNetworkDraft> second) =>
     first.length == second.length &&
     List.generate(
       first.length,
@@ -991,8 +897,7 @@ String _replaceTopSections(String yaml, ComposeStackDraft draft) {
   final kept = <String>[];
   var skipping = false;
   for (final line in lines) {
-    final top =
-        line.isNotEmpty && !line.startsWith(' ') && !line.startsWith('#');
+    final top = line.isNotEmpty && !line.startsWith(' ') && !line.startsWith('#');
     if (top && (line.trim() == 'volumes:' || line.trim() == 'networks:')) {
       skipping = true;
       continue;
@@ -1009,20 +914,16 @@ String _replaceTopSections(String yaml, ComposeStackDraft draft) {
   final generated = generateDockerComposeYaml(seed);
   final topAt = generated.indexOf('\nvolumes:');
   final networkAt = generated.indexOf('\nnetworks:');
-  final start = [topAt, networkAt]
-      .where((index) => index >= 0)
-      .fold<int>(generated.length, (a, b) => a < b ? a : b);
-  final suffix = start < generated.length
-      ? generated.substring(start).trim()
-      : '';
+  final start = [
+    topAt,
+    networkAt,
+  ].where((index) => index >= 0).fold<int>(generated.length, (a, b) => a < b ? a : b);
+  final suffix = start < generated.length ? generated.substring(start).trim() : '';
   return '${kept.join('\n').trimRight()}${suffix.isEmpty ? '' : '\n\n$suffix'}';
 }
 
-bool composeRawEditsDiffer(
-  String rawText,
-  ComposeStackDraft draft,
-  ComposeStackDraft? baseline,
-) => rawText != renderComposeYaml(draft, baseline);
+bool composeRawEditsDiffer(String rawText, ComposeStackDraft draft, ComposeStackDraft? baseline) =>
+    rawText != renderComposeYaml(draft, baseline);
 
 /// Whether the stack is fully rootless-mapped, i.e. every rendered service carries
 /// `userns_mode: keep-id`.

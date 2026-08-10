@@ -24,111 +24,79 @@ networks:
     driver: bridge
 ''';
 
-  test(
-    'parses the editable subset and records long/map syntax as lossless-only',
-    () {
-      final draft = parseDockerComposeYaml(existing, projectName: 'homelab');
+  test('parses the editable subset and records long/map syntax as lossless-only', () {
+    final draft = parseDockerComposeYaml(existing, projectName: 'homelab');
 
-      expect(draft.stackName, 'homelab');
-      expect(draft.services.map((service) => service.serviceName), [
-        'web',
-        'db',
-      ]);
-      expect(draft.services.first.image, 'nginx:1.26');
-      expect(draft.services.first.ports, ['8080:80']);
-      expect(draft.services.last.unmodeledArrayKeys, contains('environment'));
-      expect(draft.topVolumes.single.external, isTrue);
-      expect(draft.topNetworks.single.driver, 'bridge');
-    },
-  );
+    expect(draft.stackName, 'homelab');
+    expect(draft.services.map((service) => service.serviceName), ['web', 'db']);
+    expect(draft.services.first.image, 'nginx:1.26');
+    expect(draft.services.first.ports, ['8080:80']);
+    expect(draft.services.last.unmodeledArrayKeys, contains('environment'));
+    expect(draft.topVolumes.single.external, isTrue);
+    expect(draft.topNetworks.single.driver, 'bridge');
+  });
 
-  test(
-    'surgical rendering changes owned fields and preserves unknown YAML byte content',
-    () {
-      final baseline = parseDockerComposeYaml(existing, projectName: 'homelab');
-      final draft = cloneComposeDraft(baseline);
-      draft.services.first.image = 'nginx:1.27';
-      draft.services.first.ports.add('8443:443');
+  test('surgical rendering changes owned fields and preserves unknown YAML byte content', () {
+    final baseline = parseDockerComposeYaml(existing, projectName: 'homelab');
+    final draft = cloneComposeDraft(baseline);
+    draft.services.first.image = 'nginx:1.27';
+    draft.services.first.ports.add('8443:443');
 
-      final rendered = renderComposeYaml(draft, baseline);
+    final rendered = renderComposeYaml(draft, baseline);
 
-      expect(rendered, contains('image: nginx:1.27'));
-      expect(rendered, contains('      - "8443:443"'));
-      expect(
-        rendered,
-        contains(
-          'healthcheck:\n      test: ["CMD", "curl", "-f", "http://localhost"]',
+    expect(rendered, contains('image: nginx:1.27'));
+    expect(rendered, contains('      - "8443:443"'));
+    expect(
+      rendered,
+      contains('healthcheck:\n      test: ["CMD", "curl", "-f", "http://localhost"]'),
+    );
+    expect(rendered, contains('labels:\n      owner: ops'));
+    expect(rendered, contains('environment:\n      POSTGRES_DB: app'));
+  });
+
+  test('a new service is inserted inside services, before top-level volumes', () {
+    final baseline = parseDockerComposeYaml(existing, projectName: 'homelab');
+    final draft = cloneComposeDraft(baseline)
+      ..services.add(ComposeServiceDraft(serviceName: 'worker', image: 'busybox:latest'));
+    final rendered = renderComposeYaml(draft, baseline);
+
+    expect(rendered.indexOf('  worker:'), lessThan(rendered.indexOf('\nvolumes:')));
+  });
+
+  test('new Podman files emit the supported pod extension and no obsolete version key', () {
+    final draft = ComposeStackDraft(
+      projectName: 'demo',
+      stackName: 'demo',
+      runtime: 'podman',
+      podmanPodEnabled: true,
+      podmanPodName: 'demo-pod',
+      services: [ComposeServiceDraft(serviceName: 'app', image: 'alpine:3')],
+    );
+
+    final yaml = generateDockerComposeYaml(draft);
+    expect(yaml, startsWith('name: demo\nx-podman:\n  in_pod: demo-pod\nservices:'));
+    expect(yaml, isNot(contains('version:')));
+  });
+
+  test('validation catches deploy-breaking relationships and malformed ports', () {
+    final draft = ComposeStackDraft(
+      services: [
+        ComposeServiceDraft(
+          serviceName: 'web',
+          image: 'nginx',
+          ports: ['70000:80'],
+          dependsOn: ['db'],
         ),
-      );
-      expect(rendered, contains('labels:\n      owner: ops'));
-      expect(rendered, contains('environment:\n      POSTGRES_DB: app'));
-    },
-  );
+        ComposeServiceDraft(serviceName: 'db', image: 'postgres', isCommentedOut: true),
+        ComposeServiceDraft(serviceName: 'web', image: 'busybox'),
+      ],
+    );
 
-  test(
-    'a new service is inserted inside services, before top-level volumes',
-    () {
-      final baseline = parseDockerComposeYaml(existing, projectName: 'homelab');
-      final draft = cloneComposeDraft(baseline)
-        ..services.add(
-          ComposeServiceDraft(serviceName: 'worker', image: 'busybox:latest'),
-        );
-      final rendered = renderComposeYaml(draft, baseline);
-
-      expect(
-        rendered.indexOf('  worker:'),
-        lessThan(rendered.indexOf('\nvolumes:')),
-      );
-    },
-  );
-
-  test(
-    'new Podman files emit the supported pod extension and no obsolete version key',
-    () {
-      final draft = ComposeStackDraft(
-        projectName: 'demo',
-        stackName: 'demo',
-        runtime: 'podman',
-        podmanPodEnabled: true,
-        podmanPodName: 'demo-pod',
-        services: [ComposeServiceDraft(serviceName: 'app', image: 'alpine:3')],
-      );
-
-      final yaml = generateDockerComposeYaml(draft);
-      expect(
-        yaml,
-        startsWith('name: demo\nx-podman:\n  in_pod: demo-pod\nservices:'),
-      );
-      expect(yaml, isNot(contains('version:')));
-    },
-  );
-
-  test(
-    'validation catches deploy-breaking relationships and malformed ports',
-    () {
-      final draft = ComposeStackDraft(
-        services: [
-          ComposeServiceDraft(
-            serviceName: 'web',
-            image: 'nginx',
-            ports: ['70000:80'],
-            dependsOn: ['db'],
-          ),
-          ComposeServiceDraft(
-            serviceName: 'db',
-            image: 'postgres',
-            isCommentedOut: true,
-          ),
-          ComposeServiceDraft(serviceName: 'web', image: 'busybox'),
-        ],
-      );
-
-      final issues = validateComposeDraft(draft).join('\n');
-      expect(issues, contains('invalid port mapping'));
-      expect(issues, contains('Duplicate active service name: web'));
-      expect(issues, contains('depends on db, which is commented out'));
-    },
-  );
+    final issues = validateComposeDraft(draft).join('\n');
+    expect(issues, contains('invalid port mapping'));
+    expect(issues, contains('Duplicate active service name: web'));
+    expect(issues, contains('depends on db, which is commented out'));
+  });
 
   /// The Podman rootless controls, ported from `PodmanModifiersEditor` in `ui/ComposeBuilder.kt`.
   ///

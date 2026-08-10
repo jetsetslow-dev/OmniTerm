@@ -39,9 +39,7 @@ bool isImageFile(String name) {
   final dot = name.lastIndexOf('.');
   // A dot at the very end leaves no extension; `.bashrc` is a dotfile, not a `bashrc` image.
   if (dot < 1 || dot == name.length - 1) return false;
-  return previewableImageExtensions.contains(
-    name.substring(dot + 1).toLowerCase(),
-  );
+  return previewableImageExtensions.contains(name.substring(dot + 1).toLowerCase());
 }
 
 /// Whether [sizeBytes] is beyond what the viewer will attempt.

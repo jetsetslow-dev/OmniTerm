@@ -16,31 +16,31 @@ import 'support/fake_secure_storage.dart';
 import 'support/fake_shell_transport.dart';
 
 Server testServer({required String name, String status = 'online'}) => Server(
-      id: 0,
-      name: name,
-      host: '10.0.0.1',
-      port: 22,
-      username: 'root',
-      serverColor: 'Default',
-      authType: 'password',
-      authPassword: 'pw',
-      sudoPassword: '',
-      notes: '',
-      keepAlive: 30,
-      sshCompression: false,
-      persistentSession: false,
-      proxyCommand: '',
-      proxyType: 'none',
-      proxyHost: '',
-      proxyPort: 0,
-      proxyUser: '',
-      proxyPassword: '',
-      agentForwarding: false,
-      healthScore: 100,
-      lastLatency: 0,
-      status: status,
-      authStatus: 'ok',
-    );
+  id: 0,
+  name: name,
+  host: '10.0.0.1',
+  port: 22,
+  username: 'root',
+  serverColor: 'Default',
+  authType: 'password',
+  authPassword: 'pw',
+  sudoPassword: '',
+  notes: '',
+  keepAlive: 30,
+  sshCompression: false,
+  persistentSession: false,
+  proxyCommand: '',
+  proxyType: 'none',
+  proxyHost: '',
+  proxyPort: 0,
+  proxyUser: '',
+  proxyPassword: '',
+  agentForwarding: false,
+  healthScore: 100,
+  lastLatency: 0,
+  status: status,
+  authStatus: 'ok',
+);
 
 void main() {
   late AppDatabase db;
@@ -64,18 +64,15 @@ void main() {
   });
 
   group('Quick Connect Entitlement Gate', () {
-    testWidgets('shows entitlement sheet when billing enabled and unlocked is false', (tester) async {
+    testWidgets('shows entitlement sheet when billing enabled and unlocked is false', (
+      tester,
+    ) async {
       await repo.insertServer(testServer(name: 'nas'));
       await app.start();
       vm = ShellViewModel(app, transport: transport);
 
       final licenseController = MockTestLicenseController(
-        const LicenseState(
-          enabled: true,
-          loading: false,
-          unlocked: false,
-          productPrice: '\$4.99',
-        ),
+        const LicenseState(enabled: true, loading: false, unlocked: false, productPrice: '\$4.99'),
       );
 
       await tester.pumpWidget(
@@ -86,9 +83,7 @@ void main() {
           ],
           child: MaterialApp(
             theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
-            home: Scaffold(
-              body: ShellScreen(licenseController: licenseController),
-            ),
+            home: Scaffold(body: ShellScreen(licenseController: licenseController)),
           ),
         ),
       );

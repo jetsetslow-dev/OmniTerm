@@ -15,11 +15,7 @@ abstract interface class DeviceNetworkCommand {
 /// implementation searches only fixed system paths; a hostname is always an argument and can
 /// never influence executable lookup.
 abstract interface class DeviceNetworkCommandRunner {
-  Future<DeviceNetworkCommand?> startPing(
-    String target, {
-    required int count,
-    int? ttl,
-  });
+  Future<DeviceNetworkCommand?> startPing(String target, {required int count, int? ttl});
 
   Future<DeviceNetworkCommand?> startTraceroute(String target);
 }
@@ -47,11 +43,7 @@ class IoDeviceNetworkCommandRunner implements DeviceNetworkCommandRunner {
   }
 
   @override
-  Future<DeviceNetworkCommand?> startPing(
-    String target, {
-    required int count,
-    int? ttl,
-  }) async {
+  Future<DeviceNetworkCommand?> startPing(String target, {required int count, int? ttl}) async {
     final arguments = <String>[
       if (count > 0) ...['-c', count.toString()],
       '-W',
@@ -76,10 +68,7 @@ class IoDeviceNetworkCommandRunner implements DeviceNetworkCommandRunner {
     return null;
   }
 
-  Future<DeviceNetworkCommand?> _startFirst(
-    List<String> binaries,
-    List<String> arguments,
-  ) async {
+  Future<DeviceNetworkCommand?> _startFirst(List<String> binaries, List<String> arguments) async {
     for (final binary in binaries) {
       final command = await _start(binary, arguments);
       if (command != null) return command;
@@ -87,14 +76,9 @@ class IoDeviceNetworkCommandRunner implements DeviceNetworkCommandRunner {
     return null;
   }
 
-  Future<DeviceNetworkCommand?> _start(
-    String executable,
-    List<String> arguments,
-  ) async {
+  Future<DeviceNetworkCommand?> _start(String executable, List<String> arguments) async {
     try {
-      return _IoDeviceNetworkCommand(
-        await Process.start(executable, arguments, runInShell: false),
-      );
+      return _IoDeviceNetworkCommand(await Process.start(executable, arguments, runInShell: false));
     } on ProcessException {
       return null;
     } on UnsupportedError {

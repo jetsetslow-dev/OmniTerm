@@ -156,9 +156,7 @@ class AppLockController extends ChangeNotifier {
     // negative, and the monotonic one still counts; a device suspended in deep sleep freezes the
     // monotonic one, and the wall clock still counts. Neither can shorten the timeout alone.
     final wallElapsed = _now() - since;
-    final monotonicElapsed = sinceMonotonic == null
-        ? 0
-        : _monotonicNow() - sinceMonotonic;
+    final monotonicElapsed = sinceMonotonic == null ? 0 : _monotonicNow() - sinceMonotonic;
     final elapsed = wallElapsed > monotonicElapsed ? wallElapsed : monotonicElapsed;
 
     // `>=` rather than `>`: a zero timeout means "lock immediately", and a strict comparison would
@@ -277,9 +275,7 @@ class AppLockController extends ChangeNotifier {
     }
     await _persistThrottle();
     _safeNotify();
-    return lockout > 0
-        ? 'Too many attempts — wait 30 seconds'
-        : 'Incorrect PIN';
+    return lockout > 0 ? 'Too many attempts — wait 30 seconds' : 'Incorrect PIN';
   }
 
   /// Runs the biometric prompt for a privileged action, without unlocking the app.

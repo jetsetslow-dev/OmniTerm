@@ -9,10 +9,8 @@ class ShortcutHelper {
   final MethodChannel _channel;
 
   Future<bool> pinServer(Server server) => _call('pinServer', _server(server));
-  Future<bool> pushServer(Server server) =>
-      _call('pushServer', _server(server));
-  Future<bool> reportServerUsed(int id) =>
-      _call('reportServerUsed', {'id': id});
+  Future<bool> pushServer(Server server) => _call('pushServer', _server(server));
+  Future<bool> reportServerUsed(int id) => _call('reportServerUsed', {'id': id});
   Future<bool> removeServer(int id) => _call('removeServer', {'id': id});
   Future<bool> removeShare(int id) => _call('removeShare', {'id': id});
 
@@ -23,11 +21,8 @@ class ShortcutHelper {
     'secondName': second.name.isEmpty ? second.host : second.name,
   });
 
-  Future<bool> pushShare(NetworkShare share) => _call('pushShare', {
-    'id': share.id,
-    'name': share.name,
-    'address': share.address,
-  });
+  Future<bool> pushShare(NetworkShare share) =>
+      _call('pushShare', {'id': share.id, 'name': share.name, 'address': share.address});
 
   Map<String, Object> _server(Server server) => {
     'id': server.id,

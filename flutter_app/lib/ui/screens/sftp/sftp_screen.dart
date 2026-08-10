@@ -82,8 +82,7 @@ class _SftpScreenState extends State<SftpScreen> {
               // Shares has its own list, so a host picker there would be misleading.
               if (vm.activeTab == SftpTab.files && vm.browsedShare != null)
                 _ShareBar(vm: vm)
-              else if (vm.activeTab == SftpTab.files &&
-                  vm.browsedServer != null)
+              else if (vm.activeTab == SftpTab.files && vm.browsedServer != null)
                 _HostBar(vm: vm),
               _TabBar(vm: vm),
               Expanded(
@@ -92,9 +91,7 @@ class _SftpScreenState extends State<SftpScreen> {
                   child: switch (vm.activeTab) {
                     SftpTab.bookmarks => SftpBookmarksTab(vm: vm),
                     SftpTab.files =>
-                      vm.hasBrowseTarget
-                          ? SftpFilesTab(vm: vm)
-                          : const _NoOnlineHost(),
+                      vm.hasBrowseTarget ? SftpFilesTab(vm: vm) : const _NoOnlineHost(),
                     SftpTab.shares => const SharesTab(),
                     SftpTab.transfers => SftpTransfersTab(vm: vm),
                   },
@@ -106,10 +103,7 @@ class _SftpScreenState extends State<SftpScreen> {
           // leaves nothing behind — the bytes go with it.
           if (preview != null)
             Positioned.fill(
-              child: ImagePreviewOverlay(
-                preview: preview,
-                onClose: vm.closeImagePreview,
-              ),
+              child: ImagePreviewOverlay(preview: preview, onClose: vm.closeImagePreview),
             ),
         ],
       ),
@@ -193,25 +187,14 @@ class _ShareBar extends StatelessWidget {
               children: [
                 Text(
                   share.name,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 13,
-                  ),
+                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
                   overflow: TextOverflow.ellipsis,
                 ),
                 ListenableBuilder(
                   listenable: HostDisplay.instance,
                   builder: (context, _) => Text(
-                    shareUri(
-                      share,
-                      maskedAddress: HostDisplay.instance.sensitive(
-                        share.address,
-                      ),
-                    ),
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: scheme.onSurfaceVariant,
-                    ),
+                    shareUri(share, maskedAddress: HostDisplay.instance.sensitive(share.address)),
+                    style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
                   ),
                 ),
               ],
@@ -263,17 +246,14 @@ class _TabBar extends StatelessWidget {
                       Text(_labels[tab]!, style: const TextStyle(fontSize: 12)),
                       // A running transfer is easy to forget about once you navigate away, so the
                       // count follows you across tabs.
-                      if (tab == SftpTab.transfers &&
-                          vm.transfers.isNotEmpty) ...[
+                      if (tab == SftpTab.transfers && vm.transfers.isNotEmpty) ...[
                         const SizedBox(width: 6),
                         _CountBadge(count: vm.transfers.length),
                       ],
                     ],
                   ),
                   // Browsing needs a reachable host; the other three do not.
-                  onSelected: (tab == SftpTab.files && !hasHost)
-                      ? null
-                      : (_) => vm.activeTab = tab,
+                  onSelected: (tab == SftpTab.files && !hasHost) ? null : (_) => vm.activeTab = tab,
                   selected: vm.activeTab == tab,
                 ),
               ),
@@ -297,10 +277,7 @@ class _CountBadge extends StatelessWidget {
       height: 16,
       alignment: Alignment.center,
       decoration: BoxDecoration(color: scheme.primary, shape: BoxShape.circle),
-      child: Text(
-        '$count',
-        style: TextStyle(fontSize: 9, color: scheme.onPrimary),
-      ),
+      child: Text('$count', style: TextStyle(fontSize: 9, color: scheme.onPrimary)),
     );
   }
 }
@@ -315,10 +292,7 @@ class _NoOnlineHost extends StatelessWidget {
       child: Text(
         'No online SSH hosts available to browse',
         textAlign: TextAlign.center,
-        style: TextStyle(
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
-          fontSize: 12,
-        ),
+        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
       ),
     );
   }

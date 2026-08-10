@@ -157,10 +157,7 @@ class _ConnectionPromptDialog extends StatelessWidget {
                         // yet; a blank box would read as the install having done nothing.
                         output.isEmpty ? 'Starting…' : output,
                         key: const ValueKey('tmux.install.output'),
-                        style: const TextStyle(
-                          fontFamily: OmniFonts.mono,
-                          fontSize: 11,
-                        ),
+                        style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 11),
                       ),
                     ),
                   ),
@@ -184,9 +181,7 @@ class _ConnectionPromptDialog extends StatelessWidget {
               onPressed: installing ? null : shell.installTmuxAndConnect,
               child: Text(
                 installing ? 'Installing…' : 'Install tmux',
-                style: TextStyle(
-                  color: installing ? null : OmniColors.cyan,
-                ),
+                style: TextStyle(color: installing ? null : OmniColors.cyan),
               ),
             ),
           ],
@@ -213,10 +208,7 @@ class _ConnectionPromptDialog extends StatelessWidget {
           Text(
             'The status may be out of date — connect anyway to try, or cancel and wait for it to '
             'come back online.',
-            style: TextStyle(
-              fontSize: 12,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
         ],
       ),

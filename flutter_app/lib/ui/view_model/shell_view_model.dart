@@ -41,10 +41,7 @@ class ShellViewModel extends ChangeNotifier {
     unawaited(_reloadSaved());
     final service = sessionService;
     if (service != null) {
-      _actionsSub = service.actions.listen(
-        _onServiceAction,
-        onError: (Object _) {},
-      );
+      _actionsSub = service.actions.listen(_onServiceAction, onError: (Object _) {});
     }
   }
 
@@ -106,19 +103,15 @@ class ShellViewModel extends ChangeNotifier {
   void _syncBackgroundSessions() {
     final live = [
       for (final session in _sessions)
-        if (session.isOpen)
-          BackgroundSession(id: session.id, serverName: session.serverName),
+        if (session.isOpen) BackgroundSession(id: session.id, serverName: session.serverName),
     ];
     // An explicit "Send to background" navigation keeps the session alive even when the general
     // preference is off. Otherwise the preference mirrors Kotlin's TerminalSessionManager: when
     // enabled, protection starts as soon as a session opens, before the lifecycle can race the app
     // into the background.
     final shouldKeepAlive =
-        live.isNotEmpty &&
-        (!_terminalVisible || preferences.backgroundKeepAlive);
-    unawaited(
-      shouldKeepAlive ? sessionService?.sync(live) : sessionService?.stop(),
-    );
+        live.isNotEmpty && (!_terminalVisible || preferences.backgroundKeepAlive);
+    unawaited(shouldKeepAlive ? sessionService?.sync(live) : sessionService?.stop());
   }
 
   bool _disposed = false;
@@ -169,8 +162,7 @@ class ShellViewModel extends ChangeNotifier {
   /// Online only, matching the other live tabs. Forcing SSH to a host the app believes is down is
   /// done from the Hosts tab's connect button, which warns first — offering it here as an ordinary
   /// choice would hide that warning.
-  List<Server> get connectableServers =>
-      _app.servers.where((s) => s.status == 'online').toList();
+  List<Server> get connectableServers => _app.servers.where((s) => s.status == 'online').toList();
 
   /// The host the screen is showing.
   ///
@@ -179,9 +171,7 @@ class ShellViewModel extends ChangeNotifier {
   Server? get server {
     final session = current;
     if (session != null) {
-      final owner = _app.servers
-          .where((s) => s.id == session.serverId)
-          .firstOrNull;
+      final owner = _app.servers.where((s) => s.id == session.serverId).firstOrNull;
       if (owner != null) return owner;
     }
     final online = connectableServers;
@@ -197,8 +187,7 @@ class ShellViewModel extends ChangeNotifier {
   bool get hasAnyHost => _app.servers.isNotEmpty;
 
   /// True when there is nothing to show and nothing to connect to.
-  bool get hasNothingToShow =>
-      server == null && sessions.isEmpty && !isConnecting;
+  bool get hasNothingToShow => server == null && sessions.isEmpty && !isConnecting;
 
   // ── sessions ────────────────────────────────────────────────────────────────
 
@@ -230,16 +219,13 @@ class ShellViewModel extends ChangeNotifier {
   bool _splitStacked = true;
   bool get splitStacked => _splitStacked;
 
-  ShellSession? get splitSession => _splitId == null
-      ? null
-      : _sessions.where((s) => s.id == _splitId).firstOrNull;
+  ShellSession? get splitSession =>
+      _splitId == null ? null : _sessions.where((s) => s.id == _splitId).firstOrNull;
 
-  bool get isSplit =>
-      splitSession != null && current != null && splitSession != current;
+  bool get isSplit => splitSession != null && current != null && splitSession != current;
 
   /// Sessions that could occupy the second pane: everything except the one already in the first.
-  List<ShellSession> get splitCandidates =>
-      _sessions.where((s) => s.id != current?.id).toList();
+  List<ShellSession> get splitCandidates => _sessions.where((s) => s.id != current?.id).toList();
 
   /// Shows [id] in the second pane.
   void splitWith(String id) {
@@ -322,17 +308,11 @@ class ShellViewModel extends ChangeNotifier {
       // attach to a session that is gone silently leaves an ordinary, non-persistent shell.
       return (
         existing,
-        tmuxResumeCommand(
-          existing,
-          historyLimit: scrollback,
-          controlMode: controlMode,
-        ),
+        tmuxResumeCommand(existing, historyLimit: scrollback, controlMode: controlMode),
       );
     }
 
-    final name = tmuxSafeName(
-      'omniterm-${server.id}-${DateTime.now().millisecondsSinceEpoch}',
-    );
+    final name = tmuxSafeName('omniterm-${server.id}-${DateTime.now().millisecondsSinceEpoch}');
     await _app.repository.upsertPersistentSession(
       PersistentSessionsCompanion.insert(
         tmuxName: name,
@@ -360,9 +340,8 @@ class ShellViewModel extends ChangeNotifier {
   ///
   /// The filter is the point: offering to resume a session the user is currently looking at would
   /// be nonsense, and hiding one they left running would lose it.
-  List<PersistentSession> get resumableSessions => List.unmodifiable(
-    _saved.where((row) => _sessions.every((s) => s.tmuxName != row.tmuxName)),
-  );
+  List<PersistentSession> get resumableSessions =>
+      List.unmodifiable(_saved.where((row) => _sessions.every((s) => s.tmuxName != row.tmuxName)));
 
   /// Removes a saved session from this device.
   ///
@@ -580,18 +559,14 @@ class ShellViewModel extends ChangeNotifier {
     // Checked before the tmux probe, which costs a round trip: there is no point asking a host
     // whether it has tmux when the last check said it was not answering at all.
     if (!confirmedOffline &&
-        shouldWarnHostOffline(
-          probed: hasProbed?.call(server.id) ?? false,
-          status: server.status,
-        )) {
+        shouldWarnHostOffline(probed: hasProbed?.call(server.id) ?? false, status: server.status)) {
       _offlineConnectPromptServer = server;
       _safeNotify();
       return;
     }
     final ssh = transport;
     if (ssh == null) {
-      _error =
-          'The terminal is unavailable in this build: no SSH transport is wired.';
+      _error = 'The terminal is unavailable in this build: no SSH transport is wired.';
       _safeNotify();
       return;
     }
@@ -599,9 +574,7 @@ class ShellViewModel extends ChangeNotifier {
     // A host configured for persistent sessions but missing tmux used to connect as an ordinary
     // shell with no notice: the user believed their work survived a dropped link, and it did not.
     // Probed once per host per session; the answer is only acted on when it is a definite "no".
-    if (server.persistentSession &&
-        !forcePlainShell &&
-        !_tmuxVerified.contains(server.id)) {
+    if (server.persistentSession && !forcePlainShell && !_tmuxVerified.contains(server.id)) {
       if (await _hasTmux(server)) {
         _tmuxVerified.add(server.id);
       } else {
@@ -654,11 +627,7 @@ class ShellViewModel extends ChangeNotifier {
       // Resolved before the session is built so it can carry its own tmux name — that is what
       // lets the resumable list tell "open in a tab" from "running with nobody watching".
       final persistent = server.persistentSession && !forcePlainShell
-          ? await _persistentTarget(
-              server,
-              resumeName: resumeName,
-              controlMode: controlMode,
-            )
+          ? await _persistentTarget(server, resumeName: resumeName, controlMode: controlMode)
           : null;
       if (_disposed || generation != _connectGeneration) {
         channel.close();
@@ -695,9 +664,7 @@ class ShellViewModel extends ChangeNotifier {
         await _reloadSaved();
       }
       if (initialCommand != null && initialCommand.trim().isNotEmpty) {
-        session.write(
-          Uint8List.fromList(utf8.encode('${initialCommand.trim()}\r')),
-        );
+        session.write(Uint8List.fromList(utf8.encode('${initialCommand.trim()}\r')));
       }
       _syncBackgroundSessions();
     } on CredentialResolutionException catch (e) {
@@ -761,9 +728,7 @@ class ShellViewModel extends ChangeNotifier {
       close(session);
       return;
     }
-    final server = _app.servers
-        .where((server) => server.id == session.serverId)
-        .firstOrNull;
+    final server = _app.servers.where((server) => server.id == session.serverId).firstOrNull;
     try {
       if (server == null || transport == null) {
         throw StateError('The host or SSH transport is no longer available.');
@@ -908,16 +873,11 @@ class ShellViewModel extends ChangeNotifier {
   /// Mirrors an editor-style swipe/autocorrect edit as one ordered terminal write.
   bool applyLineEdit({required int backspaces, required String insert}) {
     final session = current;
-    if (session == null ||
-        session.readOnly ||
-        (backspaces <= 0 && insert.isEmpty)) {
+    if (session == null || session.readOnly || (backspaces <= 0 && insert.isEmpty)) {
       return false;
     }
     return session.write(
-      Uint8List.fromList([
-        ...List.filled(backspaces, 0x7f),
-        ...utf8.encode(insert),
-      ]),
+      Uint8List.fromList([...List.filled(backspaces, 0x7f), ...utf8.encode(insert)]),
     );
   }
 

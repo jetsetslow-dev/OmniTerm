@@ -52,17 +52,11 @@ class FakeProbe implements NetworkProbe {
     Duration timeout = const Duration(seconds: 2),
   }) async {
     pinged.add((host, port));
-    return open.contains('$host:$port')
-        ? const Duration(milliseconds: 12)
-        : null;
+    return open.contains('$host:$port') ? const Duration(milliseconds: 12) : null;
   }
 
   @override
-  Future<void> sendMagicPacket(
-    Uint8List packet,
-    String broadcast,
-    int port,
-  ) async {
+  Future<void> sendMagicPacket(Uint8List packet, String broadcast, int port) async {
     sentPackets.add((packet, broadcast, port));
   }
 
@@ -143,16 +137,10 @@ class FakeDeviceCommands implements DeviceNetworkCommandRunner {
   final List<(String, int, int?)> pings = [];
 
   @override
-  Future<DeviceNetworkCommand?> startPing(
-    String target, {
-    required int count,
-    int? ttl,
-  }) async {
+  Future<DeviceNetworkCommand?> startPing(String target, {required int count, int? ttl}) async {
     pings.add((target, count, ttl));
     if (!available) return null;
-    return FakeDeviceCommand(
-      ttl == null ? pingOutput : (ttlOutput[ttl] ?? const []),
-    );
+    return FakeDeviceCommand(ttl == null ? pingOutput : (ttlOutput[ttl] ?? const []));
   }
 
   @override
@@ -235,11 +223,7 @@ class FakeSpeedTest implements SpeedTestClient {
         created.completeError(failure!);
       } else {
         created.complete(
-          const SpeedTestResult(
-            bytes: 2097152,
-            mbps: 16.8,
-            latency: Duration(milliseconds: 23),
-          ),
+          const SpeedTestResult(bytes: 2097152, mbps: 16.8, latency: Duration(milliseconds: 23)),
         );
       }
     });
@@ -284,10 +268,7 @@ void main() {
 
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
-    repo = AppRepository(
-      db,
-      SecretStore(storage: FakeSecureStorage(<String, String>{})),
-    );
+    repo = AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{})));
     app = AppState(repo);
   });
 
@@ -346,39 +327,26 @@ void main() {
       vm.subnetPrefix = '192.168.1';
       await vm.scanSubnet();
 
-      expect(vm.scanResults.map((h) => h.address), [
-        '192.168.1.5',
-        '192.168.1.9',
-      ]);
+      expect(vm.scanResults.map((h) => h.address), ['192.168.1.5', '192.168.1.9']);
       expect(vm.scanResults.first.openPorts, [22, 80]);
       expect(vm.scanResults.first.hostname, 'nas.local');
-      expect(
-        vm.scanResults.last.hostname,
-        isNull,
-        reason: 'no PTR record is not a failure',
-      );
+      expect(vm.scanResults.last.hostname, isNull, reason: 'no PTR record is not a failure');
       vm.dispose();
     });
 
-    test(
-      'mDNS then NetBIOS fill names when the router has no PTR records',
-      () async {
-        final probe = FakeProbe(
-          open: {'192.168.1.5:22', '192.168.1.9:445'},
-          mdnsNames: {'192.168.1.5': 'nas.local.'},
-          netbiosNames: {'192.168.1.5': 'IGNORED', '192.168.1.9': 'OFFICE-NAS'},
-        );
-        final vm = await boot(probe);
-        vm.subnetPrefix = '192.168.1';
-        await vm.scanSubnet();
+    test('mDNS then NetBIOS fill names when the router has no PTR records', () async {
+      final probe = FakeProbe(
+        open: {'192.168.1.5:22', '192.168.1.9:445'},
+        mdnsNames: {'192.168.1.5': 'nas.local.'},
+        netbiosNames: {'192.168.1.5': 'IGNORED', '192.168.1.9': 'OFFICE-NAS'},
+      );
+      final vm = await boot(probe);
+      vm.subnetPrefix = '192.168.1';
+      await vm.scanSubnet();
 
-        expect(vm.scanResults.map((host) => host.hostname), [
-          'nas.local',
-          'office-nas',
-        ]);
-        vm.dispose();
-      },
-    );
+      expect(vm.scanResults.map((host) => host.hostname), ['nas.local', 'office-nas']);
+      vm.dispose();
+    });
 
     test('the sweep skips the network and broadcast addresses', () async {
       final probe = FakeProbe();
@@ -395,9 +363,7 @@ void main() {
 
     test('results are ordered numerically, not lexically', () async {
       // .10 sorting before .9 reads as though addresses are missing.
-      final probe = FakeProbe(
-        open: {'192.168.1.9:22', '192.168.1.10:22', '192.168.1.100:22'},
-      );
+      final probe = FakeProbe(open: {'192.168.1.9:22', '192.168.1.10:22', '192.168.1.100:22'});
       final vm = await boot(probe);
       vm.subnetPrefix = '192.168.1';
       await vm.scanSubnet();
@@ -425,10 +391,7 @@ void main() {
   group('wake on LAN', () {
     test('a target is saved with a normalised MAC', () async {
       final vm = await boot(FakeProbe());
-      expect(
-        await vm.saveWolTarget(name: 'nas', macAddress: 'AA-BB-CC-DD-EE-FF'),
-        isNull,
-      );
+      expect(await vm.saveWolTarget(name: 'nas', macAddress: 'AA-BB-CC-DD-EE-FF'), isNull);
       await settle();
       expect(vm.wolTargets.single.macAddress, 'aa:bb:cc:dd:ee:ff');
       vm.dispose();
@@ -437,33 +400,24 @@ void main() {
     test('an unusable MAC is refused at save time', () async {
       // A saved target with a bad MAC looks fine in the list and silently does nothing forever.
       final vm = await boot(FakeProbe());
-      expect(
-        await vm.saveWolTarget(name: 'nas', macAddress: 'nope'),
-        contains('MAC'),
-      );
-      expect(
-        await vm.saveWolTarget(name: '  ', macAddress: 'aa:bb:cc:dd:ee:ff'),
-        contains('Name'),
-      );
+      expect(await vm.saveWolTarget(name: 'nas', macAddress: 'nope'), contains('MAC'));
+      expect(await vm.saveWolTarget(name: '  ', macAddress: 'aa:bb:cc:dd:ee:ff'), contains('Name'));
       await settle();
       expect(vm.wolTargets, isEmpty);
       vm.dispose();
     });
 
-    test(
-      'the broadcast address is derived from the host IP when not given',
-      () async {
-        final vm = await boot(FakeProbe());
-        await vm.saveWolTarget(
-          name: 'nas',
-          macAddress: 'aa:bb:cc:dd:ee:ff',
-          ipAddress: '192.168.4.20',
-        );
-        await settle();
-        expect(vm.wolTargets.single.broadcastIp, '192.168.4.255');
-        vm.dispose();
-      },
-    );
+    test('the broadcast address is derived from the host IP when not given', () async {
+      final vm = await boot(FakeProbe());
+      await vm.saveWolTarget(
+        name: 'nas',
+        macAddress: 'aa:bb:cc:dd:ee:ff',
+        ipAddress: '192.168.4.20',
+      );
+      await settle();
+      expect(vm.wolTargets.single.broadcastIp, '192.168.4.255');
+      vm.dispose();
+    });
 
     test('with no IP at all it falls back to the global broadcast', () async {
       final vm = await boot(FakeProbe());
@@ -473,31 +427,28 @@ void main() {
       vm.dispose();
     });
 
-    test(
-      'waking sends a correct magic packet to the broadcast address',
-      () async {
-        final probe = FakeProbe();
-        final vm = await boot(probe);
-        await vm.saveWolTarget(
-          name: 'nas',
-          macAddress: 'aa:bb:cc:dd:ee:ff',
-          ipAddress: '192.168.4.20',
-        );
-        await settle();
+    test('waking sends a correct magic packet to the broadcast address', () async {
+      final probe = FakeProbe();
+      final vm = await boot(probe);
+      await vm.saveWolTarget(
+        name: 'nas',
+        macAddress: 'aa:bb:cc:dd:ee:ff',
+        ipAddress: '192.168.4.20',
+      );
+      await settle();
 
-        final message = await vm.wake(vm.wolTargets.single);
+      final message = await vm.wake(vm.wolTargets.single);
 
-        final (packet, broadcast, port) = probe.sentPackets.single;
-        expect(packet, magicPacketFor('aa:bb:cc:dd:ee:ff'));
-        expect(broadcast, '192.168.4.255');
-        expect(port, 9);
-        // Fire-and-forget: "sent" is the most the app can honestly claim.
-        expect(message, contains('sent'));
-        await settle();
-        expect(vm.wolTargets.single.lastWokenTime, greaterThan(0));
-        vm.dispose();
-      },
-    );
+      final (packet, broadcast, port) = probe.sentPackets.single;
+      expect(packet, magicPacketFor('aa:bb:cc:dd:ee:ff'));
+      expect(broadcast, '192.168.4.255');
+      expect(port, 9);
+      // Fire-and-forget: "sent" is the most the app can honestly claim.
+      expect(message, contains('sent'));
+      await settle();
+      expect(vm.wolTargets.single.lastWokenTime, greaterThan(0));
+      vm.dispose();
+    });
 
     test('deleting removes the target', () async {
       final vm = await boot(FakeProbe());
@@ -523,25 +474,20 @@ void main() {
       vm.dispose();
     });
 
-    test(
-      'packet loss remains command output rather than a transport error',
-      () async {
-        final vm = await boot(
-          FakeProbe(),
-          deviceCommands: FakeDeviceCommands(
-            pingOutput: const [
-              '4 packets transmitted, 0 received, 100% packet loss',
-            ],
-          ),
-        );
-        vm.pingTarget = '10.0.0.99';
-        await vm.runPing();
+    test('packet loss remains command output rather than a transport error', () async {
+      final vm = await boot(
+        FakeProbe(),
+        deviceCommands: FakeDeviceCommands(
+          pingOutput: const ['4 packets transmitted, 0 received, 100% packet loss'],
+        ),
+      );
+      vm.pingTarget = '10.0.0.99';
+      await vm.runPing();
 
-        expect(vm.pingLines.single, contains('100% packet loss'));
-        expect(vm.error, isNull);
-        vm.dispose();
-      },
-    );
+      expect(vm.pingLines.single, contains('100% packet loss'));
+      expect(vm.error, isNull);
+      vm.dispose();
+    });
 
     test('an empty target is refused', () async {
       final probe = FakeProbe();
@@ -576,10 +522,7 @@ void main() {
     });
 
     test('an unavailable platform says so explicitly', () async {
-      final vm = await boot(
-        FakeProbe(),
-        deviceCommands: FakeDeviceCommands(available: false),
-      );
+      final vm = await boot(FakeProbe(), deviceCommands: FakeDeviceCommands(available: false));
       vm.pingTarget = 'example.com';
       await vm.runPing();
 
@@ -687,8 +630,7 @@ void main() {
 
   group('DNS lookup', () {
     test('resolves and lists the records', () async {
-      final probe = FakeProbe()
-        ..dnsResponses = {fallbackResolvers.first: aRecordResponse()};
+      final probe = FakeProbe()..dnsResponses = {fallbackResolvers.first: aRecordResponse()};
       final vm = await boot(probe);
       vm.dnsTarget = 'example.com';
       await vm.runDnsLookup();
@@ -702,8 +644,7 @@ void main() {
     test('an unreachable resolver falls through to the next', () async {
       // One provider being blocked on a locked-down network is common, and reporting that as
       // "DNS is broken" would be wrong.
-      final probe = FakeProbe()
-        ..dnsResponses = {fallbackResolvers[1]: aRecordResponse()};
+      final probe = FakeProbe()..dnsResponses = {fallbackResolvers[1]: aRecordResponse()};
       final vm = await boot(probe);
       vm.dnsTarget = 'example.com';
       await vm.runDnsLookup();
@@ -775,26 +716,19 @@ void main() {
     vm.dispose();
   });
 
-  test(
-    'a scanned host action starts the tool and carries ports already found',
-    () async {
-      final probe = FakeProbe(open: {'192.168.1.5:445'});
-      final vm = await boot(probe);
-      vm.portSpec = '22,80';
+  test('a scanned host action starts the tool and carries ports already found', () async {
+    final probe = FakeProbe(open: {'192.168.1.5:445'});
+    final vm = await boot(probe);
+    vm.portSpec = '22,80';
 
-      await vm.runForHost(
-        '192.168.1.5',
-        NetworkTab.portScan,
-        knownOpenPorts: const [445, 3389],
-      );
+    await vm.runForHost('192.168.1.5', NetworkTab.portScan, knownOpenPorts: const [445, 3389]);
 
-      expect(vm.activeTab, NetworkTab.portScan);
-      expect(vm.portScanTarget, '192.168.1.5');
-      expect(parsePortSpec(vm.portSpec), [22, 80, 445, 3389]);
-      expect(vm.openPorts.map((result) => result.port), [445]);
-      vm.dispose();
-    },
-  );
+    expect(vm.activeTab, NetworkTab.portScan);
+    expect(vm.portScanTarget, '192.168.1.5');
+    expect(parsePortSpec(vm.portSpec), [22, 80, 445, 3389]);
+    expect(vm.openPorts.map((result) => result.port), [445]);
+    vm.dispose();
+  });
 
   group('speed test', () {
     test('publishes progress and the final throughput result', () async {
@@ -812,21 +746,18 @@ void main() {
       vm.dispose();
     });
 
-    test(
-      'refuses blank, malformed, and cleartext URLs before a request',
-      () async {
-        final client = FakeSpeedTest();
-        final vm = await boot(FakeProbe(), speedTest: client);
+    test('refuses blank, malformed, and cleartext URLs before a request', () async {
+      final client = FakeSpeedTest();
+      final vm = await boot(FakeProbe(), speedTest: client);
 
-        for (final url in ['', 'not a url', 'http://example.com/test.bin']) {
-          vm.speedTestUrl = url;
-          await vm.runSpeedTest();
-          expect(vm.speedTestError, isNotNull);
-        }
-        expect(client.requestedUrl, isNull);
-        vm.dispose();
-      },
-    );
+      for (final url in ['', 'not a url', 'http://example.com/test.bin']) {
+        vm.speedTestUrl = url;
+        await vm.runSpeedTest();
+        expect(vm.speedTestError, isNotNull);
+      }
+      expect(client.requestedUrl, isNull);
+      vm.dispose();
+    });
 
     test('stop cancels the active streaming request', () async {
       final client = _HoldingSpeedTest();
@@ -850,8 +781,7 @@ void main() {
       // The first answer is a delegation record; the record a user came for is at the registry.
       final whois = FakeWhois({
         'whois.iana.org': 'domain: COM\nrefer: whois.verisign-grs.com\n',
-        'whois.verisign-grs.com':
-            'Domain Name: EXAMPLE.COM\nRegistrar: Someone\n',
+        'whois.verisign-grs.com': 'Domain Name: EXAMPLE.COM\nRegistrar: Someone\n',
       });
       final vm = await boot(FakeProbe(), whois: whois);
       vm.whoisTarget = 'example.com';
@@ -870,9 +800,7 @@ void main() {
     });
 
     test('an address starts at a regional registry', () async {
-      final whois = FakeWhois({
-        'whois.arin.net': 'NetRange: 8.8.8.0 - 8.8.8.255\n',
-      });
+      final whois = FakeWhois({'whois.arin.net': 'NetRange: 8.8.8.0 - 8.8.8.255\n'});
       final vm = await boot(FakeProbe(), whois: whois);
       vm.whoisTarget = '8.8.8.8';
       await vm.runWhois();
@@ -920,59 +848,44 @@ void main() {
       vm.dispose();
     });
 
-    test(
-      'a referred server that fails leaves the first answer standing, and says why',
-      () async {
-        // The registry reply is still a real answer; discarding it because the second hop failed
-        // would turn a partial result into nothing.
-        final whois = FakeWhois({
-          'whois.iana.org': 'domain: COM\nrefer: whois.verisign-grs.com\n',
-          'whois.verisign-grs.com': const WhoisException('Connection refused'),
-        });
-        final vm = await boot(FakeProbe(), whois: whois);
-        vm.whoisTarget = 'example.com';
-        await vm.runWhois();
+    test('a referred server that fails leaves the first answer standing, and says why', () async {
+      // The registry reply is still a real answer; discarding it because the second hop failed
+      // would turn a partial result into nothing.
+      final whois = FakeWhois({
+        'whois.iana.org': 'domain: COM\nrefer: whois.verisign-grs.com\n',
+        'whois.verisign-grs.com': const WhoisException('Connection refused'),
+      });
+      final vm = await boot(FakeProbe(), whois: whois);
+      vm.whoisTarget = 'example.com';
+      await vm.runWhois();
 
-        expect(vm.whoisResult, contains('domain: COM'));
-        expect(vm.whoisResult, contains('did not answer'));
-        expect(vm.whoisServers, ['whois.iana.org']);
-        expect(
-          vm.error,
-          isNull,
-          reason: 'a partial answer is not a failed lookup',
-        );
-        vm.dispose();
-      },
-    );
+      expect(vm.whoisResult, contains('domain: COM'));
+      expect(vm.whoisResult, contains('did not answer'));
+      expect(vm.whoisServers, ['whois.iana.org']);
+      expect(vm.error, isNull, reason: 'a partial answer is not a failed lookup');
+      vm.dispose();
+    });
 
-    test(
-      'a first hop that fails is reported as an error, not as an empty record',
-      () async {
-        final whois = FakeWhois({
-          'whois.iana.org': const WhoisException('Network unreachable'),
-        });
-        final vm = await boot(FakeProbe(), whois: whois);
-        vm.whoisTarget = 'example.com';
-        await vm.runWhois();
+    test('a first hop that fails is reported as an error, not as an empty record', () async {
+      final whois = FakeWhois({'whois.iana.org': const WhoisException('Network unreachable')});
+      final vm = await boot(FakeProbe(), whois: whois);
+      vm.whoisTarget = 'example.com';
+      await vm.runWhois();
 
-        expect(vm.error, contains('Network unreachable'));
-        expect(vm.whoisResult, isEmpty);
-        vm.dispose();
-      },
-    );
+      expect(vm.error, contains('Network unreachable'));
+      expect(vm.whoisResult, isEmpty);
+      vm.dispose();
+    });
 
-    test(
-      'a blank reply says nothing came back rather than showing an empty pane',
-      () async {
-        final whois = FakeWhois({'whois.iana.org': '   \n'});
-        final vm = await boot(FakeProbe(), whois: whois);
-        vm.whoisTarget = 'example.com';
-        await vm.runWhois();
+    test('a blank reply says nothing came back rather than showing an empty pane', () async {
+      final whois = FakeWhois({'whois.iana.org': '   \n'});
+      final vm = await boot(FakeProbe(), whois: whois);
+      vm.whoisTarget = 'example.com';
+      await vm.runWhois();
 
-        expect(vm.error, contains('No registration records'));
-        vm.dispose();
-      },
-    );
+      expect(vm.error, contains('No registration records'));
+      vm.dispose();
+    });
 
     test('an empty target asks nothing', () async {
       final whois = FakeWhois({});

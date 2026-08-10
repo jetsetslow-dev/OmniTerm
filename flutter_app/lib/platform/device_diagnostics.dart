@@ -19,9 +19,7 @@ class DeviceDiagnostics {
 
   static const _channel = MethodChannel('omniterm/device_info');
 
-  static Future<DeviceDiagnostics> load({
-    required bool includeAdvertisingId,
-  }) async {
+  static Future<DeviceDiagnostics> load({required bool includeAdvertisingId}) async {
     var device = Platform.operatingSystem;
     var platform = Platform.operatingSystemVersion;
     var abi = 'unknown';
@@ -33,9 +31,7 @@ class DeviceDiagnostics {
         platform = raw?['platform'] as String? ?? platform;
         abi = raw?['abi'] as String? ?? abi;
         if (includeAdvertisingId) {
-          adId =
-              await _channel.invokeMethod<String>('advertisingId') ??
-              'Unavailable';
+          adId = await _channel.invokeMethod<String>('advertisingId') ?? 'Unavailable';
         }
       } on PlatformException {
         // Diagnostics still name the Dart platform when the optional bridge fails.
@@ -43,11 +39,6 @@ class DeviceDiagnostics {
         // Widget tests and non-Android platforms intentionally have no bridge.
       }
     }
-    return DeviceDiagnostics(
-      device: device,
-      platform: platform,
-      abi: abi,
-      advertisingId: adId,
-    );
+    return DeviceDiagnostics(device: device, platform: platform, abi: abi, advertisingId: adId);
   }
 }

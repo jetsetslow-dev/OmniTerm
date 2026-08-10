@@ -37,11 +37,7 @@ void main() {
           existingAliases: {'laptop'},
         ),
         throwsA(
-          isA<KeyImportException>().having(
-            (e) => e.message,
-            'message',
-            contains('already exists'),
-          ),
+          isA<KeyImportException>().having((e) => e.message, 'message', contains('already exists')),
         ),
       );
     });
@@ -59,11 +55,7 @@ void main() {
       expect(
         () => prepareKeyImport(alias: 'k', privateKey: ed25519Public),
         throwsA(
-          isA<KeyImportException>().having(
-            (e) => e.message,
-            'message',
-            contains('public key'),
-          ),
+          isA<KeyImportException>().having((e) => e.message, 'message', contains('public key')),
         ),
       );
     });
@@ -72,11 +64,7 @@ void main() {
       expect(
         () => prepareKeyImport(alias: 'k', privateKey: 'hello world'),
         throwsA(
-          isA<KeyImportException>().having(
-            (e) => e.message,
-            'message',
-            contains('PRIVATE KEY'),
-          ),
+          isA<KeyImportException>().having((e) => e.message, 'message', contains('PRIVATE KEY')),
         ),
       );
     });
@@ -165,28 +153,16 @@ void main() {
 
     test('without a public key it still produces a stable identifier', () {
       // Not comparable with the server's, but it makes duplicates visible in the list.
-      final a = prepareKeyImport(
-        alias: 'a',
-        privateKey: ed25519Private,
-      ).fingerprint;
-      final b = prepareKeyImport(
-        alias: 'b',
-        privateKey: ed25519Private,
-      ).fingerprint;
+      final a = prepareKeyImport(alias: 'a', privateKey: ed25519Private).fingerprint;
+      final b = prepareKeyImport(alias: 'b', privateKey: ed25519Private).fingerprint;
       expect(a, startsWith('SHA256:'));
       expect(a, b);
     });
 
     test('malformed base64 falls back instead of throwing', () {
       // A wrong fingerprint is cosmetic; refusing the import over it would not be.
-      expect(
-        () => sshPublicKeyFingerprint('ssh-rsa !!!not-base64!!!'),
-        returnsNormally,
-      );
-      expect(
-        sshPublicKeyFingerprint('ssh-rsa !!!not-base64!!!'),
-        startsWith('SHA256:'),
-      );
+      expect(() => sshPublicKeyFingerprint('ssh-rsa !!!not-base64!!!'), returnsNormally);
+      expect(sshPublicKeyFingerprint('ssh-rsa !!!not-base64!!!'), startsWith('SHA256:'));
     });
   });
 

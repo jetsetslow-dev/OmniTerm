@@ -32,25 +32,16 @@ void main() {
           reason: 'asking after $count sessions is asking before the app has proven itself',
         );
       }
-      expect(
-        reviewPromptIsDue(successCount: 3, alreadyShown: false, canPrompt: true),
-        isTrue,
-      );
+      expect(reviewPromptIsDue(successCount: 3, alreadyShown: false, canPrompt: true), isTrue);
     });
 
     test('never asks twice', () {
-      expect(
-        reviewPromptIsDue(successCount: 99, alreadyShown: true, canPrompt: true),
-        isFalse,
-      );
+      expect(reviewPromptIsDue(successCount: 99, alreadyShown: true, canPrompt: true), isFalse);
     });
 
     test('never asks when there is nothing to ask with', () {
       // The open-source build has no store. Counting is harmless; prompting would be a dead end.
-      expect(
-        reviewPromptIsDue(successCount: 99, alreadyShown: false, canPrompt: false),
-        isFalse,
-      );
+      expect(reviewPromptIsDue(successCount: 99, alreadyShown: false, canPrompt: false), isFalse);
     });
   });
 

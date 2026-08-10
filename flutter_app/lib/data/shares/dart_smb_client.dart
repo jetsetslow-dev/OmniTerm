@@ -26,9 +26,7 @@ class DartSmbClient extends RemoteFsClient {
 
   Future<smb2.Smb2Pool> _pool() {
     if (_closed) {
-      return Future.error(
-        SmbException('This share connection has been closed.'),
-      );
+      return Future.error(SmbException('This share connection has been closed.'));
     }
     if (endpoint.port != 445) {
       return Future.error(
@@ -48,9 +46,7 @@ class DartSmbClient extends RemoteFsClient {
         share: endpoint.shareName,
         user: endpoint.anonymous ? null : endpoint.username,
         password: endpoint.anonymous ? null : endpoint.password,
-        domain: endpoint.anonymous || endpoint.domain.isEmpty
-            ? null
-            : endpoint.domain,
+        domain: endpoint.anonymous || endpoint.domain.isEmpty ? null : endpoint.domain,
         workers: 1,
       );
       if (_closed) {
@@ -82,10 +78,7 @@ class DartSmbClient extends RemoteFsClient {
     code: error is smb2.Smb2Exception ? error.type.name : null,
   );
 
-  Future<T> _run<T>(
-    String operation,
-    Future<T> Function(smb2.Smb2Pool) body,
-  ) async {
+  Future<T> _run<T>(String operation, Future<T> Function(smb2.Smb2Pool) body) async {
     try {
       return await body(await _pool());
     } on SmbException {
@@ -116,24 +109,16 @@ class DartSmbClient extends RemoteFsClient {
   });
 
   @override
-  Future<void> mkdir(String path) =>
-      _run('create a folder on', (pool) => pool.mkdir(_path(path)));
+  Future<void> mkdir(String path) => _run('create a folder on', (pool) => pool.mkdir(_path(path)));
 
   @override
-  Future<void> rename(
-    String oldPath,
-    String newPath, {
-    bool isDirectory = false,
-  }) => _run(
-    'rename an item on',
-    (pool) => pool.rename(_path(oldPath), _path(newPath)),
-  );
+  Future<void> rename(String oldPath, String newPath, {bool isDirectory = false}) =>
+      _run('rename an item on', (pool) => pool.rename(_path(oldPath), _path(newPath)));
 
   @override
   Future<void> delete(String path, {required bool isDirectory}) => _run(
     'delete an item from',
-    (pool) =>
-        isDirectory ? pool.rmdir(_path(path)) : pool.deleteFile(_path(path)),
+    (pool) => isDirectory ? pool.rmdir(_path(path)) : pool.deleteFile(_path(path)),
   );
 
   @override

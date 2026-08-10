@@ -32,10 +32,7 @@ void main() {
 
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
-    repo = AppRepository(
-      db,
-      SecretStore(storage: FakeSecureStorage(<String, String>{})),
-    );
+    repo = AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{})));
     app = AppState(repo);
   });
 
@@ -44,47 +41,40 @@ void main() {
     await db.close();
   });
 
-  Server server({
-    required String name,
-    String status = 'online',
-    String sudoPassword = '',
-  }) => Server(
-    id: 0,
-    name: name,
-    host: '10.0.0.1',
-    port: 22,
-    username: 'root',
-    serverColor: 'Default',
-    authType: 'password',
-    authPassword: 'pw',
-    sudoPassword: sudoPassword,
-    notes: '',
-    keepAlive: 30,
-    sshCompression: false,
-    persistentSession: false,
-    proxyCommand: '',
-    proxyType: 'none',
-    proxyHost: '',
-    proxyPort: 0,
-    proxyUser: '',
-    proxyPassword: '',
-    agentForwarding: false,
-    healthScore: 100,
-    lastLatency: 0,
-    status: status,
-    authStatus: 'ok',
-  );
+  Server server({required String name, String status = 'online', String sudoPassword = ''}) =>
+      Server(
+        id: 0,
+        name: name,
+        host: '10.0.0.1',
+        port: 22,
+        username: 'root',
+        serverColor: 'Default',
+        authType: 'password',
+        authPassword: 'pw',
+        sudoPassword: sudoPassword,
+        notes: '',
+        keepAlive: 30,
+        sshCompression: false,
+        persistentSession: false,
+        proxyCommand: '',
+        proxyType: 'none',
+        proxyHost: '',
+        proxyPort: 0,
+        proxyUser: '',
+        proxyPassword: '',
+        agentForwarding: false,
+        healthScore: 100,
+        lastLatency: 0,
+        status: status,
+        authStatus: 'ok',
+      );
 
   SftpFile entry(String name, {bool dir = false, int size = 10}) =>
       SftpFile(name: name, isDirectory: dir, size: size, modDate: '2026-08-01');
 
   FakeFsClient homeTree() => FakeFsClient(
     tree: {
-      '/home/root': [
-        entry('docs', dir: true),
-        entry('notes.txt', size: 120),
-        entry('.hidden'),
-      ],
+      '/home/root': [entry('docs', dir: true), entry('notes.txt', size: 120), entry('.hidden')],
       '/home/root/docs': [entry('report.pdf', size: 900)],
     },
   );
@@ -96,11 +86,7 @@ void main() {
     SshTransport? transport,
   }) async {
     await app.start();
-    vm = SftpViewModel(
-      app,
-      fsClientFor: (_) async => client,
-      transport: transport,
-    );
+    vm = SftpViewModel(app, fsClientFor: (_) async => client, transport: transport);
     // Sudo mode re-authenticates before switching on, so the lock is in scope as it is in the app.
     nav = NavigationController();
     lock = AppLockController(repo);
@@ -113,8 +99,7 @@ void main() {
           // Built by the caller so the one test that needs it can dispose it inside the test body
           // (convention 5): this view model subscribes to a drift `watch` stream, and cancelling
           // that at teardown leaves zero-duration timers queued past the end-of-test check.
-          if (shares != null)
-            ChangeNotifierProvider<SharesViewModel>.value(value: shares),
+          if (shares != null) ChangeNotifierProvider<SharesViewModel>.value(value: shares),
           ChangeNotifierProvider<AppLockController>.value(value: lock),
           // The screen registers a back-press guard on this (defect 63), so it is in scope here
           // exactly as it is in the app.
@@ -144,16 +129,12 @@ void main() {
     vm.dispose();
   });
 
-  testWidgets('the browser tab is disabled with no online host', (
-    tester,
-  ) async {
+  testWidgets('the browser tab is disabled with no online host', (tester) async {
     // Bookmarks, Shares and Transfers still work — only browsing needs a reachable host.
     await repo.insertServer(server(name: 'nas', status: 'offline'));
     await pump(tester, client: homeTree());
 
-    final chip = tester.widget<ChoiceChip>(
-      find.byKey(const ValueKey('sftp.tab.files')),
-    );
+    final chip = tester.widget<ChoiceChip>(find.byKey(const ValueKey('sftp.tab.files')));
     expect(chip.onSelected, isNull);
 
     await tester.tap(find.byKey(const ValueKey('sftp.tab.transfers')));
@@ -162,9 +143,7 @@ void main() {
     vm.dispose();
   });
 
-  testWidgets('the browser lists the home directory with breadcrumbs', (
-    tester,
-  ) async {
+  testWidgets('the browser lists the home directory with breadcrumbs', (tester) async {
     await repo.insertServer(server(name: 'nas'));
     await pump(tester, client: homeTree());
     await goToFiles(tester);
@@ -197,10 +176,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('report.pdf'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('sftp.crumb./home/root/docs')),
-      findsOneWidget,
-    );
+    expect(find.byKey(const ValueKey('sftp.crumb./home/root/docs')), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('sftp.up')));
     await tester.pumpAndSettle();
@@ -208,9 +184,7 @@ void main() {
     vm.dispose();
   });
 
-  testWidgets('Back walks up a folder instead of leaving the screen', (
-    tester,
-  ) async {
+  testWidgets('Back walks up a folder instead of leaving the screen', (tester) async {
     // Defect 63, end to end: the decision table and the guard registration are unit-tested in
     // sftp_back_action_test.dart, and this is the wiring between them and the view model.
     await repo.insertServer(server(name: 'nas'));
@@ -282,17 +256,11 @@ void main() {
     await goToFiles(tester);
 
     expect(find.text('120 B · 2026-08-01'), findsOneWidget);
-    expect(
-      find.text('2026-08-01'),
-      findsOneWidget,
-      reason: 'the folder row shows only the date',
-    );
+    expect(find.text('2026-08-01'), findsOneWidget, reason: 'the folder row shows only the date');
     vm.dispose();
   });
 
-  testWidgets('search distinguishes "no match" from "empty folder"', (
-    tester,
-  ) async {
+  testWidgets('search distinguishes "no match" from "empty folder"', (tester) async {
     await repo.insertServer(server(name: 'nas'));
     await pump(tester, client: homeTree());
     await goToFiles(tester);
@@ -308,9 +276,7 @@ void main() {
   });
 
   group('destructive actions', () {
-    testWidgets('deleting asks first and warns about folder contents', (
-      tester,
-    ) async {
+    testWidgets('deleting asks first and warns about folder contents', (tester) async {
       await repo.insertServer(server(name: 'nas'));
       final client = homeTree();
       await pump(tester, client: client);
@@ -322,10 +288,7 @@ void main() {
       await tester.pumpAndSettle();
 
       // Singular: one folder is "inside it", not "inside them". Spotted on a device.
-      expect(
-        find.textContaining('1 folder and everything inside it.'),
-        findsOneWidget,
-      );
+      expect(find.textContaining('1 folder and everything inside it.'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('sftp.delete.cancel')));
       await tester.pumpAndSettle();
       expect(client.deleted, isEmpty, reason: 'cancelling must delete nothing');
@@ -340,9 +303,7 @@ void main() {
       vm.dispose();
     });
 
-    testWidgets('a file delete does not mention folder contents', (
-      tester,
-    ) async {
+    testWidgets('a file delete does not mention folder contents', (tester) async {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester, client: homeTree());
       await goToFiles(tester);
@@ -369,10 +330,7 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('sftp.newFolder')));
       await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey('sftp.newFolder.name')),
-        'archive',
-      );
+      await tester.enterText(find.byKey(const ValueKey('sftp.newFolder.name')), 'archive');
       await tester.tap(find.byKey(const ValueKey('sftp.newFolder.confirm')));
       await tester.pumpAndSettle();
 
@@ -388,10 +346,7 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('sftp.newFolder')));
       await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey('sftp.newFolder.name')),
-        '..',
-      );
+      await tester.enterText(find.byKey(const ValueKey('sftp.newFolder.name')), '..');
       await tester.tap(find.byKey(const ValueKey('sftp.newFolder.confirm')));
       await tester.pumpAndSettle();
 
@@ -410,10 +365,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('Rename'));
       await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey('sftp.rename.name')),
-        'todo.txt',
-      );
+      await tester.enterText(find.byKey(const ValueKey('sftp.rename.name')), 'todo.txt');
       await tester.tap(find.byKey(const ValueKey('sftp.rename.confirm')));
       await tester.pumpAndSettle();
 
@@ -436,17 +388,12 @@ void main() {
       vm.dispose();
     });
 
-    testWidgets('a filtered listing selects only what is on screen', (
-      tester,
-    ) async {
+    testWidgets('a filtered listing selects only what is on screen', (tester) async {
       // Selecting rows the user cannot see would put files they never chose into the next delete.
       await repo.insertServer(server(name: 'nas'));
       await pump(tester, client: homeTree());
       await goToFiles(tester);
-      await tester.enterText(
-        find.byKey(const ValueKey('sftp.search')),
-        'notes',
-      );
+      await tester.enterText(find.byKey(const ValueKey('sftp.search')), 'notes');
       await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const ValueKey('sftp.selectAll')));
@@ -456,9 +403,7 @@ void main() {
       vm.dispose();
     });
 
-    testWidgets('dotfiles are not selected while they are hidden', (
-      tester,
-    ) async {
+    testWidgets('dotfiles are not selected while they are hidden', (tester) async {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester, client: homeTree());
       await goToFiles(tester);
@@ -470,9 +415,7 @@ void main() {
       vm.dispose();
     });
 
-    testWidgets('an already-selected folder disables the button', (
-      tester,
-    ) async {
+    testWidgets('an already-selected folder disables the button', (tester) async {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester, client: homeTree());
       await goToFiles(tester);
@@ -480,51 +423,32 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        tester
-            .widget<IconButton>(find.byKey(const ValueKey('sftp.selectAll')))
-            .onPressed,
+        tester.widget<IconButton>(find.byKey(const ValueKey('sftp.selectAll'))).onPressed,
         isNull,
-        reason:
-            'a button that appears to do nothing should look like it does nothing',
+        reason: 'a button that appears to do nothing should look like it does nothing',
       );
       vm.dispose();
     });
 
-    testWidgets(
-      'downloading the selection is offered only when files are in it',
-      (tester) async {
-        await repo.insertServer(server(name: 'nas'));
-        await pump(tester, client: homeTree());
-        await goToFiles(tester);
-        expect(
-          find.byKey(const ValueKey('sftp.downloadSelected')),
-          findsNothing,
-        );
+    testWidgets('downloading the selection is offered only when files are in it', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, client: homeTree());
+      await goToFiles(tester);
+      expect(find.byKey(const ValueKey('sftp.downloadSelected')), findsNothing);
 
-        // Long press is how a row is selected. 'docs' is a directory: it has no bytes to hand to a
-        // save dialog, so the action stays hidden.
-        await tester.longPress(find.byKey(const ValueKey('sftp.entry.docs')));
-        await tester.pumpAndSettle();
-        expect(
-          find.byKey(const ValueKey('sftp.downloadSelected')),
-          findsNothing,
-        );
+      // Long press is how a row is selected. 'docs' is a directory: it has no bytes to hand to a
+      // save dialog, so the action stays hidden.
+      await tester.longPress(find.byKey(const ValueKey('sftp.entry.docs')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('sftp.downloadSelected')), findsNothing);
 
-        await tester.longPress(
-          find.byKey(const ValueKey('sftp.entry.notes.txt')),
-        );
-        await tester.pumpAndSettle();
-        expect(
-          find.byKey(const ValueKey('sftp.downloadSelected')),
-          findsOneWidget,
-        );
-        vm.dispose();
-      },
-    );
+      await tester.longPress(find.byKey(const ValueKey('sftp.entry.notes.txt')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('sftp.downloadSelected')), findsOneWidget);
+      vm.dispose();
+    });
 
-    testWidgets('clearing the selection is offered once there is one', (
-      tester,
-    ) async {
+    testWidgets('clearing the selection is offered once there is one', (tester) async {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester, client: homeTree());
       await goToFiles(tester);
@@ -551,10 +475,7 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('sftp.editPath')));
       await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey('sftp.pathInput')),
-        '/var/log',
-      );
+      await tester.enterText(find.byKey(const ValueKey('sftp.pathInput')), '/var/log');
       await tester.tap(find.byKey(const ValueKey('sftp.pathInput.go')));
       await tester.pumpAndSettle();
 
@@ -573,18 +494,13 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(
-        tester
-            .widget<TextField>(find.byKey(const ValueKey('sftp.pathInput')))
-            .controller!
-            .text,
+        tester.widget<TextField>(find.byKey(const ValueKey('sftp.pathInput'))).controller!.text,
         '/home/root',
       );
       vm.dispose();
     });
 
-    testWidgets('cancelling navigates nowhere and restores the crumbs', (
-      tester,
-    ) async {
+    testWidgets('cancelling navigates nowhere and restores the crumbs', (tester) async {
       await repo.insertServer(server(name: 'nas'));
       final client = homeTree()..tree['/var/log'] = [entry('syslog')];
       await pump(tester, client: client);
@@ -592,10 +508,7 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('sftp.editPath')));
       await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey('sftp.pathInput')),
-        '/var/log',
-      );
+      await tester.enterText(find.byKey(const ValueKey('sftp.pathInput')), '/var/log');
       await tester.tap(find.byKey(const ValueKey('sftp.pathInput.cancel')));
       await tester.pumpAndSettle();
 
@@ -605,9 +518,7 @@ void main() {
       vm.dispose();
     });
 
-    testWidgets('a path that does not exist reports the failure', (
-      tester,
-    ) async {
+    testWidgets('a path that does not exist reports the failure', (tester) async {
       await repo.insertServer(server(name: 'nas'));
       final client = homeTree()..failFor = {'/nope'};
       await pump(tester, client: client);
@@ -615,10 +526,7 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('sftp.editPath')));
       await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey('sftp.pathInput')),
-        '/nope',
-      );
+      await tester.enterText(find.byKey(const ValueKey('sftp.pathInput')), '/nope');
       await tester.tap(find.byKey(const ValueKey('sftp.pathInput.go')));
       await tester.pumpAndSettle();
 
@@ -644,46 +552,36 @@ void main() {
   });
 
   group('bookmarks', () {
-    testWidgets(
-      'a saved bookmark is listed with its host and opens the browser',
-      (tester) async {
-        final id = await repo.insertServer(server(name: 'nas'));
-        await repo.insertSetting('sftp_bookmarks_$id', '/etc');
-        final client = homeTree()..tree['/etc'] = [entry('hosts')];
-        await pump(tester, client: client);
+    testWidgets('a saved bookmark is listed with its host and opens the browser', (tester) async {
+      final id = await repo.insertServer(server(name: 'nas'));
+      await repo.insertSetting('sftp_bookmarks_$id', '/etc');
+      final client = homeTree()..tree['/etc'] = [entry('hosts')];
+      await pump(tester, client: client);
 
-        // The endpoint is named on the row: the same path exists on several machines, and opening the
-        // wrong one is the mistake a jump list invites.
-        expect(find.text('nas'), findsOneWidget);
-        await tester.tap(find.byKey(ValueKey('sftp.bookmark.host:$id./etc')));
-        await tester.pumpAndSettle();
+      // The endpoint is named on the row: the same path exists on several machines, and opening the
+      // wrong one is the mistake a jump list invites.
+      expect(find.text('nas'), findsOneWidget);
+      await tester.tap(find.byKey(ValueKey('sftp.bookmark.host:$id./etc')));
+      await tester.pumpAndSettle();
 
-        expect(find.text('hosts'), findsOneWidget);
-        vm.dispose();
-      },
-    );
+      expect(find.text('hosts'), findsOneWidget);
+      vm.dispose();
+    });
 
     testWidgets('the tab is useful before any host is online', (tester) async {
       // The defect: the old tab said "connect a host first" and showed nothing, so the jump list was
       // unavailable in exactly the state it is most wanted.
-      final id = await repo.insertServer(
-        server(name: 'nas', status: 'offline'),
-      );
+      final id = await repo.insertServer(server(name: 'nas', status: 'offline'));
       await repo.insertSetting('sftp_bookmarks_$id', '/etc');
       await pump(tester, client: homeTree());
 
-      expect(
-        find.byKey(ValueKey('sftp.bookmark.host:$id./etc')),
-        findsOneWidget,
-      );
+      expect(find.byKey(ValueKey('sftp.bookmark.host:$id./etc')), findsOneWidget);
       expect(find.textContaining('offline'), findsOneWidget);
       vm.dispose();
     });
 
     testWidgets('an offline host\'s bookmark does not open', (tester) async {
-      final id = await repo.insertServer(
-        server(name: 'nas', status: 'offline'),
-      );
+      final id = await repo.insertServer(server(name: 'nas', status: 'offline'));
       await repo.insertSetting('sftp_bookmarks_$id', '/etc');
       final client = homeTree()..tree['/etc'] = [entry('hosts')];
       await pump(tester, client: client);
@@ -696,22 +594,15 @@ void main() {
       vm.dispose();
     });
 
-    testWidgets('an empty list says so rather than showing a blank tab', (
-      tester,
-    ) async {
+    testWidgets('an empty list says so rather than showing a blank tab', (tester) async {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester, client: homeTree());
 
-      expect(
-        find.byKey(const ValueKey('sftp.bookmarks.empty')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('sftp.bookmarks.empty')), findsOneWidget);
       vm.dispose();
     });
 
-    testWidgets('the current folder can be bookmarked from the browser', (
-      tester,
-    ) async {
+    testWidgets('the current folder can be bookmarked from the browser', (tester) async {
       final id = await repo.insertServer(server(name: 'nas'));
       await pump(tester, client: homeTree());
       await goToFiles(tester);
@@ -722,20 +613,13 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('sftp.tab.bookmarks')));
       await tester.pumpAndSettle();
-      expect(
-        find.byKey(ValueKey('sftp.bookmark.host:$id./home/root')),
-        findsOneWidget,
-      );
+      expect(find.byKey(ValueKey('sftp.bookmark.host:$id./home/root')), findsOneWidget);
       vm.dispose();
     });
 
-    testWidgets('adding one files it against the endpoint that was chosen', (
-      tester,
-    ) async {
+    testWidgets('adding one files it against the endpoint that was chosen', (tester) async {
       final browsed = await repo.insertServer(server(name: 'browsed'));
-      final other = await repo.insertServer(
-        server(name: 'other', status: 'offline'),
-      );
+      final other = await repo.insertServer(server(name: 'other', status: 'offline'));
       await pump(tester, client: homeTree());
 
       await tester.tap(find.byKey(const ValueKey('sftp.bookmarks.add')));
@@ -743,23 +627,16 @@ void main() {
       // The endpoint starts unselected, so Save cannot fire until one is picked.
       expect(
         tester
-            .widget<FilledButton>(
-              find.byKey(const ValueKey('sftp.bookmark.editor.save')),
-            )
+            .widget<FilledButton>(find.byKey(const ValueKey('sftp.bookmark.editor.save')))
             .onPressed,
         isNull,
       );
 
-      await tester.tap(
-        find.byKey(const ValueKey('sftp.bookmark.editor.endpoint')),
-      );
+      await tester.tap(find.byKey(const ValueKey('sftp.bookmark.editor.endpoint')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('other').last);
       await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey('sftp.bookmark.editor.path')),
-        '/srv/www',
-      );
+      await tester.enterText(find.byKey(const ValueKey('sftp.bookmark.editor.path')), '/srv/www');
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('sftp.bookmark.editor.save')));
       await tester.pumpAndSettle();
@@ -774,19 +651,12 @@ void main() {
       await repo.insertSetting('sftp_bookmarks_$id', '/etc');
       await pump(tester, client: homeTree());
 
-      await tester.tap(
-        find.byKey(ValueKey('sftp.bookmark.host:$id./etc.remove')),
-      );
+      await tester.tap(find.byKey(ValueKey('sftp.bookmark.host:$id./etc.remove')));
       await tester.pumpAndSettle();
 
-      expect(
-        find.byKey(const ValueKey('sftp.bookmark.remove.dialog')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('sftp.bookmark.remove.dialog')), findsOneWidget);
       expect(find.textContaining('/etc on nas'), findsOneWidget);
-      await tester.tap(
-        find.byKey(const ValueKey('sftp.bookmark.remove.confirm')),
-      );
+      await tester.tap(find.byKey(const ValueKey('sftp.bookmark.remove.confirm')));
       await tester.pumpAndSettle();
 
       expect(await repo.getSetting('sftp_bookmarks_$id'), '');
@@ -798,9 +668,7 @@ void main() {
       await repo.insertSetting('sftp_bookmarks_$id', '/etc');
       await pump(tester, client: homeTree());
 
-      await tester.tap(
-        find.byKey(ValueKey('sftp.bookmark.host:$id./etc.remove')),
-      );
+      await tester.tap(find.byKey(ValueKey('sftp.bookmark.host:$id./etc.remove')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('Cancel'));
       await tester.pumpAndSettle();
@@ -809,23 +677,17 @@ void main() {
       vm.dispose();
     });
 
-    testWidgets('cloning keeps the original and offers its path', (
-      tester,
-    ) async {
+    testWidgets('cloning keeps the original and offers its path', (tester) async {
       final from = await repo.insertServer(server(name: 'from'));
       final to = await repo.insertServer(server(name: 'to', status: 'offline'));
       await repo.insertSetting('sftp_bookmarks_$from', '/etc');
       await pump(tester, client: homeTree());
 
-      await tester.tap(
-        find.byKey(ValueKey('sftp.bookmark.host:$from./etc.clone')),
-      );
+      await tester.tap(find.byKey(ValueKey('sftp.bookmark.host:$from./etc.clone')));
       await tester.pumpAndSettle();
       // Prefilled from the row, so a clone is one endpoint change rather than retyping the path.
       expect(find.widgetWithText(TextField, '/etc'), findsOneWidget);
-      await tester.tap(
-        find.byKey(const ValueKey('sftp.bookmark.editor.endpoint')),
-      );
+      await tester.tap(find.byKey(const ValueKey('sftp.bookmark.editor.endpoint')));
       await tester.pumpAndSettle();
       await tester.tap(find.text('to').last);
       await tester.pumpAndSettle();
@@ -838,9 +700,7 @@ void main() {
     });
   });
 
-  testWidgets('a listing failure is shown and the rows are cleared', (
-    tester,
-  ) async {
+  testWidgets('a listing failure is shown and the rows are cleared', (tester) async {
     await repo.insertServer(server(name: 'nas'));
     final client = homeTree()..failFor = {'/home/root/docs'};
     await pump(tester, client: client);
@@ -854,8 +714,7 @@ void main() {
     expect(
       find.text('notes.txt'),
       findsNothing,
-      reason:
-          'the previous folder rows must not sit under a path that failed to open',
+      reason: 'the previous folder rows must not sit under a path that failed to open',
     );
     vm.dispose();
   });
@@ -888,18 +747,14 @@ void main() {
     ///
     /// Sudo mode is a screen-level toggle, so an editor opened on `/etc/nginx/nginx.conf` showed a
     /// plain "Save" while the view model wrote as root.
-    testWidgets('the editor says nothing about root when sudo is off', (
-      tester,
-    ) async {
+    testWidgets('the editor says nothing about root when sudo is off', (tester) async {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester, client: editableTree(), transport: _StubShell());
       await goToFiles(tester);
       await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
       await tester.pumpAndSettle();
 
-      final save = tester.widget<FilledButton>(
-        find.byKey(const ValueKey('fileEditor.save')),
-      );
+      final save = tester.widget<FilledButton>(find.byKey(const ValueKey('fileEditor.save')));
       expect((save.child! as Text).data, 'Save');
       expect(
         tester.widget<Text>(find.byKey(const ValueKey('fileEditor.mode'))).data,
@@ -917,9 +772,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
       await tester.pumpAndSettle();
 
-      final mode = tester.widget<Text>(
-        find.byKey(const ValueKey('fileEditor.mode')),
-      );
+      final mode = tester.widget<Text>(find.byKey(const ValueKey('fileEditor.mode')));
       expect(mode.data, contains('sudo'));
       expect(
         mode.style?.color,
@@ -929,9 +782,7 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('fileEditor.editToggle')));
       await tester.pumpAndSettle();
-      final save = tester.widget<FilledButton>(
-        find.byKey(const ValueKey('fileEditor.save')),
-      );
+      final save = tester.widget<FilledButton>(find.byKey(const ValueKey('fileEditor.save')));
       expect(
         (save.child! as Text).data,
         'Save as root',
@@ -939,9 +790,7 @@ void main() {
       );
     });
 
-    testWidgets('tapping a file opens it read-only, and the pencil unlocks it', (
-      tester,
-    ) async {
+    testWidgets('tapping a file opens it read-only, and the pencil unlocks it', (tester) async {
       // Most visits to a config file on a server are to read it. An editor armed by default turns
       // a stray tap on a phone into an edit to something live.
       await repo.insertServer(server(name: 'nas'));
@@ -954,27 +803,17 @@ void main() {
       expect(find.byKey(const ValueKey('fileEditor.text')), findsOneWidget);
       expect(find.textContaining('Read-only'), findsOneWidget);
 
-      var field = tester.widget<TextField>(
-        find.byKey(const ValueKey('fileEditor.text')),
-      );
+      var field = tester.widget<TextField>(find.byKey(const ValueKey('fileEditor.text')));
       expect(field.readOnly, isTrue);
       expect(field.controller!.text, 'listen 8080\n');
 
-      var save = tester.widget<FilledButton>(
-        find.byKey(const ValueKey('fileEditor.save')),
-      );
-      expect(
-        save.onPressed,
-        isNull,
-        reason: 'nothing to save, and not in edit mode',
-      );
+      var save = tester.widget<FilledButton>(find.byKey(const ValueKey('fileEditor.save')));
+      expect(save.onPressed, isNull, reason: 'nothing to save, and not in edit mode');
 
       await tester.tap(find.byKey(const ValueKey('fileEditor.editToggle')));
       await tester.pumpAndSettle();
 
-      field = tester.widget<TextField>(
-        find.byKey(const ValueKey('fileEditor.text')),
-      );
+      field = tester.widget<TextField>(find.byKey(const ValueKey('fileEditor.text')));
       expect(field.readOnly, isFalse);
       expect(
         tester.widget<Text>(find.byKey(const ValueKey('fileEditor.mode'))).data,
@@ -993,10 +832,7 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('fileEditor.editToggle')));
       await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey('fileEditor.text')),
-        text,
-      );
+      await tester.enterText(find.byKey(const ValueKey('fileEditor.text')), text);
       await tester.pumpAndSettle();
     }
 
@@ -1006,9 +842,7 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('Back asks before discarding edits, as the close button does', (
-      tester,
-    ) async {
+    testWidgets('Back asks before discarding edits, as the close button does', (tester) async {
       // The defect: a modal sheet is popped by the system without consulting anything inside it, so
       // the guarded path was the button and the unguarded one was Back — the only path that loses
       // work being the one that never asked.
@@ -1017,10 +851,7 @@ void main() {
       await openAndEdit(tester, 'edited by hand');
 
       await pressBack(tester);
-      expect(
-        find.byKey(const ValueKey('fileEditor.discard.dialog')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('fileEditor.discard.dialog')), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('fileEditor.discard.cancel')));
       await tester.pumpAndSettle();
@@ -1032,9 +863,7 @@ void main() {
       vm.dispose();
     });
 
-    testWidgets('Back on an unedited file closes without asking', (
-      tester,
-    ) async {
+    testWidgets('Back on an unedited file closes without asking', (tester) async {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester, client: editableTree(), transport: _StubShell());
       await goToFiles(tester);
@@ -1042,17 +871,12 @@ void main() {
       await tester.pumpAndSettle();
 
       await pressBack(tester);
-      expect(
-        find.byKey(const ValueKey('fileEditor.discard.dialog')),
-        findsNothing,
-      );
+      expect(find.byKey(const ValueKey('fileEditor.discard.dialog')), findsNothing);
       expect(find.byKey(const ValueKey('fileEditor.text')), findsNothing);
       vm.dispose();
     });
 
-    testWidgets('edits still count after the pencil is switched off', (
-      tester,
-    ) async {
+    testWidgets('edits still count after the pencil is switched off', (tester) async {
       // The guard used to require edit mode as well as a changed buffer, so disarming the pencil
       // with unsaved edits in it was a silent way to lose them. Kotlin gates on the buffer alone.
       await repo.insertServer(server(name: 'nas'));
@@ -1063,13 +887,8 @@ void main() {
       await tester.pumpAndSettle();
 
       await pressBack(tester);
-      expect(
-        find.byKey(const ValueKey('fileEditor.discard.dialog')),
-        findsOneWidget,
-      );
-      await tester.tap(
-        find.byKey(const ValueKey('fileEditor.discard.confirm')),
-      );
+      expect(find.byKey(const ValueKey('fileEditor.discard.dialog')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('fileEditor.discard.confirm')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('fileEditor.text')), findsNothing);
       vm.dispose();
@@ -1087,9 +906,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('fileEditor.editToggle')));
       await tester.pumpAndSettle();
 
-      final save = tester.widget<FilledButton>(
-        find.byKey(const ValueKey('fileEditor.save')),
-      );
+      final save = tester.widget<FilledButton>(find.byKey(const ValueKey('fileEditor.save')));
       expect(save.onPressed, isNull);
 
       await tester.tap(find.byKey(const ValueKey('fileEditor.close')));
@@ -1097,48 +914,39 @@ void main() {
       vm.dispose();
     });
 
-    testWidgets(
-      'a save the server contradicts keeps the editor open with the edits',
-      (tester) async {
-        final client = editableTree()..reportedSizeOverride = 3;
-        await repo.insertServer(server(name: 'nas'));
-        await pump(tester, client: client);
-        await goToFiles(tester);
+    testWidgets('a save the server contradicts keeps the editor open with the edits', (
+      tester,
+    ) async {
+      final client = editableTree()..reportedSizeOverride = 3;
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, client: client);
+      await goToFiles(tester);
 
-        await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
-        await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const ValueKey('fileEditor.editToggle')));
-        await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('fileEditor.editToggle')));
+      await tester.pumpAndSettle();
 
-        await tester.enterText(
-          find.byKey(const ValueKey('fileEditor.text')),
-          'listen 9090\n',
-        );
-        await tester.pumpAndSettle();
-        await tester.tap(find.byKey(const ValueKey('fileEditor.save')));
-        await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('fileEditor.text')), 'listen 9090\n');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('fileEditor.save')));
+      await tester.pumpAndSettle();
 
-        expect(
-          find.byKey(const ValueKey('fileEditor.text')),
-          findsOneWidget,
-          reason:
-              'an unconfirmed save must not close over the only copy of the edits',
-        );
-        expect(find.byKey(const ValueKey('fileEditor.error')), findsOneWidget);
-        final field = tester.widget<TextField>(
-          find.byKey(const ValueKey('fileEditor.text')),
-        );
-        expect(field.controller!.text, 'listen 9090\n');
+      expect(
+        find.byKey(const ValueKey('fileEditor.text')),
+        findsOneWidget,
+        reason: 'an unconfirmed save must not close over the only copy of the edits',
+      );
+      expect(find.byKey(const ValueKey('fileEditor.error')), findsOneWidget);
+      final field = tester.widget<TextField>(find.byKey(const ValueKey('fileEditor.text')));
+      expect(field.controller!.text, 'listen 9090\n');
 
-        await tester.tap(find.byKey(const ValueKey('fileEditor.close')));
-        await tester.pumpAndSettle();
-        await tester.tap(
-          find.byKey(const ValueKey('fileEditor.discard.confirm')),
-        );
-        await tester.pumpAndSettle();
-        vm.dispose();
-      },
-    );
+      await tester.tap(find.byKey(const ValueKey('fileEditor.close')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('fileEditor.discard.confirm')));
+      await tester.pumpAndSettle();
+      vm.dispose();
+    });
 
     testWidgets('closing with unsaved edits asks first', (tester) async {
       await repo.insertServer(server(name: 'nas'));
@@ -1149,18 +957,12 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('fileEditor.editToggle')));
       await tester.pumpAndSettle();
-      await tester.enterText(
-        find.byKey(const ValueKey('fileEditor.text')),
-        'changed\n',
-      );
+      await tester.enterText(find.byKey(const ValueKey('fileEditor.text')), 'changed\n');
       await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const ValueKey('fileEditor.close')));
       await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('fileEditor.discard.dialog')),
-        findsOneWidget,
-      );
+      expect(find.byKey(const ValueKey('fileEditor.discard.dialog')), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('fileEditor.discard.cancel')));
       await tester.pumpAndSettle();
@@ -1168,18 +970,14 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('fileEditor.close')));
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey('fileEditor.discard.confirm')),
-      );
+      await tester.tap(find.byKey(const ValueKey('fileEditor.discard.confirm')));
       await tester.pumpAndSettle();
       expect(find.byKey(const ValueKey('fileEditor.text')), findsNothing);
       vm.dispose();
     });
   });
 
-  testWidgets('a listing still in flight is not called an empty directory', (
-    tester,
-  ) async {
+  testWidgets('a listing still in flight is not called an empty directory', (tester) async {
     // Found on a real host, not reasoned about: the first listing of a host carries the TCP
     // connect, the handshake, the auth and opening the SFTP subsystem, and for all of it the
     // browser stated "This directory is empty" about a folder holding nine files. The 2px progress
@@ -1197,8 +995,7 @@ void main() {
     expect(
       find.byKey(const ValueKey('sftp.empty')),
       findsNothing,
-      reason:
-          'nothing has been read yet, so nothing is known about what is there',
+      reason: 'nothing has been read yet, so nothing is known about what is there',
     );
     expect(find.text('This directory is empty'), findsNothing);
 
@@ -1267,9 +1064,7 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('the warning says every operation runs as root', (
-      tester,
-    ) async {
+    testWidgets('the warning says every operation runs as root', (tester) async {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester, client: homeTree(), transport: _StubShell());
       await openSudoDialog(tester);
@@ -1304,31 +1099,24 @@ void main() {
       expect(vm.sudoMode, isFalse);
     });
 
-    testWidgets(
-      'with a stored sudo password it authenticates before switching on',
-      (tester) async {
-        await repo.insertSetting('app_pin', '1234');
-        await repo.insertSetting('app_lock_enabled', 'true');
-        await repo.insertServer(server(name: 'nas', sudoPassword: 'hunter2'));
-        await pump(tester, client: homeTree(), transport: _StubShell());
-        await lock.load();
-        await openSudoDialog(tester);
+    testWidgets('with a stored sudo password it authenticates before switching on', (tester) async {
+      await repo.insertSetting('app_pin', '1234');
+      await repo.insertSetting('app_lock_enabled', 'true');
+      await repo.insertServer(server(name: 'nas', sudoPassword: 'hunter2'));
+      await pump(tester, client: homeTree(), transport: _StubShell());
+      await lock.load();
+      await openSudoDialog(tester);
 
-        await tester.tap(find.byKey(const ValueKey('sftp.sudo.confirm')));
-        await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('sftp.sudo.confirm')));
+      await tester.pumpAndSettle();
 
-        expect(find.byKey(const ValueKey('sudoAuth.dialog')), findsOneWidget);
-        expect(
-          vm.sudoMode,
-          isFalse,
-          reason: 'not until the user is re-identified',
-        );
+      expect(find.byKey(const ValueKey('sudoAuth.dialog')), findsOneWidget);
+      expect(vm.sudoMode, isFalse, reason: 'not until the user is re-identified');
 
-        await tester.tap(find.byKey(const ValueKey('sudoAuth.cancel')));
-        await tester.pumpAndSettle();
-        expect(vm.sudoMode, isFalse);
-      },
-    );
+      await tester.tap(find.byKey(const ValueKey('sudoAuth.cancel')));
+      await tester.pumpAndSettle();
+      expect(vm.sudoMode, isFalse);
+    });
 
     testWidgets('the right PIN switches it on', (tester) async {
       await repo.insertSetting('app_pin', '1234');
@@ -1340,19 +1128,14 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('sftp.sudo.confirm')));
       await tester.pumpAndSettle();
 
-      await tester.enterText(
-        find.byKey(const ValueKey('sudoAuth.pin')),
-        '1234',
-      );
+      await tester.enterText(find.byKey(const ValueKey('sudoAuth.pin')), '1234');
       await tester.tap(find.byKey(const ValueKey('sudoAuth.confirm')));
       await tester.pumpAndSettle();
 
       expect(vm.sudoMode, isTrue);
     });
 
-    testWidgets('a host with no stored sudo password is not gated', (
-      tester,
-    ) async {
+    testWidgets('a host with no stored sudo password is not gated', (tester) async {
       await repo.insertSetting('app_pin', '1234');
       await repo.insertSetting('app_lock_enabled', 'true');
       await repo.insertServer(server(name: 'nas'));
@@ -1402,11 +1185,7 @@ class _GatedFsClient extends FakeFsClient {
 /// throws would leave the editor unopened and the test asserting against nothing.
 class _StubShell implements SshTransport {
   @override
-  Future<String> exec(
-    SshCredentials creds,
-    String command, {
-    String? stdin,
-  }) async =>
+  Future<String> exec(SshCredentials creds, String command, {String? stdin}) async =>
       // The real command prints a marker before the file, and `parseSudoRead` returns null without
       // it — which the view model reports as "sudo refused" and never opens the editor.
       '$sudoOutputMarker\nlisten 8080\n';

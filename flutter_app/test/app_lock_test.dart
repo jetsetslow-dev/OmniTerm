@@ -25,10 +25,7 @@ void main() {
     test('the same PIN hashes differently every time', () async {
       // Without a per-PIN salt, one precomputed table covers every user of the app — and a
       // four-digit space is small enough to precompute over breakfast.
-      expect(
-        await hashPinForStorage('1234'),
-        isNot(await hashPinForStorage('1234')),
-      );
+      expect(await hashPinForStorage('1234'), isNot(await hashPinForStorage('1234')));
     });
 
     test('the format matches what the Kotlin app wrote', () async {
@@ -38,11 +35,7 @@ void main() {
       expect(parts[0], 'pin');
       expect(parts[1], 'v2');
       expect(int.parse(parts[2]), pinPbkdf2Iterations);
-      expect(
-        parts.last,
-        '6',
-        reason: 'the length is recorded so the screen can size itself',
-      );
+      expect(parts.last, '6', reason: 'the length is recorded so the screen can size itself');
     });
 
     test('the recorded length does not reveal the PIN', () async {
@@ -76,22 +69,8 @@ void main() {
       // offline attack free, and a billion hangs the unlock screen.
       final real = await hashPinForStorage('1234');
       final parts = real.split(':');
-      final tampered = [
-        'pin',
-        'v2',
-        '1',
-        parts[3],
-        parts[4],
-        parts[5],
-      ].join(':');
-      final absurd = [
-        'pin',
-        'v2',
-        '999999999',
-        parts[3],
-        parts[4],
-        parts[5],
-      ].join(':');
+      final tampered = ['pin', 'v2', '1', parts[3], parts[4], parts[5]].join(':');
+      final absurd = ['pin', 'v2', '999999999', parts[3], parts[4], parts[5]].join(':');
 
       expect(await verifyStoredPin(tampered, '1234'), isFalse);
       expect(await verifyStoredPin(absurd, '1234'), isFalse);
@@ -106,10 +85,7 @@ void main() {
     });
 
     test('an empty PIN never verifies', () async {
-      expect(
-        await verifyStoredPin(await hashPinForStorage('1234'), ''),
-        isFalse,
-      );
+      expect(await verifyStoredPin(await hashPinForStorage('1234'), ''), isFalse);
       expect(await verifyStoredPin('', ''), isFalse);
     });
 
@@ -131,10 +107,7 @@ void main() {
 
     setUp(() {
       db = AppDatabase(NativeDatabase.memory());
-      repo = AppRepository(
-        db,
-        SecretStore(storage: FakeSecureStorage(<String, String>{})),
-      );
+      repo = AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{})));
       now = 1000000;
       monotonic = 500000;
     });
@@ -162,29 +135,22 @@ void main() {
       await repo.insertSetting('app_lock_grace_ms', '$timeoutMs');
     }
 
-    test(
-      'the interval is read from the key the Android app already wrote',
-      () async {
-        // A migrating install carries `app_lock_grace_ms`; reading any other key would silently put
-        // every upgraded user back on the 30-second default while the screen still showed theirs.
-        await repo.insertSetting('app_pin', await hashPinForStorage('1234'));
-        await repo.insertSetting('app_lock_enabled', 'true');
-        await repo.insertSetting('app_lock_grace_ms', '0');
-        final lock = build();
-        await lock.load();
-        await lock.unlockWithPin('1234');
+    test('the interval is read from the key the Android app already wrote', () async {
+      // A migrating install carries `app_lock_grace_ms`; reading any other key would silently put
+      // every upgraded user back on the 30-second default while the screen still showed theirs.
+      await repo.insertSetting('app_pin', await hashPinForStorage('1234'));
+      await repo.insertSetting('app_lock_enabled', 'true');
+      await repo.insertSetting('app_lock_grace_ms', '0');
+      final lock = build();
+      await lock.load();
+      await lock.unlockWithPin('1234');
 
-        lock.onBackgrounded();
-        lock.onForegrounded();
+      lock.onBackgrounded();
+      lock.onForegrounded();
 
-        expect(
-          lock.isLocked,
-          isTrue,
-          reason: 'a zero interval must lock on the way back',
-        );
-        lock.dispose();
-      },
-    );
+      expect(lock.isLocked, isTrue, reason: 'a zero interval must lock on the way back');
+      lock.dispose();
+    });
 
     test('a cold start is locked when the lock is configured', () async {
       // Otherwise force-stopping the app — the easiest thing in the world to do to a phone you have
@@ -284,8 +250,7 @@ void main() {
           expect(
             lock.isLocked,
             isTrue,
-            reason:
-                'the timeout must not be bypassable by setting the clock back',
+            reason: 'the timeout must not be bypassable by setting the clock back',
           );
           lock.dispose();
         });
@@ -321,28 +286,24 @@ void main() {
           lock.dispose();
         });
 
-        test(
-          'a backwards wall clock inside the timeout still does not lock',
-          () async {
-            await configure(timeoutMs: 30000);
-            final lock = build();
-            await lock.load();
-            await lock.unlockWithPin('1234');
+        test('a backwards wall clock inside the timeout still does not lock', () async {
+          await configure(timeoutMs: 30000);
+          final lock = build();
+          await lock.load();
+          await lock.unlockWithPin('1234');
 
-            lock.onBackgrounded();
-            monotonic += 5000; // only five seconds really passed
-            now -= 3600000;
-            lock.onForegrounded();
+          lock.onBackgrounded();
+          monotonic += 5000; // only five seconds really passed
+          now -= 3600000;
+          lock.onForegrounded();
 
-            expect(
-              lock.isLocked,
-              isFalse,
-              reason:
-                  'a tampered clock must not make the lock fire early either',
-            );
-            lock.dispose();
-          },
-        );
+          expect(
+            lock.isLocked,
+            isFalse,
+            reason: 'a tampered clock must not make the lock fire early either',
+          );
+          lock.dispose();
+        });
       });
 
       test('the real lifecycle sequence locks', () async {
@@ -469,11 +430,7 @@ void main() {
         final second = build();
         await second.load();
 
-        expect(
-          second.isThrottled,
-          isTrue,
-          reason: 'a force-stop is not a way past the throttle',
-        );
+        expect(second.isThrottled, isTrue, reason: 'a force-stop is not a way past the throttle');
         expect(await second.unlockWithPin('1234'), UnlockOutcome.throttled);
         second.dispose();
       });
@@ -494,47 +451,33 @@ void main() {
         second.dispose();
       });
 
-      test(
-        'a lockout that has already expired does not lock a fresh start',
-        () async {
-          await configure();
-          await repo.insertSetting('pin_locked_until', '${now - 1}');
-          final lock = build();
-          await lock.load();
+      test('a lockout that has already expired does not lock a fresh start', () async {
+        await configure();
+        await repo.insertSetting('pin_locked_until', '${now - 1}');
+        final lock = build();
+        await lock.load();
 
-          expect(lock.isThrottled, isFalse);
-          expect(await lock.unlockWithPin('1234'), UnlockOutcome.unlocked);
-          lock.dispose();
-        },
-      );
+        expect(lock.isThrottled, isFalse);
+        expect(await lock.unlockWithPin('1234'), UnlockOutcome.unlocked);
+        lock.dispose();
+      });
 
-      test(
-        'a deadline far in the future is clamped rather than trusted',
-        () async {
-          // The deadline is wall-clock, and a device whose clock jumps forward would otherwise come
-          // back locked for years — effectively bricked by a timezone change.
-          await configure();
-          await repo.insertSetting(
-            'pin_locked_until',
-            '${now + const Duration(days: 365).inMilliseconds}',
-          );
-          final lock = build();
-          await lock.load();
+      test('a deadline far in the future is clamped rather than trusted', () async {
+        // The deadline is wall-clock, and a device whose clock jumps forward would otherwise come
+        // back locked for years — effectively bricked by a timezone change.
+        await configure();
+        await repo.insertSetting(
+          'pin_locked_until',
+          '${now + const Duration(days: 365).inMilliseconds}',
+        );
+        final lock = build();
+        await lock.load();
 
-          expect(
-            lock.isThrottled,
-            isTrue,
-            reason: 'the throttle is still honoured',
-          );
-          now += pinLockoutMs + 1;
-          expect(
-            lock.isThrottled,
-            isFalse,
-            reason: 'but never longer than one full lockout',
-          );
-          lock.dispose();
-        },
-      );
+        expect(lock.isThrottled, isTrue, reason: 'the throttle is still honoured');
+        now += pinLockoutMs + 1;
+        expect(lock.isThrottled, isFalse, reason: 'but never longer than one full lockout');
+        lock.dispose();
+      });
 
       test('unlocking clears the stored deadline', () async {
         await configure();
@@ -601,9 +544,7 @@ void main() {
 
       test('a throwing biometric prompt is a refusal, not a crash', () async {
         await configure(biometrics: true);
-        final lock = build(
-          biometrics: (_) async => throw StateError('no sensor'),
-        );
+        final lock = build(biometrics: (_) async => throw StateError('no sensor'));
         await lock.load();
 
         expect(await lock.unlockWithBiometrics(), isFalse);
@@ -621,18 +562,15 @@ void main() {
         lock.dispose();
       });
 
-      test(
-        'with no biometric implementation the option is simply absent',
-        () async {
-          // Convention 4: no stub that reports success.
-          await configure(biometrics: true);
-          final lock = build();
-          await lock.load();
+      test('with no biometric implementation the option is simply absent', () async {
+        // Convention 4: no stub that reports success.
+        await configure(biometrics: true);
+        final lock = build();
+        await lock.load();
 
-          expect(lock.canUseBiometrics, isFalse);
-          lock.dispose();
-        },
-      );
+        expect(lock.canUseBiometrics, isFalse);
+        lock.dispose();
+      });
     });
 
     group('configuration', () {
@@ -643,10 +581,7 @@ void main() {
 
         expect(lock.isConfigured, isTrue);
         expect(await repo.getSetting('app_lock_enabled'), 'true');
-        expect(
-          await verifyStoredPin(await repo.getSetting('app_pin'), '4321'),
-          isTrue,
-        );
+        expect(await verifyStoredPin(await repo.getSetting('app_pin'), '4321'), isTrue);
         lock.dispose();
       });
 
@@ -683,10 +618,7 @@ void main() {
 
     setUp(() {
       db = AppDatabase(NativeDatabase.memory());
-      repo = AppRepository(
-        db,
-        SecretStore(storage: FakeSecureStorage(<String, String>{})),
-      );
+      repo = AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{})));
     });
 
     tearDown(() => db.close());
@@ -699,10 +631,7 @@ void main() {
       }
     }
 
-    Future<AppLockController> locked(
-      WidgetTester tester, {
-      BiometricPrompt? biometrics,
-    }) async {
+    Future<AppLockController> locked(WidgetTester tester, {BiometricPrompt? biometrics}) async {
       // A legacy plaintext PIN on purpose: these tests are about the screen, and a real PBKDF2
       // verification costs most of a second each, which a five-attempt throttle test multiplies
       // into a timeout. The hashed path has its own tests above.
@@ -759,9 +688,7 @@ void main() {
         await settle(tester);
       }
 
-      testWidgets('a real backgrounding re-offers biometrics on return', (
-        tester,
-      ) async {
+      testWidgets('a real backgrounding re-offers biometrics on return', (tester) async {
         var prompts = 0;
         final lock = await locked(
           tester,
@@ -775,11 +702,7 @@ void main() {
         await background(tester);
         await foreground(tester);
 
-        expect(
-          prompts,
-          2,
-          reason: 'the cancelled prompt must be re-offered on return',
-        );
+        expect(prompts, 2, reason: 'the cancelled prompt must be re-offered on return');
         lock.dispose();
       });
 
@@ -796,21 +719,15 @@ void main() {
         );
 
         // inactive -> resumed, with no paused in between: the app never actually left.
-        tester.binding.handleAppLifecycleStateChanged(
-          AppLifecycleState.inactive,
-        );
-        tester.binding.handleAppLifecycleStateChanged(
-          AppLifecycleState.resumed,
-        );
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
         await settle(tester);
 
         expect(prompts, 1, reason: 'only a genuine backgrounding counts');
         lock.dispose();
       });
 
-      testWidgets('a build without biometrics is never prompted on resume', (
-        tester,
-      ) async {
+      testWidgets('a build without biometrics is never prompted on resume', (tester) async {
         final lock = await locked(tester);
 
         await background(tester);
@@ -822,9 +739,7 @@ void main() {
         lock.dispose();
       });
 
-      testWidgets('a successful biometric read on resume unlocks', (
-        tester,
-      ) async {
+      testWidgets('a successful biometric read on resume unlocks', (tester) async {
         var prompts = 0;
         final lock = await locked(
           tester,
@@ -845,9 +760,7 @@ void main() {
       });
     });
 
-    testWidgets('covers the app until the right PIN is entered', (
-      tester,
-    ) async {
+    testWidgets('covers the app until the right PIN is entered', (tester) async {
       final lock = await locked(tester);
 
       expect(find.byKey(const ValueKey('lock.screen')), findsOneWidget);
@@ -882,20 +795,12 @@ void main() {
       await settle(tester);
 
       expect(find.byKey(const ValueKey('lock.error')), findsOneWidget);
-      final field = tester.widget<TextField>(
-        find.byKey(const ValueKey('lock.pin')),
-      );
-      expect(
-        field.focusNode?.hasFocus,
-        isTrue,
-        reason: 'the user is about to type again',
-      );
+      final field = tester.widget<TextField>(find.byKey(const ValueKey('lock.pin')));
+      expect(field.focusNode?.hasFocus, isTrue, reason: 'the user is about to type again');
       lock.dispose();
     });
 
-    testWidgets('the app underneath is not reachable while locked', (
-      tester,
-    ) async {
+    testWidgets('the app underneath is not reachable while locked', (tester) async {
       // Hidden is not enough: a screen reader must not be able to walk the host list either.
       final lock = await locked(tester);
 
@@ -903,28 +808,16 @@ void main() {
         of: find.text('the host list'),
         matching: find.byType(ExcludeSemantics),
       );
+      expect(guard, findsWidgets, reason: 'the app below the lock is out of the semantics tree');
+      expect(tester.widgetList<ExcludeSemantics>(guard).any((w) => w.excluding), isTrue);
       expect(
-        guard,
-        findsWidgets,
-        reason: 'the app below the lock is out of the semantics tree',
-      );
-      expect(
-        tester.widgetList<ExcludeSemantics>(guard).any((w) => w.excluding),
-        isTrue,
-      );
-      expect(
-        find.ancestor(
-          of: find.text('the host list'),
-          matching: find.byType(ExcludeFocus),
-        ),
+        find.ancestor(of: find.text('the host list'), matching: find.byType(ExcludeFocus)),
         findsWidgets,
       );
       lock.dispose();
     });
 
-    testWidgets('the biometric option appears only when it can work', (
-      tester,
-    ) async {
+    testWidgets('the biometric option appears only when it can work', (tester) async {
       final withOut = await locked(tester);
       expect(find.byKey(const ValueKey('lock.biometrics')), findsNothing);
       withOut.dispose();
@@ -935,9 +828,7 @@ void main() {
       withIt.dispose();
     });
 
-    testWidgets('biometrics are offered without being asked for', (
-      tester,
-    ) async {
+    testWidgets('biometrics are offered without being asked for', (tester) async {
       // Not having to type is the whole reason the option exists.
       var asked = 0;
       final lock = await locked(
@@ -954,9 +845,7 @@ void main() {
       lock.dispose();
     });
 
-    testWidgets('the throttle disables entry and says how long', (
-      tester,
-    ) async {
+    testWidgets('the throttle disables entry and says how long', (tester) async {
       final lock = await locked(tester);
 
       for (var i = 0; i < pinMaxAttempts; i++) {
@@ -968,9 +857,7 @@ void main() {
       }
 
       expect(find.byKey(const ValueKey('lock.throttled')), findsOneWidget);
-      final submit = tester.widget<FilledButton>(
-        find.byKey(const ValueKey('lock.submit')),
-      );
+      final submit = tester.widget<FilledButton>(find.byKey(const ValueKey('lock.submit')));
       expect(submit.onPressed, isNull);
       lock.dispose();
     });

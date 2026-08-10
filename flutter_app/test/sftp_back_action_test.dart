@@ -49,10 +49,7 @@ void main() {
     });
 
     test('a share below its root walks up before it closes', () {
-      expect(
-        actionWith(shareOpen: true, path: '/media/film'),
-        SftpBackAction.goUp,
-      );
+      expect(actionWith(shareOpen: true, path: '/media/film'), SftpBackAction.goUp);
     });
 
     test('the other tabs leave Back to app navigation', () {
@@ -80,10 +77,7 @@ void main() {
     });
 
     test('search outranks depth', () {
-      expect(
-        actionWith(searchResultsShown: true, path: '/etc/nginx'),
-        SftpBackAction.clearSearch,
-      );
+      expect(actionWith(searchResultsShown: true, path: '/etc/nginx'), SftpBackAction.clearSearch);
     });
 
     test('the preview outranks everything, including the tab it is not part of', () {
@@ -125,17 +119,10 @@ void main() {
         SftpBackAction.clearSelection,
       );
       expect(
-        actionWith(
-          searchResultsShown: true,
-          path: '/media/film',
-          shareOpen: true,
-        ),
+        actionWith(searchResultsShown: true, path: '/media/film', shareOpen: true),
         SftpBackAction.clearSearch,
       );
-      expect(
-        actionWith(path: '/media/film', shareOpen: true),
-        SftpBackAction.goUp,
-      );
+      expect(actionWith(path: '/media/film', shareOpen: true), SftpBackAction.goUp);
       expect(actionWith(path: '/', shareOpen: true), SftpBackAction.closeShare);
       expect(actionWith(path: '/'), SftpBackAction.none);
     });
@@ -143,10 +130,7 @@ void main() {
 
   group('BackInterceptor', () {
     /// Pumps [child] under a [NavigationController] and hands back the controller to press Back on.
-    Future<NavigationController> pumpUnder(
-      WidgetTester tester,
-      Widget child,
-    ) async {
+    Future<NavigationController> pumpUnder(WidgetTester tester, Widget child) async {
       final nav = NavigationController();
       await tester.pumpWidget(
         ChangeNotifierProvider<NavigationController>.value(
@@ -178,9 +162,7 @@ void main() {
       expect(nav.currentScreen, Screen.sftp);
     });
 
-    testWidgets('an unclaimed press falls through to app navigation', (
-      tester,
-    ) async {
+    testWidgets('an unclaimed press falls through to app navigation', (tester) async {
       final nav = await pumpUnder(
         tester,
         BackInterceptor(onBack: () => false, child: const SizedBox()),
@@ -209,9 +191,7 @@ void main() {
       expect(pressed, 0, reason: 'a tab tap must not unwind screen state');
     });
 
-    testWidgets('an unmounted interceptor stops swallowing Back', (
-      tester,
-    ) async {
+    testWidgets('an unmounted interceptor stops swallowing Back', (tester) async {
       // Without deregistration the guard outlives its screen, and Back stays broken app-wide for
       // the rest of the session.
       var pressed = 0;

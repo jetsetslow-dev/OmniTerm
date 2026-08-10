@@ -41,11 +41,7 @@ class MetricLineChart extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final axisColor = Theme.of(context).colorScheme.onSurfaceVariant;
-    final axisStyle = TextStyle(
-      fontSize: 10,
-      fontFamily: OmniFonts.mono,
-      color: axisColor,
-    );
+    final axisStyle = TextStyle(fontSize: 10, fontFamily: OmniFonts.mono, color: axisColor);
     final labels = chartEndpointLabels(timestamps);
     // One scale for the whole chart so the plot, the gutter and the endpoint labels stay in step.
     final scale = MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.5);
@@ -66,10 +62,7 @@ class MetricLineChart extends StatelessWidget {
             Text(
               points.isEmpty ? '—' : '${points.last.round()}$unit',
               key: ValueKey('chart.$label.latest'),
-              style: axisStyle.copyWith(
-                color: color,
-                fontWeight: FontWeight.bold,
-              ),
+              style: axisStyle.copyWith(color: color, fontWeight: FontWeight.bold),
             ),
           ],
         ),
@@ -100,11 +93,7 @@ class MetricLineChart extends StatelessWidget {
               ),
               Expanded(
                 child: CustomPaint(
-                  painter: _ChartPainter(
-                    points: points,
-                    color: color,
-                    maxY: maxY,
-                  ),
+                  painter: _ChartPainter(points: points, color: color, maxY: maxY),
                   // The plot keeps its own height and grows with the text; the labels beside it now
                   // size themselves, and the row takes the larger of the two.
                   child: SizedBox(height: height * scale),
@@ -131,11 +120,7 @@ class MetricLineChart extends StatelessWidget {
 }
 
 class _ChartPainter extends CustomPainter {
-  const _ChartPainter({
-    required this.points,
-    required this.color,
-    required this.maxY,
-  });
+  const _ChartPainter({required this.points, required this.color, required this.maxY});
 
   final List<double> points;
   final Color color;
@@ -160,9 +145,7 @@ class _ChartPainter extends CustomPainter {
       // percentages cannot be redrawn at a different scale by one bad sample.
       final value = (points[i] / maxY).clamp(0.0, 1.0);
       final offset = Offset(i * dx, size.height - value * size.height);
-      i == 0
-          ? path.moveTo(offset.dx, offset.dy)
-          : path.lineTo(offset.dx, offset.dy);
+      i == 0 ? path.moveTo(offset.dx, offset.dy) : path.lineTo(offset.dx, offset.dy);
     }
 
     canvas.drawPath(
@@ -176,9 +159,7 @@ class _ChartPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_ChartPainter old) =>
-      old.color != color ||
-      old.maxY != maxY ||
-      !_sameSeries(old.points, points);
+      old.color != color || old.maxY != maxY || !_sameSeries(old.points, points);
 
   static bool _sameSeries(List<double> a, List<double> b) {
     if (a.length != b.length) return false;

@@ -15,8 +15,7 @@ import 'kotlin_strings.dart';
 /// host that answers something unexpected is far more likely to be an unusual Unix than a Windows
 /// box. Windows is detected from its *failure* text, since `uname` does not exist there.
 String normaliseOs(String raw) {
-  final s =
-      raw.trim().lines.where((l) => !l.isBlankString).firstOrNull?.trim() ?? '';
+  final s = raw.trim().lines.where((l) => !l.isBlankString).firstOrNull?.trim() ?? '';
   final lower = s.toLowerCase();
   if (lower.startsWith('linux')) return 'Linux';
   if (lower.startsWith('freebsd') ||
@@ -58,24 +57,20 @@ String shellQuote(String s) => "'${s.replaceAll("'", r"'\''")}'";
 ///
 /// `-p ''` suppresses the prompt so it is never echoed back into the output the user sees.
 String sudoWrap(String cmd, String sudoPassword) =>
-    sudoPassword.trim().isNotEmpty
-    ? "sudo -S -p '' $cmd 2>&1"
-    : 'sudo -n $cmd 2>&1';
+    sudoPassword.trim().isNotEmpty ? "sudo -S -p '' $cmd 2>&1" : 'sudo -n $cmd 2>&1';
 
 /// Elevates a whole [script].
 ///
 /// [sudoWrap] only elevates the first command — in `sudo a && b`, `b` runs as the ordinary user.
 /// This runs the lot under one `sh -c`, so chained operations are all privileged.
-String sudoShWrap(String script, String sudoPassword) =>
-    sudoPassword.trim().isNotEmpty
+String sudoShWrap(String script, String sudoPassword) => sudoPassword.trim().isNotEmpty
     ? "sudo -S -p '' sh -c ${shellQuote(script)} 2>&1"
     : 'sudo -n sh -c ${shellQuote(script)} 2>&1';
 
 /// The stdin payload pairing with [sudoWrap]/[sudoShWrap]: the password and the newline `sudo -S`
 /// waits for, or null on a NOPASSWD host. None of the wrapped scripts read stdin themselves, so the
 /// line is consumed only by sudo.
-String? sudoStdin(String sudoPassword) =>
-    sudoPassword.trim().isNotEmpty ? '$sudoPassword\n' : null;
+String? sudoStdin(String sudoPassword) => sudoPassword.trim().isNotEmpty ? '$sudoPassword\n' : null;
 
 // ── processes ──────────────────────────────────────────────────────────────────
 
@@ -142,9 +137,7 @@ String serviceAction(String name, String action, {String sudoPassword = ''}) {
 ///
 /// `journalctl` only exists on systemd, so Alpine/OpenWrt/BSD/macOS would otherwise return silently
 /// empty output. The `---NOLOGS---` marker lets the UI say *why* the pane is empty.
-String journalCommand({int lines = 300, String os = ''}) => switch (normaliseOs(
-  os,
-)) {
+String journalCommand({int lines = 300, String os = ''}) => switch (normaliseOs(os)) {
   'Windows' => _journalWindows(lines),
   'Darwin' =>
     'log show --last 1h --style syslog 2>/dev/null | tail -n $lines || '
@@ -188,8 +181,7 @@ String rebootCommand({String sudoPassword = ''}) =>
     '${sudoWrap('reboot', sudoPassword)} || reboot 2>&1';
 
 /// Sends [signal] to [pid]. The pid is an int, so there is nothing here to quote.
-String killProcessCommand(int pid, {int signal = 15}) =>
-    'kill -$signal $pid 2>&1';
+String killProcessCommand(int pid, {int signal = 15}) => 'kill -$signal $pid 2>&1';
 
 // ── host metrics ───────────────────────────────────────────────────────────────
 
@@ -354,8 +346,7 @@ const dockerRestartsCommand =
     'if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then ids=\$(podman ps -aq); '
     "[ -n \"\$ids\" ] && podman inspect --format 'podman\\t{{.ID}}\\t{{.RestartCount}}' \$ids 2>/dev/null || true; fi";
 
-const _imageFields =
-    r'{{.ID}}\t{{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}';
+const _imageFields = r'{{.ID}}\t{{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}';
 
 const dockerImagesCommand =
     'found=0; '
@@ -488,10 +479,7 @@ String _composeFlags(String project, String configFiles) {
       .where((s) => s.isNotEmpty)
       .map((s) => '-f ${shellQuote(s)}')
       .join(' ');
-  return [
-    configFlags,
-    '-p ${shellQuote(project)}',
-  ].where((s) => s.isNotEmpty).join(' ');
+  return [configFlags, '-p ${shellQuote(project)}'].where((s) => s.isNotEmpty).join(' ');
 }
 
 /// Runs a compose action against a stack.
@@ -533,10 +521,7 @@ String dockerComposeAction(
     'forceRecreate' => 'up -d --force-recreate$orphans',
     'restart' => 'restart',
     'logs' => 'logs --tail 200',
-    'followLogs' =>
-      service == null
-          ? 'logs -f --tail 100'
-          : 'logs -f --tail 100 $quotedService',
+    'followLogs' => service == null ? 'logs -f --tail 100' : 'logs -f --tail 100 $quotedService',
     'config' => 'config',
     'ps' => 'ps',
     'serviceLogs' => 'logs --tail 200 $quotedService',
@@ -544,8 +529,7 @@ String dockerComposeAction(
     'serviceStop' => 'stop $quotedService',
     'serviceRemove' => 'rm -sf $quotedService',
     // A negative replica count is not a scale-down, it is a malformed command; clamp at zero.
-    'scale' =>
-      'up -d --scale $quotedService=${(replicas ?? 1) < 0 ? 0 : (replicas ?? 1)}',
+    'scale' => 'up -d --scale $quotedService=${(replicas ?? 1) < 0 ? 0 : (replicas ?? 1)}',
     'removeOrphans' => 'up -d --remove-orphans',
     _ => 'ps',
   };
@@ -558,9 +542,8 @@ String dockerComposeAction(
 /// confusing; this lets the UI say plainly that the file is gone and offer to forget the stack.
 String composeConfigPresent(String workingDir, String configFiles) {
   // `~` is the shell's, not a path component, so it must expand rather than be quoted away.
-  String expand(String p) => p.startsWith('~/')
-      ? '"\$HOME"/${shellQuote(p.substring(2))}'
-      : shellQuote(p);
+  String expand(String p) =>
+      p.startsWith('~/') ? '"\$HOME"/${shellQuote(p.substring(2))}' : shellQuote(p);
 
   final dir = workingDir.endsWith('/')
       ? workingDir.substring(0, workingDir.length - 1)
@@ -603,11 +586,9 @@ String composeDeploy(
   String configFiles = '',
   String runtime = '',
 }) {
-  String expand(String path) => path.startsWith('~/')
-      ? '\$HOME/${shellQuote(path.substring(2))}'
-      : shellQuote(path);
-  String resolve(String path) =>
-      path.startsWith('/') || path.startsWith('~/') || workingDir.isEmpty
+  String expand(String path) =>
+      path.startsWith('~/') ? '\$HOME/${shellQuote(path.substring(2))}' : shellQuote(path);
+  String resolve(String path) => path.startsWith('/') || path.startsWith('~/') || workingDir.isEmpty
       ? path
       : '${workingDir.replaceFirst(RegExp(r'/+$'), '')}/$path';
   String flags(String replacement) {
@@ -697,12 +678,9 @@ String archiveExtractCommand(String directory, String archiveName) {
   final lower = archiveName.toLowerCase();
   final extract = switch (lower) {
     _ when lower.endsWith('.zip') => 'unzip -o -- $file',
-    _ when lower.endsWith('.tar.gz') || lower.endsWith('.tgz') =>
-      'tar -xzf $file',
-    _ when lower.endsWith('.tar.bz2') || lower.endsWith('.tbz2') =>
-      'tar -xjf $file',
-    _ when lower.endsWith('.tar.xz') || lower.endsWith('.txz') =>
-      'tar -xJf $file',
+    _ when lower.endsWith('.tar.gz') || lower.endsWith('.tgz') => 'tar -xzf $file',
+    _ when lower.endsWith('.tar.bz2') || lower.endsWith('.tbz2') => 'tar -xjf $file',
+    _ when lower.endsWith('.tar.xz') || lower.endsWith('.txz') => 'tar -xJf $file',
     _ when lower.endsWith('.tar') => 'tar -xf $file',
     _ when lower.endsWith('.7z') => '7z x -y -- $file',
     _ when lower.endsWith('.rar') => 'unrar x -o+ -- $file',
@@ -770,11 +748,7 @@ class RemoteSearchHit {
 /// `2>/dev/null` because a walk of a large tree as an unprivileged user produces pages of
 /// permission noise that would swamp the results. The screen says plainly that a search covers what
 /// the login can read, which is a statement that is always true rather than a per-run claim.
-String remoteSearchCommand(
-  String base,
-  String query, {
-  int maxHits = remoteSearchMaxHits,
-}) {
+String remoteSearchCommand(String base, String query, {int maxHits = remoteSearchMaxHits}) {
   final root = base.trim().isEmpty ? '/' : base;
   final term = query.trim();
   // A query already carrying a wildcard is taken at its word; anything else is matched anywhere in
@@ -808,10 +782,7 @@ String remoteSearchCommand(
   // The extra hit is the evidence. Counting a full page as "probably more" would cry wolf on a
   // search that happened to return exactly the limit.
   final truncated = hits.length > maxHits;
-  return (
-    hits: truncated ? hits.take(maxHits).toList() : hits,
-    truncated: truncated,
-  );
+  return (hits: truncated ? hits.take(maxHits).toList() : hits, truncated: truncated);
 }
 
 // ── sudo file access ───────────────────────────────────────────────────────────
@@ -895,11 +866,7 @@ String? searchSudoFailure(String output) {
 /// into place with sudo, and its size is read back as root. The temp copy is removed whether or not
 /// the copy worked — leaving a readable copy of a protected file in `/tmp` would be a quiet way to
 /// widen access to it.
-String sudoWriteCommand(
-  String tempPath,
-  String destPath,
-  String sudoPassword,
-) => sudoShWrap(
+String sudoWriteCommand(String tempPath, String destPath, String sudoPassword) => sudoShWrap(
   'cp -f -- ${shellQuote(tempPath)} ${shellQuote(destPath)} && '
   'wc -c < ${shellQuote(destPath)}; '
   'rm -f -- ${shellQuote(tempPath)}',
@@ -921,8 +888,7 @@ int parseSudoWriteSize(String output) {
 }
 
 /// A temp path for the sudo write dance, in a directory any login can write.
-String sudoTempPath() =>
-    '/tmp/.omniterm-save-${DateTime.now().microsecondsSinceEpoch}';
+String sudoTempPath() => '/tmp/.omniterm-save-${DateTime.now().microsecondsSinceEpoch}';
 
 // ── crontab ────────────────────────────────────────────────────────────────────
 
@@ -936,8 +902,7 @@ const cronExitMarker = '---OMNITERM-CRON-EXIT---';
 /// does not exist on this host. That matters because the next thing the screen offers is *Add*, and
 /// saving writes the **whole file** — so an unreadable crontab that reads as empty becomes a
 /// crontab containing one line, with everything that was in it gone.
-const crontabReadCommand =
-    'crontab -l 2>&1; printf "%s%s\\n" "$cronExitMarker" "\$?"';
+const crontabReadCommand = 'crontab -l 2>&1; printf "%s%s\\n" "$cronExitMarker" "\$?"';
 
 /// What a crontab read actually found.
 class CrontabRead {
@@ -972,9 +937,7 @@ CrontabRead parseCrontabRead(String output) {
   }
 
   final body = output.substring(0, marker);
-  final status =
-      int.tryParse(output.substring(marker + cronExitMarker.length).trim()) ??
-      -1;
+  final status = int.tryParse(output.substring(marker + cronExitMarker.length).trim()) ?? -1;
   if (status == 0) {
     return CrontabRead(_stripTrailingNewline(body), readable: true);
   }
@@ -989,8 +952,7 @@ CrontabRead parseCrontabRead(String output) {
   );
 }
 
-String _stripTrailingNewline(String s) =>
-    s.endsWith('\n') ? s.substring(0, s.length - 1) : s;
+String _stripTrailingNewline(String s) => s.endsWith('\n') ? s.substring(0, s.length - 1) : s;
 
 /// Installs [text] as the login user's crontab.
 ///
@@ -1052,9 +1014,7 @@ String compareForConflicts(String destDir, List<String> sources) {
       ..write('else OT_A=\$("\$OT_H" "\$OT_S" 2>/dev/null | awk \'{print \$1}\'); ')
       ..write('OT_B=\$("\$OT_H" "\$OT_D" 2>/dev/null | awk \'{print \$1}\'); ')
       ..write('if [ -z "\$OT_A" ] || [ -z "\$OT_B" ]; then OT_V=UNKNOWN; ')
-      ..write(
-        'elif [ "\$OT_A" = "\$OT_B" ]; then OT_V=IDENTICAL; else OT_V=DIFFERENT; fi; fi; ',
-      )
+      ..write('elif [ "\$OT_A" = "\$OT_B" ]; then OT_V=IDENTICAL; else OT_V=DIFFERENT; fi; fi; ')
       ..write(
         "printf '$index\\t%s\\t%s\\t%s\\t%s\\t%s\\n' \"\$OT_V\" \"\$OT_SS\" \"\$OT_DS\" \"\$OT_SM\" \"\$OT_DM\"; ",
       )

@@ -114,26 +114,22 @@ class _AboutScreenState extends State<AboutScreen> {
   Future<void> _openUrl(String url) async {
     var launched = false;
     try {
-      launched = await launchUrl(
-        Uri.parse(url),
-        mode: LaunchMode.externalApplication,
-      );
+      launched = await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
     } catch (_) {
       launched = false;
     }
     if (!mounted || launched) return;
     setState(() => _copied = null);
-    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-      const SnackBar(content: Text('No app could open that link.')),
-    );
+    ScaffoldMessenger.maybeOf(
+      context,
+    )?.showSnackBar(const SnackBar(content: Text('No app could open that link.')));
   }
 
   Future<void> _reportCrash(CrashEntry entry) async {
     final headline = entry.headline;
     final uri = Uri.parse('${AboutScreen.projectUrl}/issues/new').replace(
       queryParameters: {
-        'title':
-            'Crash: ${headline.substring(0, headline.length.clamp(0, 120))}',
+        'title': 'Crash: ${headline.substring(0, headline.length.clamp(0, 120))}',
         'body':
             '**Describe what you were doing when this happened:**\n\n\n---\n'
             'Crash:\n```\n$headline\n```\n\n'
@@ -145,14 +141,13 @@ class _AboutScreenState extends State<AboutScreen> {
     }
   }
 
-  Future<void> _shareCrash(CrashEntry entry, Rect origin) =>
-      SharePlus.instance.share(
-        ShareParams(
-          subject: 'OmniTerm crash report',
-          text: 'OmniTerm crash report\n\n${redactCrashReport(entry.report)}',
-          sharePositionOrigin: origin,
-        ),
-      );
+  Future<void> _shareCrash(CrashEntry entry, Rect origin) => SharePlus.instance.share(
+    ShareParams(
+      subject: 'OmniTerm crash report',
+      text: 'OmniTerm crash report\n\n${redactCrashReport(entry.report)}',
+      sharePositionOrigin: origin,
+    ),
+  );
 
   Future<void> _copy(String label, String text) async {
     await Clipboard.setData(ClipboardData(text: text));
@@ -173,10 +168,7 @@ class _AboutScreenState extends State<AboutScreen> {
             children: [
               Icon(Icons.hub, size: 56, color: scheme.primary),
               const SizedBox(height: 10),
-              const Text(
-                'OmniTerm',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20),
-              ),
+              const Text('OmniTerm', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 20)),
               Text(
                 'Terminal and homelab console',
                 style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
@@ -242,10 +234,7 @@ class _AboutScreenState extends State<AboutScreen> {
               SelectionArea(
                 child: Text(
                   AboutScreen.projectUrl,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontFamily: OmniFonts.mono,
-                  ),
+                  style: const TextStyle(fontSize: 11, fontFamily: OmniFonts.mono),
                 ),
               ),
               const SizedBox(height: 6),
@@ -264,10 +253,7 @@ class _AboutScreenState extends State<AboutScreen> {
                   OutlinedButton.icon(
                     key: const ValueKey('about.copyUrl'),
                     icon: const Icon(Icons.copy, size: 16),
-                    label: const Text(
-                      'Copy link',
-                      style: TextStyle(fontSize: 12),
-                    ),
+                    label: const Text('Copy link', style: TextStyle(fontSize: 12)),
                     onPressed: () => _copy('Link', AboutScreen.projectUrl),
                   ),
                 ],
@@ -278,10 +264,7 @@ class _AboutScreenState extends State<AboutScreen> {
                 child: OutlinedButton.icon(
                   key: const ValueKey('about.privacyPolicy'),
                   icon: const Icon(Icons.privacy_tip, size: 16),
-                  label: const Text(
-                    'Privacy policy',
-                    style: TextStyle(fontSize: 12),
-                  ),
+                  label: const Text('Privacy policy', style: TextStyle(fontSize: 12)),
                   onPressed: () => _openUrl(AboutScreen.privacyUrl),
                 ),
               ),
@@ -307,54 +290,32 @@ class _AboutScreenState extends State<AboutScreen> {
                 style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
               ),
               const SizedBox(height: 8),
-              _DiagnosticRow(
-                label: 'App version',
-                value: _package?.version ?? '…',
-              ),
-              _DiagnosticRow(
-                label: 'Build',
-                value: _package?.buildNumber ?? '…',
-              ),
+              _DiagnosticRow(label: 'App version', value: _package?.version ?? '…'),
+              _DiagnosticRow(label: 'Build', value: _package?.buildNumber ?? '…'),
               _DiagnosticRow(
                 label: 'Distribution',
-                value: isPlayStoreDistribution
-                    ? 'Play Store'
-                    : 'Source available',
+                value: isPlayStoreDistribution ? 'Play Store' : 'Source available',
               ),
-              _DiagnosticRow(
-                label: 'Device',
-                value: _device?.device ?? Platform.operatingSystem,
-              ),
-              _DiagnosticRow(
-                label: 'Platform',
-                value: _device?.platform ?? _platformLabel(),
-              ),
+              _DiagnosticRow(label: 'Device', value: _device?.device ?? Platform.operatingSystem),
+              _DiagnosticRow(label: 'Platform', value: _device?.platform ?? _platformLabel()),
               _DiagnosticRow(label: 'ABI', value: _device?.abi ?? 'unknown'),
               _DiagnosticRow(
                 label: 'Ad ID',
-                value:
-                    _device?.advertisingId ??
-                    (isPlayStoreDistribution ? '…' : 'N/A'),
+                value: _device?.advertisingId ?? (isPlayStoreDistribution ? '…' : 'N/A'),
               ),
               const SizedBox(height: 4),
               SelectionArea(
                 child: Text(
                   _diagnostics,
                   key: const ValueKey('about.diagnostics.text'),
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontFamily: OmniFonts.mono,
-                  ),
+                  style: const TextStyle(fontSize: 11, fontFamily: OmniFonts.mono),
                 ),
               ),
               const SizedBox(height: 6),
               OutlinedButton.icon(
                 key: const ValueKey('about.copyDiagnostics'),
                 icon: const Icon(Icons.copy, size: 16),
-                label: const Text(
-                  'Copy diagnostics',
-                  style: TextStyle(fontSize: 12),
-                ),
+                label: const Text('Copy diagnostics', style: TextStyle(fontSize: 12)),
                 onPressed: () => _copy('Diagnostics', _diagnostics),
               ),
               if (_ads?.enabled == true) ...[
@@ -362,10 +323,7 @@ class _AboutScreenState extends State<AboutScreen> {
                 OutlinedButton.icon(
                   key: const ValueKey('about.adPrivacy'),
                   icon: const Icon(Icons.ads_click, size: 16),
-                  label: const Text(
-                    'Ad privacy choices',
-                    style: TextStyle(fontSize: 12),
-                  ),
+                  label: const Text('Ad privacy choices', style: TextStyle(fontSize: 12)),
                   onPressed: _ads!.showPrivacyOptions,
                 ),
               ],
@@ -410,17 +368,11 @@ class _DiagnosticRow extends StatelessWidget {
           width: 96,
           child: Text(
             label,
-            style: TextStyle(
-              fontSize: 12,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
         ),
         Expanded(
-          child: Text(
-            value,
-            style: const TextStyle(fontSize: 12, fontFamily: OmniFonts.mono),
-          ),
+          child: Text(value, style: const TextStyle(fontSize: 12, fontFamily: OmniFonts.mono)),
         ),
       ],
     ),
@@ -456,27 +408,18 @@ class _CrashHistoryCardState extends State<_CrashHistoryCard> {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text(
-          'Crash history',
-          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-        ),
+        const Text('Crash history', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
         const Divider(),
         if (widget.entries.isEmpty)
           Text(
             'No crashes recorded. Reports appear here and remain on this device.',
-            style: TextStyle(
-              fontSize: 12,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
           )
         else ...[
           Text(
             '${widget.entries.length} recorded. Release traces may be obfuscated; keep the '
             'version line so they can be decoded.',
-            style: TextStyle(
-              fontSize: 11,
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
+            style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
           const SizedBox(height: 8),
           for (var index = 0; index < widget.entries.length; index++)
@@ -503,9 +446,7 @@ class _CrashHistoryCardState extends State<_CrashHistoryCard> {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
-        color: Theme.of(
-          context,
-        ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+        color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
         borderRadius: BorderRadius.circular(8),
         child: InkWell(
           key: ValueKey('about.crashHistory.$index'),
@@ -518,35 +459,26 @@ class _CrashHistoryCardState extends State<_CrashHistoryCard> {
               children: [
                 Row(
                   children: [
-                    const Icon(
-                      Icons.bug_report,
-                      color: OmniColors.red,
-                      size: 18,
-                    ),
+                    const Icon(Icons.bug_report, color: OmniColors.red, size: 18),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            DateFormat('yyyy-MM-dd HH:mm').format(
-                              DateTime.fromMillisecondsSinceEpoch(entry.timeMs),
-                            ),
+                            DateFormat(
+                              'yyyy-MM-dd HH:mm',
+                            ).format(DateTime.fromMillisecondsSinceEpoch(entry.timeMs)),
                             style: TextStyle(
                               fontSize: 11,
-                              color: Theme.of(
-                                context,
-                              ).colorScheme.onSurfaceVariant,
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
                             ),
                           ),
                           Text(
                             entry.headline,
                             maxLines: expanded ? null : 2,
                             overflow: expanded ? null : TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 11,
-                              fontFamily: OmniFonts.mono,
-                            ),
+                            style: const TextStyle(fontSize: 11, fontFamily: OmniFonts.mono),
                           ),
                         ],
                       ),
@@ -558,10 +490,7 @@ class _CrashHistoryCardState extends State<_CrashHistoryCard> {
                   const SizedBox(height: 8),
                   SelectableText(
                     entry.report,
-                    style: const TextStyle(
-                      fontSize: 10,
-                      fontFamily: OmniFonts.mono,
-                    ),
+                    style: const TextStyle(fontSize: 10, fontFamily: OmniFonts.mono),
                   ),
                   const SizedBox(height: 8),
                   Builder(
@@ -577,8 +506,7 @@ class _CrashHistoryCardState extends State<_CrashHistoryCard> {
                         OutlinedButton(
                           key: ValueKey('about.crashHistory.$index.share'),
                           onPressed: () {
-                            final box =
-                                buttonContext.findRenderObject() as RenderBox?;
+                            final box = buttonContext.findRenderObject() as RenderBox?;
                             final origin = box == null
                                 ? Rect.zero
                                 : box.localToGlobal(Offset.zero) & box.size;

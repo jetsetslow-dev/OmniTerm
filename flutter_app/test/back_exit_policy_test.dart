@@ -53,10 +53,7 @@ void main() {
     test('the window boundary is exclusive, matching Kotlin', () {
       // Kotlin compares `currentTime - backPressDisabledTime < 2000`.
       expect(
-        decideBackExit(
-          msSinceLastBackPress: backExitDoublePressWindowMs,
-          hasLiveSessions: false,
-        ),
+        decideBackExit(msSinceLastBackPress: backExitDoublePressWindowMs, hasLiveSessions: false),
         BackExitAction.warn,
       );
       expect(

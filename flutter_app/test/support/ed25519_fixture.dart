@@ -45,32 +45,24 @@ Ed25519Fixture? _shared;
 /// Each test file runs in its own isolate, so this memoises within a file rather than across the
 /// suite. That is the intent: a file's tests should agree on the key they are importing and
 /// re-importing, or "this alias already exists" stops meaning anything.
-Future<Ed25519Fixture> sharedEd25519Fixture() async =>
-    _shared ??= await generateEd25519Fixture();
+Future<Ed25519Fixture> sharedEd25519Fixture() async => _shared ??= await generateEd25519Fixture();
 
 /// Generates a fresh Ed25519 keypair and serialises it the way OpenSSH does.
 ///
 /// [comment] is embedded in both halves, as `ssh-keygen` embeds the user@host it was run on.
-Future<Ed25519Fixture> generateEd25519Fixture({
-  String comment = 'test@omniterm.test',
-}) async {
+Future<Ed25519Fixture> generateEd25519Fixture({String comment = 'test@omniterm.test'}) async {
   final pair = await Ed25519().newKeyPair();
   final seed = Uint8List.fromList(await pair.extractPrivateKeyBytes());
   final public = Uint8List.fromList((await pair.extractPublicKey()).bytes);
 
   return Ed25519Fixture(
-    privateKey: _encodeOpenSshPrivateKey(
-      seed: seed,
-      public: public,
-      comment: comment,
-    ),
+    privateKey: _encodeOpenSshPrivateKey(seed: seed, public: public, comment: comment),
     publicKey: 'ssh-ed25519 ${base64.encode(_publicBlob(public))} $comment',
   );
 }
 
 /// The `ssh-ed25519` public key blob: the algorithm name followed by the 32 raw public bytes.
-Uint8List _publicBlob(Uint8List public) =>
-    _wire([_string('ssh-ed25519'), _bytes(public)]);
+Uint8List _publicBlob(Uint8List public) => _wire([_string('ssh-ed25519'), _bytes(public)]);
 
 /// Serialises an unencrypted private key in OpenSSH's own container format.
 ///
@@ -122,8 +114,7 @@ String _encodeOpenSshPrivateKey({
 
   final encoded = base64.encode(container.toBytes());
   final lines = <String>[
-    for (var i = 0; i < encoded.length; i += 70)
-      encoded.substring(i, min(i + 70, encoded.length)),
+    for (var i = 0; i < encoded.length; i += 70) encoded.substring(i, min(i + 70, encoded.length)),
   ];
   return '${pemBegin('OPENSSH')}\n'
       '${lines.join('\n')}\n'
@@ -139,11 +130,8 @@ Uint8List _wire(List<Uint8List> parts) {
 }
 
 /// An SSH wire string: a big-endian length followed by the bytes.
-Uint8List _bytes(Uint8List value) =>
-    Uint8List.fromList([..._uint32(value.length), ...value]);
+Uint8List _bytes(Uint8List value) => Uint8List.fromList([..._uint32(value.length), ...value]);
 
-Uint8List _string(String value) =>
-    _bytes(Uint8List.fromList(utf8.encode(value)));
+Uint8List _string(String value) => _bytes(Uint8List.fromList(utf8.encode(value)));
 
-Uint8List _uint32(int value) =>
-    Uint8List(4)..buffer.asByteData().setUint32(0, value);
+Uint8List _uint32(int value) => Uint8List(4)..buffer.asByteData().setUint32(0, value);

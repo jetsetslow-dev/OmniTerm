@@ -33,9 +33,7 @@ class BackupSelection {
   /// Everything, which is what a user almost always wants from a backup.
   BackupSelection.all({bool includeCrashLogs = false})
     : _selected = BackupSection.values
-          .where(
-            (section) => includeCrashLogs || section != BackupSection.crashLogs,
-          )
+          .where((section) => includeCrashLogs || section != BackupSection.crashLogs)
           .toSet();
 
   const BackupSelection.none() : _selected = const {};
@@ -53,17 +51,13 @@ class BackupSelection {
   /// Alert rules, incidents, history and port forwards are all scoped to a host; an incident is
   /// additionally scoped to the rule that raised it. Restoring any of them without its parent would
   /// produce a row pointing at an id that no longer exists.
-  static Set<BackupSection> dependenciesOf(BackupSection section) =>
-      switch (section) {
-        BackupSection.alertRules => {BackupSection.servers},
-        BackupSection.activeAlerts => {
-          BackupSection.servers,
-          BackupSection.alertRules,
-        },
-        BackupSection.alertHistory => {BackupSection.servers},
-        BackupSection.portForwards => {BackupSection.servers},
-        _ => const {},
-      };
+  static Set<BackupSection> dependenciesOf(BackupSection section) => switch (section) {
+    BackupSection.alertRules => {BackupSection.servers},
+    BackupSection.activeAlerts => {BackupSection.servers, BackupSection.alertRules},
+    BackupSection.alertHistory => {BackupSection.servers},
+    BackupSection.portForwards => {BackupSection.servers},
+    _ => const {},
+  };
 
   /// Sections that cannot survive without [section].
   static Set<BackupSection> dependentsOf(BackupSection section) => {
@@ -102,10 +96,7 @@ class BackupSelection {
   String encode() {
     final closed = withReferentialClosure();
     return _v2Prefix +
-        BackupSection.values
-            .where(closed.contains)
-            .map((section) => section.name)
-            .join(',');
+        BackupSection.values.where(closed.contains).map((section) => section.name).join(',');
   }
 
   /// Reads a stored selection back, defaulting to everything but crash logs.

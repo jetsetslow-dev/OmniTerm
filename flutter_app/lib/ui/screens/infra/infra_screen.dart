@@ -45,8 +45,7 @@ class _InfraScreenState extends State<InfraScreen> {
         _HeaderBar(vm: vm, server: server),
         _TabBar(vm: vm),
         // Only over results already on screen; a first load gets the centred spinner below.
-        if (vm.loading && vm.hasAnyRuntimeData)
-          const LinearProgressIndicator(minHeight: 2),
+        if (vm.loading && vm.hasAnyRuntimeData) const LinearProgressIndicator(minHeight: 2),
         if (vm.actionOutput != null) _ActionOutput(vm: vm),
         Expanded(
           child: Padding(
@@ -68,10 +67,7 @@ class _InfraScreenState extends State<InfraScreen> {
                       child: CircularProgressIndicator(strokeWidth: 2),
                     ),
                     SizedBox(height: 10),
-                    Text(
-                      'Asking this host about its containers…',
-                      style: TextStyle(fontSize: 12),
-                    ),
+                    Text('Asking this host about its containers…', style: TextStyle(fontSize: 12)),
                   ],
                 ),
               ),

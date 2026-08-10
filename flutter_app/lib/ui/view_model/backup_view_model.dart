@@ -11,11 +11,7 @@ import '../../platform/crash_log.dart';
 
 @immutable
 class BackupHostOption {
-  const BackupHostOption({
-    required this.oldId,
-    required this.name,
-    required this.host,
-  });
+  const BackupHostOption({required this.oldId, required this.name, required this.host});
 
   final int oldId;
   final String name;
@@ -44,8 +40,7 @@ class BackupInspection {
 /// without a file dialog, and it is why the reporting helpers below exist — the outcome of writing
 /// the file is something only the caller knows.
 class BackupViewModel extends ChangeNotifier {
-  BackupViewModel(this._app, {CrashLog? crashLog})
-    : crashLog = crashLog ?? CrashLog.instance;
+  BackupViewModel(this._app, {CrashLog? crashLog}) : crashLog = crashLog ?? CrashLog.instance;
 
   final AppState _app;
   final CrashLog crashLog;
@@ -87,12 +82,7 @@ class BackupViewModel extends ChangeNotifier {
   /// Fire-and-forget, as Kotlin does: the checkbox has already moved, and the write must not make
   /// the UI wait on the database.
   void _persistSelection() {
-    unawaited(
-      _app.repository.insertSetting(
-        'backup_export_selection',
-        _selection.encode(),
-      ),
-    );
+    unawaited(_app.repository.insertSetting('backup_export_selection', _selection.encode()));
   }
 
   /// Reads the stored selection back. Safe to call more than once.
@@ -224,10 +214,7 @@ class BackupViewModel extends ChangeNotifier {
     final now = DateTime.now();
     _lastExportTime = now;
     unawaited(
-      _app.repository.insertSetting(
-        'backup_last_export_time',
-        '${now.millisecondsSinceEpoch}',
-      ),
+      _app.repository.insertSetting('backup_last_export_time', '${now.millisecondsSinceEpoch}'),
     );
     _error = null;
     _status = [
@@ -256,9 +243,7 @@ class BackupViewModel extends ChangeNotifier {
   /// that does not have any.
   static bool looksEncrypted(String contents) {
     final trimmed = contents.trimLeft();
-    return trimmed.startsWith('{') &&
-        trimmed.contains('"iv"') &&
-        trimmed.contains('"salt"');
+    return trimmed.startsWith('{') && trimmed.contains('"iv"') && trimmed.contains('"salt"');
   }
 
   static const _sectionKeys = <BackupSection, String>{
@@ -280,27 +265,20 @@ class BackupViewModel extends ChangeNotifier {
   ///
   /// Restore is deliberately two-phase, matching the native app: the user first sees exactly what
   /// the file contains and chooses sections/hosts, then confirms the additive write.
-  Future<BackupInspection?> inspectBackup(
-    String contents,
-    String passphrase,
-  ) async {
+  Future<BackupInspection?> inspectBackup(String contents, String passphrase) async {
     _busy = true;
     _error = null;
     _status = null;
     _safeNotify();
     try {
-      final json = looksEncrypted(contents)
-          ? await decryptBackup(contents, passphrase)
-          : contents;
+      final json = looksEncrypted(contents) ? await decryptBackup(contents, passphrase) : contents;
       final decoded = jsonDecode(json);
       if (decoded is! Map<String, dynamic>) {
         throw const BackupException('That backup file could not be read.');
       }
       // Checked before anything is parsed out of it: refusing a file whole is honest, whereas
       // reading half of an unfamiliar shape and restoring that is not.
-      final incompatible = BackupPayload.incompatibleVersionMessage(
-        decoded['v'],
-      );
+      final incompatible = BackupPayload.incompatibleVersionMessage(decoded['v']);
       if (incompatible != null) throw BackupException(incompatible);
       final counts = <BackupSection, int>{};
       final present = <BackupSection>{};
@@ -311,9 +289,7 @@ class BackupViewModel extends ChangeNotifier {
         if (count > 0) present.add(entry.key);
       }
       if (present.isEmpty) {
-        throw const BackupException(
-          'That backup contains no data OmniTerm can restore.',
-        );
+        throw const BackupException('That backup contains no data OmniTerm can restore.');
       }
       final hosts = <BackupHostOption>[];
       final rawHosts = decoded['servers'];
@@ -366,9 +342,7 @@ class BackupViewModel extends ChangeNotifier {
     _safeNotify();
 
     try {
-      var json = looksEncrypted(contents)
-          ? await decryptBackup(contents, passphrase)
-          : contents;
+      var json = looksEncrypted(contents) ? await decryptBackup(contents, passphrase) : contents;
 
       if (selection != null || selectedServerIds != null) {
         final root = jsonDecode(json) as Map<String, dynamic>;
@@ -381,8 +355,7 @@ class BackupViewModel extends ChangeNotifier {
           final ids = selectedServerIds;
           root['servers'] = [
             for (final value in root['servers'] as List)
-              if (value is Map<String, dynamic> &&
-                  ids.contains((value['id'] as num?)?.toInt()))
+              if (value is Map<String, dynamic> && ids.contains((value['id'] as num?)?.toInt()))
                 value,
           ];
           bool belongsToChosenHost(Object? value) {
@@ -391,16 +364,9 @@ class BackupViewModel extends ChangeNotifier {
             return id == 0 || ids.contains(id);
           }
 
-          for (final key in const [
-            'alertRules',
-            'activeAlerts',
-            'alertHistory',
-            'portForwards',
-          ]) {
+          for (final key in const ['alertRules', 'activeAlerts', 'alertHistory', 'portForwards']) {
             if (root[key] is List) {
-              root[key] = (root[key] as List)
-                  .where(belongsToChosenHost)
-                  .toList();
+              root[key] = (root[key] as List).where(belongsToChosenHost).toList();
             }
           }
         }
@@ -419,23 +385,18 @@ class BackupViewModel extends ChangeNotifier {
 
           final profileIds = <int>{
             for (final row in [...rows('servers'), ...rows('networkShares')])
-              if ((row['authProfileId'] as num?)?.toInt() case final int id
-                  when id != 0)
-                id,
+              if ((row['authProfileId'] as num?)?.toInt() case final int id when id != 0) id,
           };
           if (root['credentialProfiles'] is List) {
-            root['credentialProfiles'] = rows('credentialProfiles')
-                .where(
-                  (row) => profileIds.contains((row['id'] as num?)?.toInt()),
-                )
-                .toList();
+            root['credentialProfiles'] = rows(
+              'credentialProfiles',
+            ).where((row) => profileIds.contains((row['id'] as num?)?.toInt())).toList();
           }
 
           final keyAliases = <String>{
             for (final row in rows('servers'))
               for (final field in const ['authKeyAlias', 'proxyKeyAlias'])
-                if ((row[field] as String?)?.trim() case final String alias
-                    when alias.isNotEmpty)
+                if ((row[field] as String?)?.trim() case final String alias when alias.isNotEmpty)
                   alias,
             for (final row in rows('credentialProfiles'))
               if ((row['keyAlias'] as String?)?.trim() case final String alias
@@ -455,18 +416,13 @@ class BackupViewModel extends ChangeNotifier {
       // earlier sections back, otherwise the UI reports failure after silently leaving half a
       // backup behind. Crash logs live outside Drift and are merged only after this commits.
       final counts = await _app.repository.inTransaction(
-        () => BackupPayload.restore(
-          RepositoryRestoreTarget(_app.repository),
-          json,
-        ),
+        () => BackupPayload.restore(RepositoryRestoreTarget(_app.repository), json),
       );
       final root = jsonDecode(json) as Map<String, Object?>;
       final restoredCrashes = <CrashEntry>[];
       for (final value in (root['crashLogs'] as List<Object?>? ?? const [])) {
         if (value case {'t': final num time, 'r': final String report}) {
-          restoredCrashes.add(
-            CrashEntry(timeMs: time.toInt(), report: redactCrashReport(report)),
-          );
+          restoredCrashes.add(CrashEntry(timeMs: time.toInt(), report: redactCrashReport(report)));
         }
       }
       if (restoredCrashes.isNotEmpty) {
@@ -486,10 +442,8 @@ class BackupViewModel extends ChangeNotifier {
       // Naming every skip rather than hiding it: a rule silently missing after a restore is a rule
       // no longer watching anything, and a missing tunnel is a port that never opens.
       final skips = <String>[
-        if ((counts['alertRulesSkipped'] ?? 0) > 0)
-          '${counts['alertRulesSkipped']} alert rule(s)',
-        if ((counts['portForwardsSkipped'] ?? 0) > 0)
-          '${counts['portForwardsSkipped']} tunnel(s)',
+        if ((counts['alertRulesSkipped'] ?? 0) > 0) '${counts['alertRulesSkipped']} alert rule(s)',
+        if ((counts['portForwardsSkipped'] ?? 0) > 0) '${counts['portForwardsSkipped']} tunnel(s)',
         if ((counts['activeAlertsSkipped'] ?? 0) > 0)
           '${counts['activeAlertsSkipped']} firing alert(s)',
         if ((counts['alertHistorySkipped'] ?? 0) > 0)

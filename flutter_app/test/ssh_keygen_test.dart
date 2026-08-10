@@ -33,11 +33,7 @@ void main() {
 
     test('rejects an alias that is already stored', () {
       expect(
-        () => generateSshKeyPair(
-          alias: 'laptop',
-          existingAliases: {'laptop'},
-          bits: 512,
-        ),
+        () => generateSshKeyPair(alias: 'laptop', existingAliases: {'laptop'}, bits: 512),
         throwsA(
           isA<KeyGenerationException>().having(
             (e) => e.message,
@@ -52,8 +48,7 @@ void main() {
       // Kotlin points the user at import rather than silently handing back an RSA key under an
       // Ed25519 label; the message is what makes that recoverable.
       expect(
-        () =>
-            generateSshKeyPair(alias: 'laptop', keyType: 'ED25519', bits: 512),
+        () => generateSshKeyPair(alias: 'laptop', keyType: 'ED25519', bits: 512),
         throwsA(
           isA<KeyGenerationException>().having(
             (e) => e.message,
@@ -84,10 +79,7 @@ void main() {
       expect(parts.last, 'work laptop'.split(' ').last);
       expect(isPublicKeyLine(generated.publicKey), isTrue);
       expect(generated.fingerprint, startsWith('SHA256:'));
-      expect(
-        generated.fingerprint,
-        sshPublicKeyFingerprint(generated.publicKey),
-      );
+      expect(generated.fingerprint, sshPublicKeyFingerprint(generated.publicKey));
     });
 
     test('two runs never return the same key', () {
@@ -97,19 +89,16 @@ void main() {
       expect(first.fingerprint, isNot(second.fingerprint));
     });
 
-    test(
-      'the install command carries the public line and fixes the permissions',
-      () {
-        final generated = generateSshKeyPair(alias: 'laptop', bits: 512);
-        final command = authorizedKeysInstallCommand(generated.publicKey);
+    test('the install command carries the public line and fixes the permissions', () {
+      final generated = generateSshKeyPair(alias: 'laptop', bits: 512);
+      final command = authorizedKeysInstallCommand(generated.publicKey);
 
-        expect(command, contains(generated.publicKey));
-        expect(command, contains('chmod 700 ~/.ssh'));
-        expect(command, contains('chmod 600 ~/.ssh/authorized_keys'));
-        // Appends: overwriting authorized_keys would lock the user out of their own server.
-        expect(command, contains('>> ~/.ssh/authorized_keys'));
-      },
-    );
+      expect(command, contains(generated.publicKey));
+      expect(command, contains('chmod 700 ~/.ssh'));
+      expect(command, contains('chmod 600 ~/.ssh/authorized_keys'));
+      // Appends: overwriting authorized_keys would lock the user out of their own server.
+      expect(command, contains('>> ~/.ssh/authorized_keys'));
+    });
   });
 
   group('OpenSSH agreement', () {
@@ -125,17 +114,12 @@ void main() {
         final dir = Directory.systemTemp.createTempSync('omniterm-keygen-test');
         addTearDown(() => dir.deleteSync(recursive: true));
 
-        final pem = File('${dir.path}/id_rsa')
-          ..writeAsStringSync(generated.privateKey);
+        final pem = File('${dir.path}/id_rsa')..writeAsStringSync(generated.privateKey);
         // ssh-keygen refuses to read a world-readable private key.
         Process.runSync('chmod', ['600', pem.path]);
 
         final derived = Process.runSync(sshKeygen!, ['-y', '-f', pem.path]);
-        expect(
-          derived.exitCode,
-          0,
-          reason: 'ssh-keygen could not read our PEM: ${derived.stderr}',
-        );
+        expect(derived.exitCode, 0, reason: 'ssh-keygen could not read our PEM: ${derived.stderr}');
 
         final derivedLine = (derived.stdout as String).trim();
         // ssh-keygen -y prints no comment, so compare the algorithm and blob only.
@@ -148,9 +132,7 @@ void main() {
         expect(printed.exitCode, 0);
         expect((printed.stdout as String), contains(generated.fingerprint));
       },
-      skip: sshKeygen == null
-          ? 'ssh-keygen is not installed on this host'
-          : null,
+      skip: sshKeygen == null ? 'ssh-keygen is not installed on this host' : null,
     );
   });
 }

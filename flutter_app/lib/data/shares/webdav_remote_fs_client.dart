@@ -41,17 +41,9 @@ class WebDavRemoteFsClient extends RemoteFsClient {
     return '$_origin/${segments.join('/')}';
   }
 
-  void _check(
-    Response<dynamic> response,
-    Iterable<int> accepted,
-    String action,
-    String path,
-  ) {
+  void _check(Response<dynamic> response, Iterable<int> accepted, String action, String path) {
     if (!accepted.contains(response.statusCode)) {
-      throw FileSystemException(
-        '$action failed with HTTP ${response.statusCode}',
-        path,
-      );
+      throw FileSystemException('$action failed with HTTP ${response.statusCode}', path);
     }
   }
 
@@ -87,13 +79,9 @@ class WebDavRemoteFsClient extends RemoteFsClient {
               .map((node) => node.innerText.trim())
               .firstOrNull ??
           '';
-      final href = Uri.decodeComponent(
-        text('href'),
-      ).replaceFirst(RegExp(r'/+$'), '');
+      final href = Uri.decodeComponent(text('href')).replaceFirst(RegExp(r'/+$'), '');
       if (href == wantedPath || href.isEmpty) continue;
-      final name = text('displayname').isNotEmpty
-          ? text('displayname')
-          : href.split('/').last;
+      final name = text('displayname').isNotEmpty ? text('displayname') : href.split('/').last;
       final isDirectory = item.descendants.whereType<XmlElement>().any(
         (node) => node.name.local == 'collection',
       );
@@ -122,17 +110,10 @@ class WebDavRemoteFsClient extends RemoteFsClient {
   }
 
   @override
-  Future<void> rename(
-    String oldPath,
-    String newPath, {
-    bool isDirectory = false,
-  }) async {
+  Future<void> rename(String oldPath, String newPath, {bool isDirectory = false}) async {
     final response = await _dio.request<void>(
       _url(oldPath),
-      options: Options(
-        method: 'MOVE',
-        headers: {'Destination': _url(newPath), 'Overwrite': 'F'},
-      ),
+      options: Options(method: 'MOVE', headers: {'Destination': _url(newPath), 'Overwrite': 'F'}),
       cancelToken: _cancel,
     );
     _check(response, const [201, 204], 'WebDAV move', oldPath);
@@ -156,11 +137,7 @@ class WebDavRemoteFsClient extends RemoteFsClient {
       cancelToken: _cancel,
     );
     _check(response, const [200, 206], 'WebDAV download', path);
-    final total =
-        int.tryParse(
-          response.headers.value(Headers.contentLengthHeader) ?? '',
-        ) ??
-        -1;
+    final total = int.tryParse(response.headers.value(Headers.contentLengthHeader) ?? '') ?? -1;
     var copied = 0;
     await for (final chunk in response.data!.stream) {
       copied += chunk.length;
@@ -201,10 +178,7 @@ class WebDavRemoteFsClient extends RemoteFsClient {
     final controller = StreamController<List<int>>();
     final subscription = controller.stream.listen((chunk) {
       if (bytes.length + chunk.length > maxBytes) {
-        throw FileSystemException(
-          'WebDAV file is larger than the editor limit',
-          path,
-        );
+        throw FileSystemException('WebDAV file is larger than the editor limit', path);
       }
       bytes.addAll(chunk);
     });

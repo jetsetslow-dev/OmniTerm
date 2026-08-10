@@ -94,8 +94,7 @@ class AppState extends ChangeNotifier {
   bool get batterySaverEnabled => _preferences.batterySaverEnabled;
   int get batterySaverThresholdPct => _preferences.batterySaverThresholdPercent;
   int get sftpLargeBatchFileThreshold => _preferences.sftpWarnFileCount;
-  int get sftpLargeBatchBytesThreshold =>
-      _preferences.sftpWarnGigabytes * 1000000000;
+  int get sftpLargeBatchBytesThreshold => _preferences.sftpWarnGigabytes * 1000000000;
   bool get hideSensitiveInfo => _preferences.hideSensitiveInfo;
 
   /// Whether the app asks the platform to keep its contents out of screenshots, recordings and the
@@ -125,9 +124,7 @@ class AppState extends ChangeNotifier {
     final rows = await _repository.getAllSettings();
     final values = {for (final row in rows) row.key: row.value};
     _preferences = AppPreferences.decode(values);
-    healthScoring = HealthScoringConfig.decode(
-      values[HealthScoringConfig.settingKey],
-    );
+    healthScoring = HealthScoringConfig.decode(values[HealthScoringConfig.settingKey]);
     alertsEnabled = values['alerts_enabled'] != 'false';
     homelabPresetsEnabled = values['homelab_presets'] == 'true';
     alertPresetsEnabled = values['alert_presets'] == 'true';

@@ -87,8 +87,7 @@ class BatterySaverController extends ChangeNotifier {
       final percent = await _monitor.level();
       if (_disposed) return;
       final charging =
-          _powerState == DevicePowerState.charging ||
-          _powerState == DevicePowerState.full;
+          _powerState == DevicePowerState.charging || _powerState == DevicePowerState.full;
       if (_active) {
         if (charging || percent >= thresholdPercent + 5) resume();
       } else if (!charging && percent <= thresholdPercent) {

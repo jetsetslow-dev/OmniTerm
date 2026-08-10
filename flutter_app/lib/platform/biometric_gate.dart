@@ -3,8 +3,7 @@ import 'package:local_auth/local_auth.dart';
 
 /// A gateway for biometric authentication, ported from `BiometricCryptoGate.kt`.
 class BiometricGate {
-  BiometricGate({LocalAuthentication? auth})
-      : _auth = auth ?? LocalAuthentication();
+  BiometricGate({LocalAuthentication? auth}) : _auth = auth ?? LocalAuthentication();
 
   final LocalAuthentication _auth;
 
@@ -23,10 +22,7 @@ class BiometricGate {
   ///
   /// Returns `true` if authentication succeeded, `false` if the user cancelled
   /// or failed, and throws an exception on system errors.
-  Future<bool> authenticate({
-    required String title,
-    String? subtitle,
-  }) async {
+  Future<bool> authenticate({required String title, String? subtitle}) async {
     try {
       return await _auth.authenticate(
         localizedReason: subtitle ?? title,

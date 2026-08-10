@@ -15,8 +15,7 @@ class SoftInputType extends SoftInputAction {
   final String text;
 
   @override
-  bool operator ==(Object other) =>
-      other is SoftInputType && other.text == text;
+  bool operator ==(Object other) => other is SoftInputType && other.text == text;
 
   @override
   int get hashCode => text.hashCode;
@@ -45,8 +44,7 @@ class SoftInputPaste extends SoftInputAction {
   final String text;
 
   @override
-  bool operator ==(Object other) =>
-      other is SoftInputPaste && other.text == text;
+  bool operator ==(Object other) => other is SoftInputPaste && other.text == text;
 
   @override
   int get hashCode => text.hashCode;
@@ -72,9 +70,7 @@ TerminalLineEdit terminalLineEdit(String oldText, String newText) {
   final oldRunes = oldText.runes.toList(growable: false);
   final newRunes = newText.runes.toList(growable: false);
   var prefix = 0;
-  final commonLength = oldRunes.length < newRunes.length
-      ? oldRunes.length
-      : newRunes.length;
+  final commonLength = oldRunes.length < newRunes.length ? oldRunes.length : newRunes.length;
   while (prefix < commonLength && oldRunes[prefix] == newRunes[prefix]) {
     prefix++;
   }
@@ -88,17 +84,14 @@ TerminalLineEdit terminalLineEdit(String oldText, String newText) {
 int insertedTerminalRuneDelta(String oldText, String newText) {
   final oldRunes = oldText.runes.toList(growable: false);
   final newRunes = newText.runes.toList(growable: false);
-  final max = oldRunes.length < newRunes.length
-      ? oldRunes.length
-      : newRunes.length;
+  final max = oldRunes.length < newRunes.length ? oldRunes.length : newRunes.length;
   var prefix = 0;
   while (prefix < max && oldRunes[prefix] == newRunes[prefix]) {
     prefix++;
   }
   var suffix = 0;
   while (suffix < max - prefix &&
-      oldRunes[oldRunes.length - 1 - suffix] ==
-          newRunes[newRunes.length - 1 - suffix]) {
+      oldRunes[oldRunes.length - 1 - suffix] == newRunes[newRunes.length - 1 - suffix]) {
     suffix++;
   }
   return (newRunes.length - prefix - suffix).clamp(0, newRunes.length);
@@ -109,8 +102,7 @@ int insertedTerminalRuneDelta(String oldText, String newText) {
 /// A software keyboard's Enter arrives as a newline character, but an interactive PTY wants the
 /// terminal Enter key (CR). Sending the raw LF only moves the cursor and leaves the command pending
 /// until the user presses Enter a second time.
-bool isSingleTerminalEnter(String text) =>
-    text == '\n' || text == '\r' || text == '\r\n';
+bool isSingleTerminalEnter(String text) => text == '\n' || text == '\r' || text == '\r\n';
 
 /// Decide what a software-keyboard commit of [text] should send.
 SoftInputAction? interpretSoftInput(String text) {

@@ -377,10 +377,7 @@ void main() {
       await app.start();
       await Future<void>.delayed(Duration.zero);
 
-      expect(
-        vm.hostLimitExceededNow(playStoreBuild: true, unlocked: false),
-        isTrue,
-      );
+      expect(vm.hostLimitExceededNow(playStoreBuild: true, unlocked: false), isTrue);
     });
 
     test('an unlocked install is never flagged', () async {
@@ -389,14 +386,8 @@ void main() {
       await app.start();
       await Future<void>.delayed(Duration.zero);
 
-      expect(
-        vm.hostLimitExceededNow(playStoreBuild: true, unlocked: true),
-        isFalse,
-      );
-      expect(
-        vm.hostLimitExceededNow(playStoreBuild: false, unlocked: false),
-        isFalse,
-      );
+      expect(vm.hostLimitExceededNow(playStoreBuild: true, unlocked: true), isFalse);
+      expect(vm.hostLimitExceededNow(playStoreBuild: false, unlocked: false), isFalse);
     });
 
     test('keeping one deletes the rest', () async {

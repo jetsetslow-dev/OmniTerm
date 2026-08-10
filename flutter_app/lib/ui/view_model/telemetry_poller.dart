@@ -48,8 +48,7 @@ class TelemetryPoller extends ChangeNotifier {
 
   /// Tests can pin a cadence; production follows the live Settings value.
   Duration get effectiveInterval =>
-      _intervalOverride ??
-      Duration(seconds: _app.preferences.telemetryIntervalSeconds);
+      _intervalOverride ?? Duration(seconds: _app.preferences.telemetryIntervalSeconds);
 
   Duration? _lastConfiguredInterval;
 
@@ -91,8 +90,7 @@ class TelemetryPoller extends ChangeNotifier {
   HostMetrics? metricsForServer(int serverId) => _metrics[serverId];
 
   /// The recent samples for [serverId], oldest first, for the sparklines.
-  List<TimedSample> historyForServer(int serverId) =>
-      _history[serverId] ?? const [];
+  List<TimedSample> historyForServer(int serverId) => _history[serverId] ?? const [];
 
   /// When [serverId]'s newest sample was taken, so a screen can say how old its numbers are rather
   /// than presenting a reading from four minutes ago as the current state of the machine.
@@ -243,10 +241,7 @@ class TelemetryPoller extends ChangeNotifier {
   }
 
   void _recordHistory(int serverId, HostMetrics metrics, DateTime at) {
-    final samples = [
-      ..._history[serverId] ?? const <TimedSample>[],
-      TimedSample(at, metrics),
-    ];
+    final samples = [..._history[serverId] ?? const <TimedSample>[], TimedSample(at, metrics)];
     _history[serverId] = samples.length <= historyLength
         ? samples
         : samples.sublist(samples.length - historyLength);

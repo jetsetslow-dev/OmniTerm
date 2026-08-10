@@ -107,8 +107,7 @@ class ShellState extends ChangeNotifier {
   }
 
   void reconcileHostLimit(int hostCount, {String? reason}) {
-    final required =
-        _licenseEnabled && _licenseResolved && !_unlocked && hostCount > 1;
+    final required = _licenseEnabled && _licenseResolved && !_unlocked && hostCount > 1;
     final nextReason = required
         ? (reason ?? 'The free Play Store build supports one saved host.')
         : '';

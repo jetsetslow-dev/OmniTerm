@@ -86,10 +86,7 @@ const String bookmarkSeparator = '|||';
 /// bookmark that opens the wrong directory.
 List<String> decodeBookmarkPaths(String? raw) {
   if (raw == null) return const [];
-  return raw
-      .split(bookmarkSeparator)
-      .where((segment) => segment.trim().isNotEmpty)
-      .toList();
+  return raw.split(bookmarkSeparator).where((segment) => segment.trim().isNotEmpty).toList();
 }
 
 String encodeBookmarkPaths(Iterable<String> paths) => paths.join(bookmarkSeparator);
@@ -106,12 +103,7 @@ String normaliseBookmarkPath(String path) {
 /// Share statuses that mean a browse attempt has already been tried and failed.
 ///
 /// Ported from `shareUnavailable` (`ui/AppViewModel.kt:12115`).
-const Set<String> unavailableShareStatuses = {
-  'unreachable',
-  'offline',
-  'failed',
-  'error',
-};
+const Set<String> unavailableShareStatuses = {'unreachable', 'offline', 'failed', 'error'};
 
 /// Whether a share whose last probe reported [lastStatus] is worth offering.
 ///

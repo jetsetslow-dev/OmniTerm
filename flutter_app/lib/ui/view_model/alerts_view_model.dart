@@ -83,14 +83,9 @@ class AlertsViewModel extends ChangeNotifier {
       _history = list;
       _safeNotify();
     });
-    _alertsEnabled =
-        (await _app.repository.getSetting('alerts_enabled'))?.toLowerCase() !=
-        'false';
+    _alertsEnabled = (await _app.repository.getSetting('alerts_enabled'))?.toLowerCase() != 'false';
     _presetsEnabled =
-        (await _app.repository.getSetting(
-          alertPresetsSetting,
-        ))?.toLowerCase() ==
-        'true';
+        (await _app.repository.getSetting(alertPresetsSetting))?.toLowerCase() == 'true';
     _safeNotify();
   }
 
@@ -154,8 +149,7 @@ class AlertsViewModel extends ChangeNotifier {
   List<Server> get hosts => _app.servers;
 
   /// The host a rule or incident belongs to, or null for a fleet-wide rule.
-  Server? serverFor(int serverId) =>
-      _app.servers.where((s) => s.id == serverId).firstOrNull;
+  Server? serverFor(int serverId) => _app.servers.where((s) => s.id == serverId).firstOrNull;
 
   /// A label for a rule's scope. Rules with `serverId == 0` apply to every host.
   String scopeLabel(int serverId) {
@@ -229,9 +223,7 @@ class AlertsViewModel extends ChangeNotifier {
   }
 
   Future<void> setRuleEnabled(AlertRule rule, bool enabled) async {
-    await _app.repository.insertRule(
-      rule.copyWith(enabled: enabled).toCompanion(false),
-    );
+    await _app.repository.insertRule(rule.copyWith(enabled: enabled).toCompanion(false));
     if (!enabled) {
       // A disabled rule cannot re-evaluate, so leaving its incident would strand a banner that can
       // never resolve on its own.
@@ -247,10 +239,7 @@ class AlertsViewModel extends ChangeNotifier {
   }
 
   /// Drops every incident and breach window belonging to [ruleId].
-  Future<void> _clearIncidentsForRule(
-    int ruleId, {
-    required String reason,
-  }) async {
+  Future<void> _clearIncidentsForRule(int ruleId, {required String reason}) async {
     _tracker.forgetRule(ruleId);
     for (final alert in (await _app.repository.getActiveAlerts()).where(
       (a) => a.ruleId == ruleId,
@@ -277,10 +266,7 @@ class AlertsViewModel extends ChangeNotifier {
     _safeNotify();
     try {
       await _app.repository.inTransaction(() async {
-        await _app.repository.insertSetting(
-          alertPresetsSetting,
-          enabled.toString(),
-        );
+        await _app.repository.insertSetting(alertPresetsSetting, enabled.toString());
         if (enabled) {
           await _seedPresets();
         } else {
@@ -288,9 +274,7 @@ class AlertsViewModel extends ChangeNotifier {
         }
       });
       _presetsEnabled = enabled;
-      _status = enabled
-          ? 'Added the default rules.'
-          : 'Removed the default rules.';
+      _status = enabled ? 'Added the default rules.' : 'Removed the default rules.';
     } finally {
       _busy = false;
       _safeNotify();
@@ -404,9 +388,7 @@ class AlertsViewModel extends ChangeNotifier {
         await _app.repository.deleteAlert(existing.id);
         // The banner goes when the incident does. A notification left in the shade for a host that
         // recovered hours ago is how a user learns to swipe them all away unread.
-        await notifier?.clear(
-          alertNotificationId(existing.ruleId, existing.serverId),
-        );
+        await notifier?.clear(alertNotificationId(existing.ruleId, existing.serverId));
       }
     }
 
@@ -431,13 +413,11 @@ class AlertsViewModel extends ChangeNotifier {
   /// Muting keeps the incident visible but stops it re-raising — the point is to stop being told
   /// about something you already know, not to pretend it is fixed.
   Future<void> mute(ActiveAlert alert, Duration duration) async {
-    final until =
-        DateTime.now().millisecondsSinceEpoch + duration.inMilliseconds;
+    final until = DateTime.now().millisecondsSinceEpoch + duration.inMilliseconds;
     await _app.repository.muteAlert(alert.id, until);
   }
 
-  Future<void> unmute(ActiveAlert alert) =>
-      _app.repository.muteAlert(alert.id, 0);
+  Future<void> unmute(ActiveAlert alert) => _app.repository.muteAlert(alert.id, 0);
 
   /// Dismisses [alert] without waiting for it to resolve.
   Future<void> dismiss(ActiveAlert alert) async {
@@ -452,11 +432,7 @@ class AlertsViewModel extends ChangeNotifier {
   /// Guarded here rather than only inside the notifier: the incident is already recorded by this
   /// point, and a notification service that throws must not abort the evaluation loop and take
   /// every *other* rule's result down with it. The banner is a courtesy; the incident is the record.
-  Future<void> _notifyRaised(
-    Server server,
-    AlertRule rule,
-    ActiveAlert alert,
-  ) async {
+  Future<void> _notifyRaised(Server server, AlertRule rule, ActiveAlert alert) async {
     final target = notifier;
     if (target == null) return;
     try {
@@ -466,26 +442,22 @@ class AlertsViewModel extends ChangeNotifier {
     }
   }
 
-  Future<void> _post(
-    AlertNotifier target,
-    Server server,
-    AlertRule rule,
-    ActiveAlert alert,
-  ) => target.post(
-    buildAlertNotification(
-      ruleId: rule.id,
-      serverId: server.id,
-      // The host's real name, not a masked one: "hide addresses" is for a shared screen, and a
-      // notification the user cannot attribute to a machine is useless at 3am.
-      serverName: server.name,
-      severity: rule.severity,
-      metricName: rule.metricName,
-      mountPoint: rule.mountPoint,
-      value: alert.currentValue,
-      threshold: rule.thresholdValue,
-      system: _app.measurementSystem,
-    ),
-  );
+  Future<void> _post(AlertNotifier target, Server server, AlertRule rule, ActiveAlert alert) =>
+      target.post(
+        buildAlertNotification(
+          ruleId: rule.id,
+          serverId: server.id,
+          // The host's real name, not a masked one: "hide addresses" is for a shared screen, and a
+          // notification the user cannot attribute to a machine is useless at 3am.
+          serverName: server.name,
+          severity: rule.severity,
+          metricName: rule.metricName,
+          mountPoint: rule.mountPoint,
+          value: alert.currentValue,
+          threshold: rule.thresholdValue,
+          system: _app.measurementSystem,
+        ),
+      );
 
   Future<void> _archive(ActiveAlert alert, String status) async {
     await _app.repository.insertAlertHistory(
@@ -494,8 +466,7 @@ class AlertsViewModel extends ChangeNotifier {
         serverId: alert.serverId,
         // Denormalised on purpose: an archive entry must stay readable after the host is deleted,
         // and a dangling id would render as a number nobody can identify.
-        serverName:
-            serverFor(alert.serverId)?.name ?? 'Host #${alert.serverId}',
+        serverName: serverFor(alert.serverId)?.name ?? 'Host #${alert.serverId}',
         metricName: alert.metricName,
         currentValue: alert.currentValue,
         thresholdValue: alert.thresholdValue,
@@ -508,10 +479,7 @@ class AlertsViewModel extends ChangeNotifier {
     // Applied on every insert, as Kotlin does at `AppViewModel.kt:10845`. Without it the "Alert
     // history limit" setting does nothing at all and the table grows for the life of the install —
     // a monitoring app archives an incident every time one resolves.
-    await _app.repository.pruneAlertHistoryForServer(
-      alert.serverId,
-      _app.alertHistoryLimit,
-    );
+    await _app.repository.pruneAlertHistoryForServer(alert.serverId, _app.alertHistoryLimit);
   }
 
   /// Applies the retention cap to every host.

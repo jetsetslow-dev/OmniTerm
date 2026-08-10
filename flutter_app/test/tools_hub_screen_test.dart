@@ -58,7 +58,11 @@ void main() {
         'Settings',
         'About OmniTerm',
       ]) {
-        expect(find.text(label), findsOneWidget, reason: '$label must match the Kotlin label exactly');
+        expect(
+          find.text(label),
+          findsOneWidget,
+          reason: '$label must match the Kotlin label exactly',
+        );
       }
       expect(find.text('OmniTerm utilities'), findsOneWidget);
       await tester.pump();

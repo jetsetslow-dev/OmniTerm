@@ -30,11 +30,7 @@ class StartupRecoveryApp extends StatelessWidget {
               children: [
                 const Text(
                   'OmniTerm could not start',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.white,
-                  ),
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
                 ),
                 const SizedBox(height: 8),
                 const Text(
@@ -64,9 +60,7 @@ class StartupRecoveryApp extends StatelessWidget {
                     Expanded(
                       child: OutlinedButton(
                         key: const ValueKey('startup.recovery.copy'),
-                        onPressed: () => Clipboard.setData(
-                          ClipboardData(text: report),
-                        ),
+                        onPressed: () => Clipboard.setData(ClipboardData(text: report)),
                         child: const Text('Copy report'),
                       ),
                     ),

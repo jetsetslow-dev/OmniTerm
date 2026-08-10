@@ -38,23 +38,14 @@ void main() {
       expect(prefs.hideSensitiveInfo, isTrue);
     });
 
-    test(
-      'an unparseable number falls back rather than failing the whole load',
-      () {
-        // One corrupt row must never stop the app starting.
-        final prefs = AppPreferences.decode({'telemetry_interval': 'soon'});
-        expect(
-          prefs.telemetryIntervalSeconds,
-          AppPreferences.defaults.telemetryIntervalSeconds,
-        );
-      },
-    );
+    test('an unparseable number falls back rather than failing the whole load', () {
+      // One corrupt row must never stop the app starting.
+      final prefs = AppPreferences.decode({'telemetry_interval': 'soon'});
+      expect(prefs.telemetryIntervalSeconds, AppPreferences.defaults.telemetryIntervalSeconds);
+    });
 
     test('an unparseable flag falls back too', () {
-      expect(
-        AppPreferences.decode({'amoled': 'yes'}).amoled,
-        AppPreferences.defaults.amoled,
-      );
+      expect(AppPreferences.decode({'amoled': 'yes'}).amoled, AppPreferences.defaults.amoled);
     });
 
     test('an unknown terminal theme falls back to a real one', () {
@@ -71,36 +62,24 @@ void main() {
     test('a zero poll interval is raised to the floor', () {
       // Zero would busy-loop the radio and hammer every host.
       expect(
-        AppPreferences.decode({
-          'telemetry_interval': '0',
-        }).telemetryIntervalSeconds,
+        AppPreferences.decode({'telemetry_interval': '0'}).telemetryIntervalSeconds,
         PreferenceLimits.telemetryInterval.min,
       );
     });
 
-    test(
-      'an absurd poll interval is capped, so "live" still means something',
-      () {
-        expect(
-          AppPreferences.decode({
-            'telemetry_interval': '99999',
-          }).telemetryIntervalSeconds,
-          PreferenceLimits.telemetryInterval.max,
-        );
-      },
-    );
+    test('an absurd poll interval is capped, so "live" still means something', () {
+      expect(
+        AppPreferences.decode({'telemetry_interval': '99999'}).telemetryIntervalSeconds,
+        PreferenceLimits.telemetryInterval.max,
+      );
+    });
 
-    test(
-      'a huge scrollback is capped — it is a memory bound, not a preference',
-      () {
-        expect(
-          AppPreferences.decode({
-            'terminal_scrollback_limit': '2000000',
-          }).terminalScrollbackLimit,
-          PreferenceLimits.terminalScrollback.max,
-        );
-      },
-    );
+    test('a huge scrollback is capped — it is a memory bound, not a preference', () {
+      expect(
+        AppPreferences.decode({'terminal_scrollback_limit': '2000000'}).terminalScrollbackLimit,
+        PreferenceLimits.terminalScrollback.max,
+      );
+    });
 
     test('a negative value is raised to the floor', () {
       final prefs = AppPreferences.decode({
@@ -116,46 +95,19 @@ void main() {
     test('every limit has a default inside its own range', () {
       // A default outside its bounds would be silently rewritten on the first read.
       for (final (limit, value) in [
-        (
-          PreferenceLimits.telemetryInterval,
-          AppPreferences.defaults.telemetryIntervalSeconds,
-        ),
-        (
-          PreferenceLimits.metricsRetention,
-          AppPreferences.defaults.metricsRetentionDays,
-        ),
-        (
-          PreferenceLimits.alertHistoryLimit,
-          AppPreferences.defaults.alertHistoryLimit,
-        ),
-        (
-          PreferenceLimits.terminalFontSize,
-          AppPreferences.defaults.terminalFontSize,
-        ),
-        (
-          PreferenceLimits.terminalScrollback,
-          AppPreferences.defaults.terminalScrollbackLimit,
-        ),
-        (
-          PreferenceLimits.editorHighlightLimit,
-          AppPreferences.defaults.editorHighlightLimitKb,
-        ),
+        (PreferenceLimits.telemetryInterval, AppPreferences.defaults.telemetryIntervalSeconds),
+        (PreferenceLimits.metricsRetention, AppPreferences.defaults.metricsRetentionDays),
+        (PreferenceLimits.alertHistoryLimit, AppPreferences.defaults.alertHistoryLimit),
+        (PreferenceLimits.terminalFontSize, AppPreferences.defaults.terminalFontSize),
+        (PreferenceLimits.terminalScrollback, AppPreferences.defaults.terminalScrollbackLimit),
+        (PreferenceLimits.editorHighlightLimit, AppPreferences.defaults.editorHighlightLimitKb),
         (
           PreferenceLimits.batterySaverThreshold,
           AppPreferences.defaults.batterySaverThresholdPercent,
         ),
-        (
-          PreferenceLimits.sftpWarnFileCount,
-          AppPreferences.defaults.sftpWarnFileCount,
-        ),
-        (
-          PreferenceLimits.sftpWarnGigabytes,
-          AppPreferences.defaults.sftpWarnGigabytes,
-        ),
-        (
-          PreferenceLimits.textScalePercent,
-          AppPreferences.defaults.textScalePercent,
-        ),
+        (PreferenceLimits.sftpWarnFileCount, AppPreferences.defaults.sftpWarnFileCount),
+        (PreferenceLimits.sftpWarnGigabytes, AppPreferences.defaults.sftpWarnGigabytes),
+        (PreferenceLimits.textScalePercent, AppPreferences.defaults.textScalePercent),
       ]) {
         expect(value, inInclusiveRange(limit.min, limit.max));
       }
@@ -196,30 +148,19 @@ void main() {
       expect(AppPreferences.decode(prefs.encode()), prefs);
     });
 
-    test(
-      'the SFTP size warning is stored in bytes but edited in gigabytes',
-      () {
-        // Nobody reasons about a transfer warning in bytes.
-        const prefs = AppPreferences(sftpWarnGigabytes: 3);
-        expect(
-          prefs.encode()['sftp_large_batch_bytes_threshold'],
-          '3000000000',
-        );
-        expect(AppPreferences.decode(prefs.encode()).sftpWarnGigabytes, 3);
-      },
-    );
+    test('the SFTP size warning is stored in bytes but edited in gigabytes', () {
+      // Nobody reasons about a transfer warning in bytes.
+      const prefs = AppPreferences(sftpWarnGigabytes: 3);
+      expect(prefs.encode()['sftp_large_batch_bytes_threshold'], '3000000000');
+      expect(AppPreferences.decode(prefs.encode()).sftpWarnGigabytes, 3);
+    });
 
-    test(
-      'a sub-gigabyte stored value is raised to the floor rather than becoming zero',
-      () {
-        expect(
-          AppPreferences.decode({
-            'sftp_large_batch_bytes_threshold': '500',
-          }).sftpWarnGigabytes,
-          PreferenceLimits.sftpWarnGigabytes.min,
-        );
-      },
-    );
+    test('a sub-gigabyte stored value is raised to the floor rather than becoming zero', () {
+      expect(
+        AppPreferences.decode({'sftp_large_batch_bytes_threshold': '500'}).sftpWarnGigabytes,
+        PreferenceLimits.sftpWarnGigabytes.min,
+      );
+    });
 
     test('encode writes only the keys this screen owns', () {
       // Saving preferences must not clobber a bookmark list or a preset toggle.
@@ -245,17 +186,11 @@ void main() {
     test('biometrics without the app lock is flagged', () {
       // It silently does nothing, which is worse than being refused.
       const prefs = AppPreferences(appLockEnabled: false, useBiometrics: true);
-      expect(
-        prefs.warnings,
-        contains(contains('does nothing while the app lock is off')),
-      );
+      expect(prefs.warnings, contains(contains('does nothing while the app lock is off')));
     });
 
     test('an always-on battery saver is flagged', () {
-      const prefs = AppPreferences(
-        batterySaverEnabled: true,
-        batterySaverThresholdPercent: 95,
-      );
+      const prefs = AppPreferences(batterySaverEnabled: true, batterySaverThresholdPercent: 95);
       expect(prefs.warnings, contains(contains('almost all the time')));
     });
 
@@ -265,10 +200,7 @@ void main() {
     });
 
     test('keep-alive with battery saver is flagged, because they conflict', () {
-      const prefs = AppPreferences(
-        backgroundKeepAlive: true,
-        batterySaverEnabled: true,
-      );
+      const prefs = AppPreferences(backgroundKeepAlive: true, batterySaverEnabled: true);
       expect(prefs.warnings, contains(contains('keep-alive will stop')));
     });
 
@@ -290,10 +222,7 @@ void main() {
 
     setUp(() {
       db = AppDatabase(NativeDatabase.memory());
-      repo = AppRepository(
-        db,
-        SecretStore(storage: FakeSecureStorage(<String, String>{})),
-      );
+      repo = AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{})));
       app = AppState(repo);
       HostDisplay.instance.hideSensitiveInfo = false;
     });
@@ -331,9 +260,7 @@ void main() {
 
     test('saving persists and clears the dirty state', () async {
       final vm = await boot();
-      vm.update(
-        (p) => p.copyWith(terminalTheme: 'matrix', terminalFontSize: 18),
-      );
+      vm.update((p) => p.copyWith(terminalTheme: 'matrix', terminalFontSize: 18));
       await vm.save();
 
       expect(vm.isDirty, isFalse);
@@ -378,21 +305,18 @@ void main() {
       vm.dispose();
     });
 
-    test(
-      'hide-sensitive-info reaches the live singleton on load and on save',
-      () async {
-        // Every screen that renders an address observes HostDisplay directly, so it has to be told
-        // rather than waiting to be read again.
-        await repo.insertSetting('hide_sensitive_info', 'true');
-        final vm = await boot();
-        expect(HostDisplay.instance.hideSensitiveInfo, isTrue);
+    test('hide-sensitive-info reaches the live singleton on load and on save', () async {
+      // Every screen that renders an address observes HostDisplay directly, so it has to be told
+      // rather than waiting to be read again.
+      await repo.insertSetting('hide_sensitive_info', 'true');
+      final vm = await boot();
+      expect(HostDisplay.instance.hideSensitiveInfo, isTrue);
 
-        vm.update((p) => p.copyWith(hideSensitiveInfo: false));
-        await vm.save();
-        expect(HostDisplay.instance.hideSensitiveInfo, isFalse);
-        vm.dispose();
-      },
-    );
+      vm.update((p) => p.copyWith(hideSensitiveInfo: false));
+      await vm.save();
+      expect(HostDisplay.instance.hideSensitiveInfo, isFalse);
+      vm.dispose();
+    });
 
     test('warnings follow the draft, not the saved values', () async {
       final vm = await boot();

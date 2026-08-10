@@ -111,9 +111,7 @@ class MonitorViewModel extends ChangeNotifier {
     }
     if (!force && _hourlyForServer == server.id) return;
     _hourlyForServer = server.id;
-    final since = DateTime.now()
-        .subtract(retainedHistoryWindow)
-        .millisecondsSinceEpoch;
+    final since = DateTime.now().subtract(retainedHistoryWindow).millisecondsSinceEpoch;
     final rows = await _app.repository.getMetricsSince(server.id, since);
     // The host can change while the query is in flight.
     if (_disposed || monitoredServer?.id != server.id) return;

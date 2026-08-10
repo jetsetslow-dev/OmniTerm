@@ -358,12 +358,7 @@ void main() {
     testWidgets('editing a host does not warn about its own address', (tester) async {
       // Otherwise every edit of an existing host would warn about itself.
       final existing = saved();
-      await pump(
-        tester,
-        mode: ServerFormMode.edit,
-        source: existing,
-        existingServers: [existing],
-      );
+      await pump(tester, mode: ServerFormMode.edit, source: existing, existingServers: [existing]);
       await tester.tap(find.byKey(const ValueKey('serverForm.save')));
       await tester.pumpAndSettle();
 

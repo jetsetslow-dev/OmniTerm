@@ -108,10 +108,7 @@ Future<void> main() async {
 /// mid-session does not find some hosts working and others not.
 AppRepository _buildRepository(AppDatabase db) {
   final legacy = LegacySecretChannel();
-  final repository = AppRepository(
-    db,
-    SecretStore(legacyDecryptor: legacy.decrypt),
-  );
+  final repository = AppRepository(db, SecretStore(legacyDecryptor: legacy.decrypt));
   unawaited(repository.migrateLegacySecrets());
   return repository;
 }
@@ -122,49 +119,46 @@ AppRepository _buildRepository(AppDatabase db) {
 /// tab hides Browse for the rest rather than handing back a null the browser would have to explain
 /// (§18). SMB goes through the native bridge (§7.1); SFTP reuses the same pooled transport every
 /// other screen uses, so a share and a host on the same machine share one authenticated connection.
-Future<RemoteFsClient?> Function(NetworkShare) _shareClientFor(
-  DartSshTransport transport,
-) => (share) async {
-  final protocol = ShareProtocol.fromId(share.protocol);
-  return switch (protocol) {
-    ShareProtocol.smb => () {
-      final endpoint = SmbEndpoint(
-        host: share.address,
-        port: share.port,
-        shareName: ShareClients.smbShareName(share) ?? share.sharePath,
-        domain: share.workgroup,
-        username: share.username,
-        password: share.password,
-        anonymous: share.anonymous,
-      );
-      return Platform.isAndroid
-          ? PlatformSmbClient(endpoint)
-          : DartSmbClient(endpoint);
-    }(),
-    ShareProtocol.sftp => transport.sftp(
-      SshCredentials(
-        host: share.address,
-        port: share.port,
-        username: share.username,
-        password: share.password.isEmpty ? null : share.password,
-      ),
-    ),
-    ShareProtocol.ftp => FtpRemoteFsClient(
-      host: share.address,
-      port: share.port,
-      username: share.anonymous ? 'anonymous' : share.username,
-      password: share.anonymous ? '' : share.password,
-    ),
-    ShareProtocol.webdav => WebDavRemoteFsClient(
-      host: share.address,
-      port: share.port,
-      useHttps: share.useHttps,
-      username: share.anonymous ? '' : share.username,
-      password: share.anonymous ? '' : share.password,
-    ),
-    _ => null,
-  };
-};
+Future<RemoteFsClient?> Function(NetworkShare) _shareClientFor(DartSshTransport transport) =>
+    (share) async {
+      final protocol = ShareProtocol.fromId(share.protocol);
+      return switch (protocol) {
+        ShareProtocol.smb => () {
+          final endpoint = SmbEndpoint(
+            host: share.address,
+            port: share.port,
+            shareName: ShareClients.smbShareName(share) ?? share.sharePath,
+            domain: share.workgroup,
+            username: share.username,
+            password: share.password,
+            anonymous: share.anonymous,
+          );
+          return Platform.isAndroid ? PlatformSmbClient(endpoint) : DartSmbClient(endpoint);
+        }(),
+        ShareProtocol.sftp => transport.sftp(
+          SshCredentials(
+            host: share.address,
+            port: share.port,
+            username: share.username,
+            password: share.password.isEmpty ? null : share.password,
+          ),
+        ),
+        ShareProtocol.ftp => FtpRemoteFsClient(
+          host: share.address,
+          port: share.port,
+          username: share.anonymous ? 'anonymous' : share.username,
+          password: share.anonymous ? '' : share.password,
+        ),
+        ShareProtocol.webdav => WebDavRemoteFsClient(
+          host: share.address,
+          port: share.port,
+          useHttps: share.useHttps,
+          username: share.anonymous ? '' : share.username,
+          password: share.anonymous ? '' : share.password,
+        ),
+        _ => null,
+      };
+    };
 
 /// Builds the SFTP client for one host.
 ///
@@ -210,8 +204,7 @@ class OmniTermApp extends StatelessWidget {
           dispose: (_, controller) => controller.dispose(),
         ),
         Provider<AdsController>(
-          create: (_) =>
-              AdsController(enabled: isPlayStoreDistribution)..start(),
+          create: (_) => AdsController(enabled: isPlayStoreDistribution)..start(),
           dispose: (_, controller) => controller.dispose(),
         ),
         Provider<HomeWidgetSync>(create: (_) => HomeWidgetSync()),
@@ -219,46 +212,32 @@ class OmniTermApp extends StatelessWidget {
         Provider<ExternalLaunch>(create: (_) => ExternalLaunch()),
         Provider<ShortcutHelper>(create: (_) => ShortcutHelper()),
         Provider<PlatformPermissions>(create: (_) => PlatformPermissions()),
-        ChangeNotifierProvider<ExternalUiRequests>(
-          create: (_) => ExternalUiRequests(),
-        ),
+        ChangeNotifierProvider<ExternalUiRequests>(create: (_) => ExternalUiRequests()),
         ChangeNotifierProvider(
-          create: (_) => ShellState(
-            keepScreenOnSetter: (enabled) =>
-                WakelockPlus.toggle(enable: enabled),
-          ),
+          create: (_) =>
+              ShellState(keepScreenOnSetter: (enabled) => WakelockPlus.toggle(enable: enabled)),
         ),
         // One database and repository for the app's lifetime; the ViewModels layer on top.
-        Provider<AppDatabase>(
-          create: (_) => AppDatabase(),
-          dispose: (_, db) => db.close(),
-        ),
+        Provider<AppDatabase>(create: (_) => AppDatabase(), dispose: (_, db) => db.close()),
         // One trust store and one transport for the whole app. Sharing them is what makes the
         // connection pool, the host-key pins and the approval prompt consistent across screens —
         // a per-screen transport would re-prompt for the same host on every tab.
-        Provider<SshHostKeyTrust>(
-          create: (_) => SshHostKeyTrust(SecureHostKeyStore()),
-        ),
+        Provider<SshHostKeyTrust>(create: (_) => SshHostKeyTrust(SecureHostKeyStore())),
         Provider<DartSshTransport>(
-          create: (context) =>
-              DartSshTransport(context.read<SshHostKeyTrust>()),
+          create: (context) => DartSshTransport(context.read<SshHostKeyTrust>()),
           dispose: (_, transport) => transport.shutdown(),
         ),
-        ProxyProvider<DartSshTransport, SshTransport>(
-          update: (_, transport, _) => transport,
-        ),
+        ProxyProvider<DartSshTransport, SshTransport>(update: (_, transport, _) => transport),
         // A tunnel's connection is its own: `openDedicatedClient` stays out of the session pool, so
         // a forward does not die when the last terminal on that host is closed.
         Provider<SshTunnelManager>(
-          create: (context) => SshTunnelManager(
-            context.read<DartSshTransport>().openDedicatedClient,
-          ),
+          create: (context) =>
+              SshTunnelManager(context.read<DartSshTransport>().openDedicatedClient),
           dispose: (_, manager) => manager.stopAll(),
         ),
         Provider<ScreenSecurity>(create: (_) => ScreenSecurity()),
         ChangeNotifierProvider<AppState>(
-          create: (context) =>
-              AppState(_buildRepository(context.read<AppDatabase>()))..start(),
+          create: (context) => AppState(_buildRepository(context.read<AppDatabase>()))..start(),
         ),
         // Nothing else keeps `status` current, and Monitor, Infra, Fleet, SFTP and the terminal all
         // offer only hosts that are online — so without this sweep the app reads as empty
@@ -277,8 +256,7 @@ class OmniTermApp extends StatelessWidget {
           // `lazy: false` matters: nothing in the widget tree reads this provider, so with the
           // default it would never be constructed and the sweep would never run.
           lazy: false,
-          create: (context) =>
-              HostStatusProbe(context.read<AppState>().repository)..start(),
+          create: (context) => HostStatusProbe(context.read<AppState>().repository)..start(),
         ),
         // Declared after AppState because it reads the same repository, and loaded eagerly: the
         // lock has to be up before the first frame, not after it.
@@ -290,10 +268,8 @@ class OmniTermApp extends StatelessWidget {
         ),
         Provider<AlertNotifier>(create: (_) => LocalAlertNotifier()),
         ChangeNotifierProxyProvider<AppState, AlertsViewModel>(
-          create: (context) => AlertsViewModel(
-            context.read<AppState>(),
-            notifier: context.read<AlertNotifier>(),
-          ),
+          create: (context) =>
+              AlertsViewModel(context.read<AppState>(), notifier: context.read<AlertNotifier>()),
           update: (_, app, previous) => previous!,
         ),
         // Declared after the alerts view model because it feeds it: the poller measures hosts, and
@@ -340,10 +316,8 @@ class OmniTermApp extends StatelessWidget {
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, InfraViewModel>(
-          create: (context) => InfraViewModel(
-            context.read<AppState>(),
-            transport: context.read<SshTransport>(),
-          ),
+          create: (context) =>
+              InfraViewModel(context.read<AppState>(), transport: context.read<SshTransport>()),
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, FleetViewModel>(
@@ -383,10 +357,8 @@ class OmniTermApp extends StatelessWidget {
           update: (_, app, previous) => previous ?? ScriptsViewModel(app),
         ),
         ChangeNotifierProxyProvider<AppState, NetworkViewModel>(
-          create: (context) => NetworkViewModel(
-            context.read<AppState>(),
-            tunnels: context.read<SshTunnelManager>(),
-          ),
+          create: (context) =>
+              NetworkViewModel(context.read<AppState>(), tunnels: context.read<SshTunnelManager>()),
           update: (_, app, previous) => previous ?? NetworkViewModel(app),
         ),
         ChangeNotifierProxyProvider<AppState, BackupViewModel>(
@@ -421,8 +393,7 @@ class OmniTermApp extends StatelessWidget {
           // opens Settings. The previous lazy provider left every launch on defaults until that
           // screen happened to be visited.
           lazy: false,
-          create: (context) =>
-              SettingsViewModel(context.read<AppState>())..start(),
+          create: (context) => SettingsViewModel(context.read<AppState>())..start(),
           update: (_, app, previous) => previous ?? SettingsViewModel(app),
         ),
       ],
@@ -441,9 +412,9 @@ class OmniTermApp extends StatelessWidget {
             debugShowCheckedModeBanner: false,
             theme: omniTheme(mode, brightness),
             builder: (context, child) => MediaQuery(
-              data: MediaQuery.of(context).copyWith(
-                textScaler: TextScaler.linear(prefs.textScalePercent / 100.0),
-              ),
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: TextScaler.linear(prefs.textScalePercent / 100.0)),
               child: child!,
             ),
             // The lock is the outermost wrapper: a gate with a route, tab or dialog reachable
@@ -490,8 +461,7 @@ class _RuntimeBindings extends StatefulWidget {
   State<_RuntimeBindings> createState() => _RuntimeBindingsState();
 }
 
-class _RuntimeBindingsState extends State<_RuntimeBindings>
-    with WidgetsBindingObserver {
+class _RuntimeBindingsState extends State<_RuntimeBindings> with WidgetsBindingObserver {
   LicenseController? _license;
   AppState? _app;
   AlertsViewModel? _alerts;
@@ -555,20 +525,12 @@ class _RuntimeBindingsState extends State<_RuntimeBindings>
       _scheduleRuntimeSync();
     }
 
-    _widgetClicks ??= context.read<HomeWidgetSync>().widgetClickedStream.listen(
-      _handleWidgetUri,
-    );
+    _widgetClicks ??= context.read<HomeWidgetSync>().widgetClickedStream.listen(_handleWidgetUri);
     if (!_initialWidgetRead) {
       _initialWidgetRead = true;
-      unawaited(
-        context.read<HomeWidgetSync>().getInitiallyLaunchedUri().then(
-          _handleWidgetUri,
-        ),
-      );
+      unawaited(context.read<HomeWidgetSync>().getInitiallyLaunchedUri().then(_handleWidgetUri));
     }
-    _externalActions ??= context.read<ExternalLaunch>().actions.listen(
-      _queueExternalAction,
-    );
+    _externalActions ??= context.read<ExternalLaunch>().actions.listen(_queueExternalAction);
     if (!_initialExternalRead) {
       _initialExternalRead = true;
       unawaited(
@@ -722,9 +684,7 @@ class _RuntimeBindingsState extends State<_RuntimeBindings>
         // shortcut looked like a deleted host. Kotlin reads the row directly for the same reason
         // (`ui/AppViewModel.kt:4533`).
         final targetId = action.targetId;
-        final server = targetId == null
-            ? null
-            : await _app!.repository.getServerById(targetId);
+        final server = targetId == null ? null : await _app!.repository.getServerById(targetId);
         if (server == null) {
           _reportMissingShortcutTarget('host');
           nav.navigateTo(Screen.servers);
@@ -736,12 +696,8 @@ class _RuntimeBindingsState extends State<_RuntimeBindings>
       case 'open_split':
         final firstId = action.targetId;
         final secondId = action.secondTargetId;
-        final first = firstId == null
-            ? null
-            : await _app!.repository.getServerById(firstId);
-        final second = secondId == null
-            ? null
-            : await _app!.repository.getServerById(secondId);
+        final first = firstId == null ? null : await _app!.repository.getServerById(firstId);
+        final second = secondId == null ? null : await _app!.repository.getServerById(secondId);
         if (first == null || second == null) {
           _reportMissingShortcutTarget('host');
           nav.navigateTo(Screen.servers);
@@ -750,16 +706,10 @@ class _RuntimeBindingsState extends State<_RuntimeBindings>
         nav.navigateTo(Screen.shell);
         final beforeFirst = shell.sessions.map((session) => session.id).toSet();
         await shell.connect(first, controlMode: shell.useControlMode);
-        final firstSession = shell.sessions
-            .where((s) => !beforeFirst.contains(s.id))
-            .firstOrNull;
-        final beforeSecond = shell.sessions
-            .map((session) => session.id)
-            .toSet();
+        final firstSession = shell.sessions.where((s) => !beforeFirst.contains(s.id)).firstOrNull;
+        final beforeSecond = shell.sessions.map((session) => session.id).toSet();
         await shell.connect(second, controlMode: shell.useControlMode);
-        final secondSession = shell.sessions
-            .where((s) => !beforeSecond.contains(s.id))
-            .firstOrNull;
+        final secondSession = shell.sessions.where((s) => !beforeSecond.contains(s.id)).firstOrNull;
         if (firstSession != null && secondSession != null) {
           shell.select(firstSession.id);
           shell.splitWith(secondSession.id);
@@ -772,9 +722,7 @@ class _RuntimeBindingsState extends State<_RuntimeBindings>
         }
       case 'open_share':
         final shares = await _app!.repository.getAllNetworkShares();
-        final share = shares
-            .where((row) => row.id == action.targetId)
-            .firstOrNull;
+        final share = shares.where((row) => row.id == action.targetId).firstOrNull;
         if (share == null) {
           _reportMissingShortcutTarget('network share');
           nav.navigateTo(Screen.sftp);
@@ -802,9 +750,7 @@ class _RuntimeBindingsState extends State<_RuntimeBindings>
   }
 
   void _syncNavigation() {
-    context.read<ShellViewModel>().setTerminalVisible(
-      _navigation!.currentScreen == Screen.shell,
-    );
+    context.read<ShellViewModel>().setTerminalVisible(_navigation!.currentScreen == Screen.shell);
   }
 
   static bool _sameValues(List<String> left, List<String> right) {
@@ -894,9 +840,7 @@ class _BackHandlerState extends State<_BackHandler> {
   Future<void> _handleRootBack() async {
     final since = _lastBackPress;
     final action = decideBackExit(
-      msSinceLastBackPress: since == null
-          ? null
-          : DateTime.now().difference(since).inMilliseconds,
+      msSinceLastBackPress: since == null ? null : DateTime.now().difference(since).inMilliseconds,
       hasLiveSessions: _hasLiveSessions,
     );
 
@@ -928,9 +872,7 @@ class _BackHandlerState extends State<_BackHandler> {
           builder: (dialogContext) => AlertDialog(
             key: const ValueKey('app.exitDialog'),
             title: const Text('Exit OmniTerm?'),
-            content: const Text(
-              'Exiting will terminate all active background SSH sessions.',
-            ),
+            content: const Text('Exiting will terminate all active background SSH sessions.'),
             actions: [
               TextButton(
                 key: const ValueKey('app.exitDialog.cancel'),
@@ -940,10 +882,7 @@ class _BackHandlerState extends State<_BackHandler> {
               TextButton(
                 key: const ValueKey('app.exitDialog.confirm'),
                 onPressed: () => Navigator.of(dialogContext).pop(true),
-                child: const Text(
-                  'Terminate & Exit',
-                  style: TextStyle(color: OmniColors.red),
-                ),
+                child: const Text('Terminate & Exit', style: TextStyle(color: OmniColors.red)),
               ),
             ],
           ),

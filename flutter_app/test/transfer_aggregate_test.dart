@@ -8,15 +8,8 @@ import 'package:omniterm/domain/transfer_aggregate.dart';
 /// never "how far through the batch am I, and how long is left" — the only question worth asking
 /// while a folder copies.
 void main() {
-  TransferProgress running({
-    int done = 0,
-    int total = 0,
-    double speed = 0,
-  }) => TransferProgress(
-    bytesTransferred: done,
-    totalBytes: total,
-    speedKbps: speed,
-  );
+  TransferProgress running({int done = 0, int total = 0, double speed = 0}) =>
+      TransferProgress(bytesTransferred: done, totalBytes: total, speedKbps: speed);
 
   group('aggregateTransfers', () {
     test('nothing running means nothing to show', () {
@@ -39,10 +32,7 @@ void main() {
     test('a file of unknown size does not drag the total down', () {
       // Its bytes still count as progress, but it contributes no denominator — otherwise a nearly
       // finished batch would render as barely started.
-      final agg = aggregateTransfers([
-        running(done: 900, total: 1000),
-        running(done: 50),
-      ])!;
+      final agg = aggregateTransfers([running(done: 900, total: 1000), running(done: 50)])!;
 
       expect(agg.totalBytes, 1000);
       expect(agg.bytesTransferred, 950);
@@ -75,9 +65,7 @@ void main() {
   group('etaSeconds', () {
     test('estimates from the aggregate speed', () {
       // 1024 KB/s = 1 MB/s, 2 MB remaining.
-      final agg = aggregateTransfers([
-        running(done: 0, total: 2 * 1024 * 1024, speed: 1024),
-      ])!;
+      final agg = aggregateTransfers([running(done: 0, total: 2 * 1024 * 1024, speed: 1024)])!;
       expect(agg.etaSeconds, 2);
     });
 
@@ -88,9 +76,7 @@ void main() {
     });
 
     test('is -1 once there is nothing left', () {
-      final agg = aggregateTransfers([
-        running(done: 100, total: 100, speed: 512),
-      ])!;
+      final agg = aggregateTransfers([running(done: 100, total: 100, speed: 512)])!;
       expect(agg.etaSeconds, -1);
     });
   });

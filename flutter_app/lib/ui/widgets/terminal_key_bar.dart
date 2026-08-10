@@ -39,9 +39,7 @@ class _TerminalKeyBarState extends State<TerminalKeyBar> {
         padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
         child: vm.current?.readOnly ?? false
             ? _readOnlyBar(vm)
-            : Row(
-                children: _caps(vm).map((cap) => Expanded(child: cap)).toList(),
-              ),
+            : Row(children: _caps(vm).map((cap) => Expanded(child: cap)).toList()),
       ),
     );
   }

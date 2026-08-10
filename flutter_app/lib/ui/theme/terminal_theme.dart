@@ -92,9 +92,7 @@ int ansi16Index(int argb) {
 double terminalRelativeLuminance(int argb) {
   double linear(int channel) {
     final c = channel / 255.0;
-    return c <= 0.03928
-        ? c / 12.92
-        : math.pow((c + 0.055) / 1.055, 2.4).toDouble();
+    return c <= 0.03928 ? c / 12.92 : math.pow((c + 0.055) / 1.055, 2.4).toDouble();
   }
 
   return 0.2126 * linear((argb >> 16) & 0xff) +
@@ -119,11 +117,7 @@ int lerpTerminalArgb(int from, int to, double amount) {
 }
 
 /// Keeps remote-selected colours legible when the local terminal uses a different background.
-int ensureTerminalTextLegible(
-  int foreground,
-  int background, {
-  double minimumRatio = 2.5,
-}) {
+int ensureTerminalTextLegible(int foreground, int background, {double minimumRatio = 2.5}) {
   if (terminalContrastRatio(foreground, background) >= minimumRatio) {
     return foreground;
   }

@@ -36,24 +36,12 @@ void main() {
     test('is valid shell', () {
       // `sh -n` parses without executing.
       final run = Process.runSync(sh, ['-n', '-c', tmuxInstallCommand()]);
-      expect(
-        run.exitCode,
-        0,
-        reason: 'the installer must parse: ${run.stderr}',
-      );
+      expect(run.exitCode, 0, reason: 'the installer must parse: ${run.stderr}');
     });
 
     test('covers every package manager Kotlin covers', () {
       final command = tmuxInstallCommand();
-      for (final manager in const [
-        'apt-get',
-        'dnf',
-        'yum',
-        'pacman',
-        'apk',
-        'zypper',
-        'pkg',
-      ]) {
+      for (final manager in const ['apt-get', 'dnf', 'yum', 'pacman', 'apk', 'zypper', 'pkg']) {
         expect(command, contains(manager), reason: '$manager branch is missing');
       }
     });

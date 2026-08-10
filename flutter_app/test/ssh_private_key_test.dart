@@ -48,41 +48,24 @@ void main() {
     });
 
     test('an empty or whitespace key is rejected', () {
-      expect(
-        () => parsePrivateKey(''),
-        throwsA(isA<InvalidPrivateKeyException>()),
-      );
-      expect(
-        () => parsePrivateKey('   \n  '),
-        throwsA(isA<InvalidPrivateKeyException>()),
-      );
+      expect(() => parsePrivateKey(''), throwsA(isA<InvalidPrivateKeyException>()));
+      expect(() => parsePrivateKey('   \n  '), throwsA(isA<InvalidPrivateKeyException>()));
     });
 
-    test(
-      'a corrupt PEM body reports a usable message, never an object dump',
-      () {
-        final corrupt =
-            '${pemBegin('OPENSSH')}\n'
-            'not-actually-base64-key-material\n'
-            '${pemEnd('OPENSSH')}';
-        try {
-          parsePrivateKey(corrupt);
-          fail('expected the corrupt key to be rejected');
-        } on InvalidPrivateKeyException catch (e) {
-          expect(e.message, startsWith('Invalid private key'));
-          expect(
-            e.message,
-            isNot(contains('[B@')),
-            reason: 'the JSch leak this guard exists for',
-          );
-          expect(
-            e.message,
-            isNot(contains('Instance of')),
-            reason: "Dart's equivalent leak",
-          );
-        }
-      },
-    );
+    test('a corrupt PEM body reports a usable message, never an object dump', () {
+      final corrupt =
+          '${pemBegin('OPENSSH')}\n'
+          'not-actually-base64-key-material\n'
+          '${pemEnd('OPENSSH')}';
+      try {
+        parsePrivateKey(corrupt);
+        fail('expected the corrupt key to be rejected');
+      } on InvalidPrivateKeyException catch (e) {
+        expect(e.message, startsWith('Invalid private key'));
+        expect(e.message, isNot(contains('[B@')), reason: 'the JSch leak this guard exists for');
+        expect(e.message, isNot(contains('Instance of')), reason: "Dart's equivalent leak");
+      }
+    });
 
     test('the fallback message mentions the passphrase, the usual cause', () {
       final corrupt = "${pemBegin('RSA')}\nzzzz\n${pemEnd('RSA')}";
@@ -101,79 +84,55 @@ void main() {
   });
 
   group('ShareClients.startPath', () {
-    NetworkShare share({required String protocol, String sharePath = ''}) =>
-        NetworkShare(
-          id: 1,
-          name: 'test',
-          protocol: protocol,
-          address: '10.0.0.5',
-          port: 445,
-          sharePath: sharePath,
-          workgroup: '',
-          username: '',
-          password: '',
-          anonymous: true,
-          useHttps: false,
-          notes: '',
-          lastChecked: 0,
-          lastStatus: 'unknown',
-        );
-
-    test(
-      'SMB drops the first segment, which the connection already consumed',
-      () async {
-        final client = _StubFsClient('/home/stub');
-        expect(
-          await ShareClients.startPath(
-            share(protocol: 'SMB', sharePath: 'Public/docs/2026'),
-            client,
-          ),
-          '/docs/2026',
-        );
-        expect(
-          await ShareClients.startPath(
-            share(protocol: 'SMB', sharePath: 'Public'),
-            client,
-          ),
-          '/',
-        );
-      },
+    NetworkShare share({required String protocol, String sharePath = ''}) => NetworkShare(
+      id: 1,
+      name: 'test',
+      protocol: protocol,
+      address: '10.0.0.5',
+      port: 445,
+      sharePath: sharePath,
+      workgroup: '',
+      username: '',
+      password: '',
+      anonymous: true,
+      useHttps: false,
+      notes: '',
+      lastChecked: 0,
+      lastStatus: 'unknown',
     );
+
+    test('SMB drops the first segment, which the connection already consumed', () async {
+      final client = _StubFsClient('/home/stub');
+      expect(
+        await ShareClients.startPath(share(protocol: 'SMB', sharePath: 'Public/docs/2026'), client),
+        '/docs/2026',
+      );
+      expect(
+        await ShareClients.startPath(share(protocol: 'SMB', sharePath: 'Public'), client),
+        '/',
+      );
+    });
 
     test('other protocols use the configured path verbatim', () async {
       final client = _StubFsClient('/home/stub');
       expect(
-        await ShareClients.startPath(
-          share(protocol: 'FTP', sharePath: '/pub/incoming/'),
-          client,
-        ),
+        await ShareClients.startPath(share(protocol: 'FTP', sharePath: '/pub/incoming/'), client),
         '/pub/incoming',
       );
     });
 
     test('a blank path falls back to the client home', () async {
       final client = _StubFsClient('/home/stub');
-      expect(
-        await ShareClients.startPath(share(protocol: 'SFTP'), client),
-        '/home/stub',
-      );
+      expect(await ShareClients.startPath(share(protocol: 'SFTP'), client), '/home/stub');
     });
 
     test('smbShareName takes the first segment only', () {
       expect(
-        ShareClients.smbShareName(
-          share(protocol: 'SMB', sharePath: '/Public/docs'),
-        ),
+        ShareClients.smbShareName(share(protocol: 'SMB', sharePath: '/Public/docs')),
         'Public',
       );
-      expect(
-        ShareClients.smbShareName(share(protocol: 'SMB', sharePath: '')),
-        isNull,
-      );
-      expect(
-        ShareClients.smbShareName(share(protocol: 'SMB', sharePath: '/')),
-        isNull,
-      );
+      expect(ShareClients.smbShareName(share(protocol: 'SMB', sharePath: '')), isNull);
+      expect(ShareClients.smbShareName(share(protocol: 'SMB', sharePath: '/')), isNull);
     });
   });
 
@@ -181,9 +140,7 @@ void main() {
     test('formats a real timestamp and blanks a missing one', () {
       expect(formatFsDate(0), '');
       expect(formatFsDate(-1), '');
-      final formatted = formatFsDate(
-        DateTime(2026, 5, 30, 14, 5).millisecondsSinceEpoch,
-      );
+      final formatted = formatFsDate(DateTime(2026, 5, 30, 14, 5).millisecondsSinceEpoch);
       expect(formatted, '2026-05-30 14:05');
     });
   });
@@ -204,32 +161,22 @@ void main() {
 
       expect(copied, 5);
       expect(sink.bytes, [1, 2, 3, 4, 5]);
-      expect(
-        reports.first,
-        (0, 5),
-        reason: 'an initial 0 lets the UI render the row immediately',
-      );
+      expect(reports.first, (0, 5), reason: 'an initial 0 lets the UI render the row immediately');
       expect(reports.last, (5, 5));
     });
 
-    test(
-      'an unknown total is replaced by the observed count on completion',
-      () async {
-        final reports = <(int, int)>[];
-        await copyWithProgress(
-          Stream.fromIterable([
-            [1, 2, 3],
-          ]),
-          _CollectingSink(),
-          0,
-          onProgress: (c, t) => reports.add((c, t)),
-        );
-        expect(reports.last, (
-          3,
-          3,
-        ), reason: 'otherwise a finished transfer renders as partial');
-      },
-    );
+    test('an unknown total is replaced by the observed count on completion', () async {
+      final reports = <(int, int)>[];
+      await copyWithProgress(
+        Stream.fromIterable([
+          [1, 2, 3],
+        ]),
+        _CollectingSink(),
+        0,
+        onProgress: (c, t) => reports.add((c, t)),
+      );
+      expect(reports.last, (3, 3), reason: 'otherwise a finished transfer renders as partial');
+    });
 
     test('progress is throttled, not emitted per chunk', () async {
       // 200 tiny chunks well under the 64 KiB threshold and inside 150 ms: only the bookend reports
@@ -300,11 +247,7 @@ class _StubFsClient extends RemoteFsClient {
   Future<void> mkdir(String path) async {}
 
   @override
-  Future<void> rename(
-    String oldPath,
-    String newPath, {
-    bool isDirectory = false,
-  }) async {}
+  Future<void> rename(String oldPath, String newPath, {bool isDirectory = false}) async {}
 
   @override
   Future<void> delete(String path, {required bool isDirectory}) async {}

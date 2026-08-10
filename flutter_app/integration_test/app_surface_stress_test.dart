@@ -22,16 +22,12 @@ import 'package:provider/provider.dart';
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('every route and subtab opens in every app theme and orientation', (
-    tester,
-  ) async {
+  testWidgets('every route and subtab opens in every app theme and orientation', (tester) async {
     installErrorLocationProbe();
     app.main();
     await tester.pumpAndSettle(const Duration(seconds: 2));
 
-    final initialContext = tester.element(
-      find.byKey(const ValueKey('screen.servers')),
-    );
+    final initialContext = tester.element(find.byKey(const ValueKey('screen.servers')));
     final appState = initialContext.read<AppState>();
     final navigation = initialContext.read<NavigationController>();
     final settings = initialContext.read<SettingsViewModel>();
@@ -113,11 +109,7 @@ void main() {
     ];
     final orientations = <(String, List<DeviceOrientation>, Orientation)>[
       ('portrait', const [DeviceOrientation.portraitUp], Orientation.portrait),
-      (
-        'landscape',
-        const [DeviceOrientation.landscapeLeft],
-        Orientation.landscape,
-      ),
+      ('landscape', const [DeviceOrientation.landscapeLeft], Orientation.landscape),
     ];
 
     for (final (themeName, dark, amoled, contrast, textScale) in variants) {
@@ -150,8 +142,7 @@ void main() {
       // the plain dark one.
       await _waitForTextScale(tester, textScale, themeName);
 
-      for (final (orientationName, allowed, expectedOrientation)
-          in orientations) {
+      for (final (orientationName, allowed, expectedOrientation) in orientations) {
         await SystemChrome.setPreferredOrientations(allowed);
         await _waitForOrientation(tester, expectedOrientation);
 
@@ -251,17 +242,11 @@ void main() {
 }
 
 /// Waits until the live text scaler is the one the preference asked for.
-Future<void> _waitForTextScale(
-  WidgetTester tester,
-  int percent,
-  String label,
-) async {
+Future<void> _waitForTextScale(WidgetTester tester, int percent, String label) async {
   final expected = percent / 100.0;
   for (var attempt = 0; attempt < 30; attempt++) {
     await tester.pump(const Duration(milliseconds: 100));
-    final scaler = MediaQuery.textScalerOf(
-      tester.element(find.byType(Scaffold).first),
-    );
+    final scaler = MediaQuery.textScalerOf(tester.element(find.byType(Scaffold).first));
     if ((scaler.scale(100) - 100 * expected).abs() < 0.5) return;
   }
   fail('$label never reached the widget tree: text scale did not change');
@@ -271,19 +256,12 @@ Future<void> _waitForTextScale(
 ///
 /// A settings save reaches the tree through a notification and a rebuild, so sampling once reads the
 /// previous variant and fails on this helper's own latency rather than on anything real.
-Future<void> _waitForTheme(
-  WidgetTester tester,
-  OmniThemeMode mode,
-  String label,
-) async {
+Future<void> _waitForTheme(WidgetTester tester, OmniThemeMode mode, String label) async {
   // Sampled from a *descendant* of MaterialApp. `Theme.of` on MaterialApp's own element resolves
   // the ancestor fallback rather than the theme MaterialApp installs beneath itself, which reads as
   // a constant and would make this check pass no matter what the app rendered.
   Element themedElement() => tester.element(find.byType(Scaffold).first);
-  final expected = omniTheme(
-    mode,
-    MediaQuery.platformBrightnessOf(themedElement()),
-  );
+  final expected = omniTheme(mode, MediaQuery.platformBrightnessOf(themedElement()));
   for (var attempt = 0; attempt < 30; attempt++) {
     await tester.pump(const Duration(milliseconds: 100));
     final live = Theme.of(themedElement());
@@ -295,10 +273,7 @@ Future<void> _waitForTheme(
   fail('$label never reached the widget tree: the theme did not change');
 }
 
-Future<void> _waitForOrientation(
-  WidgetTester tester,
-  Orientation expected,
-) async {
+Future<void> _waitForOrientation(WidgetTester tester, Orientation expected) async {
   for (var attempt = 0; attempt < 30; attempt++) {
     await tester.pump(const Duration(milliseconds: 100));
     final route = find.byKey(
@@ -321,12 +296,7 @@ Screen? _visibleScreen(WidgetTester tester) {
   return null;
 }
 
-void _expectSurface(
-  WidgetTester tester,
-  Screen screen,
-  String label,
-  List<String> renderFailures,
-) {
+void _expectSurface(WidgetTester tester, Screen screen, String label, List<String> renderFailures) {
   final route = find.byKey(ValueKey('screen.${screen.name}'));
   expect(route, findsOneWidget, reason: '$label did not build its route');
   expect(
@@ -362,17 +332,9 @@ void installErrorLocationProbe() {
   };
 }
 
-Future<void> _expectSubtab(
-  WidgetTester tester,
-  String label,
-  List<String> renderFailures,
-) async {
+Future<void> _expectSubtab(WidgetTester tester, String label, List<String> renderFailures) async {
   await tester.pump(const Duration(milliseconds: 140));
   final exception = tester.takeException();
   if (exception != null) renderFailures.add('$label: $exception');
-  expect(
-    find.byType(Text),
-    findsWidgets,
-    reason: '$label rendered no readable content',
-  );
+  expect(find.byType(Text), findsWidgets, reason: '$label rendered no readable content');
 }

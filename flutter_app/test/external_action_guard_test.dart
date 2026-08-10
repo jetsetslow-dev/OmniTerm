@@ -12,11 +12,7 @@ void main() {
   group('ExternalActionGuard (§20.1 Pattern O)', () {
     test('action remains pending while app is locked', () {
       final guard = ExternalActionGuard();
-      const action = ExternalAction(
-        id: 'action-1',
-        type: 'connect_host',
-        targetId: 42,
-      );
+      const action = ExternalAction(id: 'action-1', type: 'connect_host', targetId: 42);
 
       guard.setPendingAction(action);
       expect(guard.pendingAction, equals(action));
@@ -29,11 +25,7 @@ void main() {
 
     test('action is consumed exactly once when app is unlocked', () {
       final guard = ExternalActionGuard();
-      const action = ExternalAction(
-        id: 'action-1',
-        type: 'connect_host',
-        targetId: 42,
-      );
+      const action = ExternalAction(id: 'action-1', type: 'connect_host', targetId: 42);
 
       guard.setPendingAction(action);
 
@@ -49,11 +41,7 @@ void main() {
 
     test('clear removes pending action without executing', () {
       final guard = ExternalActionGuard();
-      const action = ExternalAction(
-        id: 'action-1',
-        type: 'connect_host',
-        targetId: 42,
-      );
+      const action = ExternalAction(id: 'action-1', type: 'connect_host', targetId: 42);
 
       guard.setPendingAction(action);
       guard.clear();
@@ -69,10 +57,7 @@ void main() {
     // (`ui/AppViewModel.kt:4533`).
     test('the repository answers before the host stream has', () async {
       final db = AppDatabase(NativeDatabase.memory());
-      final repo = AppRepository(
-        db,
-        SecretStore(storage: FakeSecureStorage(<String, String>{})),
-      );
+      final repo = AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{})));
       final id = await repo.insertServer(_shortcutHost());
       final app = AppState(repo);
 

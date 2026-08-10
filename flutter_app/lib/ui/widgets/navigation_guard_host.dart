@@ -47,8 +47,7 @@ class _NavigationGuardHostState extends State<NavigationGuardHost> {
     }
 
     final shell = context.read<ShellViewModel>();
-    if (from == Screen.shell &&
-        (shell.sessions.isNotEmpty || shell.isConnecting)) {
+    if (from == Screen.shell && (shell.sessions.isNotEmpty || shell.isConnecting)) {
       setState(() {
         _pending = _PendingGuard.shell;
         _target = target;
@@ -96,9 +95,7 @@ class _NavigationGuardHostState extends State<NavigationGuardHost> {
         child: AlertDialog(
           key: const ValueKey('navigation.settingsDiscard'),
           title: const Text('Discard changes?'),
-          content: const Text(
-            'You have unsaved Settings changes. Leave and discard them?',
-          ),
+          content: const Text('You have unsaved Settings changes. Leave and discard them?'),
           actions: [
             TextButton(
               key: const ValueKey('navigation.settings.keepEditing'),
@@ -111,10 +108,7 @@ class _NavigationGuardHostState extends State<NavigationGuardHost> {
                 context.read<SettingsViewModel>().revert();
                 _commit();
               },
-              child: const Text(
-                'Discard',
-                style: TextStyle(color: OmniColors.red),
-              ),
+              child: const Text('Discard', style: TextStyle(color: OmniColors.red)),
             ),
           ],
         ),
@@ -126,8 +120,7 @@ class _NavigationGuardHostState extends State<NavigationGuardHost> {
     final vm = context.watch<ShellViewModel>();
     final sessions = vm.sessions;
     final allPersistent =
-        sessions.isNotEmpty &&
-        sessions.every((session) => session.tmuxName != null);
+        sessions.isNotEmpty && sessions.every((session) => session.tmuxName != null);
     return Positioned.fill(
       child: Material(
         color: Colors.black54,
@@ -156,9 +149,7 @@ class _NavigationGuardHostState extends State<NavigationGuardHost> {
                   if (mounted) _commit();
                 },
                 child: Text(
-                  vm.isConnecting && sessions.isEmpty
-                      ? 'Cancel connection'
-                      : 'Disconnect all',
+                  vm.isConnecting && sessions.isEmpty ? 'Cancel connection' : 'Disconnect all',
                   style: const TextStyle(color: OmniColors.red),
                 ),
               ),
@@ -168,9 +159,7 @@ class _NavigationGuardHostState extends State<NavigationGuardHost> {
                   vm.leaveOrBackgroundAll();
                   _commit();
                 },
-                child: Text(
-                  allPersistent ? 'Leave resumable' : 'Send to background',
-                ),
+                child: Text(allPersistent ? 'Leave resumable' : 'Send to background'),
               ),
               TextButton(
                 key: const ValueKey('navigation.shell.stay'),

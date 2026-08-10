@@ -17,39 +17,24 @@ void main() {
   test('a session nobody has closed does not claim an age', () {
     // backgroundedAt is 0 until a tab is closed. Rendering that as an elapsed time would date every
     // open session to 1970; the honest phrase is that nobody knows.
-    expect(
-      describeSessionAge(row(backgroundedAt: 0), now: now),
-      contains('still open'),
-    );
+    expect(describeSessionAge(row(backgroundedAt: 0), now: now), contains('still open'));
   });
 
   test('the phrasing scales with how long it has been sitting there', () {
     expect(
-      describeSessionAge(
-        row(backgroundedAt: ago(const Duration(seconds: 20))),
-        now: now,
-      ),
+      describeSessionAge(row(backgroundedAt: ago(const Duration(seconds: 20))), now: now),
       'left running just now',
     );
     expect(
-      describeSessionAge(
-        row(backgroundedAt: ago(const Duration(minutes: 4))),
-        now: now,
-      ),
+      describeSessionAge(row(backgroundedAt: ago(const Duration(minutes: 4))), now: now),
       'left running 4m ago',
     );
     expect(
-      describeSessionAge(
-        row(backgroundedAt: ago(const Duration(hours: 5))),
-        now: now,
-      ),
+      describeSessionAge(row(backgroundedAt: ago(const Duration(hours: 5))), now: now),
       'left running 5h ago',
     );
     expect(
-      describeSessionAge(
-        row(backgroundedAt: ago(const Duration(days: 9))),
-        now: now,
-      ),
+      describeSessionAge(row(backgroundedAt: ago(const Duration(days: 9))), now: now),
       'left running 9d ago',
     );
   });
@@ -58,11 +43,7 @@ void main() {
     // A negative age is a fact about the device's clock, not about the session.
     expect(
       describeSessionAge(
-        row(
-          backgroundedAt: now
-              .add(const Duration(hours: 2))
-              .millisecondsSinceEpoch,
-        ),
+        row(backgroundedAt: now.add(const Duration(hours: 2)).millisecondsSinceEpoch),
         now: now,
       ),
       'left running',
@@ -77,13 +58,10 @@ void main() {
     final now = DateTime(2026, 8, 10, 12, 0);
     String age(Duration ago) => formatSessionAge(now.subtract(ago), now: now);
 
-    test(
-      'a session opened this second has not been running for zero minutes',
-      () {
-        expect(age(const Duration(seconds: 5)), 'just now');
-        expect(age(Duration.zero), 'just now');
-      },
-    );
+    test('a session opened this second has not been running for zero minutes', () {
+      expect(age(const Duration(seconds: 5)), 'just now');
+      expect(age(Duration.zero), 'just now');
+    });
 
     test('minutes, then hours, then days', () {
       expect(age(const Duration(minutes: 7)), '7m');
@@ -107,10 +85,7 @@ void main() {
 
     test('a start in the future is not rendered as a negative age', () {
       // A clock adjustment during a long-lived session produces exactly this.
-      expect(
-        formatSessionAge(now.add(const Duration(hours: 1)), now: now),
-        '—',
-      );
+      expect(formatSessionAge(now.add(const Duration(hours: 1)), now: now), '—');
     });
   });
 }

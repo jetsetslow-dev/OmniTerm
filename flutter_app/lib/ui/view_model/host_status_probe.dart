@@ -110,18 +110,9 @@ class HostStatusProbe extends ChangeNotifier {
       // Shown as "connecting" while a previously offline host is retried, so a slow probe reads as
       // work in progress rather than a host that is simply still down.
       if (server.status == 'offline') {
-        await _repository.updateConnectionState(
-          server.id,
-          'connecting',
-          server.healthScore,
-          0,
-        );
+        await _repository.updateConnectionState(server.id, 'connecting', server.healthScore, 0);
       }
-      final rtt = await probe.tcpPing(
-        server.host,
-        server.port,
-        timeout: timeout,
-      );
+      final rtt = await probe.tcpPing(server.host, server.port, timeout: timeout);
       if (_disposed) return;
       // Recorded on a real answer only. A probe that threw says nothing about the host.
       _probed.add(server.id);
@@ -141,9 +132,7 @@ class HostStatusProbe extends ChangeNotifier {
       if (_disposed) return;
       // Any failure means "not reachable"; a host stuck at "connecting" forever would be worse than
       // one honestly marked offline.
-      await _repository
-          .updateConnectionState(server.id, 'offline', 0, 0)
-          .catchError((Object _) {});
+      await _repository.updateConnectionState(server.id, 'offline', 0, 0).catchError((Object _) {});
     }
   }
 

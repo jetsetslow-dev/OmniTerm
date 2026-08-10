@@ -84,9 +84,7 @@ class _NoOnlineHosts extends StatelessWidget {
             const SizedBox(height: 12),
             Text(
               'No online hosts available to monitor',
-              style: TextStyle(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
           ],
         ),
@@ -97,11 +95,7 @@ class _NoOnlineHosts extends StatelessWidget {
 
 /// Which host is being monitored, its health ring, and the reboot action.
 class _SelectorBar extends StatelessWidget {
-  const _SelectorBar({
-    required this.vm,
-    required this.server,
-    this.compact = false,
-  });
+  const _SelectorBar({required this.vm, required this.server, this.compact = false});
 
   /// Drops the score ring and tightens the padding when the screen is short.
   ///
@@ -115,9 +109,7 @@ class _SelectorBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final online = context.select<MonitorViewModel, List<Server>>(
-      (m) => m.onlineServers,
-    );
+    final online = context.select<MonitorViewModel, List<Server>>((m) => m.onlineServers);
     final accent = OmniColors.serverAccent(server.serverColor, server.name);
 
     // HostDisplay is an observable singleton, so it must be listened to rather than merely read —
@@ -153,11 +145,7 @@ class _SelectorBar extends StatelessWidget {
             IconButton(
               key: const ValueKey('monitor.reboot'),
               tooltip: 'Reboot host',
-              icon: const Icon(
-                Icons.restart_alt,
-                size: 18,
-                color: OmniColors.red,
-              ),
+              icon: const Icon(Icons.restart_alt, size: 18, color: OmniColors.red),
               onPressed: () => _confirmReboot(context, vm, server),
             ),
           ],
@@ -166,11 +154,7 @@ class _SelectorBar extends StatelessWidget {
     );
   }
 
-  Future<void> _confirmReboot(
-    BuildContext context,
-    MonitorViewModel vm,
-    Server server,
-  ) async {
+  Future<void> _confirmReboot(BuildContext context, MonitorViewModel vm, Server server) async {
     // Rebooting is destructive and irreversible from the app's side, so it is always confirmed and
     // the dialog says plainly what will run and what it needs.
     final confirmed = await showDialog<bool>(
@@ -192,10 +176,7 @@ class _SelectorBar extends StatelessWidget {
           TextButton(
             key: const ValueKey('monitor.reboot.confirm'),
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text(
-              'Reboot',
-              style: TextStyle(color: OmniColors.red),
-            ),
+            child: const Text('Reboot', style: TextStyle(color: OmniColors.red)),
           ),
         ],
       ),
@@ -230,9 +211,7 @@ class _ScoreRing extends StatelessWidget {
           CircularProgressIndicator(
             value: (score / 100).clamp(0.0, 1.0),
             strokeWidth: 3,
-            backgroundColor: Theme.of(
-              context,
-            ).colorScheme.surfaceContainerHighest,
+            backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
             valueColor: AlwaysStoppedAnimation(
               score >= 70
                   ? OmniColors.green
@@ -285,10 +264,7 @@ class _TabBar extends StatelessWidget {
               child: Center(
                 child: ChoiceChip(
                   key: ValueKey('monitor.tab.${tab.name}'),
-                  label: Text(
-                    _labels[tab]!,
-                    style: const TextStyle(fontSize: 12),
-                  ),
+                  label: Text(_labels[tab]!, style: const TextStyle(fontSize: 12)),
                   selected: vm.activeTab == tab,
                   onSelected: (_) => vm.activeTab = tab,
                 ),

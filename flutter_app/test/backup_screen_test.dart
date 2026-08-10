@@ -406,10 +406,7 @@ void main() {
 
     testWidgets('a stored time is shown when the screen opens', (tester) async {
       final when = DateTime(2026, 3, 4, 15, 30);
-      await repo.insertSetting(
-        'backup_last_export_time',
-        '${when.millisecondsSinceEpoch}',
-      );
+      await repo.insertSetting('backup_last_export_time', '${when.millisecondsSinceEpoch}');
       await pump(tester);
 
       final shown = lastExport(tester).data!;
@@ -425,9 +422,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(lastExport(tester).data, isNot(contains('Never')));
-      final stored = int.tryParse(
-        await repo.getSetting('backup_last_export_time') ?? '',
-      );
+      final stored = int.tryParse(await repo.getSetting('backup_last_export_time') ?? '');
       expect(stored, isNotNull);
       expect(
         stored,

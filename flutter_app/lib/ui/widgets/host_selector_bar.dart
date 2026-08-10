@@ -68,10 +68,7 @@ class HostSelectorBar extends StatelessWidget {
                     child: Text(
                       '${display.name(host)} — ${display.userAtHost(host)}',
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontFamily: OmniFonts.mono,
-                        fontSize: 13,
-                      ),
+                      style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13),
                     ),
                   ),
                 ],
@@ -83,12 +80,7 @@ class HostSelectorBar extends StatelessWidget {
     );
   }
 
-  Widget _closedLabel(
-    Server host,
-    HostDisplay display,
-    Color accent,
-    Color muted,
-  ) {
+  Widget _closedLabel(Server host, HostDisplay display, Color accent, Color muted) {
     // "offline" rather than a stale number: a latency from before the host went quiet reads as if it
     // were still answering.
     final latency = host.status == 'online' ? '${host.lastLatency}ms' : 'offline';
@@ -132,9 +124,6 @@ class _StatusDot extends StatelessWidget {
   Widget build(BuildContext context) => Container(
     width: 8,
     height: 8,
-    decoration: BoxDecoration(
-      shape: BoxShape.circle,
-      color: online ? color : OmniColors.textMuted,
-    ),
+    decoration: BoxDecoration(shape: BoxShape.circle, color: online ? color : OmniColors.textMuted),
   );
 }

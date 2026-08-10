@@ -25,10 +25,7 @@ enum ShareProtocol {
 
   static ShareProtocol fromId(String? value) {
     final wanted = (value ?? '').trim().toUpperCase();
-    return ShareProtocol.values.firstWhere(
-      (p) => p.id == wanted,
-      orElse: () => ShareProtocol.smb,
-    );
+    return ShareProtocol.values.firstWhere((p) => p.id == wanted, orElse: () => ShareProtocol.smb);
   }
 }
 
@@ -45,19 +42,12 @@ bool shareIsBrowsable(ShareProtocol protocol) =>
     protocol == ShareProtocol.webdav;
 
 /// Why a protocol cannot be browsed, in the user's terms.
-String? shareBrowseUnavailableReason(
-  ShareProtocol protocol,
-) => switch (protocol) {
-  ShareProtocol.smb ||
-  ShareProtocol.ftp ||
-  ShareProtocol.sftp ||
-  ShareProtocol.webdav => null,
+String? shareBrowseUnavailableReason(ShareProtocol protocol) => switch (protocol) {
+  ShareProtocol.smb || ShareProtocol.ftp || ShareProtocol.sftp || ShareProtocol.webdav => null,
   // NFS mounting is a kernel operation, not something an unprivileged app can do — this was
   // never browsable in the Kotlin either.
-  ShareProtocol.nfs =>
-    'NFS shares are mounted by the operating system, not by OmniTerm.',
-  ShareProtocol.custom =>
-    'A custom share has no protocol for OmniTerm to speak.',
+  ShareProtocol.nfs => 'NFS shares are mounted by the operating system, not by OmniTerm.',
+  ShareProtocol.custom => 'A custom share has no protocol for OmniTerm to speak.',
 };
 
 /// A share as the form holds it: strings, because that is what text fields produce.
@@ -134,9 +124,7 @@ class NetworkShareDraft {
     workgroup: workgroup ?? this.workgroup,
     username: username ?? this.username,
     password: password ?? this.password,
-    authProfileId: clearAuthProfile
-        ? null
-        : (authProfileId ?? this.authProfileId),
+    authProfileId: clearAuthProfile ? null : (authProfileId ?? this.authProfileId),
     anonymous: anonymous ?? this.anonymous,
     useHttps: useHttps ?? this.useHttps,
     notes: notes ?? this.notes,
@@ -147,14 +135,10 @@ class NetworkShareDraft {
   /// A port the user typed is never overwritten — silently changing it is how a share stops
   /// reaching a NAS on a non-standard port with no visible cause.
   NetworkShareDraft withProtocol(ShareProtocol next) {
-    final wasDefault =
-        port.trim().isEmpty ||
-        int.tryParse(port.trim()) == protocol.defaultPort;
+    final wasDefault = port.trim().isEmpty || int.tryParse(port.trim()) == protocol.defaultPort;
     return copyWith(
       protocol: next,
-      port: wasDefault
-          ? (next.defaultPort > 0 ? '${next.defaultPort}' : '')
-          : null,
+      port: wasDefault ? (next.defaultPort > 0 ? '${next.defaultPort}' : '') : null,
     );
   }
 
@@ -188,8 +172,7 @@ class NetworkShareDraft {
       found['sharePath'] = 'SMB needs a share name.';
     }
     if (!anonymous && authProfileId == null && username.trim().isEmpty) {
-      found['username'] =
-          'Enter a username, pick a credential profile, or tick anonymous.';
+      found['username'] = 'Enter a username, pick a credential profile, or tick anonymous.';
     }
     return found;
   }
@@ -206,23 +189,16 @@ class NetworkShareDraft {
       );
     }
     if (protocol == ShareProtocol.webdav && !useHttps) {
-      notes.add(
-        'Without HTTPS, WebDAV sends the password in clear text on every request.',
-      );
+      notes.add('Without HTTPS, WebDAV sends the password in clear text on every request.');
     }
     if (protocol == ShareProtocol.smb && anonymous) {
-      notes.add(
-        'Anonymous SMB only works where the server has guest access enabled.',
-      );
+      notes.add('Anonymous SMB only works where the server has guest access enabled.');
     }
     return notes;
   }
 
   /// The row to persist. The repository encrypts the password on the way down.
-  NetworkShare toShare({
-    int lastChecked = 0,
-    String lastStatus = 'unknown',
-  }) => NetworkShare(
+  NetworkShare toShare({int lastChecked = 0, String lastStatus = 'unknown'}) => NetworkShare(
     id: id,
     name: name.trim(),
     protocol: protocol.id,
@@ -250,9 +226,7 @@ String shareUri(NetworkShare share, {String? maskedAddress}) {
   final protocol = ShareProtocol.fromId(share.protocol);
   final scheme = protocol == ShareProtocol.webdav
       ? (share.useHttps ? 'https' : 'http')
-      : (protocol.scheme.isEmpty
-            ? share.protocol.toLowerCase()
-            : protocol.scheme);
+      : (protocol.scheme.isEmpty ? share.protocol.toLowerCase() : protocol.scheme);
   final port = share.port > 0 ? ':${share.port}' : '';
   final trimmed = share.sharePath.replaceAll(RegExp(r'^/+|/+$'), '');
   final path = trimmed.isEmpty ? '' : '/$trimmed';

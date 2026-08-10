@@ -60,9 +60,7 @@ class _HostLimitGateState extends State<HostLimitGate> {
         }
         return _ReconciliationSheet(
           vm: vm,
-          reason: _sawUnlocked
-              ? HostLimitReason.unlockEnded
-              : HostLimitReason.freeTier,
+          reason: _sawUnlocked ? HostLimitReason.unlockEnded : HostLimitReason.freeTier,
         );
       },
     );
@@ -84,8 +82,7 @@ class _ReconciliationSheetState extends State<_ReconciliationSheet> {
 
   static const _limit = ServersViewModel.freePlayStoreLimit;
 
-  bool get _valid =>
-      isValidHostKeepSelection(selectedCount: _keep.length, hostLimit: _limit);
+  bool get _valid => isValidHostKeepSelection(selectedCount: _keep.length, hostLimit: _limit);
 
   Future<void> _apply() async {
     final removed = await widget.vm.reconcileHostLimit(Set.of(_keep));
@@ -137,34 +134,24 @@ class _ReconciliationSheetState extends State<_ReconciliationSheet> {
                     key: ValueKey('hostLimit.host.${server.id}'),
                     dense: true,
                     controlAffinity: ListTileControlAffinity.leading,
-                    title: Text(
-                      server.name,
-                      style: const TextStyle(fontSize: 13),
-                    ),
+                    title: Text(server.name, style: const TextStyle(fontSize: 13)),
                     subtitle: Text(
                       HostDisplay.instance.host(server),
-                      style: const TextStyle(
-                        fontSize: 10,
-                        fontFamily: OmniFonts.mono,
-                      ),
+                      style: const TextStyle(fontSize: 10, fontFamily: OmniFonts.mono),
                     ),
                     value: _keep.contains(server.id),
                     // Only the boxes that would go over are disabled, so a choice can be swapped.
                     onChanged: _valid && !_keep.contains(server.id)
                         ? null
                         : (value) => setState(() {
-                            value == true
-                                ? _keep.add(server.id)
-                                : _keep.remove(server.id);
+                            value == true ? _keep.add(server.id) : _keep.remove(server.id);
                           }),
                   ),
                 const SizedBox(height: 12),
                 FilledButton(
                   key: const ValueKey('hostLimit.confirm'),
                   onPressed: _valid ? _apply : null,
-                  child: Text(
-                    'Keep ${_keep.length} of ${servers.length}, delete the rest',
-                  ),
+                  child: Text('Keep ${_keep.length} of ${servers.length}, delete the rest'),
                 ),
               ],
             ),

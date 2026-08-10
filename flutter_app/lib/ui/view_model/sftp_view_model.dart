@@ -80,8 +80,7 @@ class SftpTransfer {
 
   /// 0..1, or null when the size is unknown — a determinate bar showing a made-up fraction is
   /// worse than an indeterminate one.
-  double? get progress =>
-      totalBytes > 0 ? (copiedBytes / totalBytes).clamp(0.0, 1.0) : null;
+  double? get progress => totalBytes > 0 ? (copiedBytes / totalBytes).clamp(0.0, 1.0) : null;
 
   /// Average rate since the transfer started, in KB/s.
   ///
@@ -97,12 +96,7 @@ class SftpTransfer {
 
 /// The SFTP screen's state and actions, split out of `ui/AppViewModel.kt` per §5.2.
 class SftpViewModel extends ChangeNotifier {
-  SftpViewModel(
-    this._app, {
-    this.fsClientFor,
-    this.shareClientFor,
-    this.transport,
-  }) {
+  SftpViewModel(this._app, {this.fsClientFor, this.shareClientFor, this.transport}) {
     _app.addListener(_onAppChanged);
   }
 
@@ -184,10 +178,7 @@ class SftpViewModel extends ChangeNotifier {
     _safeNotify();
     // The share's own bookmarks, not the host's: `/etc` on the machine you were browsing is not a
     // path on this share, and starring one there must not fill in the other.
-    await _loadBookmarksFrom(
-      bookmarkStorageKey(shareId: share.id)!,
-      seedDefaults: false,
-    );
+    await _loadBookmarksFrom(bookmarkStorageKey(shareId: share.id)!, seedDefaults: false);
     await openPath('');
   }
 
@@ -235,8 +226,7 @@ class SftpViewModel extends ChangeNotifier {
     return online.firstOrNull;
   }
 
-  List<Server> get onlineServers =>
-      _app.servers.where((s) => s.status == 'online').toList();
+  List<Server> get onlineServers => _app.servers.where((s) => s.status == 'online').toList();
 
   bool get hasNoOnlineHosts => browsedServer == null;
 
@@ -421,10 +411,7 @@ class SftpViewModel extends ChangeNotifier {
 
     final client = await _client;
     if (client == null) {
-      _error = _unavailable(
-        server,
-        'File browsing is unavailable in this build.',
-      );
+      _error = _unavailable(server, 'File browsing is unavailable in this build.');
       _safeNotify();
       return;
     }
@@ -435,17 +422,12 @@ class SftpViewModel extends ChangeNotifier {
 
     // What the listing belongs to. A share's identity is its own; a host's is the host id, which is
     // what changes underneath when the user switches machines mid-fetch.
-    final startedFor = share != null
-        ? 'share:${share.id}'
-        : 'host:${server!.id}';
-    String currentTarget() => _browsedShare != null
-        ? 'share:${_browsedShare!.id}'
-        : 'host:${browsedServer?.id}';
+    final startedFor = share != null ? 'share:${share.id}' : 'host:${server!.id}';
+    String currentTarget() =>
+        _browsedShare != null ? 'share:${_browsedShare!.id}' : 'host:${browsedServer?.id}';
 
     try {
-      final resolved = target.isEmpty
-          ? await client.home()
-          : normalisePath(target);
+      final resolved = target.isEmpty ? await client.home() : normalisePath(target);
       final listing = await client.list(resolved);
       // A listing that lands after the user switched target describes a different machine.
       if (currentTarget() != startedFor) return;
@@ -504,10 +486,7 @@ class SftpViewModel extends ChangeNotifier {
     final client = await _client;
     _editingClient = client;
     if (client == null) {
-      _error = _unavailable(
-        browsedServer,
-        'File browsing is unavailable in this build.',
-      );
+      _error = _unavailable(browsedServer, 'File browsing is unavailable in this build.');
       _safeNotify();
       return null;
     }
@@ -590,11 +569,7 @@ class SftpViewModel extends ChangeNotifier {
       final reported = _sudo && transport != null && browsedServer != null
           ? await _sudoWrite(client, dest, content)
           : await client.writeText(dest, content);
-      result = judgeSave(
-        name: entry.name,
-        expected: expected,
-        reported: reported,
-      );
+      result = judgeSave(name: entry.name, expected: expected, reported: reported);
     } catch (e) {
       result = saveFailed(e);
     }
@@ -622,8 +597,7 @@ class SftpViewModel extends ChangeNotifier {
   /// A listing shows a directory's index size, not what is inside it — "4.0 KB" for a folder holding
   /// 80 GB is technically right and useless — so this is the answer to the question people open a
   /// file browser to ask.
-  bool get canMeasureSize =>
-      transport != null && _browsedShare == null && browsedServer != null;
+  bool get canMeasureSize => transport != null && _browsedShare == null && browsedServer != null;
 
   Future<FolderSize?> folderSize(SftpFile entry) async {
     final ssh = transport;
@@ -639,16 +613,12 @@ class SftpViewModel extends ChangeNotifier {
         keys: await _app.repository.getAllKeys(),
         profiles: await _app.repository.getAllProfiles(),
       );
-      final output = await ssh.exec(
-        creds,
-        folderSizeCommand(joinPath(_path, entry.name)),
-      );
+      final output = await ssh.exec(creds, folderSizeCommand(joinPath(_path, entry.name)));
       final size = parseFolderSize(output);
       if (size == null) {
         // No number at all: the path is gone, or the host has no `du`. Saying so beats reporting
         // zero, which would read as "this folder is empty".
-        _error =
-            'Could not measure "${entry.name}" — the host refused or has no `du`.';
+        _error = 'Could not measure "${entry.name}" — the host refused or has no `du`.';
       }
       return size;
     } on CredentialResolutionException catch (e) {
@@ -684,8 +654,7 @@ class SftpViewModel extends ChangeNotifier {
   /// The same condition [saveText] applies, exposed so the editor can *say so*. Sudo mode is a
   /// screen-level toggle, and an editor open on `/etc/nginx/nginx.conf` that shows a plain "Save"
   /// gives no sign that the write about to happen is a privileged one.
-  bool get sudoWritesApply =>
-      _sudo && transport != null && browsedServer != null;
+  bool get sudoWritesApply => _sudo && transport != null && browsedServer != null;
 
   set sudoMode(bool value) {
     if (_sudo == value) return;
@@ -784,11 +753,7 @@ class SftpViewModel extends ChangeNotifier {
   /// copied into place with sudo. The temp copy is removed by the same command whether or not the
   /// copy succeeded: leaving a readable copy of a protected file in `/tmp` would quietly widen
   /// access to it.
-  Future<int> _sudoWrite(
-    RemoteFsClient client,
-    String dest,
-    String content,
-  ) async {
+  Future<int> _sudoWrite(RemoteFsClient client, String dest, String content) async {
     final server = browsedServer!;
     final temp = sudoTempPath();
     await client.writeText(temp, content);
@@ -833,8 +798,7 @@ class SftpViewModel extends ChangeNotifier {
   ///
   /// Drives the button's enabled state, so "select all" in a folder that is already fully selected
   /// is visibly a no-op rather than a button that appears to do nothing.
-  bool get canSelectAllVisible =>
-      visibleEntries.any((e) => !_selected.contains(e.name));
+  bool get canSelectAllVisible => visibleEntries.any((e) => !_selected.contains(e.name));
 
   void clearSelection() {
     _selected.clear();
@@ -842,8 +806,7 @@ class SftpViewModel extends ChangeNotifier {
   }
 
   /// The selected rows, resolved against the current listing.
-  List<SftpFile> get selectedEntries =>
-      _entries.where((e) => _selected.contains(e.name)).toList();
+  List<SftpFile> get selectedEntries => _entries.where((e) => _selected.contains(e.name)).toList();
 
   bool get canArchive => canMeasureSize;
 
@@ -862,9 +825,7 @@ class SftpViewModel extends ChangeNotifier {
   }
 
   String? plannedArchiveName(String format, {SftpFile? only}) {
-    final names = only == null
-        ? selectedEntries.map((entry) => entry.name).toList()
-        : [only.name];
+    final names = only == null ? selectedEntries.map((entry) => entry.name).toList() : [only.name];
     if (names.length != 1) return null;
     final source = names.single;
     final dot = source.lastIndexOf('.');
@@ -984,10 +945,7 @@ class SftpViewModel extends ChangeNotifier {
 
   _ClipboardEndpoint get _currentEndpoint => _browsedShare != null
       ? _ClipboardEndpoint(share: _browsedShare, label: _browsedShare!.name)
-      : _ClipboardEndpoint(
-          serverId: browsedServer?.id,
-          label: browsedServer?.name ?? 'host',
-        );
+      : _ClipboardEndpoint(serverId: browsedServer?.id, label: browsedServer?.name ?? 'host');
 
   void stageSelected({required bool move}) {
     final entries = selectedEntries;
@@ -1018,14 +976,10 @@ class SftpViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
-  Future<RemoteFsClient?> _clientForEndpoint(
-    _ClipboardEndpoint endpoint,
-  ) async {
+  Future<RemoteFsClient?> _clientForEndpoint(_ClipboardEndpoint endpoint) async {
     final share = endpoint.share;
     if (share != null) return shareClientFor?.call(share);
-    final server = _app.servers
-        .where((server) => server.id == endpoint.serverId)
-        .firstOrNull;
+    final server = _app.servers.where((server) => server.id == endpoint.serverId).firstOrNull;
     return server == null ? null : fsClientFor?.call(server);
   }
 
@@ -1059,23 +1013,19 @@ class SftpViewModel extends ChangeNotifier {
     final clipboard = _clipboard;
     if (clipboard == null || _conflictScanRunning) return;
     if (clipboardContainsFolders && !recurseFolders) {
-      _error =
-          'This selection contains folders. Enable recursive copy to include them.';
+      _error = 'This selection contains folders. Enable recursive copy to include them.';
       _safeNotify();
       return;
     }
     final recursive = _selfContainingFolder(clipboard);
     if (recursive != null) {
-      _error =
-          'Cannot paste "$recursive" into itself. Choose a folder outside it.';
+      _error = 'Cannot paste "$recursive" into itself. Choose a folder outside it.';
       _safeNotify();
       return;
     }
 
     final existing = _entries.map((entry) => entry.name).toSet();
-    final clashing = clipboard.entries
-        .where((entry) => existing.contains(entry.name))
-        .toList();
+    final clashing = clipboard.entries.where((entry) => existing.contains(entry.name)).toList();
     if (clashing.isEmpty) {
       await pasteClipboard(recurseFolders: recurseFolders);
       return;
@@ -1093,9 +1043,7 @@ class SftpViewModel extends ChangeNotifier {
         return;
       }
       _pasteConflicts = verdicts;
-      _conflictsUnverified = verdicts.any(
-        (c) => c.verdict == ConflictVerdict.unknown,
-      );
+      _conflictsUnverified = verdicts.any((c) => c.verdict == ConflictVerdict.unknown);
       _pendingPaste = clipboard;
       _pendingRecurseFolders = recurseFolders;
     } catch (error) {
@@ -1139,9 +1087,7 @@ class SftpViewModel extends ChangeNotifier {
     // The scan runs one shell command on the destination host, so it can only compare sources that
     // live on that same host.
     if (_browsedShare == null && server != null && ssh != null && sameEndpoint) {
-      final sources = [
-        for (final entry in clashing) joinPath(clipboard.directory, entry.name),
-      ];
+      final sources = [for (final entry in clashing) joinPath(clipboard.directory, entry.name)];
       final script = compareForConflicts(destination, sources);
       final credentials = resolveCredentials(
         server,
@@ -1161,10 +1107,7 @@ class SftpViewModel extends ChangeNotifier {
       if (!output.contains(conflictScanOk)) {
         throw StateError('the destination conflict scan did not complete');
       }
-      final body = output
-          .split('\n')
-          .where((line) => line.trim() != conflictScanOk)
-          .join('\n');
+      final body = output.split('\n').where((line) => line.trim() != conflictScanOk).join('\n');
       conflicts = parseTransferConflicts(body, sources);
     } else {
       conflicts = const [];
@@ -1181,11 +1124,7 @@ class SftpViewModel extends ChangeNotifier {
                 name: entry.name,
                 verdict: ConflictVerdict.unknown,
                 sourceSize: entry.size,
-                destSize: _entries
-                    .where((e) => e.name == entry.name)
-                    .firstOrNull
-                    ?.size ??
-                    0,
+                destSize: _entries.where((e) => e.name == entry.name).firstOrNull?.size ?? 0,
                 sourceMtimeSeconds: entry.modTimeSeconds,
                 destMtimeSeconds: 0,
               ),
@@ -1198,10 +1137,7 @@ class SftpViewModel extends ChangeNotifier {
   ///
   /// Copying there should produce "name (2)"; moving there is a no-op. Leaving an IDENTICAL default
   /// of overwrite would instead delete the file and then copy it onto itself.
-  TransferConflict _adjustForSameFolder(
-    TransferConflict conflict,
-    _RemoteClipboard clipboard,
-  ) {
+  TransferConflict _adjustForSameFolder(TransferConflict conflict, _RemoteClipboard clipboard) {
     final sourceDir = normalisePath(clipboard.directory);
     final destDir = normalisePath(_path);
     if (clipboard.endpoint.key != _currentEndpoint.key || sourceDir != destDir) {
@@ -1221,9 +1157,7 @@ class SftpViewModel extends ChangeNotifier {
   }
 
   void setAllPasteConflictActions(ConflictAction action) {
-    _pasteConflicts = [
-      for (final conflict in _pasteConflicts) conflict.copyWith(action: action),
-    ];
+    _pasteConflicts = [for (final conflict in _pasteConflicts) conflict.copyWith(action: action)];
     _safeNotify();
   }
 
@@ -1237,9 +1171,7 @@ class SftpViewModel extends ChangeNotifier {
   /// Applies the user's per-item choices and runs the paste.
   Future<void> confirmPasteConflicts() async {
     final pending = _pendingPaste;
-    final resolutions = {
-      for (final conflict in _pasteConflicts) conflict.name: conflict.action,
-    };
+    final resolutions = {for (final conflict in _pasteConflicts) conflict.name: conflict.action};
     final recurse = _pendingRecurseFolders;
     _pasteConflicts = const [];
     _pendingPaste = null;
@@ -1286,8 +1218,7 @@ class SftpViewModel extends ChangeNotifier {
     final clipboard = _clipboard;
     if (clipboard == null) return;
     if (clipboardContainsFolders && !recurseFolders) {
-      _error =
-          'This selection contains folders. Enable recursive copy to include them.';
+      _error = 'This selection contains folders. Enable recursive copy to include them.';
       _safeNotify();
       return;
     }
@@ -1295,8 +1226,7 @@ class SftpViewModel extends ChangeNotifier {
     // is reachable directly.
     final recursive = _selfContainingFolder(clipboard);
     if (recursive != null) {
-      _error =
-          'Cannot paste "$recursive" into itself. Choose a folder outside it.';
+      _error = 'Cannot paste "$recursive" into itself. Choose a folder outside it.';
       _safeNotify();
       return;
     }
@@ -1329,10 +1259,7 @@ class SftpViewModel extends ChangeNotifier {
           // Remove the existing entry first so the replacement lands under the original name.
           // Doing it this way makes overwrite behave identically for a same-endpoint rename and a
           // cross-endpoint stream, and for every protocol behind [RemoteFsClient].
-          await destination.delete(
-            joinPath(_path, entry.name),
-            isDirectory: entry.isDirectory,
-          );
+          await destination.delete(joinPath(_path, entry.name), isDirectory: entry.isDirectory);
           existing.remove(entry.name);
           destinationName = entry.name;
         } else {
@@ -1345,14 +1272,7 @@ class SftpViewModel extends ChangeNotifier {
         if (clipboard.move && clipboard.endpoint.key == _currentEndpoint.key) {
           await source.rename(from, to, isDirectory: entry.isDirectory);
         } else {
-          await _copyRemoteEntry(
-            source,
-            destination,
-            entry,
-            from,
-            to,
-            move: clipboard.move,
-          );
+          await _copyRemoteEntry(source, destination, entry, from, to, move: clipboard.move);
         }
         transferred++;
       }
@@ -1401,9 +1321,7 @@ class SftpViewModel extends ChangeNotifier {
       totalBytes: entry.size,
     );
     _transfers.add(transfer);
-    final tempDirectory = await Directory.systemTemp.createTemp(
-      'omniterm-cross-',
-    );
+    final tempDirectory = await Directory.systemTemp.createTemp('omniterm-cross-');
     final temp = File('${tempDirectory.path}/payload');
     try {
       final sink = temp.openWrite();
@@ -1455,15 +1373,9 @@ class SftpViewModel extends ChangeNotifier {
     }
     final destination = joinPath(_path, valid);
     if (_sudo && browsedServer != null && _browsedShare == null) {
-      await _sudoMutation(
-        'mkdir -- ${shellQuote(destination)}',
-        success: 'Created $valid (sudo)',
-      );
+      await _sudoMutation('mkdir -- ${shellQuote(destination)}', success: 'Created $valid (sudo)');
     } else {
-      await _mutate(
-        (client) => client.mkdir(destination),
-        success: 'Created $valid',
-      );
+      await _mutate((client) => client.mkdir(destination), success: 'Created $valid');
     }
     return null;
   }
@@ -1496,28 +1408,18 @@ class SftpViewModel extends ChangeNotifier {
   Future<void> deleteEntries(List<SftpFile> entries) async {
     if (entries.isEmpty) return;
     if (_sudo && browsedServer != null && _browsedShare == null) {
-      final paths = entries
-          .map((entry) => shellQuote(joinPath(_path, entry.name)))
-          .join(' ');
+      final paths = entries.map((entry) => shellQuote(joinPath(_path, entry.name))).join(' ');
       await _sudoMutation(
         'rm -rf -- $paths',
-        success:
-            'Deleted ${entries.length} item${entries.length == 1 ? '' : 's'} (sudo)',
+        success: 'Deleted ${entries.length} item${entries.length == 1 ? '' : 's'} (sudo)',
       );
       return;
     }
-    await _mutate(
-      (client) async {
-        for (final entry in entries) {
-          await client.delete(
-            joinPath(_path, entry.name),
-            isDirectory: entry.isDirectory,
-          );
-        }
-      },
-      success:
-          'Deleted ${entries.length} item${entries.length == 1 ? '' : 's'}',
-    );
+    await _mutate((client) async {
+      for (final entry in entries) {
+        await client.delete(joinPath(_path, entry.name), isDirectory: entry.isDirectory);
+      }
+    }, success: 'Deleted ${entries.length} item${entries.length == 1 ? '' : 's'}');
   }
 
   Future<void> _sudoMutation(String script, {required String success}) async {
@@ -1560,10 +1462,7 @@ class SftpViewModel extends ChangeNotifier {
   }) async {
     final client = await _client;
     if (client == null) {
-      _error = _unavailable(
-        browsedServer,
-        'File operations are unavailable in this build.',
-      );
+      _error = _unavailable(browsedServer, 'File operations are unavailable in this build.');
       _safeNotify();
       return;
     }
@@ -1603,13 +1502,7 @@ class SftpViewModel extends ChangeNotifier {
   /// Seeded **in memory only**, matching `loadSftpBookmarks` (`ui/AppViewModel.kt:9006`): they are
   /// never written to settings, so the cross-endpoint list below shows only what the user actually
   /// saved rather than five suggestions per host they have never opened.
-  static const defaultBookmarks = [
-    '/root',
-    '/var/log',
-    '/etc',
-    '/opt',
-    '/home',
-  ];
+  static const defaultBookmarks = ['/root', '/var/log', '/etc', '/opt', '/home'];
 
   /// The settings row the browse target's bookmarks live in, or null with nothing being browsed.
   String? get _currentBookmarkKey => bookmarkStorageKey(
@@ -1682,8 +1575,7 @@ class SftpViewModel extends ChangeNotifier {
   /// How a share is named in the bookmark list, from `shareEndpointLabel`
   /// (`ui/AppViewModel.kt:7853`). The protocol is part of the name because one NAS is commonly
   /// saved twice, once per protocol.
-  static String shareEndpointLabel(NetworkShare share) =>
-      '${share.name} (${share.protocol})';
+  static String shareEndpointLabel(NetworkShare share) => '${share.name} (${share.protocol})';
 
   /// Rebuilds [allBookmarks] from every endpoint's settings row.
   Future<void> loadAllBookmarks() async {
@@ -1691,29 +1583,15 @@ class SftpViewModel extends ChangeNotifier {
     final collected = <EndpointBookmark>[];
     for (final server in _app.servers) {
       final key = bookmarkStorageKey(serverId: server.id)!;
-      for (final path in decodeBookmarkPaths(
-        await _app.repository.getSetting(key),
-      )) {
-        collected.add(
-          EndpointBookmark(
-            serverId: server.id,
-            endpointName: server.name,
-            path: path,
-          ),
-        );
+      for (final path in decodeBookmarkPaths(await _app.repository.getSetting(key))) {
+        collected.add(EndpointBookmark(serverId: server.id, endpointName: server.name, path: path));
       }
     }
     for (final share in shares) {
       final key = bookmarkStorageKey(shareId: share.id)!;
-      for (final path in decodeBookmarkPaths(
-        await _app.repository.getSetting(key),
-      )) {
+      for (final path in decodeBookmarkPaths(await _app.repository.getSetting(key))) {
         collected.add(
-          EndpointBookmark(
-            shareId: share.id,
-            endpointName: shareEndpointLabel(share),
-            path: path,
-          ),
+          EndpointBookmark(shareId: share.id, endpointName: shareEndpointLabel(share), path: path),
         );
       }
     }
@@ -1729,9 +1607,7 @@ class SftpViewModel extends ChangeNotifier {
   /// share is still worth attempting.
   bool bookmarkIsAvailable(EndpointBookmark bookmark) {
     if (bookmark.serverId != null) {
-      return _app.servers.any(
-        (s) => s.id == bookmark.serverId && s.status == 'online',
-      );
+      return _app.servers.any((s) => s.id == bookmark.serverId && s.status == 'online');
     }
     final share = _shareFor(bookmark.shareId);
     return share != null && !shareIsUnavailable(share.lastStatus);
@@ -1788,10 +1664,7 @@ class SftpViewModel extends ChangeNotifier {
     }
     final existing = decodeBookmarkPaths(await _app.repository.getSetting(key));
     if (!existing.contains(normalised)) {
-      await _app.repository.insertSetting(
-        key,
-        encodeBookmarkPaths([...existing, normalised]),
-      );
+      await _app.repository.insertSetting(key, encodeBookmarkPaths([...existing, normalised]));
     }
     if (key == _currentBookmarkKey && !_bookmarks.contains(normalised)) {
       _bookmarks = [..._bookmarks, normalised];
@@ -1837,8 +1710,7 @@ class SftpViewModel extends ChangeNotifier {
   /// Newest first — the one the user just started is the one they want to see.
   List<SftpTransfer> get transfers => List.unmodifiable(_transfers.reversed);
 
-  int get activeTransferCount =>
-      _transfers.where((t) => t.status == TransferStatus.running).length;
+  int get activeTransferCount => _transfers.where((t) => t.status == TransferStatus.running).length;
 
   void clearFinishedTransfers() {
     _transfers.removeWhere((t) => t.status != TransferStatus.running);
@@ -1866,8 +1738,7 @@ class SftpViewModel extends ChangeNotifier {
       await directory.delete(recursive: true).catchError((Object _) => directory);
       return null;
     }
-    if (_transfers.isNotEmpty &&
-        _transfers.last.status == TransferStatus.failed) {
+    if (_transfers.isNotEmpty && _transfers.last.status == TransferStatus.failed) {
       await directory.delete(recursive: true).catchError((Object _) => directory);
       return null;
     }
@@ -2030,9 +1901,7 @@ class SftpViewModel extends ChangeNotifier {
       final result = await store.saveInto(folder, entry.name, staged);
       // Removed whether or not the save worked, for the same reason the single-file path removes
       // it: a copy of a remote file left in the cache quietly widens access to it.
-      await File(staged).parent.delete(recursive: true).catchError(
-        (Object _) => Directory(staged),
-      );
+      await File(staged).parent.delete(recursive: true).catchError((Object _) => Directory(staged));
       switch (result.outcome) {
         case DeviceSaveOutcome.saved:
           saved++;
@@ -2068,9 +1937,7 @@ class SftpViewModel extends ChangeNotifier {
     final result = await store.save(entry.name, staged);
     // Removed whether or not the save worked: leaving a copy of a remote file in the cache is a
     // quiet way to widen access to it, and the user did not ask for a second copy.
-    await File(staged).parent.delete(recursive: true).catchError(
-      (Object _) => Directory(staged),
-    );
+    await File(staged).parent.delete(recursive: true).catchError((Object _) => Directory(staged));
     switch (result.outcome) {
       case DeviceSaveOutcome.saved:
         _status = result.location == null
@@ -2149,11 +2016,7 @@ class SftpViewModel extends ChangeNotifier {
   ///
   /// A clashing name is given a `(2)` suffix rather than overwriting: an upload that silently
   /// replaces a file the user did not mean to touch is unrecoverable.
-  Future<void> upload(
-    String name,
-    Stream<List<int>> bytes,
-    int totalBytes,
-  ) async {
+  Future<void> upload(String name, Stream<List<int>> bytes, int totalBytes) async {
     final client = await _client;
     if (client == null) return;
     final safe = uniqueName(name, _entries.map((e) => e.name).toSet());

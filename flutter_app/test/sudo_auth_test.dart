@@ -61,11 +61,7 @@ void main() {
     });
 
     test('biometrics alone are enough to gate', () async {
-      final lock = await controller(
-        pin: null,
-        biometrics: true,
-        prompt: (_) async => true,
-      );
+      final lock = await controller(pin: null, biometrics: true, prompt: (_) async => true);
       expect(lock.requiresSudoAuth('hunter2'), isTrue);
       lock.dispose();
     });

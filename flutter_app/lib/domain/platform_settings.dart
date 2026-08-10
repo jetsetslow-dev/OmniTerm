@@ -19,8 +19,7 @@ String? settingUnavailableReason(String settingKey, {required bool isIOS}) {
       'iOS stops background work when you leave the app, so this has no effect here.',
     // `FLAG_SECURE` has no iOS counterpart — there is no API to block a screenshot, which
     // `ScreenSecurityBridge.swift` says in as many words rather than pretending otherwise.
-    'blockScreenshots' =>
-      'iOS provides no way to block screenshots, so this has no effect here.',
+    'blockScreenshots' => 'iOS provides no way to block screenshots, so this has no effect here.',
     _ => null,
   };
 }

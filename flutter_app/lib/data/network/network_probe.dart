@@ -23,11 +23,7 @@ abstract interface class NetworkProbe {
   Future<void> sendMagicPacket(Uint8List packet, String broadcast, int port);
 
   /// Sends [query] to a DNS resolver and returns the raw response.
-  Future<Uint8List> resolve(
-    Uint8List query, {
-    required String resolver,
-    Duration timeout,
-  });
+  Future<Uint8List> resolve(Uint8List query, {required String resolver, Duration timeout});
 
   /// Reverse-resolves [address] to a hostname, or null.
   Future<String?> reverseLookup(String address);
@@ -69,11 +65,7 @@ class SocketNetworkProbe implements NetworkProbe {
   }
 
   @override
-  Future<void> sendMagicPacket(
-    Uint8List packet,
-    String broadcast,
-    int port,
-  ) async {
+  Future<void> sendMagicPacket(Uint8List packet, String broadcast, int port) async {
     final socket = await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
     try {
       // Without this the OS refuses a datagram addressed to a broadcast address, and the packet
@@ -154,9 +146,7 @@ class SocketNetworkProbe implements NetworkProbe {
       port: 137,
       timeout: timeout,
     );
-    return response == null
-        ? null
-        : LanHostnameWire.parseNetbiosNodeStatus(response);
+    return response == null ? null : LanHostnameWire.parseNetbiosNodeStatus(response);
   }
 
   Future<Uint8List?> _udpQuery(
@@ -268,8 +258,7 @@ Future<Map<String, String>> readSystemArpTable() async {
       final parts = line.trim().split(RegExp(r'\s+'));
       if (parts.length < 4) continue;
       final mac = parts[3].toUpperCase();
-      if (RegExp(r'^[0-9A-F]{2}(?::[0-9A-F]{2}){5}$').hasMatch(mac) &&
-          mac != '00:00:00:00:00:00') {
+      if (RegExp(r'^[0-9A-F]{2}(?::[0-9A-F]{2}){5}$').hasMatch(mac) && mac != '00:00:00:00:00:00') {
         result[parts[0]] = mac;
       }
     }
@@ -309,9 +298,7 @@ Future<List<ScannedHost>> sweepSubnet(
         if (best == null || rtt < best) best = rtt;
       }
       if (open.isNotEmpty) {
-        found.add(
-          ScannedHost(address: address, latency: best, openPorts: open),
-        );
+        found.add(ScannedHost(address: address, latency: best, openPorts: open));
       }
       onProgress?.call(++done, addresses.length);
     }
@@ -323,10 +310,7 @@ Future<List<ScannedHost>> sweepSubnet(
   final byAddress = {for (final host in found) host.address: host};
   for (final entry in arp.entries) {
     if (subnetPrefixOf(entry.key) != prefix) continue;
-    final host = byAddress.putIfAbsent(
-      entry.key,
-      () => ScannedHost(address: entry.key),
-    );
+    final host = byAddress.putIfAbsent(entry.key, () => ScannedHost(address: entry.key));
     host.macAddress = entry.value;
     host.vendor = vendorForMac(entry.value);
   }

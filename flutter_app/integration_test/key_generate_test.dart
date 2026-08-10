@@ -62,76 +62,77 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('a real 4096-bit keypair is generated, shown once, and stored', (tester) async {
-    await launch(tester);
-    await openAuthKeys(tester);
-    await removeKeyIfPresent(tester);
+  testWidgets(
+    'a real 4096-bit keypair is generated, shown once, and stored',
+    (tester) async {
+      await launch(tester);
+      await openAuthKeys(tester);
+      await removeKeyIfPresent(tester);
 
-    await tester.tap(find.byKey(const ValueKey('authKeys.generateKey')));
-    await tester.pumpAndSettle();
-    await tester.enterText(find.byKey(const ValueKey('authKeys.generate.alias')), alias);
-    await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('authKeys.generateKey')));
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byKey(const ValueKey('authKeys.generate.alias')), alias);
+      await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('authKeys.generate.submit')));
-    // Bounded real-time wait rather than a bare `pumpAndSettle`: generation is off-isolate, so the
-    // frame loop settles long before the key exists. The ceiling is the assertion — a keypair that
-    // takes longer than this on a phone is a defect, not a slow test.
-    final deadline = DateTime.now().add(const Duration(seconds: 90));
-    while (find.byKey(const ValueKey('authKeys.generated.dialog')).evaluate().isEmpty) {
+      await tester.tap(find.byKey(const ValueKey('authKeys.generate.submit')));
+      // Bounded real-time wait rather than a bare `pumpAndSettle`: generation is off-isolate, so the
+      // frame loop settles long before the key exists. The ceiling is the assertion — a keypair that
+      // takes longer than this on a phone is a defect, not a slow test.
+      final deadline = DateTime.now().add(const Duration(seconds: 90));
+      while (find.byKey(const ValueKey('authKeys.generated.dialog')).evaluate().isEmpty) {
+        expect(
+          DateTime.now().isBefore(deadline),
+          isTrue,
+          reason: 'generation did not finish within 90s on this device',
+        );
+        await tester.pump(const Duration(milliseconds: 250));
+      }
+
+      // The result dialog is the only place the private key is ever shown: it is stored encrypted and
+      // never read back to the UI, so a user who does not copy it here cannot retrieve it later.
+      final private = tester
+          .widget<SelectableText>(find.byKey(const ValueKey('authKeys.generated.private')))
+          .data!;
+      expect(private, startsWith('-----BEGIN RSA PRIVATE KEY-----'));
+      expect(private, endsWith('-----END RSA PRIVATE KEY-----\n'));
+
+      final public = tester
+          .widget<SelectableText>(find.byKey(const ValueKey('authKeys.generated.public')))
+          .data!;
+      expect(public, startsWith('ssh-rsa '));
+      expect(public, endsWith(' $alias'));
+      // A 4096-bit modulus base64s to roughly 720 characters. Asserting the magnitude catches a build
+      // that silently generated a weak key far more usefully than asserting the prefix alone.
       expect(
-        DateTime.now().isBefore(deadline),
-        isTrue,
-        reason: 'generation did not finish within 90s on this device',
+        public.split(' ')[1].length,
+        greaterThan(700),
+        reason: 'the stored key must be the full-strength one, not a downgraded modulus',
       );
-      await tester.pump(const Duration(milliseconds: 250));
-    }
 
-    // The result dialog is the only place the private key is ever shown: it is stored encrypted and
-    // never read back to the UI, so a user who does not copy it here cannot retrieve it later.
-    final private = tester
-        .widget<SelectableText>(find.byKey(const ValueKey('authKeys.generated.private')))
-        .data!;
-    expect(private, startsWith('-----BEGIN RSA PRIVATE KEY-----'));
-    expect(private, endsWith('-----END RSA PRIVATE KEY-----\n'));
+      final install = tester
+          .widget<SelectableText>(find.byKey(const ValueKey('authKeys.generated.install')))
+          .data!;
+      expect(install, contains(public));
+      expect(install, contains('>> ~/.ssh/authorized_keys'));
 
-    final public = tester
-        .widget<SelectableText>(find.byKey(const ValueKey('authKeys.generated.public')))
-        .data!;
-    expect(public, startsWith('ssh-rsa '));
-    expect(public, endsWith(' $alias'));
-    // A 4096-bit modulus base64s to roughly 720 characters. Asserting the magnitude catches a build
-    // that silently generated a weak key far more usefully than asserting the prefix alone.
-    expect(
-      public.split(' ')[1].length,
-      greaterThan(700),
-      reason: 'the stored key must be the full-strength one, not a downgraded modulus',
-    );
+      await tester.tap(find.byKey(const ValueKey('authKeys.generated.done')));
+      await tester.pumpAndSettle();
 
-    final install = tester
-        .widget<SelectableText>(find.byKey(const ValueKey('authKeys.generated.install')))
-        .data!;
-    expect(install, contains(public));
-    expect(install, contains('>> ~/.ssh/authorized_keys'));
+      // It survives as a stored key, not just as a dialog that has been dismissed.
+      expect(keyCard(alias), findsOneWidget, reason: 'the generated key must be listed');
+      expect(find.descendant(of: keyCard(alias), matching: find.text('RSA')), findsOneWidget);
+      expect(
+        find.descendant(of: keyCard(alias), matching: find.textContaining('SHA256:')),
+        findsOneWidget,
+        reason: 'the fingerprint is what the user compares against the host',
+      );
+      expect(tester.takeException(), isNull);
 
-    await tester.tap(find.byKey(const ValueKey('authKeys.generated.done')));
-    await tester.pumpAndSettle();
-
-    // It survives as a stored key, not just as a dialog that has been dismissed.
-    expect(keyCard(alias), findsOneWidget, reason: 'the generated key must be listed');
-    expect(
-      find.descendant(of: keyCard(alias), matching: find.text('RSA')),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(of: keyCard(alias), matching: find.textContaining('SHA256:')),
-      findsOneWidget,
-      reason: 'the fingerprint is what the user compares against the host',
-    );
-    expect(tester.takeException(), isNull);
-
-    await removeKeyIfPresent(tester);
-    expect(keyCard(alias), findsNothing, reason: 'the flow must leave the device as it found it');
-  }, timeout: const Timeout(Duration(minutes: 5)));
+      await removeKeyIfPresent(tester);
+      expect(keyCard(alias), findsNothing, reason: 'the flow must leave the device as it found it');
+    },
+    timeout: const Timeout(Duration(minutes: 5)),
+  );
 
   testWidgets('an alias already in use is refused without storing anything', (tester) async {
     await launch(tester);

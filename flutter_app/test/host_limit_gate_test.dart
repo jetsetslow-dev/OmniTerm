@@ -49,9 +49,7 @@ void main() {
         providers: [
           ChangeNotifierProvider<AppState>.value(value: app),
           ChangeNotifierProvider<ServersViewModel>.value(value: vm),
-          Provider<LicenseController?>.value(
-            value: MockTestLicenseController(state),
-          ),
+          Provider<LicenseController?>.value(value: MockTestLicenseController(state)),
         ],
         child: const MaterialApp(home: Scaffold(body: HostLimitGate())),
       ),
@@ -67,10 +65,7 @@ void main() {
     // against `shouldReconcileHostLimit`, where each guard is proved to discriminate.
     await repo.insertServer(hostFixture(name: 'a'));
     await repo.insertServer(hostFixture(name: 'b'));
-    await pump(
-      tester,
-      const LicenseState(enabled: true, loading: false, unlocked: false),
-    );
+    await pump(tester, const LicenseState(enabled: true, loading: false, unlocked: false));
 
     expect(find.byKey(const ValueKey('hostLimit.gate')), findsNothing);
   });

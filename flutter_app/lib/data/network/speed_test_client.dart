@@ -10,11 +10,7 @@ class SpeedTestSample {
 }
 
 class SpeedTestResult {
-  const SpeedTestResult({
-    required this.bytes,
-    required this.mbps,
-    required this.latency,
-  });
+  const SpeedTestResult({required this.bytes, required this.mbps, required this.latency});
 
   final int bytes;
   final double mbps;
@@ -69,8 +65,7 @@ class DioSpeedTestClient implements SpeedTestClient {
       options: Options(
         responseType: ResponseType.stream,
         followRedirects: true,
-        validateStatus: (status) =>
-            status != null && status >= 200 && status < 300,
+        validateStatus: (status) => status != null && status >= 200 && status < 300,
         headers: const {'User-Agent': 'OmniTerm-SpeedTest'},
         sendTimeout: const Duration(seconds: 8),
         receiveTimeout: const Duration(seconds: 8),
@@ -81,9 +76,7 @@ class DioSpeedTestClient implements SpeedTestClient {
     var bytes = 0;
     var lastEmit = Duration.zero;
 
-    await for (final chunk in response.data!.stream.timeout(
-      const Duration(seconds: 8),
-    )) {
+    await for (final chunk in response.data!.stream.timeout(const Duration(seconds: 8))) {
       bytes += chunk.length;
       final elapsed = downloadStarted.elapsed;
       if (elapsed - lastEmit >= const Duration(milliseconds: 100)) {
@@ -98,19 +91,12 @@ class DioSpeedTestClient implements SpeedTestClient {
 
     final result = _sample(bytes, downloadStarted.elapsed);
     onProgress(result);
-    return SpeedTestResult(
-      bytes: result.bytes,
-      mbps: result.mbps,
-      latency: latency,
-    );
+    return SpeedTestResult(bytes: result.bytes, mbps: result.mbps, latency: latency);
   }
 
   static SpeedTestSample _sample(int bytes, Duration elapsed) {
     final seconds = elapsed.inMicroseconds / Duration.microsecondsPerSecond;
-    return SpeedTestSample(
-      bytes: bytes,
-      mbps: seconds <= 0 ? 0 : bytes * 8 / 1000000 / seconds,
-    );
+    return SpeedTestSample(bytes: bytes, mbps: seconds <= 0 ? 0 : bytes * 8 / 1000000 / seconds);
   }
 }
 

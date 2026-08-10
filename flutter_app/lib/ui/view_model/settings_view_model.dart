@@ -48,9 +48,7 @@ class SettingsViewModel extends ChangeNotifier {
     if (_started) return;
     _started = true;
     final rows = await _app.repository.getAllSettings();
-    _saved = AppPreferences.decode({
-      for (final row in rows) row.key: row.value,
-    });
+    _saved = AppPreferences.decode({for (final row in rows) row.key: row.value});
     _draft = _saved;
     _applyImmediate(_saved);
     _app.applyPreferences(_saved);

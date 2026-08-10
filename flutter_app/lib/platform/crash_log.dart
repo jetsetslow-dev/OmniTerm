@@ -6,11 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 @immutable
 class CrashEntry {
-  const CrashEntry({
-    required this.timeMs,
-    required this.report,
-    this.startup = false,
-  });
+  const CrashEntry({required this.timeMs, required this.report, this.startup = false});
 
   final int timeMs;
   final String report;
@@ -24,11 +20,7 @@ class CrashEntry {
 
   String get headline => crashHeadline(report);
 
-  Map<String, Object> toJson() => {
-    't': timeMs,
-    'r': report,
-    if (startup) 's': true,
-  };
+  Map<String, Object> toJson() => {'t': timeMs, 'r': report, if (startup) 's': true};
 }
 
 String crashHeadline(String report) {
@@ -127,11 +119,7 @@ class CrashLog extends ChangeNotifier {
     final report = redactCrashReport('$_environment\nThread: $thread\n$error\n$stack');
     final current = await _readFresh();
     _entries = [
-      CrashEntry(
-        timeMs: DateTime.now().millisecondsSinceEpoch,
-        report: report,
-        startup: startup,
-      ),
+      CrashEntry(timeMs: DateTime.now().millisecondsSinceEpoch, report: report, startup: startup),
       ...current,
     ].take(maxEntries).toList(growable: false);
     await _write(_entries);

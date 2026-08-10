@@ -202,10 +202,7 @@ class NetworkViewModel extends ChangeNotifier {
     if (normalizedReverse.isNotEmpty) return normalizedReverse;
 
     final fallbacks = await Future.wait([
-      probe.mdnsReverseLookup(
-        address,
-        timeout: const Duration(milliseconds: 900),
-      ),
+      probe.mdnsReverseLookup(address, timeout: const Duration(milliseconds: 900)),
       probe.netbiosName(address, timeout: const Duration(milliseconds: 900)),
     ]);
     final mdns = LanHostnameWire.normalize(fallbacks[0], address);
@@ -271,16 +268,13 @@ class NetworkViewModel extends ChangeNotifier {
         ipAddress: Value(ipAddress.trim()),
         port: Value(port),
         notes: Value(notes.trim()),
-        lastWokenTime: existing == null
-            ? const Value.absent()
-            : Value(existing.lastWokenTime),
+        lastWokenTime: existing == null ? const Value.absent() : Value(existing.lastWokenTime),
       ),
     );
     return null;
   }
 
-  Future<void> deleteWolTarget(WolTarget target) =>
-      _app.repository.deleteWolTargetById(target.id);
+  Future<void> deleteWolTarget(WolTarget target) => _app.repository.deleteWolTargetById(target.id);
 
   // ── whois ───────────────────────────────────────────────────────────────────
 
@@ -358,50 +352,20 @@ class NetworkViewModel extends ChangeNotifier {
   // ── speed test ─────────────────────────────────────────────────────────────
 
   static const speedTestServers = <(String, String)>[
-    (
-      'Cloudflare — global anycast (50 MB)',
-      'https://speed.cloudflare.com/__down?bytes=52428800',
-    ),
-    (
-      'Cloudflare — global anycast (200 MB)',
-      'https://speed.cloudflare.com/__down?bytes=209715200',
-    ),
-    (
-      'Hetzner — Falkenstein, Germany (100 MB)',
-      'https://fsn1-speed.hetzner.com/100MB.bin',
-    ),
-    (
-      'Hetzner — Helsinki, Finland (100 MB)',
-      'https://hel1-speed.hetzner.com/100MB.bin',
-    ),
-    (
-      'Hetzner — Ashburn, US East (100 MB)',
-      'https://ash-speed.hetzner.com/100MB.bin',
-    ),
-    (
-      'OVH — Gravelines, France (100 MB)',
-      'https://proof.ovh.net/files/100Mb.dat',
-    ),
-    (
-      'Linode — Newark, US East (100 MB)',
-      'https://speedtest.newark.linode.com/100MB-newark.bin',
-    ),
+    ('Cloudflare — global anycast (50 MB)', 'https://speed.cloudflare.com/__down?bytes=52428800'),
+    ('Cloudflare — global anycast (200 MB)', 'https://speed.cloudflare.com/__down?bytes=209715200'),
+    ('Hetzner — Falkenstein, Germany (100 MB)', 'https://fsn1-speed.hetzner.com/100MB.bin'),
+    ('Hetzner — Helsinki, Finland (100 MB)', 'https://hel1-speed.hetzner.com/100MB.bin'),
+    ('Hetzner — Ashburn, US East (100 MB)', 'https://ash-speed.hetzner.com/100MB.bin'),
+    ('OVH — Gravelines, France (100 MB)', 'https://proof.ovh.net/files/100Mb.dat'),
+    ('Linode — Newark, US East (100 MB)', 'https://speedtest.newark.linode.com/100MB-newark.bin'),
     (
       'Linode — Fremont, US West (100 MB)',
       'https://speedtest.fremont.linode.com/100MB-fremont.bin',
     ),
-    (
-      'Linode — London, UK (100 MB)',
-      'https://speedtest.london.linode.com/100MB-london.bin',
-    ),
-    (
-      'Linode — Singapore (100 MB)',
-      'https://speedtest.singapore.linode.com/100MB-singapore.bin',
-    ),
-    (
-      'Linode — Mumbai, India (100 MB)',
-      'https://speedtest.mumbai1.linode.com/100MB-mumbai1.bin',
-    ),
+    ('Linode — London, UK (100 MB)', 'https://speedtest.london.linode.com/100MB-london.bin'),
+    ('Linode — Singapore (100 MB)', 'https://speedtest.singapore.linode.com/100MB-singapore.bin'),
+    ('Linode — Mumbai, India (100 MB)', 'https://speedtest.mumbai1.linode.com/100MB-mumbai1.bin'),
   ];
 
   String speedTestUrl = speedTestServers.first.$2;
@@ -522,14 +486,11 @@ class NetworkViewModel extends ChangeNotifier {
       if (manager.isActive(pf.id)) {
         await manager.stop(pf.id);
       } else {
-        final server = _app.servers
-            .where((s) => s.id == pf.serverId)
-            .firstOrNull;
+        final server = _app.servers.where((s) => s.id == pf.serverId).firstOrNull;
         if (server == null) {
           // The host was deleted out from under the tunnel. Saying so beats a connection error
           // that blames the network.
-          _tunnelErrors[pf.id] =
-              'The host this tunnel runs over no longer exists.';
+          _tunnelErrors[pf.id] = 'The host this tunnel runs over no longer exists.';
           return;
         }
         final creds = resolveCredentials(
@@ -570,10 +531,7 @@ class NetworkViewModel extends ChangeNotifier {
         target.broadcastIp.isEmpty ? '255.255.255.255' : target.broadcastIp,
         target.port,
       );
-      await _app.repository.updateWolLastWoken(
-        target.id,
-        DateTime.now().millisecondsSinceEpoch,
-      );
+      await _app.repository.updateWolLastWoken(target.id, DateTime.now().millisecondsSinceEpoch);
       return 'Magic packet sent to ${target.name}. It may take a moment to boot.';
     } catch (e) {
       return 'Could not send the packet: $e';
@@ -585,12 +543,7 @@ class NetworkViewModel extends ChangeNotifier {
     final address = target.ipAddress.trim();
     if (address.isEmpty) return null;
     for (final port in const [22, 80, 443, 445]) {
-      if (await probe.tcpPing(
-            address,
-            port,
-            timeout: const Duration(milliseconds: 450),
-          ) !=
-          null) {
+      if (await probe.tcpPing(address, port, timeout: const Duration(milliseconds: 450)) != null) {
         return true;
       }
     }
@@ -721,22 +674,14 @@ class NetworkViewModel extends ChangeNotifier {
   }
 
   Future<void> _runTtlTraceroute(String target) async {
-    _appendTraceLine(
-      'ICMP trace via TTL-stepped ping (no traceroute binary on this device)',
-    );
+    _appendTraceLine('ICMP trace via TTL-stepped ping (no traceroute binary on this device)');
     var reached = false;
     var completed = true;
     for (var ttl = 1; ttl <= 30 && _tracerouteRunning; ttl++) {
       final startedUs = DateTime.now().microsecondsSinceEpoch;
-      final command = await deviceCommands.startPing(
-        target,
-        count: 1,
-        ttl: ttl,
-      );
+      final command = await deviceCommands.startPing(target, count: 1, ttl: ttl);
       if (command == null) {
-        _appendTraceLine(
-          'ping is not available on this device — cannot trace.',
-        );
+        _appendTraceLine('ping is not available on this device — cannot trace.');
         completed = false;
         break;
       }
@@ -759,22 +704,18 @@ class NetworkViewModel extends ChangeNotifier {
       final text = output.toString();
       final lower = text.toLowerCase();
       if (ttl == 1 &&
-          (lower.contains('unknown host') ||
-              lower.contains('name or service not known'))) {
+          (lower.contains('unknown host') || lower.contains('name or service not known'))) {
         _appendTraceLine('Cannot resolve $target.');
         completed = false;
         break;
       }
-      final elapsedMs =
-          (DateTime.now().microsecondsSinceEpoch - startedUs) / 1000.0;
+      final elapsedMs = (DateTime.now().microsecondsSinceEpoch - startedUs) / 1000.0;
       final reply = RegExp(
         r'bytes from ([0-9a-fA-F.:]*[0-9a-fA-F])[:\s].*time=([\d.]+)',
         caseSensitive: false,
       ).firstMatch(text);
       if (reply != null) {
-        _appendTraceLine(
-          '${ttl.toString().padLeft(2)}  ${reply.group(1)}  ${reply.group(2)} ms',
-        );
+        _appendTraceLine('${ttl.toString().padLeft(2)}  ${reply.group(1)}  ${reply.group(2)} ms');
         reached = true;
         break;
       }
@@ -790,9 +731,7 @@ class NetworkViewModel extends ChangeNotifier {
     }
     if (!completed || !_tracerouteRunning) return;
     _appendTraceLine(
-      reached
-          ? 'Trace complete.'
-          : 'Stopped after 30 hops without reaching $target.',
+      reached ? 'Trace complete.' : 'Stopped after 30 hops without reaching $target.',
     );
   }
 
@@ -828,8 +767,7 @@ class NetworkViewModel extends ChangeNotifier {
     }
     final ports = parsePortSpec(portSpec);
     if (ports.isEmpty) {
-      _error =
-          'Enter ports like 22,80,443 or 8000-8100 (up to $maxPortsPerScan at a time).';
+      _error = 'Enter ports like 22,80,443 or 8000-8100 (up to $maxPortsPerScan at a time).';
       _safeNotify();
       return;
     }
@@ -845,25 +783,16 @@ class NetworkViewModel extends ChangeNotifier {
       Future<void> worker() async {
         while (queue.isNotEmpty) {
           final port = queue.removeAt(0);
-          final latency = await probe.tcpPing(
-            target,
-            port,
-            timeout: const Duration(seconds: 1),
-          );
-          results.add(
-            PortResult(port: port, open: latency != null, latency: latency),
-          );
-          _portResults = List.of(results)
-            ..sort((a, b) => a.port.compareTo(b.port));
+          final latency = await probe.tcpPing(target, port, timeout: const Duration(seconds: 1));
+          results.add(PortResult(port: port, open: latency != null, latency: latency));
+          _portResults = List.of(results)..sort((a, b) => a.port.compareTo(b.port));
           _safeNotify();
         }
       }
 
       // Bounded fan-out: opening a socket per port at once exhausts a mobile process's descriptors
       // and makes the scan slower, not faster.
-      await Future.wait([
-        for (var i = 0; i < min(32, ports.length); i++) worker(),
-      ]);
+      await Future.wait([for (var i = 0; i < min(32, ports.length); i++) worker()]);
     } catch (e) {
       _error = e.toString();
     } finally {
@@ -901,20 +830,13 @@ class NetworkViewModel extends ChangeNotifier {
     final transactionId = Random().nextInt(0xFFFF);
 
     try {
-      final query = buildDnsQuery(
-        target,
-        dnsTypeCode(dnsType),
-        transactionId: transactionId,
-      );
+      final query = buildDnsQuery(target, dnsTypeCode(dnsType), transactionId: transactionId);
       Object? lastFailure;
 
       for (final resolver in fallbackResolvers) {
         try {
           final response = await probe.resolve(query, resolver: resolver);
-          _dnsResults = parseDnsResponse(
-            response,
-            expectTransactionId: transactionId,
-          );
+          _dnsResults = parseDnsResponse(response, expectTransactionId: transactionId);
           if (_dnsResults.isEmpty) {
             _error = 'No ${dnsType.toUpperCase()} records for $target.';
           }
@@ -970,10 +892,7 @@ class NetworkViewModel extends ChangeNotifier {
     List<int> knownOpenPorts = const [],
   }) async {
     if (tool == NetworkTab.portScan && knownOpenPorts.isNotEmpty) {
-      portSpec = ({
-        ...parsePortSpec(portSpec),
-        ...knownOpenPorts,
-      }.toList()..sort()).join(',');
+      portSpec = ({...parsePortSpec(portSpec), ...knownOpenPorts}.toList()..sort()).join(',');
     }
     useHost(address, tool);
     switch (tool) {

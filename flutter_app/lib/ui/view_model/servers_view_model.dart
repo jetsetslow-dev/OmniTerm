@@ -79,8 +79,7 @@ class ServersViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  List<int> get selectedServerIdsForBulk =>
-      List.unmodifiable(_selectedServerIdsForBulk);
+  List<int> get selectedServerIdsForBulk => List.unmodifiable(_selectedServerIdsForBulk);
 
   /// The aliases of every stored SSH key, for the form's key picker.
   Future<List<String>> savedKeyAliases() async =>
@@ -163,8 +162,7 @@ class ServersViewModel extends ChangeNotifier {
       for (final server in servers)
         if ((server.name.toLowerCase().contains(needle) ||
                 server.host.toLowerCase().contains(needle)) &&
-            (_selectedGroupChip == 'All' ||
-                server.groupName == _selectedGroupChip))
+            (_selectedGroupChip == 'All' || server.groupName == _selectedGroupChip))
           server,
     ];
   }
@@ -173,24 +171,20 @@ class ServersViewModel extends ChangeNotifier {
   ///
   /// [unlocked] comes from the billing controller; the source-available build passes true because it
   /// carries no billing code at all.
-  bool hostLimitReached({
-    required bool playStoreBuild,
-    required bool unlocked,
-  }) => playStoreBuild && !unlocked && servers.length >= freePlayStoreLimit;
+  bool hostLimitReached({required bool playStoreBuild, required bool unlocked}) =>
+      playStoreBuild && !unlocked && servers.length >= freePlayStoreLimit;
 
   /// True when the install already holds **more** hosts than its entitlement allows.
   ///
   /// Distinct from [hostLimitReached], which stops a *new* host being added. This is the standing
   /// violation: a restore on an older build, a lapsed unlock or a refund all leave hosts already
   /// saved, and blocking additions does nothing about those.
-  bool hostLimitExceededNow({
-    required bool playStoreBuild,
-    required bool unlocked,
-  }) => hostLimitExceeded(
-    hasHostLimit: playStoreBuild && !unlocked,
-    hostLimit: freePlayStoreLimit,
-    hostCount: servers.length,
-  );
+  bool hostLimitExceededNow({required bool playStoreBuild, required bool unlocked}) =>
+      hostLimitExceeded(
+        hasHostLimit: playStoreBuild && !unlocked,
+        hostLimit: freePlayStoreLimit,
+        hostCount: servers.length,
+      );
 
   /// Keeps [keepIds] and deletes every other saved host.
   ///
@@ -198,10 +192,7 @@ class ServersViewModel extends ChangeNotifier {
   /// this deletes hosts, and a flow that deletes more than the user chose — or leaves the install
   /// still over its limit — is worse than one that declines. Returns how many were removed.
   Future<int> reconcileHostLimit(Set<int> keepIds) async {
-    if (!isValidHostKeepSelection(
-      selectedCount: keepIds.length,
-      hostLimit: freePlayStoreLimit,
-    )) {
+    if (!isValidHostKeepSelection(selectedCount: keepIds.length, hostLimit: freePlayStoreLimit)) {
       return 0;
     }
     final doomed = servers.where((s) => !keepIds.contains(s.id)).toList();
@@ -251,9 +242,7 @@ class ServersViewModel extends ChangeNotifier {
       final matches = servers.where((s) => s.id == id);
       final server = matches.isEmpty ? null : matches.first;
       if (server == null) continue;
-      await _app.repository.updateServer(
-        server.copyWith(groupName: Value(groupName)),
-      );
+      await _app.repository.updateServer(server.copyWith(groupName: Value(groupName)));
     }
     notifyListeners();
   }

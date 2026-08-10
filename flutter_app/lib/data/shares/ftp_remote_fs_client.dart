@@ -20,13 +20,7 @@ class FtpRemoteFsClient extends RemoteFsClient {
     required int port,
     required String username,
     required String password,
-  }) : _ftp = FTPConnect(
-         host,
-         port: port,
-         user: username,
-         pass: password,
-         timeout: 20,
-       );
+  }) : _ftp = FTPConnect(host, port: port, user: username, pass: password, timeout: 20);
 
   final FTPConnect _ftp;
   bool _connected = false;
@@ -66,11 +60,8 @@ class FtpRemoteFsClient extends RemoteFsClient {
             name: entry.name,
             isDirectory: entry.type == FTPEntryType.dir,
             size: entry.size ?? 0,
-            modDate: formatFsDate(
-              entry.modifyTime?.millisecondsSinceEpoch ?? 0,
-            ),
-            modTimeSeconds:
-                (entry.modifyTime?.millisecondsSinceEpoch ?? 0) ~/ 1000,
+            modDate: formatFsDate(entry.modifyTime?.millisecondsSinceEpoch ?? 0),
+            modTimeSeconds: (entry.modifyTime?.millisecondsSinceEpoch ?? 0) ~/ 1000,
           ),
     ];
   });
@@ -83,24 +74,18 @@ class FtpRemoteFsClient extends RemoteFsClient {
   });
 
   @override
-  Future<void> rename(
-    String oldPath,
-    String newPath, {
-    bool isDirectory = false,
-  }) => _serial(() async {
-    if (!await _ftp.rename(oldPath, newPath)) {
-      throw FileSystemException('Could not rename FTP item', oldPath);
-    }
-  });
+  Future<void> rename(String oldPath, String newPath, {bool isDirectory = false}) =>
+      _serial(() async {
+        if (!await _ftp.rename(oldPath, newPath)) {
+          throw FileSystemException('Could not rename FTP item', oldPath);
+        }
+      });
 
   @override
-  Future<void> delete(String path, {required bool isDirectory}) =>
-      _serial(() async {
-        final ok = isDirectory
-            ? await _ftp.deleteDirectory(path)
-            : await _ftp.deleteFile(path);
-        if (!ok) throw FileSystemException('Could not delete FTP item', path);
-      });
+  Future<void> delete(String path, {required bool isDirectory}) => _serial(() async {
+    final ok = isDirectory ? await _ftp.deleteDirectory(path) : await _ftp.deleteFile(path);
+    if (!ok) throw FileSystemException('Could not delete FTP item', path);
+  });
 
   Future<File> _temporaryFile() async {
     final directory = await getTemporaryDirectory();
@@ -170,10 +155,7 @@ class FtpRemoteFsClient extends RemoteFsClient {
     final sink = StreamController<List<int>>();
     final subscription = sink.stream.listen((chunk) {
       if (bytes.length + chunk.length > maxBytes) {
-        throw FileSystemException(
-          'FTP file is larger than the editor limit',
-          path,
-        );
+        throw FileSystemException('FTP file is larger than the editor limit', path);
       }
       bytes.addAll(chunk);
     });

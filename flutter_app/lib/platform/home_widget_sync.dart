@@ -24,10 +24,7 @@ class HomeWidgetSync {
       final count = servers.length;
       // Written first and cleared to `ok` only once everything else has landed, so a sync that
       // dies part-way leaves the widget saying it could not load rather than showing half a fleet.
-      await HomeWidget.saveWidgetData<String>(
-        widgetStatusKey,
-        widgetStatusFailed,
-      );
+      await HomeWidget.saveWidgetData<String>(widgetStatusKey, widgetStatusFailed);
       await HomeWidget.saveWidgetData<int>('server_count', count);
       await HomeWidget.saveWidgetData<int>(
         'online_count',

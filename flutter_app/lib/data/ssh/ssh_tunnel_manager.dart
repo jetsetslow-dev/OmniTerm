@@ -126,21 +126,9 @@ class SshTunnelManager {
   }) async {
     switch (kind) {
       case 'local':
-        return _LocalForward.bind(
-          client,
-          bindHost,
-          bindPort,
-          destHost,
-          destPort,
-        );
+        return _LocalForward.bind(client, bindHost, bindPort, destHost, destPort);
       case 'remote':
-        return _RemoteForward.bind(
-          client,
-          bindHost,
-          bindPort,
-          destHost,
-          destPort,
-        );
+        return _RemoteForward.bind(client, bindHost, bindPort, destHost, destPort);
       case 'dynamic':
         final forward = await SocksForwardServer.bind(
           bindHost: bindHost,
@@ -259,13 +247,7 @@ class _LocalForward implements _ActiveTunnel {
 
 /// `ssh -R`: the remote listens, and each inbound connection is piped to a local destination.
 class _RemoteForward implements _ActiveTunnel {
-  _RemoteForward(
-    this._client,
-    this._forward,
-    this._boundPort,
-    this._destHost,
-    this._destPort,
-  ) {
+  _RemoteForward(this._client, this._forward, this._boundPort, this._destHost, this._destPort) {
     _subscription = _forward.connections.listen(_accept, onError: (_) {});
   }
 
@@ -429,10 +411,7 @@ class SocksForwardServer {
     }
   }
 
-  Future<(String, int)?> _readSocks5(
-    Socket socket,
-    _SocketByteReader reader,
-  ) async {
+  Future<(String, int)?> _readSocks5(Socket socket, _SocketByteReader reader) async {
     final methodCount = (await reader.read(1, handshakeTimeout)).single;
     if (methodCount == 0) {
       socket.add(const [5, 0xff]);
@@ -455,18 +434,11 @@ class SocksForwardServer {
       return null;
     }
     final host = switch (header[3]) {
-      1 => InternetAddress.fromRawAddress(
-        await reader.read(4, handshakeTimeout),
-      ).address,
+      1 => InternetAddress.fromRawAddress(await reader.read(4, handshakeTimeout)).address,
       3 => utf8.decode(
-        await reader.read(
-          (await reader.read(1, handshakeTimeout)).single,
-          handshakeTimeout,
-        ),
+        await reader.read((await reader.read(1, handshakeTimeout)).single, handshakeTimeout),
       ),
-      4 => InternetAddress.fromRawAddress(
-        await reader.read(16, handshakeTimeout),
-      ).address,
+      4 => InternetAddress.fromRawAddress(await reader.read(16, handshakeTimeout)).address,
       _ => null,
     };
     if (host == null || host.isEmpty) {
@@ -481,15 +453,8 @@ class SocksForwardServer {
     if ((await reader.read(1, handshakeTimeout)).single != 1) return null;
     final port = await _readPort(reader);
     final address = await reader.read(4, handshakeTimeout);
-    await reader.readNullTerminated(
-      handshakeTimeout,
-      maxBytes: 1024,
-    ); // user id
-    final isSocks4a =
-        address[0] == 0 &&
-        address[1] == 0 &&
-        address[2] == 0 &&
-        address[3] != 0;
+    await reader.readNullTerminated(handshakeTimeout, maxBytes: 1024); // user id
+    final isSocks4a = address[0] == 0 && address[1] == 0 && address[2] == 0 && address[3] != 0;
     final host = isSocks4a
         ? await reader.readNullTerminated(handshakeTimeout, maxBytes: 1024)
         : InternetAddress.fromRawAddress(address).address;
@@ -503,17 +468,13 @@ class SocksForwardServer {
 
   static void _writeSuccess(Socket socket, int version) {
     socket.add(
-      version == 5
-          ? const [5, 0, 0, 1, 0, 0, 0, 0, 0, 0]
-          : const [0, 90, 0, 0, 0, 0, 0, 0],
+      version == 5 ? const [5, 0, 0, 1, 0, 0, 0, 0, 0, 0] : const [0, 90, 0, 0, 0, 0, 0, 0],
     );
   }
 
   static void _writeFailure(Socket socket, int version) {
     socket.add(
-      version == 5
-          ? const [5, 5, 0, 1, 0, 0, 0, 0, 0, 0]
-          : const [0, 91, 0, 0, 0, 0, 0, 0],
+      version == 5 ? const [5, 5, 0, 1, 0, 0, 0, 0, 0, 0] : const [0, 91, 0, 0, 0, 0, 0, 0],
     );
   }
 
@@ -577,11 +538,7 @@ Future<void> _pipe(Socket socket, SSHForwardChannel channel) async {
   }
 }
 
-Future<void> _pipeReader(
-  Socket socket,
-  _SocketByteReader reader,
-  SSHSocket channel,
-) async {
+Future<void> _pipeReader(Socket socket, _SocketByteReader reader, SSHSocket channel) async {
   final fromRemote = channel.stream.listen(
     socket.add,
     onError: (_) {},
@@ -621,14 +578,10 @@ class _SocketByteReader {
         throw SocketException('SOCKS connection failed: $_error');
       }
       if (_done) {
-        throw const SocketException(
-          'SOCKS client closed during the handshake.',
-        );
+        throw const SocketException('SOCKS client closed during the handshake.');
       }
       if (DateTime.now().isAfter(deadline)) {
-        throw const SocketException(
-          'SOCKS client did not finish the handshake in time.',
-        );
+        throw const SocketException('SOCKS client did not finish the handshake in time.');
       }
       await Future<void>.delayed(const Duration(milliseconds: 5));
     }
@@ -637,10 +590,7 @@ class _SocketByteReader {
     return Uint8List.sublistView(all, 0, count);
   }
 
-  Future<String> readNullTerminated(
-    Duration timeout, {
-    required int maxBytes,
-  }) async {
+  Future<String> readNullTerminated(Duration timeout, {required int maxBytes}) async {
     final bytes = <int>[];
     while (bytes.length < maxBytes) {
       final next = (await read(1, timeout)).single;

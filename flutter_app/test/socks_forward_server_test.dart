@@ -7,59 +7,52 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/ssh/ssh_tunnel_manager.dart';
 
 void main() {
-  test(
-    'SOCKS5 CONNECT preserves the domain and pipes both directions',
-    () async {
-      late SocksForwardTarget opened;
-      final channel = _FakeSshSocket();
-      final server = await SocksForwardServer.bind(
-        bindHost: '127.0.0.1',
-        bindPort: 0,
-        openChannel: (target) async {
-          opened = target;
-          return channel;
-        },
-      );
-      final socket = await Socket.connect('127.0.0.1', server.port);
-      final reader = _ClientReader(socket);
+  test('SOCKS5 CONNECT preserves the domain and pipes both directions', () async {
+    late SocksForwardTarget opened;
+    final channel = _FakeSshSocket();
+    final server = await SocksForwardServer.bind(
+      bindHost: '127.0.0.1',
+      bindPort: 0,
+      openChannel: (target) async {
+        opened = target;
+        return channel;
+      },
+    );
+    final socket = await Socket.connect('127.0.0.1', server.port);
+    final reader = _ClientReader(socket);
 
-      socket.add(const [5, 1, 0]);
-      await socket.flush();
-      expect(await reader.read(2), [5, 0]);
+    socket.add(const [5, 1, 0]);
+    await socket.flush();
+    expect(await reader.read(2), [5, 0]);
 
-      const host = 'private.internal';
-      socket.add([
-        5,
-        1,
-        0,
-        3,
-        host.length,
-        ...host.codeUnits,
-        1,
-        187, // 443
-      ]);
-      await socket.flush();
-      expect(await reader.read(10), [5, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
-      expect(
-        opened.host,
-        host,
-        reason: 'the remote side must resolve private DNS',
-      );
-      expect(opened.port, 443);
+    const host = 'private.internal';
+    socket.add([
+      5,
+      1,
+      0,
+      3,
+      host.length,
+      ...host.codeUnits,
+      1,
+      187, // 443
+    ]);
+    await socket.flush();
+    expect(await reader.read(10), [5, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+    expect(opened.host, host, reason: 'the remote side must resolve private DNS');
+    expect(opened.port, 443);
 
-      socket.add(const [1, 2, 3]);
-      await socket.flush();
-      await _eventually(() => channel.received.length == 3);
-      expect(channel.received.takeBytes(), [1, 2, 3]);
+    socket.add(const [1, 2, 3]);
+    await socket.flush();
+    await _eventually(() => channel.received.length == 3);
+    expect(channel.received.takeBytes(), [1, 2, 3]);
 
-      channel.send(const [9, 8]);
-      expect(await reader.read(2), [9, 8]);
+    channel.send(const [9, 8]);
+    expect(await reader.read(2), [9, 8]);
 
-      await socket.close();
-      await reader.cancel();
-      await server.close();
-    },
-  );
+    await socket.close();
+    await reader.cancel();
+    await server.close();
+  });
 
   test('SOCKS4 CONNECT accepts an IPv4 destination', () async {
     late SocksForwardTarget opened;
@@ -124,36 +117,29 @@ void main() {
     await server.close();
   });
 
-  test(
-    'SOCKS5 refuses unsupported authentication without opening SSH',
-    () async {
-      var opens = 0;
-      final server = await SocksForwardServer.bind(
-        bindHost: '127.0.0.1',
-        bindPort: 0,
-        openChannel: (_) async {
-          opens++;
-          return _FakeSshSocket();
-        },
-      );
-      final socket = await Socket.connect('127.0.0.1', server.port);
-      final reader = _ClientReader(socket);
+  test('SOCKS5 refuses unsupported authentication without opening SSH', () async {
+    var opens = 0;
+    final server = await SocksForwardServer.bind(
+      bindHost: '127.0.0.1',
+      bindPort: 0,
+      openChannel: (_) async {
+        opens++;
+        return _FakeSshSocket();
+      },
+    );
+    final socket = await Socket.connect('127.0.0.1', server.port);
+    final reader = _ClientReader(socket);
 
-      socket.add(const [
-        5,
-        1,
-        2,
-      ]); // username/password only; dynamic forwards are NO AUTH
-      await socket.flush();
+    socket.add(const [5, 1, 2]); // username/password only; dynamic forwards are NO AUTH
+    await socket.flush();
 
-      expect(await reader.read(2), [5, 255]);
-      expect(opens, 0);
+    expect(await reader.read(2), [5, 255]);
+    expect(opens, 0);
 
-      await socket.close();
-      await reader.cancel();
-      await server.close();
-    },
-  );
+    await socket.close();
+    await reader.cancel();
+    await server.close();
+  });
 }
 
 Future<void> _eventually(bool Function() predicate) async {

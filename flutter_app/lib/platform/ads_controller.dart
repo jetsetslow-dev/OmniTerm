@@ -44,8 +44,7 @@ class AdsController {
     try {
       final canRequest = await ConsentInformation.instance.canRequestAds();
       final privacy =
-          await ConsentInformation.instance
-              .getPrivacyOptionsRequirementStatus() ==
+          await ConsentInformation.instance.getPrivacyOptionsRequirementStatus() ==
           PrivacyOptionsRequirementStatus.required;
       if (canRequest) {
         const testIds = String.fromEnvironment('ADMOB_TEST_DEVICE_IDS');

@@ -52,11 +52,7 @@ class FakeShell implements SshTransport {
 /// landed rather than on the calls it was asked to make — the difference between testing the
 /// outcome and testing the mock.
 class FakeDeviceFileStore extends DeviceFileStore {
-  FakeDeviceFileStore(
-    this.destination, {
-    this.cancelFolder = false,
-    this.failFor = const {},
-  });
+  FakeDeviceFileStore(this.destination, {this.cancelFolder = false, this.failFor = const {}});
 
   final Directory destination;
 
@@ -75,11 +71,7 @@ class FakeDeviceFileStore extends DeviceFileStore {
   }
 
   @override
-  Future<DeviceSaveResult> saveInto(
-    DeviceFolder folder,
-    String fileName,
-    String sourcePath,
-  ) async {
+  Future<DeviceSaveResult> saveInto(DeviceFolder folder, String fileName, String sourcePath) async {
     if (failFor.contains(fileName)) {
       return const DeviceSaveResult(DeviceSaveOutcome.failed, error: 'disk full');
     }
@@ -204,36 +196,33 @@ void main() {
     await db.close();
   });
 
-  Server server({
-    required String name,
-    String status = 'online',
-    String sudoPassword = '',
-  }) => Server(
-    id: 0,
-    name: name,
-    host: '10.0.0.1',
-    port: 22,
-    username: 'root',
-    serverColor: 'Default',
-    authType: 'password',
-    authPassword: 'pw',
-    sudoPassword: sudoPassword,
-    notes: '',
-    keepAlive: 30,
-    sshCompression: false,
-    persistentSession: false,
-    proxyCommand: '',
-    proxyType: 'none',
-    proxyHost: '',
-    proxyPort: 0,
-    proxyUser: '',
-    proxyPassword: '',
-    agentForwarding: false,
-    healthScore: 100,
-    lastLatency: 0,
-    status: status,
-    authStatus: 'ok',
-  );
+  Server server({required String name, String status = 'online', String sudoPassword = ''}) =>
+      Server(
+        id: 0,
+        name: name,
+        host: '10.0.0.1',
+        port: 22,
+        username: 'root',
+        serverColor: 'Default',
+        authType: 'password',
+        authPassword: 'pw',
+        sudoPassword: sudoPassword,
+        notes: '',
+        keepAlive: 30,
+        sshCompression: false,
+        persistentSession: false,
+        proxyCommand: '',
+        proxyType: 'none',
+        proxyHost: '',
+        proxyPort: 0,
+        proxyUser: '',
+        proxyPassword: '',
+        agentForwarding: false,
+        healthScore: 100,
+        lastLatency: 0,
+        status: status,
+        authStatus: 'ok',
+      );
 
   SftpFile entry(String name, {bool dir = false, int size = 10, int modified = 0}) =>
       SftpFile(name: name, isDirectory: dir, size: size, modDate: '', modTimeSeconds: modified);
@@ -658,11 +647,8 @@ void main() {
       if (destination.existsSync()) destination.deleteSync(recursive: true);
     });
 
-    List<String> saved() => destination
-        .listSync()
-        .map((e) => e.path.split('/').last)
-        .toList()
-      ..sort();
+    List<String> saved() =>
+        destination.listSync().map((e) => e.path.split('/').last).toList()..sort();
 
     SftpFile file(String name, {int size = 10}) =>
         SftpFile(name: name, isDirectory: false, size: size, modDate: '2026-08-01');
@@ -852,12 +838,7 @@ void main() {
 
       expect(
         vm.allBookmarks.map((b) => '${b.endpointName}:${b.path}'),
-        containsAll([
-          'alpha:/srv/www',
-          'alpha:/etc',
-          'beta:/opt/app',
-          'media (SMB):/photos',
-        ]),
+        containsAll(['alpha:/srv/www', 'alpha:/etc', 'beta:/opt/app', 'media (SMB):/photos']),
       );
       vm.dispose();
     });
@@ -950,11 +931,7 @@ void main() {
       await vm.loadAllBookmarks();
       final original = vm.allBookmarks.firstWhere((b) => b.path == '/etc');
 
-      await vm.saveEndpointBookmark(
-        serverId: to,
-        path: '/srv',
-        replacing: original,
-      );
+      await vm.saveEndpointBookmark(serverId: to, path: '/srv', replacing: original);
 
       expect(await repo.getSetting('sftp_bookmarks_$from'), '/opt');
       expect(await repo.getSetting('sftp_bookmarks_$to'), '/srv');
@@ -983,9 +960,7 @@ void main() {
       final vm = await boot(client: homeTree());
       await vm.loadAllBookmarks();
 
-      await vm.removeEndpointBookmark(
-        vm.allBookmarks.firstWhere((b) => b.path == '/opt'),
-      );
+      await vm.removeEndpointBookmark(vm.allBookmarks.firstWhere((b) => b.path == '/opt'));
 
       expect(await repo.getSetting('sftp_bookmarks_$id'), '/etc|||/srv');
       vm.dispose();
@@ -999,9 +974,7 @@ void main() {
       final vm = await boot(client: homeTree());
       await vm.loadAllBookmarks();
 
-      await vm.removeEndpointBookmark(
-        vm.allBookmarks.firstWhere((b) => b.serverId == aId),
-      );
+      await vm.removeEndpointBookmark(vm.allBookmarks.firstWhere((b) => b.serverId == aId));
 
       expect(await repo.getSetting('sftp_bookmarks_$aId'), '');
       expect(await repo.getSetting('sftp_bookmarks_$bId'), '/etc');
@@ -1021,9 +994,7 @@ void main() {
       final vm = await booted(homeTree());
       await vm.toggleBookmark('/srv/www');
 
-      await vm.removeEndpointBookmark(
-        vm.allBookmarks.firstWhere((b) => b.path == '/srv/www'),
-      );
+      await vm.removeEndpointBookmark(vm.allBookmarks.firstWhere((b) => b.path == '/srv/www'));
 
       expect(vm.isBookmarked('/srv/www'), isFalse);
       vm.dispose();
@@ -1799,10 +1770,7 @@ void main() {
       await vm.beginPaste(recurseFolders: false);
 
       vm.setAllPasteConflictActions(ConflictAction.skip);
-      expect(
-        vm.pasteConflicts.every((c) => c.action == ConflictAction.skip),
-        isTrue,
-      );
+      expect(vm.pasteConflicts.every((c) => c.action == ConflictAction.skip), isTrue);
       vm.dispose();
     });
 
@@ -1904,10 +1872,7 @@ void main() {
     test('the warning does not persist onto the next file opened', () async {
       final client = withFile('app.bin', 'MZ\u0000program');
       client.files['/home/root/notes.txt'] = 'plain text';
-      client.tree['/home/root'] = [
-        entry('app.bin', size: 15),
-        entry('notes.txt', size: 10),
-      ];
+      client.tree['/home/root'] = [entry('app.bin', size: 15), entry('notes.txt', size: 10)];
       final vm = await booted(client);
 
       await vm.readForEditing(entry('app.bin', size: 15));
@@ -2062,14 +2027,10 @@ void main() {
     test('only running transfers count', () async {
       // A finished row must not keep inflating the batch it already left.
       final vm = await booted(homeTree());
-      final done = SftpTransfer(
-        id: 'a',
-        name: 'a',
-        direction: TransferDirection.download,
-        totalBytes: 100,
-      )
-        ..copiedBytes = 100
-        ..status = TransferStatus.done;
+      final done =
+          SftpTransfer(id: 'a', name: 'a', direction: TransferDirection.download, totalBytes: 100)
+            ..copiedBytes = 100
+            ..status = TransferStatus.done;
       final live = SftpTransfer(
         id: 'b',
         name: 'b',

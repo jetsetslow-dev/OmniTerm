@@ -30,10 +30,7 @@ void main() {
 
     test('a failed publish is unavailable even if old rows are still there', () {
       // A part-way sync must not leave the widget presenting half a fleet as current.
-      expect(
-        state(status: widgetStatusFailed, rowCount: 5),
-        WidgetPayloadState.unavailable,
-      );
+      expect(state(status: widgetStatusFailed, rowCount: 5), WidgetPayloadState.unavailable);
     });
 
     test('never published is unavailable, not empty', () {
@@ -49,10 +46,7 @@ void main() {
     });
 
     test('empty invites adding a host', () {
-      expect(
-        widgetPlaceholderMessage(WidgetPayloadState.empty),
-        contains('add a host'),
-      );
+      expect(widgetPlaceholderMessage(WidgetPayloadState.empty), contains('add a host'));
     });
 
     test('unavailable says what to do, not only what went wrong', () {

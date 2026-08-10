@@ -61,12 +61,8 @@ class ReviewPromptController {
     if (_loaded) return;
     _loaded = true;
     _successCount =
-        int.tryParse(
-          (await _repository.getSetting('ssh_success_count'))?.trim() ?? '',
-        ) ??
-        0;
-    _alreadyShown =
-        (await _repository.getSetting('review_prompt_shown'))?.trim() == 'true';
+        int.tryParse((await _repository.getSetting('ssh_success_count'))?.trim() ?? '') ?? 0;
+    _alreadyShown = (await _repository.getSetting('review_prompt_shown'))?.trim() == 'true';
   }
 
   /// Records a successful SSH session and prompts if this was the one that earned it.

@@ -6,21 +6,15 @@ import 'package:omniterm/data/network/lan_hostname.dart';
 
 void main() {
   group('mDNS reverse PTR', () {
-    test(
-      'query reverses a dotted IPv4 address and requests a unicast reply',
-      () {
-        final query = LanHostnameWire.buildReversePtrQuery(
-          '192.168.11.5',
-          transactionId: 0x1234,
-        )!;
-        expect(query.sublist(0, 2), [0x12, 0x34]);
-        expect(_shortAt(query, 4), 1);
-        final (name, next) = _labels(query, 12);
-        expect(name, '5.11.168.192.in-addr.arpa');
-        expect(_shortAt(query, next), LanHostnameWire.typePtr);
-        expect(_shortAt(query, next + 2), 0x8001);
-      },
-    );
+    test('query reverses a dotted IPv4 address and requests a unicast reply', () {
+      final query = LanHostnameWire.buildReversePtrQuery('192.168.11.5', transactionId: 0x1234)!;
+      expect(query.sublist(0, 2), [0x12, 0x34]);
+      expect(_shortAt(query, 4), 1);
+      final (name, next) = _labels(query, 12);
+      expect(name, '5.11.168.192.in-addr.arpa');
+      expect(_shortAt(query, next), LanHostnameWire.typePtr);
+      expect(_shortAt(query, next + 2), 0x8001);
+    });
 
     test('query rejects anything other than a dotted IPv4 literal', () {
       for (final value in ['', '192.168.1', '192.168.1.999', 'nas.local']) {
@@ -31,11 +25,7 @@ void main() {
     test('compressed, uncompressed and questionless answers parse', () {
       expect(
         LanHostnameWire.parsePtrAnswer(
-          _ptrResponse(
-            'nas.local',
-            question: '5.11.168.192.in-addr.arpa',
-            compress: true,
-          ),
+          _ptrResponse('nas.local', question: '5.11.168.192.in-addr.arpa', compress: true),
         ),
         'nas.local',
       );
@@ -45,10 +35,7 @@ void main() {
         ),
         'printer.local',
       );
-      expect(
-        LanHostnameWire.parsePtrAnswer(_ptrResponse('server.local')),
-        'server.local',
-      );
+      expect(LanHostnameWire.parsePtrAnswer(_ptrResponse('server.local')), 'server.local');
     });
 
     test('truncation and cyclic compression are rejected without throwing', () {
@@ -59,9 +46,7 @@ void main() {
       );
       for (var cut = 0; cut < packet.length; cut++) {
         expect(
-          () => LanHostnameWire.parsePtrAnswer(
-            Uint8List.sublistView(packet, 0, cut),
-          ),
+          () => LanHostnameWire.parsePtrAnswer(Uint8List.sublistView(packet, 0, cut)),
           returnsNormally,
         );
       }
@@ -77,75 +62,49 @@ void main() {
 
   group('NetBIOS node status', () {
     test('query first-level encodes the wildcard name', () {
-      final query = LanHostnameWire.buildNetbiosNodeStatusQuery(
-        transactionId: 0xab,
-      );
+      final query = LanHostnameWire.buildNetbiosNodeStatusQuery(transactionId: 0xab);
       expect(query.sublist(0, 2), [0, 0xab]);
       expect(query[12], 32);
-      expect(
-        ascii.decode(query.sublist(13, 45)),
-        'CK${List.filled(30, 'A').join()}',
-      );
+      expect(ascii.decode(query.sublist(13, 45)), 'CK${List.filled(30, 'A').join()}');
       expect(_shortAt(query, 46), LanHostnameWire.typeNbstat);
     });
 
-    test(
-      'response chooses the unique workstation name, not workgroup or service',
-      () {
-        final packet = _netbiosResponse([
-          ('WORKGROUP', 0, true),
-          ('TARSERVER', 0, false),
-          ('TARSERVER', 0x20, false),
-        ]);
-        expect(LanHostnameWire.parseNetbiosNodeStatus(packet), 'TARSERVER');
-        expect(
-          LanHostnameWire.parseNetbiosNodeStatus(
-            _netbiosResponse([('TARSERVER', 0x20, false)]),
-          ),
-          isNull,
-        );
-      },
-    );
+    test('response chooses the unique workstation name, not workgroup or service', () {
+      final packet = _netbiosResponse([
+        ('WORKGROUP', 0, true),
+        ('TARSERVER', 0, false),
+        ('TARSERVER', 0x20, false),
+      ]);
+      expect(LanHostnameWire.parseNetbiosNodeStatus(packet), 'TARSERVER');
+      expect(
+        LanHostnameWire.parseNetbiosNodeStatus(_netbiosResponse([('TARSERVER', 0x20, false)])),
+        isNull,
+      );
+    });
 
     test('every truncated response is safe', () {
       final packet = _netbiosResponse([('TARSERVER', 0, false)]);
       for (var cut = 0; cut < packet.length; cut++) {
         expect(
-          () => LanHostnameWire.parseNetbiosNodeStatus(
-            Uint8List.sublistView(packet, 0, cut),
-          ),
+          () => LanHostnameWire.parseNetbiosNodeStatus(Uint8List.sublistView(packet, 0, cut)),
           returnsNormally,
         );
       }
     });
   });
 
-  test(
-    'normalization rejects resolver non-answers and prettifies shouted NetBIOS',
-    () {
-      expect(LanHostnameWire.normalize(null, '192.168.1.5'), '');
-      expect(LanHostnameWire.normalize('192.168.1.5', '192.168.1.5'), '');
-      expect(
-        LanHostnameWire.normalize('5.1.168.192.in-addr.arpa', '192.168.1.5'),
-        '',
-      );
-      expect(
-        LanHostnameWire.normalize(' nas.local. ', '192.168.1.5'),
-        'nas.local',
-      );
-      expect(LanHostnameWire.prettifyNetbios('OFFICE-NAS'), 'office-nas');
-    },
-  );
+  test('normalization rejects resolver non-answers and prettifies shouted NetBIOS', () {
+    expect(LanHostnameWire.normalize(null, '192.168.1.5'), '');
+    expect(LanHostnameWire.normalize('192.168.1.5', '192.168.1.5'), '');
+    expect(LanHostnameWire.normalize('5.1.168.192.in-addr.arpa', '192.168.1.5'), '');
+    expect(LanHostnameWire.normalize(' nas.local. ', '192.168.1.5'), 'nas.local');
+    expect(LanHostnameWire.prettifyNetbios('OFFICE-NAS'), 'office-nas');
+  });
 }
 
-Uint8List _ptrResponse(
-  String answer, {
-  String? question,
-  bool compress = false,
-}) {
+Uint8List _ptrResponse(String answer, {String? question, bool compress = false}) {
   final rdata = BytesBuilder()..add(_encodedName(answer));
-  final body = BytesBuilder()
-    ..add(_header(questions: question == null ? 0 : 1, answers: 1));
+  final body = BytesBuilder()..add(_header(questions: question == null ? 0 : 1, answers: 1));
   if (question != null) {
     body
       ..add(_encodedName(question))
@@ -223,6 +182,5 @@ Uint8List _encodedName(String name) {
   return (labels.join('.'), cursor + 1);
 }
 
-int _shortAt(Uint8List bytes, int offset) =>
-    (bytes[offset] << 8) | bytes[offset + 1];
+int _shortAt(Uint8List bytes, int offset) => (bytes[offset] << 8) | bytes[offset + 1];
 List<int> _short(int value) => [(value >> 8) & 0xff, value & 0xff];

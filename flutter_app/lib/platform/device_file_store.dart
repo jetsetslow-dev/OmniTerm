@@ -79,11 +79,7 @@ class DeviceFileStore {
   /// **Reads the file into memory**, because the platform's directory API takes bytes and there is
   /// no streaming equivalent. The caller is responsible for not handing it something too large —
   /// see `SftpViewModel.batchDownloadByteCeiling`, which is why that ceiling exists at all.
-  Future<DeviceSaveResult> saveInto(
-    DeviceFolder folder,
-    String fileName,
-    String sourcePath,
-  ) async {
+  Future<DeviceSaveResult> saveInto(DeviceFolder folder, String fileName, String sourcePath) async {
     try {
       final location = await FlutterFileDialog.saveFileToDirectory(
         // Safe because the only thing that produces a [DeviceFolder] here is [pickFolder].
@@ -104,10 +100,7 @@ class DeviceFileStore {
   Future<DeviceSaveResult> save(String fileName, String sourcePath) async {
     try {
       final location = await FlutterFileDialog.saveFile(
-        params: SaveFileDialogParams(
-          sourceFilePath: sourcePath,
-          fileName: fileName,
-        ),
+        params: SaveFileDialogParams(sourceFilePath: sourcePath, fileName: fileName),
       );
       // Null is the user backing out, not a failure — reporting an error for a deliberate cancel
       // teaches people to ignore the messages that matter.

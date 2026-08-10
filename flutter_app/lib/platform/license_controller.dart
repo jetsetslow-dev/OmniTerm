@@ -48,9 +48,7 @@ class LicenseState {
       adRemovalPrice: identical(adRemovalPrice, _unsetLicenseValue)
           ? this.adRemovalPrice
           : adRemovalPrice as String?,
-      message: identical(message, _unsetLicenseValue)
-          ? this.message
-          : message as String?,
+      message: identical(message, _unsetLicenseValue) ? this.message : message as String?,
     );
   }
 
@@ -68,15 +66,8 @@ class LicenseState {
           message == other.message;
 
   @override
-  int get hashCode => Object.hash(
-        enabled,
-        loading,
-        unlocked,
-        adsRemoved,
-        productPrice,
-        adRemovalPrice,
-        message,
-      );
+  int get hashCode =>
+      Object.hash(enabled, loading, unlocked, adsRemoved, productPrice, adRemovalPrice, message);
 }
 
 /// Abstract controller for licensing and in-app purchases.
@@ -93,12 +84,9 @@ abstract interface class LicenseController {
 /// Disabled / OpenSource fallback controller where everything is unlocked and ads are removed.
 class DisabledLicenseController implements LicenseController {
   DisabledLicenseController()
-      : _state = ValueNotifier<LicenseState>(const LicenseState(
-          enabled: false,
-          loading: false,
-          unlocked: true,
-          adsRemoved: true,
-        ));
+    : _state = ValueNotifier<LicenseState>(
+        const LicenseState(enabled: false, loading: false, unlocked: true, adsRemoved: true),
+      );
 
   final ValueNotifier<LicenseState> _state;
 
@@ -129,13 +117,10 @@ class DisabledLicenseController implements LicenseController {
 /// Real InAppPurchase-backed LicenseController implementation.
 class InAppLicenseController implements LicenseController {
   InAppLicenseController({InAppPurchase? iap})
-      : _iap = iap ?? InAppPurchase.instance,
-        _state = ValueNotifier<LicenseState>(const LicenseState(
-          enabled: true,
-          loading: true,
-          unlocked: false,
-          adsRemoved: false,
-        ));
+    : _iap = iap ?? InAppPurchase.instance,
+      _state = ValueNotifier<LicenseState>(
+        const LicenseState(enabled: true, loading: true, unlocked: false, adsRemoved: false),
+      );
 
   final InAppPurchase _iap;
   final ValueNotifier<LicenseState> _state;
@@ -179,19 +164,13 @@ class InAppLicenseController implements LicenseController {
     try {
       final available = await _iap.isAvailable();
       if (!available) {
-        _updateState(
-          loading: false,
-          message: 'In-app purchases are unavailable on this device.',
-        );
+        _updateState(loading: false, message: 'In-app purchases are unavailable on this device.');
         return;
       }
       await _queryProducts();
       await _iap.restorePurchases();
     } catch (e) {
-      _updateState(
-        loading: false,
-        message: 'Could not connect to store: $e',
-      );
+      _updateState(loading: false, message: 'Could not connect to store: $e');
     }
   }
 
@@ -199,10 +178,7 @@ class InAppLicenseController implements LicenseController {
     const ids = <String>{omnitermPremiumUnlockId, omnitermAdRemovalId};
     final response = await _iap.queryProductDetails(ids);
     if (response.notFoundIDs.isNotEmpty && response.productDetails.isEmpty) {
-      _updateState(
-        loading: false,
-        message: 'Products not found in store.',
-      );
+      _updateState(loading: false, message: 'Products not found in store.');
       return;
     }
     for (final details in response.productDetails) {
@@ -236,18 +212,11 @@ class InAppLicenseController implements LicenseController {
           _iap.completePurchase(purchase);
         }
       } else if (purchase.status == PurchaseStatus.error) {
-        _updateState(
-          loading: false,
-          message: purchase.error?.message ?? 'Purchase failed.',
-        );
+        _updateState(loading: false, message: purchase.error?.message ?? 'Purchase failed.');
       }
     }
 
-    _updateState(
-      loading: false,
-      unlocked: unlocked,
-      adsRemoved: adsRemoved || unlocked,
-    );
+    _updateState(loading: false, unlocked: unlocked, adsRemoved: adsRemoved || unlocked);
   }
 
   @override

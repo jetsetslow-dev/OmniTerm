@@ -65,9 +65,7 @@ class DartSshTransport implements SshTransport {
   );
 
   bool _isJump(SshCredentials creds) =>
-      creds.proxyType == 'ssh' &&
-      creds.proxyHost.trim().isNotEmpty &&
-      creds.proxyPort > 0;
+      creds.proxyType == 'ssh' && creds.proxyHost.trim().isNotEmpty && creds.proxyPort > 0;
 
   static const _proxyTypes = {'http', 'socks5'};
 
@@ -110,11 +108,7 @@ class DartSshTransport implements SshTransport {
       if (_isJump(creds)) {
         onPhaseChange?.call('Authenticating bastion…');
         jump = SSHClient(
-          await SSHSocket.connect(
-            creds.proxyHost,
-            creds.proxyPort,
-            timeout: _connectTimeout,
-          ),
+          await SSHSocket.connect(creds.proxyHost, creds.proxyPort, timeout: _connectTimeout),
           username: creds.proxyUser,
           onPasswordRequest: () => creds.proxyPassword,
           // The passphrase field belongs to the *target* key, not the bastion's — feeding it here
@@ -143,11 +137,7 @@ class DartSshTransport implements SshTransport {
           timeout: _connectTimeout,
         );
       } else {
-        socket = await SSHSocket.connect(
-          creds.host,
-          creds.port,
-          timeout: _connectTimeout,
-        );
+        socket = await SSHSocket.connect(creds.host, creds.port, timeout: _connectTimeout);
       }
 
       onPhaseChange?.call('Authenticating target…');
@@ -184,8 +174,7 @@ class DartSshTransport implements SshTransport {
   /// Tunnels need this. A pooled client is shared and reaped when the last lease goes, which is
   /// exactly wrong for a forward that must stay up on its own terms — a port bound on this device
   /// has to keep working whether or not anything else is talking to that host.
-  Future<SSHClient> openDedicatedClient(SshCredentials creds) =>
-      _connect(creds);
+  Future<SSHClient> openDedicatedClient(SshCredentials creds) => _connect(creds);
 
   Future<SshLease<SSHClient>> _acquire(SshCredentials creds) async {
     if (_isJump(creds)) {
@@ -198,11 +187,7 @@ class DartSshTransport implements SshTransport {
   // ── exec ───────────────────────────────────────────────────────────────────
 
   @override
-  Future<String> exec(
-    SshCredentials creds,
-    String command, {
-    String? stdin,
-  }) async {
+  Future<String> exec(SshCredentials creds, String command, {String? stdin}) async {
     try {
       return await _execOnce(creds, command, stdin).timeout(_execTimeout);
     } on TimeoutException {
@@ -215,11 +200,7 @@ class DartSshTransport implements SshTransport {
     }
   }
 
-  Future<String> _execOnce(
-    SshCredentials creds,
-    String command,
-    String? stdin,
-  ) async {
+  Future<String> _execOnce(SshCredentials creds, String command, String? stdin) async {
     final lease = await _acquire(creds);
     SSHSession? session;
     try {
@@ -228,10 +209,7 @@ class DartSshTransport implements SshTransport {
 
       final out = CappedTextBuffer(_execOutputMaxChars);
       final err = CappedTextBuffer(_execOutputMaxChars);
-      await Future.wait([
-        _drain(session.stdout, out),
-        _drain(session.stderr, err),
-      ]);
+      await Future.wait([_drain(session.stdout, out), _drain(session.stderr, err)]);
       await session.done;
 
       final combined = StringBuffer(out.text());
@@ -300,9 +278,7 @@ class DartSshTransport implements SshTransport {
         session.close();
         return 'Cancelled';
       }
-      cancellationSubscription = cancellation?.onCancel.listen(
-        (_) => session?.close(),
-      );
+      cancellationSubscription = cancellation?.onCancel.listen((_) => session?.close());
       _writeStdin(session, stdin);
 
       final accumulated = CappedTextBuffer(_execOutputMaxChars);
@@ -366,9 +342,7 @@ class DartSshTransport implements SshTransport {
   /// carrying the status plus whatever the command managed to say on failure.
   static String _withExitStatus(String output, int? exitCode) {
     if (exitCode == 0) return output;
-    final detail = output.trim().isEmpty
-        ? 'Command exited with status $exitCode'
-        : output;
+    final detail = output.trim().isEmpty ? 'Command exited with status $exitCode' : output;
     return 'SSH Error: command failed ($exitCode): $detail';
   }
 
@@ -437,10 +411,7 @@ class DartSshTransport implements SshTransport {
       // rejected optional request must never cost the user their shell (§15.9).
       SSHSession session;
       try {
-        session = await client.shell(
-          pty: pty,
-          environment: const {'COLORTERM': 'truecolor'},
-        );
+        session = await client.shell(pty: pty, environment: const {'COLORTERM': 'truecolor'});
       } on SSHChannelRequestError {
         session = await client.shell(pty: pty);
       }
@@ -499,8 +470,7 @@ class _DartSshTerminalSession implements TerminalSession {
   final SSHClient _client;
   final SSHSession _session;
 
-  final StreamController<Uint8List> _outputController =
-      StreamController<Uint8List>();
+  final StreamController<Uint8List> _outputController = StreamController<Uint8List>();
   StreamSubscription<Uint8List>? _outputSub;
   StreamSubscription<Uint8List>? _errorSub;
 
@@ -538,12 +508,7 @@ class _DartSshTerminalSession implements TerminalSession {
   Future<void> resize(int cols, int rows) async {
     if (_closed.value) return;
     try {
-      _session.resizeTerminal(
-        cols < 1 ? 1 : cols,
-        rows < 1 ? 1 : rows,
-        cols * 8,
-        rows * 16,
-      );
+      _session.resizeTerminal(cols < 1 ? 1 : cols, rows < 1 ? 1 : rows, cols * 8, rows * 16);
     } catch (_) {
       // benign — remote may not honour resize
     }

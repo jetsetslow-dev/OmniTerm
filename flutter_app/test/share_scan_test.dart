@@ -81,7 +81,9 @@ void main() {
         ScannedHost(address: address, latency: null, openPorts: ports);
 
     test('an open port is read as the protocol that lives there', () {
-      final hits = hitsFromScan([host('10.0.0.5', [445])], allScanProtocols);
+      final hits = hitsFromScan([
+        host('10.0.0.5', [445]),
+      ], allScanProtocols);
 
       expect(hits.single.protocol, 'SMB');
       expect(hits.single.address, '10.0.0.5');
@@ -89,13 +91,20 @@ void main() {
     });
 
     test('one host offering several protocols is several hits', () {
-      final hits = hitsFromScan([host('10.0.0.5', [445, 22])], allScanProtocols);
+      final hits = hitsFromScan([
+        host('10.0.0.5', [445, 22]),
+      ], allScanProtocols);
       expect(hits.map((h) => h.protocol), ['SMB', 'SFTP']);
     });
 
     test('a port nobody asked about is ignored', () {
       // The sweep may report ports from a wider list; only the selected protocols become hits.
-      final hits = hitsFromScan([host('10.0.0.5', [445, 22])], ['SMB']);
+      final hits = hitsFromScan(
+        [
+          host('10.0.0.5', [445, 22]),
+        ],
+        ['SMB'],
+      );
       expect(hits.map((h) => h.protocol), ['SMB']);
     });
 
@@ -113,12 +122,22 @@ void main() {
 
     test('WebDAV on both ports is two rows, because they are different endpoints', () {
       // One is plain HTTP and the other TLS; saving the wrong one gives a share that will not open.
-      final hits = hitsFromScan([host('10.0.0.5', [80, 443])], ['WEBDAV']);
+      final hits = hitsFromScan(
+        [
+          host('10.0.0.5', [80, 443]),
+        ],
+        ['WEBDAV'],
+      );
       expect(hits.map((h) => h.port), [80, 443]);
     });
 
     test('the label names the endpoint, not just the host', () {
-      final hit = hitsFromScan([host('10.0.0.5', [2049])], ['NFS']).single;
+      final hit = hitsFromScan(
+        [
+          host('10.0.0.5', [2049]),
+        ],
+        ['NFS'],
+      ).single;
       expect(hit.label, 'NFS on 10.0.0.5:2049');
     });
   });

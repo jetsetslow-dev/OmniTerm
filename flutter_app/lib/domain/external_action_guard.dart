@@ -32,8 +32,7 @@ class ExternalAction {
           uri == other.uri;
 
   @override
-  int get hashCode =>
-      Object.hash(id, type, targetId, secondTargetId, target, uri);
+  int get hashCode => Object.hash(id, type, targetId, secondTargetId, target, uri);
 }
 
 /// Pattern O Guard (§20.1/§20.3):

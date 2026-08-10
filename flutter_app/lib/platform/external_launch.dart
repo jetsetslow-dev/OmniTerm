@@ -9,9 +9,7 @@ import '../domain/external_action_guard.dart';
 class ExternalLaunch {
   ExternalLaunch({
     this._methodChannel = const MethodChannel('omniterm/external_launch'),
-    EventChannel eventChannel = const EventChannel(
-      'omniterm/external_launch/events',
-    ),
+    EventChannel eventChannel = const EventChannel('omniterm/external_launch/events'),
   }) : _events = eventChannel.receiveBroadcastStream().map(_decode);
 
   final MethodChannel _methodChannel;
@@ -21,9 +19,7 @@ class ExternalLaunch {
 
   Future<List<ExternalAction>> takeInitialActions() async {
     try {
-      final raw = await _methodChannel.invokeListMethod<Object?>(
-        'takeInitialActions',
-      );
+      final raw = await _methodChannel.invokeListMethod<Object?>('takeInitialActions');
       return raw?.map(_decode).toList(growable: false) ?? const [];
     } on MissingPluginException {
       return const [];

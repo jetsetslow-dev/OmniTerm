@@ -89,19 +89,16 @@ void main() {
       expect(check(destHost: ''), 'Destination host is required.');
     });
 
-    test(
-      'ports go through the shared validator, not a local copy of the range',
-      () {
-        // The Kotlin's PR #67: a port parsed with a fallback saves a value the user never typed, and
-        // a tunnel is the worst place for it — the bind succeeds on an arbitrary port and the forward
-        // is running somewhere nobody can find.
-        expect(check(bindPort: ''), 'Bind port: Required');
-        expect(check(bindPort: 'http'), 'Bind port: Must be a whole number');
-        expect(check(bindPort: '0'), 'Bind port: Must be 1-65535');
-        expect(check(bindPort: '65536'), 'Bind port: Must be 1-65535');
-        expect(check(destPort: ''), 'Destination port: Required');
-      },
-    );
+    test('ports go through the shared validator, not a local copy of the range', () {
+      // The Kotlin's PR #67: a port parsed with a fallback saves a value the user never typed, and
+      // a tunnel is the worst place for it — the bind succeeds on an arbitrary port and the forward
+      // is running somewhere nobody can find.
+      expect(check(bindPort: ''), 'Bind port: Required');
+      expect(check(bindPort: 'http'), 'Bind port: Must be a whole number');
+      expect(check(bindPort: '0'), 'Bind port: Must be 1-65535');
+      expect(check(bindPort: '65536'), 'Bind port: Must be 1-65535');
+      expect(check(destPort: ''), 'Destination port: Required');
+    });
 
     test('a dynamic forward is not asked for a destination it cannot have', () {
       expect(check(kind: 'dynamic', destHost: '', destPort: ''), isNull);

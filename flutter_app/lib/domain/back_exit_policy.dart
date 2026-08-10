@@ -29,13 +29,8 @@ enum BackExitAction {
 ///
 /// The session check happens on the **second** press, not the first: warning about live sessions
 /// before the user has shown any intent to leave would fire on every stray swipe.
-BackExitAction decideBackExit({
-  required int? msSinceLastBackPress,
-  required bool hasLiveSessions,
-}) {
-  final armed =
-      msSinceLastBackPress != null &&
-      msSinceLastBackPress < backExitDoublePressWindowMs;
+BackExitAction decideBackExit({required int? msSinceLastBackPress, required bool hasLiveSessions}) {
+  final armed = msSinceLastBackPress != null && msSinceLastBackPress < backExitDoublePressWindowMs;
   if (!armed) return BackExitAction.warn;
   return hasLiveSessions ? BackExitAction.confirm : BackExitAction.exit;
 }

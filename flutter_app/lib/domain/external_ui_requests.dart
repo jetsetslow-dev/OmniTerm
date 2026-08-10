@@ -16,9 +16,7 @@ class ExternalUiRequests extends ChangeNotifier {
   bool get hasAddServerRequest => _addServerRequests.isNotEmpty;
 
   void requestAddServer({String? host, String? suggestedName, int port = 22}) {
-    _addServerRequests.add(
-      AddServerRequest(host: host, suggestedName: suggestedName, port: port),
-    );
+    _addServerRequests.add(AddServerRequest(host: host, suggestedName: suggestedName, port: port));
     notifyListeners();
   }
 

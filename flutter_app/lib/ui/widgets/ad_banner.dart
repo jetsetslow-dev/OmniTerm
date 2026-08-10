@@ -64,9 +64,7 @@ class _AdaptiveBannerState extends State<_AdaptiveBanner> {
   String get _unitId {
     const configured = String.fromEnvironment('ADMOB_BANNER_UNIT_ID');
     if (configured.isNotEmpty) return configured;
-    return defaultTargetPlatform == TargetPlatform.iOS
-        ? _iosTestBanner
-        : _androidTestBanner;
+    return defaultTargetPlatform == TargetPlatform.iOS ? _iosTestBanner : _androidTestBanner;
   }
 
   Future<void> _load(int width) async {

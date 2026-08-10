@@ -17,6 +17,7 @@ import '../view_model/app_lock_controller.dart';
 Future<bool> requestSudoAuth(
   BuildContext context,
   AppLockController controller, {
+
   /// What the user is being asked to confirm. Parameterised rather than duplicated: the prompt,
   /// the biometric path and the throttle are identical whatever the action, and a second copy of
   /// a security dialog is a second place for one of those to be got wrong.
@@ -123,10 +124,7 @@ class _SudoAuthDialogState extends State<_SudoAuthDialog> {
           else
             Text(
               'Use your biometric prompt to continue.',
-              style: TextStyle(
-                fontSize: 12,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+              style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
           if (_error != null)
             Padding(

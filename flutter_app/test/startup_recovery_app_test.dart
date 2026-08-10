@@ -7,9 +7,7 @@ void main() {
   testWidgets('it builds without the app it replaces', (tester) async {
     // The point of the screen: it runs when the real app could not be built, so it must not need
     // providers, a database or a theme controller. Pumped bare for exactly that reason.
-    await tester.pumpWidget(
-      const StartupRecoveryApp(report: 'Bad state: database is locked'),
-    );
+    await tester.pumpWidget(const StartupRecoveryApp(report: 'Bad state: database is locked'));
     await tester.pump();
 
     expect(find.byKey(const ValueKey('startup.recovery')), findsOneWidget);
@@ -17,9 +15,7 @@ void main() {
   });
 
   testWidgets('the report is shown so it can be read and sent on', (tester) async {
-    await tester.pumpWidget(
-      const StartupRecoveryApp(report: 'Bad state: database is locked'),
-    );
+    await tester.pumpWidget(const StartupRecoveryApp(report: 'Bad state: database is locked'));
     await tester.pump();
 
     expect(find.textContaining('database is locked'), findsOneWidget);

@@ -36,11 +36,7 @@ void main() {
         message: 'Store unavailable',
       );
 
-      final cleared = state.copyWith(
-        productPrice: null,
-        adRemovalPrice: null,
-        message: null,
-      );
+      final cleared = state.copyWith(productPrice: null, adRemovalPrice: null, message: null);
 
       expect(cleared.productPrice, isNull);
       expect(cleared.adRemovalPrice, isNull);

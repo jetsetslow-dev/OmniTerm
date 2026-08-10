@@ -563,12 +563,7 @@ void main() {
   /// in filenames and would otherwise corrupt the line protocol. These tests therefore feed indices
   /// and the source list they address, which is what `compareForConflicts` really emits.
   group('parseTransferConflicts', () {
-    const sources = [
-      '/src/same.txt',
-      '/src/diff.txt',
-      '/src/folder',
-      '/src/mystery.txt',
-    ];
+    const sources = ['/src/same.txt', '/src/diff.txt', '/src/folder', '/src/mystery.txt'];
 
     test('classifies verdicts and defaults the safe way round', () {
       const out =
@@ -580,12 +575,7 @@ void main() {
       expect(conflicts, hasLength(4));
 
       // The index is resolved back to the basename the user will recognise.
-      expect(conflicts.map((c) => c.name), [
-        'same.txt',
-        'diff.txt',
-        'folder',
-        'mystery.txt',
-      ]);
+      expect(conflicts.map((c) => c.name), ['same.txt', 'diff.txt', 'folder', 'mystery.txt']);
 
       expect(conflicts[0].verdict, ConflictVerdict.identical);
       expect(
@@ -609,10 +599,7 @@ void main() {
     });
 
     test('sizes and mtimes are carried through', () {
-      final c = parseTransferConflicts(
-        '0\tDIFFERENT\t10\t20\t111\t222',
-        const ['/src/a'],
-      ).single;
+      final c = parseTransferConflicts('0\tDIFFERENT\t10\t20\t111\t222', const ['/src/a']).single;
       expect(c.sourceSize, 10);
       expect(c.destSize, 20);
       expect(c.sourceMtimeSeconds, 111);
@@ -631,10 +618,9 @@ void main() {
 
     test('a filename containing a tab is reported whole', () {
       // It arrives via the source list, so the tab never reaches the line protocol.
-      final c = parseTransferConflicts(
-        '0\tDIFFERENT\t1\t2\t3\t4',
-        const ['/src/we\tird.txt'],
-      ).single;
+      final c = parseTransferConflicts('0\tDIFFERENT\t1\t2\t3\t4', const [
+        '/src/we\tird.txt',
+      ]).single;
       expect(c.name, 'we\tird.txt');
     });
   });

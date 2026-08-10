@@ -24,11 +24,7 @@ class LanHostnameWire {
     if (octets.any((value) => value == null || value < 0 || value > 255)) {
       return null;
     }
-    final labels = [
-      for (final value in octets.reversed) '$value',
-      'in-addr',
-      'arpa',
-    ];
+    final labels = [for (final value in octets.reversed) '$value', 'in-addr', 'arpa'];
     final out = BytesBuilder()
       ..add(_short(transactionId))
       ..add(const [0, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
@@ -108,10 +104,7 @@ class LanHostnameWire {
       final flags = cursor.readShort();
       if (raw == null || suffix == null || flags == null) return null;
       if (suffix == 0 && flags & 0x8000 == 0) {
-        final name = ascii
-            .decode(raw, allowInvalid: true)
-            .replaceAll('\u0000', '')
-            .trim();
+        final name = ascii.decode(raw, allowInvalid: true).replaceAll('\u0000', '').trim();
         if (name.isNotEmpty) return name;
       }
     }
@@ -119,8 +112,7 @@ class LanHostnameWire {
   }
 
   static String normalize(String? candidate, String ip) {
-    final name =
-        candidate?.trim().replaceFirst(RegExp(r'\.$'), '').trim() ?? '';
+    final name = candidate?.trim().replaceFirst(RegExp(r'\.$'), '').trim() ?? '';
     if (name.isEmpty || name.toLowerCase() == ip.toLowerCase()) return '';
     if (name.toLowerCase().endsWith('in-addr.arpa')) return '';
     return name;

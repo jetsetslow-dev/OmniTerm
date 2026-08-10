@@ -72,9 +72,7 @@ void main() {
     final only = host(id: 1, name: 'web-1', username: 'deploy', address: '10.0.0.7');
     await pump(tester, hosts: [only], selected: only);
 
-    final detail = tester.widget<Text>(
-      find.byKey(const ValueKey('test.picker.detail.1')),
-    );
+    final detail = tester.widget<Text>(find.byKey(const ValueKey('test.picker.detail.1')));
     expect(detail.data, contains('deploy@10.0.0.7'));
   });
 
@@ -93,9 +91,7 @@ void main() {
     final only = host(id: 1, name: 'web-1', status: 'offline', latency: 42);
     await pump(tester, hosts: [only], selected: only);
 
-    final detail = tester.widget<Text>(
-      find.byKey(const ValueKey('test.picker.detail.1')),
-    );
+    final detail = tester.widget<Text>(find.byKey(const ValueKey('test.picker.detail.1')));
     expect(detail.data, contains('offline'));
     expect(detail.data, isNot(contains('42ms')));
   });

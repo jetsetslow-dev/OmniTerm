@@ -28,8 +28,7 @@ extension HostLimitReasonMessage on HostLimitReason {
     return switch (this) {
       HostLimitReason.unlockEnded =>
         'Your full unlock is no longer active. Choose the $limit saved $hosts to keep.',
-      HostLimitReason.freeTier =>
-        'This build saves $limit $hosts. Choose which to keep.',
+      HostLimitReason.freeTier => 'This build saves $limit $hosts. Choose which to keep.',
     };
   }
 }
@@ -49,10 +48,8 @@ bool hostLimitExceeded({
 /// **Exactly the limit, not at most.** Keeping fewer would be the app deleting hosts the user never
 /// asked it to delete, and keeping none would leave an install with nothing in it — neither is a
 /// reconciliation, and both are silently destructive.
-bool isValidHostKeepSelection({
-  required int selectedCount,
-  required int hostLimit,
-}) => selectedCount == hostLimit;
+bool isValidHostKeepSelection({required int selectedCount, required int hostLimit}) =>
+    selectedCount == hostLimit;
 
 /// Whether the reconciliation surface should be shown at all.
 ///
@@ -74,9 +71,5 @@ bool shouldReconcileHostLimit({
   if (!playStoreBuild || !licenseEnabled || licenseLoading || unlocked) {
     return false;
   }
-  return hostLimitExceeded(
-    hasHostLimit: true,
-    hostLimit: hostLimit,
-    hostCount: hostCount,
-  );
+  return hostLimitExceeded(hasHostLimit: true, hostLimit: hostLimit, hostCount: hostCount);
 }

@@ -37,10 +37,7 @@ void main() {
       isTrue,
       reason: 'a truncated scan must never be read as "no conflicts"',
     );
-    final body = output
-        .split('\n')
-        .where((line) => line.trim() != conflictScanOk)
-        .join('\n');
+    final body = output.split('\n').where((line) => line.trim() != conflictScanOk).join('\n');
     return parseTransferConflicts(body, sources);
   }
 

@@ -11,11 +11,7 @@ void main() {
   final ttl = startupCrashTtl.inMilliseconds;
 
   StartupCrashVerdict verdict({String? report = 'boom', int? at}) =>
-      classifyStartupCrash(
-        report: report,
-        recordedAtMs: at ?? now,
-        nowMs: now,
-      );
+      classifyStartupCrash(report: report, recordedAtMs: at ?? now, nowMs: now);
 
   test('no recorded crash starts normally', () {
     expect(verdict(report: null), StartupCrashVerdict.none);

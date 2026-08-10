@@ -39,8 +39,7 @@ class TransferAggregate {
   /// False when nothing running has declared a size, so the bar shows motion rather than a figure.
   bool get hasKnownTotal => totalBytes > 0;
 
-  double get fraction =>
-      totalBytes > 0 ? (bytesTransferred / totalBytes).clamp(0.0, 1.0) : 0.0;
+  double get fraction => totalBytes > 0 ? (bytesTransferred / totalBytes).clamp(0.0, 1.0) : 0.0;
 
   /// Seconds remaining, or -1 when it cannot be estimated.
   ///

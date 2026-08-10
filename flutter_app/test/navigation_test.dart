@@ -79,16 +79,13 @@ void main() {
       expect(nav.currentScreen, Screen.servers);
     });
 
-    test(
-      'revisiting a stacked screen unwinds to it instead of duplicating',
-      () {
-        final nav = NavigationController()
-          ..navigateTo(Screen.monitor)
-          ..navigateTo(Screen.infra)
-          ..navigateTo(Screen.monitor);
-        expect(nav.screenHistory, [Screen.servers, Screen.monitor]);
-      },
-    );
+    test('revisiting a stacked screen unwinds to it instead of duplicating', () {
+      final nav = NavigationController()
+        ..navigateTo(Screen.monitor)
+        ..navigateTo(Screen.infra)
+        ..navigateTo(Screen.monitor);
+      expect(nav.screenHistory, [Screen.servers, Screen.monitor]);
+    });
 
     test('A-B-A-B cannot grow the stack without bound', () {
       final nav = NavigationController();
@@ -135,15 +132,12 @@ void main() {
       expect(nav.currentScreen, Screen.servers);
     });
 
-    test(
-      'commitNavigation bypasses guards, as the resolve-and-continue path does',
-      () {
-        final nav = NavigationController();
-        nav.guards.add((from, to) => true);
-        nav.commitNavigation(Screen.monitor);
-        expect(nav.currentScreen, Screen.monitor);
-      },
-    );
+    test('commitNavigation bypasses guards, as the resolve-and-continue path does', () {
+      final nav = NavigationController();
+      nav.guards.add((from, to) => true);
+      nav.commitNavigation(Screen.monitor);
+      expect(nav.currentScreen, Screen.monitor);
+    });
 
     test('a guard sees a null target on back', () {
       final nav = NavigationController()..navigateTo(Screen.monitor);
@@ -186,24 +180,21 @@ void main() {
       expect(nav.currentSubtab(Screen.infra), 3);
     });
 
-    test(
-      'always lands on the new tab first subtab, regardless of direction',
-      () {
-        final nav = NavigationController()
-          // Leave SFTP deep in its subtabs, then come back to it from the right.
-          ..navigateTo(Screen.sftp)
-          ..setSubtab(Screen.sftp, 3)
-          ..navigateTo(Screen.infra)
-          ..setSubtab(Screen.infra, 0);
-        nav.swipeNavigate(forward: false);
-        expect(nav.currentScreen, Screen.sftp);
-        expect(
-          nav.currentSubtab(Screen.sftp),
-          0,
-          reason: 'entering a tab resets it to its first subtab',
-        );
-      },
-    );
+    test('always lands on the new tab first subtab, regardless of direction', () {
+      final nav = NavigationController()
+        // Leave SFTP deep in its subtabs, then come back to it from the right.
+        ..navigateTo(Screen.sftp)
+        ..setSubtab(Screen.sftp, 3)
+        ..navigateTo(Screen.infra)
+        ..setSubtab(Screen.infra, 0);
+      nav.swipeNavigate(forward: false);
+      expect(nav.currentScreen, Screen.sftp);
+      expect(
+        nav.currentSubtab(Screen.sftp),
+        0,
+        reason: 'entering a tab resets it to its first subtab',
+      );
+    });
 
     test('does nothing at either end of the top-level order', () {
       final nav = NavigationController();
