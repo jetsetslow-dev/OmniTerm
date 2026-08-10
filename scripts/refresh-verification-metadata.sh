@@ -61,14 +61,40 @@ resolve_release_sboms() {
   done
 }
 
+# Dependency *graphs* are not everything the build resolves. Plugins that run at execution time --
+# KSP is the one that caught us -- pull artifacts into detached configurations that `dependencies`
+# and `buildEnvironment` never report. `symbol-processing-aa-embeddable` was missing from the
+# metadata for exactly this reason, and only CI found it, because only CI compiled.
+#
+# These are the tasks scripts/ci-gradle-gate.sh runs. Keep them in step: anything CI assembles has
+# to be resolved here, or the metadata is verified against a smaller graph than the one that ships.
+resolve_compile_graph() {
+  local -a metadata_args=("$@")
+  local log_file
+  log_file="$(mktemp "${TMPDIR:-/tmp}/omniterm-compile-graph.XXXXXX.log")"
+  echo "Resolving the compile graph (assemble, as CI does)"
+  if ! ./gradlew \
+      :app:assembleOpenSourceDebug \
+      :app:assemblePlayStoreDebug \
+      "${COMMON_ARGS[@]}" \
+      "${metadata_args[@]}" >"$log_file" 2>&1; then
+    cat "$log_file" >&2
+    rm -f -- "$log_file"
+    return 1
+  fi
+  rm -f -- "$log_file"
+}
+
 if [[ "$MODE" == "--write" ]]; then
   resolve_project_graphs --write-verification-metadata sha256,sha512
   resolve_release_sboms --write-verification-metadata sha256,sha512
+  resolve_compile_graph --write-verification-metadata sha256,sha512
 fi
 
 # A separate forced-refresh pass without write mode proves the resulting metadata works under
 # strict verification. In --verify mode this is the only pass and never modifies the metadata.
 resolve_project_graphs
 resolve_release_sboms
+resolve_compile_graph
 
-echo "Gradle dependency verification passed for all project and release SBOM graphs ($MODE)."
+echo "Gradle dependency verification passed for the project, release SBOM and compile graphs ($MODE)."
