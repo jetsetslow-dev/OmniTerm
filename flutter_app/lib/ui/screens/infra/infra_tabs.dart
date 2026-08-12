@@ -280,6 +280,10 @@ class _StackCardState extends State<_StackCard> {
         return StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
             key: const ValueKey('infra.stack.down.dialog'),
+            // Scrollable because the content is a multi-child Column with no scroll of its own: on a
+            // small phone in landscape at 200% text it does not fit, and an AlertDialog clips rather
+            // than scrolls unless it is asked to. Same shape as parity defects 112 and 113.
+            scrollable: true,
             title: Text('Bring down ${stack.name}?'),
             content: Column(
               mainAxisSize: MainAxisSize.min,
@@ -330,6 +334,10 @@ Future<void> _showStackPorts(BuildContext context, StackSummary stack) => showDi
   context: context,
   builder: (dialogContext) => AlertDialog(
     key: const ValueKey('infra.stack.ports.dialog'),
+    // One row per published port, so the height is data-driven and unbounded: a stack with a
+    // dozen ports overflows on any phone, not only a small one. This is the shape the guard in
+    // `test/dialog_overflow_test.dart` exists to catch.
+    scrollable: true,
     title: Text('${stack.name} ports'),
     content: stack.portDetails.isEmpty
         ? const Text('No published ports were reported for this stack.')
@@ -546,6 +554,10 @@ class _ScaleDialogState extends State<_ScaleDialog> {
 
     return AlertDialog(
       key: const ValueKey('infra.scale.dialog'),
+      // Scrollable because the content is a multi-child Column with no scroll of its own: on a
+      // small phone in landscape at 200% text it does not fit, and an AlertDialog clips rather
+      // than scrolls unless it is asked to. Same shape as parity defects 112 and 113.
+      scrollable: true,
       title: Text('Scale ${widget.service.name}'),
       content: SizedBox(
         width: 320,

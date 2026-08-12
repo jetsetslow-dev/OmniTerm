@@ -172,13 +172,22 @@ reasoning that produced a confident wrong answer, which is more useful than the 
 
 ## Where things stand
 
-**113 defects closed, none open.** Thirty-three were added across 2026-08-11/12 (80–113): one from
+**115 defects closed, none open.** Thirty-five were added across 2026-08-11/12 (80–115): one from
 the 200% surface sweep (80), nine from the live-fixture device pass (81–89), two on the terminal's
 focus lifecycle (90, 91), five on platform-call arguments and dead settings (92–96), the backup
 passphrase minimum in both apps (101), the tmux control-mode stale pane (102), the editor's Replace
-button (103), overlapping SFTP mutations (104), the unbounded replica count (105), anonymous SFTP shares (106), share search (107), WebDAV modification dates (108), SSH failures parsed as output (109), the SSH session-limit exhaustion behind it (110), unrecorded auth failures (111), Infra's never-rendered error state (112) and the overflowing PIN dialog (113). Of the nine device-pass defects, two are parity
+button (103), overlapping SFTP mutations (104), the unbounded replica count (105), anonymous SFTP shares (106), share search (107), WebDAV modification dates (108), SSH failures parsed as output (109), the SSH session-limit exhaustion behind it (110), unrecorded auth failures (111), Infra's never-rendered error state (112) the overflowing PIN dialog (113) six dialogs that clipped their own content (114) and two more found by the standing guard that replaced the search (115). Of the nine device-pass defects, two are parity
 gaps against Kotlin and seven are in the port's own share stack, which no Kotlin comparison could
 have surfaced.
+
+`test/dialog_overflow_test.dart` now fails any `AlertDialog` whose content is a multi-child `Column`
+with nothing to absorb overflow. It catches dialogs written *after* it, which the per-screen tests
+cannot, and it is the only gate for this class — see below.
+
+**The geometry that finds layout defects is 640x360 at 200% text**, not the emulator. Defects 112,
+113 and 114 were all found there; 113 explicitly *passed* at the emulator's 914x411 before failing on
+a small phone. Any new dialog or error state should be measured at the small size, because the device
+sweep cannot see this class.
 
 **A live queue worth knowing about:** twelve error/empty widgets are referenced by no test at all
 (listed in the ledger under defect 113). Defects 112 and 113 both came out of that class — a branch
@@ -212,19 +221,26 @@ search.
 Gates on
 `migration-to-flutter`:
 
+**Re-verified on 2026-08-12:** analyze, the host suite, `dart format`, the API 35 core profile, the
+device host suite against live fixtures, and the secret scan. **Not re-run since 2026-08-11** and carried forward from
+whoever last ran them: the `ZF62224F8K` surface sweeps (that phone is no longer attached), the
+standalone API 35 surface/walkthrough and action rows (now subsumed by the core profile),
+`./scripts/test-hosts.sh verify`, and the Kotlin worktree suite. A row nobody has re-run is evidence
+about the day it ran, not about today.
+
 | Gate | State |
 |---|---|
 | `flutter analyze --fatal-infos` | clean |
-| Flutter host suite | **2,513 passing** (2026-08-12) |
+| Flutter host suite | **2,515 passing** (2026-08-12) |
 | `dart format --set-exit-if-changed --line-length 100 .` | passes |
 | Device host suite, real fixtures | **passing** on the phone `ZF62224F8K` (`20260811T081220Z`) and — since defect 110 — on `emulator-5554` too (`20260812T023955Z`, exit 0, no unexpected warnings) |
 | Device surface sweep at 200%, `ZF62224F8K` | **passing** — `20260811T082511Z_android_ZF62224F8K_surface` |
-| API 35 core profile, `emulator-5554` | **24 passing**, Patrol included — `20260811T225648Z_android_emulator-5554_core`. Warning gate fails on an upstream KGP deprecation only; see the ledger note. |
+| API 35 core profile, `emulator-5554` | **24 passing**, Patrol included — `20260812T035455Z_android_emulator-5554_core`, **exit 0**. Since defect 115's slice the warning gate allowlists the one upstream KGP warning and fails on anything else, so the run reports "passed with no unexpected warnings" rather than failing. |
 | `./scripts/test-hosts.sh verify` | 18/18, now including write round trips |
 | API 35 surface sweep + walkthrough | 8 passing |
 | API 35 action suite (`app_actions_test.dart`) | 5 passing |
 | Kotlin parity worktree suite | 516 passing, 0 failures |
-| `gitleaks git --log-opts="--all"` | no leaks |
+| `gitleaks git --log-opts="--all"` | **no leaks** — run 31590121095 on `migration-to-flutter`, 2026-08-12, over every ref. The workflow now triggers on `push` and `pull_request` for **both** `main` and `migration-to-flutter`, so the branch is scanned per push rather than only when someone remembers to dispatch it. `scripts/test-secret-scan-coverage.sh` fails if that trigger list is ever narrowed, and runs from `local-pr-check.sh`. |
 
 ### The working method
 

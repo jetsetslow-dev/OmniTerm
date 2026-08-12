@@ -3147,6 +3147,152 @@ housekeeping rather than as the thing that stops the other two guards deadlockin
 Three guards, three tests, three distinct failures — which is the shape the last four defects did
 *not* have, and the reason seven controls came back vacuous before this one.
 
+### The secret gate did not cover the branch the work is on (closed, infrastructure)
+
+Not a parity defect, and worth an entry because it was a real hole in the gate protecting all of
+them.
+
+`secret-scan.yml` triggered on `push`/`pull_request` to **`main` only**. `migration-to-flutter` is
+neither `main` nor a PR *to* `main`, so **33 commits of migration work were never scanned**. The job
+would first see them at the merge — the most expensive moment to find a secret, because the history
+is already written and clearing it means a rewrite rather than a fix. `flutter-pr-check.yml` had
+already listed both branches; this one simply never followed.
+
+**Found by checking a claim rather than trusting it.** The handover's gates table asserted
+`gitleaks: no leaks` as though current. Reading the workflow showed the last real run was
+2026-08-11 against `de0d1397` on `main`, before any of this work existed.
+
+**Two fixes, because the immediate one does not prevent the next gap:**
+
+1. **Run it.** Dispatched against the branch: run `31590121095`, 2026-08-12, over every ref —
+   `Check out complete history`, `Reject tracked credential containers`, `Scan for committed
+   secrets`, all green. **No leaks.** The hand-checks done before committing (private-key headers
+   grepped across every changed file, `.env` and `keys/` confirmed gitignored) were right, but they
+   are not the tool and were never a substitute for it.
+2. **Widen the triggers**, so it is not a thing someone has to remember: `push` and `pull_request`
+   now list `[main, migration-to-flutter]`. The job takes ~16 seconds, so per-push cost is not worth
+   counting against finding a credential 33 commits late.
+
+**Guarded, because a trigger list is exactly what gets narrowed during an unrelated tidy-up.**
+`scripts/test-secret-scan-coverage.sh` parses the workflow and fails unless both events cover both
+branches — the same reasoning as `test-ci-gradle-gate.sh`, which pins the Gradle gate's arguments.
+It runs from `local-pr-check.sh` alongside its siblings.
+
+**Negative controls, and one of them nearly passed for the wrong reason.** Narrowing `push` back to
+`[main]` fails it; removing the `pull_request` branch filter fails it. Both printed `FAIL` while my
+first check reported `EXIT=0` — because the exit code I was reading came from the `head` at the end
+of the pipeline, not from the script. A guard that prints a failure and exits 0 does not fail CI.
+Re-checked directly: **exit 1 when mutated, exit 0 when correct.**
+
+Also corrected in the handover: the gates table claimed the device warning gate still fails on the
+KGP deprecation, which stopped being true when the allowlist landed, and it pointed at a stale run.
+A dated line now separates the five gates re-verified on 2026-08-12 from the rows carried forward
+from 2026-08-11 — chiefly the `ZF62224F8K` surface sweeps, since that phone is no longer attached.
+
+### 115 — two more clipping dialogs, and a standing guard so there is no next one (closed)
+
+Defect 114 fixed six dialogs found by a line-window search. That search was **wrong twice**, and this
+entry is mostly about how.
+
+**The guard.** `test/dialog_overflow_test.dart` scans `lib/` for every `AlertDialog`, walks to its
+matching close paren so one dialog's body cannot leak into the next, and fails on any whose `content`
+is a multi-child `Column` with nothing to absorb overflow — no `scrollable: true`, no
+`SingleChildScrollView`, `ListView`, `Expanded` or `Flexible`. A source scan for the reason
+`accessibility_labels_test.dart` gives: the defect is not that one dialog is wrong, it is that
+nothing stopped the next one being wrong.
+
+It is also the only practical gate for this class. Measuring dialogs by hand needs a harness per
+screen *and the right geometry* — defect 113 passed at the emulator's 914x411 and failed only at
+640x360, so the device sweep cannot see these at all.
+
+**What proper paren matching found that a 60-line window missed:**
+
+| Dialog | Why the window was wrong |
+|---|---|
+| `sftp.size.dialog` | An `Expanded(` **belonging to a different dialog further down the file** fell inside the window, so it was scored as already absorbing overflow. It does not: it is a size line plus a three-line caveat, and the caveat — the part saying the number is wrong — is what gets clipped. |
+| `infra.stack.ports.dialog` | Missed entirely. Its `content` is a ternary, so `content:\s*Column\(` never matched. |
+
+The ports dialog is the worst of the eight found across 114 and 115: its children are built by
+`for (final detail in stack.portDetails)`, so the height is **data-driven and unbounded**. A stack
+with a dozen published ports overflows on any phone, not only a small one. Nothing in the port had
+ever rendered it with more than the fixture's two.
+
+**The lesson, which is the same one as defects 105 and 110 in a different costume:** a heuristic that
+scores a construct by what appears *near* it will be wrong wherever the construct is nested or
+conditional. It found six real defects, which is what made it feel trustworthy enough not to check.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/dialog_overflow_test.dart` | 1 passed (new) |
+| Full host suite | **2,515 passed** |
+| `dart format --line-length 100` | `0 changed` |
+| `--profile core`, `emulator-5554` (API 35) | **24 passed**, exit 0 — `20260812T035455Z_android_emulator-5554_core`. Proves the two dialogs still open and behave; as with 113 and 114 it cannot prove the clipping is gone, because the emulator is too large to reproduce it. The guard is the evidence that matters here. |
+
+**Negative controls, both on the guard itself** — a guard that cannot fail is worse than none:
+
+| Mutation | Result |
+|---|---|
+| remove `scrollable: true` from `sudo_auth_dialog.dart` | fails, naming `sudo_auth_dialog.dart:100` |
+| add a brand-new offending dialog to `lib/` | fails, naming the new file and line |
+
+The second matters more than the first: it shows the guard catches a dialog **written after** it,
+which is the only thing that makes it a gate rather than a snapshot.
+
+### 114 — six dialogs clipped their own content on a small phone (closed)
+
+The systematic follow-through from 113, done as a search rather than by waiting for the next sweep.
+
+**The shape, stated precisely enough to search for:** an `AlertDialog` whose `content` is a
+multi-child `Column`, with no `scrollable: true` and no scroll or flex of its own. Material clips
+such a dialog rather than scrolling it. Fourteen dialogs in the port match the first half; **six have
+no inner scrollable at all** and are the ones at risk:
+
+| Dialog | File |
+|---|---|
+| `infra.stack.down.dialog` | `infra_tabs.dart` |
+| `infra.scale.dialog` | `infra_tabs.dart` |
+| `authKeys.generate.dialog` | `auth_keys_screen.dart` |
+| the backup prompt (`${dialogKey}.dialog`) | `backup_screen.dart` |
+| `offline.connect.dialog` | `connection_prompt_host.dart` |
+| `sudoAuth.dialog` | `sudo_auth_dialog.dart` |
+
+The other eight already hold a `SingleChildScrollView`, `Expanded` or `Flexible`, and were **left
+alone deliberately**: adding `scrollable: true` around an inner scrollable is how nested-scroll bugs
+are made, and the shape that fails is specifically the one with nothing to absorb the overflow.
+
+**Verified, not assumed.** The Scale dialog is drivable from the existing tests, so it was measured
+first: at 640x360 with 200% text it overflows by **3 pixels**. Small, and the same failure mode as
+113's 39 — the content is clipped, and what is clipped is the bottom of the dialog. Three pixels
+today is a longer error string tomorrow.
+
+`scrollable: true` on all six.
+
+**Honest about coverage:** one of the six has a regression test (the Scale dialog, with a control
+that reproduces the 3px overflow when the fix is removed). The other five are fixed by inspection of
+a shape now demonstrated to fail, not by individual measurement. That is weaker evidence and is
+recorded as such rather than presented as six tested fixes.
+
+**A test-harness fix that came with it.** `openServiceMenu` tapped controls at fixed positions, which
+worked only because every harness in that file used a large surface. It now scrolls each control into
+view first — a no-op on the big surface, and the only way the small one works at all. The same
+blind spot as 113's 1200x4000 settings harness, in a different file.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/infra_screen_test.dart` | 38 passed (+1) |
+| Full host suite | **2,514 passed** |
+| `dart format --line-length 100` | `0 changed` |
+| `--profile core`, `emulator-5554` (API 35) | **24 passed**, exit 0 — `20260812T033532Z_android_emulator-5554_core`. Proves the six dialogs still open and behave; it cannot prove the overflow is gone, because the emulator is too large to reproduce it. |
+
+**Negative control.** Removing `scrollable: true` from the Scale dialog fails *the Scale dialog fits
+a small phone in landscape at 200% text* with `A RenderFlex overflowed by 3.0 pixels on the bottom`.
+
 ### 113 — the PIN dialog overflowed on a small phone, hiding the error explaining why (closed)
 
 Found by taking defect 112's lesson and looking for the rest of its class rather than waiting for the
@@ -3184,7 +3330,7 @@ sweep on this emulator would never have caught it; the emulator is a large devic
 | `test/settings_screen_test.dart` | 24 passed (+1) |
 | Full host suite | **2,513 passed** |
 | `dart format --line-length 100` | `0 changed` |
-| `--profile core`, `emulator-5554` (API 35) | recorded below |
+| `--profile core`, `emulator-5554` (API 35) | **24 passed**, exit 0 — `20260812T031943Z_android_emulator-5554_core`. Confirmation only: this defect does not reproduce on the emulator at all, which is the point recorded above. |
 
 **Negative control.** Removing `scrollable: true` fails *the PIN dialog fits a landscape phone at
 200% text, error and all* with `A RenderFlex overflowed by 39 pixels on the bottom`.
@@ -3246,7 +3392,7 @@ at that code at all.
 | `test/infra_screen_test.dart` | 37 passed (+1) |
 | Full host suite | **2,512 passed** |
 | `dart format --line-length 100` | `0 changed` |
-| `--profile core`, `emulator-5554` (API 35) | recorded below |
+| `--profile core`, `emulator-5554` (API 35) | **24 passed**, exit **0** — `20260812T030335Z_android_emulator-5554_core`. The surface sweep that found this defect now passes it, and the run reports "passed with no unexpected warnings": the allowlist doing its job on the same run that proves the fix. |
 
 **Negative control.** Reverting `SingleChildScrollView` to `Center` fails *the transport-error state
 scrolls on a short 200% landscape phone* with `A RenderFlex overflowed by 63 pixels on the bottom`.

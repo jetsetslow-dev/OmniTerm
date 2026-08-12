@@ -57,6 +57,7 @@ echo "Preflight host: $OS_NAME/$ARCH_NAME"
 git diff --check
 ./scripts/test-release-version.sh
 ./scripts/test-ci-gradle-gate.sh
+./scripts/test-secret-scan-coverage.sh
 
 GRADLE_ARGS=(
   --no-daemon

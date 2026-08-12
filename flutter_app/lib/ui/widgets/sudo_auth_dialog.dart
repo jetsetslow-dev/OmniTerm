@@ -99,6 +99,10 @@ class _SudoAuthDialogState extends State<_SudoAuthDialog> {
     final hasPin = widget.controller.hasStoredPin;
     return AlertDialog(
       key: const ValueKey('sudoAuth.dialog'),
+      // Scrollable because the content is a multi-child Column with no scroll of its own: on a
+      // small phone in landscape at 200% text it does not fit, and an AlertDialog clips rather
+      // than scrolls unless it is asked to. Same shape as parity defects 112 and 113.
+      scrollable: true,
       title: Text(widget.title),
       content: Column(
         mainAxisSize: MainAxisSize.min,

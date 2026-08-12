@@ -1636,6 +1636,10 @@ Future<void> _measureSize(BuildContext context, SftpViewModel vm, SftpFile entry
     context: context,
     builder: (dialogContext) => AlertDialog(
       key: const ValueKey('sftp.size.dialog'),
+      // A size line plus, when `du` could not read everything, a three-line caveat. Nothing here
+      // scrolls, so on a small phone at 200% text the caveat is what gets clipped — the one part
+      // that says the number is wrong.
+      scrollable: true,
       title: Text(entry.name),
       content: Column(
         mainAxisSize: MainAxisSize.min,

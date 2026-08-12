@@ -652,10 +652,18 @@ void main() {
     Future<void> openServiceMenu(WidgetTester tester) async {
       await tester.tap(find.byKey(const ValueKey('infra.tab.stacks')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('infra.stack.web.services')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('infra.service.web.front.menu')));
-      await tester.pumpAndSettle();
+      // On a small surface the stack card sits below the fold, so each control has to be brought
+      // into view. Harmless on the large default surface, where the scroll is a no-op.
+      for (final key in ['infra.stack.web.services', 'infra.service.web.front.menu']) {
+        await tester.scrollUntilVisible(
+          find.byKey(ValueKey(key)),
+          120,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(ValueKey(key)));
+        await tester.pumpAndSettle();
+      }
     }
 
     testWidgets('scaling asks for a count and sends it', (tester) async {
@@ -704,6 +712,32 @@ void main() {
         isNotNull,
         reason: '999 is the cap, not past it',
       );
+
+      await tester.tap(find.byKey(const ValueKey('infra.scale.cancel')));
+      await tester.pumpAndSettle();
+      vm.dispose();
+    });
+
+    testWidgets('the Scale dialog fits a small phone in landscape at 200% text', (tester) async {
+      // Same shape as defect 113: an AlertDialog whose content is a multi-child Column with no
+      // `scrollable: true`, so nothing scrolls when it does not fit. 113 also showed the emulator
+      // is too large to find these — 640x360 is where they surface.
+      final overflows = <String>[];
+      final previous = FlutterError.onError;
+      FlutterError.onError = (details) {
+        if (details.toString().contains('overflowed')) overflows.add(details.toString());
+        previous?.call(details);
+      };
+      addTearDown(() => FlutterError.onError = previous);
+
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, transport: withStack(), size: const Size(640, 360), textScale: 2);
+      await openServiceMenu(tester);
+      await tester.tap(find.text('Scale…'));
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('infra.scale.dialog')), findsOneWidget);
+      expect(overflows, isEmpty, reason: 'the Scale dialog overflowed: ${overflows.join('; ')}');
 
       await tester.tap(find.byKey(const ValueKey('infra.scale.cancel')));
       await tester.pumpAndSettle();

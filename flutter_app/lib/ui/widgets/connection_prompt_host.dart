@@ -194,6 +194,10 @@ class _ConnectionPromptDialog extends StatelessWidget {
     final display = HostDisplay.instance;
     return AlertDialog(
       key: const ValueKey('offline.connect.dialog'),
+      // Scrollable because the content is a multi-child Column with no scroll of its own: on a
+      // small phone in landscape at 200% text it does not fit, and an AlertDialog clips rather
+      // than scrolls unless it is asked to. Same shape as parity defects 112 and 113.
+      scrollable: true,
       title: const Text('Host appears offline'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
