@@ -2805,13 +2805,13 @@ fun BackupToolView(viewModel: AppViewModel) {
                                     OmniPasswordField(
                                         value = exportPassword,
                                         onValueChange = { exportPassword = it },
-                                        label = "Passphrase (min 8 chars)",
+                                        label = "Passphrase (min $BACKUP_PASSPHRASE_MIN_LENGTH chars)",
                                     )
                                 }
                             },
                             confirmButton = {
                                 TextButton(
-                                    enabled = exportPassword.length >= 8,
+                                    enabled = exportPassword.length >= BACKUP_PASSPHRASE_MIN_LENGTH,
                                     onClick = {
                                         pendingExportPassword = exportPassword
                                         exportPassword = ""
