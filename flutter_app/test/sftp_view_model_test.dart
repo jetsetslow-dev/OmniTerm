@@ -92,8 +92,12 @@ class FakeFsClient extends RemoteFsClient {
   final List<String> listed = [];
   final List<String> created = [];
   final List<String> deleted = [];
+
+  /// Held open by a test that needs a mutation to still be in flight when the next one is issued.
+  Completer<void>? deleteGate;
   final List<(String, String)> renamed = [];
   final List<String> uploaded = [];
+  int closeCalls = 0;
 
   /// Path to contents, for the editor.
   final Map<String, String> files = {};
@@ -153,6 +157,7 @@ class FakeFsClient extends RemoteFsClient {
   Future<void> delete(String path, {required bool isDirectory}) async {
     if (failFor.contains(path)) throw Exception('cannot delete $path');
     deleted.add(path);
+    await deleteGate?.future;
   }
 
   @override
@@ -178,6 +183,9 @@ class FakeFsClient extends RemoteFsClient {
     uploaded.add(path);
     onProgress?.call(totalBytes, totalBytes);
   }
+
+  @override
+  void close() => closeCalls++;
 }
 
 void main() {
@@ -256,6 +264,41 @@ void main() {
     return vm;
   }
 
+  group('one mutation at a time', () {
+    test('a second delete issued mid-flight is refused rather than interleaved', () async {
+      final client = homeTree();
+      final vm = await booted(client);
+
+      final gate = Completer<void>();
+      client.deleteGate = gate;
+      final first = vm.deleteEntries([entry('notes.txt', size: 120)]);
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.loading, isTrue, reason: 'the first delete is still running');
+
+      // The second one arrives while the first holds the client — the case the menu gate stops in
+      // the UI, and that _mutate has to stop for every other caller.
+      await vm.deleteEntries([entry('.hidden', size: 5)]);
+      expect(client.deleted, ['/home/root/notes.txt']);
+
+      gate.complete();
+      await first;
+      expect(client.deleted, ['/home/root/notes.txt']);
+      vm.dispose();
+    });
+
+    test('a delete issued after the first finished still runs', () async {
+      final client = homeTree();
+      final vm = await booted(client);
+
+      await vm.deleteEntries([entry('notes.txt', size: 120)]);
+      await vm.deleteEntries([entry('.hidden', size: 5)]);
+
+      expect(client.deleted, ['/home/root/notes.txt', '/home/root/.hidden']);
+      expect(vm.loading, isFalse);
+      vm.dispose();
+    });
+  });
+
   group('listing', () {
     test('the first open resolves the remote home', () async {
       final client = homeTree();
@@ -264,6 +307,86 @@ void main() {
       expect(vm.path, '/home/root');
       expect(client.listed, contains('/home/root'));
       vm.dispose();
+    });
+
+    test('a share opens its configured start path instead of the protocol root', () async {
+      final client = FakeFsClient(
+        tree: {
+          '/fixture/nested': [entry('hello.txt')],
+        },
+      );
+      await app.start();
+      final vm = SftpViewModel(app, shareClientFor: (_) async => client);
+      await vm.openShare(
+        const NetworkShare(
+          id: 7,
+          name: 'WebDAV fixture',
+          protocol: 'WEBDAV',
+          address: 'nas.local',
+          port: 8443,
+          sharePath: '/fixture/nested/',
+          workgroup: '',
+          username: 'sam',
+          password: 'pw',
+          anonymous: false,
+          useHttps: true,
+          notes: '',
+          lastChecked: 0,
+          lastStatus: 'online',
+        ),
+      );
+
+      expect(client.listed, ['/fixture/nested']);
+      expect(vm.path, '/fixture/nested');
+      expect(vm.visibleEntries.single.name, 'hello.txt');
+      vm.dispose();
+    });
+
+    test('a share reuses one client through editor save and closes it', () async {
+      final client = FakeFsClient(
+        tree: {
+          '/fixture': [entry('fixture.txt', size: 7)],
+        },
+      )..files['/fixture/fixture.txt'] = 'before\n';
+      var resolutions = 0;
+      await app.start();
+      final vm = SftpViewModel(
+        app,
+        shareClientFor: (_) async {
+          resolutions++;
+          return client;
+        },
+      );
+      await vm.openShare(
+        const NetworkShare(
+          id: 8,
+          name: 'WebDAV fixture',
+          protocol: 'WEBDAV',
+          address: 'nas.local',
+          port: 8443,
+          sharePath: '/fixture',
+          workgroup: '',
+          username: 'sam',
+          password: 'pw',
+          anonymous: false,
+          useHttps: true,
+          notes: '',
+          lastChecked: 0,
+          lastStatus: 'online',
+        ),
+      );
+
+      final fixture = vm.visibleEntries.single;
+      expect(await vm.readForEditing(fixture), 'before\n');
+      expect((await vm.saveText(fixture, 'after\n')).isError, isFalse);
+      expect(await vm.readForEditing(fixture), 'after\n');
+      expect(resolutions, 1);
+      expect(client.closeCalls, 0);
+
+      await vm.closeShare();
+      expect(client.closeCalls, 1);
+      vm.dispose();
+      expect(client.closeCalls, 1);
     });
 
     test('hidden files are filtered until asked for', () async {
@@ -800,6 +923,120 @@ void main() {
       expect(vm.selectedDownloadBytes, 0);
       expect(vm.batchDownloadNeedsWarning, isFalse);
       vm.dispose();
+    });
+  });
+
+  group('searching a network share', () {
+    // A share has no shell, so `find` cannot be run on one. This port refused the search outright
+    // when a share was open (`_browsedShare != null`) and hid the button with it, which left no way
+    // at all to search a share. Compose walks it (`ui/AppViewModel.kt:8007`).
+    NetworkShare mediaShare() => const NetworkShare(
+      id: 5,
+      name: 'media',
+      protocol: 'SMB',
+      address: 'nas.local',
+      port: 445,
+      sharePath: '/media',
+      workgroup: '',
+      username: 'sam',
+      password: 'pw',
+      anonymous: false,
+      useHttps: false,
+      notes: '',
+      lastChecked: 0,
+      lastStatus: 'online',
+    );
+
+    Future<SftpViewModel> openedShare(FakeFsClient client) async {
+      await app.start();
+      final vm = SftpViewModel(app, shareClientFor: (_) async => client);
+      await vm.openShare(mediaShare());
+      return vm;
+    }
+
+    test('the walk descends and finds a match several levels down', () async {
+      final client = FakeFsClient(
+        tree: {
+          // SMB consumes the share name into the connection, so the walk starts at '/'.
+          '/': [entry('films', dir: true), entry('readme.txt')],
+          '/films': [entry('2026', dir: true)],
+          '/films/2026': [entry('holiday.mkv'), entry('other.mkv')],
+        },
+      );
+      final vm = await openedShare(client);
+
+      await vm.searchShare('holiday');
+
+      expect(vm.searchHits!.map((h) => h.path), ['/films/2026/holiday.mkv']);
+      expect(vm.searchTruncated, isFalse);
+      vm.dispose();
+    });
+
+    test('a directory that cannot be listed does not fail the whole search', () async {
+      // Compose skips an unreadable directory and keeps going; a share with one permission-denied
+      // folder must still return everything else.
+      final client = FakeFsClient(
+        tree: {
+          '/': [entry('locked', dir: true), entry('open', dir: true)],
+          '/open': [entry('target.txt')],
+        },
+      )..failFor.add('/locked');
+      final vm = await openedShare(client);
+
+      await vm.searchShare('target');
+
+      expect(vm.searchHits!.map((h) => h.path), ['/open/target.txt']);
+      expect(vm.error, isNull);
+      vm.dispose();
+    });
+
+    test('the walk stops at the hit cap and says the answer is partial', () async {
+      final client = FakeFsClient(
+        tree: {
+          '/': [for (var i = 0; i < shareSearchMaxHits + 10; i++) entry('clip$i.mkv')],
+        },
+      );
+      final vm = await openedShare(client);
+
+      await vm.searchShare('clip');
+
+      expect(vm.searchHits, hasLength(shareSearchMaxHits));
+      expect(vm.searchTruncated, isTrue, reason: 'a partial answer must not look complete');
+      vm.dispose();
+    });
+
+    test('a host search is still what runs when no share is open', () async {
+      final vm = await booted(homeTree());
+
+      expect(vm.canSearchShare, isFalse, reason: 'no share is open, so the walk must not be used');
+      vm.dispose();
+    });
+  });
+
+  group('the share search matcher', () {
+    test('a plain query matches anywhere in the name', () {
+      final matches = shareSearchMatcher('hol');
+      expect(matches('holiday.mkv'), isTrue);
+      expect(matches('MY-HOLIDAY.mkv'), isTrue, reason: 'case-insensitive, as Compose is');
+      expect(matches('other.mkv'), isFalse);
+    });
+
+    test('a query carrying a wildcard is taken as a pattern', () {
+      final matches = shareSearchMatcher('*.mkv');
+      expect(matches('holiday.mkv'), isTrue);
+      expect(matches('holiday.mp4'), isFalse);
+
+      final single = shareSearchMatcher('clip?.mkv');
+      expect(single('clip1.mkv'), isTrue);
+      expect(single('clip12.mkv'), isFalse);
+    });
+
+    test('regex metacharacters in a query are literal, not operators', () {
+      // Without escaping, a file called `notes(1).txt` would be unfindable and a query of `a+b`
+      // would silently mean something else.
+      final matches = shareSearchMatcher('notes(1)*');
+      expect(matches('notes(1).txt'), isTrue);
+      expect(matches('notes1.txt'), isFalse);
     });
   });
 
@@ -1906,6 +2143,29 @@ void main() {
 
     test('a stored order is in force before the first listing', () async {
       await repo.insertSetting('sftp_sort', 'sizeDesc');
+      final vm = await booted(homeTree());
+
+      expect(vm.sortOption, SftpSortOption.sizeDesc);
+      vm.dispose();
+    });
+
+    test('the share browser\'s Android sort is adopted when there is no files sort', () async {
+      // Defect 78. Kotlin keeps *two* sorts: `sftp_sort` for the Files tab and `share_sort` for the
+      // share browser (`AppViewModel.kt:7860`). This port has one, because a share takes over the
+      // Files tab — so a user who only ever changed the sort while browsing a share had their
+      // choice silently dropped on upgrade.
+      await repo.insertSetting('share_sort', 'ModifiedDesc');
+      final vm = await booted(homeTree());
+
+      expect(vm.sortOption, SftpSortOption.modifiedDesc);
+      vm.dispose();
+    });
+
+    test('the files sort wins when both were set', () async {
+      // Not a merge: `sftp_sort` is this app's own key and the one it writes, so it has to win or a
+      // value the user set *here* would be overridden by one carried in from the old app.
+      await repo.insertSetting('sftp_sort', 'sizeDesc');
+      await repo.insertSetting('share_sort', 'ModifiedDesc');
       final vm = await booted(homeTree());
 
       expect(vm.sortOption, SftpSortOption.sizeDesc);

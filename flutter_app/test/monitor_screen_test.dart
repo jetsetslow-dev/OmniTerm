@@ -125,6 +125,10 @@ void main() {
 
     expect(find.byKey(const ValueKey('monitor.hostPicker')), findsOneWidget);
     expect(find.text('82'), findsOneWidget);
+    expect(
+      tester.getSemantics(find.byKey(const ValueKey('monitor.healthScore.open'))).label,
+      'Health score: 82 out of 100',
+    );
     for (final tab in MonitorTab.values) {
       expect(find.byKey(ValueKey('monitor.tab.${tab.name}')), findsOneWidget);
     }

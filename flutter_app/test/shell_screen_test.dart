@@ -1,13 +1,18 @@
 import 'dart:async';
+import 'dart:ui' show SemanticsActionEvent, Tristate;
 
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/shell/shell_screen.dart';
+import 'package:omniterm/ui/view_model/app_lock_controller.dart';
+import 'package:omniterm/ui/widgets/app_lock_gate.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/shell_view_model.dart';
@@ -65,8 +70,14 @@ void main() {
         authStatus: 'ok',
       );
 
-  Future<void> pump(WidgetTester tester, {bool withTransport = true}) async {
-    tester.view.physicalSize = const Size(1000, 1400);
+  Future<void> pump(
+    WidgetTester tester, {
+    bool withTransport = true,
+    Size size = const Size(1000, 1400),
+    double textScale = 1,
+    AppLockController? lock,
+  }) async {
+    tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
 
@@ -80,7 +91,17 @@ void main() {
         ],
         child: MaterialApp(
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
-          home: const Scaffold(body: ShellScreen()),
+          home: MediaQuery(
+            data: MediaQueryData(size: size, textScaler: TextScaler.linear(textScale)),
+            // The real gate, not a stand-in: it is the thing that puts an `ExcludeFocus` over the
+            // whole app while locked, which is exactly what the terminal's focus has to survive.
+            child: lock == null
+                ? const Scaffold(body: ShellScreen())
+                : AppLockGate(
+                    controller: lock,
+                    child: const Scaffold(body: ShellScreen()),
+                  ),
+          ),
         ),
       ),
     );
@@ -120,6 +141,16 @@ void main() {
   });
 
   group('the connect prompt', () {
+    testWidgets('scrolls instead of overflowing on a short 200% landscape phone', (tester) async {
+      // Negative control on the physical API-32 phone: the old centred Column overflowed by 35px.
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, size: const Size(720, 150), textScale: 2);
+
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const ValueKey('shell.connect')), findsOneWidget);
+      await finish(tester);
+    });
+
     testWidgets('names the host it is about to connect to', (tester) async {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester);
@@ -295,6 +326,253 @@ void main() {
 
       // Page up scrolls the local buffer; it is not a keystroke the remote ever sees.
       expect(transport.opened.single.writes, isEmpty);
+      await finish(tester);
+    });
+
+    // The hidden 1x1 field owns the platform IME, so "does it have focus" is the same question as
+    // "is the software keyboard up". Kotlin ties both to read-only at `ShellScreen.kt:1889` and
+    // `:2077`.
+    bool keyboardIsUp(WidgetTester tester) =>
+        tester.widget<TextField>(find.byKey(const ValueKey('shell.input'))).focusNode!.hasFocus;
+
+    group('a hardware keyboard', () {
+      // `TERMINAL_COMPATIBILITY.md` calls hardware keyboards supported, listing "explicit Ctrl-byte
+      // mappings, xterm modifiers, and Alt-prefixed input". The handler consulted none of them: it
+      // mapped the special keys, sent `event.character` for everything else, and never asked
+      // whether Ctrl or Alt was down. Kotlin assigns the event's modifiers before each key
+      // (`ui/ShellScreen.kt:2322`).
+      Future<void> withModifier(
+        WidgetTester tester,
+        LogicalKeyboardKey modifier,
+        LogicalKeyboardKey key,
+      ) async {
+        await tester.sendKeyDownEvent(modifier);
+        await tester.sendKeyEvent(key);
+        await tester.sendKeyUpEvent(modifier);
+        await tester.pumpAndSettle();
+      }
+
+      String written() => transport.opened.single.writes.map((b) => String.fromCharCodes(b)).join();
+
+      testWidgets('Ctrl+C sends the interrupt byte', (tester) async {
+        // The one every terminal user reaches for first, and it did nothing at all: a Ctrl chord
+        // gives `event.character == null`, so the old handler fell through and returned ignored.
+        await repo.insertServer(server(name: 'nas'));
+        await pump(tester);
+        await connect(tester);
+
+        await withModifier(tester, LogicalKeyboardKey.controlLeft, LogicalKeyboardKey.keyC);
+
+        expect(transport.opened.single.writes.last, [0x03]);
+        await finish(tester);
+      });
+
+      testWidgets('Ctrl+arrow carries the xterm modifier', (tester) async {
+        await repo.insertServer(server(name: 'nas'));
+        await pump(tester);
+        await connect(tester);
+
+        await withModifier(tester, LogicalKeyboardKey.controlLeft, LogicalKeyboardKey.arrowLeft);
+
+        // CSI 1;5D — the modifier parameter is 1 + ctrl(4).
+        expect(written(), endsWith('[1;5D'));
+        await finish(tester);
+      });
+
+      testWidgets('Alt+b is sent as an ESC prefix', (tester) async {
+        await repo.insertServer(server(name: 'nas'));
+        await pump(tester);
+        await connect(tester);
+
+        await withModifier(tester, LogicalKeyboardKey.altLeft, LogicalKeyboardKey.keyB);
+
+        expect(transport.opened.single.writes.last, [0x1b, 0x62]);
+        await finish(tester);
+      });
+
+      testWidgets('an unmodified key is still plain text', (tester) async {
+        await repo.insertServer(server(name: 'nas'));
+        await pump(tester);
+        await connect(tester);
+
+        await tester.sendKeyEvent(LogicalKeyboardKey.keyC);
+        await tester.pumpAndSettle();
+
+        expect(transport.opened.single.writes.last, 'c'.codeUnits);
+        await finish(tester);
+      });
+    });
+
+    testWidgets('a connected session takes the keyboard without waiting for a tap', (tester) async {
+      // Kotlin focuses the hidden input as soon as a pane becomes the focused, writable one
+      // (`ShellScreen.kt:1889`), so the user can type into a fresh session immediately. This port
+      // required a tap on the grid first — a step Kotlin never asked for, on the screen whose
+      // entire purpose is typing.
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+
+      expect(keyboardIsUp(tester), isTrue);
+      await finish(tester);
+    });
+
+    testWidgets('a dismissed keyboard is not re-raised by an unrelated rebuild', (tester) async {
+      // The reason the effect compares its three values instead of acting on every build: pressing
+      // Back to dismiss the keyboard must stick. Anything that rebuilds the terminal afterwards —
+      // here, output arriving — would otherwise summon it again and again.
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+      expect(keyboardIsUp(tester), isTrue);
+
+      tester.widget<TextField>(find.byKey(const ValueKey('shell.input'))).focusNode!.unfocus();
+      await tester.pumpAndSettle();
+      expect(keyboardIsUp(tester), isFalse);
+
+      transport.opened.single.emit('later output\r\n');
+      await tester.pumpAndSettle();
+
+      expect(keyboardIsUp(tester), isFalse, reason: 'the user dismissed it; it stays dismissed');
+      await finish(tester);
+    });
+
+    testWidgets('closing the copy sheet hands the keyboard back to the terminal', (tester) async {
+      // Kotlin's copy dialog restores focus and the keyboard on dismiss, unless the session is
+      // read-only (`ShellScreen.kt:2555`). Flutter's counterpart is the transcript sheet, opened by
+      // a long press on the grid — a different shape, so the contract is checked rather than
+      // assumed.
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+      expect(keyboardIsUp(tester), isTrue);
+
+      await tester.longPress(find.byKey(const ValueKey('shell.surface')));
+      await tester.pumpAndSettle();
+      expect(find.byType(BottomSheet), findsOneWidget, reason: 'the copy sheet is open');
+
+      Navigator.of(tester.element(find.byType(BottomSheet))).pop();
+      await tester.pumpAndSettle();
+
+      expect(keyboardIsUp(tester), isTrue);
+
+      // Kotlin's restore is conditional — `if (!viewModel.terminalReadOnly)`. The same round trip
+      // on a read-only session must leave the keyboard down, or copying output would be a way to
+      // summon a keyboard that read-only exists to suppress (ledger 90).
+      await tester.tap(find.byKey(const ValueKey('shell.readOnly')));
+      await tester.pumpAndSettle();
+      expect(keyboardIsUp(tester), isFalse);
+
+      await tester.longPress(find.byKey(const ValueKey('shell.surface')));
+      await tester.pumpAndSettle();
+      Navigator.of(tester.element(find.byType(BottomSheet))).pop();
+      await tester.pumpAndSettle();
+
+      expect(keyboardIsUp(tester), isFalse);
+      await finish(tester);
+    });
+
+    testWidgets('a trip to another app leaves the keyboard where it was', (tester) async {
+      // Kotlin frees the hidden input on `ON_STOP` and re-acquires it on `ON_RESUME`
+      // (`ShellScreen.kt:1905`), and its own comment says why: Compose's legacy cursor-anchor path
+      // dereferences a torn-down IME session and crashes at draw time. That is a Compose defect
+      // being worked around, not a behaviour to reproduce — Flutter reattaches its own IME on
+      // resume. This asserts the *outcome* Kotlin's workaround produces, so that porting the
+      // workaround itself would show up as the regression it would be: a keyboard that vanishes
+      // every time the user checks a notification.
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+      expect(keyboardIsUp(tester), isTrue);
+
+      // The real sequence, both ways: the framework asserts on a direct paused→resumed jump, since
+      // a returning app always passes back through `inactive`.
+      for (final state in const [
+        AppLifecycleState.inactive,
+        AppLifecycleState.hidden,
+        AppLifecycleState.paused,
+        AppLifecycleState.hidden,
+        AppLifecycleState.inactive,
+        AppLifecycleState.resumed,
+      ]) {
+        tester.binding.handleAppLifecycleStateChanged(state);
+        await tester.pump();
+      }
+
+      expect(keyboardIsUp(tester), isTrue);
+      await finish(tester);
+    });
+
+    testWidgets('unlocking the app gives the terminal its keyboard back', (tester) async {
+      // The lock gate hides the app behind `ExcludeFocus`, which takes the hidden input's focus
+      // away — correctly, since a keyboard over the unlock screen would be absurd. Nothing gave it
+      // back afterwards: the focus effect's three values are unchanged by locking, so a user who
+      // unlocked was returned to a live session that would not accept typing until they tapped the
+      // grid. Kotlin re-acquires focus and shows the keyboard on `ON_RESUME`
+      // (`ShellScreen.kt:1905`).
+      await repo.insertServer(server(name: 'nas'));
+      final lock = AppLockController(repo);
+      // PBKDF2 yields to the event loop between chunks, and a widget test's fake-async zone never
+      // advances it, so both PIN operations have to run in the real one or the test hangs.
+      await tester.runAsync(() async {
+        await lock.load();
+        await lock.setPin('1234');
+      });
+      await pump(tester, lock: lock);
+      await connect(tester);
+      expect(keyboardIsUp(tester), isTrue);
+
+      // Single frames, not `pumpAndSettle`: the unlock screen focuses its PIN field, and a focused
+      // field blinks its cursor forever, so settling never completes while the app is locked.
+      lock.lockNow();
+      await tester.pump();
+      expect(keyboardIsUp(tester), isFalse, reason: 'no keyboard over the unlock screen');
+
+      final outcome = await tester.runAsync(() => lock.unlockWithPin('1234'));
+      expect(outcome, UnlockOutcome.unlocked);
+      await tester.pump();
+      await tester.pump();
+
+      expect(keyboardIsUp(tester), isTrue);
+      await finish(tester);
+    });
+
+    testWidgets('tapping a read-only terminal focuses it without summoning the keyboard', (
+      tester,
+    ) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+
+      // Control: a writable session must still raise the keyboard on tap, or this fix would have
+      // "passed" by breaking terminal input outright.
+      await tester.tap(find.byKey(const ValueKey('shell.surface')));
+      await tester.pumpAndSettle();
+      expect(keyboardIsUp(tester), isTrue, reason: 'a writable terminal still takes the keyboard');
+
+      await tester.tap(find.byKey(const ValueKey('shell.readOnly')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('shell.surface')));
+      await tester.pumpAndSettle();
+
+      // Input is dropped in read-only mode, so a keyboard here covers the output the user is
+      // trying to read in exchange for keystrokes that go nowhere.
+      expect(keyboardIsUp(tester), isFalse);
+      await finish(tester);
+    });
+
+    testWidgets('turning read-only on takes the keyboard away', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+
+      await tester.tap(find.byKey(const ValueKey('shell.surface')));
+      await tester.pumpAndSettle();
+      expect(keyboardIsUp(tester), isTrue);
+
+      await tester.tap(find.byKey(const ValueKey('shell.readOnly')));
+      await tester.pumpAndSettle();
+
+      expect(keyboardIsUp(tester), isFalse);
       await finish(tester);
     });
 
@@ -612,6 +890,56 @@ void main() {
       await finish(tester);
     });
 
+    testWidgets('a second host can be connected straight into a pane', (tester) async {
+      // Kotlin loads two *hosts* into panes in one action. The port could only split sessions that
+      // were already connected, so putting a second host alongside meant connecting it, watching it
+      // take over the screen, and splitting back — and with one session open the split control was
+      // hidden entirely, saying "Open a second session first".
+      await repo.insertServer(server(name: 'nas'));
+      await repo.insertServer(server(name: 'db'));
+      await pump(tester);
+      await connect(tester);
+      expect(vm.sessions, hasLength(1));
+
+      // The control is offered now, because there is a host to put in the second pane.
+      await tester.tap(find.byKey(const ValueKey('shell.split')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('shell.split.connectHeader')), findsOneWidget);
+
+      // Whichever host the connect flow did not pick — the list order is its business, not this
+      // test's.
+      final inUse = vm.current!.serverName;
+      final other = vm.connectableServers.firstWhere((s) => s.name != inUse);
+      await tester.tap(find.byKey(ValueKey('shell.split.connect.${other.id}')));
+      await tester.pumpAndSettle();
+
+      expect(vm.sessions, hasLength(2));
+      expect(find.byKey(const ValueKey('shell.splitView')), findsOneWidget);
+      expect(find.byKey(const ValueKey('shell.surface')), findsNWidgets(2));
+      expect(
+        vm.current?.serverName,
+        inUse,
+        reason: 'the new host goes alongside the one being used, not in front of it',
+      );
+      expect(vm.splitSession?.serverName, other.name);
+      await finish(tester);
+    });
+
+    testWidgets('a host already open is not offered again', (tester) async {
+      // It would be offered twice — once as a session, once as a host — and connecting it a second
+      // time would open a duplicate terminal to the same machine.
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+
+      expect(
+        find.byKey(const ValueKey('shell.split')),
+        findsNothing,
+        reason: 'the only host is already open, so there is nothing to add',
+      );
+      await finish(tester);
+    });
+
     testWidgets('two sessions can be shown at once', (tester) async {
       await connectTwo(tester);
       expect(vm.sessions, hasLength(2));
@@ -650,6 +978,51 @@ void main() {
         wasCurrent,
         reason: 'the panes swap rather than one of them vanishing',
       );
+      await finish(tester);
+    });
+
+    testWidgets('a screen reader can identify and focus either terminal pane', (tester) async {
+      // Kotlin's TerminalPaneFrame gives each pane a label, selected state and an OnClick
+      // semantics action. A cyan border is no substitute: without the action a TalkBack user can
+      // read both painted terminals but cannot choose which one receives the next command.
+      final handle = tester.ensureSemantics();
+      await connectTwo(tester);
+      final other = vm.splitCandidates.single;
+      final firstId = vm.current!.id;
+      await tester.tap(find.byKey(const ValueKey('shell.split')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey('shell.split.pick.${other.id}')));
+      await tester.pumpAndSettle();
+
+      final firstFinder = find.byKey(ValueKey('shell.pane.$firstId'));
+      final secondFinder = find.byKey(ValueKey('shell.pane.${other.id}'));
+      final first = tester.getSemantics(firstFinder);
+      final second = tester.getSemantics(secondFinder);
+
+      expect(first.label, 'Terminal pane 1: ${vm.current!.serverName}');
+      expect(first.value, 'Active terminal pane');
+      expect(first.flagsCollection.isSelected, Tristate.isTrue);
+      expect(second.label, 'Terminal pane 2: ${other.serverName}');
+      expect(second.value, 'Inactive terminal pane');
+      expect(second.flagsCollection.isSelected, Tristate.isFalse);
+      expect(second.getSemanticsData().hasAction(SemanticsAction.tap), isTrue);
+
+      // Drive the semantics action itself. A synthesized pointer tap would only prove the terminal
+      // surface still handles touch, not that assistive technology can focus the pane.
+      tester.platformDispatcher.onSemanticsActionEvent!(
+        SemanticsActionEvent(
+          type: SemanticsAction.tap,
+          viewId: tester.view.viewId,
+          nodeId: second.id,
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(vm.current!.id, other.id);
+      expect(tester.getSemantics(secondFinder).flagsCollection.isSelected, Tristate.isTrue);
+      expect(tester.getSemantics(firstFinder).flagsCollection.isSelected, Tristate.isFalse);
+
+      handle.dispose();
       await finish(tester);
     });
 

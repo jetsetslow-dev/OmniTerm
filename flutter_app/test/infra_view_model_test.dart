@@ -212,6 +212,41 @@ void main() {
       vm.dispose();
     });
 
+    test('an SSH error returned as output is an error, not an empty host', () async {
+      // The transport reports failure by *returning* `'SSH Error: …'`, not by throwing — a timeout,
+      // a refused connection and a non-zero exit all come back as a string. Parsing that as output
+      // gave no containers, no images and no runtimes with `error` still null: an unreachable host
+      // presented as an empty one. The fake above throws, which is why the returning path went
+      // uncovered. Compose checks the prefix at `ui/AppViewModel.kt:6457`.
+      await repo.insertServer(server(name: 'nas'));
+      final transport = RecordingTransport(fallback: 'SSH Error: connection refused');
+      final vm = await boot(transport: transport);
+      await Future<void>.delayed(Duration.zero);
+
+      await vm.load();
+
+      expect(vm.error, contains('connection refused'));
+      expect(vm.containers, isEmpty);
+      expect(vm.runtimes, isEmpty);
+      vm.dispose();
+    });
+
+    test('a healthy load still reports no error', () async {
+      // The negative half: the prefix check must not fire on ordinary output.
+      await repo.insertServer(server(name: 'nas'));
+      final transport = RecordingTransport(
+        replies: {'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1')},
+      );
+      final vm = await boot(transport: transport);
+      await Future<void>.delayed(Duration.zero);
+
+      await vm.load();
+
+      expect(vm.error, isNull);
+      expect(vm.containers, isNotEmpty);
+      vm.dispose();
+    });
+
     test('a credential failure surfaces as an error', () async {
       await repo.insertServer(
         server(name: 'nas').copyWith(authType: 'key', authKeyAlias: const Value('gone')),

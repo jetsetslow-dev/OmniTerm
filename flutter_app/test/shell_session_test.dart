@@ -325,6 +325,79 @@ void main() {
       expect(session.controlPaneId, isNull);
     });
 
+    test(
+      'a window switch inside tmux marks the pane unresolved rather than typing into the old one',
+      () async {
+        // The defect this covers: the pane is learned once from the first %output and never revised,
+        // so after switching window inside tmux, keystrokes keep going to the pane the user left.
+        build(controlMode: true);
+        channel.emit('${r'%output %7 x'}\n');
+        await settle();
+        expect(session.controlPaneId, '%7');
+
+        final before = session.paneChangeRevision;
+        channel.emit('%window-pane-changed @0 %9\n');
+        await settle();
+
+        expect(session.paneChangePending, isTrue);
+        expect(session.paneChangeRevision, greaterThan(before));
+      },
+    );
+
+    test('output from a background pane does not steal the keyboard', () async {
+      // The tempting shortcut — track the latest %output pane — is the same defect pointed the
+      // other way: a pane the user is not looking at would capture their typing.
+      build(controlMode: true);
+      channel.emit('${r'%output %7 x'}\n');
+      await settle();
+
+      channel.emit('${r'%output %9 background noise'}\n');
+      await settle();
+
+      expect(session.controlPaneId, '%7');
+      expect(session.paneChangePending, isFalse);
+    });
+
+    test('a pane resolved against a stale revision is refused', () async {
+      build(controlMode: true);
+      channel.emit('${r'%output %7 x'}\n');
+      await settle();
+
+      channel.emit('%window-pane-changed @0 %9\n');
+      await settle();
+      final stale = session.paneChangeRevision;
+
+      // A second switch lands while the first query is still in flight.
+      channel.emit('%window-pane-changed @0 %11\n');
+      await settle();
+
+      expect(
+        session.adoptControlPane('%9', stale),
+        isFalse,
+        reason: 'that answer describes a pane the user has already left',
+      );
+      expect(session.controlPaneId, '%7');
+      expect(
+        session.adoptControlPane('%11', session.paneChangeRevision),
+        isTrue,
+        reason: 'the current revision still resolves',
+      );
+      expect(session.controlPaneId, '%11');
+      expect(session.paneChangePending, isFalse);
+      expect(session.scrollbackDirty, isTrue, reason: 'the new pane has its own history to fetch');
+    });
+
+    test('the first session-changed is the attach completing, not a move', () async {
+      // Before any %output there is no pane to have moved away from, and treating the attach as a
+      // change would fire a query for a session that has not started streaming.
+      build(controlMode: true);
+      channel.emit('%session-changed \$0 main\n');
+      await settle();
+
+      expect(session.paneChangePending, isFalse);
+      expect(session.paneChangeRevision, 0);
+    });
+
     test('an ordinary attach still writes raw bytes', () async {
       // The wrapping must not leak into a normal PTY session, where it would be typed literally.
       build();

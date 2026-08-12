@@ -168,6 +168,13 @@ class _CodeEditorState extends State<CodeEditor> {
     if (widget.readOnly) return;
     final selection = widget.controller.selection;
     if (!selection.isValid || selection.isCollapsed) return;
+    // Replace what the *search* found, not whatever happens to be selected. Without this, a query
+    // matching nothing plus an ordinary hand-made selection turned Replace into "delete my
+    // selection": the button was live, the selection was valid, and no match was ever consulted.
+    final selected = _matches.any(
+      (match) => match.start == selection.start && match.end == selection.end,
+    );
+    if (!selected) return;
     final next = widget.controller.text.replaceRange(
       selection.start,
       selection.end,
@@ -201,28 +208,27 @@ class _CodeEditorState extends State<CodeEditor> {
   }
 
   Future<void> _goToLine() async {
-    final field = TextEditingController();
+    var entered = '';
     final line = await showDialog<int>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('Go to line'),
         content: TextField(
           key: const ValueKey('codeEditor.goToLine.value'),
-          controller: field,
           autofocus: true,
           keyboardType: TextInputType.number,
+          onChanged: (value) => entered = value,
           decoration: omniInputDecoration(dialogContext, labelText: 'Line number'),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cancel')),
           FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, int.tryParse(field.text)),
+            onPressed: () => Navigator.pop(dialogContext, int.tryParse(entered)),
             child: const Text('Go'),
           ),
         ],
       ),
     );
-    field.dispose();
     if (line == null || line < 1) return;
     var offset = 0;
     for (var current = 1; current < line; current++) {
@@ -293,12 +299,12 @@ class _CodeEditorState extends State<CodeEditor> {
                     ),
                     IconButton(
                       tooltip: 'Previous match',
-                      onPressed: () => _selectMatch(previous: true),
+                      onPressed: count > 0 ? () => _selectMatch(previous: true) : null,
                       icon: const Icon(Icons.keyboard_arrow_up),
                     ),
                     IconButton(
                       tooltip: 'Next match',
-                      onPressed: () => _selectMatch(previous: false),
+                      onPressed: count > 0 ? () => _selectMatch(previous: false) : null,
                       icon: const Icon(Icons.keyboard_arrow_down),
                     ),
                     Text('$count', style: const TextStyle(fontSize: 11)),
@@ -314,8 +320,14 @@ class _CodeEditorState extends State<CodeEditor> {
                           decoration: omniInputDecoration(context, hintText: 'Replace with'),
                         ),
                       ),
-                      TextButton(onPressed: _replaceCurrent, child: const Text('Replace')),
-                      TextButton(onPressed: _replaceAll, child: const Text('All')),
+                      TextButton(
+                        onPressed: count > 0 ? _replaceCurrent : null,
+                        child: const Text('Replace'),
+                      ),
+                      TextButton(
+                        onPressed: count > 0 ? _replaceAll : null,
+                        child: const Text('All'),
+                      ),
                     ],
                   ),
                 Row(

@@ -113,16 +113,20 @@ class _HostCard extends StatelessWidget {
                     name: display.name(server),
                     breakdown: vm.healthBreakdownFor(server),
                   ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                    child: Text(
-                      '${server.healthScore}',
-                      key: ValueKey('fleet.host.${server.id}.score'),
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        fontFamily: OmniFonts.mono,
-                        color: scoreColor,
+                  child: Semantics(
+                    label: 'Health score: ${server.healthScore} out of 100',
+                    excludeSemantics: true,
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                      child: Text(
+                        '${server.healthScore}',
+                        key: ValueKey('fleet.host.${server.id}.score'),
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          fontFamily: OmniFonts.mono,
+                          color: scoreColor,
+                        ),
                       ),
                     ),
                   ),

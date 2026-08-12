@@ -97,6 +97,57 @@ void main() {
     expect(savedRows.single.id, 0, reason: 'a new host must not target an existing row');
   });
 
+  group('SSH compression', () {
+    // The switch was live and stored a value the connection never had: this port's SSH library
+    // proposes `none` for compression and ships no zlib, while Kotlin negotiates it
+    // (`JschSession.kt:85`). Defect 77's rule — do not offer what cannot work — applied to a
+    // setting rather than a button.
+    /// The row lives on the Advanced tab, which is not built until that tab is selected.
+    Future<void> revealCompression(WidgetTester tester) async {
+      await tester.tap(find.text('Advanced'));
+      await tester.pumpAndSettle();
+      await tester.drag(
+        find.byKey(const ValueKey('serverForm.tab.advanced')),
+        const Offset(0, -300),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('cannot be switched on, and says why', (tester) async {
+      await pump(tester);
+      await revealCompression(tester);
+
+      final tile = tester.widget<SwitchListTile>(
+        find.byKey(const ValueKey('serverForm.compression')),
+      );
+      expect(
+        tile.onChanged,
+        isNull,
+        reason: 'a switch that cannot take effect must not invite a tap',
+      );
+      expect(find.textContaining('has no effect'), findsOneWidget);
+    });
+
+    testWidgets('a value set by the Kotlin app is shown and saved back unchanged', (tester) async {
+      // Disabling the control must not rewrite the row. Someone who turned this on in the Kotlin
+      // app still has it in their backup, and it starts working the day the library does.
+      await pump(tester, mode: ServerFormMode.edit, source: saved().copyWith(sshCompression: true));
+      await revealCompression(tester);
+
+      final tile = tester.widget<SwitchListTile>(
+        find.byKey(const ValueKey('serverForm.compression')),
+      );
+      expect(tile.value, isTrue);
+
+      await tester.tap(find.byKey(const ValueKey('serverForm.test')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('serverForm.save')));
+      await tester.pumpAndSettle();
+
+      expect(savedRows.single.sshCompression, isTrue);
+    });
+  });
+
   testWidgets('saving is refused until the connection has been tested', (tester) async {
     await pump(tester);
     await fillNewHost(tester);

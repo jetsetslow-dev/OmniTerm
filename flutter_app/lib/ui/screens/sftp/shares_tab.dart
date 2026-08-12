@@ -578,8 +578,19 @@ class _ShareForm extends StatelessWidget {
               key: const ValueKey('shares.form.anonymous'),
               contentPadding: EdgeInsets.zero,
               title: const Text('Connect anonymously', style: TextStyle(fontSize: 13)),
+              subtitle: errors['anonymous'] == null
+                  ? null
+                  : Text(
+                      errors['anonymous']!,
+                      style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.error),
+                    ),
               value: draft.anonymous,
-              onChanged: (v) => vm.updateDraft((d) => d.copyWith(anonymous: v)),
+              // Disabled rather than merely refused on save: SSH has no anonymous mode, so offering
+              // the choice at all is the misleading part. Compose does the same
+              // (`ui/SftpScreen.kt:1437`).
+              onChanged: draft.protocol == ShareProtocol.sftp
+                  ? null
+                  : (v) => vm.updateDraft((d) => d.copyWith(anonymous: v)),
             ),
             if (!draft.anonymous) ...[
               if (draft.protocol == ShareProtocol.smb)

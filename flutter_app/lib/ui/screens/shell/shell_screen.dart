@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -450,7 +451,7 @@ class _ConnectPrompt extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) => Center(
-    child: Padding(
+    child: SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -624,7 +625,10 @@ class _SessionBar extends StatelessWidget {
           ),
           // Splitting needs a second session to show, so the control lives next to the one that
           // creates them.
-          if (vm.sessions.length > 1 && !vm.isSplit)
+          // A second pane needs something to put in it — another open session, or a host that can
+          // be connected into it. Gating on open sessions alone hid the button in exactly the case
+          // Kotlin supports: one terminal open, and another host a tap away.
+          if (!vm.isSplit && (vm.sessions.length > 1 || vm.canConnectSecondPane))
             IconButton(
               key: const ValueKey('shell.split'),
               tooltip: 'Split the view',
@@ -806,6 +810,10 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
   final FocusNode _keyFocus = FocusNode(debugLabel: 'terminal-keys');
   String _smartValue = '';
 
+  /// The last (session, pane focus, read-only) triple acted on, standing in for the key list of
+  /// Kotlin's `LaunchedEffect` — see the comparison in [build].
+  ({String id, bool focused, bool readOnly})? _lastFocusState;
+
   @override
   void dispose() {
     _input.dispose();
@@ -890,12 +898,39 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
     if (event is KeyUpEvent) return KeyEventResult.ignored;
 
+    final keyboard = HardwareKeyboard.instance;
+    final ctrl = keyboard.isControlPressed;
+    final alt = keyboard.isAltPressed;
+    final shift = keyboard.isShiftPressed;
+
     final key = _termKeyFor(event.logicalKey);
     if (key != null) {
+      // The modifiers held on the keyboard belong to this keystroke. Kotlin assigns them before
+      // every physical key (`ui/ShellScreen.kt:2322`); without it a hardware Ctrl+Left arrived as a
+      // bare Left, because the encoder was only ever told about the on-screen sticky modifiers.
+      widget.vm.applyHardwareModifiers(shift: shift, alt: alt, ctrl: ctrl);
       widget.vm.sendKey(key);
       if (widget.vm.preferences.smartSwipeInput) _resetSmartInput();
       return KeyEventResult.handled;
     }
+
+    // Android reports AltGr as Ctrl+Alt, so that combination is left to the text-input path — an
+    // international layout typing `@` or `\` must not be read as a control chord. Kotlin says the
+    // same at `ui/ShellScreen.kt:2363`.
+    final isAltGr = ctrl && alt;
+    if ((ctrl || alt) && !isAltGr) {
+      // `character` is null for a Ctrl chord on most platforms — the modifier suppresses the text —
+      // so the letter comes from the logical key instead. Kotlin reads `utf16CodePoint`, which
+      // Android fills in the same way for the same reason.
+      final label = event.character ?? event.logicalKey.keyLabel;
+      if (label.length == 1 && label.codeUnitAt(0) >= 0x20) {
+        widget.vm.applyHardwareModifiers(shift: shift, alt: alt, ctrl: ctrl);
+        widget.vm.typeText(label.toLowerCase());
+        if (widget.vm.preferences.smartSwipeInput) _resetSmartInput();
+        return KeyEventResult.handled;
+      }
+    }
+
     final character = event.character;
     if (character != null && character.isNotEmpty && character.codeUnitAt(0) >= 0x20) {
       widget.vm.typeText(character);
@@ -912,84 +947,123 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
 
     return ListenableBuilder(
       listenable: session,
-      builder: (context, _) => Column(
-        children: [
-          _TerminalStatusRow(vm: widget.vm, session: session),
-          Expanded(
-            child: Focus(
-              focusNode: _keyFocus,
-              // Ancestor of the field, so it sees a hardware key before the field's own editing
-              // shortcuts do. Anything it does not claim falls through to ordinary text entry.
-              onKeyEvent: _onKey,
-              child: Stack(
-                children: [
-                  TerminalSurface(
-                    session: session,
-                    fontSize: preferences.terminalFontSize.toDouble(),
-                    palette: palette,
-                    focused: _imeFocus.hasFocus,
-                    onGridChanged: widget.vm.rememberGrid,
-                    onTapCell: (snapshot, row, column) async {
-                      widget.vm.focusPane(session.id);
-                      final value = preferences.terminalLinkDetection
-                          ? terminalLinkAtCell(snapshot, row, column)
-                          : null;
-                      if (value != null) {
-                        final opened = await openLink(
-                          Uri.parse(value),
-                          inApp: preferences.linkOpenInApp,
-                        );
-                        if (!opened && context.mounted) {
-                          ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-                            const SnackBar(content: Text('No app could open that link.')),
+      builder: (context, _) {
+        // Kotlin's `LaunchedEffect(sessionId, isFocused, terminalReadOnly)` at
+        // `ShellScreen.kt:1889`: a focused, writable pane takes the hidden input — and therefore
+        // raises the keyboard — while a read-only one gives it back.
+        //
+        // The three values are compared rather than acted on every build, because that is what
+        // `LaunchedEffect` keys mean: run when one of these changes, not on every recomposition.
+        // Re-requesting focus on every build would fight the user, re-raising a keyboard they had
+        // just dismissed with Back.
+        final focusState = (
+          id: session.id,
+          focused: widget.vm.current?.id == session.id,
+          readOnly: session.readOnly,
+        );
+        if (_lastFocusState != focusState) {
+          _lastFocusState = focusState;
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (!mounted) return;
+            if (focusState.focused && !focusState.readOnly) {
+              _imeFocus.requestFocus();
+            } else if (focusState.readOnly) {
+              _imeFocus.unfocus();
+            }
+          });
+        }
+        return Column(
+          children: [
+            _TerminalStatusRow(vm: widget.vm, session: session),
+            Expanded(
+              child: Focus(
+                focusNode: _keyFocus,
+                // Ancestor of the field, so it sees a hardware key before the field's own editing
+                // shortcuts do. Anything it does not claim falls through to ordinary text entry.
+                onKeyEvent: _onKey,
+                child: Stack(
+                  children: [
+                    TerminalSurface(
+                      session: session,
+                      fontSize: preferences.terminalFontSize.toDouble(),
+                      palette: palette,
+                      focused: _imeFocus.hasFocus,
+                      onGridChanged: widget.vm.rememberGrid,
+                      // Scrolling into history is what pays for the tmux capture (ledger 99): the
+                      // rows the user is reaching for may never have reached this client.
+                      onScrolledBack: () => unawaited(widget.vm.resyncTmuxScrollback(session)),
+                      onTapCell: (snapshot, row, column) async {
+                        widget.vm.focusPane(session.id);
+                        final value = preferences.terminalLinkDetection
+                            ? terminalLinkAtCell(snapshot, row, column)
+                            : null;
+                        if (value != null) {
+                          final opened = await openLink(
+                            Uri.parse(value),
+                            inApp: preferences.linkOpenInApp,
+                            // The colour role Kotlin passes at `ui/ShellScreen.kt:1846`, so a link
+                            // opened from the terminal arrives in the app's own chrome rather than
+                            // the browser's default grey.
+                            toolbarColor: Theme.of(context).colorScheme.surface.toARGB32(),
                           );
+                          if (!opened && context.mounted) {
+                            ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+                              const SnackBar(content: Text('No app could open that link.')),
+                            );
+                          }
+                          return;
                         }
-                        return;
-                      }
-                      _imeFocus.requestFocus();
-                    },
-                  ),
-                  // Sized to nothing and painted with nothing: it exists purely to own the platform
-                  // IME connection so the software keyboard has somewhere to deliver text.
-                  Positioned(
-                    width: 1,
-                    height: 1,
-                    child: Opacity(
-                      opacity: 0,
-                      child: TextField(
-                        key: const ValueKey('shell.input'),
-                        controller: _input,
-                        focusNode: _imeFocus,
-                        onChanged: (text) => _onCommit(context, text),
-                        // A terminal needs literal keystrokes. Sentence casing would capitalise the
-                        // first letter of every command, and autocorrect would rewrite flag names.
-                        autocorrect: false,
-                        enableSuggestions: preferences.smartSwipeInput,
-                        textCapitalization: TextCapitalization.none,
-                        keyboardType: preferences.smartSwipeInput
-                            ? TextInputType.text
-                            : TextInputType.visiblePassword,
-                        maxLines: null,
-                      ),
+                        // A read-only tap focuses the pane for scrolling and stops there. Kotlin
+                        // spells this out at `ShellScreen.kt:2077` — "Read-only taps may focus a
+                        // split pane for scrolling but never summon its keyboard" — and it is not
+                        // cosmetic: input is dropped in read-only mode
+                        // (`shell_view_model.dart:899`), so the keyboard would cover the output the
+                        // user is trying to read in order to accept keystrokes that go nowhere.
+                        if (!session.readOnly) _imeFocus.requestFocus();
+                      },
                     ),
-                  ),
-                  if (!session.followTail)
+                    // Sized to nothing and painted with nothing: it exists purely to own the platform
+                    // IME connection so the software keyboard has somewhere to deliver text.
                     Positioned(
-                      right: 12,
-                      bottom: 12,
-                      child: FloatingActionButton.small(
-                        key: const ValueKey('shell.jumpToBottom'),
-                        backgroundColor: OmniColors.cyan,
-                        onPressed: session.scrollToTail,
-                        child: const Icon(Icons.arrow_downward, size: 18, color: Colors.black),
+                      width: 1,
+                      height: 1,
+                      child: Opacity(
+                        opacity: 0,
+                        child: TextField(
+                          key: const ValueKey('shell.input'),
+                          controller: _input,
+                          focusNode: _imeFocus,
+                          onChanged: (text) => _onCommit(context, text),
+                          // A terminal needs literal keystrokes. Sentence casing would capitalise the
+                          // first letter of every command, and autocorrect would rewrite flag names.
+                          autocorrect: false,
+                          enableSuggestions: preferences.smartSwipeInput,
+                          textCapitalization: TextCapitalization.none,
+                          keyboardType: preferences.smartSwipeInput
+                              ? TextInputType.text
+                              : TextInputType.visiblePassword,
+                          maxLines: null,
+                        ),
                       ),
                     ),
-                ],
+                    if (!session.followTail)
+                      Positioned(
+                        right: 12,
+                        bottom: 12,
+                        child: FloatingActionButton.small(
+                          key: const ValueKey('shell.jumpToBottom'),
+                          backgroundColor: OmniColors.cyan,
+                          onPressed: session.scrollToTail,
+                          child: const Icon(Icons.arrow_downward, size: 18, color: Colors.black),
+                        ),
+                      ),
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
-      ),
+          ],
+        );
+      },
     );
   }
 
@@ -1146,11 +1220,11 @@ class _SplitTerminals extends StatelessWidget {
   Widget build(BuildContext context) {
     final panes = [
       Expanded(
-        child: _FocusablePane(vm: vm, session: first, focused: true),
+        child: _FocusablePane(paneIndex: 1, vm: vm, session: first, focused: true),
       ),
       const _SplitDivider(),
       Expanded(
-        child: _FocusablePane(vm: vm, session: second, focused: false),
+        child: _FocusablePane(paneIndex: 2, vm: vm, session: second, focused: false),
       ),
     ];
 
@@ -1179,8 +1253,14 @@ class _SplitDivider extends StatelessWidget {
 /// targets the focused pane, so a split with no visible focus would leave the user guessing which
 /// terminal is about to receive what they type.
 class _FocusablePane extends StatelessWidget {
-  const _FocusablePane({required this.vm, required this.session, required this.focused});
+  const _FocusablePane({
+    required this.paneIndex,
+    required this.vm,
+    required this.session,
+    required this.focused,
+  });
 
+  final int paneIndex;
   final ShellViewModel vm;
   final ShellSession session;
   final bool focused;
@@ -1189,12 +1269,23 @@ class _FocusablePane extends StatelessWidget {
   Widget build(BuildContext context) {
     // No gesture detector here on purpose — the terminal surface below claims the arena, so a
     // wrapper's tap would never fire. Focus is taken in `_ActiveTerminal`, where the tap lands.
-    return DecoratedBox(
+    return Semantics(
       key: ValueKey('shell.pane.${session.id}'),
-      decoration: BoxDecoration(
-        border: Border.all(color: focused ? OmniColors.cyan : Colors.transparent),
+      container: true,
+      explicitChildNodes: true,
+      label: 'Terminal pane $paneIndex: ${session.serverName}',
+      value: focused ? 'Active terminal pane' : 'Inactive terminal pane',
+      selected: focused,
+      hint: 'Focus terminal pane $paneIndex',
+      // This is an accessibility action, not a competing pointer handler. The terminal surface
+      // keeps owning real taps while TalkBack can move the same focus that a tap would move.
+      onTap: () => vm.focusPane(session.id),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          border: Border.all(color: focused ? OmniColors.cyan : Colors.transparent),
+        ),
+        child: _ActiveTerminal(vm: vm, session: session),
       ),
-      child: _ActiveTerminal(vm: vm, session: session),
     );
   }
 }
@@ -1240,9 +1331,15 @@ class _SplitControls extends StatelessWidget {
   }
 }
 
-/// Picks the session for the second pane.
+/// Picks what goes in the second pane: an open session, or a host to connect into it.
 Future<void> _openSplitPicker(BuildContext context, ShellViewModel vm) async {
   final candidates = vm.splitCandidates;
+  // Hosts with no session open. Kotlin lets two hosts be loaded into panes in one action, so an
+  // unconnected host belongs in this list; picking one connects it into the second pane.
+  final openIds = vm.sessions.map((session) => session.serverId).toSet();
+  final connectable = vm.connectableServers
+      .where((server) => !openIds.contains(server.id))
+      .toList();
   await showModalBottomSheet<void>(
     context: context,
     useSafeArea: true,
@@ -1254,27 +1351,50 @@ Future<void> _openSplitPicker(BuildContext context, ShellViewModel vm) async {
             padding: EdgeInsets.all(16),
             child: Text('Show alongside', style: TextStyle(fontWeight: FontWeight.bold)),
           ),
-          if (candidates.isEmpty)
+          if (candidates.isEmpty && connectable.isEmpty)
             const Padding(
               padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
               child: Text(
-                // A split needs two terminals, and saying so beats an empty sheet.
-                'Open a second session first — a split shows two of them at once.',
+                // Nothing open and nothing online: saying so beats an empty sheet.
+                'No other session or online host to show alongside this one.',
                 key: ValueKey('shell.split.none'),
                 style: TextStyle(fontSize: 12),
               ),
-            )
-          else
-            for (final session in candidates)
+            ),
+          for (final session in candidates)
+            ListTile(
+              key: ValueKey('shell.split.pick.${session.id}'),
+              dense: true,
+              title: Text(session.serverName, style: const TextStyle(fontSize: 13)),
+              onTap: () {
+                vm.splitWith(session.id);
+                Navigator.of(sheetContext).pop();
+              },
+            ),
+          if (connectable.isNotEmpty) ...[
+            const Divider(height: 1),
+            const Padding(
+              padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
+              child: Text(
+                // Named so the two groups cannot be confused: one is already running, the other
+                // costs a connection.
+                'Connect into the second pane',
+                key: ValueKey('shell.split.connectHeader'),
+                style: TextStyle(fontSize: 11, color: OmniColors.textMuted),
+              ),
+            ),
+            for (final server in connectable)
               ListTile(
-                key: ValueKey('shell.split.pick.${session.id}'),
+                key: ValueKey('shell.split.connect.${server.id}'),
                 dense: true,
-                title: Text(session.serverName, style: const TextStyle(fontSize: 13)),
+                leading: const Icon(Icons.add_link, size: 18, color: OmniColors.cyan),
+                title: Text(server.name, style: const TextStyle(fontSize: 13)),
                 onTap: () {
-                  vm.splitWith(session.id);
                   Navigator.of(sheetContext).pop();
+                  unawaited(vm.splitWithNewSession(server));
                 },
               ),
+          ],
         ],
       ),
     ),

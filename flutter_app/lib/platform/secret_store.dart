@@ -34,13 +34,39 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 class SecretStore {
   SecretStore({FlutterSecureStorage? storage, this.legacyDecryptor, this.onUpgraded})
     : _storage =
-          storage ??
-          const FlutterSecureStorage(
-            // Android's default is now a custom cipher (Jetpack Security was deprecated by
-            // Google); iOS pins the key to this device and requires a first unlock, so a backup
-            // restored onto another handset cannot carry the key with it.
-            iOptions: IOSOptions(accessibility: KeychainAccessibility.first_unlock_this_device),
-          );
+          storage ?? const FlutterSecureStorage(iOptions: iosOptions, aOptions: androidOptions);
+
+  /// iOS pins the key to this device and requires a first unlock, so a backup restored onto another
+  /// handset cannot carry the key with it.
+  static const iosOptions = IOSOptions(
+    accessibility: KeychainAccessibility.first_unlock_this_device,
+  );
+
+  /// Android options, stated rather than inherited — the default is destructive here.
+  ///
+  /// `resetOnError` defaults to **true**, and the plugin means it literally: a failed read calls
+  /// `delete(key)`, a failed `readAll` calls `deleteAll()`, and a failed migration calls
+  /// `deleteAllDataAndKeys` (`FlutterSecureStorage.java`, `handleStorageError`). This store keeps
+  /// exactly one thing here — [_keyStorageName], the AES key that every `enc:v2:` credential in the
+  /// database is encrypted under — so "delete the key that failed to read once" means every saved
+  /// password, sudo password, proxy password, private key, profile password and share password
+  /// becomes permanently undecryptable, with the ciphertext still sitting in the database looking
+  /// intact.
+  ///
+  /// [_key] would then complete the job: it treats a missing key as "first run" and mints a new one,
+  /// so the app would carry on encrypting under a fresh key and never report anything wrong. That is
+  /// the same silent-blanking this class's header warns about for the v1→v2 migration, arriving by a
+  /// different route.
+  ///
+  /// Kotlin does none of this. `data/SecretStore.kt:35` logs the failure class — never the secret —
+  /// and returns null, so a transient failure stays transient and the data survives it. With
+  /// `resetOnError: false` the plugin surfaces the error instead of deleting, [decrypt] catches it
+  /// and returns null exactly as Kotlin does, and the only null [_key] can see is a key that was
+  /// genuinely never written.
+  ///
+  /// `migrateOnAlgorithmChange` keeps its default of true: that one preserves data across a plugin
+  /// cipher change rather than discarding it.
+  static const androidOptions = AndroidOptions(resetOnError: false);
 
   /// Marks a value encrypted by the **Kotlin** app, under the Android Keystore key.
   static const legacyPrefix = 'enc:v1:';

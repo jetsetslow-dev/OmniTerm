@@ -9,7 +9,10 @@ val admobAppId = System.getenv("ADMOB_APP_ID") ?: admobTestAppId
 
 android {
     namespace = "com.jetsetslow.omniterm"
-    compileSdk = flutter.compileSdkVersion
+    // Match the shipped Kotlin app and the newest installed stable platform. Flutter 3.44 defaults
+    // to 36, but current flutter_secure_storage compiles against 37; Android SDKs are backward
+    // compatible at compile time and minSdk remains unchanged.
+    compileSdk = 37
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -25,7 +28,7 @@ android {
         // Matches the legacy Android app (app/build.gradle.kts) so the migration does not silently
         // drop support for devices the shipped app already serves.
         minSdk = 24
-        targetSdk = flutter.targetSdkVersion
+        targetSdk = 37
         versionCode = flutter.versionCode
         versionName = flutter.versionName
         manifestPlaceholders["admobAppId"] = admobAppId
@@ -117,6 +120,16 @@ dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 
     androidTestUtil("androidx.test:orchestrator:1.5.1")
+
+    // smbj negotiates SMB 3.1.1 with Bouncy Castle's SHA-512 digest. Its transitive provider is
+    // excluded below to prevent duplicate crypto classes, so the replacement must be explicit — a
+    // JVM build cannot reveal this omission because the native bridge is reached only on Android.
+    // Keep this aligned with the Kotlin app's security-pinned provider.
+    // Custom Tabs, for CustomTabsBridge. It also arrives transitively through url_launcher, but a
+    // transitive is not a contract: this app calls the API directly, so it declares it directly.
+    implementation("androidx.browser:browser:1.9.0")
+
+    implementation("org.bouncycastle:bcprov-jdk18on:1.85")
 
     // SMB2/3 (MIGRATION.md §7.1). Native rather than Dart because the only pub package for SMB pins
     // a pointycastle major dartssh2 cannot coexist with, and is an unmaintained implementation of a

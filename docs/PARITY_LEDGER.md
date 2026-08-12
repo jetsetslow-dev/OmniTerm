@@ -99,6 +99,29 @@ implementations decides whether a feature is missing.
 | 59 | Launcher shortcuts | **A shortcut into a host failed on a cold start, and said nothing when its target was gone.** `connect_server` and `open_split` resolved the host from the *in-memory* list, which has not emitted yet on a cold start, so a working shortcut looked like a deleted host. Kotlin reads the row from the repository for exactly that reason and shows a toast when it is really missing (`ui/AppViewModel.kt:4533`, `:4537`). | **Closed** — see below |
 | 60 | Home widget | **A widget that could not read its data told the user they had no hosts.** The receiver's `runCatching { … }.getOrElse { JSONArray() }` turned any unreadable payload into an empty one, and empty renders as "Open OmniTerm to add a host". Kotlin has three layouts — rows, empty, and `omniterm_widget_error`; Flutter had two. | **Closed** — see below |
 | 61 | Permission prompt (**consent**) | **The local-network prompt explained the upside and not the cost.** Kotlin's explanation ends "If you choose Not now, internet hosts remain available but nearby-device features may not work" (`strings.xml:33`); the Flutter port dropped that sentence, leaving "Not now" looking free on a prompt the user cannot easily get back to. | **Closed** — see below |
+| 102 | tmux control mode (**input**) | **Keystrokes keep going to the first pane ever seen.** The pane id is learned once from the first `%output` and never revised (`shell_session.dart:141`), so switching window or pane inside tmux leaves input addressed to the old one. Kotlin re-resolves it on `%session-changed` and the pane/window notifications (`ui/AppViewModel.kt:5139`), which Flutter discards. | **Open** — evidenced, see below |
+| 101 | Backup (**data loss**) | **The passphrase dialog promised eight characters and the export demanded twelve**, after the document picker had already created the file — so a rejected export left a 0-byte file that looks like a backup. Kotlin held the number in two disagreeing places (`ui/ToolsScreen.kt:2808` vs `ui/AppViewModel.kt:11360`); Flutter enforced no minimum at all. One constant per app, checked in the dialog and at the export. | **Closed** — see below |
+| 100 | Links (**chrome**) | **A link opened from the terminal used the browser's default chrome.** Kotlin builds its Custom Tab with `setShowTitle(true)` and the app's surface colour (`ui/LinkOpener.kt`), and falls through to the user's real browser when no Custom Tabs provider exists; url_launcher exposes only `showTitle` (defaulting false) and falls back to its own WebView. Ported as `CustomTabsBridge`. | **Closed** — see below |\n| 99 | Persistent tmux (**missing feature**) | **A reattached session lost its history.** Kotlin captures the pane's scrollback over a side exec channel, guarded on `#{alternate_on}` so a TUI's frames are not mistaken for history (`data/RemoteParsers.kt:280`, `ui/AppViewModel.kt:4884`). None of it exists here, so scrolling up after a reattach shows only what tmux replayed. | **Closed** — see below |\n| 98 | Terminal input (**hardware keyboard**) | **Ctrl and Alt on an attached keyboard did nothing.** The encoder was a faithful port but nothing told it which modifiers were held: `_onKey` never consulted `HardwareKeyboard`, so Ctrl+C typed `c`, Ctrl+Left sent a bare Left and Alt+b typed `b`. Kotlin assigns the event's modifiers before every key (`ui/ShellScreen.kt:2322`, `:2363`) and reserves Ctrl+Alt for AltGr. | **Closed** — see below |\n| 97 | Terminal input (**safety**) | **Pastes were never bracketed.** The emulator tracked DECSET 2004 and nothing read it, so a multi-line paste reached a shell that had asked for literal text as plain typing — executed line by line on arrival. Kotlin wraps the body and sends trailing CRs after the closing marker (`ui/AppViewModel.kt:696`). Found by checking `TERMINAL_COMPATIBILITY.md` against the Dart emulator for the first time. | **Closed** — see below |\n| 96 | Auth keys (**security**) | **A copied private key was shown by the system clipboard preview and left there indefinitely.** Kotlin marks that one copy `EXTRA_IS_SENSITIVE` and clears it after 60s if unchanged (`ui/ToolsScreen.kt:115`); Flutter used a plain `Clipboard.setData`, which cannot express the marker. Now a platform bridge plus a Dart timed, conditional clear. | **Closed** — see below |\n| 95 | Host form (**honesty**) | **The SSH compression switch claimed a behaviour the app cannot perform.** dartssh2 proposes `['none']` and ships no zlib, so the control could be set and never compressed anything, while Kotlin negotiates zlib. Shown disabled with the reason, stored value untouched so backup and restore still round-trip. | **Closed** — see below |\n| 94 | SSH transport (**dead settings**) | **Two host-form switches changed nothing.** `compression` and `agentForwarding` travelled from the form through `SshCredentials` and were never read; Kotlin implements both (`JschSshTransport.kt:351`, `JschSession.kt:85`). Agent forwarding is now served by `SSHKeyPairAgent` on the shell channel only, with a reconnect-without-it fallback matching Kotlin's `runCatching`. Compression cannot be honoured — dartssh2 hard-codes `['none']` — and is **left open with evidence**. | **Agent forwarding closed; compression open** |
+| 93 | Credential storage (**data safety**) | **A single failed keystore read could blank every stored credential.** `flutter_secure_storage`'s `AndroidOptions` defaults `resetOnError: true`, which deletes the key on a failed read (`deleteAll()` on a failed readAll). The one key kept there encrypts every password and private key in the database, and `_key()` mints a replacement silently, so the app would carry on with everything unreadable and report nothing. Kotlin logs the failure class and returns null (`data/SecretStore.kt:35`), deleting nothing. | **Closed** — see below |
+| 92 | App lock / sudo re-auth (**security**) | **The biometric gate accepted the phone's own PIN.** Kotlin allows one authenticator — `setAllowedAuthenticators(BIOMETRIC_STRONG)`, no `DEVICE_CREDENTIAL` (`data/BiometricCryptoGate.kt:91`) — because the lock defends against someone holding the *unlocked* phone. Flutter passed `biometricOnly: false`, so the device credential satisfied it, and gated availability on `canCheckBiometrics` (hardware) rather than enrolment. The correct port existed, unreferenced, in `biometric_gate.dart`. | **Closed** — see below |
+| 91 | Terminal (**input**) | **A freshly connected session had no keyboard until the grid was tapped.** Kotlin focuses the hidden input as soon as a pane becomes the focused, writable one (`ShellScreen.kt:1889`, "so the keyboard is available"); Flutter took focus only in the tap handler. Ported with the effect's *keys* as well as its body — the triple is compared, so a keyboard dismissed with Back is not re-raised by the next line of output. | **Closed** — see below |
+| 90 | Terminal / accessibility (**input**) | **A read-only terminal summoned a soft keyboard that could not type.** Kotlin ties the hidden input's focus to read-only in four places (`ShellScreen.kt:1889`, `:2077`, `:1905`, `:2555`) — "read-only taps may focus a split pane for scrolling but never summon its keyboard". Flutter requested IME focus on any tap and released it on none, so the keyboard covered the output the user turned read-only to read, for keystrokes dropped at `shell_view_model.dart:899`. | **Closed** — see below |
+| 89 | Code editor | **Go-to-line disposed its text controller while the dialog was still painting it.** The `TextEditingController` was disposed the moment `showDialog` returned, but the dialog's exit transition still renders the `TextField` bound to it. The dialog now records typed text through `onChanged` and owns no controller. | **Closed** — see below |
+| 88 | Shares — WebDAV | **PROPFIND rejected the redirect it had provoked.** Collections were addressed as `/fixture`; Apache answers `301` to `/fixture/`, and the client treated that as a failure, so a WebDAV share could not be listed at all. Collection paths are now canonically encoded with a trailing slash. | **Closed** — see below |
+| 87 | Shares — FTP | **FTP could not list a current vsftpd.** `ftpconnect` defaults to MLSD without capability discovery and vsftpd 3.0.5 answers `500 Unknown command`, making a healthy share impossible to open. FTP now probes `FEAT` and uses MLSD only when MLST/MLSD is advertised, falling back to LIST — including when FEAT itself is refused. | **Closed** — see below |
+| 86 | Shares — SMB (native) | **A finished read could terminate the next one.** The bridge sent both a transfer-scoped `done` and a global `endOfStream` on an EventChannel name shared by sequential downloads, so a delayed end could land after the next read had subscribed. The redundant end was removed. | **Closed** — see below |
+| 85 | Shares (**resource leak**) | **Every list, read and write built a new share client.** Each may own a native session and event channel, so an editor read-save-reread raced the previous stream's cancellation and left authenticated sessions open. One client is now held for the browse/editor session and closed once. | **Closed** — see below |
+| 84 | Shares — FTP/WebDAV/SMB | **A completed transfer could be missed.** All three registered the stream-completion future *after* closing the producer; a completion arriving in between was never observed and the transfer hung. Registration now precedes the transfer. | **Closed** — see below |
+| 83 | Shares — SMB (**capability**) | **Text files on an SMB share could not be edited on Android.** Kotlin's `openShareFileForEdit` (`AppViewModel.kt:8070`) edits a file on any protocol through `downloadTo`/`uploadStream`, gated only by size. Flutter's Android SMB client reported `supportsTextEditing == false` and had neither `readText` nor `writeText`. | **Closed** — see below |
+| 82 | Build (**crash**) | **The native SMB client crashed on first use.** smbj needs Bouncy Castle at runtime and the Flutter Android build excluded it as a transitive. Kotlin pins `bcprov-jdk18on` explicitly (`libs.versions.toml:52`, `app/build.gradle.kts:202`); Flutter now pins the same 1.85. Invisible to every gate except running on a device. | **Closed** — see below |
+| 81 | Shares (**start path**) | **A share's configured start path was discarded.** Kotlin resolves it through `ShareClients.startPath` (`RemoteFsClient.kt:74`, used at `AppViewModel.kt:7662`), which keeps SMB's share-name segment apart from FTP/SFTP/WebDAV's initial directory. Flutter called `openPath('')` unconditionally, so every non-SMB share opened at the protocol root while the Shares card still displayed the path being ignored. | **Closed** — see below |
+| 80 | Large text (**layout**) | **The file browser's controls pushed the listing off the screen at 200% text.** In landscape the compact side-by-side header was still taller than the body, and a `Column` child with no ceiling overflows rather than yielding — 25px on the physical phone. The header block is now capped at 55% of the body and scrolls within it. | **Closed** — see below |
+| 79 | Accessibility (**operability**) | **Split terminal focus was sight-only, and live status figures were announced as unexplained numbers.** Kotlin gives each pane a named, selected `OnClick` semantics action and describes health scores/countdowns in full. Flutter only drew the active pane's cyan border and announced `82` / `15s`, so TalkBack could neither focus a pane nor identify what the figures meant. | **Closed** — see below |
+| 78 | Sort migration (**upgrade fidelity**) | **An upgrading user's saved share sort was discarded.** Kotlin keeps two sorts — `sftp_sort` for the Files tab and `share_sort` for the share browser (`AppViewModel.kt:7860`). This port has one, since a share takes over the Files tab, and read only the first — so someone who only ever changed the sort while browsing a share was put back on Name A-Z. | **Closed** — see below |
+| 77 | Biometrics (**unreachable**) | **Biometric unlock was offered on devices that have none.** `BiometricAuth.isAvailable` carried a doc comment reading "Checked before offering the option" — and had **no caller**, so the switch was enabled on hardware where it could never succeed. Kotlin gates its prompt on `BiometricCryptoGate.canAuthenticate` and reports unavailability distinctly (`BiometricCryptoGate.kt:67`). | **Closed** — see below |
+| 76 | Split shortcut (**unreachable**) | **The split launcher shortcut could never appear.** `ShortcutHelper.pushSplit` and its entire native implementation (`ShortcutBridge.kt`, `pushSplit` → `splitShortcut`) existed and had **no caller anywhere in Dart**. Kotlin pushes one whenever two hosts are loaded into panes (`AppViewModel.kt:1712`). | **Closed** — multi-SSH gap now closed |
+| 75 | Split terminal (**capability**) | **A second host could not be opened into a pane.** Kotlin loads two *hosts* into panes in one action; the port could only split sessions that were already connected, so adding a host meant connecting it, watching it take over the screen, then splitting back. With one session open the split control was hidden entirely — "Open a second session first". | **Closed** — first slice of the multi-SSH gap |
+| 74 | Crash reporting (**error handling**) | **Reporting or sharing a crash could fail silently, taking its own fallback with it.** `launchUrl` throws when no browser exists rather than returning false, and `_reportCrash` did not catch — so the fallback that copies the report never ran and the button did nothing at all. `_shareCrash` had no guard either, where Kotlin reports the failure (`MainActivity.kt:337`). | **Closed** — guarded by a source scan |
 | 73 | Terminal accessibility (**regression**) | **The terminal output was invisible to a screen reader.** The surface is a `CustomPaint`, so it contributed nothing to the semantics tree at all — on an SSH client, the app's primary content. Kotlin puts a `contentDescription` on the same surface (`ui/ShellScreen.kt:2047`). | **Closed** — see below |
 | 71 | Accessibility (**regression**) | **Thirty icon-only controls had no accessible name.** Every dismiss and close, the find-bar arrows and the numeric steppers announced to TalkBack as "button" and nothing else. Kotlin labels them — 179 `contentDescription`s, with its 59 nulls being decorative icons, which is correct usage. | **Closed** — guarded by a source scan |
 | 72 | Formatting (**self-inflicted**) | **The branch would have failed CI's format gate.** `flutter-pr-check.yml` formats with `--line-length 100`; I had been running `dart format` at the default 80 all session, including on files that were then committed. | **Closed** — 163 files corrected |
@@ -2560,6 +2583,2826 @@ wording would break on every edit while catching nothing that matters.
 adjudicated: `crash_*` (58), `shortcut_*` (59), `widget_*` (60) and `local_network_*` (61). Three of
 the four named a missing *feature* rather than missing copy, which is the pattern worth carrying
 into any future string diff — a cluster of related strings is a feature the port did not finish.
+
+### 100 — a link opened from the terminal arrived in nobody's chrome (closed)
+
+The last item on the platform-argument seam, carried since 96 as "cosmetic, not recorded as a
+defect". It is a defect: Kotlin's `ui/LinkOpener.kt` builds its Custom Tab with `setShowTitle(true)`
+**and** `setToolbarColor(MaterialTheme.colorScheme.surface)` (`ui/ShellScreen.kt:1846`), and neither
+reached this port.
+
+`url_launcher` cannot express it. `InAppBrowserConfiguration` has exactly one field, `showTitle` —
+which was defaulting to false, so even the free half was missing — and no colour at any version.
+There is a second difference that matters more than the tint: where no Custom Tabs provider exists,
+Kotlin falls through to `ACTION_VIEW` and the user's **real browser**, while url_launcher falls back
+to its own bundled WebView. Those are different products, and on a terminal app the link came out of
+the user's own shell output.
+
+**Fix.** `CustomTabsBridge.kt`, a direct port of `LinkOpener.kt` — title, tint, and the
+`ActivityNotFoundException` fall-through to `ACTION_VIEW`. `androidx.browser:browser:1.9.0` is
+declared explicitly rather than leaned on transitively through url_launcher, for the reason the
+bcprov pin three lines above it already states: a transitive is not a contract. `openLink` gained
+`toolbarColor`, the terminal passes the same `colorScheme.surface` role Kotlin does, and everything
+without the bridge — iOS, desktop, tests — still goes through url_launcher, now with `showTitle`
+set. A missing bridge degrades to opening the link, never to refusing it.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/link_opener_test.dart` | 5 passed, all new |
+| Full host suite | **2,455 passed** (+5) |
+| `dart format --line-length 100` | `0 changed` |
+| `--profile core`, `emulator-5554` | **29 passed, no warnings** (24 Dart + 3 backup picker + 2 notification) — `20260811T170146Z_android_emulator-5554_core` |
+
+**Negative control.** Dropping the `toolbarColor` entry from the channel arguments fails `an in-app
+open carries the toolbar colour to the platform` with `Expected: <4279246896>, Actual: <null>`.
+
+The tests assert the *arguments* reaching the platform, because that is where the whole defect lived
+— a wrapper returning the right boolean while asking for the wrong chrome passes anything that only
+checks its return value. The scheme guard is covered too: a `file:` URL is refused **before** the
+channel is touched, which matters because terminal output is untrusted text.
+
+**Not covered, and stated rather than implied.** The url_launcher fallback taken when the bridge is
+absent has no test. Proving it means mocking url_launcher's own platform interface, and a test that
+merely showed "we did not call our channel" would assert the absence of one thing while claiming the
+presence of another — the sixth vacuous control in this ledger was exactly that shape, so this one
+was deleted rather than kept. The comment where it stood says so.
+
+### The Galaxy S23 clears the instrumentation blocker (closed)
+
+The Moto G6 could not run instrumentation at all — `JNI_CreateJavaVM failed`, reproducible across a
+reboot, while plain `flutter test` on the same handset passed 24 tests. A Galaxy S23 Ultra
+(`RZCW418XP4P`, Android 16 / API 36, 11GB) was attached and **runs it fine**, which settles the
+question the previous entry left open: the fault was that device, not the project, and not the
+`adb reverse` port collision that looked so much like the culprit.
+
+`--profile core` there: **23 of 24 Dart tests, and Patrol 2 of 3** — the first execution of the
+backup document-picker flow on real hardware rather than an emulator
+(`20260811T162650Z_android_RZCW418XP4P_core`). Two failures, neither in the app:
+
+- `app_actions`: the alert-rules flow died in `dragUntilVisible` with a bare `Bad state: No element`.
+  Its helpers reached controls with `scrollUntilVisible(..., scrollable: Scrollable.first)`, which is
+  two guesses — that the first scrollable holds the target, and that it survives the drag. On the
+  S23's 411x882 logical screen the second one failed. Switched to the tall-surface idiom
+  `app_lock_test.dart` and `crash_log_test.dart` already use; verified in the 29-test emulator run
+  above, **not yet re-verified on the S23**, which is now unplugged.
+- Patrol's `the picker is offered the file name` threw `StaleObjectException` from UiAutomator —
+  the native view went stale between being matched and being read. That is Patrol's native
+  inspection, not the app, and it wants a re-query rather than a fix here. **Open.**
+
+### Crash-log collection now has a device flow (closed)
+
+The last of the three gaps named when the device coverage was challenged — backup/restore had Patrol
+tests that had never run, and crash logs had nothing at all. `test/crash_log_test.dart` covers the
+pruning and the redactor as pure functions; **nothing exercised the feature on a device**, and the
+two halves that only exist there are the ones a user leans on:
+
+- The history lives in `SharedPreferences`, a platform channel. On a host that is an in-memory stub,
+  so writing a report, reading it back after the app rebuilds, and the 20-entry/30-day pruning were
+  all unproven against a real store.
+- **Copy** reaches the platform clipboard, which is how a crash actually gets to a bug report.
+
+`integration_test/crash_log_test.dart` plants a report through `CrashLog`, relaunches the app, finds
+the entry in About's crash history, expands it, copies it, and reads the **real clipboard** back;
+then clears the history and checks the empty state. The report is planted rather than caused,
+because a genuine startup crash diverts the app into `startup.recovery` and refuses to launch —
+that is its own flow and cannot be this one's setup.
+
+The copy assertion is the part worth having. The planted report contains `password:
+hunter2-should-never-be-copied`, so "the clipboard got the report" and "the clipboard got the
+secret" cannot be mistaken for each other: it requires the marker present, the secret absent, and
+`<redacted>` in its place.
+
+**A defect that wasn't.** The reason for that assertion was a suspected leak — `_shareCrash` builds
+its text with `redactCrashReport(entry.report)` while `onCopy` passes `entry.report` straight
+through, which reads exactly like one path redacting and the other not. It is not: `CrashLog.record`
+redacts **when the crash is written** (`crash_log.dart:119`), so what is stored is already safe and
+every export path inherits it — the same place and the same reasoning as Kotlin
+(`data/CrashLog.kt:46`). The share path's second call is redundant rather than load-bearing. Checked
+before changing anything, and the test now pins the property at the end of the path a user takes
+rather than at the line that happens to implement it.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| Full host suite | 2,450 passed |
+| `dart format --line-length 100` | `0 changed` |
+| `crash_log_test.dart`, `emulator-5554` | 2 passed |
+| `crash_log_test.dart`, `ZF62224F8K` | 2 passed |
+| `--profile core`, `ZF62224F8K` | **24 Dart tests passed** |
+
+It failed twice before passing, both times on the same thing and neither on the product:
+`scrollUntilVisible`'s `scrollable:` wants a `Scrollable` finder rather than the `ListView`'s key,
+and About is a lazy list whose lower rows do not exist until scrolled to. Both are solved the way
+`app_lock_test.dart` already solves them — lay the whole screen out at once — which is now the third
+device flow to need that and probably ought to be shared.
+
+**The phone still cannot run Patrol.** Rebooting it, as the handover asked, did **not** clear
+`JNI_CreateJavaVM failed`: it reproduces on a freshly booted device with 1.4GB available, a single
+user, and the runner correctly registered. Plain `flutter test -d ZF62224F8K` is unaffected — 24
+tests pass on that phone in the same run — so this is specific to the Gradle instrumentation path.
+Backup/restore through the real document picker therefore still has **emulator evidence only**.
+
+### Why Patrol reports zero tests on the phone: the device, not the project (open)
+
+The phone runs the same Patrol tests that pass on the emulator and reports `Total: 0` with
+"Test run failed to complete. No test results". Two hypotheses were tested and one is settled.
+
+**Wrong hypothesis, kept anyway.** Patrol defaults its test and app servers to **8081 and 8082** —
+and `test-hosts.sh android` reverses both to this workstation for the fixture fleet (8082 is the
+WebDAV share, 8081 a scan target). A reverse claims the port *on the device*, which is exactly where
+Patrol's servers listen, and the emulator never gets those reversals, which would explain a
+phone-only failure precisely. It is a real collision. **It is not this failure**: moving Patrol to
+8181/8182 changed nothing. The move is kept because the conflict is genuine and would bite the
+moment the real fault is cleared — but it is **reasoned, not demonstrated**, and wants confirming
+once the phone can run instrumentation at all.
+
+**The actual fault, from the device's own log.** Running the instrumentation directly:
+
+```
+adb shell am instrument -w -r com.jetsetslow.omniterm.app.flutter.test/pl.leancode.patrol.PatrolJUnitRunner
+E/AndroidRuntime: JNI_CreateJavaVM failed
+```
+
+No output, reproducible on every attempt. The instrumentation process cannot start a Java VM. That
+is below anything this repository controls: the app APK and the test APK both install cleanly by
+hand, `pm list instrumentation` shows the runner registered against the right target, and the same
+APKs execute on the emulator. Memory is not obviously the cause — 596MB free, 1.3GB available, of
+2.8GB.
+
+**What it blocks.** Backup save/restore through the real document picker, and the notification
+permission dialog, have emulator evidence only. Both pass there (5 tests). Nothing in the app is
+implicated: this is the harness failing to launch on one handset.
+
+**Next step is physical:** reboot the phone and re-run. If it recurs, the remaining suspects are
+LineageOS/Magisk interference with the instrumentation process and a per-uid process ceiling — 530
+processes were running. Neither is diagnosable from the host alone.
+
+### The backup picker tests run, and pass — first execution ever (closed)
+
+`core` now finds and launches the Patrol tests, so the question became why they reported `Total: 0`.
+The handover blamed missing androidTest wiring. **That was wrong**: `testInstrumentationRunner`,
+`clearPackageData`, `ANDROIDX_TEST_ORCHESTRATOR`, the orchestrator dependency and the parameterized
+`MainActivityTest.java` are all present and correct. On the emulator they execute fine — the
+`Total: 0` was specific to the phone run and is a separate, still-open question.
+
+Executed for the first time, they failed **2 of 3**, both on the same thing:
+
+```
+TimeoutException: Finder "Found 0 widgets with key [<'backup.export'>]" did not find any visible…
+```
+
+Not a renamed key — `backup.export` is right there at `backup_screen.dart:114`. **Zero widgets**, not
+an invisible one: the Backup screen is a `ListView`, so a control past the fold has never been
+built. The same file already scrolls to `backup.import` for exactly this reason; the two `export`
+taps did not, and nobody found out because the file had never run.
+
+**Fixed** by scrolling to it, the idiom the file already used.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `patrol test backup_file_picker_test.dart` | **3 passed** (was 1 passed / 2 failed) |
+| `patrol test notification_permission_test.dart` | **2 passed** |
+| `--profile core`, `emulator-5554` | **22 + 3 + 2 = 27 passed, no warnings** — `20260811T150010Z_android_emulator-5554_core` |
+| `flutter analyze --fatal-infos` | clean |
+| Full host suite | 2,450 passed |
+
+**What this buys.** Backup save and restore now have device evidence through the **real system
+document picker** — `ACTION_CREATE_DOCUMENT` in another process, which no widget test can reach.
+Specifically covered: cancelling the save leaves no "Backup ready." claim standing over a file that
+was never written; the picker is offered the filename the backup should have; cancelling the restore
+picker changes nothing. The notification-permission dialog is covered too, granted and denied.
+
+**Still not covered.** Crash-log collection has unit tests and no device flow. And the phone's
+`Total: 0` is unexplained — the same tests execute on the emulator, so it is environmental rather
+than a wiring gap, and it needs the phone in hand to diagnose.
+
+### The device suite was running a third of itself (closed)
+
+Prompted by a direct question — had the app been driven screen by screen on the attached phone, at
+every combination of settings? It had not, and asking the question found more than a gap in effort.
+
+**What was actually running.** `--profile core`, used by nearly every slice, ran a hand-written list
+of three integration files out of eight. `--profile all` used `find -maxdepth 1`, so
+`integration_test/native/` was invisible to every profile — five Patrol tests, 253 lines, driving
+the real system document picker for **backup save and restore** and the notification permission
+dialog, none of which had ever executed. And most slices ran `core` on the *emulator*, not the phone.
+
+**What that hid.** Running `--profile all` on the phone for the first time: **19 passed, 4 failed.**
+
+| Failure | Cause |
+|---|---|
+| `app_lock`: an absence locks the app | The test's `disableLock` tapped Save and settled. Ledger 62 and 70 had since put a confirmation dialog and a re-authentication gate in front of that save, and the helper answered neither — so the lock was never switched off and the next background locked it again. |
+| `app_lock`: a configuration change is not an absence | Same helper. |
+| `app_actions`: a host can be added and removed | Not reproducible; passed on the next run. Recorded as a flake, not fixed. |
+| `key_import`: rubbish is rejected with a reason | Below. |
+
+The two App Lock failures were **not** caused by any change in this session: they reproduce with
+ledger 92's biometric change reverted. They had been failing since 62 and 70 landed, and nothing
+noticed because the profile everyone reached for did not include the file.
+
+### The key-import failure, and four wrong hypotheses
+
+Worth recording in full, because every early answer was plausible and wrong.
+
+`rubbish is rejected with a reason, not silently stored` failed on the phone and passed on the
+emulator. The error text was absent, so the import had apparently *succeeded* on rubbish input.
+
+1. **"Slow hardware, the fixed settle is too short."** Replaced with a ten-second bounded wait. Still
+   failed.
+2. **"The validation has a platform-dependent hole."** `privateKeyParseError` short-circuits when
+   `privateKeyNeedsPassphrase` says yes, which would skip the parse entirely — a real-looking
+   suspect. Probed directly: rubbish gives `needsPassphrase=false` and a correct rejection message.
+3. **"`importKey` swallows the exception."** Read every catch clause; all three return a message.
+4. **"The button is off-screen; `ensureVisible` will fix it."** It did not.
+
+The probe that settled it printed the button's own state: **enabled, still labelled `Import`**, ten
+seconds after the tap, with nothing stored and no error. So `_import()` had never run — the tap was
+not reaching the button at all.
+
+**The cause.** The previous test's typing leaves the soft keyboard up, and it covers the bottom of
+the sheet where Import sits. `ensureVisible` cannot help: it scrolls within the sheet, and the IME is
+an overlay outside it. Run in isolation the app has just started, no field has been focused, and the
+button is in the clear — which is why *reproducing a suite failure by running one test disproved the
+wrong thing*, twice. The fix dismisses focus before reaching for the button.
+
+**Evidence.** All three key-import tests pass on `ZF62224F8K`; the full non-host profile is **22
+passing** on the phone (`20260811T142523Z_android_ZF62224F8K_core`) and 22 on the emulator
+(`20260811T132424Z_android_emulator-5554_core`), up from 13 emulator-only.
+
+### What the profiles do now
+
+- `core` discovers **every** integration test that does not need the lab, recursively. A new file
+  joins by existing; there is no list to forget to update.
+- Patrol files are split out by content — a file is Patrol's because it calls `patrolTest` — and run
+  through the Patrol CLI, because `flutter test` cannot drive another process's UI. Missing CLI is a
+  loud failure, not a silent skip.
+- The warning gate reads both logs.
+
+**The surface matrix is now a matrix.** It was five schemes plus a single 200%-text row; ledger 80
+came out of that one row, in landscape dark specifically. It is now 5 schemes × 4 text sizes (the
+full `PreferenceRange(80, 200)`) × 2 orientations = **40 passes** over every route and subtab, green
+on both devices.
+
+**Still not running: the Patrol tests.** They now build and launch, and execute **zero** tests —
+`Total: 0` with a Gradle exit of 1. `testInstrumentationRunner` and `MainActivityTest.java` are in
+place, so the remaining piece is the Patrol androidTest dependency wiring. **Backup save/restore
+through the real document picker therefore still has no device evidence**, and neither does the
+notification permission dialog. Crash-log collection has unit coverage only and no device test at
+all.
+
+### 102 — in tmux control mode, keystrokes kept going to the first pane ever seen (closed)
+
+Deferred twice as "needs the whole vertical". That was right about the shape and **wrong about the
+size**, and the correction is the useful part of this entry.
+
+**What the earlier entry got wrong.** It said the fix needed the `%begin`…`%end` reply plumbing,
+"because the active-pane query returns through the third event Flutter discards". It does not.
+Kotlin resolves the pane over a **side channel** — a separate `exec`, not the control conversation —
+and says so at the definition (`data/RemoteParsers.kt:202`):
+
+```kotlin
+/** Active pane id ... (side channel; control mode needs it to route %output). */
+fun tmuxActivePaneQuery(name: String) =
+    "tmux display-message -p -t ${tmuxSafeName(name)} '#{pane_id}' 2>/dev/null || true"
+```
+
+I had inferred the dependency from the event list rather than reading the caller. Reply plumbing is
+still absent on the Flutter side and is still worth having one day; it was never on the path to this
+fix, and believing it was is what kept the defect open for two extra slices.
+
+**The defect.** Control mode addresses input explicitly (`send-keys -t <pane>`), and Flutter learned
+the pane once, from the first `%output` it ever received:
+
+```dart
+_controlPaneId ??= paneId;   // the only assignment
+```
+
+Switch window or pane inside tmux and that id goes stale: tmux streams the new pane's output while
+OmniTerm keeps typing into the old one. Ledger 9 states the principle it broke, in the same file —
+input "is **not** sent to a guessed pane — that would deliver keystrokes somewhere the user is not
+looking." A stale id is a guess that used to be right.
+
+**The fix, and why not the one-liner.** Tracking the *latest* `%output` pane is the obvious shortcut
+and it is the same defect pointed the other way: a background pane producing output would steal the
+keyboard. So the pane is re-resolved by asking, not by guessing:
+
+- `ShellSession` recognises the notifications that mean the active pane may have moved
+  (`%window-pane-changed`, `%session-window-changed`, `%client-session-changed`, `%window-close`,
+  `%window-add`, `%unlinked-window-close`), and a `%session-changed` that is **not** the attach.
+- Each bumps `paneChangeRevision` and sets `paneChangePending`.
+- `ShellViewModel.refreshControlActivePane` runs `tmuxActivePaneQuery` over the exec side channel,
+  validates the answer against `^%\d+$` (the command ends in `|| true`, so a departed tmux answers
+  with an empty string, and adopting that would address input to nothing), and re-checks the revision
+  before committing. A switch that lands mid-query restarts the loop rather than being answered with
+  the pane the user just left.
+- Adoption marks the scrollback dirty, so the new pane's history is fetched by the existing resync.
+
+Left deliberately: until the query returns, the old pane id keeps working. That is the pre-existing
+behaviour rather than a regression, and it beats dropping keystrokes on the floor.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/shell_session_test.dart` | 31 passed (+4) |
+| `test/shell_view_model_test.dart` | 48 passed (+2) |
+| Full host suite | **2,475 passed** |
+| `dart format --line-length 100` | 1 file reformatted, then clean |
+| `--profile core`, `emulator-5554` (API 35) | **24 passed**, Patrol included — `20260811T201233Z_android_emulator-5554_core`. Script exit 3 is the warning gate on the upstream KGP warning alone; no warning from this app. |
+
+**Negative controls, three, each matched exactly once and each failing the right test:**
+
+| Mutation | Failing test |
+|---|---|
+| stop noticing pane-change notifications | *a window switch … marks the pane unresolved*, and the stale-revision test |
+| drop the revision check in `adoptControlPane` | *a pane resolved against a stale revision is refused* |
+| `_controlPaneId = paneId` — the tempting shortcut | *output from a background pane does not steal the keyboard* |
+
+The third is the one worth keeping. It is not a control on the code I wrote; it is a control on the
+**wrong fix**, and it fails, which is the only reason to believe the suite would have caught the
+shortcut had I taken it.
+
+A fourth, on the view model: replacing the `^%\d+$` check with a condition that never fires makes
+*an answer that is not a pane id is refused* fail.
+
+**The session tests alone were not enough, and nearly shipped that way.** They cover the revision
+bookkeeping thoroughly and exercise **none** of `refreshControlActivePane` — the query, the
+validation, the retry. Writing the view-model tests afterwards was not a formality: the first one
+**failed on the first run**, returning `false`, because the session under test was not in control
+mode and the guard rejected it immediately. Four tests passing against the half of the change that
+was easy to test is exactly what an unexercised code path looks like from the inside.
+
+### 101 — the backup passphrase dialog promised eight and the export demanded twelve (closed, **both apps**)
+
+Reported from use, not found by a sweep: a backup was created as a **0-byte file** and then refused
+with "Passphrase must be at least 12 characters", while the field it had just been typed into was
+labelled "min 8 chars".
+
+**Kotlin held the number in two places and they disagreed.**
+
+| Where | Said |
+|---|---|
+| `ui/ToolsScreen.kt:2808` — the field's label | `min 8 chars` |
+| `ui/ToolsScreen.kt:2814` — the confirm button | `enabled = exportPassword.length >= 8` |
+| `ui/AppViewModel.kt:11360` — the export | refuses `< 12` |
+
+The order is what turned a wording mismatch into a lost file. The dialog accepted eight, closed, and
+launched `ACTION_CREATE_DOCUMENT`; **the picker creates the file when the user chooses the
+location**; only then did the export run its own check and refuse. The user was left holding an empty
+file that looks exactly like a backup — and it is the kind of file people discover is empty at the
+moment they need it.
+
+**Flutter had no minimum at all.** No copy, no gate, no check: any passphrase encrypted a file full
+of credentials. It ordered its own steps correctly — ask, build, then save — so it never produced the
+0-byte artefact, which is precisely why the weaker defect went unnoticed.
+
+**Fixed on both sides, as one number.**
+
+- Kotlin: `BACKUP_PASSPHRASE_MIN_LENGTH = 12` in `ui/AppViewModel.kt`, used by the label, the button
+  gate and the export check. Landed in the `fix/kotlin-parity-defects` worktree.
+- Flutter: `BackupViewModel.passphraseMinLength = 12`, enforced in `exportBackup` **and** advertised
+  on the field, with the confirm button disabled until it is met.
+
+The dialog gate and the export check are deliberately both present. The dialog is one caller; the
+export is the boundary that decides whether credentials get weakly encrypted, and it has to hold for
+the next screen that calls it. That separation is the actual lesson from the Kotlin version, where
+the two disagreed and the weaker one owned the button.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| Kotlin `:app:compileOpenSourceDebugKotlin` | BUILD SUCCESSFUL |
+| Kotlin `:app:testOpenSourceDebugUnitTest` | BUILD SUCCESSFUL |
+| `test/backup_screen_test.dart` | 32 passed (+2) |
+| Full host suite | **2,464 passed** |
+| `dart format --line-length 100` | `0 changed` |
+| `--profile core`, `emulator-5554` | **29 passed, no warnings** — `20260811T182422Z_android_emulator-5554_core` |
+
+**Negative control.** Removing the dialog's gate fails `a passphrase the export would refuse cannot
+leave the dialog` with `Expected: null, Actual: <Closure: () => void>`.
+
+Disabling the export-side check does **not** produce a clean assertion failure: the export proceeds
+to encrypt, and the test stops returning promptly rather than reporting a diff. Worth stating plainly
+rather than dressing up — the control shows the guard is load-bearing, because without it the weak
+passphrase reaches the cipher, but it does so by changing the test's runtime, not its verdict.
+
+**No Kotlin test was added, deliberately.** The behavioural guard lives on the Flutter side, where
+the dialog and the export can both be driven. On the Kotlin side the invariant is now *structural* —
+one constant, three uses — so the only test expressible against it ("the number the dialog enforces
+equals the number the export enforces") reduces to comparing the constant with itself. That is the
+vacuous-control shape this ledger has caught six times, and writing it here would have made the
+seventh. A source scan for a re-inlined `>= 8` would be non-vacuous —
+and **does** have precedent, which this entry originally denied: `test/accessibility_labels_test.dart`
+is exactly that, a scan rather than a widget test, written because "nothing stopped the next screen
+being wrong". The same argument applies to a number that must not be inlined twice, so this is left
+as an available guard rather than a dismissed one.
+
+**Twenty-four existing tests failed on the new rule**, all in `backup_payload_test.dart`, all because
+they exported with the four-character `'pass'`. They encoded the absence of a minimum. Updated rather
+than exempted: a suite that keeps a rule from applying to itself is how the rule stops being true.
+
+### Sweeping for the same shape
+
+The report asked whether there were more like it — copy stating one rule while the code enforces
+another. Checked:
+
+- **The app-lock PIN.** Flutter is consistent: `_PinDialog.minLength = 4` supplies both the rule and
+  the message that quotes it, and the lock screen accepts up to twelve, the length a user can
+  actually set. No defect.
+- **"up to 24"** appears in both apps' settings copy and matches the enforced value on both sides.
+- **One cross-app difference, recorded not fixed:** Kotlin's lock screen stops accepting digits at
+  eight (`ui/AppViewModel.kt:3081`) while Flutter lets a PIN of up to twelve be set. A twelve-digit
+  PIN set in Flutter could not be typed into Kotlin. It bites only a Flutter→Kotlin downgrade, and
+  Kotlin is the app being retired, so it is listed rather than changed.
+
+The general lesson is narrow and worth keeping: **a number that appears in both a sentence and a
+condition should exist once.** Every instance found here was a constant that had been inlined twice.
+
+### 105 — the replica count had no upper bound, and the validator that would have given it one was already ported (closed)
+
+Found by widening the control audit rather than by a new idea: the extractor had left **301 Compose
+controls with no extractable label**, and unlabelled means never compared. Compose usually writes
+`Row { Text("AMOLED black"); Switch(...) }` — the label *precedes* the control — while the extractor
+only searched forward from the constructor. Searching backward for the nearest preceding label
+dropped the unlabelled count to 167 and put 134 more controls into the comparison. This defect came
+straight out of the newly-visible set.
+
+**The divergence.** Compose bounds the Scale dialog's replica count twice:
+
+| Where | Rule |
+|---|---|
+| `ui/InfraScreen.kt:562` | `it.filter(Char::isDigit).take(3)` — digits only, three of them |
+| `ui/InfraScreen.kt:555` | `countError(replicas, min = 0, max = 999)` |
+| `ui/InfraScreen.kt:573` | `enabled = replicasError == null`, with the message in `supportingText` |
+
+Flutter gated on negatives (`(value ?? -1) < 0`) and nothing else: no digit filter, no length limit,
+**no upper bound**, and no message. `999999` was an accepted replica count, and the action behind it
+is `compose up --scale` — not a slow operation but an attempt to start that many containers on the
+host.
+
+**The part worth keeping: the bound already existed.** `countError` had been ported into
+`domain/input_validation.dart`, byte-for-byte the same rule as Kotlin's, and this dialog simply never
+called it. That is the dominant defect class in this migration — code that exists, is tested, and is
+never reached — and it is why the fix is `countError(_replicas.text, min: 0, max: infraMaxReplicas)`
+rather than a new validator. A second private copy would have been the actual mistake.
+
+**A behaviour change that is a fix, not a regression.** With `FilteringTextInputFormatter.digitsOnly`
+a minus sign never reaches the field, so `-2` arrives as `2`. An existing test asserted that `-2`
+*disabled* the button; it encoded behaviour Compose has never had, since `filter(Char::isDigit)`
+strips the minus there too. Updated rather than exempted, and the `value < 0` branch is kept as the
+boundary behind the field.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/infra_screen_test.dart` | 36 passed (+3) |
+| Full host suite | **2,478 passed** |
+| `dart format --line-length 100` | `0 changed` |
+| `--profile core`, `emulator-5554` (API 35) | **24 passed**, Patrol included — `20260811T203759Z_android_emulator-5554_core`. Script exit 3 is the warning gate on the upstream KGP warning alone; no warning from this app. |
+
+**Negative controls — and the third one was vacuous on the first attempt.**
+
+| Mutation | Failing test |
+|---|---|
+| drop `LengthLimitingTextInputFormatter(3)` | *a replica count above the cap is refused and says so* |
+| drop the `error != null` gate on confirm | *an empty count is refused rather than sent as nothing* |
+| widen the cap to `999999` | **nothing failed** |
+
+The third is the interesting one. Behind a three-digit input formatter, no widget test can distinguish
+a bound of 999 from 999999 — nothing larger can ever be typed, so `countError`'s `max` is never
+reached and the number itself is uncovered. The fix was to hoist the bound to a top-level
+`infraMaxReplicas` and assert it directly; the mutation then fails *the replica bound is the one
+Compose enforces*.
+
+Worth stating plainly because the shape recurs: **a guard behind another guard is invisible to tests
+that can only drive the outer one.** That is the same trap as defect 103, where two tests passed with
+the inner check deleted, and defect 102, where four tests covered the half of the change that was
+easy to reach. Seven vacuous controls caught this session, every one of them an inner guard.
+
+### 106 — an SFTP share could be saved as anonymous, and SSH has no anonymous mode (closed)
+
+The second defect out of the unlabelled set, and the answer to a thread left open several slices ago:
+`grep -rn "saveShare\|normalizeShare\|validateShare"` over `flutter_app/lib` returned nothing, and
+that was recorded as "Flutter's equivalent must be located". It is `NetworkShareDraft.errors` in
+`domain/network_share_form.dart` — named after the *state* rather than the verb, which is why three
+verb-shaped greps missed it. The control audit found it by its gate instead: Compose's Save carries
+`enabled = validateDraft() == null` (`ui/SftpScreen.kt:1496`), and following that led to both sides
+of the comparison at once.
+
+**Four of Compose's five rules were present.** Address, port range, SMB share path and
+"some way to authenticate" all had Flutter equivalents, worded differently. The fifth did not:
+
+```kotlin
+normalizedProtocol == "SFTP" && anonymous -> "SFTP needs a username or credential profile."
+```
+
+**Why it matters more than a missing message.** SFTP is SSH, and SSH has no anonymous mode, so the
+share cannot connect — but the form *hides the username fields the moment anonymous goes on*. A user
+who ticked it on an SFTP share saved a share that could never work, and the fields that would have
+fixed it were no longer on screen. Compose does not merely refuse this on save; it **disables the
+toggle** for SFTP (`ui/SftpScreen.kt:1437`, `:1450`), so the choice is never offered.
+
+**Three guards, because two of them leave a trap.**
+
+| Guard | Why |
+|---|---|
+| `errors['anonymous']` when SFTP + anonymous | the boundary — holds for any caller, not just this form |
+| `onChanged: null` on the toggle for SFTP | the affordance — refusing on save would point at a hidden field |
+| `withProtocol` clears `anonymous` on the switch to SFTP | without it, a draft that arrives with anonymous already on meets a **disabled** toggle it cannot untick, and is unfixable without switching protocol back |
+
+The third is the one that would have been missed by porting the rule alone. Compose has it too
+(`if (option == "SFTP") anonymous = false`, `ui/SftpScreen.kt:1389`) and it is easy to read as
+housekeeping rather than as the thing that stops the other two guards deadlocking the form.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/network_shares_test.dart` | 57 passed (+3) |
+| Full host suite | **2,481 passed** |
+| `dart format --line-length 100` | 1 file reformatted, then clean |
+| `--profile core`, `emulator-5554` (API 35) | **24 passed**, Patrol included — `20260811T220624Z_android_emulator-5554_core`. Script exit 3 is the warning gate on the upstream KGP warning alone; no warning from this app. |
+
+**Negative controls, one per guard, each matched exactly once and each failing only its own test:**
+
+| Mutation | Failing test |
+|---|---|
+| drop the validation rule | *SFTP cannot be anonymous, because SSH has no anonymous mode* |
+| stop clearing `anonymous` on the switch | *switching to SFTP clears anonymous rather than trapping the draft* |
+| re-enable the toggle for SFTP | *the anonymous toggle is not offered for SFTP* |
+
+Three guards, three tests, three distinct failures — which is the shape the last four defects did
+*not* have, and the reason seven controls came back vacuous before this one.
+
+### 113 — the PIN dialog overflowed on a small phone, hiding the error explaining why (closed)
+
+Found by taking defect 112's lesson and looking for the rest of its class rather than waiting for the
+next sweep to trip.
+
+**The search.** Every `ValueKey` naming an error, empty, failed or unavailable state — 48 of them —
+checked against the whole test tree. **Thirteen are referenced by no test at all.** The empty states
+among them the surface sweep does reach, because empty is the default when there is no data. The
+error ones it cannot: producing them needs a condition no route walk creates. `settings.pin.error`
+was the most constrained of those, because it lives in an `AlertDialog`, **and an AlertDialog's
+content does not scroll unless it asks to**.
+
+**The defect.** The dialog holds a three-line warning ("There is no PIN recovery…"), two PIN fields,
+and — when the entries disagree — an error line. On a small phone in landscape at 200% text it
+overflows by **39 pixels**, and what falls off the bottom is the error message explaining what went
+wrong, in the flow that sets the lock protecting every stored credential.
+
+`scrollable: true` fixes it, which is the same answer as 112 and as ledger 80 before it.
+
+**Why no test had ever seen this.** Every harness in `settings_screen_test.dart` uses a **1200x4000**
+surface, deliberately — "thirty-odd rows across five sections; the default surface would leave most
+of them unlaid-out". That is right for driving the screen and wrong for judging whether anything
+fits. The dialog had never been laid out at a size a phone actually has.
+
+**The geometry matters, and the first attempt was too generous.** At the emulator's landscape size
+(914x411, from `1080x2400 @ 420dpi`) the dialog **fits** — the test passed and would have been
+recorded as proof. Only at 640x360, an ordinary small phone in landscape, does it overflow. A device
+sweep on this emulator would never have caught it; the emulator is a large device.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/settings_screen_test.dart` | 24 passed (+1) |
+| Full host suite | **2,513 passed** |
+| `dart format --line-length 100` | `0 changed` |
+| `--profile core`, `emulator-5554` (API 35) | recorded below |
+
+**Negative control.** Removing `scrollable: true` fails *the PIN dialog fits a landscape phone at
+200% text, error and all* with `A RenderFlex overflowed by 39 pixels on the bottom`.
+
+**The twelve remaining unrendered branches** are listed here so this is a queue rather than an
+anecdote: `fleet.dashboard.empty`, `healthScoring.error`, `infra.images.empty`,
+`infra.networks.empty`, `infra.volumes.empty`, `monitor.scripts.empty`,
+`monitor.scripts.output.error`, `network.error.dismiss`, `network.speedTest.error`,
+`network.whois.empty`, `sftp.imagePreview.error`, `tunnels.empty`. Inspected: all are plain `Text`
+inside contexts that already scroll, so none carries the shape that bit here — but "inspected" is
+weaker than "rendered", and they are still unrendered.
+
+### 112 — Infra's error state overflowed, because until defect 109 it was never shown (closed)
+
+Found by the device surface sweep the moment 109 made the branch reachable. Ten failures, one shape:
+
+```
+light-200pc-text/landscape/infra: A RenderFlex overflowed by 49 pixels on the bottom.
+[infra_screen.dart:224:14]
+```
+
+— every theme, landscape, 200% text, on Infra and its Images subtab.
+
+**This is not a regression from 109; it is 109's fix revealing dead ground.** `_RuntimeError` was
+only ever built when `vm.error != null`, and before 109 `load()` parsed `'SSH Error: …'` as data and
+never set it. The widget existed, was reachable in principle, and **had never once been rendered** —
+so its layout had never been exercised at any text scale or orientation. The surface sweep walks
+every route in every theme and orientation and had been walking past it for the life of the port.
+
+Fixed the way the empty states beside it were fixed for the same reason (ledger 80): the centred
+`Column` becomes a `SingleChildScrollView`, so a tall error scrolls instead of overflowing.
+
+**The test took three attempts, and the first two were vacuous.** Worth recording because both
+failures were about *reproducing the condition*, not about the fix:
+
+1. `tester.takeException()` returned null with the overflow still present. A `RenderFlex` overflow is
+   reported through `FlutterError.onError` during paint, not thrown — the sibling test in this file
+   already captures it that way, and I had not read it closely enough.
+2. With the capture fixed, `Size(720, 150)` at 200% still did not overflow, even though it is
+   *shorter* than the device. Height was never the variable: the message length was. `'connection
+   refused'` wraps to one line; the device's
+   `SSHChannelOpenError(2: open failed) while opening a session channel to …` wraps to several.
+
+The test now uses the emulator's real landscape geometry (914x411 logical, from `1080x2400 @ 420dpi`)
+and a message of the length this screen actually receives. Reverting the fix produces a 63px
+overflow and fails it.
+
+**The general lesson, which is the reason this entry is long.** A guard that is never reached hides
+more than a bug: it hides the *entire branch behind it* from every test that walks the app. Defect
+109 was one wrong behaviour; the code it kept unreachable had its own defect waiting. When a slice
+makes dead code live, the surface sweep is not a formality — it is the first time anything has looked
+at that code at all.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/infra_screen_test.dart` | 37 passed (+1) |
+| Full host suite | **2,512 passed** |
+| `dart format --line-length 100` | `0 changed` |
+| `--profile core`, `emulator-5554` (API 35) | recorded below |
+
+**Negative control.** Reverting `SingleChildScrollView` to `Center` fails *the transport-error state
+scrolls on a short 200% landscape phone* with `A RenderFlex overflowed by 63 pixels on the bottom`.
+
+### 110 — six concurrent probes exhausted the host's SSH session limit (closed)
+
+The finding defect 109 exposed, now fixed rather than filed.
+
+`InfraViewModel.load` issues six `exec` calls through one `Future.wait`, deliberately — "serialising
+them multiplies the round-trip latency by six on exactly the screen a user opens to check something
+quickly". Those six become six **channels on one pooled connection**, and the server decides how many
+it grants: OpenSSH's `MaxSessions` defaults to **10**, and NAS firmware often ships lower. Six is
+under ten alone, but the telemetry poller and the host-status probe share the same connection and the
+server counts the total. Exceeding it does not queue — the server refuses, and dartssh2 raises
+`SSHChannelOpenError(2: open failed)`.
+
+**The fan-out is kept and bounded**, not reduced: `ChannelLimiter` caps concurrent `exec` and
+`execStream` channels per pooled connection at **4**, and callers past the limit wait for a slot
+instead of being refused. Infra's six probes still overlap, four at a time, so the latency argument
+survives and the failure mode is removed rather than made rarer.
+
+The limit is deliberately well under 10 because this limiter governs only `exec` and `execStream`:
+interactive shells, SFTP subsystems and tunnels open channels on the same connection without passing
+through it, so the budget has to leave them room. A limit of 8 would be "correct" against the default
+and would still fail on a host with a shell open.
+
+### 111 — nothing ever recorded that a host's credentials were wrong (closed)
+
+`updateAuthState` existed on the repository **and** the DAO, and `grep -rn "updateAuthState" lib/`
+found no caller outside those two definitions. Meanwhile the Hosts list already renders the result: a
+warning row at `servers_screen.dart:649`, an amber badge at `:697`, and the words "authentication
+failed" at `:869`. Every piece was built except the one that writes the column, so a host with a bad
+key looked exactly like a healthy one however many times it failed. Compose writes it from the
+telemetry loop (`ui/AppViewModel.kt:2409`).
+
+Now written from the same place: `failed` with a described reason when the metrics probe returns an
+`SSH Error`, `ok` when the host answers.
+
+**A porting trap worth keeping.** The reason comes from `describeSshFailure`, ported from
+`classifySshConnectionFailure` (`ui/AppViewModel.kt:388`) — and porting its needles **verbatim would
+have matched nothing**. Compose classifies JSch's wording (`"Auth fail"`, `"USERAUTH fail"`); this
+port sees dartssh2's (`SSHAuthFailError`, `SSHAuthAbortError`) — no space, different words. The first
+run of the test proved it: `SSHAuthFailError` classified as `unknown`. The classifier now carries both
+vocabularies, because the app still has to read Compose-era strings from an older database.
+
+**A second trap, caught by a failing test.** The success path first wrote `ok` only when
+`server.authStatus != 'ok'`. That field is a snapshot taken when the cycle began, so a row corrected
+in the database mid-flight would keep an old `failed` **forever**. Now written unconditionally on
+success — the poller already writes metrics and a history row in the same place, so one more small
+update is proportionate.
+
+**Evidence for 110 and 111.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/channel_limiter_test.dart` | 4 passed (new) |
+| `test/ssh_failure_test.dart` | 5 passed (new) |
+| `test/telemetry_poller_test.dart` | 18 passed (+2) |
+| Full host suite | **2,511 passed** |
+| `dart format --line-length 100` | 3 files reformatted, then clean |
+| `--profile host`, `emulator-5554`, real fixtures | **passing — the first time it has on this device.** `20260812T023955Z_android_emulator-5554_host`, exit **0**, and the gate now reports "Device suite passed with no unexpected warnings". The suite that exposed 109 and 110 is the suite that now proves them. |
+
+**Negative controls:**
+
+| Mutation | Failing test |
+|---|---|
+| remove the auth-failure write | *is recorded as an auth failure the Hosts list can show* |
+| remove the auth-success write | *a host that answers is recorded as authenticated again* |
+| raise the channel limit to 99 | *the default leaves room under OpenSSH MaxSessions* |
+
+The third was **vacuous on the first attempt**: every limiter test passed an explicit `maxConcurrent`,
+so none pinned the default — the number that actually ships. Raising it to 99 left the file green. A
+test asserting the default now exists. That is the eighth vacuous control this session and the second
+of exactly this shape, after the replica cap: **a constant used only as a default parameter is
+invisible to tests that always override it.**
+
+### 109 — an SSH failure was parsed as output: an unreachable host shown as an empty one (closed)
+
+The open finding above turned out to be a real defect rather than a flaky test, and reading it out
+found two more of the same shape. All three have one cause: **`exec` reports failure by returning a
+string, not by throwing.**
+
+```dart
+// data/ssh/dartssh_transport.dart
+return 'SSH Error: command timed out';
+return 'SSH Error: ${_describe(e)}';
+return 'SSH Error: command failed ($exitCode): $detail';
+```
+
+Compose checks that prefix in **21 places**. Before this slice the port checked it in **one**
+(`shell_view_model.dart:1065`, the tmux scrollback resync).
+
+| Where | What the port did | What Compose does |
+|---|---|---|
+| `InfraViewModel.load` | parsed six error strings as data — no containers, no images, no runtimes, `_error` still null | `ui/AppViewModel.kt:6457` sets `dockerError` and clears the lists |
+| `TelemetryPoller` OS probe | cached whatever `normaliseOs('SSH Error: …')` returns, **permanently** | `ui/AppViewModel.kt:2404` caches only on success |
+| `TelemetryPoller` metrics | parsed the error string into a sample, wrote it to history and charted it | `ui/AppViewModel.kt:2408` branches and records the failure instead |
+
+**Why the Infra one is worse than it sounds.** An unreachable host was presented as a host with
+nothing on it. There is no error, no spinner, no retry prompt — just an empty Infra screen, which is
+indistinguishable from a host that genuinely runs no containers. This is the same failure the SFTP
+sudo-search comment already names in this codebase: *"a wrong answer wearing the clothes of a right
+one."*
+
+**Why the OS-cache one is worse still.** The OS is probed once per host and then trusted for the life
+of the host. Caching what a *failed* probe normalises to means every later metrics command is the
+wrong one — the poller's own comment describes the result: "output the parser reads as a host with no
+memory and no disks". One transient failure, permanently wrong readings.
+
+**How it was found.** The device host suite failed at `infra.runtimes` being empty while `infra.error`
+was null. Two hypotheses were wrong before the right one: that `inspectedServer` was null (the test
+inserts the server with `status: 'online'` and finds it), and that it was a mid-flight server change
+(`selectedServerId` is stable across the call). The prefix check was found by looking for how failure
+is *represented* rather than where it is handled.
+
+**The reason the suite never caught it.** `RecordingTransport.failure` makes `exec` **throw**, and
+every existing failure test uses it. The real transport never throws. The tests added here use
+`fallback: 'SSH Error: connection refused'` instead, which is what the app actually sees.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/infra_view_model_test.dart` | 23 passed (+2) |
+| `test/telemetry_poller_test.dart` | 16 passed (+2) |
+| Full host suite | **2,500 passed** |
+| `dart format --line-length 100` | `0 changed` |
+| `--profile host`, `emulator-5554`, real fixtures | **still fails — and now says why.** `20260811T232022Z_android_emulator-5554_host`. Before this fix: `Expected: contains 'docker' / Actual: Set:[]` with `error` null. After: `docker runtime discovery failed: SSH Error: SSHChannelOpenError(2: open failed)`. Turning a silent empty screen into a named transport failure **is** what this defect was; the channel failure behind it is a separate finding, below. |
+
+**Negative controls, each matched exactly once:**
+
+| Mutation | Failing test |
+|---|---|
+| Infra ignores the prefix | *an SSH error returned as output is an error, not an empty host* |
+| telemetry caches a failed OS probe | *is not cached, so one bad cycle does not misread the host forever* |
+| telemetry parses metrics from an error string | same test — the metrics path feeds the OS cache too |
+
+The third control failing the *same* test as the second is worth noting rather than smoothing over:
+the two guards are not independent, because `parseMetrics` also writes the OS cache. One test covers
+both paths into it, which is honest but means a future change could remove one guard and still pass.
+
+### 108 — every file on a WebDAV share had no modification date (closed)
+
+Two defects in one parser, found by taking the "does it exist at all" method down a level: after the
+UI-control axes were exhausted, the same word-absence search was run over Compose's **view-model and
+data-layer functions**. 344 public `AppViewModel` functions produced **zero** candidates — the port
+is complete at that level. The 25 files under `data/` produced three, of which two were naming
+differences (`formatThrowable`, `execOnceJumped` — both features present, both implemented at least
+as well; Flutter's jump-host handling carries the same "never pooled" reasoning as Compose's). The
+third was `parseMultistatus`, and reading the two parsers side by side found this.
+
+**The date, which is the one that bit every user of every WebDAV share.**
+
+```dart
+final modified = DateTime.tryParse(text('getlastmodified'));   // always null
+```
+
+`getlastmodified` is an **HTTP-date** — RFC 4918 says so — and `DateTime.tryParse` parses ISO 8601.
+It returns null for `Tue, 11 Aug 2026 10:00:00 GMT`, so `modified?.millisecondsSinceEpoch ?? 0` made
+every entry's time **zero**. The listing showed no date, and sorting by date ranked every file equal
+while looking like it had worked. Compose parses it with an explicit RFC 1123 format
+(`data/shares/WebDavFsClient.kt:215`).
+
+Confirmed against the live fixture rather than argued from the spec — `PROPFIND` on the lab's rclone
+server returns:
+
+```
+<D:getlastmodified>Tue, 11 Aug 2026 16:27:24 GMT</D:getlastmodified>
+```
+
+`parseWebDavDate` now reads RFC 1123 and still falls back to ISO, because a few servers send it
+despite the spec.
+
+**The href, which bites only some servers.** RFC 4918 allows `<D:href>` to be an absolute URL or an
+absolute path, and real servers send both. The port compared the raw href against the requested path:
+
+```dart
+final href = Uri.decodeComponent(text('href')).replaceFirst(RegExp(r'/+$'), '');
+if (href == wantedPath || href.isEmpty) continue;      // never true for an absolute URL
+```
+
+Against a server answering with absolute URLs, the collection never matched itself and **appeared as
+an entry inside its own listing**. Compose strips the scheme and authority first (`hrefToPath`).
+`webDavHrefToPath` now does the same.
+
+**Stated rather than implied:** the lab's rclone server sends *relative* hrefs, so this second fix is
+not exercised by the fixture. It is a spec-conformance fix verified by unit test only, and the ledger
+should not pretend otherwise.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/webdav_remote_fs_client_test.dart` | 10 passed (+8) |
+| Full host suite | **2,496 passed** |
+| `dart format --line-length 100` | 2 files reformatted, then clean |
+| Live `PROPFIND` against the lab | RFC 1123 confirmed as what the server actually sends |
+| `--profile core`, `emulator-5554` (API 35) | **24 passed**, Patrol included — `20260811T225648Z_android_emulator-5554_core`. Script exit 3 is the warning gate on the upstream KGP warning alone. |
+| `--profile host`, `emulator-5554`, real fixtures | **failed, for an unrelated reason** — Infra runtime discovery, not the WebDAV client; see the open finding above (`20260811T225534Z_android_emulator-5554_host`). This fix is therefore **not** fixture-proven end to end on device; the live `PROPFIND` above is the strongest evidence it has. |
+
+**Negative controls, each matched exactly once:**
+
+| Mutation | Failing tests |
+|---|---|
+| date parser falls back to `DateTime.tryParse` alone | *an RFC 1123 date is parsed*, *a single-digit day and every month name are handled* |
+| stop stripping scheme and authority from an href | all three href tests |
+
+One test asserts the bug directly — `expect(DateTime.tryParse('Tue, 11 Aug 2026 10:00:00 GMT'), isNull)`
+— so the reason this code exists cannot quietly stop being true.
+
+**A wrong turn:** `Uri.decodeComponent` throws `ArgumentError`, not `FormatException`, for a stray
+`%`. The first `on FormatException` catch let a malformed href crash the whole listing instead of
+being used verbatim. Caught by the test written for exactly that case.
+
+### 107 — a network share could not be searched at all (closed)
+
+The first **missing feature** the audit has produced, as opposed to a missing rule, and the only one:
+every other unmatched control turned out to be a wording difference.
+
+**How it was found, and why the method mattered.** 334 Compose controls had no Flutter peer by label,
+which is far too many to read. Instead of eyeballing them, every distinctive word of each label was
+checked against the whole of `flutter_app/lib`: a label whose words appear *nowhere* in the port is a
+candidate for something that was never built, while a label that appears under different wording is
+noise. That reduced 250 distinct labels to **three**, and two of those were interpolated strings
+(`${draftIntervalSec}s`, `via $srvName`). The third was Compose's `Wildcards * ?` chip, which sits
+beside a `Recursive` chip in the **share search** — and pulling that thread found the feature behind
+it missing entirely.
+
+**The defect.** Compose searches a share by walking it (`runShareSearch`, `ui/AppViewModel.kt:8007`),
+because a share is not a shell — SMB, FTP, WebDAV and NFS have no `find` to run. Flutter's search
+refuses outright when a share is open:
+
+```dart
+if (ssh == null || server == null || _browsedShare != null) return;   // searchHost
+bool get canSearchHost => canMeasureSize;                             // ... && _browsedShare == null
+```
+
+The guard and the button agreed with each other, so nothing looked broken: the control simply was not
+rendered while browsing a share. **There was no way to search a network share in this port**, and no
+error to say so — the single most invisible kind of gap, and the reason a control-level inventory was
+worth building at all.
+
+**The port.** `searchShare` walks breadth-first from the current folder, bounded exactly as Compose
+bounds it — `shareSearchMaxHits = 500` results and `shareSearchDirBudget = 4000` directories — sets
+`searchTruncated` when either runs out, skips a directory it cannot list rather than failing the
+whole search, and abandons the walk if the user closes the share underneath it. Results reuse
+`RemoteSearchHit` and `openSearchHit`, so a hit opens the same way a host hit does.
+
+**One deliberate divergence.** Compose asks the user to declare wildcard mode with a chip; this port
+infers it, following the rule `remoteSearchCommand` already uses for host search — a query carrying
+`*` or `?` is a pattern, anything else matches anywhere in the name. That is one less control for the
+same answer on every query except a literal search for an asterisk, and it keeps the two search paths
+in this app consistent with each other, which matters more than matching Compose's chip count.
+Metacharacters are escaped, so `notes(1)*` finds `notes(1).txt` instead of quietly meaning something
+else.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/sftp_view_model_test.dart` | 146 passed (+7) |
+| Full host suite | **2,488 passed** |
+| `dart format --line-length 100` | 1 file reformatted, then clean |
+| `--profile core`, `emulator-5554` (API 35) | **24 passed**, Patrol included — `20260811T223244Z_android_emulator-5554_core`. Script exit 3 is the warning gate on the upstream KGP warning alone; no warning from this app. |
+
+**Negative controls, three, each matched once and each failing its own test:**
+
+| Mutation | Failing test |
+|---|---|
+| stop descending into subdirectories | *the walk descends and finds a match several levels down* |
+| let an unlistable directory abort the search | *a directory that cannot be listed does not fail the whole search* |
+| stop escaping regex metacharacters | *regex metacharacters in a query are literal, not operators* |
+
+**Two wrong turns worth recording**, because both were caught by tests failing rather than by
+reading. The trees were first keyed at `/media`, but `ShareClients.startPath` consumes an SMB share's
+first path segment into the connection, so the walk starts at `/` — the tests returned empty until
+the fixtures matched what the app actually does. And `canSearchHost` was asserted true in a
+`booted()` session that has no SSH transport at all, which it never could be.
+
+### The audit's first false positive: Monitor and the offline host (no defect, change reverted)
+
+Recorded in full because it is the failure mode this whole audit is most exposed to, and because I
+had already written the fix, the test and the ledger entry before catching it.
+
+Compose gates command execution on reachability in two places:
+
+| Control | Compose gate |
+|---|---|
+| Run (one-off command) | `customCommand.isNotBlank() && srv.status == "online"` (`ui/MonitorScreen.kt:199`) |
+| a saved script's card | `.clickable(enabled = srv.status == "online")` (`ui/MonitorScreen.kt:240`) |
+
+Flutter checks only `server == null` in both, and `grep -n status` over
+`ui/screens/monitor/scripts_tab.dart` returns **nothing**. That reads as a clean two-for-one defect,
+and it is not one:
+
+```dart
+Server? get monitoredServer {
+  final online = _app.servers.where((s) => s.status == 'online');   // <- already filtered
+  ...
+}
+```
+
+Every `server` in that file comes from `monitoredServer`, which only ever yields an online host. So
+`server != null` **is** "an online host is selected", and the gate I added — `server != null &&
+server.status == 'online'` — was a tautology. The two apps enforce the same rule at different
+altitudes: Compose per control, Flutter once at the source.
+
+**How it was caught.** Not by review — by the test failing for the wrong reason. `openScripts` could
+not find the tab strip, because with only an offline host Monitor renders no tabs at all. The
+scenario I had written was unreachable, which is what a tautological guard looks like from the test's
+side. The change and its test are reverted; `git diff` on `scripts_tab.dart` is empty.
+
+**The rule this adds to the audit.** The extractor compares *controls*, and a control's gate is only
+half the story — the other half is what the values feeding it can be. Four defects (101, 103, 105,
+106) were real because the guarded thing really could reach a bad state. This one was not, and the
+difference is invisible at the control. **Follow the value to its source before believing a missing
+gate.** The ledger has said "follow the call chain" since the early entries; this is the first time
+skipping it produced a fix rather than a wrong conclusion, which is worse.
+
+No defect number is assigned, and the count is unchanged.
+
+### More of the unlabelled gated set, cleared on inspection
+
+Six more Compose gates read against their Flutter peers, all matching. Recorded because the audit is
+only worth anything if the clears are as visible as the hits:
+
+| Compose gate | Flutter | Verdict |
+|---|---|---|
+| `ToolsScreen.kt:2306` `alias.isNotBlank() && !sshKeygenRunning` | `_alias.text.trim().isEmpty \|\| _running` | identical |
+| `ToolsScreen.kt:3119` `checked \|\| selectedIds.size < effectiveMax` (free-tier restore cap) | `_atCap && !_hostIds.contains(...)`, with the cap explained above the list | identical, and Flutter says it before the boxes grey out |
+| `SftpScreen.kt:325` `!scanning` on the protocol chips | `onSelected: vm.scanning ? null` | identical |
+| `SftpScreen.kt:459` `enabled = browsable` on Browse | button hidden, reason rendered as visible text | different shape, and Flutter's reason is on screen rather than only in a content description |
+| `SftpScreen.kt:3221` `.clickable(enabled = available)` on an endpoint bookmark | `onTap: available ? … : null` plus the same 0.38 opacity | identical |
+| `ToolsScreen.kt:1265` quick-script Save | Compose disables the button; Flutter validates on submit and shows *why* (`Name is required.`, `Offer this script in Quick scripts, Fleet commands, or both.`) | **not a defect** — the three rules are all present in `saveScript`; only the affordance differs, and the one that names the problem is the better of the two |
+
+That last row is worth keeping as a rule for this audit: **a missing `enabled=` is not automatically
+a defect.** It is a defect when the action behind it can do damage (101, 103), when it routes around
+a rule the app keeps elsewhere (107), or when the form hides the field that would fix it (106). Where
+the alternative is an explicit message, it is a design difference.
+
+### Working the unlabelled set
+
+167 Compose controls carry no extractable label. **31 of them carry a gate**, and those were worked
+first on the evidence of defects 101 and 105 that a gating divergence is where the damage is. Two
+defects out of the first pass (105, 106).
+
+**Cleared on inspection**, recorded because a row that is checked and dismissed is a result too, and
+because the reasons say something about where the port diverges *safely*:
+
+| Compose gate | Verdict |
+|---|---|
+| `ToolsScreen.kt:4497` `scoringError == null` | **No defect.** Compose chains four `firstError`s by hand; Flutter's `validateAll` iterates `HealthMetric.values`, which is the same rule expressed once instead of four times. Flutter additionally requires `isDirty` — extra scope, and the better behaviour. |
+| `AppUi.kt:207` `checkedForSplit \|\| splitSelection.size < 2` | **No defect.** Compose caps a checkbox multi-select at two panes; Flutter models the same feature as `splitWith(id)` — one companion session — so the limit is structural rather than enforced. A different shape, not a missing rule. |
+
+Still unexamined, so the next pass starts with a queue rather than a number: `ToolsScreen.kt:1265`
+and `:1258` (quick-script name and command), `:2306` (`alias.isNotBlank() && !sshKeygenRunning`),
+`:3119` (`canAdd`), `SftpScreen.kt:325` (`!scanning`), `:459` (`browsable`), `:3221` (`available`),
+`MonitorScreen.kt:190` and `:240`. The remaining 136 unlabelled controls carry no gate at all and are
+the lower-yield tail.
+
+### Never run `flutter test` and a device sweep at the same time on this box (closed, operational)
+
+Worth recording because it manufactures a device failure that looks exactly like a real one, and the
+next person to hit it will spend the time I did.
+
+The `20260811T193504Z` sweep reported `app_actions_test.dart` failing to load with
+`Gradle task assembleDebug failed with exit code 1`, under:
+
+```
+* What went wrong:
+Gradle build daemon disappeared unexpectedly (it may have been killed or may have crashed)
+```
+
+Cause, from the kernel log rather than inference:
+
+```
+Out of memory: Killed process 2977062 (java) total-vm:15786092kB, anon-rss:6025592kB
+```
+
+I had launched the sweep in the background and then run the full host suite in the same project. On
+this 18 GB machine the Gradle daemon (`-Xmx4g`, per [[dev-machine-toolchain]]), the Kotlin compile
+daemon (another 4 GB) and `flutter test`'s isolates do not fit together. The two also share
+`flutter_app/build/` and `.dart_tool/`, which is a second reason not to overlap them.
+
+**The failure was not in the app and not in the test.** Re-run serially, the file loads. The lesson
+is narrow: device sweeps are exclusive on this host — nothing else may touch the project while one
+runs, and a device failure whose message mentions the daemon disappearing should be re-run before it
+is believed.
+
+### The device warning gate now has a narrow allowlist (closed)
+
+Carried as "needs a decision" for three slices. Decided: an allowlist, not `--allow-warnings`.
+
+That flag suppresses *everything*, and a gate routinely passed with a suppression flag has stopped
+being a gate. The allowlist names the one upstream warning this app cannot fix from its own source —
+Flutter warning that `flutter_file_dialog`, `flutter_foreground_task`, `home_widget` and `patrol`
+apply the Kotlin Gradle Plugin — and **anything else still fails the run**.
+
+Verified to discriminate rather than assumed. Against a log holding only the known warning it reports
+0 unexpected lines; against the same log plus an `unused_local_variable` warning it reports exactly 1
+and names it. The run also now distinguishes "no warnings" from "only known upstream warnings", so a
+reader can tell which they are looking at — the `20260812T023955Z` host run prints the latter.
+
+**The plugin upgrade is not available**, which was worth establishing rather than carrying as an
+open debt. All four are already pinned at the newest version published:
+
+| Plugin | Locked | Latest on pub.dev |
+|---|---|---|
+| `flutter_file_dialog` | 3.3.2 | 3.3.2 (18 days) |
+| `flutter_foreground_task` | 10.0.0 | 10.0.0 (28 days) |
+| `home_widget` | 0.9.3 | 0.9.3 (2 months) |
+| `patrol` | 4.8.0 | 4.8.0 (18 days) |
+
+So there is nothing to upgrade *to*: none of them has shipped a build-tools-compatible release yet,
+and the warning cannot be cleared from this repository at all. The allowlist is not a stopgap for
+work we are putting off — it is the only correct response until upstream moves, and it keeps the
+warning visible in every log meanwhile.
+
+Flutter's own guidance is to "report the issue to the plugin" authors. Filing four upstream issues is
+an outward-facing action and is left for the maintainer to decide, not taken here. Re-check the
+versions when a future Flutter actually refuses the build; the warning says that day is coming, not
+that it has arrived.
+
+### 104 — two SFTP file operations could run at once, and the last one decided what you were told (closed)
+
+Second row out of the control audit. **The entry as first written was wrong and is corrected here**,
+because the correction is the useful part.
+
+It claimed the Flutter SFTP view model had "no concurrent-operation guard — one line, `isSearching`".
+That was an artefact of the grep: it searched for `isBusy|opRunning|transferRunning|busy` and the
+flag is called `_loading`. It exists, it is exposed as `loading`, and it already gates Upload,
+Refresh and Paste (`sftp_tabs.dart:733, 785, 823`) exactly as Compose does. A name-shaped search
+found a name-shaped absence.
+
+**What was actually wrong, once read rather than grepped**, is narrower and still real:
+
+- The per-file context menu (`sftp_tabs.dart:1277`) was gated on file *type* only —
+  `if (!entry.isDirectory)`, `if (vm.canArchive)` — never on whether an operation was in flight.
+  Compose gates Rename, Delete and Download on `!shareOpRunning` / `!shareTransferRunning`
+  (`ui/SftpScreen.kt:1118-1139`).
+- `_mutate` set `_loading = true` but never checked it on entry, so it was re-entrant.
+
+Those compose into the defect. Delete file A; while it runs, open the menu on file B and delete that
+too. Both calls enter `_mutate`. Each one, on finishing, sets `_loading = false`, calls `refresh()`
+and overwrites `_error` and `_status` — so **whichever returns last decides what the user is told**.
+A delete that failed is reported as a success because the operation beside it worked, and the listing
+refreshes mid-flight while the other mutation is still running.
+
+**Fixed with both guards**, the same shape as defect 103: `enabled: !vm.loading` on the menu for the
+affordance, and `if (_loading) return;` at the top of `_mutate` for the boundary. The menu gate alone
+would leave every other caller of `_mutate` re-entrant; the boundary alone would leave a menu that
+looks live and silently does nothing.
+
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/sftp_view_model_test.dart` | 139 passed (+2) |
+| Full host suite | **2,469 passed** |
+| `dart format --line-length 100` | `0 changed` |
+| `--profile core`, `emulator-5554` (API 35) | **24 passed**, Patrol included — `20260811T195106Z_android_emulator-5554_core`. Script exit 3: the suite passed and the *warning gate* failed, on the upstream KGP warning alone (see the gate note above); no warning from this app. |
+
+**Negative control.** Removing `if (_loading) return;` — matched exactly once — fails *a second
+delete issued mid-flight is refused rather than interleaved*, with the second path appearing in
+`client.deleted`. The companion test (*a delete issued after the first finished still runs*) passes
+either way by design: it is there to catch the opposite mistake, a guard that never releases.
+
+### 103 — the editor's Replace button overwrote whatever the user had selected (closed)
+
+Found by the control-by-control audit the user asked for after defect 101 — "every single button
+every single option every single toggle" — and specifically at the granularity they named: not "does
+Flutter have a find bar" but "does each control carry the same enabling condition as its Compose
+peer". It is the first defect out of that audit.
+
+**The divergence.** Compose gates four controls on one condition (`ui/CodeEditor.kt:582-596`):
+
+```kotlin
+IconButton(onClick = onPrev, enabled = matchCount > 0)
+IconButton(onClick = onNext, enabled = matchCount > 0)
+TextButton(onClick = onReplace,    enabled = matchCount > 0)
+TextButton(onClick = onReplaceAll, enabled = matchCount > 0)
+```
+
+Flutter gated none of them. Three survived that anyway, because they re-check internally —
+`_selectMatch` returns on `matches.isEmpty`, `_replaceAll` returns on an empty query. Those three
+were a missing affordance: the buttons looked live and did nothing.
+
+**`_replaceCurrent` was the real one.** It never consulted the search at all:
+
+```dart
+final selection = widget.controller.selection;
+if (!selection.isValid || selection.isCollapsed) return;
+// ...replaceRange(selection.start, selection.end, _replacement.text)
+```
+
+Its only precondition was *some non-empty selection exists* — and in a text editor there is nearly
+always one. So: open Find, type a query that matches nothing, select a line by hand as anyone editing
+would, press Replace. Flutter deleted the selection and substituted the replacement text. Compose
+could not: the button was disabled.
+
+That is silent data loss in an editor, from a button whose label promises a search-and-replace, and
+it is the same shape as defect 101 — **a control offered as available while the operation behind it
+was not valid.** The audit was built to find exactly this shape and this is what it returned first.
+
+**Fixed with both guards, deliberately.** The button gate (`count > 0`) restores parity with Compose
+and the honest affordance. The check inside `_replaceCurrent` — that the selection *is* one of the
+matches — is the boundary, and it holds for a case the gate cannot reach: matches exist, so the
+button is live, but the selection is the user's own rather than one `_selectMatch` produced. Compose
+has the gate and not the boundary, so it still mis-replaces a hand-made selection when the query
+matches something else. Recorded rather than ported: Kotlin is the app being retired, and the Flutter
+behaviour is the correct one.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/code_editor_test.dart` | 9 passed (+3) |
+| Full host suite | **2,467 passed** (was 2,464) |
+| `dart format --line-length 100` | `0 changed` |
+| `--profile core`, `emulator-5554` (API 35) | **24 passed**, Patrol included — `20260811T195106Z_android_emulator-5554_core`. Script exit 3: the suite passed and the *warning gate* failed, on the upstream KGP warning alone (see the gate note above); no warning from this app. |
+
+**Negative controls, both non-vacuous.** Each mutation matched exactly once and failed exactly the
+test that covers it:
+
+| Mutation | Failing test |
+|---|---|
+| drop `if (!selected) return;` | *Replace ignores a hand-made selection even while matches exist* |
+| drop `count > 0 ?` on the Replace button | *Replace leaves a hand-made selection alone when the query matches nothing* |
+
+The first control is why a third test exists. The two tests written first both passed with the
+boundary check removed — the button gate alone satisfied them — which would have shipped an
+unexercised guard and recorded it as tested. That is the sixth time this session a control has caught
+a vacuous test, and the pattern is always the same: the test reached the *outer* guard and never the
+inner one.
+
+### The tool that found it
+
+`scripts/parity_controls.py`. `scripts/inventory.py` already walked composables and screens, which is
+why it never found this: both apps plainly "have" a code editor. The new script walks **controls** —
+buttons, switches, checkboxes, sliders, fields, menu items, taps, long-presses, drags — and records
+each one's label and its enabling condition, then pairs the two sides by normalised label.
+
+Two faults in the first run are worth keeping, because both made the tool confidently wrong:
+
+- **It reported 70 suspects out of 70 gated controls.** A 100% hit rate is not a finding, it is a
+  broken comparison. Dart rarely writes `enabled:`; it writes `onPressed: cond ? action : null`.
+  The tool saw no gate on any Flutter control because it was looking for the Compose idiom.
+- **Compose labels are `R.string` keys**, so every resource-labelled control looked absent from
+  Flutter. The very first "missing" row, `connect_non_resumable`, has a peer in
+  `connection_prompt_host.dart:171` — correctly gated on the same condition. Resolving the keys
+  through `res/values/strings.xml` fixed it.
+
+After both fixes: 70 gated-and-labelled Compose controls, 38 with no Flutter peer found, **15 whose
+peer carries no gate**. Defect 103 came out of those 15. The remaining rows are the queue, and they
+are questions rather than defects — several are label collisions where a generic word like "All" or
+"Password" matched the wrong widget on the other side.
+
+Counts as of this entry: **692 Compose controls / 627 Flutter**, and 301 Compose controls carry no
+extractable label at all — those need reading by hand and are not yet covered by anything.
+
+### The tmux copy-mode exit is dead on both sides (closed, no defect)
+
+Entry 99 left `tmuxExitCopyModeCommand` ported but unreferenced and called it "a separate slice".
+It is not a slice — it is nothing, and the check that settled it took one grep.
+
+**Kotlin's caller does not exist.** `terminalJumpToLiveTail` and `terminalJumpToLiveTailFor`
+(`ui/AppViewModel.kt:6291`) have no callers. Nor does `terminalMouseWheel`, nor
+`terminalTmuxScrolledBack`, nor `clearTerminalTmuxScrolledBack`. The whole cluster — forward the
+wheel to tmux, remember that the pane went into copy-mode, offer a jump-to-tail that cancels it — is
+unreachable in the app it was written for.
+
+**And the reason is already written down, twice.** `terminal_surface.dart:271` records it as settled
+design: "the Kotlin settled on tracking the local buffer rather than forwarding wheel events to
+tmux, because the forwarded version had inconsistent direction and never quite reached the bottom."
+`TERMINAL_COMPATIBILITY.md` states the same outcome as a contract: "Touch gestures operate local
+scrollback; tmux mouse mode is disabled for app-created persistent sessions."
+
+So the copy-mode exit is the tail of an approach Kotlin **abandoned**. Nothing puts the pane into
+copy-mode any more, because nothing forwards the wheel, so nothing needs to take it out.
+
+**What was done: the command was removed**, along with its test. It was added one slice earlier as
+part of ledger 99 and never acquired a caller. Keeping it would have been the twelfth unreferenced
+primitive in this codebase, and this time with the extra insult of mirroring dead code on the other
+side — a port of an abandonment.
+
+**Evidence.** `flutter analyze --fatal-infos` clean; **2,462 passed** (-1, the removed test);
+`dart format --line-length 100` reports `0 changed`. No device sweep: the only change is a deletion
+of code nothing reached, and the suite proves nothing reached it.
+
+**The lesson, since this is the third time.** A missing caller in *this* port is a defect. A missing
+caller in **both** ports is a decision somebody already made, and the way to tell them apart is to
+grep the other side for callers before writing anything. Entry 99 assumed the second case was the
+first, and would have shipped dead code on the strength of it.
+
+### 99 — a reattached tmux session lost its history (closed)
+
+The third `TERMINAL_COMPATIBILITY.md` claim to fail, and the first that is a **missing feature**
+rather than a wiring bug. **No fix in this slice** — the honest reason is below.
+
+The doc claimed, under "Standard persistent tmux | Supported": "App-created session, bounded
+history, reconnect/reattach, **capture-based history recovery**". The first three are real. The
+fourth does not exist in this port.
+
+**What Kotlin does.** When a persistent session is scrolled up after a reattach, it streams the
+pane's history over a side exec channel and merges it into local scrollback:
+
+| Piece | Kotlin | Flutter |
+|---|---|---|
+| The command | `RemoteCommands.tmuxCaptureHistoryCommand` (`data/RemoteParsers.kt:280`) | **absent** |
+| The capture | `captureTmuxHistoryFull` — `execStream` with a byte budget of `scrollbackLimit * 300 + 65_536`, trimming from the front (`ui/AppViewModel.kt:4884`) | **absent** |
+| The trigger and bookkeeping | dirty flag cleared *before* the capture so mid-capture output re-arms it, a `tryLock` so two scroll-ups do not race, a geometry generation so a resize mid-capture is discarded (`:4970`) | **absent** |
+| Snapping the pane back to the live tail | `tmuxExitCopyModeCommand` (`RemoteParsers.kt:293`), sent over exec rather than typed, because a typed `q` lands at the shell prompt as a letter if the pane already left copy mode | **absent** |
+
+**The alternate-screen guard is the part worth reading.** The command is wrapped in a
+`#{alternate_on}` test, with the reason recorded from a real observation: while a full-screen TUI
+owns the alternate screen, `capture-pane` returns TUI frames rather than the primary screen's
+history — verified on tmux 3.3a — which would seed local scrollback with stale `vim` junk. Empty
+output leaves the caller's dirty flag armed so it retries once the TUI exits.
+
+That guard is also the answer to a loose end from the emulator sweep that started this slice:
+`isAlternateScreenActive` is the one piece of emulator state with **zero consumers** in `lib/`, and
+Kotlin's only consumer of its equivalent is exactly this capture guard (`ui/AppViewModel.kt:4981`).
+The getter is not dead code — it is the missing feature's missing caller.
+
+**Why no fix here.** This is four coupled pieces — a guarded command, a budgeted streaming capture,
+merge-into-scrollback, and concurrency bookkeeping — landing in the terminal session core. Porting
+only the command builder would add exactly the unreferenced, unit-tested, never-called code this
+ledger has recorded eleven times; porting the capture without the dirty-flag and geometry
+bookkeeping would produce a race whose symptom is corrupted scrollback. It needs its own slice, with
+the persistent-tmux fixture driving a real reattach.
+
+**What was done.** The doc no longer claims the feature. `TERMINAL_COMPATIBILITY.md` now states the
+gap and points here, because a shipped document asserting a capability the app lacks is the same
+defect as a switch that does nothing (ledger 95) — and unlike the compression switch, this one is
+buildable, so the sentence is a placeholder until it is.
+
+**Sized properly (2026-08-11), and the plan changed as a result.** An attempt to start the port
+established what already exists, which is more than the entry assumed:
+
+| Piece | State |
+|---|---|
+| `TerminalEmulator.adoptScrollbackFrom` | **Already in Flutter, unreferenced.** Kotlin's only callers are this feature (`ui/AppViewModel.kt:5021` and `:5407`). |
+| `scrollbackRowCount()` | present |
+| A standalone `TerminalEmulator(cols:, rows:, scrollbackLimit:)` for the scratch re-parse | present |
+| `ShellSession` viewport anchor that survives trimming | present |
+| `tmuxCaptureHistoryCommand`, `tmuxExitCopyModeCommand` | absent |
+| The capture, the swap, the trigger, the guards | absent |
+
+So the port is smaller than four fresh pieces — but it is still one vertical, and it must land as one.
+Both command builders were written during this slice and **reverted before finishing**: with no
+caller they would have been the twelfth instance of the unreferenced-code defect this ledger keeps
+recording, which is precisely what this entry warned against.
+
+**What the swap actually does**, read from `ui/AppViewModel.kt:4998`, since the entry only had the
+shape of it:
+
+1. A scratch emulator at the *live* grid's cols/rows and the configured scrollback limit.
+2. Feed the capture with `\n` → `\r\n`, then a screen-height of `\r\n` so the tail rows are pushed
+   off the scratch screen and its scrollback holds everything.
+3. Under the emulator lock, re-check the alt state **and** the geometry generation; if either moved,
+   leave the dirty flag armed and abandon the capture rather than trust it.
+4. `adoptScrollbackFrom(scratch)`, then shift `viewportFirstRow` by the row delta so the content
+   under the user's finger does not move.
+5. Publish on every adoption, not only when the count changed — a replacement can fix gaps and
+   colours while keeping the same number of rows.
+
+**The doc that pointed the wrong way.** `adoptScrollbackFrom` carried a comment saying it was "used
+when a reconnect replaces the live session". Nothing reconnects through it in either app; the
+sentence described a plausible caller rather than a real one, which is worse than a stale reference
+because it makes dead code look wired. Corrected to name the caller it is actually waiting for.
+
+**Also absent, same area:** `tmuxExitCopyModeCommand`. Kotlin sends it when the user scrolls back to
+the bottom so the pane snaps to the live tail; without it a Flutter session left in tmux copy mode
+stays there.
+
+**Evidence.** `grep -rn "tmuxCaptureHistoryCommand\|captureHistory" lib/` and the same for
+`tmuxExitCopyModeCommand` return nothing; `capturePane` in `data/term/tmux_control_commands.dart:68`
+is referenced only by its own tests. Entry 9 closed the *input* half of that file — `sendKeysHex`
+and `refreshClientSize`, both named in it — and `capturePane` was never part of that fix.
+
+## Closed (2026-08-11)
+
+Ported as one vertical, as this entry insisted. What each piece became:
+
+| Kotlin | Flutter |
+|---|---|
+| `RemoteCommands.tmuxCaptureHistoryCommand` | `tmuxCaptureHistoryCommand`, guard and 1,000–50,000 clamp included |
+| `tmuxExitCopyModeCommand` | ported alongside it |
+| `captureTmuxHistoryFull` byte budget | `execStream` with the same `limit * 300 + 65_536`, trimming from the front |
+| dirty flag / `tryLock` / geometry generation | `ShellSession.scrollbackDirty`, a `_resyncing` single-flight, and a cols/rows re-check |
+| `adoptScrollbackFrom` + viewport shift | `ShellSession.adoptScrollback`, which moves `_anchorRow` by the delta |
+| the scroll-up trigger | `TerminalSurface.onScrolledBack`, fired only on a backward drag with the flag armed |
+
+**The ordering that is not obvious**, taken from `ui/AppViewModel.kt:4987`: the dirty flag is cleared
+**before** the capture, not after. Output arriving mid-capture re-arms it, so the next scroll retries
+rather than trusting a capture that missed those rows. Clearing afterwards would swallow exactly the
+rows the feature exists to recover.
+
+Three things leave the flag armed instead of adopting: an **empty** capture (the `#{alternate_on}`
+guard firing, so a TUI owns the pane and its frames are not history), a **grid change** between
+taking the capture and applying it (the rows would be re-wrapped to the wrong width), and any
+**exception** (a capture that could not run is not evidence the history is gone).
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/tmux_scrollback_resync_test.dart` | 5 passed, all new |
+| `test/shell_view_model_test.dart` | 46 passed (+3) |
+| Full host suite | **2,463 passed** (+8) |
+| `dart format --line-length 100` | `0 changed` |
+| `--profile core`, `emulator-5554` | **29 passed, no warnings** — `20260811T173545Z_android_emulator-5554_core` |
+
+**Negative controls**, each asserting the mutation matched exactly once. Dropping the re-arm on an
+empty capture fails `an empty capture leaves the flag armed, so a later scroll retries`. Removing the
+`tmuxName == null` guard fails `a session that is not persistent is never captured` with
+`Expected: <0>, Actual: <1>` — a command sent per scroll gesture on an ordinary PTY.
+
+**A wrong assertion, corrected rather than accommodated.** The first version of the adoption test
+expected a positive row delta and got **-35**. That was the test being wrong, not the code: the
+capture replaces the scrollback *wholesale*, so a capture shorter than the local buffer legitimately
+shrinks it. Rewritten to assert the rows themselves — `pane-history-0` and `pane-history-89` present
+after the swap — which is the property that matters, with the count left as a secondary check on a
+capture deliberately made longer than the client's own buffer.
+
+**What is still not proven.** No device or fixture test drives a real reattach: the wiring, the
+guards and the swap are covered against a fake transport, but "tmux collapsed output and the pane
+still had it" has not been reproduced against a live tmux. The persistent-tmux fixture is the place
+to do it, and `tmuxExitCopyModeCommand` was removed in the slice above this entry: its
+Kotlin caller does not exist either, and the behaviour it served was abandoned on both sides.
+
+### 98 — a hardware keyboard's Ctrl and Alt did nothing (closed)
+
+The second claim from `TERMINAL_COMPATIBILITY.md` checked against this port: "Hardware keyboard |
+Supported | Navigation, Insert/Delete, Page Up/Down, F1–F12, **explicit Ctrl-byte mappings, xterm
+modifiers, and Alt-prefixed input** are encoded; **Ctrl+Alt is reserved for AltGr**".
+
+The *encoder* is faithful — `terminal_key_encoder.dart` and `ui/TerminalKeyEncoder.kt` are the same
+function, key for key, modifier for modifier. The defect is that nothing told it which modifiers
+were held. `_onKey` mapped the special keys, sent `event.character` for everything else, and never
+asked `HardwareKeyboard` anything:
+
+| With a keyboard attached | Kotlin | Flutter before |
+|---|---|---|
+| Ctrl+C | `0x03` | the letter `c` |
+| Ctrl+Left | `CSI 1;5D` | `CSI D` — a bare Left |
+| Alt+b | `ESC b` | the letter `b` |
+| AltGr+q (`@` on many layouts) | typed as text | typed as text |
+
+Kotlin assigns the event's modifiers into the view model before every physical key
+(`ui/ShellScreen.kt:2322`) and again before a Ctrl/Alt chord (`:2363`); `sendKey` and `typeText`
+read those fields and clear them, so a modifier applies to one keystroke and then goes. The port had
+the same fields — used only by the on-screen key bar — and the hardware path never wrote to them.
+
+**Fix.** `applyHardwareModifiers` writes the event's modifiers into that same state, OR-ed with any
+latched sticky ones, so an unmodified hardware key cannot drop a modifier the user latched on screen.
+The chord path takes the letter from `event.logicalKey.keyLabel` when `character` is null — a Ctrl
+chord suppresses the text on most platforms, which is exactly why the old code fell through — and
+leaves Ctrl+Alt alone, because Android reports AltGr that way and an international layout typing `@`
+must not be read as a control chord.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/shell_screen_test.dart` | 52 passed (+4) |
+| Full host suite | **2,450 passed** (+4) |
+| `dart format --line-length 100` | `0 changed` |
+| API 35 core profile, `emulator-5554` | **13 passed, no warnings** — `20260811T122537Z_android_emulator-5554_core` |
+
+**Negative controls**, each asserting the mutation matched exactly once. Dropping the modifier
+assignment before `sendKey` fails `Ctrl+arrow carries the xterm modifier`
+(`Expected: ends with '[1;5D', Actual: 'ESC[D'`). Disabling the chord branch fails `Ctrl+C sends the
+interrupt byte` with `Expected: [3], Actual: [99]`.
+
+That `[99]` is worth keeping: in the test harness the old code sent a literal **`c`** for Ctrl+C. On
+a device `event.character` is usually null for a Ctrl chord, in which case it sent nothing at all.
+Both are wrong and the tests pin the fix, but only the harness behaviour was observed here — the
+device behaviour is inference from the platform's documented handling, not something this slice
+measured.
+
+**Not covered.** A real keyboard. The suite drives `HardwareKeyboard` through Flutter's test
+bindings, which is the same state the widget reads, but AltGr specifically depends on how Android
+reports a physical international layout — the case Kotlin's comment exists for. The fourth test
+asserts an unmodified key is still plain text, which is the regression that matters if the chord
+branch ever grows too greedy.
+
+### 97 — pastes were never bracketed, on a shell that asked for them to be (closed, **safety**)
+
+`TERMINAL_COMPATIBILITY.md` has been carried since the Kotlin era with a note in the handover that
+nobody had checked it against the Dart emulator. This slice checked five of its claims. Four held.
+The fifth was the one that mattered.
+
+| Claim | Verdict |
+|---|---|
+| OSC "safely ignored… OSC 52 cannot write the Android clipboard" | **True.** `terminal_parser.dart:144` consumes the sequence to its BEL or ST terminator and acts on none of it. |
+| Mouse reporting "not supported" | **True.** No DECSET case for 1000/1002/1003/1006/1015 exists. |
+| Focus reporting "not supported" | **True.** Nothing in `lib/data/term` emits focus events. |
+| Alternate screen "DEC 47/1047/1049" | **True.** All four cases present, 1048 included. |
+| Bracketed paste "DECSET 2004 is **tracked and pasted blocks are wrapped** with the standard begin/end markers" | **Half false, and the wrong half.** |
+
+The mode was tracked — `_bracketedPasteMode`, set from DECSET 2004, with a doc comment saying
+pasted blocks are wrapped. Nothing outside the emulator ever read it. `encodePastedText` normalised
+newlines to CR and sent the bytes raw, so **every paste reached the remote as plain typing**.
+
+That is the one thing bracketed paste exists to prevent. A shell that turns 2004 on is asking for
+pasted text to arrive as *text*; without the markers a multi-line paste is executed line by line as
+it arrives, before the user can read what they pasted. The app's paste-confirmation dialog softens
+the surprise but does not change what the shell does with the bytes.
+
+**Fix.** `bracketedPastePayload` is ported from `ui/AppViewModel.kt:696`, including the part that is
+not obvious: readline treats **everything** between the markers as literal, a trailing Enter
+included, so a pasted command ending in a newline would be echoed at the prompt and never run.
+Mainstream terminals keep interior newlines inside the brackets — literal, as the mode intends — and
+send trailing CRs *after* the closing marker so they act as real Enter presses. `paste()` reads the
+mode from the emulator at the moment of the paste rather than caching it, because a shell turns 2004
+on and off around its own prompt.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/terminal_input_test.dart` | 24 passed (+6) |
+| `test/shell_view_model_test.dart` | 43 passed (+2) |
+| Full host suite | **2,446 passed** (+8) |
+| `dart format --line-length 100` | `0 changed` |
+| API 35 core profile, `emulator-5554` | **13 passed, no warnings** — `20260811T120724Z_android_emulator-5554_core` |
+
+**Negative controls**, each asserting the mutation matched exactly once:
+
+- Reverting `paste()` to ignore the emulator fails `a paste is bracketed once the remote turns
+  DECSET 2004 on` — the wiring, which was the actual defect.
+- Leaving the trailing CR inside the brackets fails `a trailing Enter is sent after the closing
+  marker` — the subtle half, which a straight reading of the spec would get wrong.
+
+The wiring test drives the mode by feeding `ESC [ ? 2004 h` through the real emulator rather than
+setting a flag, because "the remote enabled it" is the only way this is ever true in the app.
+
+**The doc is a Kotlin document no longer.** Four of its claims are now verified against this
+implementation and one was wrong; that one is corrected by the code rather than by editing the
+sentence, which is the right direction of fix. The claims not checked here are the large ones —
+UTF-8 clustering, reflow, tmux control framing, the hardware-keyboard matrix — and they remain
+unverified against Flutter.
+
+### 96 — a copied private key was displayed by the system and left on the clipboard (closed, **security**)
+
+The last caller on the platform-argument seam, and the one where the missing argument is a whole
+behaviour. Kotlin has a dedicated helper for copying a secret — `copySensitiveClipboard`
+(`ui/ToolsScreen.kt:115`) — with exactly one call site: **Copy private key**, on the sheet that shows
+a freshly generated key once (`:2563`). It does two things a plain copy does not:
+
+| Kotlin | Why | Flutter before |
+|---|---|---|
+| `ClipDescription.EXTRA_IS_SENSITIVE` on API 33+ | From Android 13 the system shows a **preview** of what was copied. Without the marker, the private key is displayed on screen next to the button pressed to keep it private. | nothing |
+| Clears the clipboard after 60s, **if it still holds the same text** | A clipboard is readable by whatever the user pastes into next, for as long as it sits there. | nothing |
+
+Flutter used `Clipboard.setData` for all three blocks on that sheet. That API cannot express the
+marker at all — it writes a plain clip — so this needed a platform channel rather than an argument.
+
+**Fix.** `SensitiveClipboardBridge` sets the marker and answers two narrow questions (does the
+clipboard still hold this text; clear it). The 60-second policy lives in Dart, in
+`SensitiveClipboard`, because that is the part with decisions in it and therefore the part worth
+testing. Only the private-key block opts in, matching Kotlin's single call site: the public key and
+the install command are meant to be pasted around.
+
+Three details that are decisions rather than mechanics:
+
+- **The clear is conditional.** Wiping unconditionally would destroy whatever the user copied in the
+  meantime — a worse defect than the one being fixed.
+- **`dispose` cancels the timer but never the clipboard.** Someone who copies a key and closes the
+  sheet still needs to paste it.
+- **No channel means a plain copy, not a refusal.** On iOS and in tests the marker is unavailable;
+  skipping the copy would leave a button that silently does nothing.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/sensitive_clipboard_test.dart` | 6 passed, all new |
+| Full host suite | **2,438 passed** (+6) |
+| `dart format --line-length 100` | `0 changed` |
+| API 35 core profile, `emulator-5554` | **13 passed, no warnings** — `20260811T115423Z_android_emulator-5554_core` |
+
+**Negative controls.** Clearing unconditionally fails `something the user copied afterwards is left
+alone` (`Expected: 'something the user copied later', Actual: <null>`) and the call-order assertion.
+Dropping the timer cancellation fails `tapping copy again restarts the minute`
+(`Expected: 'PRIVATE-KEY-BODY', Actual: <null>`).
+
+**A control that proved nothing, and what replaced it.** The timer-cancellation test was first
+written with *different* text for the second copy — and it passed with the cancellation removed,
+because the conditional clear already protects a different value. It could not fail for the line it
+claimed to guard. Rewritten to copy the **same** secret twice, which is what a user tapping the
+button again does, it fails correctly. Sixth vacuous control caught in this ledger; the tell each
+time is a test that passes on the mutation, and the fix each time is a scenario where the two
+implementations genuinely differ.
+
+**What is not covered.** The marker itself is a platform behaviour: the tests prove the bridge is
+called with the right text and label, not that Android hides the preview. That needs eyes on a
+device running API 33+ — the emulator is API 35, so the check is available, and it is a *look*, not
+an assertion a suite can make.
+
+### 95 — the compression switch stops claiming a behaviour the app cannot perform (closed)
+
+The half of defect 94 left open. dartssh2 proposes `compression: ['none']` in its KEX and ships no
+zlib — the CHANGELOG has never mentioned compression in any version — so "SSH compression" was a
+control that could be set, saved, restored and read back, and never once compressed anything. Kotlin
+negotiates `zlib@openssh.com,zlib,none` (`JschSession.kt:85`).
+
+Defect 77 settled the principle on a button ("biometric unlock was offered where it cannot work");
+this is the same rule applied to a setting. The row is now **shown and disabled**, with the reason
+under it, and three options were weighed rather than one:
+
+| Option | Why not |
+|---|---|
+| Leave it live | It reports a state the connection does not have. That is the defect. |
+| Remove the row | Hides a setting the user may have switched on in the Kotlin app and can still see in their backup file, with no explanation of where it went. |
+| **Show it disabled, say why** | Keeps the setting visible and its stored value untouched, so backup and restore round-trip and it starts working the day the library does. |
+
+The stored value being left alone is the part worth stating: disabling a control must not rewrite
+the row underneath it, and the second test exists because that is an easy thing to get wrong.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/server_form_sheet_test.dart` | 22 passed (+2) |
+| Full host suite | **2,432 passed** (+2) |
+| `dart format --line-length 100` | `0 changed` |
+| API 35 core profile, `emulator-5554` | **13 passed, no warnings** — `20260811T112341Z_android_emulator-5554_core` |
+
+**Negative control.** Restoring the live `onChanged` fails `cannot be switched on, and says why` with
+`Expected: null, Actual: <Closure: (bool) => void>` — "a switch that cannot take effect must not
+invite a tap". The mutation asserted it matched exactly once.
+
+**Still true, and still open.** The app cannot compress. This closes the lie, not the gap: a user who
+wants compression on a slow link is no better off than before, and the only fix for that is a
+library that implements it. Recorded in the handover as a capability difference from Kotlin rather
+than as a defect, because there is nothing left in this repository to change about it.
+
+### 94 — two host-form switches that changed nothing (agent forwarding closed, compression evidenced)
+
+Continuing the platform-argument seam from 92 and 93 into the SSH client. The client's own arguments
+were fine — both `SSHClient`s set `onVerifyHostKey`, so host keys are checked on the target and on
+the bastion. The defect was one level out: of the eleven fields `SshCredentials` carries, the
+transport reads nine. **`compression` and `agentForwarding` are never read at all.**
+
+Both are real switches in the host form, saved to the database, carried through
+`server_credentials.dart:101-102` into `SshCredentials`, and then dropped. `compression` reaches
+`ssh_session_pool.dart:56` — but only as part of the pool's cache key, so toggling it opens a fresh
+connection that ignores it just as thoroughly as the old one did.
+
+**Both are implemented in Kotlin**, which is what makes them defects rather than shared gaps:
+
+| | Kotlin | Flutter (before) |
+|---|---|---|
+| Agent forwarding | `if (creds.agentForwarding) runCatching { setAgentForwarding(true) }` on the shell channel (`JschSshTransport.kt:351`) | nothing |
+| Compression | `compression.s2c` / `compression.c2s` set to `zlib@openssh.com,zlib,none` (`JschSession.kt:85-90`) | nothing |
+
+This also **withdraws a ruling**. Agent forwarding sits in this ledger's "Ruled out (verified
+present, wording differs only)" list. That ruling came from a string sweep, and the strings *were*
+present — the switch, its label, its help text, its database column and its backup round trip all
+exist. Only the four lines that would have made it do something were missing. A string sweep cannot
+tell those apart, and this is the fourth time that has been true here.
+
+**Agent forwarding: fixed.** dartssh2 supports it and even ships the agent — `SSHKeyPairAgent`
+answers identity and signing requests. There is no ssh-agent on a phone, so the app *is* the agent,
+signing with the same key the connection authenticated with; that is what lets an onward hop work
+without the private key being copied to the server. `agentHandlerFor` returns one only when the
+setting is on **and** there is a key to sign with: a password host has nothing to serve, and an empty
+agent would ask the server for a forwarding channel that could never answer.
+
+Two placement details, both taken from Kotlin rather than from convenience:
+
+- **Shell only.** Kotlin sets it on the channel from `openChannel("shell")`. dartssh2 attaches the
+  agent to the *client*, and then requests forwarding on **every** channel that client opens — so
+  passing it to the pooled `exec` connections would have put the monitoring commands behind a
+  request the user made for their terminal. `_connect` takes `forwardAgent` per call; only
+  `openShell` passes it.
+- **A refusal must not cost the shell.** Kotlin wraps the request in `runCatching`, so
+  `AllowAgentForwarding no` is survivable. dartssh2 instead throws `SSHChannelRequestError` and
+  closes the channel, and because the agent belongs to the client, retrying the channel would fail
+  identically — so the fallback reconnects without it. That mirrors the `COLORTERM` fallback three
+  lines above it, which exists for the same reason: an optional request that is refused must never
+  be the reason a terminal will not open.
+
+**Compression: evidenced, not fixed, and not fixable here.** dartssh2 hard-codes its KEX proposal to
+`compressionClientToServer: ['none']` and `compressionServerToClient: ['none']`
+(`ssh_transport.dart:1035`) and ships no zlib implementation, so the switch cannot be honoured
+without patching the library. What must not stand is the current state: a switch that claims a
+behaviour the app cannot perform. Defect 77 settled the principle — do not offer what cannot work —
+and the options are to disable it with an explanation or to remove it, which is a parity decision
+about a feature Kotlin *has*. **Left open deliberately, with the evidence, rather than guessed at.**
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/ssh_agent_forwarding_test.dart` | 3 passed, all new |
+| Full host suite | **2,430 passed** (+3) |
+| `dart format --line-length 100` | `0 changed` |
+| Device host suite, live SSH fixtures, `ZF62224F8K` | **passed, no warnings** — `20260811T111105Z_android_ZF62224F8K_host` |
+
+**Negative control.** Dropping the `!creds.agentForwarding` clause — the exact state the code was in
+— fails `a host with it off is served none` with `Expected: null, Actual: <Instance of
+'SSHKeyPairAgent'>`, asserting the mutation matched exactly once.
+
+The test generates its key through `test/support/ed25519_fixture.dart` rather than embedding one.
+The first draft of it carried a `BEGIN OPENSSH PRIVATE KEY` block, which is precisely what that
+helper exists to prevent: the secret gate scans **all history**, so a committed key keeps reporting
+forever even after deletion.
+
+**What this does not prove.** The unit tests cover which agent is built, not the forwarding
+handshake — that needs a server with `AllowAgentForwarding` set both ways, which the lab does not
+yet have. The device run above proves the shell path still opens against real hosts, i.e. that the
+new argument broke nothing; it does not prove an onward hop can authenticate. A fixture host with
+forwarding refused is the missing coverage, and the refusal fallback above is the code it would
+exercise.
+
+**An unexplained flake, recorded rather than dismissed.** The first device run of this change failed
+— `20260811T110727Z_android_ZF62224F8K_host`. Podman's raw probe answered `podman` over the app's
+own transport, and then `infra.load` returned an empty runtime set two lines later; Docker had
+passed the identical sequence seconds before. `./scripts/test-hosts.sh verify` was fully green
+afterwards, including the Podman host and its Compose smoke, and the second run of the same build
+passed all six protocols. So it is not the fixture and it does not reproduce, and **it is not
+attributed to this change** — the exec path this failure sits on never receives the new argument
+(`forwardAgent` defaults to false, and `agentHandlerFor` is not called for pooled connections).
+
+That is the whole of what is known. Intermittent runtime discovery on the Podman host is now an open
+question with an artifact attached, not a passing thought: the next host run that fails the same way
+should compare `infra.error` and the raw probe in the same breath, because a null error with an
+empty set is the part that does not add up.
+
+### 93 — one failed read could blank every stored credential (closed, **data safety**)
+
+Found by generalising defect 92 rather than by a new sweep: that one was a defect in the *arguments*
+to a platform call, so the question became which other platform calls carry arguments nobody chose.
+`SecretStore` is the highest-stakes of them, and its Android options were inherited defaults.
+
+**What the default does.** `flutter_secure_storage` 11's `AndroidOptions` defaults
+`resetOnError: true`, and its own doc says it "will PERMANENTLY erase the data when an error
+occurs". The Android source is literal about it — `handleStorageError` calls `delete(key)` after a
+failed read, `deleteAll()` after a failed `readAll`, and `deleteAllDataAndKeys` after a failed
+migration.
+
+**Why that is catastrophic here specifically.** This store keeps exactly one thing in the platform
+keystore: `omniterm_secret_key_v2`, the AES key under which every `enc:v2:` value in the database is
+encrypted — server, sudo and proxy passwords, imported private keys, credential-profile passwords,
+share passwords. Deleting the key that failed to read once makes all of them permanently
+undecryptable while the ciphertext sits in the database looking intact.
+
+**And the app would not notice.** `_key()` treats a missing key as first run and mints a new one, so
+after the wipe the app carries on encrypting under a fresh key and reports nothing. That is exactly
+the failure this class's own header warns about for the v1→v2 migration — "an updating user would
+open the app to find every saved password and private key silently blank" — reintroduced by a
+different route, in a class whose header already knew the shape of it.
+
+**Kotlin does none of this.** `data/SecretStore.kt:35` logs the failure *class* — never the secret —
+and returns null. A transient failure stays transient; nothing is deleted, and every other value is
+untouched.
+
+**Fix.** The options are now stated rather than inherited: `resetOnError: false`. The plugin then
+surfaces the error instead of deleting, `decrypt` catches it and returns null exactly as Kotlin
+does, and the only null `_key()` can see is a key that was genuinely never written.
+`migrateOnAlgorithmChange` keeps its default of true — that one *preserves* data across a plugin
+cipher change. The iOS accessibility choice, previously a comment, is now a named constant next to
+it.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/secret_store_test.dart` | 19 passed (+3) |
+| Full host suite | **2,427 passed** (+3) |
+| `dart format --line-length 100` | `0 changed` |
+| API 35 core profile, `emulator-5554` | **13 passed, no warnings** — `20260811T104432Z_android_emulator-5554_core` |
+
+**Negative control.** Restoring the inherited `AndroidOptions()` fails `a failed read must not
+delete the key` with `Expected: 'false', Actual: 'true'`, asserting the mutation matched exactly
+once.
+
+**On testing arguments rather than behaviour.** These three tests assert a configuration, which is
+usually a weak thing to test. Here it is the whole defect: the behaviour they protect can only be
+produced by a platform failing a keystore read on a real device, which no unit test can stage, and
+the cost of it happening once is unrecoverable. A tripwire on the argument is the only guard
+available, and it fails the moment someone deletes the option — which is precisely how the defect
+arrived.
+
+**What this did not settle.** `encrypt()` calls `_key()` without a catch, so with the delete-on-error
+behaviour gone a keystore read failure now propagates out of a save rather than silently writing
+under a new key. That is the better of the two, and it is *deliberately* left as is: failing a save
+loudly beats saving a password nothing can read back. Whether the UI reports it well has not been
+checked, and is not claimed here.
+
+### 92 — the app lock accepted the phone's own PIN (closed, **security**)
+
+The handover listed `lib/platform/biometric_gate.dart` as "a second, unused biometric implementation
+duplicating the live `BiometricAuth`… a hazard rather than a defect — the risk is someone wiring the
+wrong one". Reading the two side by side, the wrong one was **already wired**. The unreferenced file
+was the faithful port; the live one had quietly relaxed the thing the gate exists to enforce.
+
+| | Kotlin `BiometricCryptoGate` | `BiometricGate` (unused) | `BiometricAuth` (live) |
+|---|---|---|---|
+| Authenticators | `BIOMETRIC_STRONG` only (`:91`) | `biometricOnly: true` | **`biometricOnly: false`** |
+| Availability | `canAuthenticate(BIOMETRIC_STRONG) == SUCCESS` (`:44`) — enrolled | — | **`canCheckBiometrics`** — hardware only |
+
+Kotlin has exactly one biometric implementation and five call sites, the app lock among them
+(`AppUi.kt:709`), and it allows one authenticator: `setAllowedAuthenticators(BIOMETRIC_STRONG)`,
+with no `DEVICE_CREDENTIAL`. It goes further — `setUserAuthenticationParameters(0,
+AUTH_BIOMETRIC_STRONG)` binds a KeyStore key to that same class of authentication.
+
+**Why `biometricOnly: false` is not a small difference.** The device credential is the PIN, pattern
+or password of the phone's own lock screen. The app lock and the sudo re-prompt both exist to defend
+against someone *holding the unlocked phone* — the port says so itself at
+`app_lock_controller.dart:268`: "a saved sudo password turns 'holding the unlocked phone' into 'can
+reboot the server', so the password is not used until the person is re-identified." Accepting the
+device credential re-identifies them with the very secret that unlocked the phone in the first
+place. It is not a weaker check; for that threat it is not a check at all.
+
+The live file argued its own case in a comment — refusing the device credential "would lock out
+anyone whose sensor is wet, gloved, or simply worn out". That argument does not survive contact with
+the rest of the screen: **the app has its own PIN**, PBKDF2-hashed and separate from the device's
+(`domain/app_pin.dart`), and the lock screen offers it underneath the biometric button. The
+lockout it feared cannot happen.
+
+**Availability was wrong in the same direction.** `canCheckBiometrics` resolves to
+`deviceSupportsBiometrics()` — whether the *hardware* exists — so a phone with a fingerprint reader
+and no finger registered answered yes. `getAvailableBiometrics()` resolves to
+`getEnrolledBiometrics()`, which is what Kotlin's `canAuthenticate(BIOMETRIC_STRONG) ==
+BIOMETRIC_SUCCESS` means. This is defect 77 one level deeper: 77 found that the availability check
+was never *called*; the check itself was also answering the wrong question, which no amount of
+wiring would have fixed.
+
+**Fix.** `prompt` asks for a biometric only, and `isAvailable` asks whether one is enrolled. The
+duplicate `biometric_gate.dart` is deleted: with the live class now doing what it did, keeping a
+second copy of a security decision is how the two drift apart again.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/biometric_auth_test.dart` | 7 passed, all new |
+| Full host suite | **2,424 passed** (+7) |
+| `dart format --line-length 100` | `0 changed` |
+| API 35 core profile, `emulator-5554` | **13 passed, no warnings** — `20260811T102728Z_android_emulator-5554_core` |
+
+**Negative controls**, each asserting the mutation matched exactly once:
+
+- `biometricOnly: false` fails `asks for a biometric, not the device credential`
+  (`Expected: true, Actual: <false>`).
+- Availability back to `canCheckBiometrics` fails `hardware with nothing enrolled is not available`
+  (`Expected: false, Actual: <true>`).
+
+The tests fake `LocalAuthentication` and record what the wrapper asks the platform for, because the
+defect is entirely in the *arguments* — a wrapper that returns the right booleans while asking the
+wrong question passes any test that only checks its return value.
+
+**A note on the dead file.** It had been sitting there since the port, containing the correct
+`biometricOnly: true`. Two sweeps found it, both classified it as duplication, and neither compared
+the two implementations — the assumption each time was that the live one was right and the spare was
+redundant. The lesson is narrow and worth keeping: when a sweep finds two implementations of one
+thing, the question is not which is unused, it is **which is correct**.
+
+### The copy dialog's focus restore: no defect, and the axis is now closed (closed)
+
+The last of Kotlin's four focus sites, and the one entry 90 explicitly refused to call a gap without
+reading Flutter's copy path first. Reading it was the right call: there is no defect, and the shapes
+are different enough that a literal port would have been wrong.
+
+**Kotlin**, `ShellScreen.kt:2555`: the copy dialog's `dismiss()` clears its state and then
+`if (!viewModel.terminalReadOnly) { focusRequester.requestFocus(); keyboard?.show() }`. The restore
+is *conditional*, and that condition is the same one as everywhere else on this axis.
+
+**Flutter** has no copy dialog. The counterpart is `openTerminalTranscript`, a modal bottom sheet
+opened by a long press on the grid (`terminal_surface.dart:246`), which is where defect 67 put the
+two copy ranges. Popping a route restores focus to whatever held it before, so the writable case
+already behaves as Kotlin's `dismiss()` arranges by hand — and the read-only case behaves correctly
+for a different reason than Kotlin's: there is nothing to restore, because read-only released the
+hidden input before the sheet ever opened (entries 90 and 91).
+
+So the same two outcomes arrive by two different routes. Kotlin restores conditionally; Flutter
+restores unconditionally but has nothing to restore in the case Kotlin's condition excludes. Porting
+`dismiss()` literally — an unconditional `requestFocus` after the sheet — would have broken the
+read-only case that currently works by construction.
+
+**One test, both cases.** `closing the copy sheet hands the keyboard back to the terminal` drives
+the real long press, asserts the sheet opened, pops it, and checks the keyboard returned; then
+switches the session to read-only and repeats the whole round trip, requiring the keyboard to stay
+down.
+
+**Negative control.** Making the long press dismiss the keyboard before opening the sheet — a
+one-line change modelling the ordinary regression here, a sheet that takes the keyboard and never
+gives it back — fails the writable assertion with `Expected: true, Actual: <false>`. The read-only
+half's control is entry 90's: without the read-only release, the keyboard is already up before the
+long press.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/shell_screen_test.dart` | 48 passed (+1) |
+| Full host suite | **2,417 passed** (+1) |
+| `dart format --line-length 100` | `0 changed` |
+| Device sweep | not run — **no product code changed in this slice** |
+
+**The terminal focus axis is closed.** All four Kotlin sites are accounted for, and it is worth
+recording how they divided: two were real gaps and were ported (`:1889` in 90 and 91, `:2077` in
+90); two were behaviours Flutter already had for its own reasons, where the work was proving it and
+leaving a guard (`:1905` in the entry below, `:2555` here). Half of a "port these four sites" list
+turned out to be "read these four sites". Counting sites on one side says nothing about how many
+defects are behind them — the same lesson the confirmed-defect table records for string diffs, in a
+different disguise.
+
+### The last focus-lifecycle item: no defect, two guards instead (closed)
+
+Entries 90 and 91 left one Kotlin site unported — the `ON_STOP` / `ON_RESUME` handler at
+`ShellScreen.kt:1905` that frees the hidden input on background and re-acquires it on return. This
+slice answered it. **There is no defect, and porting it would have created one.** No product code
+changed; the slice's output is the answer and two tests that keep it answered.
+
+**Why Kotlin does it.** Its own comment: backgrounding tears down the IME text-input session, and if
+the field is still focused when the app resumes, "Compose's legacy cursor-anchor path
+(LegacyCursorAnchorInfoController via onGloballyPositioned) dereferences the now-null session and
+crashes at draw time." That is a Compose defect being worked around. It is not a behaviour anyone
+chose, and it is not a contract the port owes.
+
+**What Flutter does.** Reattaches its own IME on resume and keeps the keyboard. The user-visible
+outcome is what Kotlin's workaround laboriously restores — so the two agree on behaviour and differ
+only in how much code it takes. Ported literally, the `ON_STOP` half would be a **regression**: the
+keyboard would drop every time the user glanced at a notification and never come back, because
+Flutter has no reason to re-acquire.
+
+`a trip to another app leaves the keyboard where it was` therefore asserts the outcome rather than
+the mechanism. It drives the real lifecycle sequence — `inactive → hidden → paused` and
+`hidden → inactive → resumed`; the framework asserts on the shortcuts, which is worth knowing before
+writing any lifecycle test here.
+
+**Negative control, and a caught vacuous test.** The first attempt at the control added Kotlin's
+`ON_STOP` unfocus to `_ActiveTerminalState` — and the test **passed**, which would have been
+recorded as proof the guard worked. It proved nothing: the mutation never called
+`WidgetsBinding.instance.addObserver(this)`, so its `didChangeAppLifecycleState` was never
+dispatched. With the observer registered the control fails correctly (`Expected: true, Actual:
+<false>`). This is the fifth vacuous control in this ledger and the second whose cause was the
+mutation not being *reachable* rather than not being *applied* — checking that the edit landed is
+not the same as checking it runs.
+
+### The lock and the terminal's keyboard (verified, no defect)
+
+Following the call chain from the lifecycle question reached `AppLockGate`, which hides the app
+behind `ExcludeSemantics(ExcludeFocus(...))` while locked. That takes the terminal's hidden input
+out of the focus tree — correctly, since a keyboard over the unlock screen would be absurd — and the
+question was whether anything gives it back, since entry 91's effect keys on three values that
+locking does not change.
+
+It does: removing the exclusion restores the previously focused node, so unlocking returns to a
+session that accepts typing. `unlocking the app gives the terminal its keyboard back` pins both
+halves — no keyboard while locked, keyboard back afterwards — using the real gate rather than a
+stand-in.
+
+**Negative control.** Removing `ExcludeFocus` from the gate fails the *first* assertion
+(`Expected: false, Actual: <true>` — "no keyboard over the unlock screen"), which is the half worth
+protecting: it is the difference between a locked app and a locked-looking one.
+
+**Two traps for anyone writing lock tests here**, both of which cost time:
+
+- `pumpAndSettle` never returns while the app is locked. The unlock screen focuses its PIN field and
+  a focused field blinks its cursor forever. Pump explicit frames.
+- `setPin` and `unlockWithPin` hang inside `testWidgets`. PBKDF2 at 210,000 iterations yields to the
+  event loop between chunks, and a widget test's fake-async zone never advances it. Wrap both in
+  `tester.runAsync`.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/shell_screen_test.dart` | 47 passed (+2) |
+| Full host suite | **2,416 passed** (+2) |
+| `dart format --line-length 100` | `0 changed` |
+| Device sweep | not run — **no product code changed in this slice** |
+
+**Three of four sites settled here.** `:1889` ported (90, 91), `:2077` ported (90), `:1905`
+deliberately not ported and guarded against being ported (this entry). The fourth, the copy-dialog
+restore at `:2555`, was read in the slice after this one and needed no change either — see the
+copy-dialog entry above, which closes the axis.
+
+### 91 — a fresh session made you tap the grid before you could type (closed)
+
+The first of the two items entry 90 left open, taken as its own slice because auto-raising a
+keyboard changes what every session looks like on open.
+
+**Kotlin:** `LaunchedEffect(sessionId, isFocused, viewModel.terminalReadOnly)` at
+`ShellScreen.kt:1889` — "Focus the hidden input immediately so the keyboard is available — but only
+for the focused pane. In split view the unfocused pane must not grab the keyboard."
+
+**Flutter before:** focus was only ever taken in the tap handler, so a newly connected session had
+no keyboard until the user tapped the grid. On the one screen whose entire purpose is typing, that
+is a step Kotlin never asks for.
+
+**Fix.** The port now mirrors the effect, including its keys. That last part is the whole design:
+`LaunchedEffect` keys mean *run when one of these changes*, not *run on every recomposition*. A
+Flutter `build` has no such semantics, so the three values — session id, whether this pane is the
+focused one, and read-only — are compared against the last triple acted on. Without that, dismissing
+the keyboard with Back would be undone by the next rebuild, and on a terminal rebuilds arrive with
+the output.
+
+The same effect subsumes the read-only release added in entry 90, so there is now one place that
+decides whether the hidden input holds focus, rather than two that must agree.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/shell_screen_test.dart` | 45 passed (+2) |
+| Full host suite | **2,414 passed** (+2) |
+| `dart format --line-length 100` | `0 changed` |
+| API 35 core profile, `emulator-5554` | **13 passed, no warnings** — `20260811T092349Z_android_emulator-5554_core` |
+
+**Negative controls**, each asserting the mutation matched exactly once:
+
+- Disabling the focus branch fails `a connected session takes the keyboard without waiting for a
+  tap` — `Expected: true, Actual: <false>`.
+- Replacing the triple comparison with `if (true)` — an effect that fires on every build — fails
+  `a dismissed keyboard is not re-raised by an unrelated rebuild` with
+  `Expected: false, Actual: <true>`. That test dismisses the keyboard, emits terminal output, and
+  requires it to stay dismissed.
+
+The second control is the one worth keeping. The obvious implementation of "focus on open" passes
+the first test and fails the user: it re-raises a keyboard they deliberately closed, every time a
+line of output arrives.
+
+**Still open on this axis.** Nothing. Background and resume (`ShellScreen.kt:1905`) was settled in
+the slice above this entry: no defect, and a guard against porting Kotlin's Compose workaround.
+
+### 90 — a read-only terminal summoned a keyboard that could not type (closed)
+
+Found by continuing the accessibility axis (71, 73, 79) with the marker method: count a construct on
+both sides, then read the call chain. Three of the four remaining sub-items dissolved on contact and
+the fourth was this.
+
+**Kotlin** ties the hidden input's focus — and therefore the software keyboard — to read-only in
+four places, all in `ShellScreen.kt`:
+
+| Site | Behaviour |
+|---|---|
+| `:1889` `LaunchedEffect(sessionId, isFocused, terminalReadOnly)` | focus + show keyboard when the pane is focused and writable; **free focus + hide keyboard when read-only** |
+| `:2077` terminal tap | focus + show only when focused and writable; otherwise "Read-only taps may focus a split pane for scrolling but never summon its keyboard" |
+| `:1905` `ON_STOP` / `ON_RESUME` | free focus and hide on background, re-acquire on return when focused and writable |
+| `:2555` copy-dialog dismiss | restore focus and keyboard **unless** read-only |
+
+**Flutter before:** the tap handler called `_imeFocus.requestFocus()` unconditionally, and nothing
+released focus when read-only was switched on. So a read-only session raised the soft keyboard on
+any tap and kept it up after the toggle — covering the output the user turned read-only in order to
+read, in exchange for keystrokes that are dropped at `shell_view_model.dart:899`. Read-only already
+hid the useless keys from the key bar (an earlier defect); the keyboard was the same mistake one
+layer down.
+
+**Fix.** The tap guard now mirrors `:2077`, and the read-only state releases the IME from inside the
+`ListenableBuilder` that the toggle rebuilds — reacting to the state rather than to the toolbar
+callback, so it holds however read-only was reached: the toggle, a resumed read-only session, or a
+pane swap onto one.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/shell_screen_test.dart` | 43 passed (+2) |
+| Full host suite | **2,412 passed** (+2) |
+| `dart format --line-length 100` | `0 changed` |
+| API 35 core profile, `emulator-5554` | **13 passed, no warnings** — `20260811T090643Z_android_emulator-5554_core` |
+
+The hidden 1x1 field owns the platform IME, so "does that node have focus" is the same question as
+"is the keyboard up", and that is what both tests assert.
+
+**Negative controls**, one per half, each asserting the mutation matched exactly once:
+
+- Dropping the `if (!session.readOnly)` guard fails `tapping a read-only terminal focuses it without
+  summoning the keyboard` — `Expected: false, Actual: <true>`.
+- Deleting the unfocus block fails `turning read-only on takes the keyboard away` with the same
+  signature.
+
+The first test also asserts a **writable** terminal still takes the keyboard on tap, before it
+checks the read-only case. Without that line the fix could have "passed" by disabling terminal input
+altogether.
+
+### Still open on this axis, with the Kotlin references
+
+Two of Kotlin's four focus sites have no Flutter counterpart and were **not** addressed here:
+
+- **Focus on open.** `ShellScreen.kt:1889` focuses the hidden input as soon as a pane becomes the
+  focused one, so the keyboard is available without a tap. Flutter required a tap first.
+  **Closed by entry 91**, in its own slice as intended here.
+- **Background and resume.** `ShellScreen.kt:1905` frees focus on `ON_STOP` and re-acquires on
+  `ON_RESUME`. Kotlin's comment says this exists to dodge a Compose IME crash, which is a
+  framework-specific reason that may not transfer — but the *user-visible* half (the keyboard state
+  surviving a trip to another app) still needs checking on a device before anyone concludes Flutter
+  is fine.
+
+The copy-dialog restore at `:2555` reaches the same two outcomes by a different route; read and
+settled, with a test, in the copy-dialog entry above.
+
+### Three accessibility sub-items that dissolved when counted
+
+Recorded so nobody re-derives them. The handover listed four open accessibility items; three are not
+defects:
+
+- **`liveRegion` for state changes** — **zero** uses in Kotlin and zero in Flutter. There is nothing
+  to port. (See the scope note below: the user has since said additions are welcome when they make
+  sense, provided they land in *both* apps. That makes this a possible enhancement, jointly, rather
+  than a parity defect.)
+- **Focus order** — Kotlin has no `traversalIndex`, `isTraversalGroup` or `focusProperties` anywhere.
+  There is no traversal order to match.
+- **`Semantics` grouping on composite rows** — Kotlin's single `semantics(mergeDescendants = ...)`
+  and both `stateDescription` uses are the same site, the terminal pane, closed as defect 79.
+
+## The 2026-08-11 live-fixture device pass (81–89)
+
+Nine defects found by driving the app on a physical phone against the real SFTP/SMB/FTP/WebDAV
+fixtures. They were written up in `HANDOVER.md` first and carried there alone for a session, which
+is the wrong way round — this file is the authority. Each was re-read against the current code
+before being entered here.
+
+Two are parity gaps against Kotlin (81, 83). The other seven are defects in the Flutter port's own
+share stack that no Kotlin comparison could have found, because Kotlin does not have the code: its
+share clients are synchronous JVM streams, while Flutter's cross a method channel and an event
+channel. **That is the lesson of this pass.** Every earlier slice looked for behaviour Kotlin has
+and Flutter lacks. These were found the only way they could be — by pointing the app at a real
+server and using it.
+
+### 81 — a share's configured start path was thrown away (closed)
+
+**Kotlin:** `ShareClients.startPath` (`data/shares/RemoteFsClient.kt:74`), called at
+`AppViewModel.kt:7662` as `sharePath.ifBlank { ShareClients.startPath(share, client) }`. SMB
+consumes the first path segment as the share name; FTP, SFTP and WebDAV treat the configured path as
+the initial directory. `startPath` is what keeps those two readings apart.
+
+**Flutter before:** `SftpViewModel.openShare` called `openPath('')` unconditionally, so every
+non-SMB share opened at the protocol root and nested SMB paths were lost — while the Shares card
+went on displaying the saved path the browser was ignoring. Now `sftp_view_model.dart:203` resolves
+through the same helper.
+
+**Evidence.** `test/sftp_view_model_test.dart` — `a share opens its configured start path instead of
+the protocol root`. **Negative control:** the WebDAV `/fixture/nested/` case fails on the old
+`openPath('')`.
+
+### 82 — the native SMB client crashed on first use (closed)
+
+smbj needs Bouncy Castle at runtime. The Flutter Android build excluded it as a transitive, so the
+first SMB editor path taken on a device died immediately. Kotlin pins it explicitly —
+`gradle/libs.versions.toml:52` at `1.85`, used at `app/build.gradle.kts:202`, with the comment that
+smbj's "bcprov needs are satisfied by the pinned bcprov-jdk18on above". Flutter now pins the same
+version at `flutter_app/android/app/build.gradle.kts:128`.
+
+A dependency exclusion is invisible to every gate in this project except running the code on a
+device. `flutter analyze`, the host suite and the emulator sweeps were all green while this shipped.
+
+### 83 — text files on an SMB share could not be edited on Android (closed)
+
+**Kotlin:** `AppViewModel.openShareFileForEdit` (`AppViewModel.kt:8070`) edits a file on **any**
+share protocol, through `downloadTo`/`uploadStream`, gated only by `shareEditMaxBytes`. There is no
+per-protocol capability check, because there is nothing to check: every `RemoteFsClient` streams.
+
+**Flutter before:** the Android SMB client reported `supportsTextEditing == false` and implemented
+neither `readText` nor `writeText`, so the editor was simply unavailable for SMB — a capability
+present in Kotlin for every protocol and in Flutter for all but one. Both now stream UTF-8 through
+the native bridge (`platform_smb_client.dart:265`).
+
+**Evidence.** `test/platform_smb_client_test.dart` — `text editing is available and writes UTF-8
+through the streaming bridge`; and the device host suite's SMB read/save/reread.
+
+### 84 — a completed transfer could be missed entirely (closed)
+
+FTP, WebDAV and native SMB all registered their stream-completion future **after** closing the
+producer. A completion that arrived in between was never observed, and the transfer hung. All three
+now register before the transfer starts — `ftp_remote_fs_client.dart:175`,
+`webdav_remote_fs_client.dart:183`, `platform_smb_client.dart:279`.
+
+No Kotlin counterpart: Kotlin copies bytes on a blocking stream and needs no completion event.
+
+### 85 — every list, read and write leaked a share client (closed)
+
+`SftpViewModel` resolved a fresh `RemoteFsClient` per operation. Each may own a native session and
+event channel, so a rapid editor read-save-reread raced the previous stream's cancellation and left
+authenticated sessions open. One client is now kept for the browse/editor session and closed once
+(`sftp_view_model.dart:164`). Host SFTP stays resolver-owned deliberately: that transport has its
+own connection pool and must pick up credential edits from `AppState`.
+
+**Evidence.** `test/sftp_view_model_test.dart` — `a share reuses one client through editor save and
+closes it`.
+
+### 86 — a finished SMB read could end the *next* read (closed)
+
+The native bridge sent both a transfer-scoped `done` message and `endOfStream` on an EventChannel
+name shared by sequential downloads. The delayed global end could land after the next read had
+subscribed and terminate it before its first chunk. The redundant end was removed; `done` is the
+terminator and Dart cancels on it.
+
+**Negative artifact:** `20260811T074224Z_android_ZF62224F8K_host`. SMB read/save/reread and
+mutations pass after the change.
+
+### 87 — FTP could not list a current vsftpd at all (closed)
+
+`ftpconnect` defaults to MLSD without capability discovery, and vsftpd 3.0.5 answers
+`500 Unknown command`, which made an otherwise healthy share impossible to open. FTP now probes
+RFC 2389 `FEAT`, prefers MLSD only when MLST/MLSD is advertised, and otherwise uses the
+interoperable LIST. A rejected or unsupported FEAT leaves LIST selected rather than failing the
+login — FEAT is optional and an older server must not be refused for lacking it.
+
+**Evidence.** `test/ftp_remote_fs_client_test.dart` — `FTP uses structured MLSD only when the server
+advertises it` and `FTP falls back to portable LIST when MLSD is unavailable`. **Negative
+artifact:** `20260811T074451Z_android_ZF62224F8K_host`.
+
+### 88 — WebDAV rejected the redirect it had provoked (closed)
+
+PROPFIND addressed the collection as `/fixture`; Apache answered `301` to `/fixture/`, and the
+client treated the redirect as a failure. Collection paths are now canonically encoded with a
+trailing slash (`webdav_remote_fs_client.dart:59`).
+
+**Evidence.** `test/webdav_remote_fs_client_test.dart` — `WebDAV collection paths are encoded and
+end in a slash` and `WebDAV file paths do not gain a collection slash`. **Negative artifact:**
+`20260811T074848Z_android_ZF62224F8K_host`.
+
+**Now unverified where it was verified.** The fixture that produced that 301 has since been replaced
+by rclone, which answers `207` directly (see the lab entry below). The unit guard is the only thing
+holding this fix; the live path no longer exercises the redirect.
+
+### 89 — Go-to-line disposed a controller the dialog was still painting (closed)
+
+`_goToLine` disposed its `TextEditingController` as soon as `showDialog` returned, while the
+dialog's exit transition was still rendering the `TextField` bound to it. The dialog now records
+what was typed through `onChanged` and owns no controller at all, which removes the lifetime
+question rather than moving it.
+
+**Evidence.** `test/code_editor_test.dart` — `go-to-line moves the selection to the requested line
+start`, with a failing widget control captured before the fix.
+
+### 80 — the file browser's controls pushed the listing off the screen at 200% text (closed)
+
+Found by the surface sweep on the physical API-32 phone, not by reading code:
+`dark-200pc-text/landscape/sftp/files: A RenderFlex overflowed by 25 pixels on the bottom
+[sftp_tabs.dart:389]`, artifact `20260811T081441Z_android_ZF62224F8K_surface`. It is the one
+signature the sweep found across every route, subtab, theme and orientation at the app's maximum
+text size.
+
+The browser body already had a responsive answer to this: above 600dp wide and below 120dp tall it
+puts the breadcrumbs and the toolbar side by side instead of stacking them. That answer was
+incomplete rather than wrong. **A `Column` child with no ceiling does not yield — it overflows**, so
+once even the compact row needed more height than the body had, the layout had nowhere to go. The
+`Expanded` listing below it was already at zero.
+
+Everything above the listing is now one block with a ceiling: at most 55% of the body height (less
+the 6px gap, which sits outside the block and would otherwise be unaccounted for), scrolling inside
+that ceiling. At ordinary sizes the block is far shorter than the cap and nothing changes. At 200%
+in landscape the controls stay reachable by scrolling and the listing keeps 45% of the body.
+
+`720x360dp` is the phone's own landscape geometry, so the failing heights were found by bisecting
+the body height on the host rather than by guessing: clean at 224, and overflowing by 4, 12, 20, 28
+and 36 pixels at 216, 208, 200, 192 and 184. The device's 25 pixels sits inside that range. All five
+are clean after the fix.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `test/sftp_screen_test.dart` | 60 passed (+1) |
+| Full host suite | 2,410 passed |
+| Device surface sweep, 200% text, `ZF62224F8K` | **passed, no warnings** — `20260811T082511Z_android_ZF62224F8K_surface` |
+| API 35 core profile, `emulator-5554` | **13 passed, no warnings** — `20260811T083355Z_android_emulator-5554_core` |
+
+**Negative control.** Replacing the ceiling with `maxHeight: double.infinity` fails the new test at
+`body height 208.0 overflowed` with `A RenderFlex overflowed by 12 pixels on the bottom` — the same
+signature the phone produced. The mutation asserts it matched exactly once before applying, per
+entry 75.
+
+The test also asserts the listing is still present at every height. An overflow check alone would be
+satisfied by a header that swallowed the whole body, which is the failure mode this fix could
+plausibly introduce.
+
+### The lab itself was the last thing blocking the host suite (closed)
+
+The 2026-08-11 device pass left one failure standing: WebDAV listed and read on the phone but every
+save returned 500. `HANDOVER.md` recorded it as an Alpine Apache fixture fault and said to fix the
+fixture rather than the assertion. It is worse than a missing package.
+
+**What it actually was.** `mod_dav_fs` opens its lock database through `apr_dbm`, and apr-util
+1.6.4 ships **no `apr_dbm_*.so` driver at all**. Reproduced identically on four independent images —
+Alpine 3.22 (`apr-util-1.6.4-r0`), Alpine 3.21 (same version, backported), `httpd:2.4-alpine` and
+Debian-based `httpd:2.4`. Alpine has no `apr-util-dbm_*` subpackage to install; the Debian image
+carries `apr_dbm_db-1.so` and `apr_dbm_gdbm-1.so` but not the `sdbm` driver httpd asks for. This
+build of `mod_dav_fs` also has no `DavLockDBType` directive to point at another driver:
+
+```text
+[dav_fs:crit] (20019)DSO load failed: AH00576: The DBM driver could not be loaded
+```
+
+Dropping `DavLockDB` does not help, and that is the part worth remembering: `mod_dav` consults the
+lock database on **writes as well as locks**, because it queries lock-null status first. With the
+directive removed the failure simply renames itself — `AH00623: Failed to query lock-null status`,
+still 500. Reads and `PROPFIND` keep working throughout, which is exactly why `verify` was happy.
+
+**Fix.** WebDAV is now served by `rclone serve webdav` from the same Alpine image, over the same
+`/srv/share` volume and the same `/fixture` base URL. It runs as the share user through `su-exec`,
+so a WebDAV write lands with the same ownership as an SMB or FTP write — a root-owned file would be
+unwritable over the other two protocols and would have produced cross-protocol flakiness later.
+Unprivileged means it cannot bind 80, so the share answers on 8080 and Compose maps the host's 8082
+onto it; nothing outside the container changed. `apache2*`, `dav.conf` and the htpasswd file are
+gone.
+
+**The gap that let this reach a device run.** `test-hosts.sh verify` proved SMB, FTP and WebDAV
+**reads** and nothing else, so a share that could not be written to passed every lab gate. Each of
+the three now does a write round trip — PUT/STOR/put a uniquely named file, read the same bytes
+back, delete it — leaving the seeded baseline untouched. This is the same shape of error the ledger
+keeps recording in the product: the check existed, passed, and could not have failed for the thing
+that was broken.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `curl -T` against the old Apache fixture | **PUT 500**, `PROPFIND 207` |
+| `curl -T` against the rclone fixture | **PUT 201**, GET 200, MKCOL 201, MOVE 201, DELETE 204, unauthenticated PROPFIND 401 |
+| `./scripts/test-hosts.sh verify` | 18/18 OK, including the three new write round trips |
+| Device host suite, `ZF62224F8K` | `HOST-E2E share passed: WEBDAV` in `artifacts/device-tests/20260811T080903Z_android_ZF62224F8K_host` |
+
+**Negative controls.** The old fixture is the control for the fix: the identical `curl -T` returned
+500 before the change and 201 after. For the new probes, pointing the WebDAV write probe at a
+missing collection makes the chain return non-zero and report FAILED, so the probe can fail.
+
+**Rejected alternatives, and why.** Pinning the image to Alpine 3.21 does not work — it carries the
+same apr-util 1.6.4. Keeping Apache and installing a DBM provider is not possible: no Alpine package
+supplies one. `nginx` with `dav-ext` would cover the verbs this client uses but drops LOCK entirely;
+rclone's `golang.org/x/net/webdav` server answers `supportedlock` and is the closer server.
+
+**Written down as changed, not as equivalent.** Apache answered `/fixture` (no trailing slash) with
+a 301 to `/fixture/`; rclone answers 207 directly. The client fix for that redirect — canonical
+trailing-slash encoding of collection paths — is therefore no longer exercised by the fixture. It is
+still covered by the unit guard in `test/webdav_remote_fs_client_test.dart`, and that guard is now
+the only thing holding it.
+
+### The host suite failed after every product assertion had passed (closed)
+
+With the fixture fixed, `host_backed_e2e_test.dart` printed
+`HOST-E2E complete: Docker, Podman, SFTP, SMB, FTP and WebDAV passed` and then failed anyway. Its
+`addTearDown` closure called `context.read<HostStatusProbe>()` and `context.read<TelemetryPoller>()`
+on a context whose widget is deactivated by teardown time; an inherited-widget lookup on a
+deactivated element throws. Both objects are now captured as locals when the test first reads them,
+and teardown stops those. Artifact: `20260811T080903Z_android_ZF62224F8K_host` is the failing
+control; `20260811T081220Z_android_ZF62224F8K_host` is the pass.
+
+This is a harness defect, not a parity defect, and it is recorded here because it had the same
+effect as one: a red suite that named nothing real, over a product that worked.
+
+### Defect 72 recurred in the working tree (closed)
+
+`dart format` had been run at its default 80 columns again, leaving 14 files in the dirty worktree
+formatted against a gate that uses 100 — `integration_test/host_backed_e2e_test.dart`, four
+`lib/data/shares` and `lib/ui` files, and nine tests. `dart format --output=none
+--set-exit-if-changed --line-length 100 .` reported `14 changed`; after reformatting at 100 it
+reports `0 changed`. The branch still has no PR, so CI would not have caught it. Entry 72 predicted
+exactly this and it happened again anyway, which argues the width belongs in a wrapper or a hook
+rather than in a paragraph of documentation.
+
+### Action-level device coverage (task 4, closed)
+
+Open since the start of this work, and the thing the last two no-defect slices argued was the
+highest-value remaining work: the two device suites open every destination and check it renders,
+which catches a screen that crashes on a real engine **and nothing else**.
+
+`integration_test/app_actions_test.dart` drives actions instead — the ones that write to the
+database, open a dialog and come back. **Five flows**, all host-free on purpose (the ones needing a
+reachable host belong in the lab suites): creating a quick script and finding it after leaving the
+screen, enabling App Lock, changing a setting and reading it back, creating **and deleting** an
+alert rule, and adding a host.
+
+The alert-rule flow drives both halves deliberately. A create that is not verified and a delete that
+is not verified hide opposite defects, and alert rules are the one thing in the app that acts on its
+own — a rule that appears to save and does not is a monitor silently watching nothing. Deleting it
+again also leaves the device as the suite found it, which is what makes the suite re-runnable
+against a device that keeps its data.
+
+**Negative control on the device suite itself.** Making `saveRule` silently drop new rules fails the
+flow — so it is testing persistence rather than the dialog closing. Worth doing once for a device
+suite: a flow that only taps through screens passes whatever the app does.
+
+**It found something on its first run.** Defect 70's widget test asserted the App Lock
+off-transition and passed — but its harness has no `AppLockController`, so enabling the lock never
+prompted for a PIN, the save silently reverted, and the "on to off" transition it claimed to cover
+**was never an on-to-off transition at all**. On a device the PIN dialog appears and the flow is
+real. That is the whole argument for device coverage in one example: the widget test was not wrong
+about the code, it was wrong about the state it had put the app in.
+
+**Two lessons about writing these**, both of which cost a device round-trip:
+
+* **A control below the fold is not built at all.** These screens are `ListView`s, so
+  `ensureVisible` cannot reach a widget that does not yet exist — every "key not found" here was
+  that, not a missing key. Both the tap and the read helpers scroll first.
+* **Reading a widget after navigating away and back needs the same scroll**, for the same reason.
+
+**The App Lock *off* transition was attempted on device and withdrawn**, with the evidence kept in
+the test file rather than the attempt silently dropped. Instrumenting each step showed the flow
+reaching the off-save with no dialog of any kind and the switch already back to false:
+
+```
+AFTER-ON       switch=true  pinDialog=0 lockScreen=0
+AFTER-OFF-SAVE off=0 sudo=0 pin=0 lock=0 switch=false
+```
+
+The confirmation keys off `vm.saved.appLockEnabled`, and by the second save that was still false —
+the first save set the PIN and left the *draft* on without the saved value following. **Whether that
+is the test driving the screen faster than it commits, or the screen genuinely not persisting the
+preference, is not established**, and asserting either would be a guess. Both paths stay covered at
+the widget level.
+
+**Resolved the following slice: not a defect.** Asserting `vm.saved.appLockEnabled` directly in a
+widget test with a real `AppLockController` shows the preference *is* committed — the PIN is stored,
+`isConfigured` is true, and the saved value follows. The device failure was the flow outrunning the
+save, not the screen failing to persist it. Recorded because it was flagged here as possibly
+security-relevant, and an unretracted suspicion is worse than none.
+
+**That answer also removed a limitation this ledger had asserted twice.** Defect 62 recorded the
+gated-save path as undrivable — *"providing a live `AppLockController` stops the harness settling at
+all… the gated path cannot be driven through this screen without a harness rewrite larger than the
+fix"*. It can: `pumpWithLock` provides a real controller and **bounded pumps** replace
+`pumpAndSettle`, which is the only thing the repeating background-lock timer actually breaks. The
+harness rewrite was two helpers.
+
+Two tests now cover what was previously assumption:
+
+| Test | What it pins |
+|---|---|
+| `the preference is saved, not just the PIN` | enabling collects a PIN **and** turns the lock on — a switch reporting protection it is not providing would fail here |
+| `with a PIN stored, saving asks for it first` | defect 62's wiring: the join between `hasStoredPin` and the save, and that cancelling changes nothing |
+
+**Negative control.** Disabling the gate (`if (false && lock != null && lock.hasStoredPin)`) fails
+the second test; mutation asserted before running.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `dart format --set-exit-if-changed --line-length 100 .` | passes |
+| Full host suite | **2,386 passed** |
+| `app_actions_test.dart`, API 35 `emulator-5554` | **5 passed** |
+| Surface sweep + walkthrough, API 35 | **8 passed** |
+
+The emulator had to be rebuilt to run this: `Xvfb :99` was gone and `pkill -f "Xvfb :99"` **matched
+its own command line** and killed the shell — the second time this session a `-f` pattern matched
+the process running it. Start it with `setsid … & disown` and check `/tmp/.X11-unix/` for `X99`
+rather than pattern-matching for the process.
+
+### Swept clean: colour (no defects)
+
+| Layer | Result |
+|---|---|
+| `OmniColors` palette | 21 names both sides, **every value identical** |
+| Terminal base palette | same 16 xterm-variant colours, same 6×6×6 cube steps `[0,95,135,175,215,255]`, same 24-step grey ramp |
+| Terminal themes | same five keys and labels (`system`, `omni_dark`, `solarized_dark`, `matrix`, `light`), and the same background/foreground/cursor triples behind each |
+
+Two differences examined and both correct:
+
+* **Compose's `background` role has no Flutter equivalent** — it was deprecated in favour of
+  `surface`, and the legacy themes set the two to *different* tokens (bg0 vs bg1). The port carries
+  `background` into `ThemeData.scaffoldBackgroundColor` and documents why, so the terminal's
+  system-theme background resolves to bg0 on both sides. Not a divergence; a translation.
+* **Light/dark is decided differently in the system branch** — Kotlin measures
+  `relativeLuminance(scheme.background) > 0.5`, this port reads `Theme.of(context).brightness`.
+  These agree for all four of the app's own themes (dark, light, AMOLED, high contrast), so the
+  distinction is theoretical here and changing it would be churn.
+
+**Two consecutive slices have now found nothing** (this and the data/commands/presets sweep before
+it). That is worth stating plainly rather than hunting harder in the same places: the mechanical
+axes — anything with a symbol to diff on both sides — are largely exhausted. What remains open is
+the work that cannot be swept by grep: **action-by-action semantics** (does this button do the same
+thing to the host?), **spacing and layout**, the rest of **accessibility**, **iOS**, and the
+outstanding **action-level device coverage** task. Those need a screen driven, not a file compared.
+
+### Swept clean: data model, remote tooling, and preset scripts (no defects)
+
+Three axes swept in one pass, all at parity. Recorded so they are not re-derived — a clean axis is
+worth as much as a defect, provided the sweep is written down.
+
+| Axis | Method | Result |
+|---|---|---|
+| **Database columns** | Kotlin `Entities.kt` field names vs drift `tables.dart` getters | 96 vs 101 — **0 missing** |
+| **Remote tooling** | every command head invoked on a host (`systemctl`, `journalctl`, `docker`, `podman`, `crontab`, `df`, `ss`, `smartctl`, package managers, …) | 27 vs 26 — the one difference, `apt`, is help text and a preset command, both present |
+| **Preset scripts** | all 32 `presetKey` values, then the **command text** behind each shared key | 32 vs 32 keys, **0 differing commands** |
+
+The commands matter more than the keys: a preset with the same name and a different body runs
+something else on the user's server. All 20 comparable bodies are byte-identical once escaping is
+normalised.
+
+**Four false differences, and why they are worth naming.** The first comparison reported 11
+differing commands and every one was an artifact of my extractor:
+
+* Kotlin escapes `$` as `\$` inside its strings; Dart does not.
+* Dart escapes `'` as `\'` inside single-quoted strings; Kotlin does not.
+* Flutter concatenates a long command across lines **alternating `'` and `"` quoting**, so a regex
+  matching only `'…'` truncated `fleet.syslog` at its first `||`.
+* Picking "the longest string in the row" grabbed *labels* rather than commands for the five
+  `homelab.pve_*` presets, whose commands are short (`qm list`, `pct list`).
+
+Each looked exactly like a real finding. `fleet.syslog` in particular read as "Flutter only runs the
+first of four fallbacks", which would have been a serious defect on any host without journald — and
+the file shows all four present. **The lesson is the one from defect 78, one turn later: when a
+sweep and the code disagree, suspect the sweep first.**
+
+### 79 — split panes and live status figures were not operable or understandable without sight (closed)
+
+Continuing the accessibility axis from 71 and 73 against the current Kotlin code, not against a
+generic accessibility wish list. Four Kotlin semantic contracts were absent from Flutter:
+
+| Surface | Kotlin contract | Flutter before |
+|---|---|---|
+| MultiSSH pane | `Terminal pane 1: host`, selected state, active/inactive state and an `OnClick` semantics action | A cyan border only; TalkBack could read both terminal grids but could not identify or focus either pane |
+| Monitor health ring | `Health score: 82 out of 100` | The bare number and progress indicator |
+| Fleet host score | `Health score: 82 out of 100` | The bare number |
+| Fleet refresh countdown | `Refreshing in 15 seconds` | `15s` |
+
+The pane gap was functional, not merely wording. Every per-session action targets the focused pane,
+including typed input, the key bar and disconnect. A sighted user could tap the cyan-bordered pane;
+an accessibility service had no equivalent action. `_FocusablePane` now exposes the same named,
+selected action as Kotlin's `TerminalPaneFrame`, while leaving pointer input on `TerminalSurface` so
+the wrapper does not compete for its gesture arena. Flutter has no direct `stateDescription`
+property, so active/inactive is carried as the semantics value.
+
+The three status figures now use explicit labels and exclude their terse visual descendants. This
+does not add design scope: all three labels are the existing Kotlin defaults from
+`OmniComponents.kt` (`ScoreRing` and `RefreshCountdown`). The server-card status dot was deliberately
+left alone because the card already announces the host status; adding a second node would duplicate
+information rather than improve parity.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| Full host suite | **2,387 passed** (+1) |
+| `shell_screen_test.dart` | 40 (+1) |
+| API 35 surface sweep + walkthrough | **8 passed** |
+| API 35 action suite | **5 passed** |
+
+The split test dispatches a real `SemanticsAction.tap` through the platform dispatcher and asserts
+that the selected state moves to the other pane. A synthesized pointer tap would only re-test touch
+input and could pass while TalkBack remained unable to focus it.
+
+**Negative controls.** Removing the pane's semantics `onTap` fails on the missing tap action.
+Replacing the score and countdown labels with their terse visible values fails all three label
+assertions.
+
+**Device-run note.** The first validation attempt accidentally left two Flutter invocations alive;
+one reinstalled/uninstalled the APK under the other, which reached 7 tests and then disconnected.
+That result was rejected. After terminating the exact duplicate processes, a single clean invocation
+executed all 8 tests and passed. The KGP built-in migration warning from four third-party plugins is
+still emitted during Android assembly; it is a future toolchain warning, not a skipped test.
+
+### 78 — an upgrading user's share sort was silently dropped (closed)
+
+Found by diffing every persisted settings key between the two apps: 44 in Kotlin, 37 here. The first
+pass reported 31 differences, which was wrong — this port maps its keys in `AppPreferences.keys`
+rather than calling `getSetting` per key, so a grep for call sites measured the wrong thing.
+Re-running against the actual key set left 8, of which 7 are legitimately absent (`first_run_complete`
+is the write-only field removed from Kotlin in the parity branch; the `*_presets` keys are seeding
+markers; `health_scoring` *is* persisted here, via a constant the regex missed).
+
+The remaining one is real. Kotlin keeps **two** sorts and this port has **one**:
+
+| | Kotlin | This port |
+|---|---|---|
+| Files tab | `sftp_sort` | `sftp_sort` — already read |
+| Share browser | `share_sort` | *(none — a share takes over the Files tab)* |
+
+So a user who only ever changed the sort while browsing a share had that choice dropped on upgrade.
+`_restoreSortOption` now falls back to `share_sort` when this app has written nothing yet — the same
+reasoning that keeps `app_lock_grace_ms` under its original Android key rather than a tidier one.
+
+`SftpSortOption.fromStored` already lowercases, so Kotlin's `NameAsc` spelling reads correctly
+without further work.
+
+**The files sort wins when both exist.** Not a merge: `sftp_sort` is this app's own key and the one
+it writes, so a value the user set *here* must not be overridden by one carried in from the old app.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `dart format --set-exit-if-changed --line-length 100 .` | passes |
+| Full host suite | **2,384 passed** (+2) |
+| `sftp_view_model_test.dart` | 135 (+2) |
+| Surface sweep + walkthrough, API 35 `emulator-5554` | **8 passed** |
+
+**Negative control.** Dropping the `share_sort` fallback fails the migration test; the precedence
+test keeps passing, which is the right shape since it asserts the *absence* of an override.
+
+**A claim in an existing test was worth checking rather than trusting.** `sort order persistence`
+says Kotlin writes `sftp_sort` at `AppViewModel.kt:1410` — my key diff appeared to contradict it,
+and the test was right: the key is in both apps, so it never showed up in the difference. Worth
+recording because the instinct on seeing a contradiction was to doubt the older claim, and the newer
+measurement was the faulty one.
+
+### 77 — biometric unlock was offered where it cannot work (closed)
+
+Found by generalising defect 76's method: instead of chasing one symbol, sweeping every public
+member in `lib/` for one with no reference outside its own file. That produced 36 candidates, most
+of them legitimate. This one was not, and it is in an area worth being strict about.
+
+```dart
+/// True when the device has an enrolled biometric or device credential to check against.
+///
+/// Checked before offering the option: enabling "unlock with biometrics" on a device with none
+/// enrolled would leave the user staring at a button that can never succeed.
+Future<bool> isAvailable() async { … }
+```
+
+`grep -rn isAvailable lib test integration_test` returned its own definition and an unrelated
+in-app-purchase call. **The comment describes a check that does not happen**, and the consequence is
+precisely the one it warns about. This is the same shape as the Kotlin `isFirstRun` removal in the
+parity branch — a comment asserting a behaviour nothing implements — and it is worth noting that
+both survived review because the *documentation* was correct about intent.
+
+**The fix** gives `AppLockController` an optional availability probe, wired in `main.dart` to
+`BiometricAuth.isAvailable`, and gates the Settings switch on it with a subtitle naming the reason.
+Two states needed distinguishing, because they need different actions from the user: *"enable the
+lock first"* and *"this device has nothing enrolled"*.
+
+Three deliberate choices:
+
+* **It fails open.** No probe wired — tests, and any build without one — leaves the option offered
+  exactly as before. A wrong "unavailable" hides a working feature; a wrong "available" costs one
+  prompt that falls back to the PIN.
+* **A probe that throws counts as unavailable, and `load()` still completes.** A hardware probe must
+  never stop the lock loading: a controller that failed to load would leave the app unlocked.
+* **The switch's *value* is gated too**, not just its enabled state, so a device that loses its
+  enrolment does not keep showing biometrics as on.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `dart format --set-exit-if-changed --line-length 100 .` | passes |
+| Full host suite | **2,382 passed** (+4) |
+| `app_lock_test.dart` | 61 (+4) |
+| Surface sweep + walkthrough, API 35 `emulator-5554` | **8 passed** |
+
+**Negative control.** Ignoring the probe's result fails two of the four new tests — the mutation was
+asserted to have applied before running.
+
+**Also found, not fixed:** `lib/platform/biometric_gate.dart` is a **second, unused biometric
+implementation** duplicating the live `BiometricAuth`, including its own `canAuthenticate`. Nothing
+references it. It is a hazard rather than a defect — the risk is that someone wires the wrong one —
+and deleting it is a decision left rather than taken, since this slice was about the missing check.
+
+**The orphan sweep's other findings**, recorded so they are not re-derived: `moveScript` (superseded
+by the renumbering reorder beside it), `setAvailableForFleet` and `setAvailableForQuick` (the editor
+dialog sets both flags; Kotlin has no inline toggle either, only display tags), `lockNow` (no Kotlin
+counterpart), `clearBulkSelection`, `clearTargets`, `finishInput`, `adoptScrollbackFrom`. **None is
+a parity gap** — checked against Kotlin rather than assumed — so they are dead or convenience code,
+not missing wiring.
+
+### 76 — the split launcher shortcut had no caller (closed)
+
+The last piece of the multi-SSH gap, and the purest example of this session's dominant defect class
+so far. Every layer was built:
+
+```
+lib/platform/shortcut_helper.dart   Future<bool> pushSplit(Server first, Server second)
+android/.../ShortcutBridge.kt       "pushSplit" -> upsert(manager, splitShortcut(context, args))
+                                    splitShortcut(): id "split_${first}_$second", both extras set
+```
+
+and `grep -rn pushSplit --include=*.dart lib test` returned **one line — its own definition**. The
+Dart method, the method-channel handler, the `ShortcutInfo` builder and the launch-intent extras
+were all written, and nothing ever invoked any of it. Kotlin pushes the shortcut whenever two hosts
+are loaded into panes, so a user who splits regularly gets a one-tap way back to that pair; the port
+silently offered nothing.
+
+**The fix** calls it where the split is established — `splitWith`, which both the picker and
+`splitWithNewSession` (defect 75) go through, so there is one place rather than two. `ShellViewModel`
+takes a `ShortcutHelper` the way the other view models do, and `main.dart` provides it — without
+that last line this would have been the same defect one layer up.
+
+The pair is recorded in **pane order**, so the shortcut reopens the layout the user had rather than
+a mirror of it.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `dart format --set-exit-if-changed --line-length 100 .` | passes |
+| Full host suite | **2,378 passed** (+2) |
+| `shell_view_model_test.dart` | 41 (+2) |
+| Surface sweep + walkthrough, API 35 `emulator-5554` | **8 passed** |
+
+Tested with a `ShortcutHelper` subclass that records instead of calling the platform — the channel
+itself is not the thing in doubt. The second test pins the degradation path: with no helper at all,
+splitting still works and simply offers no shortcut, which is how every other `ShortcutHelper`
+action behaves.
+
+**Negative control.** Removing the `_offerSplitShortcut()` call fails the first test — and the
+mutation was asserted to have applied before running, after the lesson recorded in defect 75.
+
+**The multi-SSH gap is now closed** as far as it is worth closing. Of the four differences listed
+below: the host-picker selection is served by defect 75's sheet (a checkbox flow *as well* would be
+two ways to do one thing), the focused-pane model was already present, the connect-into-pane flow is
+defect 75, and the shortcut is this entry.
+
+### 75 — a second host could not be opened into a pane (closed)
+
+The first slice of the multi-SSH gap recorded below, chosen because it is the part that stands on
+its own: it extends the split the port already has rather than starting a second, competing one.
+
+**Before:** `splitCandidates` listed only sessions that were already connected, and the split control
+was gated on `sessions.length > 1`. With one terminal open the control was hidden and the sheet said
+*"Open a second session first"* — so putting a host alongside meant connecting it, watching it take
+over the screen, and splitting back. Three steps for what Kotlin does in one.
+
+**After:** the sheet has a second group, *"Connect into the second pane"*, listing online hosts with
+no session open. `splitWithNewSession` connects and splits in one action, reusing the sequence
+`main.dart`'s `open_split` external action already performs.
+
+Two details that are the whole behaviour:
+
+* **The current pane is restored after connecting.** `connect` focuses what it opens
+  (`shell_view_model.dart:687`), which is right normally and wrong here — the user asked for this
+  host *alongside* the one they are reading, not in front of it.
+* **A failed or cancelled connection leaves the split untouched.** `connect` has already put its
+  reason on screen; forcing a split with nothing in it would replace that explanation with an empty
+  pane.
+
+The visibility gate widened to `sessions.length > 1 || canConnectSecondPane`, or the new entries
+would be unreachable in exactly the case they exist for. A host already open is not offered again —
+it would appear twice, once as a session and once as a host, and connecting it twice would open a
+duplicate terminal to the same machine.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `dart format --set-exit-if-changed --line-length 100 .` | passes |
+| Full host suite | **2,376 passed** (+2) |
+| `shell_screen_test.dart` | 39 (+2) |
+| Surface sweep + walkthrough, API 35 `emulator-5554` | **8 passed** |
+
+**A negative control that proved nothing, and how it was caught.** The first attempt at mutating the
+focus-restore reported *all tests passing* — which would have meant the restore was dead code. It
+was not: the mutation string never matched, so nothing was mutated and the control could not fail.
+Re-run with `assert s.count(old) == 1` before mutating, it fails the new test as it should. **A
+mutation that is not asserted to have applied is not a negative control**, and this is the second
+time that class of mistake has appeared in this session.
+
+**Still open** from the multi-SSH comparison below: the host-picker checkbox flow with `P1`/`P2`
+badges, and the launcher shortcut. The focused-pane model turned out to be **already present and
+wired** (`focusPane`, `shell_screen.dart:933`) — worth recording, because the entry below listed it
+as missing on the strength of Kotlin having a named field for it.
+
+### Open, evidenced: multi-SSH is a *mode* in Kotlin and an ad-hoc split in Flutter
+
+Not fixed. Investigated to the point where the shape is certain, and written down so the next
+session starts from evidence rather than from the guess this began as.
+
+It surfaced from the accessibility sweep — a checkbox with a stateful label, *"Add nas to split
+panes"* / *"Remove nas from pane 2"* (`ui/AppUi.kt:211`) — and following it found the label was the
+smallest part.
+
+**Kotlin has a second terminal mode.** `isMultiSsh` is `activeSshTab == 1`
+(`AppViewModel.kt:1589`), and it carries:
+
+| | Kotlin | Flutter |
+|---|---|---|
+| Entry from the host picker | checkboxes with `P1`/`P2` badges and *"Load selected hosts into panes"*, enabled at 2/2 (`AppUi.kt:196–235`, gated by `allowSplitSelection`) | **none found** |
+| Pane focus | `multiSshFocusedPane`; the header, key bar and actions all address the focused pane | ~~no focus concept~~ — **present after all**: `focusPane` swaps primary and split, wired at `shell_screen.dart:933` (corrected while closing defect 75) |
+| Entering split | pane 2 defaults to another live session, or shows its own connect prompt | `splitWith(id)` picks from **already-connected** sessions only |
+| Leaving split | focused pane's session becomes the single current session (`AppViewModel.kt:1661`) | `unsplit()` drops the second pane |
+| Launcher shortcut | `pushSplitTerminalShortcut(srv1, srv2)` | — |
+
+**What Flutter does have:** `splitWith`, `unsplit`, `toggleSplitAxis`, `splitCandidates`, and the
+`open_split` external action in `main.dart`, which connects two hosts and splits them. So splitting
+works; what is missing is choosing two hosts *before* connecting, and the focused-pane model that
+Kotlin's whole shell header is written against.
+
+**Why it is not a slice.** It is a mode, a selection UI, a focus model and a shortcut. Sizing it
+honestly matters more than starting it: half of this landed would be worse than none, because
+`splitWith` already works and a partial second path would give two ways to split that disagree.
+
+**Where to start:** `ui/ShellScreen.kt:482` (`allowSplitSelection = viewModel.isMultiSsh`) is the
+single switch that turns the host picker into the selection UI; read outward from there.
+
+### 74 — a crash report could be lost by the button meant to save it (closed)
+
+Found by sweeping action feedback: Kotlin has 13 toasts, Flutter 17 snackbars. Most of the wording
+differs harmlessly, but two Kotlin messages describe *failure* paths — "Couldn't share the report"
+and "No browser found — issue link copied to clipboard" — and chasing those into Flutter found the
+handling, not the copy, was wrong.
+
+**Handing work to another app fails in two ways, and only one is a return value.** `launchUrl`
+answers `false` when a handler declines, and **throws** when there is no handler at all.
+`SharePlus.share` only throws.
+
+The same file already knew this — `_openUrl` wraps its call in a try/catch — but the knowledge had
+not reached the two call sites next to it:
+
+| Call site | Before | Consequence |
+|---|---|---|
+| `_reportCrash` | `if (!await launchUrl(...))` | On a device with no browser: no browser, **no copy**, no message. The fallback that exists precisely for this case was itself taken down by the throw. |
+| `_shareCrash` | bare `await SharePlus…share(...)` | Share fails, nothing said. Kotlin reports it. |
+
+The report is the one artefact worth keeping when the app has just crashed, and the button offering
+to save it was the one that dropped it.
+
+`_shareCrash` now also falls back to the clipboard, because that is the only other way to get a
+report off the device.
+
+**Evidence.**
+
+| Gate | Result |
+|---|---|
+| `flutter analyze --fatal-infos` | clean |
+| `dart format --set-exit-if-changed --line-length 100 .` | passes |
+| Full host suite | **2,374 passed** (+1) |
+| Surface sweep + walkthrough, API 35 `emulator-5554` | **8 passed** |
+
+**On the test, honestly.** I first wrote a widget test that stubbed the launcher to fail and drove
+the real button. It passed for the wrong reason: `url_launcher_android` routes through **pigeon**
+channels, not the plain `MethodChannel` a test can stub by name, so the stub was never consulted and
+the launch "succeeded". I spent a long time on that before recognising it, and threw it away rather
+than keep a test whose green meant nothing.
+
+`test/external_handoff_guard_test.dart` replaces it: a source scan asserting that every `launchUrl`
+and `SharePlus…share` call sits inside a `try`. It cannot prove the fallback *behaves* — that limit
+is written into the file — but it does prove no call site is left unguarded, which is the defect
+that actually happened, and it fails with the file and line of any new one.
+
+**Negative control.** Restoring the unguarded `_reportCrash` call fails the guard, naming
+`about_screen.dart:142`.
 
 ### 73 — the terminal output was invisible to a screen reader (closed)
 

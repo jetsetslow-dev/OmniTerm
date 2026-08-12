@@ -138,15 +138,22 @@ class _RefreshCountdownState extends State<_RefreshCountdown> {
     if (next == null) return const SizedBox.shrink();
 
     final remaining = next.difference(DateTime.now());
-    return Padding(
+    final label = remaining.isNegative
+        ? 'Refreshing now'
+        : 'Refreshing in ${remaining.inSeconds + 1} seconds';
+    return Semantics(
       key: const ValueKey('fleet.summary.countdown'),
-      padding: const EdgeInsets.only(right: 10),
-      child: Text(
-        remaining.isNegative ? 'refreshing…' : '${remaining.inSeconds + 1}s',
-        style: TextStyle(
-          fontSize: 11,
-          fontFamily: OmniFonts.mono,
-          color: Theme.of(context).colorScheme.onSurfaceVariant,
+      label: label,
+      excludeSemantics: true,
+      child: Padding(
+        padding: const EdgeInsets.only(right: 10),
+        child: Text(
+          remaining.isNegative ? 'refreshing…' : '${remaining.inSeconds + 1}s',
+          style: TextStyle(
+            fontSize: 11,
+            fontFamily: OmniFonts.mono,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
         ),
       ),
     );

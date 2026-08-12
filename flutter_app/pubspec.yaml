@@ -40,7 +40,7 @@ dependencies:
   drift_flutter: ^0.3.1
   path_provider: ^2.1.6
   provider: ^6.1.5+1
-  flutter_secure_storage: ^10.3.1
+  flutter_secure_storage: ^11.0.0
   local_auth: ^3.0.2
   shared_preferences: ^2.5.5
   package_info_plus: ^10.2.1
@@ -53,7 +53,7 @@ dependencies:
   dio: ^5.11.0
   pointycastle: ^4.0.0
   cryptography: ^2.9.0
-  flutter_local_notifications: ^22.2.0
+  flutter_local_notifications: ^22.3.0
   flutter_foreground_task: ^10.0.0
   home_widget: ^0.9.3
   intl: ^0.20.3
@@ -62,11 +62,11 @@ dependencies:
   file_selector: ^1.1.0
   flutter_file_dialog: ^3.3.2
   path: ^1.9.1
-  sqlite3: ^3.5.0
+  sqlite3: ^3.5.1
   crypto: ^3.0.7
   in_app_purchase: ^3.3.0
   uuid: ^4.6.0
-  xml: ^6.6.1
+  xml: ^7.0.1
   battery_plus: ^7.1.1
   google_mobile_ads: ^9.0.0
   dart_smb2: 0.1.1
@@ -89,6 +89,7 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
   drift_dev: ^2.34.5
+  # 2.15.2+ needs meta >=1.18.3; Flutter 3.44.9 pins meta 1.18.0.
   build_runner: ^2.15.1
   mocktail: ^1.0.5
 

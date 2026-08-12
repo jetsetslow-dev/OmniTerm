@@ -37,6 +37,16 @@ networks:
     name: omniterm-test-internal
     internal: true
 
+volumes:
+  share-data:
+    name: omniterm-test-share-data
+  runtime-docker-run:
+    name: omniterm-test-runtime-docker-run
+  runtime-docker-data:
+    name: omniterm-test-runtime-docker-data
+  runtime-podman-data:
+    name: omniterm-test-runtime-podman-data
+
 x-ssh-common: &ssh-common
   image: lscr.io/linuxserver/openssh-server:latest
   environment: &ssh-env
@@ -74,8 +84,6 @@ services:
       # the Network Tools port scan expects it open.
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:8081:8081"
-      - "127.0.0.1:21:21"
-      - "127.0.0.1:445:445"
     networks: [edge]
 
   # HTTP origin + spare TCP listeners for the Network Tools suite. Joins `direct`'s network
@@ -89,6 +97,83 @@ services:
     depends_on: [direct]
     volumes:
       - ./fixtures/lab-http/nginx.conf:/etc/nginx/nginx.conf:ro
+    restart: "no"
+
+  # One seeded writable filesystem exposed through every share protocol Flutter can browse. NFS is
+  # deliberately absent: both apps explain that Android cannot mount it through the in-app browser.
+  # A named volume preserves edits across `up` calls; `down` remains the explicit clean reset.
+  shares:
+    build: ./fixtures/shares
+    image: omniterm-test-shares:local
+    container_name: omniterm-test-shares
+    environment:
+      OMNITERM_TEST_USER: "${OMNITERM_TEST_USER:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+      OMNITERM_TEST_PASSWORD: "${OMNITERM_TEST_PASSWORD:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+      OMNITERM_TEST_FTP_PASV_ADDRESS: "127.0.0.1"
+    volumes:
+      - share-data:/srv/share
+    ports:
+      - "127.0.0.1:21:21"
+      - "127.0.0.1:445:445"
+      - "127.0.0.1:8082:8080"
+      - "127.0.0.1:21100-21110:21100-21110"
+    networks: [edge]
+    restart: "no"
+
+  # An engine whose storage and socket are both fixture-owned. The SSH gateway below sees only this
+  # socket, so destructive container actions can never reach the developer's personal daemon.
+  runtime-docker-engine:
+    image: docker:29-dind
+    container_name: omniterm-test-runtime-docker-engine
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    volumes:
+      - runtime-docker-run:/var/run
+      - runtime-docker-data:/var/lib/docker
+    networks: [edge]
+    restart: "no"
+
+  runtime-docker:
+    build:
+      context: ./fixtures/runtime-host
+      target: docker-host
+    image: omniterm-test-runtime-docker:local
+    container_name: omniterm-test-runtime-docker
+    environment:
+      OMNITERM_TEST_USER: "${OMNITERM_TEST_USER:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+      OMNITERM_TEST_PASSWORD: "${OMNITERM_TEST_PASSWORD:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+    volumes:
+      - runtime-docker-run:/var/run
+      - ./fixtures/runtime-stack:/fixtures/runtime-stack:ro
+      - ./fixtures/large-stack/compose.yml:/fixtures/large-stack.yml:ro
+      - ../../app/src/test/resources/compose-corpus:/fixtures/compose-corpus:ro
+    ports:
+      - "127.0.0.1:2205:2222"
+    networks: [edge]
+    depends_on: [runtime-docker-engine]
+    restart: "no"
+
+  # Podman must be privileged only inside this disposable container so it can create its own user
+  # namespaces and network. Its storage is a fixture volume and no host runtime socket is mounted.
+  runtime-podman:
+    build:
+      context: ./fixtures/runtime-host
+      target: podman-host
+    image: omniterm-test-runtime-podman:local
+    container_name: omniterm-test-runtime-podman
+    privileged: true
+    environment:
+      OMNITERM_TEST_USER: "${OMNITERM_TEST_USER:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+      OMNITERM_TEST_PASSWORD: "${OMNITERM_TEST_PASSWORD:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+    volumes:
+      - runtime-podman-data:/var/lib/containers
+      - ./fixtures/runtime-stack:/fixtures/runtime-stack:ro
+      - ./fixtures/large-stack/compose.yml:/fixtures/large-stack.yml:ro
+      - ../../app/src/test/resources/compose-corpus:/fixtures/compose-corpus:ro
+    ports:
+      - "127.0.0.1:2206:2222"
+    networks: [edge]
     restart: "no"
 
   # Key-only host: password auth disabled, so this exercises the private-key credential path.

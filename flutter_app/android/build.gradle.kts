@@ -1,3 +1,5 @@
+import org.gradle.api.tasks.compile.JavaCompile
+
 allprojects {
     repositories {
         google()
@@ -17,6 +19,11 @@ subprojects {
 }
 subprojects {
     project.evaluationDependsOn(":app")
+    // Never collapse a dependency's deprecated Java calls into an unactionable two-line note.
+    // The device/build log must name the API and source so warning cleanup is reproducible.
+    tasks.withType<JavaCompile>().configureEach {
+        options.compilerArgs.add("-Xlint:deprecation")
+    }
 }
 
 tasks.register<Delete>("clean") {

@@ -164,8 +164,37 @@ Uint8List encodeTypedText(String text, {bool shift = false, bool alt = false, bo
 /// Newlines normalise to CR, matching what Enter sends, so each pasted line is submitted the way the
 /// shell expects. Sticky modifiers are deliberately ignored: a Ctrl held for one keystroke must not
 /// silently rewrite the first byte of a hundred-line paste.
-Uint8List encodePastedText(String text) =>
-    Uint8List.fromList(utf8.encode(text.replaceAll('\r\n', '\r').replaceAll('\n', '\r')));
+///
+/// [bracketed] is the remote's DECSET 2004 state, read from the emulator at the moment of the
+/// paste — see [bracketedPastePayload] for what it changes and why.
+Uint8List encodePastedText(String text, {bool bracketed = false}) {
+  final normalized = text.replaceAll('\r\n', '\r').replaceAll('\n', '\r');
+  return Uint8List.fromList(utf8.encode(bracketedPastePayload(normalized, bracketed)));
+}
+
+/// Wraps a paste in the DECSET 2004 markers when the remote asked for them.
+///
+/// Ported from `bracketedPastePayload` in `ui/AppViewModel.kt:696`, including the part that is not
+/// obvious. Bracketed paste exists so a shell treats pasted text as *text* rather than as typing —
+/// which is what stops a multi-line paste executing itself line by line. But readline treats
+/// **everything** between the markers as literal, a trailing Enter included, so a pasted command
+/// ending in a newline would be echoed at the prompt and never run. Mainstream terminals resolve
+/// that by keeping interior newlines inside the brackets, where the mode intends them to be
+/// literal, and sending any trailing CRs *after* the closing marker so they act as real Enter
+/// presses. This does the same.
+///
+/// [normalized] must already use CR line endings. Pure, so the rule can be tested without a
+/// terminal.
+String bracketedPastePayload(String normalized, bool bracketed) {
+  if (!bracketed) return normalized;
+  var end = normalized.length;
+  while (end > 0 && normalized.codeUnitAt(end - 1) == 0x0d) {
+    end--;
+  }
+  final body = normalized.substring(0, end);
+  final trailingEnters = normalized.substring(end);
+  return '\u001B[200~$body\u001B[201~$trailingEnters';
+}
 
 /// Kotlin's `String.toByteArray()` defaults to UTF-8; every sequence here is pure ASCII, for which
 /// the two encodings are identical.

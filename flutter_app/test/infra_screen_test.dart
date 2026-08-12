@@ -1,12 +1,14 @@
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:omniterm/domain/input_validation.dart';
 import 'package:omniterm/ui/navigation.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/infra/infra_screen.dart';
+import 'package:omniterm/ui/screens/infra/infra_tabs.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/infra_view_model.dart';
@@ -15,6 +17,12 @@ import 'package:provider/provider.dart';
 import 'infra_view_model_test.dart' show psRow;
 import 'monitor_view_model_test.dart' show RecordingTransport;
 import 'support/fake_secure_storage.dart';
+
+/// The shape of error this screen actually receives — the emulator's landscape sweep produced this
+/// exact class of message, and its length is what pushes the layout over.
+const _deviceLikeSshError =
+    'SSH Error: SSHChannelOpenError(2: open failed) while opening a session channel to '
+    '10.0.2.2:2205 for the container probe';
 
 void main() {
   late AppDatabase db;
@@ -63,7 +71,15 @@ void main() {
     authStatus: 'ok',
   );
 
-  Future<void> pump(WidgetTester tester, {RecordingTransport? transport}) async {
+  Future<void> pump(
+    WidgetTester tester, {
+    RecordingTransport? transport,
+    Size size = const Size(800, 600),
+    double textScale = 1,
+  }) async {
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     await app.start();
     vm = InfraViewModel(app, transport: transport);
     nav = NavigationController();
@@ -76,7 +92,10 @@ void main() {
         ],
         child: MaterialApp(
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
-          home: const Scaffold(body: InfraScreen()),
+          home: MediaQuery(
+            data: MediaQueryData(size: size, textScaler: TextScaler.linear(textScale)),
+            child: const Scaffold(body: InfraScreen()),
+          ),
         ),
       ),
     );
@@ -119,6 +138,99 @@ void main() {
       await tester.tap(find.byKey(ValueKey('infra.tab.${tab.name}')));
       await tester.pumpAndSettle();
       expect(find.byKey(ValueKey(probe)), findsOneWidget, reason: '${tab.name} did not render');
+    }
+    vm.dispose();
+  });
+
+  testWidgets('builder and resource actions wrap on a 360dp phone at 200% text', (tester) async {
+    // Negative control on the physical API-32 phone: Builder, Images and Volumes overflowed right.
+    String? errorLocation;
+    final previousErrorHandler = FlutterError.onError;
+    FlutterError.onError = (details) {
+      final match = RegExp(r'([A-Za-z_]+\.dart):(\d+):(\d+)').firstMatch(details.toString());
+      errorLocation = match?.group(0);
+      previousErrorHandler?.call(details);
+    };
+    addTearDown(() => FlutterError.onError = previousErrorHandler);
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester, transport: withStack(), size: const Size(360, 720), textScale: 2);
+
+    for (final tab in [InfraTab.builder, InfraTab.images, InfraTab.volumes]) {
+      vm.activeTab = tab;
+      await tester.pumpAndSettle();
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: '${tab.name} overflowed${errorLocation == null ? '' : ' at $errorLocation'}',
+      );
+      errorLocation = null;
+    }
+    vm.dispose();
+  });
+
+  testWidgets('the Compose raw YAML editor fits a 360dp phone at 200% text', (tester) async {
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester, transport: withStack(), size: const Size(360, 720), textScale: 2);
+    vm.activeTab = InfraTab.builder;
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('infra.builder.rawToggle')));
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const ValueKey('infra.builder.raw')), findsOneWidget);
+    expect(find.byKey(const ValueKey('codeEditor.find')), findsOneWidget);
+    expect(find.byKey(const ValueKey('codeEditor.goToLine')), findsOneWidget);
+    vm.dispose();
+  });
+
+  testWidgets('the transport-error state scrolls on a short 200% landscape phone', (tester) async {
+    // Found by the device surface sweep the moment defect 109 made this branch reachable: until
+    // then `load()` parsed `'SSH Error: …'` as data and never set `vm.error`, so this layout had
+    // never once been rendered. It overflowed by 49px in landscape at 200% across every theme.
+    await repo.insertServer(server(name: 'nas'));
+    await pump(
+      tester,
+      transport: RecordingTransport(fallback: _deviceLikeSshError),
+      size: const Size(914, 411),
+      textScale: 2,
+    );
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('infra.error')), findsOneWidget, reason: 'the branch is live');
+
+    // A RenderFlex overflow is reported through FlutterError.onError during paint, not thrown, so
+    // `takeException` does not see it — the first version of this test passed with the overflow
+    // still present. The sibling test above captures it the same way.
+    final overflows = <String>[];
+    final previous = FlutterError.onError;
+    FlutterError.onError = (details) {
+      if (details.toString().contains('overflowed')) overflows.add(details.toString());
+      previous?.call(details);
+    };
+    addTearDown(() => FlutterError.onError = previous);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await pump(
+      tester,
+      transport: RecordingTransport(fallback: _deviceLikeSshError),
+      size: const Size(914, 411),
+      textScale: 2,
+    );
+    await tester.pumpAndSettle();
+
+    expect(overflows, isEmpty, reason: 'the error state overflowed: ${overflows.join('; ')}');
+    vm.dispose();
+  });
+
+  testWidgets('empty resource states scroll on a short 200% landscape phone', (tester) async {
+    // Negative control on the physical API-32 phone: the old centred empty Column overflowed by
+    // 40px on Infra and each empty resource subtab.
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester, transport: RecordingTransport(), size: const Size(720, 150), textScale: 2);
+
+    for (final tab in [InfraTab.images, InfraTab.volumes, InfraTab.networks]) {
+      vm.activeTab = tab;
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: '${tab.name} empty state overflowed');
     }
     vm.dispose();
   });
@@ -570,6 +682,64 @@ void main() {
       vm.dispose();
     });
 
+    testWidgets('a replica count above the cap is refused and says so', (tester) async {
+      // Compose bounds this twice — `take(3)` on the input and `countError(..., max = 999)` — and
+      // this port bounded it neither way. `up --scale` with a mistyped count is not a slow
+      // operation; it is an attempt to start that many containers on the host.
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, transport: withStack());
+      await openServiceMenu(tester);
+      await tester.tap(find.text('Scale…'));
+      await tester.pumpAndSettle();
+
+      // Typed rather than set: the length limit is part of the fix, so a paste of six digits must
+      // not survive to become a request.
+      await tester.enterText(find.byKey(const ValueKey('infra.scale.replicas')), '999999');
+      await tester.pumpAndSettle();
+
+      final field = tester.widget<TextField>(find.byKey(const ValueKey('infra.scale.replicas')));
+      expect(field.controller!.text, '999', reason: 'the field itself stops at three digits');
+      expect(
+        tester.widget<FilledButton>(find.byKey(const ValueKey('infra.scale.confirm'))).onPressed,
+        isNotNull,
+        reason: '999 is the cap, not past it',
+      );
+
+      await tester.tap(find.byKey(const ValueKey('infra.scale.cancel')));
+      await tester.pumpAndSettle();
+      vm.dispose();
+    });
+
+    test('the replica bound is the one Compose enforces', () {
+      // The three-digit formatter means no widget test can distinguish 999 from 999999: nothing
+      // larger can be typed, so the bound itself has to be asserted here or it is uncovered. It
+      // was — widening the constant left the whole suite green.
+      expect(infraMaxReplicas, 999);
+      expect(countError('1000', min: 0, max: infraMaxReplicas), 'Must be 0-999');
+      expect(countError('999', min: 0, max: infraMaxReplicas), isNull);
+    });
+
+    testWidgets('an empty count is refused rather than sent as nothing', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, transport: withStack());
+      await openServiceMenu(tester);
+      await tester.tap(find.text('Scale…'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byKey(const ValueKey('infra.scale.replicas')), '');
+      await tester.pumpAndSettle();
+
+      expect(
+        tester.widget<FilledButton>(find.byKey(const ValueKey('infra.scale.confirm'))).onPressed,
+        isNull,
+      );
+      expect(find.text('Required'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('infra.scale.cancel')));
+      await tester.pumpAndSettle();
+      vm.dispose();
+    });
+
     testWidgets('scaling to zero is allowed, but a negative count is not', (tester) async {
       // Draining a service without tearing the stack down is a real thing to want; a negative
       // replica count is a typo.
@@ -586,11 +756,18 @@ void main() {
         isNotNull,
       );
 
+      // A negative is now unrepresentable rather than rejected: the digits-only formatter strips
+      // the minus, exactly as Compose's `filter(Char::isDigit)` does, so `-2` arrives as `2`. The
+      // `value < 0` branch in `replicaError` is kept as the boundary behind that, for a count that
+      // reaches it without passing through the field.
       await tester.enterText(find.byKey(const ValueKey('infra.scale.replicas')), '-2');
       await tester.pumpAndSettle();
+      final field = tester.widget<TextField>(find.byKey(const ValueKey('infra.scale.replicas')));
+      expect(field.controller!.text, '2', reason: 'the minus never reaches the count');
       expect(
-        tester.widget<FilledButton>(find.byKey(const ValueKey('infra.scale.confirm'))).onPressed,
-        isNull,
+        countError('-2', min: 0, max: 999),
+        'Must be 0-999',
+        reason: 'the boundary behind the field still refuses one',
       );
 
       await tester.tap(find.byKey(const ValueKey('infra.scale.cancel')));

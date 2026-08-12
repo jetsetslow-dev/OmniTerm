@@ -173,6 +173,7 @@ class _BackupScreenState extends State<BackupScreen> {
         context,
         title: 'Choose a passphrase',
         confirmLabel: 'Create backup',
+        minLength: BackupViewModel.passphraseMinLength,
         // Stated at the point of decision, where it can still change what the user does.
         note: 'Without this passphrase the backup cannot be opened. Nobody can reset it.',
       );
@@ -422,6 +423,7 @@ Future<String?> _askPassphrase(
   required String title,
   required String confirmLabel,
   required String note,
+  int minLength = 0,
 }) => showDialog<String>(
   context: context,
   builder: (_) => _PromptDialog(
@@ -430,6 +432,7 @@ Future<String?> _askPassphrase(
     note: note,
     confirmLabel: confirmLabel,
     obscure: true,
+    minLength: minLength,
   ),
 );
 
@@ -441,6 +444,7 @@ class _PromptDialog extends StatefulWidget {
     required this.confirmLabel,
     this.note,
     this.obscure = false,
+    this.minLength = 0,
   });
 
   final String dialogKey;
@@ -449,12 +453,18 @@ class _PromptDialog extends StatefulWidget {
   final String? note;
   final bool obscure;
 
+  /// Shortest accepted value. The confirm button stays disabled below it, so the dialog cannot hand
+  /// back something the caller will refuse — which is the shape of the defect this fixes.
+  final int minLength;
+
   @override
   State<_PromptDialog> createState() => _PromptDialogState();
 }
 
 class _PromptDialogState extends State<_PromptDialog> {
   final _controller = TextEditingController();
+
+  bool get _longEnough => _controller.text.length >= widget.minLength;
 
   @override
   void dispose() {
@@ -480,7 +490,13 @@ class _PromptDialogState extends State<_PromptDialog> {
             controller: _controller,
             autofocus: true,
             obscureText: widget.obscure,
-            decoration: omniInputDecoration(context),
+            onChanged: (_) => setState(() {}),
+            decoration: omniInputDecoration(
+              context,
+              // The requirement is on the field, not in an error after the fact. A user who is told
+              // the number while typing never meets the refusal.
+              labelText: widget.minLength > 0 ? 'At least ${widget.minLength} characters' : null,
+            ),
           ),
         ],
       ),
@@ -492,7 +508,7 @@ class _PromptDialogState extends State<_PromptDialog> {
         ),
         TextButton(
           key: ValueKey('${widget.dialogKey}.confirm'),
-          onPressed: () => Navigator.of(context).pop(_controller.text),
+          onPressed: _longEnough ? () => Navigator.of(context).pop(_controller.text) : null,
           child: Text(widget.confirmLabel),
         ),
       ],

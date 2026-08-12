@@ -33,13 +33,8 @@ class WebDavRemoteFsClient extends RemoteFsClient {
   final Dio _dio;
   CancelToken _cancel = CancelToken();
 
-  String _url(String path) {
-    final segments = path
-        .split('/')
-        .where((segment) => segment.isNotEmpty)
-        .map(Uri.encodeComponent);
-    return '$_origin/${segments.join('/')}';
-  }
+  String _url(String path, {bool collection = false}) =>
+      '$_origin${webDavResourcePath(path, collection: collection)}';
 
   void _check(Response<dynamic> response, Iterable<int> accepted, String action, String path) {
     if (!accepted.contains(response.statusCode)) {
@@ -53,7 +48,10 @@ class WebDavRemoteFsClient extends RemoteFsClient {
   @override
   Future<List<SftpFile>> list(String path) async {
     final response = await _dio.request<String>(
-      _url(path),
+      // A WebDAV collection has a canonical trailing slash. Apache and many managed servers
+      // redirect `/folder` to `/folder/`; Dio does not replay a PROPFIND through that redirect, and
+      // even clients that do may turn the custom method into GET. Address the collection directly.
+      _url(path, collection: true),
       options: Options(
         method: 'PROPFIND',
         headers: const {'Depth': '1'},
@@ -66,7 +64,7 @@ class WebDavRemoteFsClient extends RemoteFsClient {
     _check(response, const [207], 'WebDAV listing', path);
     final document = XmlDocument.parse(response.data ?? '');
     final wantedPath = Uri.decodeComponent(
-      Uri.parse(_url(path)).path,
+      Uri.parse(_url(path, collection: true)).path,
     ).replaceFirst(RegExp(r'/+$'), '');
     final files = <SftpFile>[];
     for (final item in document.descendants.whereType<XmlElement>().where(
@@ -79,13 +77,13 @@ class WebDavRemoteFsClient extends RemoteFsClient {
               .map((node) => node.innerText.trim())
               .firstOrNull ??
           '';
-      final href = Uri.decodeComponent(text('href')).replaceFirst(RegExp(r'/+$'), '');
+      final href = webDavHrefToPath(text('href')).replaceFirst(RegExp(r'/+$'), '');
       if (href == wantedPath || href.isEmpty) continue;
       final name = text('displayname').isNotEmpty ? text('displayname') : href.split('/').last;
       final isDirectory = item.descendants.whereType<XmlElement>().any(
         (node) => node.name.local == 'collection',
       );
-      final modified = DateTime.tryParse(text('getlastmodified'));
+      final modified = parseWebDavDate(text('getlastmodified'));
       files.add(
         SftpFile(
           name: name,
@@ -182,9 +180,10 @@ class WebDavRemoteFsClient extends RemoteFsClient {
       }
       bytes.addAll(chunk);
     });
+    final completed = subscription.asFuture<void>();
     await downloadTo(path, controller.sink);
     await controller.close();
-    await subscription.asFuture<void>();
+    await completed;
     return utf8.decode(bytes, allowMalformed: true);
   }
 
@@ -206,4 +205,83 @@ class WebDavRemoteFsClient extends RemoteFsClient {
     _cancel.cancel('Connection closed');
     _dio.close(force: true);
   }
+}
+
+/// Turns a `<D:href>` into a server-relative path.
+///
+/// hrefs are legal either way: RFC 4918 allows an absolute URL or an absolute path, and real servers
+/// send both. This port compared the raw href against the requested path, so against a server
+/// answering with absolute URLs the collection never matched itself and **appeared as an entry
+/// inside its own listing**. Compose strips the scheme and authority first (`hrefToPath`,
+/// `data/shares/WebDavFsClient.kt:203`); this does the same.
+String webDavHrefToPath(String href) {
+  var raw = href.trim();
+  final lower = raw.toLowerCase();
+  if (lower.startsWith('http://') || lower.startsWith('https://')) {
+    final afterScheme = raw.substring(raw.indexOf('://') + 3);
+    final slash = afterScheme.indexOf('/');
+    raw = slash >= 0 ? afterScheme.substring(slash) : '/';
+  }
+  try {
+    return Uri.decodeComponent(raw);
+  } catch (_) {
+    // A badly encoded href is still better used verbatim than dropped. `decodeComponent` throws
+    // ArgumentError rather than FormatException for a stray `%`, so this catches both.
+    return raw;
+  }
+}
+
+const _httpDateMonths = {
+  'jan': 1,
+  'feb': 2,
+  'mar': 3,
+  'apr': 4,
+  'may': 5,
+  'jun': 6,
+  'jul': 7,
+  'aug': 8,
+  'sep': 9,
+  'oct': 10,
+  'nov': 11,
+  'dec': 12,
+};
+
+final _rfc1123 = RegExp(
+  r'^[A-Za-z]{3},\s+(\d{1,2})\s+([A-Za-z]{3})\s+(\d{4})\s+(\d{2}):(\d{2}):(\d{2})',
+);
+
+/// Parses a WebDAV `getlastmodified`, which is an HTTP-date, not an ISO 8601 timestamp.
+///
+/// `DateTime.tryParse` returns **null** for `Tue, 11 Aug 2026 10:00:00 GMT` — the format RFC 4918
+/// requires for this property. This port used `tryParse` alone, so every file on every WebDAV share
+/// came back with a modified time of zero: no date in the listing, and sorting by date silently
+/// ranked everything equal. Compose parses it with an explicit RFC 1123 format
+/// (`data/shares/WebDavFsClient.kt:215`).
+///
+/// ISO is still accepted afterwards, because a few servers send it despite the spec.
+DateTime? parseWebDavDate(String value) {
+  final text = value.trim();
+  if (text.isEmpty) return null;
+  final match = _rfc1123.firstMatch(text);
+  if (match != null) {
+    final month = _httpDateMonths[match.group(2)!.toLowerCase()];
+    if (month != null) {
+      return DateTime.utc(
+        int.parse(match.group(3)!),
+        month,
+        int.parse(match.group(1)!),
+        int.parse(match.group(4)!),
+        int.parse(match.group(5)!),
+        int.parse(match.group(6)!),
+      );
+    }
+  }
+  return DateTime.tryParse(text);
+}
+
+/// Encodes a WebDAV resource path, preserving the canonical slash for a collection request.
+String webDavResourcePath(String path, {bool collection = false}) {
+  final segments = path.split('/').where((segment) => segment.isNotEmpty).map(Uri.encodeComponent);
+  final encoded = '/${segments.join('/')}';
+  return collection && encoded != '/' ? '$encoded/' : encoded;
 }

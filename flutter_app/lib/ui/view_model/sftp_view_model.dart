@@ -156,6 +156,16 @@ class SftpViewModel extends ChangeNotifier {
   /// machine entirely.
   NetworkShare? _browsedShare;
 
+  // Share clients may own a native session and event channel. Keep exactly one for the browsing
+  // session instead of resolving a fresh client for every list/read/write call: rapid editor
+  // read-save-reread cycles otherwise race the previous native stream's cancellation (and leak the
+  // authenticated sessions). Host SFTP clients remain resolver-owned because that transport has
+  // its own connection pool and must pick up credential edits emitted by AppState.
+  RemoteFsClient? _shareClient;
+  Future<RemoteFsClient?>? _shareClientOpening;
+  int? _shareClientForId;
+  int _shareClientGeneration = 0;
+
   NetworkShare? get browsedShare => _browsedShare;
 
   /// True when the Files tab has something to show — a host or a share.
@@ -166,6 +176,7 @@ class SftpViewModel extends ChangeNotifier {
 
   /// Open [share] in the Files tab.
   Future<void> openShare(NetworkShare share) async {
+    _resetShareClient();
     _browsedShare = share;
     // Paths and bookmarks belong to whatever was open before; carrying either across would point a
     // listing — or a delete — at a directory on a different machine.
@@ -179,12 +190,23 @@ class SftpViewModel extends ChangeNotifier {
     // The share's own bookmarks, not the host's: `/etc` on the machine you were browsing is not a
     // path on this share, and starring one there must not fill in the other.
     await _loadBookmarksFrom(bookmarkStorageKey(shareId: share.id)!, seedDefaults: false);
-    await openPath('');
+    // SMB consumes the first path segment as the share name; FTP/SFTP/WebDAV use the configured
+    // path as their initial directory. Calling `openPath('')` here discarded that distinction and
+    // made every non-SMB profile open the protocol root even though its saved path was shown in the
+    // Shares card. Resolve it through the same helper as Kotlin before issuing the first listing.
+    final client = await _client;
+    if (client == null) {
+      _error = _unavailable(browsedServer, 'Browsing shares is unavailable in this build.');
+      _safeNotify();
+      return;
+    }
+    await openPath(await ShareClients.startPath(share, client));
   }
 
   /// Return to browsing hosts.
   Future<void> closeShare() async {
     if (_browsedShare == null) return;
+    _resetShareClient();
     _browsedShare = null;
     _path = '';
     _entries = const [];
@@ -200,11 +222,48 @@ class SftpViewModel extends ChangeNotifier {
   /// The client for whatever is currently being browsed, or null when there is none.
   Future<RemoteFsClient?> get _client async {
     final share = _browsedShare;
-    if (share != null) return shareClientFor?.call(share);
+    if (share != null) {
+      if (_shareClientForId != share.id) {
+        _resetShareClient();
+        _shareClientForId = share.id;
+      }
+      final cached = _shareClient;
+      if (cached != null) return cached;
+      final pending = _shareClientOpening;
+      if (pending != null) return pending;
+      final resolve = shareClientFor;
+      if (resolve == null) return null;
+
+      final generation = _shareClientGeneration;
+      final opening = resolve(share);
+      _shareClientOpening = opening;
+      try {
+        final client = await opening;
+        if (_shareClientGeneration == generation && _browsedShare?.id == share.id) {
+          _shareClient = client;
+          return client;
+        }
+        client?.close();
+        return null;
+      } finally {
+        if (identical(_shareClientOpening, opening)) {
+          _shareClientOpening = null;
+        }
+      }
+    }
     final server = browsedServer;
     final resolve = fsClientFor;
     if (server == null || resolve == null) return null;
     return resolve(server);
+  }
+
+  void _resetShareClient() {
+    _shareClientGeneration++;
+    _shareClient?.close();
+    _shareClient = null;
+    _shareClientOpening = null;
+    _shareClientForId = null;
+    _editingClient = null;
   }
 
   bool _disposed = false;
@@ -358,8 +417,18 @@ class SftpViewModel extends ChangeNotifier {
   }
 
   /// Reads the stored sort order back.
+  ///
+  /// Falls back to the Android app's `share_sort` when this app has written nothing yet. Kotlin
+  /// keeps two independent sorts — the Files tab's is not persisted at all, the share browser's is
+  /// (`AppViewModel.kt:7860`) — while this port has one sort serving both, since a share takes over
+  /// the Files tab. Without this an upgrading user's saved choice is silently discarded, which is
+  /// the same reasoning that keeps `app_lock_grace_ms` under its original key.
+  ///
+  /// `fromStored` already lowercases, so Kotlin's `NameAsc` spelling reads correctly.
   Future<void> _restoreSortOption() async {
-    final stored = await _app.repository.getSetting('sftp_sort');
+    final stored =
+        await _app.repository.getSetting('sftp_sort') ??
+        await _app.repository.getSetting('share_sort');
     final option = SftpSortOption.fromStored(stored);
     if (_disposed || option == _sortOption) return;
     _sortOption = option;
@@ -665,6 +734,12 @@ class SftpViewModel extends ChangeNotifier {
   /// Whether a host-wide search can be run: it needs a shell, which a share does not have.
   bool get canSearchHost => canMeasureSize;
 
+  /// A network share can be searched too, by walking it — see [searchShare].
+  bool get canSearchShare => _browsedShare != null;
+
+  /// True when the current browsing target can be searched at all, however it is done.
+  bool get canSearch => canSearchHost || canSearchShare;
+
   List<RemoteSearchHit>? _searchHits;
   bool _searchTruncated = false;
   bool _searching = false;
@@ -684,6 +759,77 @@ class SftpViewModel extends ChangeNotifier {
     _searchHits = null;
     _searchTruncated = false;
     _safeNotify();
+  }
+
+  /// Searches the open network share for [query] by walking it.
+  ///
+  /// Ported from `runShareSearch` (`ui/AppViewModel.kt:8007`). A share is not a shell: SMB, FTP,
+  /// WebDAV and NFS have no `find` to run, so the only way to search one is to list directories and
+  /// descend. [searchHost] refuses outright when a share is open (`_browsedShare != null`) and the
+  /// button was hidden with it, which left **no way at all** to search a share in this port.
+  ///
+  /// Bounded twice, as Compose bounds it: at [shareSearchMaxHits] results and at
+  /// [shareSearchDirBudget] directories visited. A share with a deep tree on a slow link would
+  /// otherwise walk until the user gave up, with nothing on screen to say why.
+  Future<void> searchShare(String query) async {
+    final share = _browsedShare;
+    final term = query.trim();
+    if (share == null || term.isEmpty || _searching) return;
+
+    _searching = true;
+    _searchHits = null;
+    _searchTruncated = false;
+    _error = null;
+    _safeNotify();
+    try {
+      final client = await _client;
+      if (client == null) {
+        _error = _unavailable(null, 'Searching this share is unavailable in this build.');
+        return;
+      }
+      final matches = shareSearchMatcher(term);
+      final hits = <RemoteSearchHit>[];
+      final queue = <String>[_path.isEmpty ? '/' : _path];
+      var dirBudget = shareSearchDirBudget;
+
+      while (queue.isNotEmpty && hits.length < shareSearchMaxHits && dirBudget > 0) {
+        final dir = queue.removeAt(0);
+        dirBudget--;
+        List<SftpFile> listing;
+        try {
+          listing = await client.list(dir);
+        } catch (_) {
+          // One unreadable directory is not a failed search. Compose skips it the same way, and a
+          // share with a single permission-denied folder still returns everything else.
+          continue;
+        }
+        // The user navigated away or closed the share while the walk was running.
+        if (_browsedShare?.id != share.id) return;
+        for (final entry in listing) {
+          final full = joinPath(dir, entry.name);
+          if (matches(entry.name)) {
+            hits.add(RemoteSearchHit(full, isDirectory: entry.isDirectory));
+            if (hits.length >= shareSearchMaxHits) {
+              _searchTruncated = true;
+              break;
+            }
+          }
+          if (entry.isDirectory) queue.add(full);
+        }
+      }
+      // Anything left to visit means the answer is partial, whichever budget ran out.
+      if (queue.isNotEmpty && (hits.length >= shareSearchMaxHits || dirBudget <= 0)) {
+        _searchTruncated = true;
+      }
+      hits.sort((a, b) => a.path.toLowerCase().compareTo(b.path.toLowerCase()));
+      _searchHits = hits;
+    } catch (e) {
+      _error = 'Search failed: $e';
+      _searchHits = const [];
+    } finally {
+      _searching = false;
+      _safeNotify();
+    }
   }
 
   /// Searches the host below the current folder for [query].
@@ -978,7 +1124,10 @@ class SftpViewModel extends ChangeNotifier {
 
   Future<RemoteFsClient?> _clientForEndpoint(_ClipboardEndpoint endpoint) async {
     final share = endpoint.share;
-    if (share != null) return shareClientFor?.call(share);
+    if (share != null) {
+      if (_browsedShare?.id == share.id) return _client;
+      return shareClientFor?.call(share);
+    }
     final server = _app.servers.where((server) => server.id == endpoint.serverId).firstOrNull;
     return server == null ? null : fsClientFor?.call(server);
   }
@@ -1460,6 +1609,10 @@ class SftpViewModel extends ChangeNotifier {
     Future<void> Function(RemoteFsClient client) action, {
     required String success,
   }) async {
+    // One mutation at a time. Two overlapping calls both finish by clearing `_loading`, refreshing
+    // and overwriting `_error`/`_status`, so whichever returns last decides what the user is told —
+    // a delete that failed can be reported as a success because a rename beside it worked.
+    if (_loading) return;
     final client = await _client;
     if (client == null) {
       _error = _unavailable(browsedServer, 'File operations are unavailable in this build.');
@@ -2070,6 +2223,7 @@ class SftpViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _resetShareClient();
     _app.removeListener(_onAppChanged);
     super.dispose();
   }

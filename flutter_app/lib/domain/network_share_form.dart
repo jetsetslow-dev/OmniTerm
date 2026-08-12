@@ -139,6 +139,10 @@ class NetworkShareDraft {
     return copyWith(
       protocol: next,
       port: wasDefault ? (next.defaultPort > 0 ? '${next.defaultPort}' : '') : null,
+      // Switching to SFTP with anonymous already on would leave the draft invalid behind a toggle
+      // that is disabled for SFTP — unfixable without switching protocol back. Compose clears it on
+      // the same transition (`ui/SftpScreen.kt:1389`).
+      anonymous: next == ShareProtocol.sftp ? false : null,
     );
   }
 
@@ -170,6 +174,12 @@ class NetworkShareDraft {
     if (protocol == ShareProtocol.smb && sharePath.trim().isEmpty) {
       // SMB connects to a *share*, not to a host; without one there is nothing to open.
       found['sharePath'] = 'SMB needs a share name.';
+    }
+    // SFTP is SSH, and SSH has no anonymous mode: a share saved this way can never connect, and
+    // the form has just hidden the username field that would have fixed it. Compose refuses the
+    // same combination at `ui/SftpScreen.kt:1351`.
+    if (protocol == ShareProtocol.sftp && anonymous) {
+      found['anonymous'] = 'SFTP needs a username or credential profile.';
     }
     if (!anonymous && authProfileId == null && username.trim().isEmpty) {
       found['username'] = 'Enter a username, pick a credential profile, or tick anonymous.';

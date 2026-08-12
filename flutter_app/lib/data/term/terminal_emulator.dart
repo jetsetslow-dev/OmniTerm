@@ -281,8 +281,18 @@ class TerminalEmulator implements TerminalSink {
     );
   }
 
-  /// Take over another emulator's history — used when a reconnect replaces the live session but the
-  /// user's scrollback must survive.
+  /// Take over another emulator's history, leaving this one's live screen alone.
+  ///
+  /// **Currently unreferenced.** Kotlin's counterpart exists for one caller — the persistent-tmux
+  /// history resync at `ui/AppViewModel.kt:5021`, which re-parses a `capture-pane` dump through a
+  /// scratch emulator at the live grid's width and swaps the result in. That feature is not ported
+  /// (parity ledger 99), so this primitive has nothing to serve yet. It is kept rather than deleted
+  /// because it is what the port of that feature will call.
+  ///
+  /// The doc this replaces claimed it was "used when a reconnect replaces the live session". Nothing
+  /// reconnects through it, in either app; the sentence described a plausible use rather than a real
+  /// one, which is worth more than a stale reference — a comment that invents a caller makes dead
+  /// code look wired.
   void adoptScrollbackFrom(TerminalEmulator source) {
     if (identical(source, this)) return;
     _scrollback

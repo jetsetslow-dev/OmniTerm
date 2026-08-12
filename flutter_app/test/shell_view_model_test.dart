@@ -1,3 +1,5 @@
+import 'package:omniterm/platform/shortcut_helper.dart';
+import 'package:flutter/services.dart';
 import 'dart:async';
 import 'dart:convert';
 
@@ -15,6 +17,19 @@ import 'package:omniterm/ui/view_model/shell_view_model.dart';
 
 import 'support/fake_secure_storage.dart';
 import 'support/fake_shell_transport.dart';
+
+/// Records what would have been pushed to the launcher, instead of calling the platform.
+class _RecordingShortcuts extends ShortcutHelper {
+  _RecordingShortcuts() : super(channel: const MethodChannel('omniterm/shortcuts.test'));
+
+  final List<(int, int)> splits = [];
+
+  @override
+  Future<bool> pushSplit(Server first, Server second) async {
+    splits.add((first.id, second.id));
+    return true;
+  }
+}
 
 void main() {
   late AppDatabase db;
@@ -78,6 +93,60 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     return vm = ShellViewModel(app, transport: ssh ?? transport);
   }
+
+  group('the split launcher shortcut', () {
+    /// Defect 76. `ShortcutHelper.pushSplit` and its whole native implementation existed, and
+    /// nothing ever called it — so the shortcut Kotlin offers whenever two hosts share the screen
+    /// (`AppViewModel.kt:1712`) could never appear.
+    ///
+    /// Assigns the shared `vm` so the suite's teardown disposes it, and waits the same zero delay
+    /// `start` does: the host list arrives on a drift watch stream and is not populated when
+    /// `app.start()` returns.
+    Future<ShellViewModel> startWith({ShortcutHelper? shortcuts}) async {
+      await app.start();
+      await Future<void>.delayed(Duration.zero);
+      return vm = ShellViewModel(app, transport: transport, shortcuts: shortcuts);
+    }
+
+    test('splitting offers the pair to the launcher', () async {
+      final shortcuts = _RecordingShortcuts();
+      await repo.insertServer(server(name: 'nas'));
+      await repo.insertServer(server(name: 'db'));
+      final model = await startWith(shortcuts: shortcuts);
+      for (final host in app.servers) {
+        await model.connect(host);
+      }
+
+      expect(model.sessions, hasLength(2));
+      expect(shortcuts.splits, isEmpty, reason: 'connecting alone is not a split');
+
+      final other = model.sessions.firstWhere((s) => s.id != model.current!.id);
+      final currentServerId = model.current!.serverId;
+      model.splitWith(other.id);
+
+      expect(shortcuts.splits, hasLength(1));
+      expect(
+        shortcuts.splits.single,
+        (currentServerId, other.serverId),
+        reason: 'the pair is recorded in pane order, so the shortcut reopens the same layout',
+      );
+    });
+
+    test('with no launcher support, no shortcut and no failure', () async {
+      // Every other ShortcutHelper action degrades this way; failing to offer a shortcut must never
+      // interrupt opening a terminal.
+      await repo.insertServer(server(name: 'nas'));
+      await repo.insertServer(server(name: 'db'));
+      final model = await startWith();
+      for (final host in app.servers) {
+        await model.connect(host);
+      }
+      final other = model.sessions.firstWhere((s) => s.id != model.current!.id);
+
+      expect(() => model.splitWith(other.id), returnsNormally);
+      expect(model.splitSession?.id, other.id);
+    });
+  });
 
   String sent(FakeShellTransport t) =>
       t.opened.last.writes.map((b) => utf8.decode(b, allowMalformed: true)).join();
@@ -280,6 +349,161 @@ void main() {
       expect(transport.opened.last.writes, hasLength(1), reason: 'contiguous');
       expect(sent(transport), 'echo one\recho two');
       expect(vm.ctrl, isTrue, reason: 'the modifier still belongs to the next keystroke');
+    });
+
+    test('a paste is bracketed once the remote turns DECSET 2004 on', () async {
+      // The defect this covers is the wiring, not the payload: the emulator tracked the mode and
+      // nothing asked it, so a multi-line paste ran line by line on a shell that had explicitly
+      // asked for it to arrive as text. Driven through the emulator rather than by setting a flag,
+      // because "the remote enabled it" is the only way this is ever true in the app.
+      await repo.insertServer(server(name: 'nas'));
+      await start();
+      await vm.connect(vm.server!);
+
+      transport.opened.last.emit('[?2004h');
+      await Future<void>.delayed(Duration.zero);
+
+      vm.paste('echo one\necho two\n');
+
+      expect(sent(transport), '[200~echo one\recho two[201~\r');
+    });
+
+    test('a paste is plain again once the remote turns it off', () async {
+      await repo.insertServer(server(name: 'nas'));
+      await start();
+      await vm.connect(vm.server!);
+
+      transport.opened.last.emit('[?2004h');
+      await Future<void>.delayed(Duration.zero);
+      transport.opened.last.emit('[?2004l');
+      await Future<void>.delayed(Duration.zero);
+
+      vm.paste('echo one\n');
+
+      expect(sent(transport), 'echo one\r');
+    });
+
+    group('persistent tmux scrollback', () {
+      /// Scrolls the session up so it is no longer following the tail, then delivers output — the
+      /// exact condition tmux collapses, and the only one in which a capture is worth its round
+      /// trip.
+      Future<void> scrollUpWithOutputPending(ShellSession session) async {
+        // Enough output to have a history to scroll into: an empty buffer clamps `scrollBy` to the
+        // tail, so the session never stops following it and nothing is ever pending.
+        for (var i = 0; i < 60; i++) {
+          transport.opened.last.emit('line $i\r\n');
+        }
+        // `emit` publishes on a stream, so the emulator has not seen any of that until the
+        // listener runs — scrolling before it does would clamp against an empty buffer.
+        await Future<void>.delayed(Duration.zero);
+
+        session.scrollBy(-5);
+        transport.opened.last.emit('a burst the client did not keep up with\r\n');
+        await Future<void>.delayed(Duration.zero);
+      }
+
+      test('scrollback the client never received is fetched and adopted', () async {
+        // The defect: tmux does not stream every line to an attached client, so rows the user never
+        // had on screen are simply missing locally and are not recoverable from this side. Kotlin
+        // fetches them from the pane (`ui/AppViewModel.kt:4967`); this port did not fetch them at
+        // all, so scrolling up after a reattach showed only what tmux had replayed.
+        await repo.insertServer(server(name: 'nas', persistent: true));
+        await start();
+        await vm.connect(vm.server!);
+        final session = vm.current!;
+        // Longer than what the client holds locally, which is the case that matters: the pane knows
+        // rows this client never received.
+        transport.streamChunks = [List.generate(90, (i) => 'pane-history-$i').join('\n')];
+
+        await scrollUpWithOutputPending(session);
+        expect(
+          session.scrollbackDirty,
+          isTrue,
+          reason: 'output while scrolled up may have been collapsed',
+        );
+
+        final delta = await vm.resyncTmuxScrollback(session);
+
+        expect(transport.commands.last, contains('capture-pane'));
+        expect(delta, greaterThan(0), reason: 'the pane held more rows than the client did');
+        expect(session.scrollbackDirty, isFalse);
+
+        // The rows themselves, not just a count. The adoption replaces the scrollback wholesale —
+        // Kotlin does the same — so the point is that what the client never received is now there.
+        final text = session.emulator
+            .snapshot()
+            .rows
+            .map((r) => r.spans.map((sp) => sp.text).join())
+            .join('\n');
+        expect(text, contains('pane-history-0'));
+        expect(text, contains('pane-history-89'));
+      });
+
+      test('a pane change is resolved by asking tmux, over the side channel', () async {
+        // Kotlin resolves the active pane with an exec rather than through the control
+        // conversation (`data/RemoteParsers.kt:202`), so the query is answerable while the control
+        // stream is mid-burst.
+        await repo.insertServer(server(name: 'nas', persistent: true));
+        await start();
+        await vm.connect(vm.server!, controlMode: true);
+        final session = vm.current!;
+        expect(session.controlMode, isTrue, reason: 'the guard under test only applies here');
+        transport.streamChunks = ['%9\n'];
+
+        expect(await vm.refreshControlActivePane(session), isTrue);
+
+        expect(transport.commands.last, contains("display-message -p -t"));
+        expect(transport.commands.last, contains("'#{pane_id}'"));
+        expect(session.controlPaneId, '%9');
+        expect(
+          session.scrollbackDirty,
+          isTrue,
+          reason: 'the new pane has history this client has never seen',
+        );
+      });
+
+      test('an answer that is not a pane id is refused rather than addressed', () async {
+        // The query ends in `|| true`, so a tmux that has gone away answers with an empty string.
+        // Adopting it would point send-keys at nothing and silently swallow every keystroke.
+        await repo.insertServer(server(name: 'nas', persistent: true));
+        await start();
+        await vm.connect(vm.server!, controlMode: true);
+        final session = vm.current!;
+        transport.streamChunks = [''];
+
+        expect(await vm.refreshControlActivePane(session), isFalse);
+        expect(session.controlPaneId, isNull);
+      });
+
+      test('a session that is not persistent is never captured', () async {
+        // The round trip is only meaningful for a tmux pane. An ordinary PTY has no server-side
+        // history to fetch, and asking for one would be a command per scroll gesture.
+        await repo.insertServer(server(name: 'nas'));
+        await start();
+        await vm.connect(vm.server!);
+        final session = vm.current!;
+        final before = transport.commands.length;
+
+        await scrollUpWithOutputPending(session);
+        expect(await vm.resyncTmuxScrollback(session), 0);
+
+        expect(transport.commands.length, before, reason: 'no command may be sent');
+      });
+
+      test('an empty capture leaves the flag armed, so a later scroll retries', () async {
+        // Empty is the `#{alternate_on}` guard firing: a TUI owns the pane, and its frames are not
+        // history. Clearing the flag here would mean never re-syncing once the TUI exits.
+        await repo.insertServer(server(name: 'nas', persistent: true));
+        await start();
+        await vm.connect(vm.server!);
+        final session = vm.current!;
+        transport.streamChunks = [''];
+
+        await scrollUpWithOutputPending(session);
+        expect(await vm.resyncTmuxScrollback(session), 0);
+
+        expect(session.scrollbackDirty, isTrue);
+      });
     });
 
     test('read-only refuses typing but still allows paging', () async {

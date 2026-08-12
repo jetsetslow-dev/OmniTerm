@@ -190,11 +190,44 @@ void main() {
   }
 
   /// Turns the lock off and saves, which also forgets the PIN.
+  ///
+  /// Saving with the lock off passes two gates that this helper used to walk straight past, so it
+  /// stopped turning the lock off at all — it tapped Save, the confirmation appeared, and nothing
+  /// answered it. Both gates are deliberate and both have ledger entries: the warning that says
+  /// what turning the lock off destroys (70), and the re-authentication that stops anyone holding a
+  /// briefly-unlocked phone from disabling the lock, screenshot blocking and info masking together
+  /// (62).
   Future<void> disableLock(WidgetTester tester) async {
     await openSettings(tester);
     await setSwitch(tester, 'settings.appLockEnabled', on: false);
     await tester.tap(find.byKey(const ValueKey('settings.save')));
     await settle(tester);
+
+    // "This deletes your saved PIN…" — shown before the credential is asked for, never after.
+    await pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('settings.appLockOff.dialog')).evaluate().isNotEmpty,
+    );
+    await tester.tap(find.byKey(const ValueKey('settings.appLockOff.confirm')));
+    await settle(tester);
+
+    // Then prove you can already pass the lock you are switching off.
+    await pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('sudoAuth.dialog')).evaluate().isNotEmpty,
+    );
+    await tester.enterText(find.byKey(const ValueKey('sudoAuth.pin')), pin);
+    await settle(tester);
+    await tester.tap(find.byKey(const ValueKey('sudoAuth.confirm')));
+    // Verification is another 210k PBKDF2 rounds, so wait for the dialog to go rather than guess.
+    await pumpUntil(tester, () => find.byKey(const ValueKey('sudoAuth.dialog')).evaluate().isEmpty);
+    // The save that follows clears the stored PIN; "Set PIN" replacing "Change PIN" is the signal
+    // that it has actually happened rather than merely been asked for.
+    await pumpUntil(
+      tester,
+      () => find.byKey(const ValueKey('settings.changePin')).evaluate().isEmpty,
+    );
+    await settle(tester, frames: 10);
   }
 
   testWidgets('an absence locks the app, and only the right PIN opens it', (tester) async {

@@ -4,7 +4,7 @@ env:
   GIT_CONFIG_COUNT: 1
   GIT_CONFIG_KEY_0: init.defaultBranch
   GIT_CONFIG_VALUE_0: main
-  FLUTTER_VERSION: 3.44.8
+  FLUTTER_VERSION: 3.44.9
   KEYSTORE_PATH: ${{ github.workspace }}/flutter_app/android/release.keystore
 
 on:

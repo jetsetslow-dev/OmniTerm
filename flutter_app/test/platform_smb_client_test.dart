@@ -167,6 +167,17 @@ void main() {
   });
 
   group('uploads', () {
+    test('text editing is available and writes UTF-8 through the streaming bridge', () async {
+      final client = PlatformSmbClient(endpoint);
+
+      expect(client.supportsTextEditing, isTrue);
+      expect(await client.writeText('/notes.txt', 'café'), 5);
+
+      final chunk = calls.singleWhere((call) => call.method == 'uploadChunk').arguments as Map;
+      expect(chunk['bytes'], Uint8List.fromList([99, 97, 102, 195, 169]));
+      client.close();
+    });
+
     test('the stream is written in order and closed', () async {
       final client = PlatformSmbClient(endpoint);
 

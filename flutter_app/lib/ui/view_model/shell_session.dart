@@ -117,6 +117,11 @@ class ShellSession extends ChangeNotifier {
 
   void _onOutput(Uint8List bytes) {
     if (_disposed) return;
+    // Output arriving while the user is reading history is exactly when tmux's collapsing can have
+    // left the local copy short. Armed here rather than on every byte so a session at the tail —
+    // where the user can see what arrived — never pays for a capture.
+    if (!_followTail) scrollbackDirty = true;
+
     final control = _control;
     if (control == null) {
       emulator.feed(bytes);
@@ -141,7 +146,14 @@ class ShellSession extends ChangeNotifier {
           // disappear rather than linger with its scrollback for a network that never dropped.
           _finish(ShellSessionEnd.remoteExited);
           return;
-        case TmuxReply() || TmuxSessionChanged() || TmuxNotification():
+        // A session change re-points the client at a different window, so the pane behind it moves
+        // too. The *first* one is the attach completing and the pane is still whatever %output
+        // reports; only later ones mean the user moved.
+        case TmuxSessionChanged():
+          if (_controlPaneId != null) _notePaneChange();
+        case TmuxNotification(:final line):
+          if (_paneChanging.hasMatch(line)) _notePaneChange();
+        case TmuxReply():
           break;
       }
     }
@@ -206,6 +218,29 @@ class ShellSession extends ChangeNotifier {
 
   /// True when there is history above the viewport to scroll into.
   bool get canScrollBack => _viewportFirstRow > 0;
+
+  /// True when output has landed since the local scrollback was last known to match the pane's.
+  ///
+  /// Only meaningful for a persistent tmux session. tmux collapses output the client cannot keep up
+  /// with into a repaint, so a burst leaves the local scrollback missing rows the pane still holds;
+  /// this marks that the two may have diverged, and a scroll into history is what pays to find out.
+  bool scrollbackDirty = false;
+
+  /// Replaces the buffered scrollback with [source]'s, keeping the live screen, and returns the
+  /// change in row count.
+  ///
+  /// The anchor moves with the content: adopting a longer history pushes what the user is reading
+  /// further down the buffer, and without the shift the viewport would appear to jump. Kotlin does
+  /// the same at `ui/AppViewModel.kt:5023`.
+  int adoptScrollback(TerminalEmulator source) {
+    final before = emulator.scrollbackRowCount();
+    emulator.adoptScrollbackFrom(source);
+    final delta = emulator.scrollbackRowCount() - before;
+    if (delta != 0 && !_followTail) _anchorRow += delta;
+    scrollbackDirty = false;
+    publishNow();
+    return delta;
+  }
 
   /// Move the viewport by [rows] (negative scrolls back into history).
   ///
@@ -346,6 +381,48 @@ class ShellSession extends ChangeNotifier {
   /// The pane keystrokes are addressed to, exposed for tests.
   @visibleForTesting
   String? get controlPaneId => _controlPaneId;
+
+  /// Bumped every time tmux says the active pane may have moved.
+  ///
+  /// The refresh reads this before its query and again after, and restarts when it changed: a
+  /// second switch arriving while the first is still resolving must not be answered with the
+  /// first one's pane id.
+  int _paneChangeRevision = 0;
+
+  int get paneChangeRevision => _paneChangeRevision;
+
+  /// True once tmux has reported a pane change that has not been resolved yet.
+  bool paneChangePending = false;
+
+  /// Adopt a pane id resolved out of band, from `tmux display-message -p '#{pane_id}'`.
+  ///
+  /// Refused when the revision moved on, because by then the answer describes a pane the user has
+  /// already left — the same reason Kotlin re-checks its revision before committing
+  /// (`ui/AppViewModel.kt:5158`).
+  bool adoptControlPane(String paneId, int revision) {
+    if (_disposed || revision != _paneChangeRevision) return false;
+    _controlPaneId = paneId;
+    paneChangePending = false;
+    scrollbackDirty = true;
+    return true;
+  }
+
+  /// tmux notifications that mean "the pane your keystrokes are addressed to may have moved".
+  ///
+  /// `%output` cannot carry this: it names the pane that *produced* output, and a background pane
+  /// producing output would steal the keyboard if it were treated as the active one.
+  static final _paneChanging = RegExp(
+    r'^%(window-pane-changed|session-window-changed|client-session-changed|window-close|window-add|unlinked-window-close)\b',
+  );
+
+  void _notePaneChange() {
+    _paneChangeRevision++;
+    paneChangePending = true;
+    onPaneChanged?.call(this);
+  }
+
+  /// Invoked when the active pane may have moved; the view model does the side-channel query.
+  void Function(ShellSession session)? onPaneChanged;
 
   Future<void> _write(Uint8List bytes) async {
     try {

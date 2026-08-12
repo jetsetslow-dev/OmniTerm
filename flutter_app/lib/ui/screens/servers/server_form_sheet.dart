@@ -406,11 +406,21 @@ class _AdvancedTab extends StatelessWidget {
           keyboardType: TextInputType.number,
           onChanged: (v) => form.update(() => form.keepAlive = v),
         ),
+        // Shown and disabled rather than hidden. The Kotlin app negotiates zlib
+        // (`JschSession.kt:85`), and this port's SSH library proposes `none` for compression and
+        // has no zlib to offer, so the switch could be set but never took effect — it reported a
+        // state the connection did not have. Removing the row would hide a setting the user may
+        // have turned on in the Kotlin app and still see in their backup; leaving it live would go
+        // on lying. The stored value is untouched either way, so it survives backup and restore and
+        // starts working the day the library does.
         SwitchListTile(
           key: const ValueKey('serverForm.compression'),
           title: const Text('SSH compression'),
+          subtitle: const Text(
+            'Not supported by this app’s SSH library — the setting has no effect',
+          ),
           value: form.compression,
-          onChanged: (v) => form.update(() => form.compression = v),
+          onChanged: null,
         ),
         SwitchListTile(
           key: const ValueKey('serverForm.persistentSession'),

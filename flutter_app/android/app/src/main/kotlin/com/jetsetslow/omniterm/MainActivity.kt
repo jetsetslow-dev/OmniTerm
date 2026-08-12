@@ -23,6 +23,8 @@ class MainActivity : FlutterActivity() {
         ShortcutBridge.register(flutterEngine, this)
         PlatformPermissionsBridge.register(flutterEngine, this)
         DeviceInfoBridge.register(flutterEngine, this)
+        SensitiveClipboardBridge.register(flutterEngine, this)
+        CustomTabsBridge.register(flutterEngine, this)
     }
 
     override fun onNewIntent(intent: Intent) {

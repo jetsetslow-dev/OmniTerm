@@ -8,6 +8,7 @@ import '../../data/remote_commands.dart';
 import '../../data/remote_models.dart';
 import '../../data/remote_parsers.dart';
 import '../../data/ssh/ssh_transport.dart';
+import '../../domain/ssh_failure.dart';
 import '../../domain/server_credentials.dart';
 import '../../domain/telemetry_sampling.dart';
 import 'app_state.dart';
@@ -202,13 +203,31 @@ class TelemetryPoller extends ChangeNotifier {
       // AppState, where Monitor, Infra and SFTP read it too.
       var os = _app.osForServer(server.id);
       if (os.isEmpty) {
-        os = normaliseOs(await ssh.exec(creds, osProbeCommand));
+        final probe = await ssh.exec(creds, osProbeCommand);
         if (_disposed) return;
-        _app.recordOsForServer(server.id, os);
+        os = normaliseOs(probe);
+        // `exec` returns `'SSH Error: …'` rather than throwing, and the cache is consulted once per
+        // host and then trusted forever. Caching what a failed probe normalises to would send the
+        // wrong metrics command for the life of the host — exactly the "no memory and no disks"
+        // reading described above, from one transient failure. Compose guards the same way at
+        // `ui/AppViewModel.kt:2404`.
+        if (!probe.startsWith('SSH Error')) _app.recordOsForServer(server.id, os);
       }
 
       final raw = await ssh.exec(creds, metricsFor(os));
       if (_disposed) return;
+      // A failed probe is not a reading. Parsing it yields a plausible-looking sample — the OS
+      // defaults to Linux and every gauge to zero — which is then written to history, charted, and
+      // fed back into the OS cache as if the host had answered. Compose branches on the same prefix
+      // (`ui/AppViewModel.kt:2408`) and records the failure instead of a sample.
+      if (raw.startsWith('SSH Error')) {
+        // The Hosts list already renders `authStatus == 'failed'` — a warning row, an amber badge
+        // and the words "authentication failed". Nothing in this port ever wrote the column, so a
+        // host with a wrong key looked identical to a healthy one no matter how often it failed.
+        // `serversStream` is a drift watch, so the write reaches AppState on its own.
+        await _app.repository.updateAuthState(server.id, 'failed', describeSshFailure(raw));
+        return;
+      }
 
       final now = _clock();
       final sample = enrichMetrics(
@@ -228,6 +247,13 @@ class TelemetryPoller extends ChangeNotifier {
       if (sample.metrics.os.isNotEmpty) {
         _app.recordOsForServer(server.id, sample.metrics.os);
       }
+
+      // A host that answered is authenticated, whatever it said last time. Written every cycle
+      // rather than only when `server.authStatus` looks stale: that field is a snapshot taken when
+      // the cycle began, and a row corrected in the database while it was in flight would keep an
+      // old `failed` forever. The poller already writes metrics and a history row here, so one
+      // more small update is proportionate.
+      await _app.repository.updateAuthState(server.id, 'ok', null);
 
       await _persist(server, sample.metrics, now);
       _safeNotify();

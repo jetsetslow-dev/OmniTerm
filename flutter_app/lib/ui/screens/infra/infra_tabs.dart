@@ -1,10 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 
 import '../../../data/app_database.dart';
 import '../../../data/remote_commands.dart';
+import '../../../domain/input_validation.dart';
 import '../../../data/remote_models.dart';
 import '../../../domain/stack_summary.dart';
 import '../../navigation.dart';
@@ -501,6 +503,14 @@ Future<void> _promptScale(
   await vm.stackAction(stack, 'scale', service: service.name, replicas: replicas);
 }
 
+/// Upper bound on a replica count, matching Compose's `countError(replicas, min = 0, max = 999)`
+/// at `ui/InfraScreen.kt:555`.
+///
+/// Top-level so a test can pin the number itself. Behind the three-digit input formatter nothing
+/// larger can be typed, which means a widget test cannot tell 999 from 999999 — the bound has to be
+/// asserted directly or it is not covered at all.
+const infraMaxReplicas = 999;
+
 /// The replica-count prompt.
 ///
 /// A widget rather than a closure over a controller: a dialog's content outlives the `showDialog`
@@ -529,6 +539,9 @@ class _ScaleDialogState extends State<_ScaleDialog> {
     // Zero is allowed — draining a service without tearing the stack down is a real thing to want.
     // Negative is not a scale-down, it is a typo.
     final value = int.tryParse(_replicas.text.trim());
+    // `countError` was ported into `domain/input_validation.dart` with the rest of Compose's
+    // validators and this dialog never called it — the bound existed and was simply not reached.
+    final error = countError(_replicas.text, min: 0, max: infraMaxReplicas);
     final scheme = Theme.of(context).colorScheme;
 
     return AlertDialog(
@@ -550,7 +563,14 @@ class _ScaleDialogState extends State<_ScaleDialog> {
               controller: _replicas,
               keyboardType: TextInputType.number,
               autofocus: true,
-              decoration: const InputDecoration(labelText: 'Replicas', isDense: true),
+              // Digits only and three of them: the same shape as Compose's
+              // `it.filter(Char::isDigit).take(3)` (`ui/InfraScreen.kt:562`). Without a cap, a typed
+              // extra digit asks compose to start thousands of containers.
+              inputFormatters: [
+                FilteringTextInputFormatter.digitsOnly,
+                LengthLimitingTextInputFormatter(3),
+              ],
+              decoration: InputDecoration(labelText: 'Replicas', isDense: true, errorText: error),
               onChanged: (_) => setState(() {}),
             ),
             const SizedBox(height: 8),
@@ -573,7 +593,7 @@ class _ScaleDialogState extends State<_ScaleDialog> {
         ),
         FilledButton(
           key: const ValueKey('infra.scale.confirm'),
-          onPressed: (value ?? -1) < 0 ? null : () => Navigator.of(context).pop(value),
+          onPressed: error != null ? null : () => Navigator.of(context).pop(value),
           child: const Text('Scale'),
         ),
       ],
@@ -859,7 +879,11 @@ class _ImagesTabState extends State<ImagesTab> {
 
     return Column(
       children: [
-        Row(
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 4,
+          runSpacing: 4,
           children: [
             TextButton(
               key: const ValueKey('infra.images.multiSelect'),
@@ -869,7 +893,6 @@ class _ImagesTabState extends State<ImagesTab> {
               }),
               child: Text(_selecting ? 'Cancel selection' : 'Multi-select'),
             ),
-            const Spacer(),
             if (_selecting && _selected.isNotEmpty)
               TextButton.icon(
                 key: const ValueKey('infra.images.deleteSelected'),
@@ -917,21 +940,9 @@ class _ImagesTabState extends State<ImagesTab> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Row(
-                                  children: [
-                                    Flexible(
-                                      child: Text(
-                                        '${image.repository}:${image.tag}',
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          fontFamily: OmniFonts.mono,
-                                          fontSize: 13,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 6),
-                                    RuntimeTag(runtime: image.runtime),
-                                  ],
+                                _ResourceTitle(
+                                  label: '${image.repository}:${image.tag}',
+                                  runtime: image.runtime,
                                 ),
                                 Text(
                                   'ID: ${image.id} · ${image.size} · ${image.created}',
@@ -1017,7 +1028,11 @@ class _VolumesTabState extends State<VolumesTab> {
 
     return Column(
       children: [
-        Row(
+        Wrap(
+          alignment: WrapAlignment.spaceBetween,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 4,
+          runSpacing: 4,
           children: [
             TextButton(
               key: const ValueKey('infra.volumes.multiSelect'),
@@ -1027,7 +1042,6 @@ class _VolumesTabState extends State<VolumesTab> {
               }),
               child: Text(_selecting ? 'Cancel selection' : 'Multi-select'),
             ),
-            const Spacer(),
             if (_selecting && _selected.isNotEmpty)
               TextButton.icon(
                 key: const ValueKey('infra.volumes.deleteSelected'),
@@ -1076,22 +1090,7 @@ class _VolumesTabState extends State<VolumesTab> {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Row(
-                                  children: [
-                                    Flexible(
-                                      child: Text(
-                                        volume.name,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          fontFamily: OmniFonts.mono,
-                                          fontSize: 13,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 6),
-                                    RuntimeTag(runtime: volume.runtime),
-                                  ],
-                                ),
+                                _ResourceTitle(label: volume.name, runtime: volume.runtime),
                                 Text(
                                   [
                                     'Driver: ${volume.driver}',
@@ -1222,22 +1221,7 @@ class NetworksTab extends StatelessWidget {
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Row(
-                                  children: [
-                                    Flexible(
-                                      child: Text(
-                                        network.name,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                          fontFamily: OmniFonts.mono,
-                                          fontSize: 13,
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: 6),
-                                    RuntimeTag(runtime: network.runtime),
-                                  ],
-                                ),
+                                _ResourceTitle(label: network.name, runtime: network.runtime),
                                 Text(
                                   [
                                     'Driver: ${network.driver}',
@@ -1290,6 +1274,42 @@ Future<void> _confirmRemoveNetwork(
     confirmLabel: 'Remove',
   );
   if (accepted) await vm.networkAction(network, 'remove');
+}
+
+/// Resource name plus its owning runtime, kept readable when status/actions leave a narrow column.
+class _ResourceTitle extends StatelessWidget {
+  const _ResourceTitle({required this.label, required this.runtime});
+
+  final String label;
+  final String runtime;
+
+  @override
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) {
+      final name = Text(
+        label,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 13),
+      );
+      if (constraints.maxWidth < 180) {
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            name,
+            const SizedBox(height: 2),
+            RuntimeTag(runtime: runtime),
+          ],
+        );
+      }
+      return Row(
+        children: [
+          Expanded(child: name),
+          const SizedBox(width: 6),
+          RuntimeTag(runtime: runtime),
+        ],
+      );
+    },
+  );
 }
 
 class _PruneButton extends StatelessWidget {
@@ -1406,17 +1426,26 @@ class _EmptyTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 36, color: OmniColors.textMuted),
-          const SizedBox(height: 10),
-          Text(
-            message,
-            style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
+    return SingleChildScrollView(
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon, size: 36, color: OmniColors.textMuted),
+              const SizedBox(height: 10),
+              Text(
+                message,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontSize: 12,
+                ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

@@ -264,6 +264,7 @@ class OmniTermApp extends StatelessWidget {
           create: (context) => AppLockController(
             context.read<AppState>().repository,
             biometricPrompt: BiometricAuth().prompt,
+            biometricAvailability: BiometricAuth().isAvailable,
           )..load(),
         ),
         Provider<AlertNotifier>(create: (_) => LocalAlertNotifier()),
@@ -376,6 +377,7 @@ class OmniTermApp extends StatelessWidget {
             sessionService: SessionService(),
             // Read once: the probe provider is eager and outlives this view model.
             hasProbed: context.read<HostStatusProbe>().hasProbed,
+            shortcuts: context.read<ShortcutHelper>(),
           ),
           update: (_, app, previous) => previous!,
         ),

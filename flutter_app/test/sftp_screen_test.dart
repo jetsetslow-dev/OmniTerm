@@ -84,7 +84,12 @@ void main() {
     FakeFsClient? client,
     SharesViewModel? shares,
     SshTransport? transport,
+    Size size = const Size(800, 600),
+    double textScale = 1,
   }) async {
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
     await app.start();
     vm = SftpViewModel(app, fsClientFor: (_) async => client, transport: transport);
     // Sudo mode re-authenticates before switching on, so the lock is in scope as it is in the app.
@@ -107,7 +112,10 @@ void main() {
         ],
         child: MaterialApp(
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
-          home: const Scaffold(body: SftpScreen()),
+          home: MediaQuery(
+            data: MediaQueryData(size: size, textScaler: TextScaler.linear(textScale)),
+            child: const Scaffold(body: SftpScreen()),
+          ),
         ),
       ),
     );
@@ -153,6 +161,54 @@ void main() {
     expect(find.text('docs'), findsOneWidget);
     expect(find.byKey(const ValueKey('sftp.crumb./home/root')), findsOneWidget);
     vm.dispose();
+  });
+
+  testWidgets('the file controls fit a 360dp phone', (tester) async {
+    // Negative control on the physical API-32 phone: the old toolbar overflowed by 48px.
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester, client: homeTree(), size: const Size(360, 720));
+    await goToFiles(tester);
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const ValueKey('sftp.toolbarActions')), findsOneWidget);
+    vm.dispose();
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+  });
+
+  testWidgets('the file controls share one row in a short 200% landscape body', (tester) async {
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester, client: homeTree(), size: const Size(720, 360), textScale: 2);
+    await goToFiles(tester);
+
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const ValueKey('sftp.search')), findsOneWidget);
+    vm.dispose();
+  });
+
+  testWidgets('the file controls yield when a 200% landscape body is too short for them', (
+    tester,
+  ) async {
+    // The physical API-32 phone is 360x720dp; in landscape at 200% text, once the app bar, tab
+    // chips and system bars are taken out, the browser body is around this height. The compact
+    // side-by-side header was still taller than that and the surface sweep failed on it:
+    // `dark-200pc-text/landscape/sftp/files: A RenderFlex overflowed by 25 pixels on the bottom`
+    // (artifacts/device-tests/20260811T081441Z_android_ZF62224F8K_surface). Heights from 184 up are
+    // clean; the same body overflowed at every one of them before the header gained its ceiling.
+    for (final height in <double>[224, 208, 200, 192, 184]) {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, client: homeTree(), size: Size(720, height), textScale: 2);
+      await goToFiles(tester);
+
+      expect(tester.takeException(), isNull, reason: 'body height $height overflowed');
+      // The listing must survive the squeeze — a header that simply took the whole body would
+      // satisfy the overflow check and leave the user with no files.
+      expect(find.byKey(const ValueKey('sftp.list')), findsOneWidget);
+      vm.dispose();
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+    }
   });
 
   testWidgets('dotfiles are hidden until the toggle is used', (tester) async {
@@ -741,6 +797,20 @@ void main() {
       client.files['/home/root/notes.txt'] = 'listen 8080\n';
       return client;
     }
+
+    testWidgets('the full file editor fits a 360dp phone at 200% text', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, client: editableTree(), size: const Size(360, 720), textScale: 2);
+      await goToFiles(tester);
+      await tester.tap(find.byKey(const ValueKey('sftp.entry.notes.txt')));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.byKey(const ValueKey('fileEditor.text')), findsOneWidget);
+      expect(find.byKey(const ValueKey('fileEditor.editToggle')), findsOneWidget);
+      expect(find.byKey(const ValueKey('fileEditor.save')), findsOneWidget);
+      vm.dispose();
+    });
 
     /// The editor must say when a save will be a root write, ported from Kotlin's `· sudo`
     /// subtitle and `Save as root` button (`ui/SftpScreen.kt:3114`, `:3121`).

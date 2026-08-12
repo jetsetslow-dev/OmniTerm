@@ -191,4 +191,28 @@ void main() {
       expect(upgrades, 0);
     });
   });
+
+  group('platform storage options', () {
+    // These are the arguments, not the behaviour — and the arguments are where the danger is. The
+    // store keeps one thing in the platform keystore: the AES key every stored credential is
+    // encrypted under. Anything that deletes it turns every saved password and private key into
+    // ciphertext nobody can read, and the app would not even report an error, because a missing key
+    // reads as "first run" and a fresh one is minted over the top.
+    test('a failed read must not delete the key', () {
+      // The plugin's default is `resetOnError: true`, and it means it: `handleStorageError` calls
+      // `delete(key)` on a failed read and `deleteAll()` on a failed readAll. Kotlin logs the
+      // failure class and returns null (`data/SecretStore.kt:35`) — a transient failure stays
+      // transient.
+      expect(SecretStore.androidOptions.toMap()['resetOnError'], 'false');
+    });
+
+    test('a cipher change migrates the key rather than discarding it', () {
+      expect(SecretStore.androidOptions.toMap()['migrateOnAlgorithmChange'], 'true');
+    });
+
+    test('the iOS key stays on the device that made it', () {
+      // Restoring a backup onto another handset must not carry the key with it.
+      expect(SecretStore.iosOptions.toMap()['accessibility'], contains('first_unlock_this_device'));
+    });
+  });
 }

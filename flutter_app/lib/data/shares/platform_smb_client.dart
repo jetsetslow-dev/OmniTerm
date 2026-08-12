@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
 
@@ -187,7 +189,9 @@ class PlatformSmbClient extends RemoteFsClient {
               total = (message['total'] as num?)?.toInt() ?? total;
               onProgress?.call(copied, total);
             }
-            if (message['done'] == true && !completer.isCompleted) completer.complete(copied);
+            if (message['done'] == true && !completer.isCompleted) {
+              completer.complete(copied);
+            }
           },
           onError: (Object error) {
             if (completer.isCompleted) return;
@@ -255,6 +259,43 @@ class PlatformSmbClient extends RemoteFsClient {
       await _abandon(session, transferId);
       rethrow;
     }
+  }
+
+  @override
+  bool get supportsTextEditing => true;
+
+  @override
+  Future<String> readText(String path, {int maxBytes = 512 * 1024}) async {
+    final bytes = BytesBuilder(copy: false);
+    var tooLarge = false;
+    final controller = StreamController<List<int>>();
+    final subscription = controller.stream.listen((chunk) {
+      if (tooLarge || bytes.length + chunk.length > maxBytes) {
+        tooLarge = true;
+        return;
+      }
+      bytes.add(chunk);
+    });
+    final completed = subscription.asFuture<void>();
+    try {
+      await downloadTo(path, controller.sink);
+      await controller.close();
+      await completed;
+    } finally {
+      if (!controller.isClosed) await controller.close();
+      await subscription.cancel();
+    }
+    if (tooLarge) {
+      throw SmbException('The SMB file is larger than the editor limit.');
+    }
+    return utf8.decode(bytes.takeBytes(), allowMalformed: true);
+  }
+
+  @override
+  Future<int> writeText(String path, String content) async {
+    final bytes = utf8.encode(content);
+    await uploadStream(path, Stream.value(bytes), bytes.length);
+    return bytes.length;
   }
 
   Future<void> _abandon(String session, String transferId) async {

@@ -23,6 +23,7 @@ class AppLockController extends ChangeNotifier {
   AppLockController(
     this._repository, {
     this.biometricPrompt,
+    this.biometricAvailability,
     int Function()? clock,
     int Function()? monotonicClock,
   }) : _now = clock ?? (() => DateTime.now().millisecondsSinceEpoch),
@@ -30,6 +31,23 @@ class AppLockController extends ChangeNotifier {
 
   final AppRepository _repository;
   final BiometricPrompt? biometricPrompt;
+
+  /// Whether this device has an enrolled biometric or device credential.
+  ///
+  /// Null where it cannot be asked; [biometricsAvailable] then stays true and the option is offered
+  /// as before. Failing *open* on purpose: a wrong "unavailable" would hide a working feature,
+  /// while a wrong "available" costs one prompt that falls back to the PIN.
+  final Future<bool> Function()? biometricAvailability;
+
+  bool _biometricsAvailable = true;
+
+  /// True when biometric unlock is worth offering on this device.
+  ///
+  /// `BiometricAuth.isAvailable` existed with a doc comment saying it was "checked before offering
+  /// the option" — and had no caller, so the switch was offered on hardware where it could never
+  /// succeed. Kotlin gates its prompt on `BiometricCryptoGate.canAuthenticate` and reports
+  /// unavailability distinctly (`BiometricCryptoGate.kt:67`).
+  bool get biometricsAvailable => _biometricsAvailable;
 
   /// Wall clock. Correct for the PIN throttle, which is **persisted** and so has to survive a
   /// reboot — as it does in the Kotlin, which uses `System.currentTimeMillis()` there too.
@@ -88,6 +106,15 @@ class AppLockController extends ChangeNotifier {
 
   /// Read the configuration and decide the starting state.
   Future<void> load() async {
+    final probe = biometricAvailability;
+    if (probe != null) {
+      // Never let a hardware probe stop the lock loading: the PIN is the authority.
+      try {
+        _biometricsAvailable = await probe();
+      } catch (_) {
+        _biometricsAvailable = false;
+      }
+    }
     _enabled = (await _repository.getSetting('app_lock_enabled')) == 'true';
     _useBiometrics = (await _repository.getSetting('biometrics_enabled')) == 'true';
     _storedPin = await _repository.getSetting('app_pin');

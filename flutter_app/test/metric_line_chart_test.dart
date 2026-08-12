@@ -8,17 +8,17 @@ import 'package:omniterm/ui/widgets/metric_line_chart.dart';
 /// 56px, and the column overflowed by 118px on every screen that draws a chart — found by adding a
 /// 200% pass to the device surface sweep.
 void main() {
-  Future<void> pumpChart(WidgetTester tester, double scale) async {
+  Future<void> pumpChart(WidgetTester tester, double scale, {double width = 400}) async {
     await tester.pumpWidget(
       MaterialApp(
         home: MediaQuery(
           data: MediaQueryData(textScaler: TextScaler.linear(scale)),
-          child: const Scaffold(
+          child: Scaffold(
             // Column(min) so the chart reports its *natural* height. Given the whole body it would
             // simply fill the viewport, and every size assertion would read the same number.
             body: SizedBox(
-              width: 400,
-              child: Column(
+              width: width,
+              child: const Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   MetricLineChart(points: [10, 40, 30], timestamps: []),
@@ -39,6 +39,16 @@ void main() {
   testWidgets('at 200% text the axis labels still fit', (tester) async {
     // The regression this exists for. An overflow here is a clipped axis on Fleet and Monitor.
     await pumpChart(tester, 2);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a 360dp phone keeps the large-text header inside its card', (tester) async {
+    // The route leaves 50dp for its card margins and padding on a 360dp Moto G6. The physical
+    // surface sweep found both Monitor charts overflowing this header by 33px at 200% text.
+    await pumpChart(tester, 2, width: 310);
+
+    expect(find.text('CPU · 3 samples'), findsOneWidget);
+    expect(find.text('30%'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

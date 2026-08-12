@@ -219,7 +219,11 @@ class _RuntimeError extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Center(
+    // Scrollable, like the empty states beside it. Until defect 109 this branch was unreachable —
+    // `load()` parsed `'SSH Error: …'` as data and never set `vm.error` — so its layout had never
+    // been rendered, let alone at 200% text in landscape, where the icon, heading and detail box
+    // overflow a short viewport by 49px.
+    return SingleChildScrollView(
       key: const ValueKey('infra.error'),
       child: Column(
         mainAxisSize: MainAxisSize.min,

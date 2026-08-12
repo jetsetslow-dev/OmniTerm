@@ -210,6 +210,70 @@ void main() {
     await finish(tester);
   });
 
+  testWidgets('a passphrase the export would refuse cannot leave the dialog', (tester) async {
+    // The defect this covers, reported from the field: the dialog advertised eight characters and
+    // enabled its button at eight, the picker then created the file, and only afterwards did the
+    // export refuse anything under twelve — leaving a 0-byte "backup" on disk and an error. Kotlin
+    // had the same three numbers in two values (`ui/ToolsScreen.kt:2808` said 8,
+    // `ui/AppViewModel.kt:11360` demanded 12); this port had no minimum at all.
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester);
+    vm
+      ..selectNone()
+      ..toggleSection(BackupSection.settings, enabled: true)
+      ..toggleSection(BackupSection.sshKeys, enabled: true);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('backup.export')));
+    await tester.pumpAndSettle();
+
+    // The number is on the field while the user types, not in an error after the file exists.
+    expect(
+      find.textContaining('At least ${BackupViewModel.passphraseMinLength} characters'),
+      findsOneWidget,
+    );
+
+    await tester.enterText(find.byKey(const ValueKey('backup.passphrase.field')), 'short11chr');
+    await tester.pumpAndSettle();
+    final tooShort = tester.widget<TextButton>(
+      find.byKey(const ValueKey('backup.passphrase.confirm')),
+    );
+    expect(
+      tooShort.onPressed,
+      isNull,
+      reason: 'a dialog must not hand back a value its caller will reject',
+    );
+
+    await tester.enterText(
+      find.byKey(const ValueKey('backup.passphrase.field')),
+      'a-long-enough-passphrase',
+    );
+    await tester.pumpAndSettle();
+    final longEnough = tester.widget<TextButton>(
+      find.byKey(const ValueKey('backup.passphrase.confirm')),
+    );
+    expect(longEnough.onPressed, isNotNull);
+
+    await tester.tap(find.byKey(const ValueKey('backup.passphrase.cancel')));
+    await tester.pumpAndSettle();
+    await finish(tester);
+  });
+
+  testWidgets('the export refuses a short passphrase even if a caller asks it to', (tester) async {
+    // The dialog is one caller. The boundary that decides whether credentials are weakly encrypted
+    // has to hold on its own, or the next screen to call it inherits the old defect.
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester);
+    vm
+      ..selectNone()
+      ..toggleSection(BackupSection.sshKeys, enabled: true);
+    await tester.pumpAndSettle();
+
+    expect(await vm.exportBackup('short'), isNull);
+    expect(vm.error, contains('at least ${BackupViewModel.passphraseMinLength} characters'));
+    await finish(tester);
+  });
+
   testWidgets('the restore section states that nothing is deleted', (tester) async {
     // The two things a user needs before tapping: nothing is destroyed, and the passphrase is not
     // recoverable.

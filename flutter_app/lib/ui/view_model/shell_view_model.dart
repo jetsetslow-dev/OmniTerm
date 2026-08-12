@@ -19,6 +19,7 @@ import '../../domain/terminal_key_encoder.dart';
 import '../../platform/session_service.dart';
 import 'app_state.dart';
 import 'shell_session.dart';
+import '../../platform/shortcut_helper.dart';
 
 /// The Shell screen's state and actions, split out of `ui/AppViewModel.kt` per §5.2.
 ///
@@ -32,6 +33,7 @@ class ShellViewModel extends ChangeNotifier {
     this.sessionService,
     this.reviewPrompt,
     this.hasProbed,
+    this.shortcuts,
   }) {
     _useControlMode = _app.preferences.tmuxControlMode;
     _lastPreferenceControlMode = _useControlMode;
@@ -231,7 +233,68 @@ class ShellViewModel extends ChangeNotifier {
   void splitWith(String id) {
     if (id == current?.id) return;
     _splitId = id;
+    _offerSplitShortcut();
     _safeNotify();
+  }
+
+  /// Launcher shortcuts. Null in tests and on platforms without them; the split shortcut is then
+  /// simply not offered, which is what [ShortcutHelper] does for every other action too.
+  final ShortcutHelper? shortcuts;
+
+  /// Offers the current pair as a launcher shortcut.
+  ///
+  /// Kotlin pushes one whenever two hosts are loaded into panes
+  /// (`AppViewModel.kt:1712`). Flutter had `ShortcutHelper.pushSplit` and a complete native
+  /// implementation behind it — and no caller, so the shortcut could never appear.
+  ///
+  /// Best-effort by construction: `pushSplit` swallows MissingPlugin and PlatformException and
+  /// answers false, because failing to offer a shortcut must never interrupt opening a terminal.
+  void _offerSplitShortcut() {
+    final helper = shortcuts;
+    if (helper == null) return;
+    final first = current;
+    final second = splitSession;
+    if (first == null || second == null) return;
+    final firstServer = _app.servers.where((server) => server.id == first.serverId).firstOrNull;
+    final secondServer = _app.servers.where((server) => server.id == second.serverId).firstOrNull;
+    if (firstServer == null || secondServer == null) return;
+    unawaited(helper.pushSplit(firstServer, secondServer));
+  }
+
+  /// True when a host could be connected into a second pane.
+  ///
+  /// Distinct from [splitCandidates], which lists sessions that are already running: this is what
+  /// makes the split control worth showing when only one terminal is open.
+  bool get canConnectSecondPane {
+    final open = _sessions.map((session) => session.serverId).toSet();
+    return connectableServers.any((server) => !open.contains(server.id));
+  }
+
+  /// Connects [server] and shows it in the second pane.
+  ///
+  /// Kotlin can load two *hosts* into panes in one action (`ui/AppUi.kt:196–235`, gated by
+  /// `allowSplitSelection`). The port could only split sessions that were **already connected**, so
+  /// putting a second host alongside meant connecting it, having it take over the screen, and then
+  /// splitting back — three steps for what Kotlin does in one, and the split picker said so:
+  /// "Open a second session first".
+  ///
+  /// The current pane is deliberately restored afterwards. `connect` focuses what it opens, which
+  /// is right when connecting normally and wrong here: the user asked for this host *alongside* the
+  /// one they are looking at, not instead of it.
+  ///
+  /// A failed or cancelled connection leaves the split untouched. `connect` has already reported
+  /// why on screen, and forcing a split with nothing in it would replace that explanation with an
+  /// empty pane.
+  Future<void> splitWithNewSession(Server server) async {
+    final keepCurrent = _currentId;
+    final before = _sessions.map((session) => session.id).toSet();
+    await connect(server);
+    final opened = _sessions.where((session) => !before.contains(session.id)).firstOrNull;
+    if (opened == null) return;
+    if (keepCurrent != null && _sessions.any((session) => session.id == keepCurrent)) {
+      _currentId = keepCurrent;
+    }
+    splitWith(opened.id);
   }
 
   void unsplit() {
@@ -645,6 +708,10 @@ class ShellViewModel extends ChangeNotifier {
         // asked for it would have its ordinary output parsed as a protocol and rendered as nothing.
         controlMode: controlMode && persistent != null,
       )..setViewportRows(_preferredRows);
+      // Fire-and-forget: the parser must not block on an SSH round trip, and until the query comes
+      // back the old pane id keeps working, which is the pre-existing behaviour rather than a
+      // regression.
+      session.onPaneChanged = (changed) => unawaited(refreshControlActivePane(changed));
       session.addListener(_safeNotify);
       session.addListener(_syncBackgroundSessions);
       _sessions.add(session);
@@ -815,6 +882,25 @@ class ShellViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
+  /// Adopts the modifiers held on a **hardware** keyboard for the next send.
+  ///
+  /// Kotlin does the same assignment before every physical key (`ui/ShellScreen.kt:2322`), which is
+  /// what makes Ctrl+C and Alt+Left work on an attached keyboard: `sendKey` and `typeText` read
+  /// these fields and clear them afterwards, so the modifier applies to exactly one keystroke and
+  /// then goes, exactly as a real Ctrl does.
+  ///
+  /// Sticky on-screen modifiers use the same fields deliberately. A user holding Ctrl on a keyboard
+  /// while a sticky Ctrl is latched means Ctrl either way, and OR-ing them keeps the latched one
+  /// from being dropped by an unmodified hardware key.
+  void applyHardwareModifiers({required bool shift, required bool alt, required bool ctrl}) {
+    final next = (this.shift || shift, this.alt || alt, this.ctrl || ctrl);
+    if ((this.shift, this.alt, this.ctrl) == next) return;
+    this.shift = next.$1;
+    this.alt = next.$2;
+    this.ctrl = next.$3;
+    _safeNotify();
+  }
+
   void _clearModifiers() {
     if (!hasModifier) return;
     ctrl = false;
@@ -861,13 +947,158 @@ class ShellViewModel extends ChangeNotifier {
     return sent;
   }
 
+  /// Whether a capture is already in flight, so two scroll gestures cannot race one.
+  bool _resyncing = false;
+
+  /// Re-reads a persistent session's scrollback from the pane's own tmux history.
+  ///
+  /// Sessions whose active pane is being resolved right now, so a burst of notifications produces
+  /// one query rather than one per notification.
+  final _paneRefreshing = <ShellSession>{};
+
+  /// Re-resolve the pane keystrokes are addressed to, after tmux said it may have moved.
+  ///
+  /// Ported from `refreshControlActivePane` (`ui/AppViewModel.kt:5139`). Control mode addresses
+  /// input explicitly (`send-keys -t <pane>`), and the pane is learned from the first `%output` the
+  /// session ever sees. Switch window inside tmux and that id goes stale: tmux streams the new
+  /// pane's output while OmniTerm keeps typing into the old one — keystrokes land somewhere the user
+  /// is not looking.
+  ///
+  /// The obvious shortcut — track the *latest* `%output` pane — is wrong, and is why this needs a
+  /// query at all: a background pane producing output would steal the keyboard, which is the same
+  /// defect pointed the other way.
+  Future<bool> refreshControlActivePane(ShellSession session) async {
+    final name = session.tmuxName;
+    final ssh = transport;
+    if (name == null || ssh == null || !session.controlMode) return false;
+    if (!_paneRefreshing.add(session)) return false;
+    final host = _app.servers.where((s) => s.id == session.serverId).firstOrNull;
+    if (host == null) {
+      _paneRefreshing.remove(session);
+      return false;
+    }
+
+    try {
+      final creds = resolveCredentials(
+        host,
+        keys: await _app.repository.getAllKeys(),
+        profiles: await _app.repository.getAllProfiles(),
+      );
+      // Retry rather than return: a switch that lands while the query is in flight would otherwise
+      // be answered with the pane the user has just left.
+      while (true) {
+        final revision = session.paneChangeRevision;
+        final buffer = StringBuffer();
+        await ssh.execStream(
+          creds,
+          tmuxActivePaneQuery(name),
+          onChunk: (chunk) async => buffer.write(chunk),
+        );
+        final paneId = buffer.toString().trim();
+        // `%0`, not "whatever came back": the command ends in `|| true`, so a tmux that has gone
+        // away answers with an empty string, and adopting that would address input to nothing.
+        if (!RegExp(r'^%\d+$').hasMatch(paneId)) return false;
+        if (session.paneChangeRevision != revision) continue;
+        if (session.adoptControlPane(paneId, revision)) return true;
+        if (session.paneChangeRevision == revision) return false;
+      }
+    } catch (_) {
+      // Leave `paneChangePending` set: the pane is still unresolved, and the next notification or
+      // reconnect retries. Failing loudly here would take down a session whose only problem is that
+      // one side-channel exec did not come back.
+      return false;
+    } finally {
+      _paneRefreshing.remove(session);
+    }
+  }
+
+  /// Ported from `resyncTmuxScrollbackFor` (`ui/AppViewModel.kt:4967`). tmux does not stream every
+  /// line to an attached client — output faster than the client consumes is collapsed into a
+  /// repaint — so a burst leaves the local scrollback missing rows the pane still holds. They are
+  /// not recoverable locally: the pane's history lives on the server, and this fetches it, re-parses
+  /// it at the live grid's width and swaps it in wholesale.
+  ///
+  /// Returns the change in row count so the caller can keep the viewport steady. Zero when nothing
+  /// was adopted, which is the normal answer: not persistent, not dirty, already running, no
+  /// transport, or a capture that came back empty because a TUI owns the pane.
+  Future<int> resyncTmuxScrollback(ShellSession session) async {
+    final name = session.tmuxName;
+    final ssh = transport;
+    if (name == null || ssh == null || !session.scrollbackDirty || _resyncing) return 0;
+    final host = _app.servers.where((s) => s.id == session.serverId).firstOrNull;
+    if (host == null) return 0;
+
+    _resyncing = true;
+    // Cleared *before* the capture, not after: output arriving mid-capture re-arms it, so the next
+    // scroll retries rather than trusting a capture that missed those rows. Kotlin says the same at
+    // `ui/AppViewModel.kt:4987`.
+    session.scrollbackDirty = false;
+    final cols = session.cols;
+    final rows = session.rows;
+    try {
+      final creds = resolveCredentials(
+        host,
+        keys: await _app.repository.getAllKeys(),
+        profiles: await _app.repository.getAllProfiles(),
+      );
+      final limit = preferences.terminalScrollbackLimit;
+      // A byte budget rather than an unbounded buffer: a pane with 50,000 rows of output is a
+      // multi-megabyte string, and only the tail of it can survive the scrollback limit anyway.
+      final budget = limit * 300 + 65536;
+      final buffer = StringBuffer();
+      await ssh.execStream(
+        creds,
+        tmuxCaptureHistoryCommand(name, limit),
+        onChunk: (chunk) async {
+          buffer.write(chunk);
+          if (buffer.length > budget) {
+            final kept = buffer.toString();
+            buffer
+              ..clear()
+              ..write(kept.substring(kept.length - budget));
+          }
+        },
+      );
+      final history = buffer.toString().trimRight();
+      // Empty is the `#{alternate_on}` guard firing: a TUI owns the pane and `capture-pane` would
+      // return its frames rather than history. Re-arm and let a later scroll try again.
+      if (history.isEmpty || history.startsWith('SSH Error:')) {
+        session.scrollbackDirty = true;
+        return 0;
+      }
+
+      // The capture is only valid for the grid it was taken against. A resize in flight means the
+      // rows would be re-wrapped to the wrong width, so it is discarded rather than adopted.
+      if (session.cols != cols || session.rows != rows) {
+        session.scrollbackDirty = true;
+        return 0;
+      }
+
+      final scratch = TerminalEmulator(cols: cols, rows: rows, scrollbackLimit: limit);
+      scratch.feed(Uint8List.fromList(utf8.encode(history.replaceAll('\n', '\r\n'))));
+      // A screen-height of newlines pushes the tail off the scratch screen, so everything the
+      // capture contained ends up in its *scrollback* — which is the half being adopted.
+      scratch.feed(Uint8List.fromList(utf8.encode('\r\n' * rows)));
+      return session.adoptScrollback(scratch);
+    } catch (_) {
+      // A capture that could not run is not evidence the history is gone. Leave it armed.
+      session.scrollbackDirty = true;
+      return 0;
+    } finally {
+      _resyncing = false;
+    }
+  }
+
   /// Send a clipboard paste as one contiguous write.
   bool paste(String text) {
     final session = current;
     if (session == null || text.isEmpty) return false;
     // Modifiers are deliberately not consumed: a stuck Ctrl must not rewrite the paste's first byte,
     // and silently swallowing the modifier here would surprise the very next keystroke.
-    return session.write(encodePastedText(text));
+    //
+    // The remote's DECSET 2004 state is read now rather than cached: a shell turns bracketed paste
+    // on and off around its own prompt, so the only moment the answer is true is this one.
+    return session.write(encodePastedText(text, bracketed: session.emulator.bracketedPasteMode));
   }
 
   /// Mirrors an editor-style swipe/autocorrect edit as one ordered terminal write.

@@ -1,6 +1,7 @@
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:omniterm/ui/view_model/app_lock_controller.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/domain/app_preferences.dart';
@@ -55,11 +56,206 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// Pumps the screen with a **real** `AppLockController`, which the harness above deliberately
+  /// omits.
+  ///
+  /// Bounded pumps rather than `pumpAndSettle`: a live controller keeps a background-lock timer, so
+  /// settling waits on a timer that is meant to keep repeating. That is the same obstacle recorded
+  /// against defect 62, and it is why the enable-with-PIN path had never been driven here.
+  Future<AppLockController> pumpWithLock(WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1200, 4000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await app.start();
+    vm = SettingsViewModel(app);
+    final lock = AppLockController(repo);
+    await lock.load();
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AppState>.value(value: app),
+          ChangeNotifierProvider<SettingsViewModel>.value(value: vm),
+          ChangeNotifierProvider<AppLockController>.value(value: lock),
+        ],
+        child: MaterialApp(
+          theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
+          home: const Scaffold(body: SettingsScreen()),
+        ),
+      ),
+    );
+    for (var frame = 0; frame < 8; frame++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    return lock;
+  }
+
+  /// Like [pumpWithLock] but at a real phone's landscape geometry and text scale.
+  ///
+  /// Every other harness here uses a 1200x4000 surface so all thirty-odd settings rows lay out. That
+  /// is right for driving the screen and wrong for judging whether anything fits: the PIN dialog has
+  /// never been rendered at a size a phone actually has.
+  Future<AppLockController> pumpWithLockAt(
+    WidgetTester tester, {
+    required Size size,
+    required double textScale,
+  }) async {
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+
+    await app.start();
+    vm = SettingsViewModel(app);
+    final lock = AppLockController(repo);
+    await lock.load();
+    await tester.pumpWidget(
+      MultiProvider(
+        providers: [
+          ChangeNotifierProvider<AppState>.value(value: app),
+          ChangeNotifierProvider<SettingsViewModel>.value(value: vm),
+          ChangeNotifierProvider<AppLockController>.value(value: lock),
+        ],
+        child: MaterialApp(
+          theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
+          home: MediaQuery(
+            data: MediaQueryData(size: size, textScaler: TextScaler.linear(textScale)),
+            child: const Scaffold(body: SettingsScreen()),
+          ),
+        ),
+      ),
+    );
+    for (var frame = 0; frame < 8; frame++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    return lock;
+  }
+
+  /// Advances a few frames without waiting for the lock timer to stop repeating.
+  Future<void> step(WidgetTester tester) async {
+    for (var frame = 0; frame < 8; frame++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+  }
+
   Future<void> finish(WidgetTester tester) async {
     vm.dispose();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 10));
   }
+
+  testWidgets('the PIN dialog fits a landscape phone at 200% text, error and all', (tester) async {
+    // The class defect 112 belongs to: a branch nothing renders is a branch nothing has measured.
+    // `settings.pin.error` appears in no test in this repository, and the harnesses here all use a
+    // 1200x4000 surface, so this dialog had never been laid out at a size a phone actually has —
+    // and an AlertDialog's content is *not* scrollable unless it asks to be.
+    final overflows = <String>[];
+    final previous = FlutterError.onError;
+    FlutterError.onError = (details) {
+      if (details.toString().contains('overflowed')) overflows.add(details.toString());
+      previous?.call(details);
+    };
+    addTearDown(() => FlutterError.onError = previous);
+
+    // A small phone in landscape — 640x360 logical, tighter than the emulator's 914x411 and the
+    // hardest case this dialog has to survive.
+    await pumpWithLockAt(tester, size: const Size(640, 360), textScale: 2);
+
+    // At a real phone size the list scrolls, so both controls have to be brought into view first —
+    // which is itself the point: the tall harness never exercised that either.
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('settings.appLockEnabled')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await step(tester);
+    await tester.tap(find.byKey(const ValueKey('settings.appLockEnabled')));
+    await step(tester);
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('settings.save')),
+      200,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await step(tester);
+    await tester.tap(find.byKey(const ValueKey('settings.save')));
+    await step(tester);
+    expect(find.byKey(const ValueKey('settings.pin.dialog')), findsOneWidget);
+
+    // Mismatched entries, so the error line is present — the tallest the dialog ever gets.
+    await tester.enterText(find.byKey(const ValueKey('settings.pin.first')), '4913');
+    await tester.enterText(find.byKey(const ValueKey('settings.pin.second')), '1234');
+    await step(tester);
+    await tester.tap(find.byKey(const ValueKey('settings.pin.confirm')));
+    await step(tester);
+
+    expect(find.byKey(const ValueKey('settings.pin.error')), findsOneWidget, reason: 'error shown');
+    expect(overflows, isEmpty, reason: 'the PIN dialog overflowed: ${overflows.join('; ')}');
+    await finish(tester);
+  });
+
+  group('enabling App Lock actually turns it on', () {
+    /// The open question from the device suite: on a device the switch showed *on* after saving,
+    /// while the confirmation that fires on the way back off never appeared — and that confirmation
+    /// keys off `vm.saved.appLockEnabled`, not the draft. Either the device test drove the screen
+    /// faster than the save committed, or enabling App Lock sets a PIN **without turning the lock
+    /// on**, which would be a switch reporting protection it is not providing.
+    testWidgets('the preference is saved, not just the PIN', (tester) async {
+      final lock = await pumpWithLock(tester);
+
+      await tester.tap(find.byKey(const ValueKey('settings.appLockEnabled')));
+      await step(tester);
+      await tester.tap(find.byKey(const ValueKey('settings.save')));
+      await step(tester);
+
+      expect(
+        find.byKey(const ValueKey('settings.pin.dialog')),
+        findsOneWidget,
+        reason: 'enabling the lock must collect a PIN',
+      );
+      await tester.enterText(find.byKey(const ValueKey('settings.pin.first')), '4913');
+      await tester.enterText(find.byKey(const ValueKey('settings.pin.second')), '4913');
+      await step(tester);
+      await tester.tap(find.byKey(const ValueKey('settings.pin.confirm')));
+      await step(tester);
+
+      expect(lock.hasStoredPin, isTrue, reason: 'the PIN was not stored');
+      expect(
+        vm.saved.appLockEnabled,
+        isTrue,
+        reason:
+            'the PIN was stored but the lock was left off — a switch that reports protection '
+            'it is not providing',
+      );
+      expect(lock.isConfigured, isTrue);
+    });
+
+    testWidgets('with a PIN stored, saving asks for it first', (tester) async {
+      // Defect 62's uncovered wiring. That entry recorded the gated path as undrivable here,
+      // because a live `AppLockController` stops `pumpAndSettle` quieting. Bounded pumps make it
+      // drivable, so the join between `hasStoredPin` and the save is no longer an assumption.
+      await repo.insertSetting('app_pin', '4913');
+      final lock = await pumpWithLock(tester);
+      expect(lock.hasStoredPin, isTrue);
+
+      await tester.tap(find.byKey(const ValueKey('settings.blockScreenshots')));
+      await step(tester);
+      await tester.tap(find.byKey(const ValueKey('settings.save')));
+      await step(tester);
+
+      expect(
+        find.byKey(const ValueKey('sudoAuth.dialog')),
+        findsOneWidget,
+        reason:
+            'settings saved without proving who was asking, and disabling the lock from here '
+            'clears the stored PIN outright',
+      );
+
+      // Cancelling must change nothing.
+      final before = vm.saved.blockScreenshots;
+      await tester.tap(find.byKey(const ValueKey('sudoAuth.cancel')));
+      await step(tester);
+      expect(vm.saved.blockScreenshots, before);
+    });
+  });
 
   testWidgets('the sections and their controls render', (tester) async {
     await pump(tester);

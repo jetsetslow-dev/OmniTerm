@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:collection/collection.dart';
 import 'package:flutter/foundation.dart';
 
 import '../../data/app_database.dart';
@@ -316,6 +317,17 @@ class InfraViewModel extends ChangeNotifier {
 
       // A reply for a host the user has already navigated away from must not be committed.
       if (inspectedServer?.id != startedFor) return;
+
+      // `exec` reports failure by *returning* a string, not by throwing (`dartssh_transport.dart`
+      // returns `'SSH Error: …'` for a timeout, a refused connection or a non-zero exit). Parsing
+      // that as output yields no containers, no images and no runtimes with `_error` still null —
+      // an unreachable host presented as an empty one, which is a wrong answer wearing the clothes
+      // of a right one. Compose checks the same prefix at `ui/AppViewModel.kt:6455`.
+      final failure = results.firstWhereOrNull((out) => out.startsWith('SSH Error'));
+      if (failure != null) {
+        _failWith(failure);
+        return;
+      }
 
       final restarts = parseDockerRestartCounts(results[1]);
       final parsed = [

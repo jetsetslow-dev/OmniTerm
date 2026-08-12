@@ -431,6 +431,8 @@ void main() {
       await poller.cycle();
       await tester.pumpAndSettle();
 
+      final scoreSemantics = tester.getSemantics(find.byKey(ValueKey('fleet.host.$id.score.open')));
+      expect(scoreSemantics.label, matches(RegExp(r'Health score: \d+ out of 100')));
       await tester.tap(find.byKey(ValueKey('fleet.host.$id.score.open')));
       await tester.pumpAndSettle();
 
@@ -484,6 +486,10 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('fleet.summary.countdown')), findsOneWidget);
+      expect(
+        tester.getSemantics(find.byKey(const ValueKey('fleet.summary.countdown'))).label,
+        'Refreshing in 15 seconds',
+      );
       vm.dispose();
       scriptsVm.dispose();
       poller.dispose();

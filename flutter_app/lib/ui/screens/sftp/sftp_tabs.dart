@@ -380,79 +380,120 @@ class SftpFilesTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _Breadcrumbs(vm: vm),
-        _Toolbar(vm: vm),
-        if (vm.loading) const LinearProgressIndicator(minHeight: 2),
-        if (vm.status != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: OmniCard(
-              key: const ValueKey('sftp.status'),
-              leftAccent: OmniColors.green,
-              child: Row(
-                children: [
-                  Expanded(child: Text(vm.status!, style: const TextStyle(fontSize: 12))),
-                  IconButton(
-                    tooltip: 'Dismiss',
-                    key: const ValueKey('sftp.status.dismiss'),
-                    icon: const Icon(Icons.close, size: 16),
-                    onPressed: vm.dismissStatus,
-                  ),
-                ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // A phone in landscape at the largest supported text size can leave less than 80 logical
+        // pixels below the app chrome. Putting the path and toolbar beside one another preserves
+        // both controls and the file list instead of overflowing before the list gets any height.
+        final compactHeader = constraints.maxWidth >= 600 && constraints.maxHeight < 120;
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Everything above the listing is one block with a ceiling. Side-by-side controls alone
+            // were not enough: on the API-32 phone in landscape at 200% text even the compact row
+            // needs more height than the body has, and a Column child with no ceiling overflows
+            // rather than yielding. Capping the block at 55% of the body and letting it scroll
+            // inside that keeps both the controls and a usable listing at any text size, and costs
+            // nothing at ordinary sizes where the block is shorter than the cap.
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                // Less the 6px gap below, which is outside this block: taking the fraction of the
+                // raw height leaves the gap unaccounted for and the Column overflows by it.
+                maxHeight: ((constraints.maxHeight - 6) * 0.55).clamp(0.0, double.infinity),
               ),
-            ),
-          ),
-        if (vm.error != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 6),
-            child: OmniCard(
-              key: const ValueKey('sftp.error'),
-              leftAccent: OmniColors.red,
-              child: SelectionArea(
-                child: Text(
-                  vm.error!,
-                  style: const TextStyle(fontSize: 11, fontFamily: OmniFonts.mono),
+              child: SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (compactHeader)
+                      Row(
+                        children: [
+                          Expanded(child: _Breadcrumbs(vm: vm)),
+                          const SizedBox(width: 8),
+                          Expanded(flex: 2, child: _Toolbar(vm: vm)),
+                        ],
+                      )
+                    else ...[
+                      _Breadcrumbs(vm: vm),
+                      _Toolbar(vm: vm),
+                    ],
+                    if (vm.loading) const LinearProgressIndicator(minHeight: 2),
+                    if (vm.status != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: OmniCard(
+                          key: const ValueKey('sftp.status'),
+                          leftAccent: OmniColors.green,
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(vm.status!, style: const TextStyle(fontSize: 12)),
+                              ),
+                              IconButton(
+                                tooltip: 'Dismiss',
+                                key: const ValueKey('sftp.status.dismiss'),
+                                icon: const Icon(Icons.close, size: 16),
+                                onPressed: vm.dismissStatus,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    if (vm.error != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: OmniCard(
+                          key: const ValueKey('sftp.error'),
+                          leftAccent: OmniColors.red,
+                          child: SelectionArea(
+                            child: Text(
+                              vm.error!,
+                              style: const TextStyle(fontSize: 11, fontFamily: OmniFonts.mono),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
                 ),
               ),
             ),
-          ),
-        const SizedBox(height: 6),
-        // Search results take the listing's place while they exist, because they answer a different
-        // question than "what is in this folder" and mixing the two would make neither readable.
-        if (vm.searchHits != null) Expanded(child: _SearchResults(vm: vm)),
-        if (vm.searchHits == null)
-          Expanded(
-            child: vm.visibleEntries.isEmpty
-                // "Not read yet" is not "nothing here". The first listing of a host includes the
-                // TCP connect, the handshake, the auth and opening the SFTP subsystem, and a
-                // browser that says "This directory is empty" throughout that is stating something
-                // false about the user's files — measured on a real host, where the claim stood for
-                // seconds before the listing landed. The 2px bar above is not a correction: it sits
-                // in the toolbar while the body asserts the opposite.
-                ? Center(
-                    key: ValueKey(vm.loading ? 'sftp.loading' : 'sftp.empty'),
-                    child: Text(
-                      vm.loading
-                          ? 'Listing…'
-                          // "Nothing matched" and "nothing here" are different facts.
-                          : vm.searchText.trim().isNotEmpty
-                          ? 'Nothing matches your search'
-                          : 'This directory is empty',
-                      style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
-                    ),
-                  )
-                : ListView.separated(
-                    key: const ValueKey('sftp.list'),
-                    itemCount: vm.visibleEntries.length,
-                    separatorBuilder: (_, _) => const SizedBox(height: 4),
-                    itemBuilder: (context, index) =>
-                        _EntryRow(vm: vm, entry: vm.visibleEntries[index]),
-                  ),
-          ),
-      ],
+            const SizedBox(height: 6),
+            // Search results take the listing's place while they exist, because they answer a different
+            // question than "what is in this folder" and mixing the two would make neither readable.
+            if (vm.searchHits != null) Expanded(child: _SearchResults(vm: vm)),
+            if (vm.searchHits == null)
+              Expanded(
+                child: vm.visibleEntries.isEmpty
+                    // "Not read yet" is not "nothing here". The first listing of a host includes the
+                    // TCP connect, the handshake, the auth and opening the SFTP subsystem, and a
+                    // browser that says "This directory is empty" throughout that is stating something
+                    // false about the user's files — measured on a real host, where the claim stood for
+                    // seconds before the listing landed. The 2px bar above is not a correction: it sits
+                    // in the toolbar while the body asserts the opposite.
+                    ? Center(
+                        key: ValueKey(vm.loading ? 'sftp.loading' : 'sftp.empty'),
+                        child: Text(
+                          vm.loading
+                              ? 'Listing…'
+                              // "Nothing matched" and "nothing here" are different facts.
+                              : vm.searchText.trim().isNotEmpty
+                              ? 'Nothing matches your search'
+                              : 'This directory is empty',
+                          style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
+                        ),
+                      )
+                    : ListView.separated(
+                        key: const ValueKey('sftp.list'),
+                        itemCount: vm.visibleEntries.length,
+                        separatorBuilder: (_, _) => const SizedBox(height: 4),
+                        itemBuilder: (context, index) =>
+                            _EntryRow(vm: vm, entry: vm.visibleEntries[index]),
+                      ),
+              ),
+          ],
+        );
+      },
     );
   }
 }
@@ -656,155 +697,181 @@ class _ToolbarState extends State<_Toolbar> {
   @override
   Widget build(BuildContext context) {
     final vm = widget.vm;
-    return Row(
-      children: [
-        Expanded(
-          child: SizedBox(
-            height: 38,
-            child: TextField(
-              key: const ValueKey('sftp.search'),
-              controller: _search,
-              // setState as well as the view model: the "search this host" button beside it is
-              // enabled by whether anything has been typed, and a controller alone does not rebuild.
-              onChanged: (value) => setState(() => vm.searchText = value),
-              style: const TextStyle(fontSize: 13),
-              decoration: omniInputDecoration(
-                context,
-                hintText: 'Filter this folder',
-                prefixIcon: const Icon(Icons.search, size: 18),
-              ),
-            ),
-          ),
+    final search = SizedBox(
+      height: 38,
+      child: TextField(
+        key: const ValueKey('sftp.search'),
+        controller: _search,
+        // setState as well as the view model: the "search this host" button beside it is
+        // enabled by whether anything has been typed, and a controller alone does not rebuild.
+        onChanged: (value) => setState(() => vm.searchText = value),
+        style: const TextStyle(fontSize: 13),
+        decoration: omniInputDecoration(
+          context,
+          hintText: 'Filter this folder',
+          prefixIcon: const Icon(Icons.search, size: 18),
         ),
-        // The escalation from the filter beside it: when what you want is not in this folder, the
-        // next question is "is it on this host at all".
-        if (vm.canSearchHost)
-          IconButton(
-            key: const ValueKey('sftp.searchHost'),
-            tooltip: 'Search this host',
-            icon: const Icon(Icons.travel_explore, size: 18, color: OmniColors.cyan),
-            onPressed: vm.isSearching || _search.text.trim().isEmpty
-                ? null
-                : () => vm.searchHost(_search.text),
-          ),
-        if (vm.hasBrowseTarget)
-          IconButton(
-            key: const ValueKey('sftp.upload'),
-            tooltip: 'Upload files from device',
-            icon: const Icon(Icons.upload_file, size: 18),
-            onPressed: vm.loading ? null : () => _uploadFromDevice(context, vm),
-          ),
-        if (vm.canUseSudo)
-          IconButton(
-            key: const ValueKey('sftp.sudo'),
-            tooltip: vm.sudoMode ? 'Reading and writing as root' : 'Read and write as root',
-            icon: Icon(
-              vm.sudoMode ? Icons.shield : Icons.shield_outlined,
-              size: 18,
-              // Red when on, because the difference between the two states is who you are on
-              // someone else's machine.
-              color: vm.sudoMode ? OmniColors.red : null,
-            ),
-            onPressed: () => vm.sudoMode ? vm.sudoMode = false : _confirmSudo(context, vm),
-          ),
+      ),
+    );
+    final actions = <Widget>[
+      // The escalation from the filter beside it: when what you want is not in this folder, the
+      // next question is "is it on this host at all". A share answers the same question by being
+      // walked, since it has no shell to run `find` on.
+      if (vm.canSearch)
         IconButton(
-          key: const ValueKey('sftp.toggleHidden'),
-          tooltip: vm.showHidden ? 'Hide dotfiles' : 'Show dotfiles',
-          icon: Icon(
-            vm.showHidden ? Icons.visibility : Icons.visibility_off,
-            size: 18,
-            color: vm.showHidden ? OmniColors.cyan : null,
-          ),
-          onPressed: () => vm.showHidden = !vm.showHidden,
+          key: const ValueKey('sftp.searchHost'),
+          tooltip: vm.canSearchShare ? 'Search this share' : 'Search this host',
+          icon: const Icon(Icons.travel_explore, size: 18, color: OmniColors.cyan),
+          onPressed: vm.isSearching || _search.text.trim().isEmpty
+              ? null
+              : () =>
+                    vm.canSearchShare ? vm.searchShare(_search.text) : vm.searchHost(_search.text),
         ),
-        PopupMenuButton<SftpSortOption>(
-          key: const ValueKey('sftp.sort'),
-          tooltip: 'Sort',
+      if (vm.hasBrowseTarget)
+        IconButton(
+          key: const ValueKey('sftp.upload'),
+          tooltip: 'Upload files from device',
+          icon: const Icon(Icons.upload_file, size: 18),
+          onPressed: vm.loading ? null : () => _uploadFromDevice(context, vm),
+        ),
+      if (vm.canUseSudo)
+        IconButton(
+          key: const ValueKey('sftp.sudo'),
+          tooltip: vm.sudoMode ? 'Reading and writing as root' : 'Read and write as root',
           icon: Icon(
-            Icons.sort,
+            vm.sudoMode ? Icons.shield : Icons.shield_outlined,
             size: 18,
-            color: vm.sortOption != SftpSortOption.nameAsc ? OmniColors.cyan : null,
+            // Red when on, because the difference between the two states is who you are on
+            // someone else's machine.
+            color: vm.sudoMode ? OmniColors.red : null,
           ),
-          onSelected: (option) => vm.sortOption = option,
-          itemBuilder: (_) => [
-            for (final option in SftpSortOption.values)
-              PopupMenuItem(
-                value: option,
-                child: Text(option.label, style: const TextStyle(fontSize: 13)),
-              ),
+          onPressed: () => vm.sudoMode ? vm.sudoMode = false : _confirmSudo(context, vm),
+        ),
+      IconButton(
+        key: const ValueKey('sftp.toggleHidden'),
+        tooltip: vm.showHidden ? 'Hide dotfiles' : 'Show dotfiles',
+        icon: Icon(
+          vm.showHidden ? Icons.visibility : Icons.visibility_off,
+          size: 18,
+          color: vm.showHidden ? OmniColors.cyan : null,
+        ),
+        onPressed: () => vm.showHidden = !vm.showHidden,
+      ),
+      PopupMenuButton<SftpSortOption>(
+        key: const ValueKey('sftp.sort'),
+        tooltip: 'Sort',
+        icon: Icon(
+          Icons.sort,
+          size: 18,
+          color: vm.sortOption != SftpSortOption.nameAsc ? OmniColors.cyan : null,
+        ),
+        onSelected: (option) => vm.sortOption = option,
+        itemBuilder: (_) => [
+          for (final option in SftpSortOption.values)
+            PopupMenuItem(
+              value: option,
+              child: Text(option.label, style: const TextStyle(fontSize: 13)),
+            ),
+        ],
+      ),
+      IconButton(
+        key: const ValueKey('sftp.newFolder'),
+        tooltip: 'New folder',
+        icon: const Icon(Icons.create_new_folder_outlined, size: 18),
+        onPressed: () => _promptNewFolder(context, vm),
+      ),
+      IconButton(
+        key: const ValueKey('sftp.refresh'),
+        tooltip: 'Refresh',
+        icon: const Icon(Icons.refresh, size: 18),
+        onPressed: vm.loading ? null : vm.refresh,
+      ),
+      IconButton(
+        key: const ValueKey('sftp.selectAll'),
+        tooltip: 'Select all',
+        icon: const Icon(Icons.select_all, size: 18),
+        onPressed: vm.canSelectAllVisible ? vm.selectAllVisible : null,
+      ),
+      if (vm.hasSelection)
+        IconButton(
+          key: const ValueKey('sftp.clearSelection'),
+          tooltip: 'Clear selection',
+          icon: const Icon(Icons.deselect, size: 18),
+          onPressed: vm.clearSelection,
+        ),
+      if (vm.canBatchDownload)
+        IconButton(
+          key: const ValueKey('sftp.downloadSelected'),
+          tooltip: 'Download selected files',
+          icon: const Icon(Icons.download, size: 18),
+          onPressed: () => _downloadSelected(context, vm),
+        ),
+      if (vm.hasSelection)
+        PopupMenuButton<String>(
+          key: const ValueKey('sftp.clipboard.stage'),
+          tooltip: 'Copy or move selected',
+          icon: const Icon(Icons.content_copy, size: 18, color: OmniColors.cyan),
+          onSelected: (action) => _stageClipboard(context, vm, move: action == 'move'),
+          itemBuilder: (_) => const [
+            PopupMenuItem(value: 'copy', child: Text('Copy selected')),
+            PopupMenuItem(value: 'move', child: Text('Move selected')),
           ],
         ),
+      if (vm.hasClipboard)
         IconButton(
-          key: const ValueKey('sftp.newFolder'),
-          tooltip: 'New folder',
-          icon: const Icon(Icons.create_new_folder_outlined, size: 18),
-          onPressed: () => _promptNewFolder(context, vm),
+          key: const ValueKey('sftp.clipboard.paste'),
+          tooltip: '${vm.clipboardSummary} into this folder',
+          icon: const Icon(Icons.content_paste, size: 18, color: OmniColors.green),
+          onPressed: vm.loading ? null : () => _pasteClipboard(context, vm),
         ),
+      if (vm.hasSelection && vm.canArchive)
+        PopupMenuButton<String>(
+          key: const ValueKey('sftp.archiveSelected'),
+          tooltip: 'Compress selected',
+          icon: const Icon(Icons.archive_outlined, size: 18),
+          onSelected: (format) => _createArchive(context, vm, format),
+          itemBuilder: (_) => const [
+            PopupMenuItem(value: 'zip', child: Text('ZIP (.zip)')),
+            PopupMenuItem(value: 'tar.gz', child: Text('Gzipped tar (.tar.gz)')),
+            PopupMenuItem(value: 'tar', child: Text('Tar (.tar)')),
+            PopupMenuItem(value: '7z', child: Text('7-Zip (.7z, needs 7z on host)')),
+          ],
+        ),
+      if (vm.hasSelection)
         IconButton(
-          key: const ValueKey('sftp.refresh'),
-          tooltip: 'Refresh',
-          icon: const Icon(Icons.refresh, size: 18),
-          onPressed: vm.loading ? null : vm.refresh,
+          key: const ValueKey('sftp.deleteSelected'),
+          tooltip: 'Delete selected',
+          icon: const Icon(Icons.delete_outline, size: 18, color: OmniColors.red),
+          onPressed: () => _confirmDelete(context, vm, vm.selectedEntries),
         ),
-        IconButton(
-          key: const ValueKey('sftp.selectAll'),
-          tooltip: 'Select all',
-          icon: const Icon(Icons.select_all, size: 18),
-          onPressed: vm.canSelectAllVisible ? vm.selectAllVisible : null,
-        ),
-        if (vm.hasSelection)
-          IconButton(
-            key: const ValueKey('sftp.clearSelection'),
-            tooltip: 'Clear selection',
-            icon: const Icon(Icons.deselect, size: 18),
-            onPressed: vm.clearSelection,
-          ),
-        if (vm.canBatchDownload)
-          IconButton(
-            key: const ValueKey('sftp.downloadSelected'),
-            tooltip: 'Download selected files',
-            icon: const Icon(Icons.download, size: 18),
-            onPressed: () => _downloadSelected(context, vm),
-          ),
-        if (vm.hasSelection)
-          PopupMenuButton<String>(
-            key: const ValueKey('sftp.clipboard.stage'),
-            tooltip: 'Copy or move selected',
-            icon: const Icon(Icons.content_copy, size: 18, color: OmniColors.cyan),
-            onSelected: (action) => _stageClipboard(context, vm, move: action == 'move'),
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'copy', child: Text('Copy selected')),
-              PopupMenuItem(value: 'move', child: Text('Move selected')),
+    ];
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth >= 600) {
+          return Row(
+            children: [
+              Expanded(child: search),
+              ...actions,
             ],
-          ),
-        if (vm.hasClipboard)
-          IconButton(
-            key: const ValueKey('sftp.clipboard.paste'),
-            tooltip: '${vm.clipboardSummary} into this folder',
-            icon: const Icon(Icons.content_paste, size: 18, color: OmniColors.green),
-            onPressed: vm.loading ? null : () => _pasteClipboard(context, vm),
-          ),
-        if (vm.hasSelection && vm.canArchive)
-          PopupMenuButton<String>(
-            key: const ValueKey('sftp.archiveSelected'),
-            tooltip: 'Compress selected',
-            icon: const Icon(Icons.archive_outlined, size: 18),
-            onSelected: (format) => _createArchive(context, vm, format),
-            itemBuilder: (_) => const [
-              PopupMenuItem(value: 'zip', child: Text('ZIP (.zip)')),
-              PopupMenuItem(value: 'tar.gz', child: Text('Gzipped tar (.tar.gz)')),
-              PopupMenuItem(value: 'tar', child: Text('Tar (.tar)')),
-              PopupMenuItem(value: '7z', child: Text('7-Zip (.7z, needs 7z on host)')),
-            ],
-          ),
-        if (vm.hasSelection)
-          IconButton(
-            key: const ValueKey('sftp.deleteSelected'),
-            tooltip: 'Delete selected',
-            icon: const Icon(Icons.delete_outline, size: 18, color: OmniColors.red),
-            onPressed: () => _confirmDelete(context, vm, vm.selectedEntries),
-          ),
-      ],
+          );
+        }
+        // Seven always-available actions cannot coexist with a useful search field at 360dp.
+        // Keep the search visible and make only the action strip horizontally scrollable.
+        return Row(
+          children: [
+            Expanded(flex: 2, child: search),
+            const SizedBox(width: 4),
+            Expanded(
+              flex: 3,
+              child: SingleChildScrollView(
+                key: const ValueKey('sftp.toolbarActions'),
+                scrollDirection: Axis.horizontal,
+                child: Row(children: actions),
+              ),
+            ),
+          ],
+        );
+      },
     );
   }
 }
@@ -1211,6 +1278,9 @@ class _EntryRow extends StatelessWidget {
           ),
           PopupMenuButton<String>(
             key: ValueKey('sftp.entry.${entry.name}.menu'),
+            // Every item below mutates or transfers, so the whole menu closes while one is running,
+            // matching the per-item `!shareOpRunning` gates in Compose (ui/SftpScreen.kt:1118-1139).
+            enabled: !vm.loading,
             onSelected: (action) => _handle(context, action),
             itemBuilder: (_) => [
               // Only for a directory, and only where there is a shell to run `du` on: a file

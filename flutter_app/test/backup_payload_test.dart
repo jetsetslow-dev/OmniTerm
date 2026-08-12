@@ -99,7 +99,7 @@ void main() {
   /// silently inspect the wrong object and every field would read as absent.
   Future<Map<String, dynamic>> exportedDocument(
     BackupViewModel vm, {
-    String passphrase = 'pass',
+    String passphrase = 'a-long-enough-passphrase',
   }) async {
     final contents = await vm.exportBackup(passphrase);
     expect(contents, isNotNull, reason: vm.error ?? 'export returned null');
@@ -147,7 +147,7 @@ void main() {
       await repo.insertSetting('theme', 'dark');
       final vm = await boot();
 
-      final document = await exportedDocument(vm, passphrase: 'pass');
+      final document = await exportedDocument(vm, passphrase: 'a-long-enough-passphrase');
       final keys = (document['settings'] as List).map((s) => (s as Map)['key'] as String).toList();
       expect(keys, contains('theme'));
       for (final localKey in const [
@@ -183,7 +183,7 @@ void main() {
       scripts.dispose();
 
       final vm = await boot();
-      final document = await exportedDocument(vm, passphrase: 'pass');
+      final document = await exportedDocument(vm, passphrase: 'a-long-enough-passphrase');
       final exported = (document['scripts'] as List).cast<Map<String, dynamic>>();
 
       expect(exported, hasLength(1));
@@ -196,7 +196,7 @@ void main() {
     test('an empty selection is refused rather than writing an empty file', () async {
       final vm = await boot();
       vm.selectNone();
-      expect(await vm.exportBackup('pass'), isNull);
+      expect(await vm.exportBackup('a-long-enough-passphrase'), isNull);
       expect(vm.error, contains('at least one'));
       vm.dispose();
     });
@@ -236,7 +236,7 @@ void main() {
     test('brings hosts back with their secrets intact', () async {
       await repo.insertServer(server(name: 'nas', host: '10.0.0.9'));
       final vm = await boot();
-      final contents = await vm.exportBackup('pass');
+      final contents = await vm.exportBackup('a-long-enough-passphrase');
 
       // A different device: a fresh database with nothing in it.
       final freshDb = AppDatabase(NativeDatabase.memory());
@@ -248,7 +248,7 @@ void main() {
       await freshApp.start();
       final freshVm = BackupViewModel(freshApp);
 
-      await freshVm.importBackup(contents!, 'pass');
+      await freshVm.importBackup(contents!, 'a-long-enough-passphrase');
 
       final restored = (await freshRepo.getAllServers()).single;
       expect(restored.name, 'nas');
@@ -293,14 +293,14 @@ void main() {
         ),
       );
       final vm = await boot();
-      final contents = await vm.exportBackup('pass');
+      final contents = await vm.exportBackup('a-long-enough-passphrase');
 
       final (freshDb, freshRepo, freshApp, freshVm) = await freshDevice();
       final unrelatedId = await freshRepo.insertProfile(
         profile('unrelated', password: 'do-not-use'),
       );
       expect(unrelatedId, sourceProfileId, reason: 'the collision is the regression condition');
-      await freshVm.importBackup(contents!, 'pass');
+      await freshVm.importBackup(contents!, 'a-long-enough-passphrase');
 
       final restoredProfile = (await freshRepo.getAllProfiles()).singleWhere(
         (p) => p.profileName == 'production',
@@ -333,12 +333,12 @@ void main() {
         ),
       );
       final vm = await boot();
-      final contents = await vm.exportBackup('pass');
+      final contents = await vm.exportBackup('a-long-enough-passphrase');
 
       final (freshDb, freshRepo, freshApp, freshVm) = await freshDevice();
       await freshVm.importBackup(
         contents!,
-        'pass',
+        'a-long-enough-passphrase',
         selection: BackupSelection.all(),
         selectedServerIds: {firstHost},
       );
@@ -364,13 +364,13 @@ void main() {
           ),
         );
         final vm = await boot();
-        final contents = await vm.exportBackup('pass');
+        final contents = await vm.exportBackup('a-long-enough-passphrase');
 
         final (freshDb, freshRepo, freshApp, freshVm) = await freshDevice();
         await freshRepo.insertProfile(profile('unrelated'));
         await freshVm.importBackup(
           contents!,
-          'pass',
+          'a-long-enough-passphrase',
           selection: const BackupSelection({BackupSection.servers}),
         );
 
@@ -387,7 +387,7 @@ void main() {
     test('a restored host starts unprobed rather than carrying a stale score', () async {
       await repo.insertServer(server(name: 'nas'));
       final vm = await boot();
-      final contents = await vm.exportBackup('pass');
+      final contents = await vm.exportBackup('a-long-enough-passphrase');
 
       final freshDb = AppDatabase(NativeDatabase.memory());
       final freshRepo = AppRepository(
@@ -397,7 +397,7 @@ void main() {
       final freshApp = AppState(freshRepo);
       await freshApp.start();
       final freshVm = BackupViewModel(freshApp);
-      await freshVm.importBackup(contents!, 'pass');
+      await freshVm.importBackup(contents!, 'a-long-enough-passphrase');
 
       final restored = (await freshRepo.getAllServers()).single;
       expect(restored.status, 'offline');
@@ -418,14 +418,14 @@ void main() {
       await repo.insertSetting('sftp_bookmarks_$sourceHostId', '/srv/data\n/var/log');
       await repo.insertSetting('sftp_last_path_$sourceHostId', '/private/source/path');
       final vm = await boot();
-      final contents = await vm.exportBackup('pass');
+      final contents = await vm.exportBackup('a-long-enough-passphrase');
 
       final (freshDb, freshRepo, freshApp, freshVm) = await freshDevice();
       final unrelatedHostId = await freshRepo.insertServer(
         server(name: 'already-here', host: '10.0.0.99'),
       );
       expect(unrelatedHostId, sourceHostId, reason: 'the collision is the regression condition');
-      await freshVm.importBackup(contents!, 'pass');
+      await freshVm.importBackup(contents!, 'a-long-enough-passphrase');
 
       final restoredHost = (await freshRepo.getAllServers()).singleWhere(
         (host) => host.name == 'bookmarked',
@@ -447,8 +447,8 @@ void main() {
       // There is no undo for a restore; wiping first would make one mistake permanent.
       await repo.insertServer(server(name: 'existing'));
       final vm = await boot();
-      final contents = await vm.exportBackup('pass');
-      await vm.importBackup(contents!, 'pass');
+      final contents = await vm.exportBackup('a-long-enough-passphrase');
+      await vm.importBackup(contents!, 'a-long-enough-passphrase');
       await settle();
 
       final all = await repo.getAllServers();
@@ -468,7 +468,7 @@ void main() {
         ),
       );
       final vm = await boot();
-      final contents = await vm.exportBackup('pass');
+      final contents = await vm.exportBackup('a-long-enough-passphrase');
 
       final freshDb = AppDatabase(NativeDatabase.memory());
       final freshRepo = AppRepository(
@@ -480,7 +480,7 @@ void main() {
       // Something already occupies id 1, so the restored host cannot keep its old id.
       await freshRepo.insertServer(server(name: 'unrelated'));
       final freshVm = BackupViewModel(freshApp);
-      await freshVm.importBackup(contents!, 'pass');
+      await freshVm.importBackup(contents!, 'a-long-enough-passphrase');
 
       final restoredHost = (await freshRepo.getAllServers()).firstWhere((s) => s.name == 'nas');
       final rule = (await freshRepo.getAllRules()).single;
@@ -506,7 +506,7 @@ void main() {
         ),
       );
       final vm = await boot();
-      final contents = await vm.exportBackup('pass');
+      final contents = await vm.exportBackup('a-long-enough-passphrase');
 
       final freshDb = AppDatabase(NativeDatabase.memory());
       final freshRepo = AppRepository(
@@ -516,7 +516,7 @@ void main() {
       final freshApp = AppState(freshRepo);
       await freshApp.start();
       final freshVm = BackupViewModel(freshApp);
-      await freshVm.importBackup(contents!, 'pass');
+      await freshVm.importBackup(contents!, 'a-long-enough-passphrase');
 
       expect(
         (await freshRepo.getAllRules()).single.serverId,
@@ -557,7 +557,7 @@ void main() {
     test('an encrypted file is recognised as such', () async {
       await repo.insertServer(server(name: 'nas'));
       final vm = await boot();
-      final contents = await vm.exportBackup('pass');
+      final contents = await vm.exportBackup('a-long-enough-passphrase');
       expect(BackupViewModel.looksEncrypted(contents!), isTrue);
       vm.dispose();
     });
@@ -565,7 +565,7 @@ void main() {
     test('a wrong passphrase is reported as one', () async {
       await repo.insertServer(server(name: 'nas'));
       final vm = await boot();
-      final contents = await vm.exportBackup('pass');
+      final contents = await vm.exportBackup('a-long-enough-passphrase');
 
       expect(await vm.importBackup(contents!, 'wrong'), isNull);
       expect(vm.error, contains('passphrase'));
@@ -623,7 +623,7 @@ void main() {
     scripts.dispose();
 
     final vm = await boot();
-    final document = await exportedDocument(vm, passphrase: 'pass');
+    final document = await exportedDocument(vm, passphrase: 'a-long-enough-passphrase');
     expect(
       document['scripts'],
       isEmpty,
@@ -677,10 +677,10 @@ void main() {
         ..toggleSection(BackupSection.portForwards, enabled: true);
       // A passphrase is required here, not incidental: a tunnel carries a host's address and the
       // port it exposes, so the selection counts as sensitive and an unencrypted export is refused.
-      final contents = await vm.exportBackup('pass');
+      final contents = await vm.exportBackup('a-long-enough-passphrase');
       await settle();
 
-      final counts = await vm.importBackup(contents!, 'pass');
+      final counts = await vm.importBackup(contents!, 'a-long-enough-passphrase');
       await settle();
 
       expect(counts!['portForwards'], 1);
@@ -704,10 +704,10 @@ void main() {
       vm
         ..selectNone()
         ..toggleSection(BackupSection.portForwards, enabled: true);
-      final contents = await vm.exportBackup('pass');
+      final contents = await vm.exportBackup('a-long-enough-passphrase');
       await settle();
 
-      await vm.importBackup(contents!, 'pass');
+      await vm.importBackup(contents!, 'a-long-enough-passphrase');
       await settle();
 
       expect((await repo.getAllPortForwards()).last.autoStart, isFalse);
@@ -776,10 +776,10 @@ void main() {
         ),
       );
       final vm = await boot();
-      final contents = await vm.exportBackup('pass');
+      final contents = await vm.exportBackup('a-long-enough-passphrase');
 
       final (freshDb, freshRepo, freshApp, freshVm) = await freshDevice();
-      await freshVm.importBackup(contents!, 'pass');
+      await freshVm.importBackup(contents!, 'a-long-enough-passphrase');
 
       final restored = (await freshRepo.getAllNetworkShares()).single;
       expect(restored.name, 'media');
@@ -815,10 +815,10 @@ void main() {
         ),
       );
       final vm = await boot();
-      final contents = await vm.exportBackup('pass');
+      final contents = await vm.exportBackup('a-long-enough-passphrase');
 
       final (freshDb, freshRepo, freshApp, freshVm) = await freshDevice();
-      await freshVm.importBackup(contents!, 'pass');
+      await freshVm.importBackup(contents!, 'a-long-enough-passphrase');
 
       final restored = (await freshRepo.getAlertHistory()).single;
       expect(restored.serverName, 'nas-as-it-was-called');
@@ -847,10 +847,10 @@ void main() {
         ),
       );
       final vm = await boot();
-      final contents = await vm.exportBackup('pass');
+      final contents = await vm.exportBackup('a-long-enough-passphrase');
 
       final (freshDb, freshRepo, freshApp, freshVm) = await freshDevice();
-      await freshVm.importBackup(contents!, 'pass');
+      await freshVm.importBackup(contents!, 'a-long-enough-passphrase');
 
       final restoredServer = (await freshRepo.getAllServers()).single;
       final restoredRule = (await freshRepo.getAllRules()).single;

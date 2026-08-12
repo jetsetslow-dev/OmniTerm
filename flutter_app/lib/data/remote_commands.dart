@@ -735,6 +735,42 @@ class RemoteSearchHit {
   final bool isDirectory;
 }
 
+/// How many hits a share walk collects before declaring the rest "more".
+const shareSearchMaxHits = 500;
+
+/// How many directories a share walk visits before giving up.
+///
+/// A share is walked one `list` round trip at a time, so an unbounded walk of a deep tree on a slow
+/// link runs until the user gives up. Compose uses the same two numbers (`ui/AppViewModel.kt:8021`).
+const shareSearchDirBudget = 4000;
+
+/// Builds the name matcher for a share walk.
+///
+/// Follows the same rule as [remoteSearchCommand] rather than Compose's separate Wildcards toggle:
+/// a query already carrying `*` or `?` is taken as a pattern, anything else is matched anywhere in
+/// the name. Compose asks the user to declare which they meant; inferring it means one less control
+/// and the same answer for every query that is not literally searching for an asterisk.
+bool Function(String name) shareSearchMatcher(String query) {
+  final term = query.trim();
+  if (!term.contains('*') && !term.contains('?')) {
+    final needle = term.toLowerCase();
+    return (name) => name.toLowerCase().contains(needle);
+  }
+  final pattern = StringBuffer('^');
+  for (final ch in term.split('')) {
+    if (ch == '*') {
+      pattern.write('.*');
+    } else if (ch == '?') {
+      pattern.write('.');
+    } else {
+      pattern.write(RegExp.escape(ch));
+    }
+  }
+  pattern.write(r'$');
+  final regex = RegExp(pattern.toString(), caseSensitive: false);
+  return regex.hasMatch;
+}
+
 /// Searches a host for names matching [query], starting at [base].
 ///
 /// A plain `find` prints paths and nothing else, so the type of each hit — file or directory —
@@ -1052,3 +1088,44 @@ String tmuxInstallCommand() =>
     'elif command -v pkg >/dev/null 2>&1; then \$SUDO pkg install -y tmux; '
     "else echo 'No supported package manager found; install tmux manually.' >&2; exit 1; fi; "
     "command -v tmux >/dev/null 2>&1 && echo 'tmux installed' || { echo 'tmux install failed' >&2; exit 1; }";
+
+/// The tmux session name reduced to what is safe to interpolate into a shell command.
+///
+/// Ported from the filter in `RemoteCommands.tmuxCaptureHistoryCommand` (`data/RemoteParsers.kt:281`).
+/// The name travels inside a command string, so anything outside this set is dropped rather than
+/// escaped; the fallback keeps a name that reduces to nothing from producing a bare `-t ` and a
+/// syntax error.
+String tmuxSafeSessionName(String name) {
+  final safe = name.split('').where((c) => RegExp(r'[0-9A-Za-z-]').hasMatch(c)).join();
+  return safe.isEmpty ? 'omniterm' : safe;
+}
+
+/// Reads a persistent pane's own scrollback — or nothing at all while a TUI owns the pane.
+///
+/// Active pane id of [name]'s current window, e.g. `%0`.
+///
+/// Ported from `RemoteCommands.tmuxActivePaneQuery` (`data/RemoteParsers.kt:202`). This is a **side
+/// channel**, deliberately: control mode's own `%begin`…`%end` replies would work, but the query has
+/// to be answerable while the control stream is mid-burst, and an exec channel cannot be starved by
+/// pane output the way the control conversation can.
+String tmuxActivePaneQuery(String name) =>
+    "tmux display-message -p -t ${tmuxSafeSessionName(name)} '#{pane_id}' 2>/dev/null || true";
+
+/// Ported from `RemoteCommands.tmuxCaptureHistoryCommand` (`data/RemoteParsers.kt:280`).
+///
+/// tmux does not stream every line to an attached client: output faster than the client consumes is
+/// collapsed into a screen repaint, so rows the user never had on screen are simply missing from
+/// locally captured scrollback. The pane's real history lives on the server, and this is how it is
+/// fetched.
+///
+/// The `#{alternate_on}` test is why this is a shell conditional and not a bare `capture-pane`.
+/// While a full-screen TUI owns the pane's alternate screen, `capture-pane` returns the TUI's frames
+/// rather than the primary screen's history — verified against tmux 3.3a — and adopting those would
+/// replace real history with `vim` repaints. Producing **empty output** in that case is deliberate:
+/// the caller keeps its dirty flag armed and retries once the TUI exits.
+String tmuxCaptureHistoryCommand(String name, int maxLines) {
+  final safe = tmuxSafeSessionName(name);
+  final lines = maxLines.clamp(1000, 50000);
+  return 'if [ "\$(tmux display-message -p -t $safe \'#{alternate_on}\' 2>/dev/null)" = 1 ]; '
+      'then :; else tmux capture-pane -p -e -J -S -$lines -E -1 -t $safe 2>/dev/null; fi || true';
+}

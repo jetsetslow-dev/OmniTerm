@@ -8,7 +8,7 @@ env:
   GIT_CONFIG_VALUE_0: main
   # Pinned rather than "stable": a toolchain that moves on its own turns an unrelated PR red, and
   # the whole point of a gate is that a red result means *this change* broke something.
-  FLUTTER_VERSION: 3.44.8
+  FLUTTER_VERSION: 3.44.9
 
 on:
   pull_request:

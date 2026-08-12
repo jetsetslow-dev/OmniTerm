@@ -232,6 +232,85 @@ void main() {
     });
   });
 
+  group('a failed OS probe', () {
+    test('is not cached, so one bad cycle does not misread the host forever', () async {
+      // The OS decides which metrics command is sent, and the cache is consulted once per host and
+      // then trusted. `exec` returns `'SSH Error: …'` rather than throwing, so caching what that
+      // normalises to would send the wrong command for the life of the host — the "no memory and no
+      // disks" reading the poller's own comment warns about, from one transient failure. Compose
+      // guards it at `ui/AppViewModel.kt:2404`.
+      final id = await repo.insertServer(server(name: 'a'));
+      await app.start();
+      await settle();
+
+      final poller = TelemetryPoller(
+        app,
+        transport: RecordingTransport(fallback: 'SSH Error: connection refused'),
+      );
+      await poller.cycle();
+
+      expect(app.osForServer(id), isEmpty, reason: 'nothing was learned, so nothing is remembered');
+      poller.dispose();
+    });
+
+    test('is recorded as an auth failure the Hosts list can show', () async {
+      // `updateAuthState` existed on the repository and the DAO with no caller anywhere in lib/,
+      // while the Hosts list already rendered `authStatus == 'failed'` — a warning row, an amber
+      // badge and the words "authentication failed". A host with a wrong key looked identical to a
+      // healthy one, however often it failed. Compose writes it from this same loop
+      // (`ui/AppViewModel.kt:2409`).
+      final id = await repo.insertServer(server(name: 'a'));
+      await app.start();
+      await settle();
+
+      final poller = TelemetryPoller(
+        app,
+        transport: RecordingTransport(fallback: 'SSH Error: SSHAuthFailError'),
+      );
+      await poller.cycle();
+      await settle();
+
+      final row = (await repo.getAllServers()).singleWhere((s) => s.id == id);
+      expect(row.authStatus, 'failed');
+      expect(row.authError, 'Authentication failed (bad key or password)');
+      poller.dispose();
+    });
+
+    test('a host that answers is recorded as authenticated again', () async {
+      final id = await repo.insertServer(server(name: 'a'));
+      await app.start();
+      await settle();
+      await repo.updateAuthState(id, 'failed', 'stale');
+
+      final poller = TelemetryPoller(
+        app,
+        transport: RecordingTransport(fallback: metricsReply(memUsedPct: 50)),
+      );
+      await poller.cycle();
+      await settle();
+
+      final row = (await repo.getAllServers()).singleWhere((s) => s.id == id);
+      expect(row.authStatus, 'ok');
+      expect(row.authError, isNull, reason: 'a stale reason left behind reads as a current one');
+      poller.dispose();
+    });
+
+    test('a successful probe is still cached', () async {
+      final id = await repo.insertServer(server(name: 'a'));
+      await app.start();
+      await settle();
+
+      final poller = TelemetryPoller(
+        app,
+        transport: RecordingTransport(fallback: metricsReply(memUsedPct: 50)),
+      );
+      await poller.cycle();
+
+      expect(app.osForServer(id), isNotEmpty);
+      poller.dispose();
+    });
+  });
+
   group('hosts that come and go', () {
     test('a deleted host takes its samples with it', () async {
       // Otherwise a new host reusing the freed row id inherits the old one's counters, and its

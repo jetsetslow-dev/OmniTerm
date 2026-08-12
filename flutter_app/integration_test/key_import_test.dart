@@ -167,8 +167,27 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    // Put the keyboard away before reaching for Import.
+    //
+    // On the phone this test failed while passing in isolation, and passing on the emulator. The
+    // button was present, enabled and still labelled "Import" ten seconds after the tap, and nothing
+    // had been stored: the tap was landing on the soft keyboard, which the previous test's typing
+    // had left up and which covers the bottom of the sheet. `ensureVisible` cannot help — it scrolls
+    // within the sheet, and the IME is an overlay outside it. Run alone the app has just started, no
+    // field has been focused, and the button is in the clear, which is exactly why running one test
+    // to reproduce a suite failure can disprove the wrong thing.
+    FocusManager.instance.primaryFocus?.unfocus();
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('authKeys.import.save')));
+    await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('authKeys.import.save')));
-    await tester.pumpAndSettle(const Duration(seconds: 2));
+
+    // Bounded rather than a fixed settle: parsing and the failure it produces are asynchronous, and
+    // a fixed wait that is long enough on an emulator is a guess everywhere else.
+    for (var i = 0; i < 100; i++) {
+      if (find.byKey(const ValueKey('authKeys.import.error')).evaluate().isNotEmpty) break;
+      await tester.pump(const Duration(milliseconds: 100));
+    }
 
     // The sheet stays open, carrying the parser's own reason — not a shrug, and not silence.
     final error = tester.widget<Text>(find.byKey(const ValueKey('authKeys.import.error'))).data!;

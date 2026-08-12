@@ -33,4 +33,68 @@ void main() {
     expect(string.start, 15);
     expect(string.end, 26);
   });
+
+  test('none produces no tokens', () {
+    expect(highlightAll('image: nginx # comment', CodeLanguage.none), isEmpty);
+  });
+
+  test('yaml handles comments, quoted fragments, unicode and malformed lines safely', () {
+    const source = '''
+# leading comment
+services:
+  web:
+    image: "registry.example/a:b#fragment" # real comment
+    environment: { FLAG: true, COUNT: 12.5 }
+    command: 'unterminated café-東京-🙂
+''';
+    final tokens = highlightAll(source, CodeLanguage.yaml);
+
+    expect(tokens.every((token) => token.start >= 0 && token.end <= source.length), isTrue);
+    expect(
+      tokens.any(
+        (token) =>
+            token.kind == HighlightKind.comment &&
+            source.substring(token.start, token.end) == '# leading comment',
+      ),
+      isTrue,
+    );
+    expect(
+      tokens.any(
+        (token) =>
+            token.kind == HighlightKind.string &&
+            source.substring(token.start, token.end).contains('a:b#fragment'),
+      ),
+      isTrue,
+    );
+    expect(
+      tokens.any(
+        (token) =>
+            token.kind == HighlightKind.number &&
+            source.substring(token.start, token.end) == '12.5',
+      ),
+      isTrue,
+    );
+  });
+
+  test('shell highlighting distinguishes fragments from real comments at a nonzero base', () {
+    const line = r'''if [ "$URL" ]; then echo "a\"#b" foo#bar # comment; fi''';
+    final tokens = highlightLine(line, 17, CodeLanguage.shell);
+
+    expect(tokens.every((token) => token.start >= 17 && token.end <= line.length + 17), isTrue);
+    String text(HighlightToken token) => line.substring(token.start - 17, token.end - 17);
+    expect(
+      tokens.any((token) => token.kind == HighlightKind.keyword && text(token) == 'if'),
+      isTrue,
+    );
+    expect(
+      tokens.any(
+        (token) => token.kind == HighlightKind.comment && text(token).startsWith('# comment'),
+      ),
+      isTrue,
+    );
+    expect(
+      tokens.where((token) => token.kind == HighlightKind.comment).map(text),
+      isNot(contains('#bar # comment; fi')),
+    );
+  });
 }

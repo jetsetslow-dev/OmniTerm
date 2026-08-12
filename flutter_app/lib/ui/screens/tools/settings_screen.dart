@@ -73,6 +73,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final vm = context.watch<SettingsViewModel>();
     final draft = vm.draft;
+    // True where the lock controller is absent (tests, and any build without one): the option then
+    // behaves exactly as it did before this check existed.
+    final biometricsAvailable = context.watch<AppLockController?>()?.biometricsAvailable ?? true;
 
     return Stack(
       children: [
@@ -268,8 +271,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
             _Switch(
               settingKey: 'biometrics',
               title: 'Unlock with biometrics',
-              value: draft.useBiometrics,
-              enabled: draft.appLockEnabled,
+              // Says which of the two reasons it is off, because "enable the lock first" and "this
+              // device has nothing enrolled" need different actions from the user.
+              subtitle: biometricsAvailable
+                  ? null
+                  : 'No fingerprint or device credential is enrolled on this device',
+              value: draft.useBiometrics && biometricsAvailable,
+              enabled: draft.appLockEnabled && biometricsAvailable,
               onChanged: (v) => vm.update((p) => p.copyWith(useBiometrics: v)),
             ),
             _lockTimeoutSection(context, vm, draft),
@@ -792,6 +800,10 @@ class _PinDialogState extends State<_PinDialog> {
   @override
   Widget build(BuildContext context) => AlertDialog(
     key: const ValueKey('settings.pin.dialog'),
+    // An AlertDialog's content does not scroll unless it asks to. This one holds a three-line
+    // warning, two fields and — when the entries disagree — an error line, which overflows a small
+    // phone in landscape at 200% text by 39px, hiding the very message explaining what went wrong.
+    scrollable: true,
     title: const Text('Set an app PIN'),
     content: Column(
       mainAxisSize: MainAxisSize.min,

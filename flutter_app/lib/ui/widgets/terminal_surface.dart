@@ -194,6 +194,7 @@ class TerminalSurface extends StatefulWidget {
     this.focused = true,
     this.onGridChanged,
     this.onTapCell,
+    this.onScrolledBack,
   });
 
   final ShellSession session;
@@ -204,6 +205,13 @@ class TerminalSurface extends StatefulWidget {
   /// Reports the measured grid so the view model can open the *next* session at this size.
   final void Function(int cols, int rows)? onGridChanged;
   final void Function(TerminalSnapshot snapshot, int row, int column)? onTapCell;
+
+  /// Called when the user drags back into history.
+  ///
+  /// A persistent tmux pane holds rows this client never received — tmux collapses output it cannot
+  /// keep up with into a repaint — and fetching them costs a round trip, so it is paid for on the
+  /// gesture that wants them rather than on every burst of output.
+  final void Function()? onScrolledBack;
 
   @override
   State<TerminalSurface> createState() => _TerminalSurfaceState();
@@ -276,5 +284,6 @@ class _TerminalSurfaceState extends State<TerminalSurface> {
     if (whole == 0) return;
     _dragRemainder -= whole;
     widget.session.scrollBy(whole);
+    if (whole < 0 && widget.session.scrollbackDirty) widget.onScrolledBack?.call();
   }
 }

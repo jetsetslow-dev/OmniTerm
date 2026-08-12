@@ -28,6 +28,7 @@ import 'proxy_socket.dart';
 import 'ssh_host_key_trust.dart';
 import 'dartssh_sftp.dart';
 import 'ssh_private_key.dart';
+import 'channel_limiter.dart';
 import 'ssh_session_pool.dart';
 import 'ssh_transport.dart';
 import 'terminal_close.dart';
@@ -49,6 +50,23 @@ class SshHostKeyException implements Exception {
 
   @override
   String toString() => message;
+}
+
+/// The agent to serve to the remote when the host has agent forwarding enabled, or null.
+///
+/// Kotlin's switch is `if (creds.agentForwarding) runCatching { setAgentForwarding(true) }`
+/// (`JschSshTransport.kt:351`). The port carried `agentForwarding` from the host form through
+/// `SshCredentials` and then never read it, so the switch stored a value and changed nothing.
+///
+/// Forwarding needs an agent to forward. There is no ssh-agent on a phone, so the app *is* the
+/// agent: `SSHKeyPairAgent` answers identity and signing requests with the same key this connection
+/// authenticated with, which is what makes the onward hop work without the private key ever being
+/// copied to the server. With no key — a password host — there is nothing to serve, and offering an
+/// empty agent would mean asking the server for a forwarding channel that could never sign
+/// anything.
+SSHAgentHandler? agentHandlerFor(SshCredentials creds, List<SSHKeyPair> identities) {
+  if (!creds.agentForwarding || identities.isEmpty) return null;
+  return SSHKeyPairAgent(identities);
 }
 
 class DartSshTransport implements SshTransport {
@@ -98,9 +116,16 @@ class DartSshTransport implements SshTransport {
   }
 
   /// Opens a client to [creds], routing through a jump host or proxy when configured.
+  ///
+  /// [forwardAgent] is opt-in per call rather than read from [creds] because Kotlin scopes agent
+  /// forwarding to the interactive shell channel — `JschSshTransport.kt:351`, on the channel
+  /// returned by `openChannel("shell")` — and dartssh2 applies it to *every* channel a client opens
+  /// once `agentHandler` is set. Passing it here for pooled `exec` connections would put the
+  /// monitoring commands behind a request the user only made for their shell.
   Future<SSHClient> _connect(
     SshCredentials creds, {
     void Function(String phase)? onPhaseChange,
+    bool forwardAgent = false,
   }) async {
     SSHClient? jump;
     try {
@@ -141,15 +166,17 @@ class DartSshTransport implements SshTransport {
       }
 
       onPhaseChange?.call('Authenticating target…');
+      final identities = _keyPairs(creds.privateKeyPem, creds.passphrase);
       final client = SSHClient(
         socket,
         username: creds.username,
         onPasswordRequest: () => creds.password,
-        identities: _keyPairs(creds.privateKeyPem, creds.passphrase),
+        identities: identities,
         onVerifyHostKey: _verifier(creds.host, creds.port),
         keepAliveInterval: creds.keepAliveSeconds > 0
             ? Duration(seconds: creds.keepAliveSeconds)
             : null,
+        agentHandler: forwardAgent ? agentHandlerFor(creds, identities) : null,
       );
       await client.authenticated;
 
@@ -200,7 +227,13 @@ class DartSshTransport implements SshTransport {
     }
   }
 
-  Future<String> _execOnce(SshCredentials creds, String command, String? stdin) async {
+  /// Bounds how many channels this app opens at once on one connection; see [ChannelLimiter].
+  final _channels = ChannelLimiter();
+
+  Future<String> _execOnce(SshCredentials creds, String command, String? stdin) =>
+      _channels.run(SshSessionPool.poolKey(creds), () => _execOnceUnlimited(creds, command, stdin));
+
+  Future<String> _execOnceUnlimited(SshCredentials creds, String command, String? stdin) async {
     final lease = await _acquire(creds);
     SSHSession? session;
     try {
@@ -263,6 +296,17 @@ class DartSshTransport implements SshTransport {
   }
 
   Future<String> _execStreamOnce(
+    SshCredentials creds,
+    String command,
+    String? stdin,
+    Future<void> Function(String chunk) onChunk,
+    SshCancellationToken? cancellation,
+  ) => _channels.run(
+    SshSessionPool.poolKey(creds),
+    () => _execStreamOnceUnlimited(creds, command, stdin, onChunk, cancellation),
+  );
+
+  Future<String> _execStreamOnceUnlimited(
     SshCredentials creds,
     String command,
     String? stdin,
@@ -382,6 +426,21 @@ class DartSshTransport implements SshTransport {
 
   // ── interactive shell ──────────────────────────────────────────────────────
 
+  /// Opens the shell channel, dropping the optional `COLORTERM` request if the server refuses it.
+  ///
+  /// A stock OpenSSH server accepts no environment variables unless they are listed in `AcceptEnv`
+  /// and refuses the request outright, so asking for it as part of opening the channel meant **the
+  /// terminal could not open on a default-configured server** — nearly all of them. Requested first
+  /// because a server that allows it renders 24-bit colour correctly, then retried without, because
+  /// a rejected optional request must never cost the user their shell (§15.9).
+  Future<SSHSession> _openShellChannel(SSHClient client, SSHPtyConfig pty) async {
+    try {
+      return await client.shell(pty: pty, environment: const {'COLORTERM': 'truecolor'});
+    } on SSHChannelRequestError {
+      return client.shell(pty: pty);
+    }
+  }
+
   @override
   Future<TerminalSession> openShell(
     SshCredentials creds,
@@ -392,7 +451,11 @@ class DartSshTransport implements SshTransport {
     SSHClient? client;
     try {
       onPhaseChange?.call('Resolving target…');
-      client = await _connect(creds, onPhaseChange: onPhaseChange);
+      client = await _connect(
+        creds,
+        onPhaseChange: onPhaseChange,
+        forwardAgent: creds.agentForwarding,
+      );
 
       onPhaseChange?.call('Opening channel…');
       final pty = SSHPtyConfig(
@@ -403,17 +466,18 @@ class DartSshTransport implements SshTransport {
         pixelHeight: rows * 16,
       );
 
-      // COLORTERM is a nicety; the shell is not. A stock OpenSSH server accepts no environment
-      // variables at all unless they are listed in `AcceptEnv`, and refuses the request outright —
-      // so asking for it as part of opening the channel meant **the terminal could not open on a
-      // default-configured server**, which is nearly all of them. Requested first because a server
-      // that does allow it renders 24-bit colour correctly, then retried without it, because a
-      // rejected optional request must never cost the user their shell (§15.9).
       SSHSession session;
       try {
-        session = await client.shell(pty: pty, environment: const {'COLORTERM': 'truecolor'});
+        session = await _openShellChannel(client, pty);
       } on SSHChannelRequestError {
-        session = await client.shell(pty: pty);
+        // The other optional request on this channel. Kotlin wraps agent forwarding in
+        // `runCatching` (`JschSshTransport.kt:351`), so a server with `AllowAgentForwarding no`
+        // costs the user nothing; here the agent is attached to the *client*, so honouring that
+        // means reconnecting without it rather than retrying the channel.
+        if (!creds.agentForwarding) rethrow;
+        client.close();
+        client = await _connect(creds, forwardAgent: false);
+        session = await _openShellChannel(client, pty);
       }
       return _DartSshTerminalSession(client, session);
     } catch (e) {

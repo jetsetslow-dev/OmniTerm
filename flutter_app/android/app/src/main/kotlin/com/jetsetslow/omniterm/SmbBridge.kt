@@ -175,7 +175,11 @@ object SmbBridge {
                             )
                         }
                     }
-                    main.post { events.endOfStream() }
+                    // The transfer-scoped `done` message is the terminator. Do not also call
+                    // endOfStream(): this EventChannel name is shared by sequential downloads, so
+                    // a delayed end event from read A can land after read B has subscribed and end
+                    // B before its first chunk. Dart cancels this subscription as soon as it sees
+                    // `done`; failures still use events.error below.
                 } catch (e: InterruptedException) {
                     // Cancelled by onCancel; the Dart side is already tearing the transfer down.
                 } catch (e: Exception) {

@@ -45,7 +45,11 @@ void main() {
       reason: 'Settings alone carries no credentials, so no passphrase should be demanded',
     );
 
-    await $(const ValueKey('backup.export')).tap();
+    // Scrolled to, like `backup.import` below. The Backup screen is a `ListView`, so a control past
+    // the fold is not merely off-screen — it has never been built, and the finder reports zero
+    // widgets rather than an invisible one. Both of these failed exactly there the first time these
+    // tests were ever executed.
+    await $(const ValueKey('backup.export')).scrollTo().tap();
 
     // The picker belongs to another app, so this is the only way to know it opened at all.
     await $.platformAutomator.android.waitUntilVisible(
@@ -74,7 +78,7 @@ void main() {
     // difference between a findable backup and an anonymous blob.
     await openBackup($);
     await selectSettingsOnly($);
-    await $(const ValueKey('backup.export')).tap();
+    await $(const ValueKey('backup.export')).scrollTo().tap();
 
     await $.platformAutomator.android.waitUntilVisible(
       AndroidSelector(applicationPackage: 'com.google.android.documentsui'),

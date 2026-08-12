@@ -870,4 +870,52 @@ void main() {
       lock.dispose();
     });
   });
+
+  group('biometric availability', () {
+    late AppDatabase db;
+    late AppRepository repo;
+
+    setUp(() {
+      db = AppDatabase(NativeDatabase.memory());
+      repo = AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{})));
+    });
+
+    tearDown(() => db.close());
+
+    /// Defect 77. `BiometricAuth.isAvailable` carried a doc comment saying it was "checked before
+    /// offering the option" — and had no caller anywhere. The switch was offered on hardware with
+    /// nothing enrolled, which is exactly what that comment warns against. Kotlin gates its prompt
+    /// on `BiometricCryptoGate.canAuthenticate` and reports unavailability distinctly.
+    test('an unavailable device is reported as such', () async {
+      final lock = AppLockController(repo, biometricAvailability: () async => false);
+      await lock.load();
+      expect(lock.biometricsAvailable, isFalse);
+    });
+
+    test('an available device is reported as such', () async {
+      final lock = AppLockController(repo, biometricAvailability: () async => true);
+      await lock.load();
+      expect(lock.biometricsAvailable, isTrue);
+    });
+
+    test('a probe that throws is treated as unavailable, and load still finishes', () async {
+      // A hardware probe must never stop the lock loading: the PIN is the authority, and a
+      // controller that failed to load would leave the app unlocked.
+      final lock = AppLockController(
+        repo,
+        biometricAvailability: () async => throw StateError('no biometric hardware'),
+      );
+      await lock.load();
+      expect(lock.biometricsAvailable, isFalse);
+      expect(lock.isConfigured, isFalse, reason: 'load completed rather than throwing');
+    });
+
+    test('with no probe wired the option stays offered', () async {
+      // Failing open on purpose: a wrong "unavailable" hides a working feature, while a wrong
+      // "available" costs one prompt that falls back to the PIN.
+      final lock = AppLockController(repo);
+      await lock.load();
+      expect(lock.biometricsAvailable, isTrue);
+    });
+  });
 }

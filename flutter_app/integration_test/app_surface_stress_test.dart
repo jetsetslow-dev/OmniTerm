@@ -89,23 +89,33 @@ void main() {
     }
     expect(appState.servers, hasLength(1));
 
-    // The five schemes `themeModeFor` can select. High contrast is included because those two
-    // schemes were unreachable until defect 44 wired the preference in — so until now they had never
-    // been painted against a single screen, and a colour role that is never rendered is a colour
-    // role nobody has checked is legible.
+    // The five schemes `themeModeFor` can select, crossed with every text size the app offers.
     //
-    // AMOLED is deliberately left on for the high-contrast rows: it is the combination that proves
-    // precedence holds end to end, not just in `themeModeFor`'s unit tests.
+    // High contrast is here because those two schemes were unreachable until defect 44 wired the
+    // preference in, so a colour role nobody had ever painted was a colour role nobody had checked
+    // was legible. AMOLED stays on for the high-contrast rows: that combination is what proves
+    // precedence holds end to end rather than only in `themeModeFor`'s unit tests.
+    //
+    // The cross product replaced a flat list of five schemes plus one 200% row. That single row is
+    // how ledger 80 was found — in *landscape dark* specifically, which is the lesson: an overflow
+    // is a property of a (scheme, text size, orientation) triple, so testing one cell of that grid
+    // tests one cell of it.
+    const schemes = <(String, bool, bool, bool)>[
+      ('light', false, false, false),
+      ('dark', true, false, false),
+      ('amoled', true, true, false),
+      ('contrast-dark', true, true, true),
+      ('contrast-light', false, true, true),
+    ];
+    // The full range `PreferenceRange(80, 200, 100)` offers, both ends included. 150% earns its
+    // place separately from 200%: a row that wraps to two lines at 150% and three at 200% can fit
+    // at 200% only because something else already gave way, so a layout can clip at the
+    // intermediate size while surviving both ends.
+    const textScales = <int>[80, 100, 150, 200];
     final variants = <(String, bool, bool, bool, int)>[
-      ('light', false, false, false, 100),
-      ('dark', true, false, false, 100),
-      ('amoled', true, true, false, 100),
-      ('contrast-dark', true, true, true, 100),
-      ('contrast-light', false, true, true, 100),
-      // The largest text the Settings screen offers. Every fixed-height row, chip and toolbar in
-      // the app is an overflow candidate at 200%, and nothing exercised it — a user who needs large
-      // text is exactly the user least able to work around a clipped control.
-      ('dark-200pc-text', true, false, false, 200),
+      for (final (name, dark, amoled, contrast) in schemes)
+        for (final scale in textScales)
+          (scale == 100 ? name : '$name-${scale}pc-text', dark, amoled, contrast, scale),
     ];
     final orientations = <(String, List<DeviceOrientation>, Orientation)>[
       ('portrait', const [DeviceOrientation.portraitUp], Orientation.portrait),
@@ -335,6 +345,10 @@ void installErrorLocationProbe() {
 Future<void> _expectSubtab(WidgetTester tester, String label, List<String> renderFailures) async {
   await tester.pump(const Duration(milliseconds: 140));
   final exception = tester.takeException();
-  if (exception != null) renderFailures.add('$label: $exception');
+  if (exception != null) {
+    final where = _lastErrorWidget;
+    renderFailures.add('$label: $exception${where == null ? '' : ' [$where]'}');
+  }
+  _lastErrorWidget = null;
   expect(find.byType(Text), findsWidgets, reason: '$label rendered no readable content');
 }

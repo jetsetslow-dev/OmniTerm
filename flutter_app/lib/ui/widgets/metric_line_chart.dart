@@ -51,14 +51,17 @@ class MetricLineChart extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // The sample count is not decoration: it is how "flat because nothing changed" is told
             // apart from "flat because we have two readings".
-            Text(
-              '$label · ${points.length} ${points.length == 1 ? "sample" : "samples"}',
-              style: axisStyle,
+            Expanded(
+              child: Text(
+                '$label · ${points.length} ${points.length == 1 ? "sample" : "samples"}',
+                style: axisStyle,
+              ),
             ),
+            const SizedBox(width: 8),
             Text(
               points.isEmpty ? '—' : '${points.last.round()}$unit',
               key: ValueKey('chart.$label.latest'),

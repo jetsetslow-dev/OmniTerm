@@ -124,6 +124,30 @@ void main() {
         );
       });
 
+      test('SFTP cannot be anonymous, because SSH has no anonymous mode', () {
+        // The form hides the username fields once anonymous is on, so a share saved this way has
+        // no credentials and can never connect. Compose refuses the same pair at
+        // `ui/SftpScreen.kt:1351` and disables the toggle outright.
+        final sftp = valid().withProtocol(ShareProtocol.sftp).copyWith(anonymous: true);
+
+        expect(sftp.errors, contains('anonymous'));
+        expect(sftp.isValid, isFalse);
+        expect(
+          valid().copyWith(anonymous: true).errors,
+          isNot(contains('anonymous')),
+          reason: 'SMB guest access is a real thing',
+        );
+      });
+
+      test('switching to SFTP clears anonymous rather than trapping the draft', () {
+        // The toggle is disabled for SFTP, so a draft that arrived here with anonymous still set
+        // could not be repaired without switching protocol back.
+        final trapped = valid().copyWith(anonymous: true).withProtocol(ShareProtocol.sftp);
+
+        expect(trapped.anonymous, isFalse);
+        expect(trapped.errors, isNot(contains('anonymous')));
+      });
+
       test('some way to authenticate is required', () {
         expect(valid().copyWith(username: '').errors, contains('username'));
         expect(valid().copyWith(username: '', anonymous: true).errors, isNot(contains('username')));
@@ -722,6 +746,34 @@ void main() {
       expect(find.byKey(const ValueKey('shares.form.warning.0')), findsOneWidget);
       final save = tester.widget<FilledButton>(find.byKey(const ValueKey('shares.form.save')));
       expect(save.onPressed, isNotNull, reason: 'a warning is advice, not a veto');
+      await finish(tester);
+    });
+
+    testWidgets('the anonymous toggle is not offered for SFTP', (tester) async {
+      // Refusing on save would be too late and too confusing: the form hides the username fields
+      // the moment anonymous goes on, so the user is told to fix a field they can no longer see.
+      await pump(tester);
+      await tester.tap(find.byKey(const ValueKey('shares.add')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('shares.form.protocol.SFTP')));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<SwitchListTile>(find.byKey(const ValueKey('shares.form.anonymous')))
+            .onChanged,
+        isNull,
+      );
+
+      await tester.tap(find.byKey(const ValueKey('shares.form.protocol.SMB')));
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<SwitchListTile>(find.byKey(const ValueKey('shares.form.anonymous')))
+            .onChanged,
+        isNotNull,
+        reason: 'SMB guest access is real, and the toggle must come back',
+      );
       await finish(tester);
     });
 

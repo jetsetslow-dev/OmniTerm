@@ -10,6 +10,7 @@ import '../../../platform/distribution.dart';
 import '../../../platform/license_controller.dart';
 import '../../theme/colors.dart';
 import '../../theme/typography.dart';
+import '../../../platform/sensitive_clipboard.dart';
 import '../../view_model/auth_keys_view_model.dart';
 import '../../widgets/omni_components.dart';
 import '../../widgets/license_gate.dart';
@@ -561,6 +562,10 @@ class _GeneratedKeyDialog extends StatelessWidget {
                 value: generated.privateKey,
                 copyLabel: 'Copy private key',
                 valueKey: 'authKeys.generated.private',
+                // The only secret this app offers to copy, and the only block Kotlin marks
+                // sensitive (`ui/ToolsScreen.kt:2563`). The public key and the install command are
+                // meant to be pasted around; this one is not.
+                sensitive: true,
               ),
               const SizedBox(height: 10),
               _CopyBlock(
@@ -600,12 +605,13 @@ class _GeneratedKeyDialog extends StatelessWidget {
   }
 }
 
-class _CopyBlock extends StatelessWidget {
+class _CopyBlock extends StatefulWidget {
   const _CopyBlock({
     required this.label,
     required this.value,
     required this.copyLabel,
     required this.valueKey,
+    this.sensitive = false,
   });
 
   final String label;
@@ -613,12 +619,40 @@ class _CopyBlock extends StatelessWidget {
   final String copyLabel;
   final String valueKey;
 
+  /// Copy through [SensitiveClipboard] instead of the plain one: marked so the system's clipboard
+  /// preview does not display it, and taken back after a minute.
+  final bool sensitive;
+
+  @override
+  State<_CopyBlock> createState() => _CopyBlockState();
+}
+
+class _CopyBlockState extends State<_CopyBlock> {
+  final SensitiveClipboard _clipboard = SensitiveClipboard();
+
+  @override
+  void dispose() {
+    // Cancels the pending timer only. The clipboard keeps what it has: a user who copied a key and
+    // closed the sheet still needs to paste it.
+    _clipboard.dispose();
+    super.dispose();
+  }
+
+  Future<void> _copy() async {
+    if (widget.sensitive) {
+      await _clipboard.copy(label: 'OmniTerm ${widget.label.toLowerCase()}', text: widget.value);
+    } else {
+      await Clipboard.setData(ClipboardData(text: widget.value));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        if (label.isNotEmpty) Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
+        if (widget.label.isNotEmpty)
+          Text(widget.label, style: const TextStyle(fontWeight: FontWeight.bold)),
         Container(
           width: double.infinity,
           constraints: const BoxConstraints(maxHeight: 130),
@@ -630,8 +664,8 @@ class _CopyBlock extends StatelessWidget {
           ),
           child: SingleChildScrollView(
             child: SelectableText(
-              value,
-              key: ValueKey(valueKey),
+              widget.value,
+              key: ValueKey(widget.valueKey),
               style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 10),
             ),
           ),
@@ -639,15 +673,15 @@ class _CopyBlock extends StatelessWidget {
         Align(
           alignment: Alignment.centerRight,
           child: TextButton.icon(
-            key: ValueKey('$valueKey.copy'),
+            key: ValueKey('${widget.valueKey}.copy'),
             icon: const Icon(Icons.copy, size: 16),
-            label: Text(copyLabel),
+            label: Text(widget.copyLabel),
             onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: value));
+              await _copy();
               if (!context.mounted) return;
               ScaffoldMessenger.of(
                 context,
-              ).showSnackBar(SnackBar(content: Text('$copyLabel — copied.')));
+              ).showSnackBar(SnackBar(content: Text('${widget.copyLabel} — copied.')));
             },
           ),
         ),

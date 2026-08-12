@@ -106,6 +106,44 @@ run_secret_scan() {
 
 run_secret_scan
 
+# The Flutter app is the branch under migration, and until now this script did not look at it at
+# all: `grep -c flutter` was zero, so "the required gate passed" meant only that the Kotlin app
+# passed. These are the same three commands `.github/workflows/flutter-pr-check.yml` runs, in the
+# same order, so a green local run and a green PR mean the same thing.
+#
+# The line length is not optional: `dart format` defaults to 80, `flutter analyze` says nothing
+# about it, and a tree formatted at the default fails CI with every touched file marked changed.
+run_flutter_checks() {
+  if [[ ! -d "$PWD/flutter_app" ]]; then
+    echo "No flutter_app directory; skipping the Flutter gate."
+    return
+  fi
+  if ! command -v flutter >/dev/null 2>&1; then
+    echo "WARNING: flutter is not on PATH — the Flutter gate was NOT run." >&2
+    echo "         Put it on PATH or set FLUTTER_BIN, then re-run." >&2
+    return 1
+  fi
+  (
+    cd flutter_app
+    echo "Resolving Flutter dependencies"
+    flutter pub get
+    echo "Checking Flutter formatting (line length 100)"
+    dart format --output=none --set-exit-if-changed --line-length 100 .
+    echo "Analyzing the Flutter app"
+    flutter analyze --fatal-infos
+    echo "Running the Flutter test suite"
+    flutter test
+  )
+}
+
+# `flutter` may be installed only as FLUTTER_BIN; put its directory on PATH so `dart` resolves too.
+if [[ -n "${FLUTTER_BIN:-}" && -x "${FLUTTER_BIN}" ]]; then
+  PATH="$(dirname "$FLUTTER_BIN"):$PATH"
+  export PATH
+fi
+
+run_flutter_checks
+
 if [[ "$MODE" == "--full" ]]; then
   if [[ "$LINUX_ARM64" == "true" ]]; then
     OMNITERM_DEPENDENCY_JVMARGS="-Xmx2g -Dfile.encoding=UTF-8" \

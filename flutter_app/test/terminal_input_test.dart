@@ -58,6 +58,44 @@ void main() {
       final lines = List.generate(50, (i) => 'line$i').join('\n');
       expect(decode(encodePastedText(lines)).split('\r'), hasLength(50));
     });
+
+    group('bracketed paste (DECSET 2004)', () {
+      // The emulator tracked the mode and nothing read it, so every paste reached the remote as
+      // plain typing — the one thing bracketed paste exists to prevent. Kotlin builds the payload
+      // at `ui/AppViewModel.kt:696`.
+      const begin = '[200~';
+      const end = '[201~';
+
+      test('is off unless the remote asked for it', () {
+        expect(decode(encodePastedText('ls -la')), 'ls -la');
+        expect(bracketedPastePayload('ls -la', false), 'ls -la');
+      });
+
+      test('wraps the body in the standard markers', () {
+        expect(bracketedPastePayload('ls -la', true), '${begin}ls -la$end');
+      });
+
+      test('interior newlines stay inside the brackets, literal as the mode intends', () {
+        // This is the protection: a multi-line paste arrives as text, not as three commands the
+        // shell runs before the user can read them.
+        expect(bracketedPastePayload('one\rtwo\rthree', true), '${begin}one\rtwo\rthree$end');
+      });
+
+      test('a trailing Enter is sent after the closing marker, so it still submits', () {
+        // readline treats everything between the markers as literal — a trailing CR included — so
+        // wrapping it would leave the command echoed at the prompt and never run.
+        expect(bracketedPastePayload('ls -la\r', true), '${begin}ls -la$end\r');
+        expect(bracketedPastePayload('ls -la\r\r', true), '${begin}ls -la$end\r\r');
+      });
+
+      test('a paste that is only newlines is all Enter presses', () {
+        expect(bracketedPastePayload('\r\r', true), '$begin$end\r\r');
+      });
+
+      test('the encoder wraps once the mode is on', () {
+        expect(decode(encodePastedText('a\nb\n', bracketed: true)), '${begin}a\rb$end\r');
+      });
+    });
   });
 
   group('smart swipe line edit', () {

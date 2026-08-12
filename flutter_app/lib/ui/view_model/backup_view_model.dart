@@ -103,6 +103,14 @@ class BackupViewModel extends ChangeNotifier {
   /// password into a file the user may well drop in a cloud drive.
   bool get requiresPassphrase => _selection.hasSensitiveData;
 
+  /// The shortest passphrase a sensitive backup may be encrypted with.
+  ///
+  /// Kotlin refuses anything shorter (`ui/AppViewModel.kt:11361`), and this is the same number so
+  /// a backup made on one app opens on the other. It lives here, next to the check that enforces
+  /// it, because the previous arrangement is what broke: Kotlin's dialog advertised eight, gated
+  /// its own button on eight, and the export then refused twelve — with the file already created.
+  static const passphraseMinLength = 12;
+
   bool get canExport => !_selection.isEmpty && !_busy;
 
   bool _busy = false;
@@ -133,6 +141,15 @@ class BackupViewModel extends ChangeNotifier {
     }
     if (requiresPassphrase && passphrase.isEmpty) {
       _error = 'This backup contains credentials, so it needs a passphrase.';
+      _safeNotify();
+      return null;
+    }
+    if (requiresPassphrase && passphrase.length < passphraseMinLength) {
+      // Enforced here as well as in the dialog: this is the boundary that decides whether
+      // credentials get encrypted weakly, and it must not depend on which screen called it.
+      _error =
+          'The passphrase must be at least $passphraseMinLength characters, '
+          'because it is the only thing protecting the credentials in this file.';
       _safeNotify();
       return null;
     }

@@ -136,18 +136,44 @@ class _AboutScreenState extends State<AboutScreen> {
             '_Attach the full report via Share on the crash history screen._',
       },
     );
-    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-      await _copy('Crash report', entry.report);
+    // `launchUrl` can *throw* as well as return false — a device with no browser raises a
+    // PlatformException rather than answering. `_openUrl` above already guards for that; this call
+    // did not, so the fallback that copies the report never ran and the button did nothing at all.
+    var launched = false;
+    try {
+      launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      launched = false;
     }
+    if (!launched) await _copy('Crash report', entry.report);
   }
 
-  Future<void> _shareCrash(CrashEntry entry, Rect origin) => SharePlus.instance.share(
-    ShareParams(
-      subject: 'OmniTerm crash report',
-      text: 'OmniTerm crash report\n\n${redactCrashReport(entry.report)}',
-      sharePositionOrigin: origin,
-    ),
-  );
+  /// Shares the report, saying so when it cannot.
+  ///
+  /// The share sheet is not guaranteed: a device with no target for `text/plain` throws rather than
+  /// returning, and an unhandled failure left the user tapping Share with nothing happening and no
+  /// reason given. Kotlin reports it — "Couldn't share the report" (`MainActivity.kt:337`). The
+  /// clipboard fallback is here because it is the only other way to get a report off the device.
+  Future<void> _shareCrash(CrashEntry entry, Rect origin) async {
+    try {
+      await SharePlus.instance.share(
+        ShareParams(
+          subject: 'OmniTerm crash report',
+          text: 'OmniTerm crash report\n\n${redactCrashReport(entry.report)}',
+          sharePositionOrigin: origin,
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      await _copy('Crash report', redactCrashReport(entry.report));
+      if (!mounted) return;
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        const SnackBar(
+          content: Text("Couldn't share the report — copied it to the clipboard instead."),
+        ),
+      );
+    }
+  }
 
   Future<void> _copy(String label, String text) async {
     await Clipboard.setData(ClipboardData(text: text));

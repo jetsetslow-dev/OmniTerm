@@ -202,30 +202,34 @@ class _ScoreRing extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return SizedBox(
-      width: 32,
-      height: 32,
-      child: Stack(
-        alignment: Alignment.center,
-        children: [
-          CircularProgressIndicator(
-            value: (score / 100).clamp(0.0, 1.0),
-            strokeWidth: 3,
-            backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
-            valueColor: AlwaysStoppedAnimation(
-              score >= 70
-                  ? OmniColors.green
-                  : score >= 40
-                  ? OmniColors.amber
-                  : OmniColors.red,
+    return Semantics(
+      label: 'Health score: $score out of 100',
+      excludeSemantics: true,
+      child: SizedBox(
+        width: 32,
+        height: 32,
+        child: Stack(
+          alignment: Alignment.center,
+          children: [
+            CircularProgressIndicator(
+              value: (score / 100).clamp(0.0, 1.0),
+              strokeWidth: 3,
+              backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
+              valueColor: AlwaysStoppedAnimation(
+                score >= 70
+                    ? OmniColors.green
+                    : score >= 40
+                    ? OmniColors.amber
+                    : OmniColors.red,
+              ),
             ),
-          ),
-          Text(
-            '$score',
-            key: const ValueKey('monitor.healthScore'),
-            style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
-          ),
-        ],
+            Text(
+              '$score',
+              key: const ValueKey('monitor.healthScore'),
+              style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+            ),
+          ],
+        ),
       ),
     );
   }

@@ -35,6 +35,19 @@ class FtpRemoteFsClient extends RemoteFsClient {
         if (!_connected) {
           _connected = await _ftp.connect();
           if (!_connected) throw const FileSystemException('FTP login failed.');
+          // MLSD has structured timestamps and types, so prefer it when the server advertises the
+          // RFC 3659 MLST capability. It is not universal: current vsftpd, among other real servers,
+          // can answer `500 Unknown command` to MLSD. ftpconnect defaults to MLSD without probing,
+          // which makes an otherwise healthy share impossible to open. LIST is the interoperable
+          // fallback; a rejected or unsupported FEAT command leaves that fallback selected.
+          _ftp.listCommand = ListCommand.list;
+          try {
+            final features = await _ftp.sendCustomCommand('FEAT');
+            _ftp.listCommand = ftpListCommandForFeatures(features.message.toString());
+          } catch (_) {
+            // RFC 2389 FEAT is optional. Login succeeded, so do not reject an older server merely
+            // because capability discovery is unavailable.
+          }
         }
         result.complete(await action());
       } catch (error, stack) {
@@ -159,9 +172,10 @@ class FtpRemoteFsClient extends RemoteFsClient {
       }
       bytes.addAll(chunk);
     });
+    final completed = subscription.asFuture<void>();
     await downloadTo(path, sink.sink);
     await sink.close();
-    await subscription.asFuture<void>();
+    await completed;
     return utf8.decode(bytes, allowMalformed: true);
   }
 
@@ -178,4 +192,12 @@ class FtpRemoteFsClient extends RemoteFsClient {
     _closed = true;
     if (_connected) unawaited(_ftp.disconnect());
   }
+}
+
+/// Selects the most precise directory command the FTP server explicitly supports.
+ListCommand ftpListCommandForFeatures(String reply) {
+  final features = reply.toUpperCase().split(RegExp(r'\s+')).toSet();
+  return features.contains('MLST') || features.contains('MLSD')
+      ? ListCommand.mlsd
+      : ListCommand.list;
 }

@@ -282,13 +282,15 @@ class _BuilderTabState extends State<BuilderTab> {
       child: ListView(
         key: const ValueKey('infra.builder'),
         children: [
-          Row(
+          Wrap(
+            alignment: WrapAlignment.end,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: 4,
+            runSpacing: 4,
             children: [
-              const Expanded(
-                child: Text(
-                  'Compose Builder',
-                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
-                ),
+              const Text(
+                'Compose Builder',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
               ),
               TextButton.icon(
                 key: const ValueKey('infra.builder.new'),
@@ -317,12 +319,16 @@ class _BuilderTabState extends State<BuilderTab> {
                 if (stacks.isNotEmpty)
                   DropdownButtonFormField<StackSummary>(
                     key: const ValueKey('infra.builder.existingStack'),
+                    isExpanded: true,
                     decoration: const InputDecoration(labelText: 'Edit running stack'),
                     items: [
                       for (final stack in stacks)
                         DropdownMenuItem(
                           value: stack,
-                          child: Text('${stack.name} · ${stack.runtime}'),
+                          child: Text(
+                            '${stack.name} · ${stack.runtime}',
+                            overflow: TextOverflow.ellipsis,
+                          ),
                         ),
                     ],
                     onChanged: vm.composeBusy
@@ -438,6 +444,7 @@ class _VisualEditor extends StatelessWidget {
             _field('Working directory', draft.workingDir, (value) => draft.workingDir = value),
             DropdownButtonFormField<String>(
               key: const ValueKey('infra.builder.runtime'),
+              isExpanded: true,
               initialValue: draft.runtime,
               decoration: const InputDecoration(labelText: 'Runtime'),
               items: const [
@@ -458,11 +465,13 @@ class _VisualEditor extends StatelessWidget {
         _PodmanModifiersCard(draft: draft, onChanged: onChanged),
       ],
       const SizedBox(height: 10),
-      Row(
+      Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 4,
+        runSpacing: 4,
         children: [
-          const Expanded(
-            child: Text('Services', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-          ),
+          const Text('Services', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
           OutlinedButton.icon(
             key: const ValueKey('infra.builder.addService'),
             onPressed: () {
@@ -660,6 +669,7 @@ class _ServiceCardState extends State<_ServiceCard> {
                 (value) => service.containerName = value,
               ),
               DropdownButtonFormField<String>(
+                isExpanded: true,
                 initialValue:
                     const {
                       '',
