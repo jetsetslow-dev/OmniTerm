@@ -35,11 +35,14 @@ plugins {
   alias(libs.plugins.roborazzi) apply false
 }
 
+val kotlinBaseline = libs.versions.kotlin.get()
+
 // Android's lint, emulator, bundle and test tooling resolves several older transitive libraries
 // even though the top-level plugins are current. Keep those build-time parsers and network stacks
 // on patched, binary-compatible releases as well as hardening the dependencies packaged in APKs.
 allprojects {
   configurations.configureEach {
+    val resolvedConfigurationName = name
     resolutionStrategy.dependencySubstitution {
       // Split coordinates for the same reason as the buildscript block above: the keys must stay
       // at the VULNERABLE versions, and Dependabot rewrites full-coordinate literals.
@@ -58,6 +61,16 @@ allprojects {
     }
     resolutionStrategy.eachDependency {
       when {
+        resolvedConfigurationName == "kotlinAbiValidationCompatClasspath" &&
+          requested.group == "org.jetbrains.kotlin" -> {
+          // Kotlin 2.4.0 declares this internal tool classpath as the open range
+          // [2.4.0-Beta2, 2.5.0). Every new beta/RC published by JetBrains therefore changes a
+          // previously green build and trips strict dependency verification. Keep the ABI helper
+          // on the same reviewed Kotlin baseline as the compiler plugin; intentional Kotlin
+          // upgrades update both through the version catalog and verification metadata.
+          useVersion(kotlinBaseline)
+          because("keep ABI validation tooling reproducible and aligned with the Kotlin plugin")
+        }
         requested.group == "io.netty" && requested.name.startsWith("netty-") -> {
           useVersion("4.1.135.Final")
           because("align the Netty family to the patched security baseline")
