@@ -59,6 +59,17 @@ private const val ALERT_CHANNEL_ID = "monitoring_alerts"
 /** Notification channel for the low-battery saver engaging. */
 private const val BATTERY_SAVER_CHANNEL_ID = "battery_saver"
 
+/**
+ * Shortest passphrase a sensitive backup may be encrypted with.
+ *
+ * Public because the dialog that collects one has to advertise and enforce the *same* number. It
+ * did not: the field was labelled "min 8 chars", its confirm button was gated on eight, and the
+ * export then refused anything under twelve — after the document picker had already created the
+ * file, so the user was left holding a 0-byte "backup" and an error. One constant, three call
+ * sites, is what stops that recurring.
+ */
+const val BACKUP_PASSPHRASE_MIN_LENGTH = 12
+
 /** Cap on the live action panel text: long-running streams keep only the most recent output. */
 private const val ACTION_STREAM_MAX_CHARS = 200_000
 
@@ -11369,7 +11380,10 @@ class AppViewModel @JvmOverloads constructor(
     /** Export a selective backup. Sensitive selections are always encrypted. */
     fun exportBackup(uri: android.net.Uri, passphrase: String, context: android.content.Context, selection: BackupSelection, onResult: (Boolean, String) -> Unit) {
         val closedSelection = selection.withReferentialClosure()
-        if (closedSelection.hasSensitiveData() && passphrase.length < 12) { onResult(false, "Passphrase must be at least 12 characters for backups."); return }
+        if (closedSelection.hasSensitiveData() && passphrase.length < BACKUP_PASSPHRASE_MIN_LENGTH) {
+            onResult(false, "Passphrase must be at least $BACKUP_PASSPHRASE_MIN_LENGTH characters for backups.")
+            return
+        }
         if (backupExportRunning) return
         backupExportRunning = true
         viewModelScope.launch {
