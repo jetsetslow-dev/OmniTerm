@@ -22,6 +22,41 @@ import 'package:flutter_test/flutter_test.dart';
 ///     the overflow. Wrapping *those* in `scrollable: true` is how nested-scroll bugs are made, so
 ///     they are deliberately allowed rather than "fixed".
 void main() {
+  test('no modal bottom sheet can clip its own content', () {
+    // Without `isScrollControlled: true` a sheet is capped at *half* the available height — ~180
+    // logical pixels on a small phone in landscape. Four sheets exceeded that at 200% text; the
+    // premium gate overflowed by 84 pixels, hiding the unlock button it exists to offer.
+    final offenders = <String>[];
+
+    for (final file in Directory('lib').listSync(recursive: true).whereType<File>()) {
+      if (!file.path.endsWith('.dart')) continue;
+      final source = file.readAsStringSync();
+
+      for (final match in RegExp(r'showModalBottomSheet<[^>]*>\(').allMatches(source)) {
+        final body = _callBody(source, match.end);
+        final absorbs =
+            body.contains('isScrollControlled: true') ||
+            body.contains('SingleChildScrollView') ||
+            body.contains('ListView') ||
+            body.contains('Expanded(') ||
+            body.contains('Flexible(');
+        if (absorbs) continue;
+
+        final line = '\n'.allMatches(source.substring(0, match.start)).length + 1;
+        offenders.add('${file.path}:$line');
+      }
+    }
+
+    expect(
+      offenders,
+      isEmpty,
+      reason:
+          'These sheets are capped at half the screen with nothing to absorb the overflow, so they '
+          'clip their bottom rows — where the buttons are. Add `isScrollControlled: true`, or give '
+          'the content its own scrollable:\n  ${offenders.join('\n  ')}',
+    );
+  });
+
   test('no dialog can clip its own content', () {
     final offenders = <String>[];
 
@@ -72,4 +107,20 @@ void main() {
           'content its own scrollable:\n  ${offenders.join('\n  ')}',
     );
   });
+}
+
+/// Walks to the paren that closes the call opened at [start].
+String _callBody(String source, int start) {
+  var i = start;
+  var depth = 1;
+  while (i < source.length && depth > 0) {
+    final char = source[i];
+    if (char == '(') {
+      depth++;
+    } else if (char == ')') {
+      depth--;
+    }
+    i++;
+  }
+  return source.substring(start, i);
 }

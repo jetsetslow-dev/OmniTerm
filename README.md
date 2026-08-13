@@ -188,8 +188,3 @@ it on API 29 (an older SQLite platform, and cheap on runners without KVM). On a 
 machine it is worth also running it against an **API 35** AVD, which covers the modern end of the
 supported range. API 35 is currently the newest level that boots: emulator 37.1.11 crash-loops on
 any API 36+ image, so Android 16/17 can be compiled and targeted but not yet emulated.
-
-Contributors should also read [CONTRIBUTING.md](CONTRIBUTING.md) and the
-[AI-first development policy](AI_FIRST_DEVELOPMENT.md); maintainers should use
-the [release runbook](docs/RELEASE_RUNBOOK.md) and
-[repository security checklist](docs/REPOSITORY_SECURITY.md).

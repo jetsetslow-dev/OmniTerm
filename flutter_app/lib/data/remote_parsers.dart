@@ -891,7 +891,7 @@ String _extractTime(String ts) {
 /// therefore all classified INFO, which is exactly backwards for log triage.
 ///
 /// Dropping the trailing boundary fixes all of them at once. The leading `\b` is kept, so a stem
-/// still has to start a word and cannot match mid-token. See MIGRATION.md §7.8.
+/// still has to start a word and cannot match mid-token.
 final _errorRe = RegExp(r'\b(error|fail|fatal|critical|denied|refused|panic|segfault)');
 final _warnRe = RegExp(r'\b(warn|deprecat|timeout|retry)');
 

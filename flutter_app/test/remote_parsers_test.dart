@@ -172,7 +172,7 @@ void main() {
       // The Kotlin patterns were \b(...)\b, and the trailing \b disabled every stem: "fail" could
       // not match "failure", "error" could not match "errors", and "deprecat" — plainly written as
       // a stem — matched only the literal string "deprecat". These lines were all INFO in the
-      // shipped app. See MIGRATION.md §7.8.
+      // shipped app.
       String levelOf(String message) =>
           parseJournal('2026-05-30T10:41:22+0000 host app[1]: $message').single.level;
 

@@ -9,7 +9,7 @@ import 'package:omniterm/platform/secret_store.dart';
 
 import 'support/fake_secure_storage.dart';
 
-/// MIGRATION.md §7.10. The Kotlin app encrypted every credential under a non-exportable Android
+/// The Kotlin app encrypted every credential under a non-exportable Android
 /// Keystore key, so without the bridge an updating user finds every saved secret blank. These tests
 /// cover the property that matters most: a secret is either migrated correctly or left exactly
 /// as it was — never replaced with an empty value.

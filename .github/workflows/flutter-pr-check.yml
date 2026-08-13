@@ -145,15 +145,16 @@ jobs:
         uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.0.0
         with:
           distribution: temurin
-          java-version: "17"
+          # AGP 9.3.1's lint JavaDoc parser calls List.removeLast. Under JDK 17 the release build
+          # aborts while linting Flutter plugin sources; JDK 21 supplies that API.
+          java-version: "21"
 
       - name: Resolve dependencies
         run: flutter pub get
 
-      # **Release, not debug.** The Kotlin pipeline learned this the expensive way (see MIGRATION.md
-      # §20 pattern L): PR checks built only debug variants, so the release classpath first failed
-      # after merge, on main. Everything release-only lives here — R8, the shrinker, the release
-      # resource pipeline — and none of it is exercised by a debug build.
+      # **Release, not debug.** PR checks once built only debug variants, so a broken release
+      # classpath first failed after merge. Everything release-only lives here — R8, the shrinker,
+      # the release resource pipeline — and none of it is exercised by a debug build.
       #
       # No signing secrets are available to a pull request, so this is deliberately an *unsigned*
       # verification build: `KEYSTORE_PATH` is unset, which `app/build.gradle.kts` handles by
@@ -173,6 +174,17 @@ jobs:
           flutter build appbundle --release
           --dart-define=OMNITERM_PLAY_STORE=true
           --dart-define=ADMOB_BANNER_UNIT_ID=ca-app-pub-3940256099942544/6300978111
+
+      - name: Prove development test code is not shipped
+        run: |
+          set -euo pipefail
+          PACKAGES="$RUNNER_TEMP/flutter-release-packages.txt"
+          apkanalyzer dex packages build/app/outputs/flutter-apk/app-release.apk > "$PACKAGES"
+          if grep -Eiq 'patrol|integration_test|flutter_test|test_api|mocktail' "$PACKAGES"; then
+            echo "A development-only test package was compiled into the release APK:" >&2
+            grep -Ei 'patrol|integration_test|flutter_test|test_api|mocktail' "$PACKAGES" >&2
+            exit 1
+          fi
 
       - name: Report artifact sizes
         run: |
@@ -236,7 +248,7 @@ jobs:
       - run: echo "No Flutter files changed; skipping the iOS build."
 
   # The device suites. Both halves run: the Dart-only flows through `flutter test`, and Patrol's
-  # native flows through its own runner — they cannot share a runner (MIGRATION.md §11.1).
+  # native flows through its own runner; the two harnesses cannot share a runner.
   e2e:
     name: End-to-end on an emulator
     needs: changes
@@ -263,7 +275,7 @@ jobs:
         uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.0.0
         with:
           distribution: temurin
-          java-version: "17"
+          java-version: "21"
 
       - name: Resolve dependencies
         run: flutter pub get
@@ -281,9 +293,9 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      # API 35, deliberately. Emulator 37.x crash-loops on every image from API 36 up (bisected —
-      # MIGRATION.md §19), and that failure impersonates an app bug, so pinning below it keeps a red
-      # run meaning what it says.
+      # API 35, deliberately. Emulator 37.x crash-loops on every image from API 36 up in the local
+      # bisect, and that failure impersonates an app bug, so pinning below it keeps a red run meaning
+      # what it says.
       - name: Run the device suites
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.35.0
         with:

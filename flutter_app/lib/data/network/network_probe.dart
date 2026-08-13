@@ -9,7 +9,7 @@ import 'lan_hostname.dart';
 ///
 /// An interface rather than free functions so the view model can be tested without touching a real
 /// network — a test that depends on the machine's own LAN is a test that fails on a laptop in a
-/// café and passes on the dev box, which is exactly the host-dependence MIGRATION.md warns about.
+/// café and passes on the dev box, which is exactly the host dependence the test fleet prevents.
 abstract interface class NetworkProbe {
   /// Round-trip time to [host]:[port], or null when it did not answer in [timeout].
   ///

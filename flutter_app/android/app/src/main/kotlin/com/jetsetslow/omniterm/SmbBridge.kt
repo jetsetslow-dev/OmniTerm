@@ -25,7 +25,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
- * SMB2/3 for the Dart side, over smbj (MIGRATION.md §7.1).
+ * SMB2/3 for the Dart side, over smbj.
  *
  * Ported from `data/shares/SmbFsClient.kt` in the Kotlin app, which is the same library and the same
  * connection-caching and retry behaviour. What is new is the boundary: sessions are handles the Dart

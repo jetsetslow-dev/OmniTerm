@@ -67,7 +67,7 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  /// See MIGRATION.md: cancelling a drift `watch` subscription schedules zero-duration timers.
+  /// Cancelling a drift `watch` subscription schedules zero-duration timers.
   Future<void> finish(WidgetTester tester) async {
     vm.dispose();
     await tester.pump();

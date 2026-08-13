@@ -12,7 +12,7 @@ import 'package:omniterm/ui/navigation.dart';
 /// how an ICU-only regex defect in the Compose Builder reached a release.
 ///
 /// Everything here runs without a reachable host, deliberately. The flows that need one belong in
-/// the lab suites (see AGENTS.md); these are the actions a user can perform on a plane, and they
+/// the lab suites; these are the actions a user can perform on a plane, and they
 /// are the ones that persist state, so a failure here is data loss rather than a blank pane.
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();

@@ -103,7 +103,7 @@ Future<void> main() async {
 /// Root of the Flutter app, replacing `MainActivity` + `MyApplicationTheme`.
 /// Builds the repository with the Android bridge that reads Kotlin-era credentials attached.
 ///
-/// Without it, every credential the old app saved would read back blank — see MIGRATION.md §7.10.
+/// Without it, every credential the old app saved would read back blank after an in-place upgrade.
 /// The migration pass runs once here rather than lazily per read, so a user whose upgrade lands
 /// mid-session does not find some hosts working and others not.
 AppRepository _buildRepository(AppDatabase db) {

@@ -2,7 +2,7 @@
 /// `commandDangerHits` in `ui/FleetScreen.kt`.
 ///
 /// **This is a warning, not a block.** The user chose these hosts and is entitled to run whatever
-/// they like on them (MIGRATION.md §17) — a broadcast `reboot` across a lab is a legitimate thing to
+/// they like on them — a broadcast `reboot` across a lab is a legitimate thing to
 /// want. What makes it worth flagging is the multiplier: the same typo that costs one host costs
 /// forty, and the confirmation dialog is the last point at which that is cheap to notice.
 ///

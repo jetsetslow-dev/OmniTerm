@@ -194,7 +194,7 @@ void main() {
       // Deliberately NOT asserted against the Kotlin's back-stamp list. That list exists because
       // `presetKey` was added to an app that already had rows in the wild; a fresh Flutter install
       // seeds every preset with its key from the start, so there is nothing to back-stamp and no
-      // reason for one preset to be special. See MIGRATION.md §16.4.
+      // reason for one preset to be special.
       for (final preset in kAlertPresets) {
         expect(preset.presetKey, startsWith('alert.'), reason: preset.presetKey);
         expect(preset.thresholdValue, greaterThan(0), reason: preset.presetKey);

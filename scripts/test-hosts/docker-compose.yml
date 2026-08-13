@@ -72,7 +72,7 @@ services:
       # The 400-service Compose stack the builder stress test edits. Mounted read-only so the test
       # cannot mutate its own input, and committed rather than generated at `up` time so every
       # contributor reads byte-identical bytes. Regenerate via ComposeLargeStackFixtureTest; see
-      # AGENTS.md. It replaces a path that only existed under one contributor's home directory.
+      # repository test contract. It replaces a path that existed only on one contributor's host.
       - ./fixtures/large-stack/compose.yml:/fixtures/large-stack/compose.yml:ro
       # Without this the image refuses every -L/-D tunnel; see the script for why.
       - ./fixtures/ssh-init:/custom-cont-init.d:ro

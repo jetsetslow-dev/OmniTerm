@@ -72,10 +72,19 @@ class BackupPayload {
     List<AlertHistoryRow> alertHistory = const [],
     List<NetworkShare> networkShares = const [],
     List<CrashEntry> crashLogs = const [],
+    Map<String, String> knownHosts = const {},
   }) {
     final closed = selection.withReferentialClosure();
 
     final document = <String, dynamic>{'v': version};
+
+    // Pinned host keys travel with the hosts, as they do in Compose (`ui/AppViewModel.kt:11646`).
+    // Without them a restore silently downgrades every host from "verified against a pinned key" to
+    // trust-on-first-use: the next connection is accepted as new rather than flagged as *changed*,
+    // which is the one thing pinning exists to catch.
+    if (closed.contains(BackupSection.servers) && knownHosts.isNotEmpty) {
+      document['knownHosts'] = Map<String, String>.from(knownHosts);
+    }
 
     if (closed.contains(BackupSection.servers)) {
       document['servers'] = [

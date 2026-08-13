@@ -1,6 +1,8 @@
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:omniterm/data/ssh/secure_host_key_store.dart';
+import 'package:omniterm/data/ssh/ssh_host_key_trust.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/domain/backup_selection.dart';
@@ -69,7 +71,14 @@ void main() {
     addTearDown(tester.view.reset);
 
     await app.start();
-    vm = BackupViewModel(app);
+    vm = BackupViewModel(
+      app,
+      // Injected: the default reaches for real secure storage, which a widget test has no channel
+      // for, and an export that silently lost its pins would still look like a pass.
+      hostKeyTrust: SshHostKeyTrust(
+        SecureHostKeyStore(storage: FakeSecureStorage(<String, String>{})),
+      ),
+    );
     await tester.pumpWidget(
       MultiProvider(
         providers: [

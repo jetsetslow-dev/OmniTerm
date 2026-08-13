@@ -407,6 +407,11 @@ class _ActiveTab extends StatelessWidget {
 Future<void> _openMuteMenu(BuildContext context, AlertsViewModel vm, ActiveAlert alert) async {
   final duration = await showModalBottomSheet<Duration>(
     context: context,
+    // Scroll-controlled because a sheet is otherwise capped at half the available height: on a
+    // small phone in landscape at 200% text that is ~180px, and this content needs far more.
+    // The clipped part is the bottom, which is where the buttons are. Parity defects 112-115
+    // are the same failure in dialogs.
+    isScrollControlled: true,
     builder: (sheetContext) => SafeArea(
       child: Column(
         mainAxisSize: MainAxisSize.min,

@@ -16,7 +16,6 @@ void main() {
       // `presetKey` was added to an app that already had rows on devices; a fresh Flutter install
       // seeds every preset with its key from the start. Requiring a legacy counterpart would make
       // any *new* preset fail this suite for a reason that has nothing to do with it working.
-      // See MIGRATION.md §16.4.
       for (final preset in kAllScriptPresets) {
         expect(preset.presetKey, matches(RegExp(r'^(fleet|homelab)\.')), reason: preset.presetKey);
       }

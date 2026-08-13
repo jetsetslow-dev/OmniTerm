@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 /// This is a deliberately small seam carved out of the legacy 12,310-line `AppViewModel`: the
 /// scaffold only ever read a handful of its properties (alert count, keep-screen-on, refresh
 /// state, monetization gating). Feature ViewModels land alongside it as their screens are ported
-/// — see MIGRATION.md §5.2.
+/// so navigation and feature state stay independently testable.
 class ShellState extends ChangeNotifier {
   ShellState({this.keepScreenOnSetter});
 

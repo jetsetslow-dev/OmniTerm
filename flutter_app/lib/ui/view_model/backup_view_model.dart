@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import '../../data/ssh/secure_host_key_store.dart';
+import '../../data/ssh/ssh_host_key_trust.dart';
 import '../../data/backup/backup_envelope.dart';
 import '../../data/backup/backup_payload.dart';
 import '../../domain/backup_selection.dart';
@@ -40,10 +42,27 @@ class BackupInspection {
 /// without a file dialog, and it is why the reporting helpers below exist — the outcome of writing
 /// the file is something only the caller knows.
 class BackupViewModel extends ChangeNotifier {
-  BackupViewModel(this._app, {CrashLog? crashLog}) : crashLog = crashLog ?? CrashLog.instance;
+  BackupViewModel(this._app, {CrashLog? crashLog, SshHostKeyTrust? hostKeyTrust})
+    : crashLog = crashLog ?? CrashLog.instance,
+      hostKeyTrust = hostKeyTrust ?? SshHostKeyTrust(SecureHostKeyStore());
 
   final AppState _app;
   final CrashLog crashLog;
+
+  /// Pinned host keys, which travel with the hosts in a backup.
+  final SshHostKeyTrust hostKeyTrust;
+
+  /// Pinned host keys for the export, or none if the trust store cannot be read.
+  ///
+  /// A locked or unavailable keystore must not cost the user their whole backup — every other
+  /// section is still worth writing. The restore side already tolerates the key being absent.
+  Future<Map<String, String>> _pinnedHostKeys() async {
+    try {
+      return await hostKeyTrust.exportEntries();
+    } catch (_) {
+      return const {};
+    }
+  }
 
   bool _disposed = false;
 
@@ -174,6 +193,7 @@ class BackupViewModel extends ChangeNotifier {
         alertHistory: await repository.getAlertHistory(),
         networkShares: await repository.getAllNetworkShares(),
         crashLogs: crashLog.entries,
+        knownHosts: await _pinnedHostKeys(),
       );
 
       // An unencrypted export is only reachable for a selection with nothing sensitive in it.
@@ -436,6 +456,30 @@ class BackupViewModel extends ChangeNotifier {
         () => BackupPayload.restore(RepositoryRestoreTarget(_app.repository), json),
       );
       final root = jsonDecode(json) as Map<String, Object?>;
+
+      // Pinned host keys, imported only for hosts that were actually restored. A limited restore
+      // skips hosts, and importing their keys anyway would leave orphaned trust entries — a pin for
+      // a host this device does not have, which would silently auto-trust it if it were re-added
+      // later. `filterEntriesForHosts` is the rule Compose applies at `ui/AppViewModel.kt:11650`;
+      // it was ported and tested here and had no caller until now.
+      if (root['knownHosts'] case final Map<Object?, Object?> pinned when pinned.isNotEmpty) {
+        final entries = <String, String>{
+          for (final entry in pinned.entries)
+            if (entry.key case final String alias)
+              if (entry.value case final String fingerprint) alias: fingerprint,
+        };
+        final hosts = <(String, int)>[
+          for (final row in (root['servers'] as List<Object?>? ?? const []))
+            if (row case {'host': final String host}) (host, (row['port'] as num?)?.toInt() ?? 22),
+        ];
+        final kept = SshHostKeyTrust.filterEntriesForHosts(entries, hosts);
+        if (kept.isNotEmpty) await hostKeyTrust.importEntries(kept);
+        counts['knownHosts'] = kept.length;
+        if (entries.length > kept.length) {
+          counts['knownHostsSkipped'] = entries.length - kept.length;
+        }
+      }
+
       final restoredCrashes = <CrashEntry>[];
       for (final value in (root['crashLogs'] as List<Object?>? ?? const [])) {
         if (value case {'t': final num time, 'r': final String report}) {

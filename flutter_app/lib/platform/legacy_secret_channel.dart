@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 /// The Dart half of the Android bridge that reads credentials the Kotlin app wrote
-/// (MIGRATION.md §7.10).
+/// during an in-place Kotlin-to-Flutter upgrade.
 ///
 /// Every credential the old app stored — server, sudo and proxy passwords, imported private keys,
 /// credential-profile and share passwords — was encrypted under a non-exportable Android Keystore

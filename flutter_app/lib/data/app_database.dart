@@ -318,8 +318,7 @@ QueryExecutor _open() {
       //
       // The old `applyWorkaroundToOpenSqlite3OnOldAndroidVersions()` call is deliberately absent:
       // `sqlite3_flutter_libs` is a no-op stub as of 0.6.0+eol and is obsolete once `sqlite3` 3.x
-      // bundles the library itself, so the package has been dropped entirely (closes MIGRATION.md
-      // §7.5).
+      // bundles the library itself, so the obsolete compatibility package has been dropped.
       sqlite3.tempDirectory = (await getTemporaryDirectory()).path;
     }
 

@@ -131,7 +131,7 @@ dependencies {
 
     implementation("org.bouncycastle:bcprov-jdk18on:1.85")
 
-    // SMB2/3 (MIGRATION.md §7.1). Native rather than Dart because the only pub package for SMB pins
+    // SMB2/3. Native rather than Dart because the only pub package for SMB pins
     // a pointycastle major dartssh2 cannot coexist with, and is an unmaintained implementation of a
     // large attacker-reachable wire protocol. smbj is the same client the Kotlin app already ships.
     implementation("com.hierynomus:smbj:0.14.0") {

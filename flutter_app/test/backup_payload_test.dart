@@ -4,6 +4,8 @@ import 'package:drift/drift.dart' show Value;
 
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:omniterm/data/ssh/secure_host_key_store.dart';
+import 'package:omniterm/data/ssh/ssh_host_key_trust.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/data/backup/backup_envelope.dart';
@@ -70,10 +72,14 @@ void main() {
     groupName: 'General',
   );
 
+  /// The trust store the source device pins into, so a test can seed and assert pinned keys.
+  late SshHostKeyTrust trust;
+
   Future<BackupViewModel> boot() async {
     await app.start();
     await Future<void>.delayed(Duration.zero);
-    return BackupViewModel(app);
+    trust = SshHostKeyTrust(SecureHostKeyStore(storage: FakeSecureStorage(<String, String>{})));
+    return BackupViewModel(app, hostKeyTrust: trust);
   }
 
   Future<void> settle() async {
@@ -92,6 +98,46 @@ void main() {
     await freshApp.start();
     return (freshDb, freshRepo, freshApp, BackupViewModel(freshApp));
   }
+
+  group('pinned host keys travel with the hosts', () {
+    // `exportEntries`, `importEntries` and `filterEntriesForHosts` were all ported and tested, and
+    // nothing in lib/ called any of them. A restore therefore dropped every pin, silently
+    // downgrading each host from "verified against a pinned key" to trust-on-first-use: the next
+    // connection is accepted as *new* rather than flagged as *changed*, which is the one thing
+    // pinning exists to catch. Compose carries them at `ui/AppViewModel.kt:11646`.
+    test('a restore keeps the trust store for hosts it restored', () async {
+      final vm = await boot();
+      await repo.insertServer(server(name: 'nas'));
+      await settle();
+      await trust.importEntries({'10.0.0.1|ssh-ed25519': 'AAAA', '[10.0.0.1]:22|ssh-rsa': 'BBBB'});
+
+      final contents = await vm.exportBackup('a-long-enough-passphrase');
+      expect(contents, isNotNull);
+
+      final (freshDb, freshRepo, freshApp, _) = await freshDevice();
+      final freshTrust = SshHostKeyTrust(
+        SecureHostKeyStore(storage: FakeSecureStorage(<String, String>{})),
+      );
+      final freshVm = BackupViewModel(freshApp, hostKeyTrust: freshTrust);
+      await freshVm.importBackup(contents!, 'a-long-enough-passphrase');
+
+      expect(await freshTrust.exportEntries(), isNotEmpty, reason: 'the pins came across');
+      expect(freshRepo, isNotNull);
+      freshVm.dispose();
+      freshApp.dispose();
+      await freshDb.close();
+      vm.dispose();
+    });
+
+    test('a pin for a host that was not restored is dropped', () async {
+      // The limited-restore case: skipping a host must not leave an orphaned pin behind, which
+      // would silently auto-trust that host if it were ever added back.
+      final entries = {'10.0.0.1|ssh-ed25519': 'AAAA', '10.0.0.9|ssh-ed25519': 'CCCC'};
+      final kept = SshHostKeyTrust.filterEntriesForHosts(entries, [('10.0.0.1', 22)]);
+
+      expect(kept.keys, ['10.0.0.1|ssh-ed25519']);
+    });
+  });
 
   /// Exports and returns the *payload*, decrypting when a passphrase was used.
   ///

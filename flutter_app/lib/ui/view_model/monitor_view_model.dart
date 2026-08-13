@@ -172,7 +172,7 @@ class MonitorViewModel extends ChangeNotifier {
   /// which left Monitor rendering a host that had since gone offline while the online-only selector
   /// bar above it no longer listed that host — so the header disagreed with the body and there was
   /// no way to switch away from it. Every tab also kept issuing SSH commands at a host that was
-  /// down. See MIGRATION.md §15.4.
+  /// down.
   Server? get monitoredServer {
     final online = _app.servers.where((s) => s.status == 'online');
     final selectedId = _app.selectedServerId;

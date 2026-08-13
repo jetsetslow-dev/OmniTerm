@@ -11,6 +11,11 @@ Future<void> showPremiumGate(
 }) => showModalBottomSheet<void>(
   context: context,
   useSafeArea: true,
+  // Scroll-controlled because a sheet is otherwise capped at half the available height: on a
+  // small phone in landscape at 200% text that is ~180px, and this content needs far more.
+  // The clipped part is the bottom, which is where the buttons are. Parity defects 112-115
+  // are the same failure in dialogs.
+  isScrollControlled: true,
   builder: (sheetContext) => Padding(
     key: const ValueKey('license.gate'),
     padding: const EdgeInsets.all(24),

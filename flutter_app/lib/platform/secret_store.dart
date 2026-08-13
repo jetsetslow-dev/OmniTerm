@@ -9,7 +9,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 /// Protects every secret the app persists: server passwords, sudo passwords, proxy passwords,
 /// imported private keys, credential-profile passwords and share passwords.
 ///
-/// ## Why this is not a straight port — and why it matters (MIGRATION.md §7.10)
+/// ## Why this is not a straight port — and why it matters
 ///
 /// The Kotlin encrypted with AES-GCM under a key generated **inside the Android Keystore**, which
 /// never leaves it (hardware-backed where the device supports it). A Flutter app cannot use that key

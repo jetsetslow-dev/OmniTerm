@@ -115,7 +115,9 @@ jobs:
         uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.0.0
         with:
           distribution: temurin
-          java-version: "17"
+          # Keep this identical to the Flutter PR release build. AGP 9.3.1's lint JavaDoc parser
+          # calls List.removeLast and aborts on JDK 17 before an APK exists.
+          java-version: "21"
 
       - name: Resolve dependencies
         run: flutter pub get
@@ -216,6 +218,16 @@ jobs:
           # PR gate proved, and its absence is exactly how a shrinker misconfiguration ships.
           test -s build/app/outputs/mapping/release/mapping.txt || {
             echo "No R8 mapping — the release build was not minified" >&2; exit 1; }
+
+          # Test sources stay versioned so CI can protect the migration, but their harnesses and
+          # native plugins must remain development-only and absent from what users install.
+          PACKAGES="$RUNNER_TEMP/flutter-release-packages.txt"
+          apkanalyzer dex packages build/app/outputs/flutter-apk/app-release.apk > "$PACKAGES"
+          if grep -Eiq 'patrol|integration_test|flutter_test|test_api|mocktail' "$PACKAGES"; then
+            echo "A development-only test package was compiled into the release APK:" >&2
+            grep -Ei 'patrol|integration_test|flutter_test|test_api|mocktail' "$PACKAGES" >&2
+            exit 1
+          fi
         working-directory: flutter_app
 
       # The last question nobody else asks: does the artifact we are about to publish *start*?

@@ -2,7 +2,7 @@
 ///
 /// **Partial port.** Only [normaliseOs] is here so far, because `remote_parsers.dart` dispatches on
 /// it. The ~940 lines of shell command strings land with the screens that issue them
-/// (MIGRATION.md §3.2).
+/// so parsing and remote behaviour stay independently testable.
 library;
 
 import 'dart:convert';

@@ -160,7 +160,7 @@ if command -v adb >/dev/null 2>&1 &&
   # UI instrumentation test ever ran here, so a screen could crash on first open with the preflight
   # still green -- exactly how an ICU-only regex defect in ComposeBuilder reached a release. The
   # lab-dependent `E2e*` suites self-skip through `assumeTrue` when their instrumentation arguments
-  # are absent, so this stays runnable on a bare emulator; see AGENTS.md for running them for real.
+  # are absent, so this stays runnable on a bare emulator; the host profile exercises them for real.
   ./gradlew connectedOpenSourceDebugAndroidTest "${GRADLE_ARGS[@]}"
 else
   echo "Device matrix (Room migrations + UI instrumentation): no Android device/emulator available; deferred to PR CI"

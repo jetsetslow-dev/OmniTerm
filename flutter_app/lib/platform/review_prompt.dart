@@ -5,7 +5,7 @@
 /// In-App Review API through `flavorRequestInAppReview`, which is a no-op in its open-source flavor.
 /// Wiring an equivalent package in here would be a dependency change, and this repository treats
 /// those as a security boundary — new checksums across every resolved graph and both release SBOMs
-/// (AGENTS.md, "Dependency and checksum verification"). So the *policy* lives here, fully tested,
+/// (the repository's strict dependency-verification gate). So the *policy* lives here, fully tested,
 /// and the build that has a store SDK supplies the launcher. A build without one simply never
 /// prompts, rather than pretending to.
 library;

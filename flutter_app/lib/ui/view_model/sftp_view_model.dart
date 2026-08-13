@@ -275,7 +275,7 @@ class SftpViewModel extends ChangeNotifier {
   // ── which host ──────────────────────────────────────────────────────────────
 
   /// Same rule as Monitor and Infra: the explicit selection while it is online, else the first
-  /// online host. See MIGRATION.md §15.4.
+  /// online host.
   Server? get browsedServer {
     final online = _app.servers.where((s) => s.status == 'online');
     final selectedId = _app.selectedServerId;

@@ -10,7 +10,7 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /**
- * Decrypts credentials written by the Kotlin app's `SecretStore` (MIGRATION.md §7.10).
+ * Decrypts credentials written by the Kotlin app's `SecretStore` during in-place upgrade.
  *
  * The old app encrypted **every** stored credential — server, sudo and proxy passwords, imported
  * private keys, credential-profile and share passwords — under an AES-GCM key generated inside the

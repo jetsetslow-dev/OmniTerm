@@ -42,7 +42,7 @@ class InfraViewModel extends ChangeNotifier {
   // ── which host is inspected ─────────────────────────────────────────────────
 
   /// The host whose containers are shown: the explicitly selected one **if it is still online**,
-  /// else the first online host. Same rule as Monitor — see MIGRATION.md §15.4 for why the Kotlin's
+  /// else the first online host. Same rule as Monitor; the Kotlin app's
   /// unconditional version left the screen showing a host its own picker no longer listed.
   Server? get inspectedServer {
     final online = _app.servers.where((s) => s.status == 'online');

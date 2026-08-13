@@ -23,6 +23,13 @@
         android:label="${appLabel}"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
+        <!-- Some physical Android GPUs render a permanent black frame with Impeller even though
+             the same release APK draws normally on the emulator. OmniTerm's terminal is already
+             exercised against Skia's mature CustomPaint path, so prefer compatibility until the
+             affected handset can be proven green with Impeller again. -->
+        <meta-data
+            android:name="io.flutter.embedding.android.EnableImpeller"
+            android:value="false" />
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
             android:value="${admobAppId}" />
