@@ -6,6 +6,8 @@ import com.jetsetslow.omniterm.ui.SshConnectionPhase
 import com.jetsetslow.omniterm.ui.TerminalConnectionState
 import com.jetsetslow.omniterm.ui.classifySshConnectionFailure
 import com.jetsetslow.omniterm.ui.classifySshConnectionPhase
+import com.jetsetslow.omniterm.ui.shouldProbeSshPortDirectly
+import com.jetsetslow.omniterm.ui.sshFailureProvesEndpointUnreachable
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.flow.take
@@ -59,5 +61,35 @@ class SshConnectionStateTest {
             .isEqualTo(SshConnectionFailure.NetworkUnreachable)
         assertThat(classifySshConnectionFailure("Broken pipe"))
             .isEqualTo(SshConnectionFailure.Dropped)
+    }
+
+    @Test
+    fun onlyDefinitiveAddressOrListenerFailuresMarkAHostUnreachable() {
+        listOf(
+            SshConnectionFailure.Refused,
+            SshConnectionFailure.Timeout,
+            SshConnectionFailure.HostNotFound,
+            SshConnectionFailure.NetworkUnreachable,
+        ).forEach { failure ->
+            assertThat(sshFailureProvesEndpointUnreachable(failure)).isTrue()
+        }
+
+        listOf(
+            SshConnectionFailure.Authentication,
+            SshConnectionFailure.Dropped,
+            SshConnectionFailure.HostKeyVerification,
+            SshConnectionFailure.Unknown("algorithm negotiation failed"),
+        ).forEach { failure ->
+            assertThat(sshFailureProvesEndpointUnreachable(failure)).isFalse()
+        }
+    }
+
+    @Test
+    fun proxyAndJumpHostRoutesNeverUseTheDirectTargetProbe() {
+        assertThat(shouldProbeSshPortDirectly("none")).isTrue()
+        assertThat(shouldProbeSshPortDirectly("NONE")).isTrue()
+        assertThat(shouldProbeSshPortDirectly("ssh")).isFalse()
+        assertThat(shouldProbeSshPortDirectly("socks5")).isFalse()
+        assertThat(shouldProbeSshPortDirectly("http")).isFalse()
     }
 }

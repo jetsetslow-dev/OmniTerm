@@ -169,6 +169,9 @@
     <string name="host_appears_offline">"Host Appears Offline"</string>
     <string name="the_status_may_be_out_of">"The status may be out of date — connect anyway to try, or cancel and wait for it to come back online."</string>
     <string name="connect_anyway">"Connect anyway"</string>
+    <string name="ssh_anyway">"SSH anyway"</string>
+    <string name="automatic_ssh_check_failed">"Automatic SSH check failed"</string>
+    <string name="automatic_ssh_check_failed_detail">"%1$s:%2$d did not answer through its configured SSH route. You can still try SSH."</string>
     <string name="omniterm">"OmniTerm"</string>
     <string name="unlock">"Unlock"</string>
     <string name="use_biometrics">"Use biometrics"</string>
