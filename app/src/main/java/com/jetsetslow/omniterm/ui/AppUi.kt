@@ -1956,19 +1956,34 @@ fun ServersMainView(viewModel: AppViewModel) {
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Column(modifier = Modifier.weight(1f)) {
-                                                Text(stringResource(R.string.offline_unreachable), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.Red)
+                                                Text(stringResource(R.string.automatic_ssh_check_failed), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = Color.Red)
                                                 Text(
-                                                    "No TCP route to ${HostDisplay.host(server)}:${server.port} — host down, wrong address/port, or network blocked",
+                                                    stringResource(
+                                                        R.string.automatic_ssh_check_failed_detail,
+                                                        HostDisplay.host(server),
+                                                        server.port,
+                                                    ),
                                                     fontSize = 10.sp,
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 )
                                             }
-                                            OmniButton(
-                                                label = "Retry",
-                                                onClick = { viewModel.refreshServer(server.id) },
-                                                color = OmniColors.red,
-                                                small = true
-                                            )
+                                            Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                                OmniButton(
+                                                    label = stringResource(R.string.ssh_anyway),
+                                                    onClick = {
+                                                        viewModel.selectedServerId = server.id
+                                                        viewModel.connectTerminal()
+                                                    },
+                                                    color = identityColor,
+                                                    small = true,
+                                                )
+                                                OmniButton(
+                                                    label = "Retry",
+                                                    onClick = { viewModel.refreshServer(server.id) },
+                                                    color = OmniColors.red,
+                                                    small = true,
+                                                )
+                                            }
                                         }
                                     }
                             }
