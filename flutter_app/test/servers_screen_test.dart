@@ -98,6 +98,15 @@ void main() {
     expect(find.byKey(const ValueKey('servers.list')), findsOneWidget);
   });
 
+  testWidgets('a failed automatic check keeps an explicit SSH anyway action', (tester) async {
+    await repo.insertServer(server(name: 'nas', status: 'offline'));
+    await pump(tester);
+
+    expect(find.text('AUTOMATIC SSH CHECK FAILED'), findsOneWidget);
+    expect(find.text('SSH ANYWAY'), findsOneWidget);
+    expect(find.textContaining('No TCP route'), findsNothing);
+  });
+
   testWidgets('the summary banner counts total, online and offline', (tester) async {
     await repo.insertServer(server(name: 'a', status: 'online'));
     await repo.insertServer(server(name: 'b', status: 'offline'));

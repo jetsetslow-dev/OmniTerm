@@ -59,6 +59,17 @@ private const val ALERT_CHANNEL_ID = "monitoring_alerts"
 /** Notification channel for the low-battery saver engaging. */
 private const val BATTERY_SAVER_CHANNEL_ID = "battery_saver"
 
+/**
+ * Shortest passphrase a sensitive backup may be encrypted with.
+ *
+ * Public because the dialog that collects one has to advertise and enforce the *same* number. It
+ * did not: the field was labelled "min 8 chars", its confirm button was gated on eight, and the
+ * export then refused anything under twelve — after the document picker had already created the
+ * file, so the user was left holding a 0-byte "backup" and an error. One constant, three call
+ * sites, is what stops that recurring.
+ */
+const val BACKUP_PASSPHRASE_MIN_LENGTH = 12
+
 /** Cap on the live action panel text: long-running streams keep only the most recent output. */
 private const val ACTION_STREAM_MAX_CHARS = 200_000
 
@@ -401,6 +412,33 @@ internal fun classifySshConnectionFailure(raw: String): SshConnectionFailure {
         else -> SshConnectionFailure.Unknown(msg)
     }
 }
+
+/**
+ * Only failures that prove the target address or SSH listener could not be reached should make a
+ * host offline. Authentication, host-key, protocol, and server-side disconnect failures all prove
+ * that an SSH endpoint answered; presenting those hosts as "unreachable" hides the useful error and
+ * can incorrectly prevent a user from trying a client that supports a different negotiation path.
+ */
+internal fun sshFailureProvesEndpointUnreachable(failure: SshConnectionFailure): Boolean = when (failure) {
+    SshConnectionFailure.Refused,
+    SshConnectionFailure.Timeout,
+    SshConnectionFailure.HostNotFound,
+    SshConnectionFailure.NetworkUnreachable -> true
+    SshConnectionFailure.Authentication,
+    SshConnectionFailure.Dropped,
+    SshConnectionFailure.HostKeyVerification,
+    is SshConnectionFailure.Unknown -> false
+}
+
+/** Live interactive SSH evidence is stronger than any second connection's probe failure. */
+internal fun sshFailureShouldMarkHostOffline(
+    failure: SshConnectionFailure,
+    hasLiveSshSession: Boolean,
+): Boolean = !hasLiveSshSession && sshFailureProvesEndpointUnreachable(failure)
+
+/** A target behind any configured proxy/jump host must not be judged by a direct socket probe. */
+internal fun shouldProbeSshPortDirectly(proxyType: String): Boolean =
+    proxyType.equals("none", ignoreCase = true)
 
 internal fun classifySshConnectionPhase(raw: String, viaJumpHost: Boolean): SshConnectionPhase = when {
     raw.contains("resolv", ignoreCase = true) -> SshConnectionPhase.Resolving
@@ -806,7 +844,6 @@ class AppViewModel @JvmOverloads constructor(
     private var pinLockedUntilMs by mutableStateOf(0L)
     var isAppLockEnabled by mutableStateOf(false)
     var useBiometrics by mutableStateOf(false); private set
-    var isFirstRun by mutableStateOf(false); private set
     var isAppLocked by mutableStateOf(false)
     var currentPinInput by mutableStateOf("")
     var lockScreenError by mutableStateOf<String?>(null)
@@ -1789,19 +1826,45 @@ class AppViewModel @JvmOverloads constructor(
     private var sshSuccessCount = 0
     private var reviewPromptShown = false
 
-    // Gates the first-run notification/battery prompts: they are deferred until the user has
-    // gotten value from the app (first successful connection) instead of interrupting onboarding.
-    var hasConnectedOnce by mutableStateOf(false)
-        private set
-
     private fun noteSuccessfulSshSession() {
-        hasConnectedOnce = true
         val count = ++sshSuccessCount
         viewModelScope.launch { repository.insertSetting("ssh_success_count", count.toString()) }
         if (count >= 3 && !reviewPromptShown) {
             reviewPromptShown = true
             viewModelScope.launch { repository.insertSetting("review_prompt_shown", "true") }
             reviewPromptDue = true
+        }
+    }
+
+    private suspend fun markServerReachableAfterSsh(srv: ServerEntity) {
+        if (srv.id <= 0) return
+        // Serialize with that host's background probe. If the probe started first, this online write
+        // lands last; if it starts later, it sees the live session and cannot write offline.
+        telemetryProbeMutexes.computeIfAbsent(srv.id) { Mutex() }.withLock {
+            repository.updateAuthState(srv.id, "ok", null)
+            repository.updateConnectionState(
+                srv.id,
+                "online",
+                srv.healthScore.takeIf { it > 0 } ?: 100,
+                srv.lastLatency.coerceAtLeast(0),
+            )
+            withContext(Dispatchers.Main) { probedServerIds[srv.id] = true }
+        }
+    }
+
+    private fun hasLiveSshSession(serverId: Int): Boolean =
+        activeSessions.any { it.serverId == serverId && it.isConnected && !it.userClosed }
+
+    private suspend fun markServerOfflineUnlessConnected(srv: ServerEntity) {
+        if (hasLiveSshSession(srv.id)) {
+            repository.updateConnectionState(
+                srv.id,
+                "online",
+                srv.healthScore.takeIf { it > 0 } ?: 100,
+                srv.lastLatency.coerceAtLeast(0),
+            )
+        } else {
+            repository.updateConnectionState(srv.id, "offline", 0, 0)
         }
     }
 
@@ -1969,6 +2032,10 @@ class AppViewModel @JvmOverloads constructor(
     var cronStatus by mutableStateOf(""); private set
     var cronLoading by mutableStateOf(false); private set
 
+    /** True once a crontab has actually been read from this host. Editing is gated on it: a save
+     *  rewrites the entire file, so an unreadable crontab must not be writable. */
+    var cronReadable by mutableStateOf(false); private set
+
     // In-flight flags for long operations that report only through a completion callback, so the
     // UI can disable its trigger and show a spinner instead of looking frozen. RSA keygen and
     // backup export/restore all run for seconds; without these the user gets no feedback at all.
@@ -2110,9 +2177,6 @@ class AppViewModel @JvmOverloads constructor(
             drainPendingExternalLaunches()
         }
         viewModelScope.launch {
-            isFirstRun = repository.getSetting("first_run_complete") != "true"
-        }
-        viewModelScope.launch {
             // NOTE: allSettings is a StateFlow, so this collect body runs its first iteration
             // synchronously inside the ViewModel constructor (Main.immediate launches undispatched).
             // Every property assigned in here must be declared ABOVE the init block, or its
@@ -2133,9 +2197,6 @@ class AppViewModel @JvmOverloads constructor(
                     ?.value?.toIntOrNull()?.coerceIn(1, 10_000) ?: 50
                 sftpLargeBatchBytesThreshold = list.find { it.key == "sftp_large_batch_bytes_threshold" }
                     ?.value?.toLongOrNull()?.coerceAtLeast(1_000_000_000L) ?: 1_000_000_000L
-                if (list.isNotEmpty()) {
-                    isFirstRun = list.find { it.key == "first_run_complete" }?.value != "true"
-                }
                 list.find { it.key == "terminal_font_size" }?.value?.toIntOrNull()?.let { terminalFontSize = it.coerceIn(8, 28) }
                 terminalTheme = list.find { it.key == "terminal_theme" }?.value
                     ?.takeIf { it in setOf("system", "omni_dark", "solarized_dark", "matrix", "light") }
@@ -2184,7 +2245,6 @@ class AppViewModel @JvmOverloads constructor(
                     telemetryIntervalMs = it.coerceIn(5, 300) * 1000L
                 }
                 sshSuccessCount = list.find { it.key == "ssh_success_count" }?.value?.toIntOrNull() ?: sshSuccessCount
-                if (sshSuccessCount > 0) hasConnectedOnce = true
                 reviewPromptShown = reviewPromptShown || list.find { it.key == "review_prompt_shown" }?.value == "true"
                 homelabPresetsEnabled = list.find { it.key == "homelab_presets" }?.value == "true"
                 alertsEnabled = list.find { it.key == "alerts_enabled" }?.value != "false"
@@ -2370,36 +2430,62 @@ class AppViewModel @JvmOverloads constructor(
     private suspend fun probeServer(srv: ServerEntity) {
         telemetryProbeMutexes.computeIfAbsent(srv.id) { Mutex() }.withLock {
             try {
-                // Make the periodic retry visible: an offline host shows "connecting" while its probe
-                // runs (TCP reachability first — up to 4s — then SSH only if the port answered), instead
-                // of silently sitting at Offline through the whole attempt.
+                // Make the periodic retry visible: an offline host shows "connecting" while its
+                // direct and configured-SSH routes are checked instead of silently sitting Offline.
                 if (srv.status == "offline") {
                     repository.updateConnectionState(srv.id, "connecting", 0, 0)
                 }
-                val rtt = tcpReachable(srv.host, srv.port)
-                if (rtt < 0) {
-                    repository.updateConnectionState(srv.id, "offline", 0, 0)
-                    return@withLock
+                val directRtt = if (shouldProbeSshPortDirectly(srv.proxyType)) {
+                    tcpReachable(srv.host, srv.port)
+                } else {
+                    -1
                 }
                 telemetryProbeLimiter.withPermit {
-                    probeServerInner(srv, rtt)
+                    if (directRtt >= 0) {
+                        probeServerInner(srv, directRtt)
+                    } else {
+                        // A direct probe can be invalid (proxy/jump host) or simply produce a false
+                        // negative on a multi-address/filtered network. Try the real configured SSH
+                        // route once before calling the host unreachable.
+                        val startedAt = System.currentTimeMillis()
+                        val osProbe = runCatching {
+                            executeSshCommand(srv, RemoteCommands.OS_PROBE)
+                        }.getOrElse { "SSH Error: ${it.message.orEmpty()}" }
+                        val sshRtt = (System.currentTimeMillis() - startedAt).toInt().coerceAtLeast(0)
+                        if (osProbe.startsWith("SSH Error")) {
+                            val failure = classifySshConnectionFailure(osProbe)
+                            val hasLiveSession = hasLiveSshSession(srv.id)
+                            if (hasLiveSession) {
+                                // Do not replace a live terminal's successful authentication with
+                                // a second background connection's failure.
+                                markServerOfflineUnlessConnected(srv)
+                            } else if (sshFailureShouldMarkHostOffline(failure, hasLiveSession)) {
+                                markServerOfflineUnlessConnected(srv)
+                            } else {
+                                repository.updateAuthState(srv.id, "failed", failure.userMessage)
+                                repository.updateConnectionState(srv.id, "online", 100, sshRtt)
+                            }
+                        } else {
+                            probeServerInner(srv, sshRtt, osProbe)
+                        }
+                    }
                 }
             } catch (e: Exception) {
-                repository.updateConnectionState(srv.id, "offline", 0, 0)
+                markServerOfflineUnlessConnected(srv)
             } finally {
                 withContext(Dispatchers.Main) { probedServerIds[srv.id] = true }
             }
         }
     }
 
-    private suspend fun probeServerInner(srv: ServerEntity, rtt: Int) {
+    private suspend fun probeServerInner(srv: ServerEntity, rtt: Int, preloadedOsProbe: String? = null) {
         // Capture the selected host once: the live `selectedServerId` can change on the main thread
         // while this IO poll is in flight, and we must not attribute this host's metrics to whatever
         // host happens to be selected when the (slow) probe finally completes.
         val activeServerId = selectedServerId
         // Detect the remote OS once per host (cached), then run the matching metrics probe.
             val os = osByServer[srv.id] ?: run {
-                val probe = executeSshCommand(srv, RemoteCommands.OS_PROBE)
+                val probe = preloadedOsProbe ?: executeSshCommand(srv, RemoteCommands.OS_PROBE)
                 val detected = RemoteCommands.normaliseOs(probe)
                 if (!probe.startsWith("SSH Error")) osByServer[srv.id] = detected
                 detected
@@ -2495,8 +2581,11 @@ class AppViewModel @JvmOverloads constructor(
                 ramUsage = metrics.memPercent,
                 diskUsage = metrics.diskPercent,
                 latency = latency,
-                networkIn = 0f,
-                networkOut = 0f,
+                // The columns are KB/s and the interface rates are bytes/s. These were written as
+                // 0f on every sample, so the retained history could only ever draw a flat network
+                // chart -- for data the poller had already computed one line earlier.
+                networkIn = metrics.netInterfaces.sumOf { it.rxPerSec } / 1024f,
+                networkOut = metrics.netInterfaces.sumOf { it.txPerSec } / 1024f,
                 cpuTemperatureC = metrics.cpuTempC,
             )
         )
@@ -3142,13 +3231,6 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    fun completeFirstRun() {
-        isFirstRun = false
-        viewModelScope.launch {
-            repository.insertSetting("first_run_complete", "true")
-        }
-    }
-
     fun removeDigit() {
         if (currentPinInput.isNotEmpty()) {
             currentPinInput = currentPinInput.substring(0, currentPinInput.length - 1)
@@ -3256,23 +3338,10 @@ class AppViewModel @JvmOverloads constructor(
             val newId = repository.insertServer(server)
             refreshHomeWidgets()
             onResult(null)
-            // Start pessimistic: only promote reachability/auth after a real probe succeeds.
+            // Use the same proxy-aware, SSH-fallback probe as periodic telemetry. A direct socket
+            // check cannot judge a target that is reachable only through its configured route.
             withContext(Dispatchers.IO) {
-                val rtt = tcpReachable(host, port)
-                if (rtt < 0) {
-                    repository.updateConnectionState(newId.toInt(), "offline", 0, 0)
-                } else {
-                    repository.updateConnectionState(newId.toInt(), "online", 100, rtt)
-                    val saved = repository.getServerById(newId.toInt())
-                    if (saved != null) {
-                        val authErr = sshTransport.testConnection(buildCredentials(saved))
-                        repository.updateAuthState(
-                            newId.toInt(),
-                            if (authErr == null) "ok" else "failed",
-                            authErr?.let { cleanSshError(it) },
-                        )
-                    }
-                }
+                repository.getServerById(newId.toInt())?.let { probeServer(it) }
             }
             refreshHomeWidgets()
         }
@@ -3324,6 +3393,11 @@ class AppViewModel @JvmOverloads constructor(
             runCatching { ShortcutHelper.removeShortcutsForServer(getApplication(), server.id) }
             refreshHomeWidgets()
             restorablePersistentSessions = restorablePersistentSessions.filter { it.serverId != server.id }
+            // Everything keyed by this host's row id goes with it. Room reuses a freed rowid, so a
+            // host added later can be handed the deleted one's id -- and would then inherit its
+            // cumulative counters, measuring its first CPU and network rates against a machine it
+            // has never met, and showing a sparkline drawn from someone else's readings.
+            forgetTelemetryFor(server.id)
             SshHostKeyTrust.removeHost(server.host, server.port)
             if (selectedServerId == server.id) {
                 selectedServerId = null
@@ -3333,6 +3407,21 @@ class AppViewModel @JvmOverloads constructor(
                     "Host deleted locally, but at least one remote tmux session could not be confirmed stopped."
             }
         }
+    }
+
+    /** Drops every per-host cache keyed by [serverId]. See the call in [deleteServer]. */
+    private fun forgetTelemetryFor(serverId: Int) {
+        hostMetricsById.remove(serverId)
+        cpuSparklineCache.remove(serverId)
+        ramSparklineCache.remove(serverId)
+        sparklineTimestampCache.remove(serverId)
+        prevStatByServer.remove(serverId)
+        prevNetByServer.remove(serverId)
+        prevDiskByServer.remove(serverId)
+        osByServer.remove(serverId)
+        probedServerIds.remove(serverId)
+        telemetryProbeMutexes.remove(serverId)
+        activeProbes.remove(serverId)?.cancel()
     }
 
     fun dismissHostKeyChangedDialog() { hostKeyChangedServer = null }
@@ -4440,16 +4529,8 @@ class AppViewModel @JvmOverloads constructor(
         if (host.isBlank()) { onResult("Host is required."); return }
         isTestingConnection = true
         viewModelScope.launch {
-            // A direct TCP precheck only makes sense without a proxy — through a proxy/jump host the
-            // target isn't reachable directly, so skip it and let the SSH test be the source of truth.
-            if (proxyType == "none") {
-                val rtt = withContext(Dispatchers.IO) { tcpReachable(host, port) }
-                if (rtt < 0) {
-                    isTestingConnection = false
-                    onResult("Host unreachable on $host:$port (no TCP route).")
-                    return@launch
-                }
-            }
+            // The real configured SSH route is authoritative. A preliminary direct socket failure
+            // can be false on filtered/multi-address networks and is invalid for proxy/jump hosts.
             var user = username
             var pass: String? = password
             var pem: String? = null
@@ -4814,6 +4895,7 @@ class AppViewModel @JvmOverloads constructor(
                 if (shellSession.controlMode) initControlModeSession(shellSession, creds)
                 if (usePersistence) rememberRestorablePersistentSession(shellSession)
                 setupComplete = true
+                markServerReachableAfterSsh(srv)
                 noteSuccessfulSshSession()
                 TerminalSessionManager.updateKeepaliveCount()
                 startKeepAliveService()
@@ -5423,6 +5505,7 @@ class AppViewModel @JvmOverloads constructor(
                     }
                 }
                 setupComplete = true
+                markServerReachableAfterSsh(srv)
                 noteSuccessfulSshSession()
                 TerminalSessionManager.updateKeepaliveCount()
                 startKeepAliveService()
@@ -5798,6 +5881,12 @@ class AppViewModel @JvmOverloads constructor(
                             TerminalSessionManager.updateKeepaliveCount()
                             TerminalSessionManager.startKeepAliveService()
                         }
+                    }
+                    // The dropped channel may have made telemetry mark this host offline while the
+                    // reconnect loop was running. This newly authenticated channel is stronger and
+                    // must restore the visible state immediately.
+                    repository.getServerById(shellSession.serverId)?.let {
+                        markServerReachableAfterSsh(it)
                     }
                     currentCoroutineContext().ensureActive()
                     // Cleanup and this handoff share the ownership lock. Either cleanup wins and
@@ -6931,10 +7020,19 @@ class AppViewModel @JvmOverloads constructor(
             cronLoading = true
             try {
                 cronStatus = ""
-                val cmd = "crontab -l 2>/dev/null || true"
-                val out = executeSshCommand(srv, cmd).trim()
+                // Keep stderr and the exit status. `crontab -l 2>/dev/null || true` collapses three
+                // different answers into one empty string -- this user has no crontab, this user is
+                // not allowed one, and this host has no cron at all -- and the CRON tab then offers
+                // Add, whose save rewrites the *whole file*. A crontab the user was never allowed to
+                // read would be replaced by a single line.
+                val out = executeSshCommand(srv, RemoteCommands.CRON_READ_COMMAND)
                 if (srv.id != selectedServerId) return@launch
-                cronText = out
+                val read = RemoteParsers.parseCrontabRead(out)
+                cronReadable = read.readable
+                cronText = read.text
+                if (!read.readable) {
+                    cronStatus = read.error.ifBlank { "This host would not show its crontab." }
+                }
             } finally {
                 if (cronJob == coroutineContext[Job]) cronLoading = false
             }
@@ -6943,6 +7041,8 @@ class AppViewModel @JvmOverloads constructor(
 
     fun saveCron(text: String, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
         val srv = selectedServer ?: return onResult(false, "No host selected.")
+        // Writing a file we were never allowed to read would replace contents nobody has seen.
+        if (!cronReadable) return onResult(false, "This host's crontab could not be read, so it will not be written.")
         cronJob?.cancel()
         cronJob = viewModelScope.launch {
             cronLoading = true
@@ -8980,7 +9080,7 @@ class AppViewModel @JvmOverloads constructor(
                 else
                     executeSshCommand(srv, script)
                 if (out.startsWith("SSH Error")) { sftpError = out; return@launch }
-                sftpReadError(out)?.let { sftpError = it; return@launch }
+                RemoteCommands.searchSudoFailure(out)?.let { sftpError = it; return@launch }
                 val hits = out.lineSequence()
                     .mapNotNull { line ->
                         val tab = line.indexOf('\t')
@@ -9314,9 +9414,15 @@ class AppViewModel @JvmOverloads constructor(
                 val path = joinPath(sftpPath, file.name)
                 val text = if (sftpSudo && srv != null) {
                     // SFTP can't elevate; read protected files with `sudo cat` over an exec channel.
-                    val out = executeSshCommand(srv, RemoteCommands.sudoShWrap("cat -- ${shellQuote(path)}", srv.sudoPassword), stdin = RemoteCommands.sudoStdin(srv.sudoPassword))
+                    val out = executeSshCommand(srv, RemoteCommands.sudoReadCommand(path, srv.sudoPassword), stdin = RemoteCommands.sudoStdin(srv.sudoPassword))
                     sftpReadError(out)?.let { sftpError = it; return@launch }
-                    out
+                    // Everything before the marker is sudo's, not the file's. Without this the
+                    // lecture sudo prints on first use is prepended to the file, shown in the
+                    // editor, and written back on save.
+                    RemoteParsers.parseSudoRead(out) ?: run {
+                        sftpError = out.trim().ifBlank { "Could not read ${file.name} as root." }
+                        return@launch
+                    }
                 } else {
                     sftpClientOrNull()?.readText(path) ?: return@launch
                 }
@@ -9675,12 +9781,7 @@ class AppViewModel @JvmOverloads constructor(
      */
     private fun sftpReadError(out: String): String? {
         val first = out.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: return null
-        val markers = listOf(
-            "permission denied", "no such file", "sudo:", "a password is required",
-            "incorrect password", "not in the sudoers", "operation not permitted",
-            "command not found", "not installed", "unsupported archive",
-        )
-        return if (markers.any { first.contains(it, ignoreCase = true) }) first else null
+        return if (RemoteCommands.sudoFailureMarkers.any { first.contains(it, ignoreCase = true) }) first else null
     }
 
     /** Download [remoteName] from the current remote dir into the SAF-provided [uri]. */
@@ -10468,13 +10569,6 @@ class AppViewModel @JvmOverloads constructor(
             } finally {
                 isSpeedTestRunning = false
             }
-        }
-    }
-
-    // APPS SETTINGS ENGINE SAVE
-    fun saveThemeOption(isDark: Boolean) {
-        viewModelScope.launch {
-            repository.insertSetting("theme_dark", isDark.toString())
         }
     }
 
@@ -11358,7 +11452,10 @@ class AppViewModel @JvmOverloads constructor(
     /** Export a selective backup. Sensitive selections are always encrypted. */
     fun exportBackup(uri: android.net.Uri, passphrase: String, context: android.content.Context, selection: BackupSelection, onResult: (Boolean, String) -> Unit) {
         val closedSelection = selection.withReferentialClosure()
-        if (closedSelection.hasSensitiveData() && passphrase.length < 12) { onResult(false, "Passphrase must be at least 12 characters for backups."); return }
+        if (closedSelection.hasSensitiveData() && passphrase.length < BACKUP_PASSPHRASE_MIN_LENGTH) {
+            onResult(false, "Passphrase must be at least $BACKUP_PASSPHRASE_MIN_LENGTH characters for backups.")
+            return
+        }
         if (backupExportRunning) return
         backupExportRunning = true
         viewModelScope.launch {

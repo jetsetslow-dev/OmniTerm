@@ -27,11 +27,11 @@ enum ServerFormMode {
 ///    empty field means "keep the saved value"; the matching `forget…` flag means "remove it". A
 ///    saved password is therefore never rendered into a text field where it could be
 ///    shoulder-surfed, screenshotted, or read out by an accessibility service.
-/// 2. **Saving requires a passing connection test for the *current* configuration.** The
+/// 2. **Saving without a passing connection test requires an explicit confirmation.** The
 ///    [connectionSignature] fingerprints every connection-relevant field, so changing a host,
-///    credential or proxy invalidates a previous pass — which is what stops the first-connect
-///    host-key approval from being skipped by editing a tested host. Cosmetic edits (name, group,
-///    colour, notes) deliberately do **not** force a retest.
+///    credential or proxy invalidates a previous pass. The sheet can then offer a deliberate
+///    "Save anyway" path for hosts an advisory probe cannot reach; it never bypasses the real SSH
+///    host-key approval. Cosmetic edits (name, group, colour, notes) do not force a retest.
 class ServerFormState extends ChangeNotifier {
   ServerFormState({
     required this.mode,
@@ -178,8 +178,8 @@ class ServerFormState extends ChangeNotifier {
 
   /// True when the current configuration has not passed a connection test.
   ///
-  /// This is the host-key gate: an untested configuration cannot be saved, so a new host's key must
-  /// have been presented and approved first.
+  /// The sheet uses this to require either a passing test or an explicit unverified-save decision.
+  /// The real SSH handshake still owns host-key approval.
   bool get requiresConnectionTest => _testedOkSignature != connectionSignature;
 
   // ── validation ─────────────────────────────────────────────────────────────

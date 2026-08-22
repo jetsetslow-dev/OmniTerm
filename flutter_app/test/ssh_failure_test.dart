@@ -51,4 +51,20 @@ void main() {
       );
     });
   });
+
+  group('whether a failure proves the endpoint unreachable', () {
+    test('definitive route failures do', () {
+      expect(sshFailureProvesEndpointUnreachable('Connection refused'), isTrue);
+      expect(sshFailureProvesEndpointUnreachable('Connection timed out'), isTrue);
+      expect(sshFailureProvesEndpointUnreachable('Failed host lookup'), isTrue);
+      expect(sshFailureProvesEndpointUnreachable('No route to host'), isTrue);
+    });
+
+    test('reachable and ambiguous SSH failures do not', () {
+      expect(sshFailureProvesEndpointUnreachable('SSHAuthFailError'), isFalse);
+      expect(sshFailureProvesEndpointUnreachable('Host key changed'), isFalse);
+      expect(sshFailureProvesEndpointUnreachable('Connection reset by peer'), isFalse);
+      expect(sshFailureProvesEndpointUnreachable('unexpected handshake detail'), isFalse);
+    });
+  });
 }

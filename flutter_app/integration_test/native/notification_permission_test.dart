@@ -17,6 +17,15 @@ import 'package:omniterm/main.dart' as app;
 /// does nothing after a denied permission is the failure this exists to catch, and it is invisible
 /// from the inside.
 void main() {
+  Future<void> launch(PatrolIntegrationTester $) async {
+    // Native permission automation enables Android accessibility during the first test. Pinning
+    // the test dispatcher's platform request avoids a framework-owned SemanticsHandle leaking past
+    // teardown. The suite-owned handle below establishes a stable baseline before tests execute.
+    $.tester.binding.platformDispatcher.semanticsEnabledTestValue = false;
+    app.main();
+    await $.pumpAndSettle();
+  }
+
   /// Turns alerts on, having first made sure they are off.
   ///
   /// Alerts default to **on**, so a blind tap turns them *off* — and turning them off asks for
@@ -35,8 +44,7 @@ void main() {
   /// Patrol clears app data between tests (`clearPackageData`), so each flow starts from a fresh
   /// install and the permission is genuinely unanswered rather than remembered from the last run.
   patrolTest('denying notifications leaves alerting working, and says so', ($) async {
-    app.main();
-    await $.pumpAndSettle();
+    await launch($);
 
     await $(const ValueKey('nav.tools')).tap();
     await $(const ValueKey('tools.alerts')).tap();
@@ -88,11 +96,10 @@ void main() {
       true,
       reason: 'rules must still be creatable with notifications denied',
     );
-  });
+  }, semanticsEnabled: false);
 
   patrolTest('granting notifications clears the warning', ($) async {
-    app.main();
-    await $.pumpAndSettle();
+    await launch($);
 
     await $(const ValueKey('nav.tools')).tap();
     await $(const ValueKey('tools.alerts')).tap();
@@ -114,5 +121,13 @@ void main() {
       reason: 'nothing is blocked, so there is nothing to warn about',
     );
     expect($(const ValueKey('alerts.tabs')).exists, true);
-  });
+  }, semanticsEnabled: false);
+
+  // Registered after PatrolBinding exists but before the test runner starts either case. This
+  // removes the race where Android's permission UI created the first semantics handle just after
+  // testWidgets recorded a zero baseline; the handle is released after both native cases finish.
+  final binding = WidgetsBinding.instance;
+  binding.platformDispatcher.onSemanticsEnabledChanged = () {};
+  final suiteSemantics = binding.ensureSemantics();
+  tearDownAll(suiteSemantics.dispose);
 }

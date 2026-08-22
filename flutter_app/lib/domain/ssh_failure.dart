@@ -67,6 +67,22 @@ SshFailureKind classifySshFailure(String raw) {
   return SshFailureKind.unknown;
 }
 
+/// Whether [raw] proves that no SSH endpoint could be reached.
+///
+/// Authentication and host-key failures happen only after an SSH server answers, while dropped or
+/// unknown failures are too ambiguous to justify blocking the user's connection attempt. Keep this
+/// deliberately narrow: a background check is advisory, not an authority over the real SSH path.
+bool sshFailureProvesEndpointUnreachable(String raw) => switch (classifySshFailure(raw)) {
+  SshFailureKind.refused ||
+  SshFailureKind.timeout ||
+  SshFailureKind.hostNotFound ||
+  SshFailureKind.networkUnreachable => true,
+  SshFailureKind.authentication ||
+  SshFailureKind.dropped ||
+  SshFailureKind.hostKey ||
+  SshFailureKind.unknown => false,
+};
+
 /// A user-facing sentence for [raw].
 ///
 /// An unrecognised failure keeps its own detail rather than being flattened into "something went

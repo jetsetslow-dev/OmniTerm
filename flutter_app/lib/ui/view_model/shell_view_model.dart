@@ -33,6 +33,8 @@ class ShellViewModel extends ChangeNotifier {
     this.sessionService,
     this.reviewPrompt,
     this.hasProbed,
+    this.markReachable,
+    this.syncLiveSessionServers,
     this.shortcuts,
   }) {
     _useControlMode = _app.preferences.tmuxControlMode;
@@ -58,6 +60,13 @@ class ShellViewModel extends ChangeNotifier {
   /// Nullable, and a null answer means "not probed" — which suppresses the offline warning rather
   /// than raising it. A build that cannot tell must not invent an alarm.
   final bool Function(int serverId)? hasProbed;
+
+  /// Records the result of the most authoritative reachability check: a real interactive shell.
+  final Future<void> Function(Server server)? markReachable;
+
+  /// Publishes the hosts with open interactive channels so an advisory background probe cannot
+  /// contradict a terminal that is demonstrably connected.
+  final void Function(Set<int> serverIds)? syncLiveSessionServers;
 
   AppPreferences get preferences => _app.preferences;
 
@@ -195,6 +204,17 @@ class ShellViewModel extends ChangeNotifier {
 
   final List<ShellSession> _sessions = [];
   List<ShellSession> get sessions => List.unmodifiable(_sessions);
+  Set<int> _lastLiveSessionServers = <int>{};
+
+  void _syncReachabilityEvidence() {
+    final live = _sessions
+        .where((session) => session.isOpen)
+        .map((session) => session.serverId)
+        .toSet();
+    if (setEquals(live, _lastLiveSessionServers)) return;
+    _lastLiveSessionServers = live;
+    syncLiveSessionServers?.call(Set.unmodifiable(live));
+  }
 
   String? _currentId;
 
@@ -714,8 +734,14 @@ class ShellViewModel extends ChangeNotifier {
       session.onPaneChanged = (changed) => unawaited(refreshControlActivePane(changed));
       session.addListener(_safeNotify);
       session.addListener(_syncBackgroundSessions);
+      session.addListener(_syncReachabilityEvidence);
       _sessions.add(session);
       _currentId = session.id;
+      _syncReachabilityEvidence();
+
+      // A shell channel opened, so any earlier advisory reachability result is stale. Do not make
+      // the user fight the same false offline warning on their next connection.
+      unawaited(markReachable?.call(server) ?? Future<void>.value());
 
       // A session that reached this point authenticated and opened a channel, which is the only
       // definition of "it worked" worth counting. Fire-and-forget: the terminal must not wait on a
@@ -778,12 +804,14 @@ class ShellViewModel extends ChangeNotifier {
     session.closeByUser();
     session.removeListener(_safeNotify);
     session.removeListener(_syncBackgroundSessions);
+    session.removeListener(_syncReachabilityEvidence);
     _sessions.remove(session);
     if (_splitId == session.id) _splitId = null;
     if (_currentId == session.id) {
       _currentId = _sessions.isEmpty ? null : _sessions.last.id;
     }
     session.dispose();
+    _syncReachabilityEvidence();
     _syncBackgroundSessions();
     _safeNotify();
   }
@@ -1123,9 +1151,12 @@ class ShellViewModel extends ChangeNotifier {
     for (final session in _sessions) {
       session.removeListener(_safeNotify);
       session.removeListener(_syncBackgroundSessions);
+      session.removeListener(_syncReachabilityEvidence);
       session.dispose();
     }
     _sessions.clear();
+    _lastLiveSessionServers = <int>{};
+    syncLiveSessionServers?.call(const <int>{});
     // The service outlives this object, so it has to be told. A foreground notification left
     // standing over nothing is exactly the kind of thing users uninstall an app for.
     unawaited(sessionService?.stop());

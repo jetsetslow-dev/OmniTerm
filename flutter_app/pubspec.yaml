@@ -34,7 +34,12 @@ dependencies:
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-  dartssh2: ^2.22.5
+  # OmniTerm's reviewed fork adds RFC 4253 stateful zlib and delayed
+  # zlib@openssh.com compression. Pin the exact tested commit, never a moving branch.
+  dartssh2:
+    git:
+      url: https://github.com/jetsetslow-dev/dartssh2.git
+      ref: c5015f3101010060fa45e5d7d27b0b2230712d60
   xterm: ^4.0.0
   drift: ^2.34.3
   drift_flutter: ^0.3.1

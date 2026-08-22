@@ -98,10 +98,6 @@ void main() {
   });
 
   group('SSH compression', () {
-    // The switch was live and stored a value the connection never had: this port's SSH library
-    // proposes `none` for compression and ships no zlib, while Kotlin negotiates it
-    // (`JschSession.kt:85`). Defect 77's rule — do not offer what cannot work — applied to a
-    // setting rather than a button.
     /// The row lives on the Advanced tab, which is not built until that tab is selected.
     Future<void> revealCompression(WidgetTester tester) async {
       await tester.tap(find.text('Advanced'));
@@ -113,24 +109,25 @@ void main() {
       await tester.pumpAndSettle();
     }
 
-    testWidgets('cannot be switched on, and says why', (tester) async {
+    testWidgets('can be switched on and explains when compression starts', (tester) async {
       await pump(tester);
       await revealCompression(tester);
 
       final tile = tester.widget<SwitchListTile>(
         find.byKey(const ValueKey('serverForm.compression')),
       );
+      expect(tile.onChanged, isNotNull);
+      expect(find.textContaining('after authentication'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('serverForm.compression')));
+      await tester.pumpAndSettle();
       expect(
-        tile.onChanged,
-        isNull,
-        reason: 'a switch that cannot take effect must not invite a tap',
+        tester.widget<SwitchListTile>(find.byKey(const ValueKey('serverForm.compression'))).value,
+        isTrue,
       );
-      expect(find.textContaining('has no effect'), findsOneWidget);
     });
 
     testWidgets('a value set by the Kotlin app is shown and saved back unchanged', (tester) async {
-      // Disabling the control must not rewrite the row. Someone who turned this on in the Kotlin
-      // app still has it in their backup, and it starts working the day the library does.
       await pump(tester, mode: ServerFormMode.edit, source: saved().copyWith(sshCompression: true));
       await revealCompression(tester);
 
@@ -148,18 +145,23 @@ void main() {
     });
   });
 
-  testWidgets('saving is refused until the connection has been tested', (tester) async {
+  testWidgets('saving without a test requires an explicit decision', (tester) async {
     await pump(tester);
     await fillNewHost(tester);
 
     await tester.tap(find.byKey(const ValueKey('serverForm.save')));
     await tester.pumpAndSettle();
 
-    expect(savedRows, isEmpty, reason: 'this is what forces the host-key approval');
-    expect(find.byKey(const ValueKey('serverForm.error')), findsOneWidget);
+    expect(savedRows, isEmpty);
+    expect(find.byKey(const ValueKey('serverForm.unverified.dialog')), findsOneWidget);
+    expect(find.textContaining('host key'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('serverForm.unverified.saveAnyway')));
+    await tester.pumpAndSettle();
+    expect(savedRows, hasLength(1));
   });
 
-  testWidgets('a failed test does not open the save gate', (tester) async {
+  testWidgets('a failed test can be saved only through Save anyway', (tester) async {
     await pump(tester, testFailure: 'Connection refused');
     await fillNewHost(tester);
 
@@ -170,6 +172,12 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('serverForm.save')));
     await tester.pumpAndSettle();
     expect(savedRows, isEmpty);
+    expect(find.byKey(const ValueKey('serverForm.unverified.dialog')), findsOneWidget);
+    expect(find.textContaining('Connection refused'), findsWidgets);
+
+    await tester.tap(find.byKey(const ValueKey('serverForm.unverified.saveAnyway')));
+    await tester.pumpAndSettle();
+    expect(savedRows, hasLength(1));
   });
 
   testWidgets('changing the host after a pass forces a retest', (tester) async {
@@ -188,6 +196,7 @@ void main() {
       isEmpty,
       reason: 'the new host presents a different key, which was never approved',
     );
+    expect(find.byKey(const ValueKey('serverForm.unverified.dialog')), findsOneWidget);
   });
 
   testWidgets('validation blocks an incomplete form and names the missing field', (tester) async {
@@ -250,6 +259,8 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('serverForm.save')));
       await tester.pumpAndSettle();
       expect(savedRows, isEmpty, reason: 'the credential changed, so the pass is stale');
+      await tester.tap(find.byKey(const ValueKey('serverForm.unverified.review')));
+      await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const ValueKey('serverForm.test')));
       await tester.pumpAndSettle();
@@ -302,6 +313,8 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('serverForm.save')));
     await tester.pumpAndSettle();
     expect(savedRows, isEmpty, reason: 'a copy shares no trust state with its source');
+    await tester.tap(find.byKey(const ValueKey('serverForm.unverified.review')));
+    await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey('serverForm.test')));
     await tester.pumpAndSettle();

@@ -8,6 +8,7 @@ import '../../domain/host_limit.dart';
 import '../../domain/health_scoring.dart';
 import '../../domain/measurement_units.dart';
 import '../../domain/server_credentials.dart';
+import '../../domain/ssh_failure.dart';
 import '../../platform/shortcut_helper.dart';
 import 'app_state.dart';
 
@@ -105,12 +106,16 @@ class ServersViewModel extends ChangeNotifier {
       // Persisted, not just returned. Nothing else wrote this column, so a host stayed offline
       // forever no matter how many times its connection tested green — and every screen that
       // filters on `status == 'online'` showed nothing (§15.8).
-      await _app.repository.updateConnectionState(
-        candidate.id,
-        failure == null ? 'online' : 'offline',
-        candidate.healthScore,
-        0,
-      );
+      final endpointUnreachable = failure != null && sshFailureProvesEndpointUnreachable(failure);
+      await Future.wait([
+        _app.repository.updateConnectionState(
+          candidate.id,
+          endpointUnreachable ? 'offline' : 'online',
+          endpointUnreachable ? 0 : candidate.healthScore,
+          0,
+        ),
+        _app.repository.updateAuthState(candidate.id, failure == null ? 'ok' : 'failed', failure),
+      ]);
       return failure;
     } on CredentialResolutionException catch (e) {
       return e.message;

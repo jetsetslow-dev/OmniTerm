@@ -70,9 +70,10 @@ SSHAgentHandler? agentHandlerFor(SshCredentials creds, List<SSHKeyPair> identiti
 }
 
 class DartSshTransport implements SshTransport {
-  DartSshTransport(this._trust);
+  DartSshTransport(this._trust, {this.printDebug});
 
   final SshHostKeyTrust _trust;
+  final SSHPrintHandler? printDebug;
 
   /// Pooled clients for one-shot exec/execStream calls (never for interactive shells, which own
   /// their connection for its whole lifetime).
@@ -141,6 +142,7 @@ class DartSshTransport implements SshTransport {
           // passed null. (Encrypted jump keys are consequently unsupported, as before.)
           identities: _keyPairs(creds.proxyKeyPem, null),
           onVerifyHostKey: _verifier(creds.proxyHost, creds.proxyPort),
+          printDebug: printDebug,
         );
         // Tunnel the target connection through the bastion, exactly as `ssh -J` does: the target's
         // own host key is still verified end-to-end below.
@@ -177,6 +179,8 @@ class DartSshTransport implements SshTransport {
             ? Duration(seconds: creds.keepAliveSeconds)
             : null,
         agentHandler: forwardAgent ? agentHandlerFor(creds, identities) : null,
+        compression: creds.compression,
+        printDebug: printDebug,
       );
       await client.authenticated;
 

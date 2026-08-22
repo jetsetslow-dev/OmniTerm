@@ -83,6 +83,7 @@ jobs:
       - name: Validate release and CI tooling
         run: |
           ./scripts/test-release-version.sh
+          ./scripts/test-release-engine.sh
           ./scripts/test-ci-gradle-gate.sh
 
       # Verification APKs never need signing continuity. Always use an ephemeral key so untrusted

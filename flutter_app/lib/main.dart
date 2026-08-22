@@ -256,7 +256,10 @@ class OmniTermApp extends StatelessWidget {
           // `lazy: false` matters: nothing in the widget tree reads this provider, so with the
           // default it would never be constructed and the sweep would never run.
           lazy: false,
-          create: (context) => HostStatusProbe(context.read<AppState>().repository)..start(),
+          create: (context) => HostStatusProbe(
+            context.read<AppState>().repository,
+            transport: context.read<SshTransport>(),
+          )..start(),
         ),
         // Declared after AppState because it reads the same repository, and loaded eagerly: the
         // lock has to be up before the first frame, not after it.
@@ -377,6 +380,8 @@ class OmniTermApp extends StatelessWidget {
             sessionService: SessionService(),
             // Read once: the probe provider is eager and outlives this view model.
             hasProbed: context.read<HostStatusProbe>().hasProbed,
+            markReachable: context.read<HostStatusProbe>().markReachable,
+            syncLiveSessionServers: context.read<HostStatusProbe>().setLiveSessionServers,
             shortcuts: context.read<ShortcutHelper>(),
           ),
           update: (_, app, previous) => previous!,

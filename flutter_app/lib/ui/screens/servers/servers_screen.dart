@@ -741,7 +741,7 @@ class _ServerCard extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const Text(
-                          'OFFLINE / UNREACHABLE',
+                          'AUTOMATIC SSH CHECK FAILED',
                           style: TextStyle(
                             color: OmniColors.red,
                             fontWeight: FontWeight.bold,
@@ -749,16 +749,27 @@ class _ServerCard extends StatelessWidget {
                           ),
                         ),
                         Text(
-                          'No TCP route to ${display.host(server)}:${server.port}',
+                          'No response through the configured SSH route to '
+                          '${display.host(server)}:${server.port}',
                           style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 10),
                         ),
                       ],
                     ),
                   ),
-                  _CardAction(
-                    label: 'Retry',
-                    color: OmniColors.red,
-                    onPressed: hostProbe == null ? null : () => hostProbe!.probeOne(server),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      _CardAction(
+                        label: 'SSH ANYWAY',
+                        onPressed: shell == null ? null : () => _connect(context),
+                      ),
+                      const SizedBox(height: 5),
+                      _CardAction(
+                        label: 'Retry',
+                        color: OmniColors.red,
+                        onPressed: hostProbe == null ? null : () => hostProbe!.probeOne(server),
+                      ),
+                    ],
                   ),
                 ],
               ),

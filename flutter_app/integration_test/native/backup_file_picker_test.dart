@@ -17,6 +17,10 @@ import 'package:omniterm/main.dart' as app;
 /// not given.
 void main() {
   Future<void> openBackup(PatrolIntegrationTester $) async {
+    // Android's native automator enables platform accessibility the first time it inspects another
+    // app. Hide that asynchronous platform request; the suite-owned handle below makes semantics
+    // availability deterministic before testWidgets records each test's baseline.
+    $.tester.binding.platformDispatcher.semanticsEnabledTestValue = false;
     app.main();
     await $.pumpAndSettle();
     await $(const ValueKey('nav.tools')).tap();
@@ -136,4 +140,12 @@ void main() {
       reason: 'the screen must be usable again after a cancelled restore',
     );
   });
+
+  // `patrolTest` has initialized PatrolBinding by the time registration reaches this line, while
+  // no test can execute until main returns. Owning one handle now prevents Android accessibility
+  // from adding the first handle just after testWidgets records zero (a first-test-only failure).
+  final binding = WidgetsBinding.instance;
+  binding.platformDispatcher.onSemanticsEnabledChanged = () {};
+  final suiteSemantics = binding.ensureSemantics();
+  tearDownAll(suiteSemantics.dispose);
 }

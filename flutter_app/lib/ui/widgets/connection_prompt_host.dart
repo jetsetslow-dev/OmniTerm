@@ -205,13 +205,13 @@ class _ConnectionPromptDialog extends StatelessWidget {
         children: [
           Text(
             '${display.name(server)} (${display.host(server)}:${server.port}) '
-            "didn't answer on its SSH port at the last check, so it looks offline.",
+            "didn't complete OmniTerm's last automatic SSH check.",
             style: const TextStyle(fontSize: 13),
           ),
           const SizedBox(height: 8),
           Text(
-            'The status may be out of date — connect anyway to try, or cancel and wait for it to '
-            'come back online.',
+            'The status may be out of date or the configured route may behave differently. '
+            'Connect anyway to make a real SSH attempt.',
             style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
         ],

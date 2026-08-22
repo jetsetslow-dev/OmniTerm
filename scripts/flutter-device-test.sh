@@ -13,9 +13,16 @@ ARTIFACT_ROOT="${OMNITERM_DEVICE_ARTIFACTS:-$ROOT/artifacts/device-tests}"
 USE_FIXTURES=true
 FAIL_ON_WARNING=true
 ANDROID_PREVIOUS_STAY=""
+ANDROID_STALE_FORWARD_COUNT=0
 
-restore_android_power() {
-  if [ "$PLATFORM" != android ] || [ -z "$ANDROID_PREVIOUS_STAY" ]; then return; fi
+restore_android_device() {
+  if [ "$PLATFORM" != android ]; then return; fi
+  # Flutter allocates an adb forward for every test APK it starts. Interrupted runs can leave those
+  # mappings behind; after enough accumulate, a later APK reaches the Dart VM but the host tool
+  # never attaches and Android leaves the launch splash on screen indefinitely. This runner owns
+  # the selected device for its duration, so clean up the forwards it may have allocated.
+  adb -s "$DEVICE" forward --remove-all >/dev/null 2>&1 || true
+  if [ -z "$ANDROID_PREVIOUS_STAY" ]; then return; fi
   adb -s "$DEVICE" shell settings put global stay_on_while_plugged_in \
     "$ANDROID_PREVIOUS_STAY" >/dev/null 2>&1 || true
   if [ "$(adb -s "$DEVICE" shell settings get global stay_on_while_plugged_in 2>/dev/null | tr -d '\r')" != "$ANDROID_PREVIOUS_STAY" ]; then
@@ -23,7 +30,7 @@ restore_android_power() {
       "settings put global stay_on_while_plugged_in $ANDROID_PREVIOUS_STAY" >/dev/null 2>&1 || true
   fi
 }
-trap restore_android_power EXIT
+trap restore_android_device EXIT
 
 usage() {
   cat <<'EOF'
@@ -129,6 +136,11 @@ git -C "$ROOT" status --short >"$RUN_DIR/git-status.txt" 2>&1 || true
 if [ "$PLATFORM" = android ]; then
   command -v adb >/dev/null || { echo "adb is required for Android" >&2; exit 2; }
   adb -s "$DEVICE" wait-for-device
+  ANDROID_STALE_FORWARD_COUNT="$(
+    adb -s "$DEVICE" forward --list 2>/dev/null |
+      awk -v device="$DEVICE" '$1 == device { count++ } END { print count + 0 }'
+  )"
+  adb -s "$DEVICE" forward --remove-all
   ANDROID_PREVIOUS_STAY="$(adb -s "$DEVICE" shell settings get global stay_on_while_plugged_in 2>/dev/null | tr -d '\r')"
   case "$ANDROID_PREVIOUS_STAY" in ''|*[!0-9]*) ANDROID_PREVIOUS_STAY=0 ;; esac
   adb -s "$DEVICE" shell settings put global stay_on_while_plugged_in 7 >/dev/null 2>&1 || true
@@ -147,6 +159,7 @@ if [ "$PLATFORM" = android ]; then
     adb -s "$DEVICE" shell wm density
     adb -s "$DEVICE" shell settings get system font_scale
     adb -s "$DEVICE" shell settings get system screen_off_timeout
+    echo "stale_adb_forwards_removed=$ANDROID_STALE_FORWARD_COUNT"
     echo "stay_on_while_plugged_in_before=$ANDROID_PREVIOUS_STAY"
     echo "stay_on_while_plugged_in_during=$(adb -s "$DEVICE" shell settings get global stay_on_while_plugged_in 2>/dev/null | tr -d '\r')"
     adb -s "$DEVICE" shell id
@@ -316,9 +329,21 @@ grep -Ein '(^|[[:space:]])warning:|^WARNING:|deprecated|RenderFlex overflow' \
 #    `flutter_foreground_task`, `home_widget` and `patrol`, and tracked in the parity ledger. It is
 #    printed during `assembleDebug`, so a run that reuses a cached APK never sees it — which is why
 #    this gate's history is inconsistent rather than clean.
+# 2. The Play Store build's current `google_mobile_ads` Android implementation calls APIs deprecated
+#    by its own transitive AndroidX/Play Services versions, and some plugins still compile Java 8
+#    sources. Keep these messages exact: warnings from OmniTerm source or a different API must still
+#    fail the run. Dependency upgrades can remove entries when their upstream fixes land.
 cat >"$RUN_DIR/warnings-allowed.txt" <<'ALLOWED'
 plugins that apply Kotlin Gradle Plugin (KGP)
 Future versions of Flutter will fail to build if your app uses plugins that apply KGP
+getWebView(FlutterEngine,long) in WebViewFlutterAndroidExternalApi has been deprecated
+setTagForChildDirectedTreatment(int) in Builder has been deprecated
+setTagForUnderAgeOfConsent(int) in Builder has been deprecated
+TAG_FOR_CHILD_DIRECTED_TREATMENT_UNSPECIFIED in RequestConfiguration has been deprecated
+TAG_FOR_UNDER_AGE_OF_CONSENT_UNSPECIFIED in RequestConfiguration has been deprecated
+warning: [options] source value 8 is obsolete and will be removed in a future release
+warning: [options] target value 8 is obsolete and will be removed in a future release
+warning: [options] To suppress warnings about obsolete options, use -Xlint:-options.
 ALLOWED
 
 if [ -s "$RUN_DIR/warnings.log" ]; then

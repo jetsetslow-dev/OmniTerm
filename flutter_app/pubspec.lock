@@ -244,10 +244,11 @@ packages:
   dartssh2:
     dependency: "direct main"
     description:
-      name: dartssh2
-      sha256: ce7347d76fd7115994f3785b3b7b7c61e957641faa01a2ce066699609f2b45be
-      url: "https://pub.dev"
-    source: hosted
+      path: "."
+      ref: c5015f3101010060fa45e5d7d27b0b2230712d60
+      resolved-ref: c5015f3101010060fa45e5d7d27b0b2230712d60
+      url: "https://github.com/jetsetslow-dev/dartssh2.git"
+    source: git
     version: "2.22.5"
   dbus:
     dependency: transitive

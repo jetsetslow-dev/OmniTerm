@@ -93,17 +93,49 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
       setState(() => _saveError = validation);
       return;
     }
-    if (_form.requiresConnectionTest) {
-      setState(
-        () => _saveError = 'Test the connection before saving, so the host key can be verified.',
-      );
-      return;
-    }
+    if (_form.requiresConnectionTest && !await _confirmUnverifiedSave()) return;
     final duplicate = _duplicateHost();
     if (duplicate != null && !await _confirmDuplicate(duplicate)) return;
 
     await widget.onSave(_form.toServer());
     if (mounted) Navigator.of(context).pop();
+  }
+
+  /// Keeps host-key verification prominent without making an advisory network check a hard gate.
+  ///
+  /// A server can be reachable through a route this device's probe cannot reproduce, and a typo can
+  /// still be corrected after saving. The actual SSH handshake remains authoritative: its host-key
+  /// prompt is not bypassed here, so saving an unchecked row never means trusting an unchecked key.
+  Future<bool> _confirmUnverifiedSave() async {
+    final failedCheck = _testResult != null && !_testPassed;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        key: const ValueKey('serverForm.unverified.dialog'),
+        title: Text(failedCheck ? 'Save after failed check?' : 'Save without testing?'),
+        content: Text(
+          failedCheck
+              ? 'The automatic connection check did not succeed: $_testResult\n\n'
+                    'You can still save this host and use SSH ANYWAY. OmniTerm will ask you to '
+                    'approve its host key when an SSH server answers.'
+              : 'This connection has not been tested. You can still save it and try SSH directly. '
+                    'OmniTerm will ask you to approve the host key when an SSH server answers.',
+        ),
+        actions: [
+          TextButton(
+            key: const ValueKey('serverForm.unverified.review'),
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('Review'),
+          ),
+          FilledButton(
+            key: const ValueKey('serverForm.unverified.saveAnyway'),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('Save anyway'),
+          ),
+        ],
+      ),
+    );
+    return confirmed ?? false;
   }
 
   /// An existing host already saved at the same address, or null.
@@ -251,7 +283,7 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
                           key: const ValueKey('serverForm.save'),
                           onPressed: _save,
                           child: Text(
-                            _form.requiresConnectionTest ? 'Save (test first)' : 'Save',
+                            _form.requiresConnectionTest ? 'Save anyway' : 'Save',
                             style: TextStyle(color: scheme.onPrimary),
                           ),
                         ),
@@ -406,21 +438,12 @@ class _AdvancedTab extends StatelessWidget {
           keyboardType: TextInputType.number,
           onChanged: (v) => form.update(() => form.keepAlive = v),
         ),
-        // Shown and disabled rather than hidden. The Kotlin app negotiates zlib
-        // (`JschSession.kt:85`), and this port's SSH library proposes `none` for compression and
-        // has no zlib to offer, so the switch could be set but never took effect — it reported a
-        // state the connection did not have. Removing the row would hide a setting the user may
-        // have turned on in the Kotlin app and still see in their backup; leaving it live would go
-        // on lying. The stored value is untouched either way, so it survives backup and restore and
-        // starts working the day the library does.
         SwitchListTile(
           key: const ValueKey('serverForm.compression'),
           title: const Text('SSH compression'),
-          subtitle: const Text(
-            'Not supported by this app’s SSH library — the setting has no effect',
-          ),
+          subtitle: const Text('Reduces bandwidth on slow links (zlib after authentication)'),
           value: form.compression,
-          onChanged: null,
+          onChanged: (v) => form.update(() => form.compression = v),
         ),
         SwitchListTile(
           key: const ValueKey('serverForm.persistentSession'),

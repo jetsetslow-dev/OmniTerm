@@ -191,7 +191,7 @@ void main() {
   });
 
   group('adding a host', () {
-    testWidgets('an untested host is not offered as ready to save', (tester) async {
+    testWidgets('an untested host requires an explicit save decision', (tester) async {
       // Driving this by hand is what put a password into a display-name field twice; a flow does
       // not mis-tap.
       await launch(tester);
@@ -207,17 +207,18 @@ void main() {
       // ended up in a display-name field during the manual walk.
       await tester.enterText(find.byKey(const ValueKey('serverForm.name')), 'flow-host');
       await tester.enterText(find.byKey(const ValueKey('serverForm.host')), '203.0.113.1');
+      await tester.enterText(find.byKey(const ValueKey('serverForm.username')), 'root');
       await tester.pumpAndSettle();
 
-      // The button's own label is the gate: an untested host reads "Save (test first)", and only
-      // a passing connection test turns it into a plain "Save". That is the behaviour worth
-      // pinning — a host saved without ever having connected is the thing this prevents.
-      final save = tester.widget<FilledButton>(find.byKey(const ValueKey('serverForm.save')));
-      expect(
-        (save.child! as Text).data,
-        'Save (test first)',
-        reason: 'a host that has never connected must not look ready to save',
-      );
+      // Automatic checks are advisory: saving is possible, but only through a second explicit
+      // decision that explains host-key approval is still mandatory.
+      await tester.tap(find.byKey(const ValueKey('serverForm.save')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('serverForm.unverified.dialog')), findsOneWidget);
+      expect(find.textContaining('host key'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('serverForm.unverified.review')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('serverForm.tabs')), findsOneWidget);
       expect(tester.takeException(), isNull);
 
       // Closed without saving: a flow must not leave a host behind for the next run.

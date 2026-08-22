@@ -56,6 +56,7 @@ fi
 echo "Preflight host: $OS_NAME/$ARCH_NAME"
 git diff --check
 ./scripts/test-release-version.sh
+./scripts/test-release-engine.sh
 ./scripts/test-ci-gradle-gate.sh
 ./scripts/test-secret-scan-coverage.sh
 
@@ -129,7 +130,9 @@ run_flutter_checks() {
     echo "Resolving Flutter dependencies"
     flutter pub get
     echo "Checking Flutter formatting (line length 100)"
-    dart format --output=none --set-exit-if-changed --line-length 100 .
+    mapfile -d '' dart_files < <(git ls-files -z -- '*.dart')
+    ((${#dart_files[@]} > 0)) || { echo "No tracked Dart files found" >&2; return 1; }
+    dart format --output=none --set-exit-if-changed --line-length 100 "${dart_files[@]}"
     echo "Analyzing the Flutter app"
     flutter analyze --fatal-infos
     echo "Running the Flutter test suite"

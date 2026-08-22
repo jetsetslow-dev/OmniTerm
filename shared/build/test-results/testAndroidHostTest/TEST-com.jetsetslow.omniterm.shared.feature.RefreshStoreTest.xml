@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="com.jetsetslow.omniterm.shared.feature.RefreshStoreTest" tests="3" skipped="0" failures="0" errors="0" timestamp="2026-08-01T20:10:08.752Z" hostname="SER8-Server" time="0.005">
-  <properties/>
-  <testcase name="cancellationClearsVisibleProgress" classname="com.jetsetslow.omniterm.shared.feature.RefreshStoreTest" time="0.003"/>
-  <testcase name="exposesProgressAndResult" classname="com.jetsetslow.omniterm.shared.feature.RefreshStoreTest" time="0.001"/>
-  <testcase name="newerRefreshOwnsProgressAndResult" classname="com.jetsetslow.omniterm.shared.feature.RefreshStoreTest" time="0.001"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>

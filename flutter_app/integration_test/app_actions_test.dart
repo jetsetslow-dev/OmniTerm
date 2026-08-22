@@ -3,6 +3,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:omniterm/main.dart' as app;
 import 'package:omniterm/ui/navigation.dart';
+import 'package:omniterm/ui/view_model/app_state.dart';
+import 'package:omniterm/ui/view_model/host_status_probe.dart';
+import 'package:provider/provider.dart';
 
 /// Actions, on a device — not screens.
 ///
@@ -244,20 +247,54 @@ void main() {
   });
 
   group('hosts', () {
-    testWidgets('a host can be added and removed again', (tester) async {
+    testWidgets('a failed automatic host check still offers direct SSH', (tester) async {
       // The whole app is empty without this, and it is the one flow every other screen depends on.
       await launch(tester);
       await goTo(tester, Screen.servers);
+      final context = tester.element(find.byKey(const ValueKey('screen.servers')));
+      final appState = context.read<AppState>();
+      final hostProbe = context.read<HostStatusProbe>()..stop();
+      addTearDown(hostProbe.stop);
       await tapKey(tester, 'servers.add');
 
       final name = 'device-host-${DateTime.now().millisecondsSinceEpoch}';
       await tester.enterText(find.byKey(const ValueKey('serverForm.name')), name);
-      await tester.enterText(find.byKey(const ValueKey('serverForm.host')), '10.255.255.1');
+      await tester.enterText(find.byKey(const ValueKey('serverForm.host')), '127.0.0.1');
+      await tester.enterText(find.byKey(const ValueKey('serverForm.port')), '1');
       await tester.enterText(find.byKey(const ValueKey('serverForm.username')), 'root');
       await tester.pumpAndSettle();
+      await tapKey(tester, 'serverForm.test');
+      expect(find.byKey(const ValueKey('serverForm.testResult')), findsOneWidget);
       await tapKey(tester, 'serverForm.save');
+      expect(find.byKey(const ValueKey('serverForm.unverified.dialog')), findsOneWidget);
+      await tapKey(tester, 'serverForm.unverified.saveAnyway');
 
       expect(find.text(name), findsWidgets, reason: 'the saved host is not in the list');
+
+      // A fresh host is deliberately not called unreachable before anything has tried it. Trigger
+      // the real production probe against a repository-controlled refused endpoint; this exercises
+      // both the cheap TCP attempt and the authoritative SSH fallback without relying on a lab.
+      for (
+        var attempt = 0;
+        attempt < 20 && !appState.servers.any((server) => server.name == name);
+        attempt++
+      ) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      final saved = appState.servers.singleWhere((server) => server.name == name);
+      await tester.runAsync(() => hostProbe.probeOne(saved));
+      await tester.pumpAndSettle();
+
+      expect(
+        find.text('AUTOMATIC SSH CHECK FAILED'),
+        findsOneWidget,
+        reason: 'an advisory probe failure must be described as a check failure, not certainty',
+      );
+      expect(
+        find.text('SSH ANYWAY'),
+        findsOneWidget,
+        reason: 'a failed automatic check must never remove the user\'s direct SSH path',
+      );
     });
   });
 }

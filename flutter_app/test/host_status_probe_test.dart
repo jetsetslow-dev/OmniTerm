@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:drift/native.dart';
@@ -5,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/data/network/network_probe.dart';
+import 'package:omniterm/data/ssh/ssh_transport.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/ui/view_model/host_status_probe.dart';
@@ -43,6 +45,36 @@ class _FakeProbe implements NetworkProbe {
   noSuchMethod(Invocation invocation) => throw UnimplementedError();
 }
 
+class _FakeSshTransport implements SshTransport {
+  _FakeSshTransport({this.failure});
+
+  final String? failure;
+  final List<SshCredentials> tested = [];
+
+  @override
+  Future<String?> testConnection(SshCredentials creds) async {
+    tested.add(creds);
+    return failure;
+  }
+
+  @override
+  noSuchMethod(Invocation invocation) => throw UnimplementedError();
+}
+
+class _CompletingSshTransport implements SshTransport {
+  final Completer<void> started = Completer<void>();
+  final Completer<String?> result = Completer<String?>();
+
+  @override
+  Future<String?> testConnection(SshCredentials creds) {
+    if (!started.isCompleted) started.complete();
+    return result.future;
+  }
+
+  @override
+  noSuchMethod(Invocation invocation) => throw UnimplementedError();
+}
+
 void main() {
   late AppDatabase db;
   late AppRepository repo;
@@ -60,6 +92,7 @@ void main() {
     int port = 22,
     String status = 'unknown',
     int healthScore = 82,
+    String proxyType = 'none',
   }) => Server(
     id: 0,
     name: name,
@@ -75,7 +108,7 @@ void main() {
     sshCompression: false,
     persistentSession: false,
     proxyCommand: '',
-    proxyType: 'none',
+    proxyType: proxyType,
     proxyHost: '',
     proxyPort: 0,
     proxyUser: '',
@@ -108,6 +141,112 @@ void main() {
     final probe = HostStatusProbe(repo, probe: _FakeProbe());
 
     await probe.sweep();
+
+    expect((await only()).status, 'offline');
+    probe.dispose();
+  });
+
+  test('a failed TCP probe falls back to the configured SSH connection', () async {
+    await repo.insertServer(server(name: 'nas', status: 'online'));
+    final ssh = _FakeSshTransport();
+    final probe = HostStatusProbe(repo, probe: _FakeProbe(), transport: ssh);
+
+    await probe.sweep();
+
+    expect((await only()).status, 'online');
+    expect(ssh.tested.single.endpointKey, 'root@10.0.0.5:22');
+    probe.dispose();
+  });
+
+  test('a proxied host skips the invalid direct TCP route', () async {
+    await repo.insertServer(server(name: 'nas', proxyType: 'ssh'));
+    final network = _FakeProbe();
+    final ssh = _FakeSshTransport();
+    final probe = HostStatusProbe(repo, probe: network, transport: ssh);
+
+    await probe.sweep();
+
+    expect(network.probed, isEmpty);
+    expect(ssh.tested, hasLength(1));
+    expect((await only()).status, 'online');
+    probe.dispose();
+  });
+
+  test('an authentication failure proves the SSH endpoint is online', () async {
+    await repo.insertServer(server(name: 'nas'));
+    final probe = HostStatusProbe(
+      repo,
+      probe: _FakeProbe(),
+      transport: _FakeSshTransport(failure: 'SSHAuthFailError'),
+    );
+
+    await probe.sweep();
+
+    final row = await only();
+    expect(row.status, 'online');
+    expect(row.authStatus, 'failed');
+    probe.dispose();
+  });
+
+  test('a definitive SSH timeout marks the endpoint offline', () async {
+    await repo.insertServer(server(name: 'nas', status: 'online'));
+    final probe = HostStatusProbe(
+      repo,
+      probe: _FakeProbe(),
+      transport: _FakeSshTransport(failure: 'Connection timed out'),
+    );
+
+    await probe.sweep();
+
+    expect((await only()).status, 'offline');
+    probe.dispose();
+  });
+
+  test('a live terminal always keeps its host online', () async {
+    await repo.insertServer(server(name: 'nas', status: 'offline'));
+    final ssh = _FakeSshTransport(failure: 'Connection timed out');
+    final probe = HostStatusProbe(repo, probe: _FakeProbe(), transport: ssh);
+    final row = await only();
+    probe.setLiveSessionServers({row.id});
+
+    await probe.sweep();
+
+    expect((await only()).status, 'online');
+    expect(ssh.tested, isEmpty, reason: 'an open terminal already proves reachability');
+    probe.dispose();
+  });
+
+  test('an in-flight probe cannot overwrite a later successful shell', () async {
+    await repo.insertServer(server(name: 'nas', status: 'online'));
+    final ssh = _CompletingSshTransport();
+    final probe = HostStatusProbe(repo, probe: _FakeProbe(), transport: ssh);
+    final sweep = probe.sweep();
+    await ssh.started.future;
+
+    final row = await only();
+    probe.setLiveSessionServers({row.id});
+    await probe.markReachable(row);
+    ssh.result.complete('Connection timed out');
+    await sweep;
+
+    final saved = await only();
+    expect(saved.status, 'online');
+    expect(saved.authStatus, 'ok');
+    probe.dispose();
+  });
+
+  test('closing the last live terminal immediately rechecks the host', () async {
+    await repo.insertServer(server(name: 'nas', status: 'online'));
+    final ssh = _CompletingSshTransport();
+    final probe = HostStatusProbe(repo, probe: _FakeProbe(), transport: ssh);
+    final row = await only();
+    probe.setLiveSessionServers({row.id});
+
+    probe.setLiveSessionServers(const <int>{});
+    await ssh.started.future;
+    ssh.result.complete('Connection timed out');
+    // Joins the close-triggered check rather than starting a competing handshake.
+    await probe.probeOne(row);
 
     expect((await only()).status, 'offline');
     probe.dispose();

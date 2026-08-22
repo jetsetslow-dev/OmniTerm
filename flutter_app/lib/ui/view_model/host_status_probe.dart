@@ -5,6 +5,9 @@ import 'package:flutter/foundation.dart';
 import '../../data/app_database.dart';
 import '../../data/app_repository.dart';
 import '../../data/network/network_probe.dart';
+import '../../data/ssh/ssh_transport.dart';
+import '../../domain/server_credentials.dart';
+import '../../domain/ssh_failure.dart';
 
 /// Keeps every saved host's `status` column current.
 ///
@@ -13,19 +16,21 @@ import '../../data/network/network_probe.dart';
 /// app shows "no online hosts" on every screen no matter how reachable the machines are — which is
 /// exactly what a device run turned up (§15.8).
 ///
-/// Ported from `probeServer` in `ui/AppViewModel.kt`. Deliberately **TCP reachability only**: the
-/// question this answers is "can I reach the SSH port right now", which is what the screens filter
-/// on. A full SSH handshake per host per cycle would authenticate dozens of times a minute, and the
-/// screens that need a real session open one themselves.
+/// Ported from `probeServer` in `ui/AppViewModel.kt`. A cheap direct TCP check is tried first, but it
+/// cannot judge a host reached through HTTP/SOCKS/jump routing. When TCP cannot prove reachability,
+/// the configured SSH route is authoritative; otherwise OmniTerm can call a working server
+/// "unreachable" merely because the phone has no direct route to its final address.
 class HostStatusProbe extends ChangeNotifier {
   HostStatusProbe(
     this._repository, {
     NetworkProbe? probe,
+    this.transport,
     this.interval = const Duration(seconds: 45),
   }) : probe = probe ?? const SocketNetworkProbe();
 
   final AppRepository _repository;
   final NetworkProbe probe;
+  final SshTransport? transport;
 
   /// How often the sweep repeats once [start] is called.
   final Duration interval;
@@ -100,41 +105,202 @@ class HostStatusProbe extends ChangeNotifier {
   /// "probed since launch", which is the only thing that makes the stored status trustworthy.
   final Set<int> _probed = <int>{};
 
+  /// Hosts with at least one interactive SSH channel that is open right now.
+  ///
+  /// A second, background connection can time out or be refused while an existing terminal is
+  /// demonstrably carrying traffic (for example when the server limits concurrent handshakes).
+  /// That advisory failure must never overwrite stronger live-session evidence.
+  final Set<int> _liveSessionServers = <int>{};
+
+  /// Changes whenever interactive-session evidence changes. A probe snapshots this before its
+  /// awaits, so one that started before a shell opened cannot race in afterward and write offline.
+  final Map<int, int> _evidenceGeneration = <int, int>{};
+
+  /// One check per host. A session-close recheck can coincide with the periodic sweep; sharing the
+  /// same future avoids opening two SSH handshakes and lets the close path await the real result.
+  final Map<int, Future<void>> _activeHostProbes = <int, Future<void>>{};
+
   /// Whether [serverId] has been probed since the app started.
   bool hasProbed(int serverId) => _probed.contains(serverId);
 
+  /// Replaces the set of hosts currently backed by an open interactive SSH channel.
+  void setLiveSessionServers(Set<int> serverIds) {
+    if (_disposed) return;
+    final next = serverIds.where((id) => id > 0).toSet();
+    final ended = _liveSessionServers.difference(next);
+    final changed = <int>{
+      ..._liveSessionServers,
+      ...next,
+    }.where((id) => _liveSessionServers.contains(id) != next.contains(id));
+    for (final id in changed) {
+      _evidenceGeneration[id] = (_evidenceGeneration[id] ?? 0) + 1;
+    }
+    _liveSessionServers
+      ..clear()
+      ..addAll(next);
+    for (final id in ended) {
+      // The channel that proved reachability has gone away. Recheck immediately instead of showing
+      // its old online result until the next 45-second sweep.
+      unawaited(_recheckAfterSessionEnded(id));
+    }
+  }
+
   Future<void> probeOne(Server server) => _probeOne(server);
 
-  Future<void> _probeOne(Server server) async {
+  /// Promote a host after a real shell has authenticated and opened.
+  Future<void> markReachable(Server server) async {
+    if (_disposed) return;
+    // Bump synchronously, before the database awaits: an older probe can observe this generation
+    // immediately and is no longer allowed to commit an offline result.
+    _evidenceGeneration[server.id] = (_evidenceGeneration[server.id] ?? 0) + 1;
+    _probed.add(server.id);
+    await Future.wait([
+      _repository.updateConnectionState(
+        server.id,
+        'online',
+        server.healthScore,
+        server.lastLatency,
+      ),
+      _repository.updateAuthState(server.id, 'ok', null),
+    ]);
+  }
+
+  Future<void> _probeOne(Server server) {
+    final existing = _activeHostProbes[server.id];
+    if (existing != null) return existing;
+    late final Future<void> running;
+    running = _probeOneInner(server).whenComplete(() {
+      if (identical(_activeHostProbes[server.id], running)) {
+        _activeHostProbes.remove(server.id);
+      }
+    });
+    _activeHostProbes[server.id] = running;
+    return running;
+  }
+
+  Future<void> _recheckAfterSessionEnded(int serverId) async {
+    final inFlight = _activeHostProbes[serverId];
+    if (inFlight != null) await inFlight;
+    if (_disposed || _liveSessionServers.contains(serverId)) return;
+    final server = await _repository.getServerById(serverId);
+    if (server != null) await _probeOne(server);
+  }
+
+  Future<void> _probeOneInner(Server server) async {
+    if (_liveSessionServers.contains(server.id)) {
+      _probed.add(server.id);
+      await _preserveInteractiveSuccess(server);
+      return;
+    }
+    final evidenceGeneration = _evidenceGeneration[server.id] ?? 0;
+    final stopwatch = Stopwatch()..start();
     try {
       // Shown as "connecting" while a previously offline host is retried, so a slow probe reads as
       // work in progress rather than a host that is simply still down.
       if (server.status == 'offline') {
         await _repository.updateConnectionState(server.id, 'connecting', server.healthScore, 0);
       }
-      final rtt = await probe.tcpPing(server.host, server.port, timeout: timeout);
+      // A direct socket to the final host bypasses every configured proxy. Do not let that result
+      // overrule the route the user actually asked SSH to use.
+      final rtt = server.proxyType == 'none'
+          ? await probe.tcpPing(server.host, server.port, timeout: timeout)
+          : null;
       if (_disposed) return;
-      // Recorded on a real answer only. A probe that threw says nothing about the host.
-      _probed.add(server.id);
-      if (rtt == null) {
-        await _repository.updateConnectionState(server.id, 'offline', 0, 0);
+      if (rtt != null) {
+        _probed.add(server.id);
+        // The health score is left alone: it is Monitor's business, computed from real telemetry,
+        // and overwriting it from a ping would make a reachable-but-struggling host look perfect.
+        await _repository.updateConnectionState(
+          server.id,
+          'online',
+          server.healthScore,
+          rtt.inMilliseconds,
+        );
         return;
       }
-      // The health score is left alone: it is Monitor's business, computed from real telemetry, and
-      // overwriting it from a ping would make a reachable-but-struggling host look perfect.
-      await _repository.updateConnectionState(
-        server.id,
-        'online',
-        server.healthScore,
-        rtt.inMilliseconds,
+
+      final ssh = transport;
+      if (ssh == null) {
+        // Compatibility for transport-less tests/builds. Production always wires the configured
+        // SSH fallback, so a direct failure there never becomes a verdict by itself.
+        _probed.add(server.id);
+        await _markOfflineUnlessSshSucceeded(server, evidenceGeneration);
+        return;
+      }
+      final creds = resolveCredentials(
+        server,
+        keys: await _repository.getAllKeys(),
+        profiles: await _repository.getAllProfiles(),
       );
+      final failure = await ssh.testConnection(creds);
+      if (_disposed) return;
+      _probed.add(server.id);
+      if (failure == null) {
+        await Future.wait([
+          _repository.updateConnectionState(
+            server.id,
+            'online',
+            server.healthScore,
+            stopwatch.elapsedMilliseconds,
+          ),
+          _repository.updateAuthState(server.id, 'ok', null),
+        ]);
+      } else if (!_mayMarkOffline(server.id, evidenceGeneration)) {
+        // A shell opened while this independent check was in flight. Do not replace its successful
+        // authentication with the second connection's failure either.
+        await _preserveInteractiveSuccess(server);
+      } else if (sshFailureProvesEndpointUnreachable(failure)) {
+        await _markOfflineUnlessSshSucceeded(server, evidenceGeneration);
+      } else {
+        // Auth/host-key failures prove that an SSH server answered. Ambiguous transport errors do
+        // not justify hiding the host from online-only screens or preventing a manual attempt.
+        await Future.wait([
+          _repository.updateConnectionState(
+            server.id,
+            'online',
+            server.healthScore,
+            stopwatch.elapsedMilliseconds,
+          ),
+          _repository.updateAuthState(server.id, 'failed', failure),
+        ]);
+      }
     } catch (_) {
       if (_disposed) return;
-      // Any failure means "not reachable"; a host stuck at "connecting" forever would be worse than
-      // one honestly marked offline.
-      await _repository.updateConnectionState(server.id, 'offline', 0, 0).catchError((Object _) {});
+      if (!_mayMarkOffline(server.id, evidenceGeneration)) {
+        await _preserveInteractiveSuccess(server).catchError((Object _) {});
+        return;
+      }
+      // Failure to run the advisory checker says nothing about the host. Restore the previous state
+      // rather than leaving a retried card stuck at "connecting" or inventing an offline verdict.
+      await _repository
+          .updateConnectionState(server.id, server.status, server.healthScore, server.lastLatency)
+          .catchError((Object _) {});
     }
   }
+
+  bool _mayMarkOffline(int serverId, int evidenceGeneration) =>
+      !_liveSessionServers.contains(serverId) &&
+      (_evidenceGeneration[serverId] ?? 0) == evidenceGeneration;
+
+  Future<void> _markOfflineUnlessSshSucceeded(Server server, int evidenceGeneration) async {
+    if (!_mayMarkOffline(server.id, evidenceGeneration)) {
+      await _preserveInteractiveSuccess(server);
+      return;
+    }
+    await _repository.updateConnectionState(server.id, 'offline', 0, 0);
+    // Database writes yield. Reconcile once more in case a shell opened while the offline write was
+    // being committed; the successful SSH result must be the final visible state.
+    if (!_mayMarkOffline(server.id, evidenceGeneration)) {
+      await _preserveInteractiveSuccess(server);
+    }
+  }
+
+  Future<void> _preserveInteractiveSuccess(Server server) => _repository.updateConnectionState(
+    server.id,
+    'online',
+    server.healthScore,
+    server.lastLatency,
+  );
 
   void _safeNotify() {
     if (!_disposed) notifyListeners();

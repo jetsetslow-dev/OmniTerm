@@ -50,7 +50,7 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           echo "Changed files:"; echo "$changed"
-          if echo "$changed" | grep -qE '^(flutter_app/|\.github/workflows/flutter-pr-check\.yml$)'; then
+          if echo "$changed" | grep -qE '^(flutter_app/|\.github/(cyclonedx\.init\.gradle\.kts|release-engine)$|scripts/(flutter-pub-cyclonedx\.jq|generate-flutter-sboms\.sh|resolve-release-version\.sh|test-release-engine\.sh|test-release-resolution\.sh)$|\.github/workflows/(flutter-pr-check|flutter-release|android-release)\.yml$)'; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
@@ -86,10 +86,16 @@ jobs:
       - name: Resolve dependencies
         run: flutter pub get
 
+      - name: Validate the sole release publisher
+        run: ../scripts/test-release-engine.sh
+
       # `--output=none` so this reports rather than rewrites: a gate that edits the tree would
       # "pass" locally by fixing the thing it was meant to catch.
       - name: Check formatting
-        run: dart format --output=none --set-exit-if-changed --line-length 100 .
+        run: |
+          mapfile -d '' dart_files < <(git ls-files -z -- '*.dart')
+          ((${#dart_files[@]} > 0)) || { echo "No tracked Dart files found" >&2; exit 1; }
+          dart format --output=none --set-exit-if-changed --line-length 100 "${dart_files[@]}"
 
       # `--fatal-infos`: an analyzer hint that nothing fails on is a hint that accumulates.
       - name: Analyze
@@ -174,6 +180,9 @@ jobs:
           flutter build appbundle --release
           --dart-define=OMNITERM_PLAY_STORE=true
           --dart-define=ADMOB_BANNER_UNIT_ID=ca-app-pub-3940256099942544/6300978111
+
+      - name: Generate and validate release SBOMs
+        run: ../scripts/generate-flutter-sboms.sh build/release-sboms v0.0.0-pr
 
       - name: Prove development test code is not shipped
         run: |
