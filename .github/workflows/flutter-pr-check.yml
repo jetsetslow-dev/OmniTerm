@@ -50,7 +50,7 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           echo "Changed files:"; echo "$changed"
-          if echo "$changed" | grep -qE '^(flutter_app/|\.github/(cyclonedx\.init\.gradle\.kts|release-engine)$|scripts/(flutter-pub-cyclonedx\.jq|generate-flutter-sboms\.sh|resolve-release-version\.sh|test-release-engine\.sh|test-release-resolution\.sh)$|\.github/workflows/(flutter-pr-check|flutter-release|android-release)\.yml$)'; then
+          if echo "$changed" | grep -qE '^(flutter_app/|\.github/(cyclonedx\.init\.gradle\.kts|release-engine)$|scripts/(flutter-pub-cyclonedx\.jq|generate-flutter-sboms\.sh|verify-flutter-release-apk\.sh|resolve-release-version\.sh|test-release-engine\.sh|test-release-resolution\.sh)$|\.github/workflows/(flutter-pr-check|flutter-release|android-release)\.yml$)'; then
             echo "code=true" >> "$GITHUB_OUTPUT"
           else
             echo "code=false" >> "$GITHUB_OUTPUT"
@@ -185,15 +185,7 @@ jobs:
         run: ../scripts/generate-flutter-sboms.sh build/release-sboms v0.0.0-pr
 
       - name: Prove development test code is not shipped
-        run: |
-          set -euo pipefail
-          PACKAGES="$RUNNER_TEMP/flutter-release-packages.txt"
-          apkanalyzer dex packages build/app/outputs/flutter-apk/app-release.apk > "$PACKAGES"
-          if grep -Eiq 'patrol|integration_test|flutter_test|test_api|mocktail' "$PACKAGES"; then
-            echo "A development-only test package was compiled into the release APK:" >&2
-            grep -Ei 'patrol|integration_test|flutter_test|test_api|mocktail' "$PACKAGES" >&2
-            exit 1
-          fi
+        run: ../scripts/verify-flutter-release-apk.sh build/app/outputs/flutter-apk/app-release.apk
 
       - name: Report artifact sizes
         run: |

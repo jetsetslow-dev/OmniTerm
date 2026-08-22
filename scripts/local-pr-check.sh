@@ -149,6 +149,32 @@ fi
 run_flutter_checks
 
 if [[ "$MODE" == "--full" ]]; then
+  (
+    cd flutter_app
+    # Exercise the same release-only path as Flutter PR Check. Never inherit a developer's real
+    # signing inputs into a preflight verification build.
+    unset KEYSTORE_PATH STORE_PASSWORD KEY_ALIAS KEY_PASSWORD
+    JAVA21_HOME="${OMNITERM_JAVA21_HOME:-/usr/lib/jvm/java-21-openjdk-amd64}"
+    if [[ ! -x "$JAVA21_HOME/bin/java" ]]; then
+      echo "Flutter release validation requires JDK 21; set OMNITERM_JAVA21_HOME." >&2
+      exit 1
+    fi
+    export JAVA_HOME="$JAVA21_HOME"
+    PATH="$JAVA_HOME/bin:$PATH"
+    export PATH
+    export ADMOB_APP_ID=ca-app-pub-3940256099942544~3347511713
+    echo "Building Flutter release APK and App Bundle"
+    flutter build apk --release \
+      --dart-define=OMNITERM_PLAY_STORE=true \
+      --dart-define=ADMOB_BANNER_UNIT_ID=ca-app-pub-3940256099942544/6300978111
+    flutter build appbundle --release \
+      --dart-define=OMNITERM_PLAY_STORE=true \
+      --dart-define=ADMOB_BANNER_UNIT_ID=ca-app-pub-3940256099942544/6300978111
+    echo "Generating Flutter release SBOMs"
+    ../scripts/generate-flutter-sboms.sh build/release-sboms v0.0.0-local
+    ../scripts/verify-flutter-release-apk.sh build/app/outputs/flutter-apk/app-release.apk
+  )
+
   if [[ "$LINUX_ARM64" == "true" ]]; then
     OMNITERM_DEPENDENCY_JVMARGS="-Xmx2g -Dfile.encoding=UTF-8" \
       ./scripts/refresh-verification-metadata.sh --verify
