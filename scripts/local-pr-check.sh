@@ -56,7 +56,9 @@ fi
 echo "Preflight host: $OS_NAME/$ARCH_NAME"
 git diff --check
 ./scripts/test-release-version.sh
+./scripts/test-release-engine.sh
 ./scripts/test-ci-gradle-gate.sh
+./scripts/test-secret-scan-coverage.sh
 
 GRADLE_ARGS=(
   --no-daemon
@@ -81,7 +83,98 @@ fi
   lintOpenSourceDebug lintPlayStoreDebug \
   "${GRADLE_ARGS[@]}"
 
+# The secret gate, run the way CI runs it. Two properties of that job are easy to get wrong locally
+# and both cost this repository real time:
+#
+#   1. It scans ALL refs, not the current branch. `actions/checkout` with fetch-depth 0 fetches every
+#      ref, so a finding on any branch fails the scan on all of them. A plain `gitleaks git` walks
+#      HEAD's ancestry only, which can report clean while CI reports six.
+#   2. It scans history, so removing a secret from the working tree never clears a past commit.
+#      Fix the cause first, then baseline the fingerprint in .gitleaksignore.
+run_secret_scan() {
+  local -a cmd
+  if command -v gitleaks >/dev/null 2>&1; then
+    cmd=(gitleaks)
+  elif command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    cmd=(docker run --rm -v "$PWD:/repo" -w /repo zricethezav/gitleaks:latest)
+  else
+    echo "WARNING: neither gitleaks nor a working docker found — the secret gate was NOT run." >&2
+    echo "         CI will still run it over every ref. Install gitleaks to catch this locally." >&2
+    return 0
+  fi
+  echo "Scanning every ref for committed secrets"
+  "${cmd[@]}" git --log-opts="--all" --redact --no-banner --no-color .
+}
+
+run_secret_scan
+
+# The Flutter app is the branch under migration, and until now this script did not look at it at
+# all: `grep -c flutter` was zero, so "the required gate passed" meant only that the Kotlin app
+# passed. These are the same three commands `.github/workflows/flutter-pr-check.yml` runs, in the
+# same order, so a green local run and a green PR mean the same thing.
+#
+# The line length is not optional: `dart format` defaults to 80, `flutter analyze` says nothing
+# about it, and a tree formatted at the default fails CI with every touched file marked changed.
+run_flutter_checks() {
+  if [[ ! -d "$PWD/flutter_app" ]]; then
+    echo "No flutter_app directory; skipping the Flutter gate."
+    return
+  fi
+  if ! command -v flutter >/dev/null 2>&1; then
+    echo "WARNING: flutter is not on PATH — the Flutter gate was NOT run." >&2
+    echo "         Put it on PATH or set FLUTTER_BIN, then re-run." >&2
+    return 1
+  fi
+  (
+    cd flutter_app
+    echo "Resolving Flutter dependencies"
+    flutter pub get
+    echo "Checking Flutter formatting (line length 100)"
+    mapfile -d '' dart_files < <(git ls-files -z -- '*.dart')
+    ((${#dart_files[@]} > 0)) || { echo "No tracked Dart files found" >&2; return 1; }
+    dart format --output=none --set-exit-if-changed --line-length 100 "${dart_files[@]}"
+    echo "Analyzing the Flutter app"
+    flutter analyze --fatal-infos
+    echo "Running the Flutter test suite"
+    flutter test
+  )
+}
+
+# `flutter` may be installed only as FLUTTER_BIN; put its directory on PATH so `dart` resolves too.
+if [[ -n "${FLUTTER_BIN:-}" && -x "${FLUTTER_BIN}" ]]; then
+  PATH="$(dirname "$FLUTTER_BIN"):$PATH"
+  export PATH
+fi
+
+run_flutter_checks
+
 if [[ "$MODE" == "--full" ]]; then
+  (
+    cd flutter_app
+    # Exercise the same release-only path as Flutter PR Check. Never inherit a developer's real
+    # signing inputs into a preflight verification build.
+    unset KEYSTORE_PATH STORE_PASSWORD KEY_ALIAS KEY_PASSWORD
+    JAVA21_HOME="${OMNITERM_JAVA21_HOME:-/usr/lib/jvm/java-21-openjdk-amd64}"
+    if [[ ! -x "$JAVA21_HOME/bin/java" ]]; then
+      echo "Flutter release validation requires JDK 21; set OMNITERM_JAVA21_HOME." >&2
+      exit 1
+    fi
+    export JAVA_HOME="$JAVA21_HOME"
+    PATH="$JAVA_HOME/bin:$PATH"
+    export PATH
+    export ADMOB_APP_ID=ca-app-pub-3940256099942544~3347511713
+    echo "Building Flutter release APK and App Bundle"
+    flutter build apk --release \
+      --dart-define=OMNITERM_PLAY_STORE=true \
+      --dart-define=ADMOB_BANNER_UNIT_ID=ca-app-pub-3940256099942544/6300978111
+    flutter build appbundle --release \
+      --dart-define=OMNITERM_PLAY_STORE=true \
+      --dart-define=ADMOB_BANNER_UNIT_ID=ca-app-pub-3940256099942544/6300978111
+    echo "Generating Flutter release SBOMs"
+    ../scripts/generate-flutter-sboms.sh build/release-sboms v0.0.0-local
+    ../scripts/verify-flutter-release-apk.sh build/app/outputs/flutter-apk/app-release.apk
+  )
+
   if [[ "$LINUX_ARM64" == "true" ]]; then
     OMNITERM_DEPENDENCY_JVMARGS="-Xmx2g -Dfile.encoding=UTF-8" \
       ./scripts/refresh-verification-metadata.sh --verify
@@ -96,7 +189,7 @@ if command -v adb >/dev/null 2>&1 &&
   # UI instrumentation test ever ran here, so a screen could crash on first open with the preflight
   # still green -- exactly how an ICU-only regex defect in ComposeBuilder reached a release. The
   # lab-dependent `E2e*` suites self-skip through `assumeTrue` when their instrumentation arguments
-  # are absent, so this stays runnable on a bare emulator; see AGENTS.md for running them for real.
+  # are absent, so this stays runnable on a bare emulator; the host profile exercises them for real.
   ./gradlew connectedOpenSourceDebugAndroidTest "${GRADLE_ARGS[@]}"
 else
   echo "Device matrix (Room migrations + UI instrumentation): no Android device/emulator available; deferred to PR CI"

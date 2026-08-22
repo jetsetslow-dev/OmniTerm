@@ -413,6 +413,33 @@ internal fun classifySshConnectionFailure(raw: String): SshConnectionFailure {
     }
 }
 
+/**
+ * Only failures that prove the target address or SSH listener could not be reached should make a
+ * host offline. Authentication, host-key, protocol, and server-side disconnect failures all prove
+ * that an SSH endpoint answered; presenting those hosts as "unreachable" hides the useful error and
+ * can incorrectly prevent a user from trying a client that supports a different negotiation path.
+ */
+internal fun sshFailureProvesEndpointUnreachable(failure: SshConnectionFailure): Boolean = when (failure) {
+    SshConnectionFailure.Refused,
+    SshConnectionFailure.Timeout,
+    SshConnectionFailure.HostNotFound,
+    SshConnectionFailure.NetworkUnreachable -> true
+    SshConnectionFailure.Authentication,
+    SshConnectionFailure.Dropped,
+    SshConnectionFailure.HostKeyVerification,
+    is SshConnectionFailure.Unknown -> false
+}
+
+/** Live interactive SSH evidence is stronger than any second connection's probe failure. */
+internal fun sshFailureShouldMarkHostOffline(
+    failure: SshConnectionFailure,
+    hasLiveSshSession: Boolean,
+): Boolean = !hasLiveSshSession && sshFailureProvesEndpointUnreachable(failure)
+
+/** A target behind any configured proxy/jump host must not be judged by a direct socket probe. */
+internal fun shouldProbeSshPortDirectly(proxyType: String): Boolean =
+    proxyType.equals("none", ignoreCase = true)
+
 internal fun classifySshConnectionPhase(raw: String, viaJumpHost: Boolean): SshConnectionPhase = when {
     raw.contains("resolv", ignoreCase = true) -> SshConnectionPhase.Resolving
     raw.contains("bastion", ignoreCase = true) || raw.contains("jump host", ignoreCase = true) ->
@@ -1809,6 +1836,38 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    private suspend fun markServerReachableAfterSsh(srv: ServerEntity) {
+        if (srv.id <= 0) return
+        // Serialize with that host's background probe. If the probe started first, this online write
+        // lands last; if it starts later, it sees the live session and cannot write offline.
+        telemetryProbeMutexes.computeIfAbsent(srv.id) { Mutex() }.withLock {
+            repository.updateAuthState(srv.id, "ok", null)
+            repository.updateConnectionState(
+                srv.id,
+                "online",
+                srv.healthScore.takeIf { it > 0 } ?: 100,
+                srv.lastLatency.coerceAtLeast(0),
+            )
+            withContext(Dispatchers.Main) { probedServerIds[srv.id] = true }
+        }
+    }
+
+    private fun hasLiveSshSession(serverId: Int): Boolean =
+        activeSessions.any { it.serverId == serverId && it.isConnected && !it.userClosed }
+
+    private suspend fun markServerOfflineUnlessConnected(srv: ServerEntity) {
+        if (hasLiveSshSession(srv.id)) {
+            repository.updateConnectionState(
+                srv.id,
+                "online",
+                srv.healthScore.takeIf { it > 0 } ?: 100,
+                srv.lastLatency.coerceAtLeast(0),
+            )
+        } else {
+            repository.updateConnectionState(srv.id, "offline", 0, 0)
+        }
+    }
+
     fun onReviewPromptLaunched() {
         reviewPromptDue = false
     }
@@ -2371,36 +2430,62 @@ class AppViewModel @JvmOverloads constructor(
     private suspend fun probeServer(srv: ServerEntity) {
         telemetryProbeMutexes.computeIfAbsent(srv.id) { Mutex() }.withLock {
             try {
-                // Make the periodic retry visible: an offline host shows "connecting" while its probe
-                // runs (TCP reachability first — up to 4s — then SSH only if the port answered), instead
-                // of silently sitting at Offline through the whole attempt.
+                // Make the periodic retry visible: an offline host shows "connecting" while its
+                // direct and configured-SSH routes are checked instead of silently sitting Offline.
                 if (srv.status == "offline") {
                     repository.updateConnectionState(srv.id, "connecting", 0, 0)
                 }
-                val rtt = tcpReachable(srv.host, srv.port)
-                if (rtt < 0) {
-                    repository.updateConnectionState(srv.id, "offline", 0, 0)
-                    return@withLock
+                val directRtt = if (shouldProbeSshPortDirectly(srv.proxyType)) {
+                    tcpReachable(srv.host, srv.port)
+                } else {
+                    -1
                 }
                 telemetryProbeLimiter.withPermit {
-                    probeServerInner(srv, rtt)
+                    if (directRtt >= 0) {
+                        probeServerInner(srv, directRtt)
+                    } else {
+                        // A direct probe can be invalid (proxy/jump host) or simply produce a false
+                        // negative on a multi-address/filtered network. Try the real configured SSH
+                        // route once before calling the host unreachable.
+                        val startedAt = System.currentTimeMillis()
+                        val osProbe = runCatching {
+                            executeSshCommand(srv, RemoteCommands.OS_PROBE)
+                        }.getOrElse { "SSH Error: ${it.message.orEmpty()}" }
+                        val sshRtt = (System.currentTimeMillis() - startedAt).toInt().coerceAtLeast(0)
+                        if (osProbe.startsWith("SSH Error")) {
+                            val failure = classifySshConnectionFailure(osProbe)
+                            val hasLiveSession = hasLiveSshSession(srv.id)
+                            if (hasLiveSession) {
+                                // Do not replace a live terminal's successful authentication with
+                                // a second background connection's failure.
+                                markServerOfflineUnlessConnected(srv)
+                            } else if (sshFailureShouldMarkHostOffline(failure, hasLiveSession)) {
+                                markServerOfflineUnlessConnected(srv)
+                            } else {
+                                repository.updateAuthState(srv.id, "failed", failure.userMessage)
+                                repository.updateConnectionState(srv.id, "online", 100, sshRtt)
+                            }
+                        } else {
+                            probeServerInner(srv, sshRtt, osProbe)
+                        }
+                    }
                 }
             } catch (e: Exception) {
-                repository.updateConnectionState(srv.id, "offline", 0, 0)
+                markServerOfflineUnlessConnected(srv)
             } finally {
                 withContext(Dispatchers.Main) { probedServerIds[srv.id] = true }
             }
         }
     }
 
-    private suspend fun probeServerInner(srv: ServerEntity, rtt: Int) {
+    private suspend fun probeServerInner(srv: ServerEntity, rtt: Int, preloadedOsProbe: String? = null) {
         // Capture the selected host once: the live `selectedServerId` can change on the main thread
         // while this IO poll is in flight, and we must not attribute this host's metrics to whatever
         // host happens to be selected when the (slow) probe finally completes.
         val activeServerId = selectedServerId
         // Detect the remote OS once per host (cached), then run the matching metrics probe.
             val os = osByServer[srv.id] ?: run {
-                val probe = executeSshCommand(srv, RemoteCommands.OS_PROBE)
+                val probe = preloadedOsProbe ?: executeSshCommand(srv, RemoteCommands.OS_PROBE)
                 val detected = RemoteCommands.normaliseOs(probe)
                 if (!probe.startsWith("SSH Error")) osByServer[srv.id] = detected
                 detected
@@ -3253,23 +3338,10 @@ class AppViewModel @JvmOverloads constructor(
             val newId = repository.insertServer(server)
             refreshHomeWidgets()
             onResult(null)
-            // Start pessimistic: only promote reachability/auth after a real probe succeeds.
+            // Use the same proxy-aware, SSH-fallback probe as periodic telemetry. A direct socket
+            // check cannot judge a target that is reachable only through its configured route.
             withContext(Dispatchers.IO) {
-                val rtt = tcpReachable(host, port)
-                if (rtt < 0) {
-                    repository.updateConnectionState(newId.toInt(), "offline", 0, 0)
-                } else {
-                    repository.updateConnectionState(newId.toInt(), "online", 100, rtt)
-                    val saved = repository.getServerById(newId.toInt())
-                    if (saved != null) {
-                        val authErr = sshTransport.testConnection(buildCredentials(saved))
-                        repository.updateAuthState(
-                            newId.toInt(),
-                            if (authErr == null) "ok" else "failed",
-                            authErr?.let { cleanSshError(it) },
-                        )
-                    }
-                }
+                repository.getServerById(newId.toInt())?.let { probeServer(it) }
             }
             refreshHomeWidgets()
         }
@@ -4457,16 +4529,8 @@ class AppViewModel @JvmOverloads constructor(
         if (host.isBlank()) { onResult("Host is required."); return }
         isTestingConnection = true
         viewModelScope.launch {
-            // A direct TCP precheck only makes sense without a proxy — through a proxy/jump host the
-            // target isn't reachable directly, so skip it and let the SSH test be the source of truth.
-            if (proxyType == "none") {
-                val rtt = withContext(Dispatchers.IO) { tcpReachable(host, port) }
-                if (rtt < 0) {
-                    isTestingConnection = false
-                    onResult("Host unreachable on $host:$port (no TCP route).")
-                    return@launch
-                }
-            }
+            // The real configured SSH route is authoritative. A preliminary direct socket failure
+            // can be false on filtered/multi-address networks and is invalid for proxy/jump hosts.
             var user = username
             var pass: String? = password
             var pem: String? = null
@@ -4831,6 +4895,7 @@ class AppViewModel @JvmOverloads constructor(
                 if (shellSession.controlMode) initControlModeSession(shellSession, creds)
                 if (usePersistence) rememberRestorablePersistentSession(shellSession)
                 setupComplete = true
+                markServerReachableAfterSsh(srv)
                 noteSuccessfulSshSession()
                 TerminalSessionManager.updateKeepaliveCount()
                 startKeepAliveService()
@@ -5440,6 +5505,7 @@ class AppViewModel @JvmOverloads constructor(
                     }
                 }
                 setupComplete = true
+                markServerReachableAfterSsh(srv)
                 noteSuccessfulSshSession()
                 TerminalSessionManager.updateKeepaliveCount()
                 startKeepAliveService()
@@ -5815,6 +5881,12 @@ class AppViewModel @JvmOverloads constructor(
                             TerminalSessionManager.updateKeepaliveCount()
                             TerminalSessionManager.startKeepAliveService()
                         }
+                    }
+                    // The dropped channel may have made telemetry mark this host offline while the
+                    // reconnect loop was running. This newly authenticated channel is stronger and
+                    // must restore the visible state immediately.
+                    repository.getServerById(shellSession.serverId)?.let {
+                        markServerReachableAfterSsh(it)
                     }
                     currentCoroutineContext().ensureActive()
                     // Cleanup and this handoff share the ownership lock. Either cleanup wins and

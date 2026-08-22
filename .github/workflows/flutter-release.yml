@@ -1,0 +1,473 @@
+name: Flutter build & publish
+
+env:
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+  FLUTTER_VERSION: 3.44.9
+  KEYSTORE_PATH: ${{ github.workspace }}/flutter_app/android/release.keystore
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag vMAJOR.MINOR.PATCH[-SuffixN]. Defaults to the current ref's tag."
+        required: false
+        type: string
+      release_channel:
+        description: "GitHub Release type when release_tag is omitted"
+        required: true
+        type: choice
+        options: [prerelease, production]
+        default: prerelease
+      publish_artifacts:
+        description: >-
+          Sign with the real release key and attach the artifacts to a GitHub Release.
+          Off = dry run: an ephemeral key, nothing published.
+        required: true
+        type: boolean
+        default: false
+      version_code:
+        description: "Break-glass versionCode override; skips the monotonicity guard"
+        required: false
+        type: string
+  push:
+    tags:
+      - "v*"
+  workflow_run:
+    workflows: [CodeQL]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Serialized, not cancelled. Two tags pushed together would otherwise race to publish and the
+# second would find the first's Release already there.
+concurrency:
+  group: flutter-release
+  cancel-in-progress: false
+
+jobs:
+  release-engine:
+    name: Select release engine
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      selected: ${{ steps.engine.outputs.selected }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Read release engine
+        id: engine
+        env:
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: |
+          set -euo pipefail
+          # Do not check out workflow_run event data. Read only the inert engine selector; the
+          # publishing job independently proves the source is the successful main commit.
+          git fetch --no-tags origin "$SOURCE_SHA"
+          SELECTED=kotlin
+          if git cat-file -e "$SOURCE_SHA:.github/release-engine" 2>/dev/null; then
+            SELECTED="$(git show "$SOURCE_SHA:.github/release-engine" | tr -d '[:space:]')"
+          fi
+          case "$SELECTED" in kotlin|flutter) ;; *) echo "Invalid release engine: $SELECTED" >&2; exit 1 ;; esac
+          echo "selected=$SELECTED" >> "$GITHUB_OUTPUT"
+          echo "Selected release engine: $SELECTED"
+
+  release:
+    name: Build signed release artifacts
+    needs: release-engine
+    if: >-
+      needs.release-engine.outputs.selected == 'flutter' &&
+      ((github.event_name == 'workflow_run' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.event == 'push' &&
+        github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.head_branch == 'main') ||
+       github.event_name == 'push' ||
+       github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      attestations: write
+      contents: write
+      id-token: write
+    outputs:
+      tag: ${{ steps.version.outputs.release_label }}
+      release_already_published: ${{ steps.version.outputs.release_already_published }}
+      publish_external: ${{ steps.version.outputs.publish_external }}
+    environment: ${{ (github.event_name == 'workflow_dispatch' && !inputs.publish_artifacts) && 'dry-run' || (((github.event_name == 'workflow_dispatch' && inputs.release_channel == 'production') || (startsWith(github.ref, 'refs/tags/') && !contains(github.ref, '-'))) && 'production' || 'testing') }}
+    env:
+      BUILD_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+      PUBLISH_EXTERNAL: ${{ github.event_name != 'workflow_dispatch' || inputs.publish_artifacts }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ env.BUILD_SHA }}
+
+      - name: Verify trusted release source
+        if: env.PUBLISH_EXTERNAL == 'true'
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$BUILD_SHA" || {
+            echo "Checked-out commit does not match BUILD_SHA" >&2; exit 1; }
+          git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git merge-base --is-ancestor "$BUILD_SHA" refs/remotes/origin/main || {
+            echo "Published builds must use a commit reachable from origin/main" >&2; exit 1; }
+
+      - name: Require exact-SHA aggregate security gate
+        if: env.PUBLISH_EXTERNAL == 'true' && github.event_name != 'workflow_run'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          RUNS="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/codeql.yml/runs?head_sha=${BUILD_SHA}&per_page=100")"
+          jq -e --arg sha "$BUILD_SHA" '
+            any(.workflow_runs[];
+              .head_sha == $sha and .event == "push" and .head_branch == "main" and
+              .status == "completed" and .conclusion == "success")
+          ' <<<"$RUNS" >/dev/null || {
+            echo "No successful exact-SHA CodeQL aggregate push gate exists for $BUILD_SHA" >&2
+            exit 1
+          }
+
+      # The version identity is resolved once by the same script used by the Android publisher, so
+      # a tag means one versionCode across every pipeline in this repository.
+      #
+      #   versionCode = major*10_000_000 + minor*100_000 + patch*100 + build
+      #   prerelease  = build 1..98 (its trailing number, or 1)   ·   release = build 99
+      #
+      # Flutter takes exactly those two numbers as --build-name / --build-number.
+      - name: Resolve version identity
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_RELEASE_TAG: ${{ inputs.release_tag }}
+          INPUT_RELEASE_CHANNEL: ${{ inputs.release_channel }}
+          INPUT_VERSION_CODE: ${{ inputs.version_code }}
+        run: ./scripts/resolve-release-version.sh
+
+      # The packing library has its own tests. Run them against this checkout rather than trusting
+      # that the copy here behaves like the one the tests were written for.
+      - name: Validate the version tooling
+        run: |
+          ./scripts/test-release-version.sh
+          ./scripts/test-release-engine.sh
+
+      - name: Check out Flutter SDK
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: flutter/flutter
+          ref: ${{ env.FLUTTER_VERSION }}
+          path: _flutter
+          persist-credentials: false
+      - name: Put Flutter on PATH
+        run: echo "$GITHUB_WORKSPACE/_flutter/bin" >> "$GITHUB_PATH"
+
+      - name: Set up JDK
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.0.0
+        with:
+          distribution: temurin
+          # Keep this identical to the Flutter PR release build. AGP 9.3.1's lint JavaDoc parser
+          # calls List.removeLast and aborts on JDK 17 before an APK exists.
+          java-version: "21"
+
+      - name: Resolve dependencies
+        run: flutter pub get
+        working-directory: flutter_app
+
+      # A release is not the place to discover a red test. The PR gate ran these, but a tag can
+      # point anywhere, so they run again against exactly what is about to be signed.
+      - name: Run tests
+        run: flutter test
+        working-directory: flutter_app
+
+      - name: Decode signing key
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          PUBLISH: ${{ env.PUBLISH_EXTERNAL }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          umask 077
+          if [ "$PUBLISH" = "true" ]; then
+            test -n "$ANDROID_KEYSTORE_BASE64" || { echo "Missing ANDROID_KEYSTORE_BASE64"; exit 1; }
+            test -n "$STORE_PASSWORD" || { echo "Missing ANDROID_KEYSTORE_PASSWORD"; exit 1; }
+            test -n "$KEY_ALIAS" || { echo "Missing ANDROID_KEY_ALIAS"; exit 1; }
+            test -n "$KEY_PASSWORD" || { echo "Missing ANDROID_KEY_PASSWORD"; exit 1; }
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+          else
+            # A dry run signs with a throwaway key generated here. Deliberately *not* the debug key:
+            # an artifact that is signed by something every Android SDK holds is one somebody can
+            # mistake for a real build, and a key valid for a day cannot be.
+            keytool -genkeypair -keystore "$KEYSTORE_PATH" -storepass dryrun -keypass dryrun \
+              -alias dryrun -dname CN=OmniTerm-Dry-Run -keyalg RSA -keysize 2048 -validity 1
+          fi
+
+      - name: Build signed App Bundle and APK
+        env:
+          PUBLISH: ${{ env.PUBLISH_EXTERNAL }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD || 'dryrun' }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || 'dryrun' }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || 'dryrun' }}
+          BUILD_NAME: ${{ steps.version.outputs.name }}
+          BUILD_NUMBER: ${{ steps.version.outputs.code }}
+          REAL_ADMOB_APP_ID: ${{ secrets.ADMOB_APP_ID }}
+          REAL_ADMOB_BANNER_ID: ${{ secrets.ADMOB_BANNER_UNIT_ID }}
+          ADMOB_TEST_DEVICE_IDS: ${{ vars.ADMOB_TEST_DEVICE_IDS }}
+        run: |
+          set -euo pipefail
+          if [ "$PUBLISH" = "true" ]; then
+            test -n "$REAL_ADMOB_APP_ID" || { echo "Missing ADMOB_APP_ID" >&2; exit 1; }
+            test -n "$REAL_ADMOB_BANNER_ID" || { echo "Missing ADMOB_BANNER_UNIT_ID" >&2; exit 1; }
+            export ADMOB_APP_ID="$REAL_ADMOB_APP_ID"
+            BANNER_ID="$REAL_ADMOB_BANNER_ID"
+          else
+            export ADMOB_APP_ID="ca-app-pub-3940256099942544~3347511713"
+            BANNER_ID="ca-app-pub-3940256099942544/6300978111"
+          fi
+          flutter build appbundle --release \
+            --build-name="$BUILD_NAME" --build-number="$BUILD_NUMBER" \
+            --dart-define=OMNITERM_PLAY_STORE=true \
+            --dart-define=ADMOB_BANNER_UNIT_ID="$BANNER_ID" \
+            --dart-define=ADMOB_TEST_DEVICE_IDS="$ADMOB_TEST_DEVICE_IDS"
+          flutter build apk --release \
+            --build-name="$BUILD_NAME" --build-number="$BUILD_NUMBER" \
+            --dart-define=OMNITERM_PLAY_STORE=true \
+            --dart-define=ADMOB_BANNER_UNIT_ID="$BANNER_ID" \
+            --dart-define=ADMOB_TEST_DEVICE_IDS="$ADMOB_TEST_DEVICE_IDS"
+        working-directory: flutter_app
+
+      # Signing is done. Remove the key before any later step — artifact upload, third-party
+      # actions — can see it, even though the runner is ephemeral.
+      - name: Delete signing key
+        if: always()
+        run: rm -f "$KEYSTORE_PATH"
+
+      # What was actually produced, not what was asked for. A build that silently kept the pubspec's
+      # placeholder version would still upload happily and then be rejected by Play, days later.
+      - name: Verify artifact identity
+        env:
+          EXPECTED_NAME: ${{ steps.version.outputs.name }}
+          EXPECTED_CODE: ${{ steps.version.outputs.code }}
+        run: |
+          set -euo pipefail
+          AAPT="$(find "$ANDROID_HOME/build-tools" -name aapt2 | sort -V | tail -1)"
+          BADGING="$("$AAPT" dump badging build/app/outputs/flutter-apk/app-release.apk)"
+          echo "$BADGING" | head -3
+
+          grep -q "package: name='com.jetsetslow.omniterm.app'" <<<"$BADGING" || {
+            echo "Unexpected applicationId" >&2; exit 1; }
+          grep -q "versionCode='$EXPECTED_CODE'" <<<"$BADGING" || {
+            echo "versionCode is not $EXPECTED_CODE" >&2; exit 1; }
+          grep -q "versionName='$EXPECTED_NAME'" <<<"$BADGING" || {
+            echo "versionName is not $EXPECTED_NAME" >&2; exit 1; }
+          grep -q "application-debuggable" <<<"$BADGING" && {
+            echo "Release artifact is debuggable" >&2; exit 1; }
+
+          # R8 must have run. An unminified release build is a different artifact from the one the
+          # PR gate proved, and its absence is exactly how a shrinker misconfiguration ships.
+          test -s build/app/outputs/mapping/release/mapping.txt || {
+            echo "No R8 mapping — the release build was not minified" >&2; exit 1; }
+
+          # Test sources stay versioned so CI can protect the migration, but their harnesses and
+          # native plugins must remain development-only and absent from what users install.
+          PACKAGES="$RUNNER_TEMP/flutter-release-packages.txt"
+          apkanalyzer dex packages build/app/outputs/flutter-apk/app-release.apk > "$PACKAGES"
+          if grep -Eiq 'patrol|integration_test|flutter_test|test_api|mocktail' "$PACKAGES"; then
+            echo "A development-only test package was compiled into the release APK:" >&2
+            grep -Ei 'patrol|integration_test|flutter_test|test_api|mocktail' "$PACKAGES" >&2
+            exit 1
+          fi
+        working-directory: flutter_app
+
+      # The last question nobody else asks: does the artifact we are about to publish *start*?
+      #
+      # Every other suite runs a debug build through Flutter's own test binding, so none of them
+      # would notice a bad R8 rule, a missing native library, or a manifest mistake that only
+      # affects the release package. This installs the real APK and drives it black-box.
+      - name: Smoke-test the release APK
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.35.0
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          working-directory: flutter_app
+          script: |
+            curl -fsSL "https://get.maestro.mobile.dev" | bash
+            adb install -r build/app/outputs/flutter-apk/app-release.apk
+            "$HOME/.maestro/bin/maestro" test maestro/smoke.yaml
+
+      - name: Generate and validate release SBOMs
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: ./scripts/generate-flutter-sboms.sh artifacts "$TAG"
+
+      - name: Collect artifacts
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          cp flutter_app/build/app/outputs/bundle/release/app-release.aab \
+            "artifacts/OmniTerm-${TAG}.aab"
+          cp flutter_app/build/app/outputs/flutter-apk/app-release.apk \
+            "artifacts/OmniTerm-${TAG}.apk"
+          (cd artifacts && sha256sum -- ./* > SHA256SUMS.txt)
+          cat artifacts/SHA256SUMS.txt
+
+      # The R8 mapping is deliberately NOT uploaded as a workflow artifact: in a public repository
+      # those are public, and a mapping file is the deobfuscation key for the shipped binary.
+      - name: Upload artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v5.0.0
+        with:
+          name: omniterm-flutter-${{ steps.version.outputs.tag }}-attempt-${{ github.run_attempt }}
+          path: artifacts/*
+          retention-days: 7
+          if-no-files-found: error
+
+      - name: Attest build provenance
+        if: env.PUBLISH_EXTERNAL == 'true' && env.RELEASE_ALREADY_PUBLISHED != 'true'
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v3.0.0
+        with:
+          subject-path: artifacts/*
+
+      - name: Attest AAB Dart dependency SBOM
+        if: env.PUBLISH_EXTERNAL == 'true' && env.RELEASE_ALREADY_PUBLISHED != 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: artifacts/OmniTerm-${{ steps.version.outputs.tag }}.aab
+          sbom-path: artifacts/OmniTerm-Flutter-Dart-${{ steps.version.outputs.tag }}.cdx.json
+
+      - name: Attest AAB Android dependency SBOM
+        if: env.PUBLISH_EXTERNAL == 'true' && env.RELEASE_ALREADY_PUBLISHED != 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: artifacts/OmniTerm-${{ steps.version.outputs.tag }}.aab
+          sbom-path: artifacts/OmniTerm-Flutter-Android-${{ steps.version.outputs.tag }}.cdx.json
+
+      # Staged as a **draft**, deliberately. The draft state is the transaction boundary: it means
+      # "artifacts exist, Play has not accepted them yet". Only the finalize job below is allowed to
+      # publish it, so a run that dies between here and Play can be retried without a half-announced
+      # release standing.
+      - name: Stage GitHub Release as draft
+        if: env.PUBLISH_EXTERNAL == 'true' && env.RELEASE_ALREADY_PUBLISHED != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # A SemVer pre-release suffix (v1.0.0-Alpha, v2.0.0-rc1) marks the release prerelease.
+          case "$TAG" in *-*) PRERELEASE=true ;; *) PRERELEASE=false ;; esac
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" artifacts/* --clobber
+            gh release edit "$TAG" --draft=true --prerelease="$PRERELEASE"
+          else
+            # Every commit subject since the previous v* release. Commits land on main directly, so
+            # GitHub's --generate-notes would come up empty here.
+            PREV_TAG=$(gh release list --limit 50 --json tagName \
+              --jq '[.[] | select(.tagName | test("^v[0-9]"))][0].tagName' 2>/dev/null || true)
+            {
+              echo "Signed Flutter release build."
+              echo
+              echo "## Changes${PREV_TAG:+ since $PREV_TAG}"
+              if [ -n "$PREV_TAG" ] && git rev-parse "$PREV_TAG" >/dev/null 2>&1; then
+                git log --no-merges --pretty='- %s' "$PREV_TAG"..HEAD
+              else
+                git log --no-merges --pretty='- %s' -15
+              fi
+            } > release-notes.md
+            gh release create "$TAG" artifacts/* \
+              --draft \
+              --prerelease="$PRERELEASE" \
+              --target "$BUILD_SHA" \
+              --title "OmniTerm $TAG" \
+              --notes-file release-notes.md
+          fi
+
+      # The `internal` track, always. Promotion to a wider audience is a human decision made in the
+      # Play console, not something a green pipeline should be able to do on its own.
+      #
+      # The mapping goes to Play directly and nowhere else: it deobfuscates the shipped binary, and
+      # ordinary workflow artifacts are public in a public repository.
+      - name: Upload to Google Play
+        if: env.PUBLISH_EXTERNAL == 'true' && env.RELEASE_ALREADY_PUBLISHED != 'true'
+        uses: r0adkll/upload-google-play@e738b9dd8f2476ea806d921b64aacd24f34515a5 # v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
+          packageName: com.jetsetslow.omniterm.app
+          releaseFiles: artifacts/*.aab
+          mappingFile: flutter_app/build/app/outputs/mapping/release/mapping.txt
+          tracks: internal
+
+  # Kept as its own job for the same reason the Android pipeline does it: if publication fails after
+  # Play has already accepted the bundle, "rerun failed jobs" retries only this idempotent step and
+  # never rebuilds — which would otherwise burn a versionCode Play will never accept twice.
+  finalize-release:
+    name: Finalize GitHub Release
+    needs: release
+    if: needs.release.outputs.publish_external == 'true' && needs.release.outputs.release_already_published != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Publish the staged release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.release.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh release view "$TAG" >/dev/null
+          gh release edit "$TAG" --draft=false
+          echo "Published $TAG"
+
+      - name: Prune old releases
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          KEEP: "5"
+        run: |
+          set -uo pipefail
+          mapfile -t TAGS < <(
+            gh release list --limit 200 --json tagName,isDraft \
+              --jq '.[] | select(.isDraft | not) | select(.tagName | test("^v[0-9]")) | .tagName' \
+              | sort -V | tac
+          )
+          echo "Found ${#TAGS[@]} version release(s); keeping newest $KEEP."
+          if [ "${#TAGS[@]}" -le "$KEEP" ]; then
+            echo "Nothing to prune."
+            exit 0
+          fi
+          for tag in "${TAGS[@]:$KEEP}"; do
+            case "$tag" in
+              v[0-9]*)
+                # Retain immutable tags as Play version/provenance markers; prune only the old
+                # GitHub Release objects so the public downloads remain bounded.
+                echo "Pruning release: $tag (tag retained)"
+                gh release delete "$tag" --yes ||
+                  echo "Failed to delete release $tag; continuing." >&2
+                ;;
+              *) echo "Skipping unexpected tag: $tag" >&2 ;;
+            esac
+          done

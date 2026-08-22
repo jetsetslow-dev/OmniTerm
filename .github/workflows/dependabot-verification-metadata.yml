@@ -68,8 +68,20 @@ jobs:
         with:
           cache-read-only: "true"
 
+      # refresh-verification-metadata.sh resolves the same assembled debug graphs as CI. Android's
+      # signing validation therefore needs a throwaway keystore even though no APK is retained.
+      - name: Provide ephemeral debug keystore
+        run: |
+          umask 077
+          keytool -genkeypair -keystore debug.keystore -storepass android -keypass android \
+            -alias androiddebugkey -dname CN=Android-Debug -keyalg RSA -keysize 2048 -validity 1
+
       - name: Regenerate and strictly verify dependency metadata
         run: ./scripts/refresh-verification-metadata.sh --write
+
+      - name: Delete ephemeral debug keystore
+        if: always()
+        run: rm -f debug.keystore
 
       - name: Open a follow-up PR with the regenerated metadata
         env:
