@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:patrol/patrol.dart';
+import 'package:provider/provider.dart';
 
 import 'package:omniterm/main.dart' as app;
+import 'package:omniterm/ui/view_model/alerts_view_model.dart';
 
 /// The notification-permission dialog, driven for real — Patrol's native half.
 ///
@@ -41,6 +43,20 @@ void main() {
     await toggle.tap();
   }
 
+  Future<AlertsViewModel> waitForPermissionResult(PatrolIntegrationTester $) async {
+    final context = $.tester.element($(const ValueKey('alerts.masterSwitch')).finder);
+    final vm = context.read<AlertsViewModel>();
+    final deadline = DateTime.now().add(const Duration(seconds: 15));
+    while (vm.notificationsAllowed == null && DateTime.now().isBefore(deadline)) {
+      await $.tester.pump(const Duration(milliseconds: 100));
+      // The notification plugin replies on a real Android platform channel. Advancing only the
+      // test clock can race that reply on a fast hosted runner, so give device I/O wall-clock time
+      // before observing the state that it updates.
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+    return vm;
+  }
+
   /// Patrol clears app data between tests (`clearPackageData`), so each flow starts from a fresh
   /// install and the permission is genuinely unanswered rather than remembered from the last run.
   patrolTest('denying notifications leaves alerting working, and says so', ($) async {
@@ -62,6 +78,12 @@ void main() {
     );
 
     await $.platformAutomator.mobile.denyPermission();
+    final vm = await waitForPermissionResult($);
+    expect(
+      vm.notificationsAllowed,
+      false,
+      reason: 'the app must finish observing the native denial before rendering its warning',
+    );
     await $.pumpAndSettle();
 
     // The screen must not pretend everything is fine.
@@ -113,6 +135,12 @@ void main() {
       reason: 'turning alerts on must ask for permission to notify',
     );
     await $.platformAutomator.mobile.grantPermissionWhenInUse();
+    final vm = await waitForPermissionResult($);
+    expect(
+      vm.notificationsAllowed,
+      true,
+      reason: 'the app must finish observing the native grant before the warning is checked',
+    );
     await $.pumpAndSettle();
 
     expect(
