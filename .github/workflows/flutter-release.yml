@@ -59,15 +59,20 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - name: Read release engine
         id: engine
+        env:
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -euo pipefail
+          # Do not check out workflow_run event data. Read only the inert engine selector; the
+          # publishing job independently proves the source is the successful main commit.
+          git fetch --no-tags origin "$SOURCE_SHA"
           SELECTED=kotlin
-          if [ -f .github/release-engine ]; then
-            SELECTED="$(tr -d '[:space:]' < .github/release-engine)"
+          if git cat-file -e "$SOURCE_SHA:.github/release-engine" 2>/dev/null; then
+            SELECTED="$(git show "$SOURCE_SHA:.github/release-engine" | tr -d '[:space:]')"
           fi
           case "$SELECTED" in kotlin|flutter) ;; *) echo "Invalid release engine: $SELECTED" >&2; exit 1 ;; esac
           echo "selected=$SELECTED" >> "$GITHUB_OUTPUT"

@@ -13,6 +13,7 @@
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
 		7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */; };
 		A10B00012F00000100ABCDEF /* PlatformIntegrationBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10B00022F00000100ABCDEF /* PlatformIntegrationBridge.swift */; };
+		A10B00042F00000100ABCDEF /* ScreenSecurityBridge.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10B00052F00000100ABCDEF /* ScreenSecurityBridge.swift */; };
 		A10B00102F00000100ABCDEF /* OmniTermWidget.swift in Sources */ = {isa = PBXBuildFile; fileRef = A10B00122F00000100ABCDEF /* OmniTermWidget.swift */; };
 		A10B00112F00000100ABCDEF /* OmniTermWidget.appex in Embed App Extensions */ = {isa = PBXBuildFile; fileRef = A10B00152F00000100ABCDEF /* OmniTermWidget.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		78A318202AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage in Frameworks */ = {isa = PBXBuildFile; productRef = 78A3181F2AECB46A00862997 /* FlutterGeneratedPluginSwiftPackage */; };
@@ -73,6 +74,7 @@
 		7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SceneDelegate.swift; sourceTree = "<group>"; };
 		A10B00022F00000100ABCDEF /* PlatformIntegrationBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformIntegrationBridge.swift; sourceTree = "<group>"; };
 		A10B00032F00000100ABCDEF /* Runner.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Runner.entitlements; sourceTree = "<group>"; };
+		A10B00052F00000100ABCDEF /* ScreenSecurityBridge.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenSecurityBridge.swift; sourceTree = "<group>"; };
 		A10B00122F00000100ABCDEF /* OmniTermWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OmniTermWidget.swift; sourceTree = "<group>"; };
 		A10B00132F00000100ABCDEF /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		A10B00142F00000100ABCDEF /* OmniTermWidget.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = OmniTermWidget.entitlements; sourceTree = "<group>"; };
@@ -160,6 +162,7 @@
 				74858FAE1ED2DC5600515810 /* AppDelegate.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				A10B00022F00000100ABCDEF /* PlatformIntegrationBridge.swift */,
+				A10B00052F00000100ABCDEF /* ScreenSecurityBridge.swift */,
 				A10B00032F00000100ABCDEF /* Runner.entitlements */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
@@ -371,6 +374,7 @@
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 				A10B00012F00000100ABCDEF /* PlatformIntegrationBridge.swift in Sources */,
+				A10B00042F00000100ABCDEF /* ScreenSecurityBridge.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

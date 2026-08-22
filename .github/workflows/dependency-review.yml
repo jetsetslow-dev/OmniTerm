@@ -31,8 +31,59 @@ jobs:
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
           fail-on-severity: moderate
-          # New dependencies must use a reviewed permissive/weak-file-level license. Unknown
-          # licenses are still surfaced by the action and require maintainer review.
-          allow-licenses: >-
-            Apache-2.0, MIT, BSD-2-Clause, BSD-3-Clause, ISC, EPL-2.0, MPL-2.0,
-            Unicode-3.0, OFL-1.1, CC0-1.0, Unlicense, Zlib
+          # GitHub currently returns Pub SPDX identifiers in lowercase (for example,
+          # `bsd-3-clause`). dependency-review-action rejects those identifiers before applying
+          # its allow list, so enforce the same policy case-insensitively in the audited API step
+          # below. Vulnerability and OpenSSF review remain enabled here.
+          license-check: false
+
+      - name: Enforce reviewed dependency licenses
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          changes="$(
+            gh api \
+              -H 'Accept: application/vnd.github+json' \
+              --paginate --slurp \
+              "repos/${GITHUB_REPOSITORY}/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}"
+          )"
+
+          # Keep this equivalent to the former allow-licenses input. Exact matching is
+          # intentionally conservative: a new compound or non-SPDX value requires review.
+          allowed='[
+            "apache-2.0", "mit", "bsd-2-clause", "bsd-3-clause", "isc", "epl-2.0",
+            "mpl-2.0", "unicode-3.0", "ofl-1.1", "cc0-1.0", "unlicense", "zlib"
+          ]'
+          rejected="$(
+            jq -r --argjson allowed "$allowed" '
+              [ .[][]
+                | select(.change_type != "removed")
+                | select(.license != null and .license != "NOASSERTION")
+                | select((.license | ascii_downcase) as $license
+                         | ($allowed | index($license)) == null)
+                | "\(.manifest) » \(.name)@\(.version) – License: \(.license)"
+              ] | unique[]
+            ' <<<"$changes"
+          )"
+          if [ -n "$rejected" ]; then
+            echo "Dependencies outside the reviewed license policy:" >&2
+            echo "$rejected" >&2
+            exit 1
+          fi
+
+          unresolved="$(
+            jq -r '
+              [ .[][]
+                | select(.change_type != "removed")
+                | select(.license == null or .license == "NOASSERTION")
+                | "\(.manifest) » \(.name)@\(.version)"
+              ] | unique[]
+            ' <<<"$changes"
+          )"
+          if [ -n "$unresolved" ]; then
+            echo "::warning::GitHub could not resolve licenses for some dependency changes; review the dependency summary."
+            echo "$unresolved"
+          fi

@@ -1,4 +1,4 @@
-FROM alpine:3.22
+FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
 
 # WebDAV is served by rclone rather than Apache. Apache's mod_dav_fs opens its lock database through
 # apr_dbm, and apr-util 1.6.4 ships no apr_dbm_*.so driver on Alpine 3.21/3.22, httpd:2.4-alpine or

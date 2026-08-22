@@ -65,13 +65,15 @@ def closure($index; $queue; $seen):
           name: $package.name,
           version: $package.version,
           purl: package_ref($package),
-          properties: [
-            {name: "omniterm:dart:dependency-kind", value: $package.kind},
-            {name: "omniterm:dart:source", value: $package.source}
-          ] + (if $package.source == "git" and $git_locks[$package.name] then [
-            {name: "omniterm:dart:git-url", value: $git_locks[$package.name].url},
-            {name: "omniterm:dart:git-commit", value: $git_locks[$package.name].resolvedRef}
-          ] else [] end)
+          properties: (
+            [
+              {name: "omniterm:dart:dependency-kind", value: $package.kind},
+              {name: "omniterm:dart:source", value: $package.source}
+            ] + (if $package.source == "git" and $git_locks[$package.name] then [
+              {name: "omniterm:dart:git-url", value: $git_locks[$package.name].url},
+              {name: "omniterm:dart:git-commit", value: $git_locks[$package.name].resolvedRef}
+            ] else [] end)
+          )
         }
     ],
     dependencies: (
