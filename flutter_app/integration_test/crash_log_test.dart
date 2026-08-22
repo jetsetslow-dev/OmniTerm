@@ -33,6 +33,10 @@ void main() {
   Future<void> pumpUntil(WidgetTester tester, bool Function() done, {int maxFrames = 200}) async {
     for (var i = 0; i < maxFrames && !done(); i++) {
       await tester.pump(const Duration(milliseconds: 100));
+      // A pump advances the test clock but does not promise that a real platform-channel reply had
+      // wall-clock time to arrive. Yield briefly so device I/O, such as Clipboard.setData, cannot
+      // lose a race to a fast hosted runner executing every pump back-to-back.
+      await Future<void>.delayed(const Duration(milliseconds: 10));
     }
   }
 
@@ -88,7 +92,12 @@ void main() {
     await settle(tester);
 
     await tester.tap(find.byKey(const ValueKey('about.crashHistory.0.copy')));
-    await settle(tester);
+    await pumpUntil(tester, () => find.byKey(const ValueKey('about.copied')).evaluate().isNotEmpty);
+    expect(
+      find.byKey(const ValueKey('about.copied')),
+      findsOneWidget,
+      reason: 'Copy must finish its platform call before the clipboard is read',
+    );
 
     final clip = await Clipboard.getData(Clipboard.kTextPlain);
     expect(clip?.text, isNotNull, reason: 'Copy must put the report on the real clipboard');
