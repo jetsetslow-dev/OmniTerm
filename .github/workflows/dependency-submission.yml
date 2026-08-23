@@ -40,7 +40,7 @@ jobs:
       - name: Generate and submit dependency graph
         # Keep this SHA aligned with the repository Actions allowlist. Updating the action and the
         # allowlist must be one coordinated change or GitHub rejects the workflow before a job starts.
-        uses: gradle/actions/dependency-submission@3f131e8634966bd73d06cc69884922b02e6faf92 # v6.2.0
+        uses: gradle/actions/dependency-submission@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
         with:
           # Report only the dependencies that can ship in a release APK. Resolving every Gradle
           # configuration also publishes build-tool and test-runner internals as if they were app
