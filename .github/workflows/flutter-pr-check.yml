@@ -307,13 +307,13 @@ jobs:
           disable-animations: true
           emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
           working-directory: flutter_app
-          script: |
-            ../scripts/flutter-device-test.sh \
-              --device emulator-5554 \
-              --platform android \
-              --profile core \
-              --no-fixtures \
-              --artifacts "$GITHUB_WORKSPACE/artifacts/device-tests"
+          script: >-
+            ../scripts/flutter-device-test.sh
+            --device emulator-5554
+            --platform android
+            --profile core
+            --no-fixtures
+            --artifacts "$GITHUB_WORKSPACE/artifacts/device-tests"
 
   e2e-skip:
     name: End-to-end on an emulator
