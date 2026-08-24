@@ -75,8 +75,12 @@ class E2eAlertLifecycleStressTest {
             composeRule.onNodeWithContentDescription("Choose hosts").performClick()
             composeRule.onNodeWithText(HOST).performClick()
             composeRule.onNodeWithText("Done").performClick()
+            // Percentage validation intentionally rejects the old -1 sentinel. Memory usage is
+            // always positive on the disposable host, so zero is both a real user-valid threshold
+            // and a deterministic way to fire the rule without bypassing the visible form.
+            composeRule.onNodeWithText("Memory Usage").performClick()
             val textFields = composeRule.onAllNodes(hasSetTextAction())
-            textFields[0].performTextReplacement("-1")
+            textFields[0].performTextReplacement("0")
             textFields[1].performTextReplacement(NOTE)
             composeRule.onNodeWithText("Confirm").performClick()
             composeRule.waitUntil(10_000) { vm.alertRules.value.any { it.notes == NOTE } }
@@ -166,7 +170,7 @@ class E2eAlertLifecycleStressTest {
             // Updating closes the acknowledged incident and resets its breach timer. The restarted
             // five-second poller—not a direct per-host refresh—must then create a fresh incident.
             val currentRule = requireNotNull(vm.alertRules.value.find { it.id == created.id })
-            vm.updateAlertRule(currentRule.copy(thresholdValue = -2f, triggerWindow = "0m"))
+            vm.updateAlertRule(currentRule.copy(thresholdValue = 1f, triggerWindow = "0m"))
             composeRule.waitUntil(10_000) { vm.activeAlerts.value.none { it.ruleId == created.id } }
             vm.saveTelemetryInterval(5)
             vm.refreshAllServers()
