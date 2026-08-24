@@ -32,6 +32,44 @@ restore_android_device() {
 }
 trap restore_android_device EXIT
 
+# Each integration-test entrypoint gets its own APK/harness connection. Flutter normally tears the
+# previous pair down before starting the next one, but Android's package manager can transiently
+# return DELETE_FAILED_INTERNAL_ERROR. Flutter then carries on, and the next APK launches while the
+# host is still attached to a stale forwarded VM-service port; the run sits on that launch until
+# the outer CI timeout. Own the boundary explicitly, retry the failed uninstall, and never let one
+# entrypoint's transport leak into the next.
+reset_android_flutter_harness() {
+  if [ "$PLATFORM" != android ]; then return 0; fi
+
+  adb -s "$DEVICE" wait-for-device
+  adb -s "$DEVICE" forward --remove-all
+
+  local package attempt removed
+  for package in \
+    com.jetsetslow.omniterm \
+    com.jetsetslow.omniterm.app.flutter.test \
+    com.jetsetslow.omniterm.app.flutter; do
+    adb -s "$DEVICE" shell am force-stop "$package" >/dev/null 2>&1 || true
+    if ! adb -s "$DEVICE" shell pm path "$package" 2>/dev/null | grep -q '^package:'; then
+      continue
+    fi
+
+    removed=false
+    for attempt in 1 2 3; do
+      if adb -s "$DEVICE" uninstall "$package" >/dev/null 2>&1; then
+        removed=true
+        break
+      fi
+      adb -s "$DEVICE" shell am force-stop "$package" >/dev/null 2>&1 || true
+      sleep 1
+    done
+    if [ "$removed" != true ]; then
+      echo "could not remove stale Flutter test package $package after 3 attempts" >&2
+      return 1
+    fi
+  done
+}
+
 usage() {
   cat <<'EOF'
 Usage: ./scripts/flutter-device-test.sh --device <id> [options]
@@ -260,11 +298,29 @@ echo "Device test artifacts: $RUN_DIR"
 set +e
 TEST_RC=0
 if [ "${#PLAIN_TESTS[@]}" -gt 0 ]; then
-  (
-    cd "$FLUTTER_APP" &&
-      "$FLUTTER_BIN" test "${PLAIN_TESTS[@]}" -d "$DEVICE" --reporter expanded "${TEST_ARGS[@]}"
-  ) 2>&1 | tee "$RUN_DIR/test.log"
-  TEST_RC=${PIPESTATUS[0]}
+  for test_file in "${PLAIN_TESTS[@]}"; do
+    reset_android_flutter_harness
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+      TEST_RC=$rc
+      break
+    fi
+    (
+      cd "$FLUTTER_APP" &&
+        "$FLUTTER_BIN" test "$test_file" -d "$DEVICE" --reporter expanded "${TEST_ARGS[@]}"
+    ) 2>&1 | tee -a "$RUN_DIR/test.log"
+    rc=${PIPESTATUS[0]}
+    reset_android_flutter_harness
+    cleanup_rc=$?
+    if [ "$rc" -ne 0 ]; then
+      TEST_RC=$rc
+      break
+    fi
+    if [ "$cleanup_rc" -ne 0 ]; then
+      TEST_RC=$cleanup_rc
+      break
+    fi
+  done
 fi
 
 # Patrol needs `dart` on PATH; the CLI is a Dart snapshot wrapper and exits with "dart: not found"
@@ -283,6 +339,12 @@ if [ "${#PATROL_TESTS[@]}" -gt 0 ]; then
   if [ -x "$PATROL_BIN" ]; then
     FLUTTER_DIR="$(dirname "$(command -v "$FLUTTER_BIN")")"
     for test_file in "${PATROL_TESTS[@]}"; do
+      reset_android_flutter_harness
+      rc=$?
+      if [ "$rc" -ne 0 ]; then
+        TEST_RC=$rc
+        break
+      fi
       (
         cd "$FLUTTER_APP" &&
           PATH="$FLUTTER_DIR:$FLUTTER_DIR/cache/dart-sdk/bin:$PATH" \
@@ -291,7 +353,16 @@ if [ "${#PATROL_TESTS[@]}" -gt 0 ]; then
               "${TEST_ARGS[@]}"
       ) 2>&1 | tee -a "$RUN_DIR/test-patrol.log"
       rc=${PIPESTATUS[0]}
-      [ "$rc" -eq 0 ] || TEST_RC=$rc
+      reset_android_flutter_harness
+      cleanup_rc=$?
+      if [ "$rc" -ne 0 ]; then
+        TEST_RC=$rc
+        break
+      fi
+      if [ "$cleanup_rc" -ne 0 ]; then
+        TEST_RC=$cleanup_rc
+        break
+      fi
     done
   else
     echo "patrol CLI not found at $PATROL_BIN; ${#PATROL_TESTS[@]} native test(s) were NOT run" \
