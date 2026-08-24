@@ -12,6 +12,7 @@ DEVICE=""
 ARTIFACT_ROOT="${OMNITERM_DEVICE_ARTIFACTS:-$ROOT/artifacts/device-tests}"
 USE_FIXTURES=true
 FAIL_ON_WARNING=true
+PLAIN_TRANSPORT_ATTEMPTS=2
 ANDROID_PREVIOUS_STAY=""
 ANDROID_STALE_FORWARD_COUNT=0
 
@@ -299,25 +300,47 @@ set +e
 TEST_RC=0
 if [ "${#PLAIN_TESTS[@]}" -gt 0 ]; then
   for test_file in "${PLAIN_TESTS[@]}"; do
-    reset_android_flutter_harness
-    rc=$?
-    if [ "$rc" -ne 0 ]; then
+    for attempt in $(seq 1 "$PLAIN_TRANSPORT_ATTEMPTS"); do
+      reset_android_flutter_harness
+      rc=$?
+      if [ "$rc" -ne 0 ]; then
+        TEST_RC=$rc
+        break
+      fi
+
+      safe_test_name="$(printf '%s' "$test_file" | tr -c '[:alnum:]_.-' '_')"
+      attempt_log="$RUN_DIR/plain-${safe_test_name}-attempt-${attempt}.log"
+      (
+        cd "$FLUTTER_APP" &&
+          "$FLUTTER_BIN" test "$test_file" -d "$DEVICE" --reporter expanded "${TEST_ARGS[@]}"
+      ) 2>&1 | tee -a "$RUN_DIR/test.log" "$attempt_log"
+      rc=${PIPESTATUS[0]}
+      reset_android_flutter_harness
+      cleanup_rc=$?
+      if [ "$rc" -eq 0 ]; then
+        if [ "$cleanup_rc" -ne 0 ]; then
+          TEST_RC=$cleanup_rc
+        fi
+        break
+      fi
+
+      # Flutter can finish one APK with DELETE_FAILED_INTERNAL_ERROR and then fail the next
+      # entrypoint before its first test because the new VM-service forward cannot start DDS. The
+      # harness reset above has already removed every package/forward again, so one fresh launch is
+      # safe. Match only Flutter's startup error: assertion failures and app crashes are never
+      # retried and remain immediately visible.
+      if [ "$PLATFORM" = android ] &&
+        [ "$attempt" -lt "$PLAIN_TRANSPORT_ATTEMPTS" ] &&
+        grep -Fq 'Failed to start Dart Development Service' "$attempt_log"; then
+        echo "Retrying $test_file after Flutter DDS startup failure ($attempt/$PLAIN_TRANSPORT_ATTEMPTS)" \
+          | tee -a "$RUN_DIR/test.log"
+        continue
+      fi
+
       TEST_RC=$rc
       break
-    fi
-    (
-      cd "$FLUTTER_APP" &&
-        "$FLUTTER_BIN" test "$test_file" -d "$DEVICE" --reporter expanded "${TEST_ARGS[@]}"
-    ) 2>&1 | tee -a "$RUN_DIR/test.log"
-    rc=${PIPESTATUS[0]}
-    reset_android_flutter_harness
-    cleanup_rc=$?
-    if [ "$rc" -ne 0 ]; then
-      TEST_RC=$rc
-      break
-    fi
-    if [ "$cleanup_rc" -ne 0 ]; then
-      TEST_RC=$cleanup_rc
+    done
+    if [ "$TEST_RC" -ne 0 ]; then
       break
     fi
   done
