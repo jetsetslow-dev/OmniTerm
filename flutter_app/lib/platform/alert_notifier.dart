@@ -1,6 +1,8 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter/foundation.dart';
 
 import '../domain/alert_notification.dart';
+import 'platform_permissions.dart';
 
 /// Posts and clears fired-alert notifications.
 ///
@@ -23,10 +25,17 @@ abstract interface class AlertNotifier {
 
 /// The real implementation, on `flutter_local_notifications`.
 class LocalAlertNotifier implements AlertNotifier {
-  LocalAlertNotifier({FlutterLocalNotificationsPlugin? plugin})
-    : _plugin = plugin ?? FlutterLocalNotificationsPlugin();
+  LocalAlertNotifier({
+    FlutterLocalNotificationsPlugin? plugin,
+    PlatformPermissions? permissions,
+    TargetPlatform? platform,
+  }) : _plugin = plugin ?? FlutterLocalNotificationsPlugin(),
+       _permissions = permissions ?? PlatformPermissions(),
+       _platform = platform ?? defaultTargetPlatform;
 
   final FlutterLocalNotificationsPlugin _plugin;
+  final PlatformPermissions _permissions;
+  final TargetPlatform _platform;
 
   /// Distinct from the background-session channel, so a user can silence long-running session
   /// notices without also silencing the thing that wakes them when a disk fills up.
@@ -54,8 +63,18 @@ class LocalAlertNotifier implements AlertNotifier {
 
   @override
   Future<bool> ensurePermission() async {
-    await _init();
     try {
+      // flutter_local_notifications 22.3.0 can leave its permission-request Future pending after
+      // Android reports a denial. The dialog is already gone, but callers then remain at the
+      // indeterminate `null` state forever and never render the "notifications are blocked"
+      // warning. OmniTerm's activity bridge owns a distinct request code and completes directly
+      // from onRequestPermissionsResult for both grant and denial, so use it on Android. The
+      // notification plugin is still initialised lazily before the first post.
+      if (_platform == TargetPlatform.android) {
+        return await _permissions.requestNotifications();
+      }
+
+      await _init();
       final android = _plugin
           .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
       if (android != null) {
