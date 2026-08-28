@@ -169,7 +169,7 @@ recover_android_flutter_transport() {
     return 1
   fi
 
-  echo "Rebooting the disposable emulator after Flutter DDS failed to start"
+  echo "Rebooting the disposable emulator after Flutter test transport failed before tests started"
   adb -s "$DEVICE" reboot >/dev/null
   adb -s "$DEVICE" wait-for-device
 
@@ -182,13 +182,28 @@ recover_android_flutter_transport() {
     sleep 1
   done
   if [ "$boot_completed" != true ]; then
-    echo "disposable emulator did not finish rebooting after Flutter DDS failure" >&2
+    echo "disposable emulator did not finish rebooting after Flutter test transport failure" >&2
     return 1
   fi
 
   adb -s "$DEVICE" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
   adb -s "$DEVICE" shell wm dismiss-keyguard >/dev/null 2>&1 || true
   remove_android_test_forwards
+}
+
+is_android_flutter_transport_failure() {
+  local rc="$1"
+  local attempt_log="$2"
+
+  if grep -Fq 'Failed to start Dart Development Service' "$attempt_log"; then
+    return 0
+  fi
+
+  # A hosted emulator can also accept the APK and then never expose the VM service. GNU timeout
+  # interrupts Flutter before its own DDS error is emitted; Flutter's exact terminal result is
+  # then exit 124 plus "No tests ran." This is still a pre-test transport failure, not an app
+  # assertion. Require both signals so an ordinary test timeout or failure is never retried.
+  [ "$rc" -eq 124 ] && grep -Fq 'No tests ran.' "$attempt_log"
 }
 
 usage() {
@@ -436,8 +451,8 @@ done
 echo "Device test artifacts: $RUN_DIR"
 set +e
 TEST_RC=0
-# Hosted Android runners can leave the emulator's VM-service transport half-open when DDS fails to
-# start. Retrying against that same device state can hang after APK installation until the outer job
+# Hosted Android runners can leave the emulator's VM-service transport half-open before DDS starts.
+# Retrying against that same device state can hang after APK installation until the outer job
 # timeout. Keep every entrypoint bounded and reboot only the repository-owned disposable emulator
 # before the one permitted transport retry. App assertions and physical devices are never retried.
 if [ "${#PLAIN_TESTS[@]}" -gt 0 ]; then
@@ -476,7 +491,7 @@ if [ "${#PLAIN_TESTS[@]}" -gt 0 ]; then
       fi
 
       if [ "$cleanup_rc" -eq 0 ] && [ "$attempt" -lt "$PLAIN_TRANSPORT_ATTEMPTS" ] &&
-        grep -Fq 'Failed to start Dart Development Service' "$attempt_log" &&
+        is_android_flutter_transport_failure "$rc" "$attempt_log" &&
         recover_android_flutter_transport; then
         echo "Retrying $test_file after rebooting the disposable emulator ($attempt/$PLAIN_TRANSPORT_ATTEMPTS)" \
           | tee -a "$RUN_DIR/test.log"
