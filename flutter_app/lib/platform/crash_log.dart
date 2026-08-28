@@ -206,7 +206,7 @@ class CrashLog extends ChangeNotifier {
 
 /// Installs both framework and root-isolate handlers without replacing Flutter's normal error
 /// presentation. The history write is best-effort because the platform may terminate immediately.
-Future<void> installCrashHistory() async {
+Future<void> installCrashHistory({bool Function()? startupInProgress}) async {
   final log = CrashLog.instance;
   await log.initialize();
   final previousFlutterHandler = FlutterError.onError;
@@ -217,11 +217,19 @@ Future<void> installCrashHistory() async {
         details.exception,
         details.stack ?? StackTrace.current,
         thread: 'Flutter framework',
+        startup: startupInProgress?.call() ?? false,
       ),
     );
   };
   PlatformDispatcher.instance.onError = (error, stack) {
-    unawaited(log.record(error, stack, thread: 'Dart root isolate'));
+    unawaited(
+      log.record(
+        error,
+        stack,
+        thread: 'Dart root isolate',
+        startup: startupInProgress?.call() ?? false,
+      ),
+    );
     return false;
   };
 }

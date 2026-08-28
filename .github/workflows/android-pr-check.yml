@@ -85,6 +85,7 @@ jobs:
           ./scripts/test-release-version.sh
           ./scripts/test-release-engine.sh
           ./scripts/test-ci-gradle-gate.sh
+          ./scripts/test-flutter-device-preservation.sh
 
       # Verification APKs never need signing continuity. Always use an ephemeral key so untrusted
       # build/test code cannot access the stable sideload signing key.

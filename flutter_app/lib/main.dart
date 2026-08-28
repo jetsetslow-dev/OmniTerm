@@ -72,31 +72,50 @@ import 'ui/widgets/startup_recovery_app.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await installCrashHistory();
-
-  // A startup crash used to kill the app before any UI existed, and the next launch did the same —
-  // on a device the only escape was clearing app data, which throws away every saved host to get
-  // past a problem the user cannot even see. Kotlin gates this the same way
-  // (`MainActivity.kt:55`): a recent startup crash offers recovery instead of relaunching into it.
+  var startupInProgress = true;
   final log = CrashLog.instance;
-  final last = log.entries.isEmpty ? null : log.entries.first;
-  final verdict = classifyStartupCrash(
-    report: last?.report,
-    recordedAtMs: last?.timeMs ?? 0,
-    nowMs: DateTime.now().millisecondsSinceEpoch,
-  );
-  if (verdict == StartupCrashVerdict.offerRecovery && last!.startup) {
-    runApp(StartupRecoveryApp(report: last.report));
-    return;
-  }
 
   try {
+    await installCrashHistory(startupInProgress: () => startupInProgress);
+
+    // A startup crash used to kill the app before any UI existed, and the next launch did the same
+    // — on a device the only escape was clearing app data, which throws away every saved host to
+    // get past a problem the user cannot even see. Kotlin gates this the same way
+    // (`MainActivity.kt:55`): a recent startup crash offers recovery instead of relaunching into it.
+    final last = log.entries.isEmpty ? null : log.entries.first;
+    final verdict = classifyStartupCrash(
+      report: last?.report,
+      recordedAtMs: last?.timeMs ?? 0,
+      nowMs: DateTime.now().millisecondsSinceEpoch,
+    );
+    if (verdict == StartupCrashVerdict.offerRecovery && last!.startup) {
+      runApp(StartupRecoveryApp(report: last.report));
+      return;
+    }
+
+    // A framework error before the first rendered frame is a startup failure. Scope the custom
+    // builder to that window: leaving a process-global ErrorWidget builder installed leaked into
+    // later integration-test cases and would also turn an isolated post-start screen bug into a
+    // full-app recovery screen.
+    final previousErrorWidgetBuilder = ErrorWidget.builder;
+    final startupErrorWidgetBuilder = startupRecoveryForError;
+    ErrorWidget.builder = startupErrorWidgetBuilder;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      startupInProgress = false;
+      if (identical(ErrorWidget.builder, startupErrorWidgetBuilder)) {
+        ErrorWidget.builder = previousErrorWidgetBuilder;
+      }
+    });
     runApp(const OmniTermApp());
   } catch (error, stack) {
-    // Anything thrown while building the root is recorded as a *startup* crash, so the next launch
-    // recognises it — and this one shows an explanation rather than a dead window.
-    await log.record(error, stack, thread: 'Startup', startup: true);
-    runApp(StartupRecoveryApp(report: '$error\n$stack'));
+    // This also covers failures while initializing crash history itself. Recording is best-effort:
+    // a broken preferences channel must not prevent the independent recovery UI from rendering.
+    try {
+      await log.record(error, stack, thread: 'Startup', startup: true);
+    } catch (_) {
+      // The on-screen redacted report remains available even when persistence is unavailable.
+    }
+    runApp(StartupRecoveryApp(report: redactCrashReport('$error\n$stack')));
   }
 }
 

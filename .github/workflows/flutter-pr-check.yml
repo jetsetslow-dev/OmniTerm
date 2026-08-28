@@ -87,7 +87,9 @@ jobs:
         run: flutter pub get
 
       - name: Validate the sole release publisher
-        run: ../scripts/test-release-engine.sh
+        run: |
+          ../scripts/test-release-engine.sh
+          ../scripts/test-flutter-device-preservation.sh
 
       # `--output=none` so this reports rather than rewrites: a gate that edits the tree would
       # "pass" locally by fixing the thing it was meant to catch.

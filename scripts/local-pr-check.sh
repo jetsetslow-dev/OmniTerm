@@ -59,6 +59,7 @@ git diff --check
 ./scripts/test-release-engine.sh
 ./scripts/test-ci-gradle-gate.sh
 ./scripts/test-secret-scan-coverage.sh
+./scripts/test-flutter-device-preservation.sh
 
 GRADLE_ARGS=(
   --no-daemon

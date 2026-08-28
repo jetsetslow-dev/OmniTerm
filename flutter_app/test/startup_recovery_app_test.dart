@@ -31,4 +31,25 @@ void main() {
     expect(find.byKey(const ValueKey('startup.recovery.clear')), findsOneWidget);
     expect(find.byKey(const ValueKey('startup.recovery.copy')), findsOneWidget);
   });
+
+  testWidgets('a root build failure renders recovery instead of a blank release surface', (
+    tester,
+  ) async {
+    final previous = ErrorWidget.builder;
+    ErrorWidget.builder = startupRecoveryForError;
+    try {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(builder: (_) => throw StateError('upgraded database value failed')),
+        ),
+      );
+      expect(tester.takeException(), isA<StateError>());
+      await tester.pump();
+
+      expect(find.byKey(const ValueKey('startup.recovery')), findsOneWidget);
+      expect(find.textContaining('upgraded database value failed'), findsOneWidget);
+    } finally {
+      ErrorWidget.builder = previous;
+    }
+  });
 }

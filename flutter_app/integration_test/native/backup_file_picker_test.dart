@@ -89,23 +89,23 @@ void main() {
       timeout: const Duration(seconds: 20),
     );
 
-    final views = await $.platformAutomator.android.getNativeViews(
-      AndroidSelector(applicationPackage: 'com.google.android.documentsui'),
+    // Query the filename leaf directly. Asking UIAutomator for the DocumentsUI package root makes
+    // Patrol recursively serialize every descendant; Samsung's API 36 picker can mutate that tree
+    // while it is being walked, leaving the native request hung until Patrol's 60-second transport
+    // timeout. The filename field is the contract this test actually needs and has no descendants.
+    const filename = AndroidSelector(
+      applicationPackage: 'com.google.android.documentsui',
+      className: 'android.widget.EditText',
     );
-
-    // The picker's view tree, flattened — the file-name field is somewhere inside it and its exact
-    // position is the picker's business, not ours.
-    final text = StringBuffer();
-    void walk(AndroidNativeView view) {
-      text.write('${view.text ?? ''} ${view.contentDescription ?? ''} ');
-      view.children.forEach(walk);
-    }
-
-    views.roots.forEach(walk);
+    await $.platformAutomator.android.waitUntilVisible(
+      filename,
+      timeout: const Duration(seconds: 20),
+    );
+    final views = await $.platformAutomator.android.getNativeViews(filename);
     expect(
-      text.toString(),
-      contains('omniterm'),
-      reason: 'the picker must open on a name that identifies the app, not an anonymous default',
+      views.roots.single.text,
+      matches(RegExp(r'^omniterm-\d{8}-\d{4}\.omnibak$')),
+      reason: 'the picker must receive OmniTerm\'s dated .omnibak filename, not a generic default',
     );
 
     await $.platformAutomator.android.pressBack();

@@ -5,6 +5,18 @@ import '../../platform/crash_log.dart';
 import '../theme/colors.dart';
 import '../theme/typography.dart';
 
+/// Replaces Flutter's blank release-mode error surface when the app throws while building.
+///
+/// This is deliberately a standalone function so [main] can install it as [ErrorWidget.builder]
+/// before constructing any provider, database-backed view model, or theme state. Samsung and other
+/// production devices must get an actionable report even when the failing value exists only in an
+/// upgraded installation and could not be reproduced by a fresh-install smoke test.
+Widget startupRecoveryForError(FlutterErrorDetails details) {
+  final stack = details.stack ?? StackTrace.current;
+  final report = redactCrashReport('${details.exceptionAsString()}\n$stack');
+  return StartupRecoveryApp(report: report);
+}
+
 /// Shown instead of the app when the last launch crashed while starting.
 ///
 /// Ported from `showCrashReport` (`MainActivity.kt:342`). Its own `MaterialApp`, deliberately: this

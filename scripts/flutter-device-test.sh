@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-FLUTTER_APP="$ROOT/flutter_app"
+FLUTTER_APP="${OMNITERM_FLUTTER_APP_ROOT:-$ROOT/flutter_app}"
 FLUTTER_BIN="${FLUTTER_BIN:-flutter}"
 PROFILE="core"
 PLATFORM="auto"
@@ -12,9 +12,50 @@ DEVICE=""
 ARTIFACT_ROOT="${OMNITERM_DEVICE_ARTIFACTS:-$ROOT/artifacts/device-tests}"
 USE_FIXTURES=true
 FAIL_ON_WARNING=true
+PRESERVE_DEVICE=false
 PLAIN_TRANSPORT_ATTEMPTS=2
 ANDROID_PREVIOUS_STAY=""
 ANDROID_STALE_FORWARD_COUNT=0
+ANDROID_BASELINE_FORWARDS_FILE=""
+ANDROID_BASELINE_REVERSES_FILE=""
+ANDROID_MAIN_APP_TEMP_DIR=""
+ANDROID_MAIN_APP_APK=""
+
+remove_android_test_forwards() {
+  if [ "$PLATFORM" != android ]; then return; fi
+  if [ "$PRESERVE_DEVICE" != true ]; then
+    adb -s "$DEVICE" forward --remove-all >/dev/null 2>&1 || true
+    return
+  fi
+  if [ -z "$ANDROID_BASELINE_FORWARDS_FILE" ] || [ ! -f "$ANDROID_BASELINE_FORWARDS_FILE" ]; then
+    return
+  fi
+
+  local serial local_socket remote_socket
+  while read -r serial local_socket remote_socket; do
+    [ "$serial" = "$DEVICE" ] || continue
+    if ! grep -Fqx "$serial $local_socket $remote_socket" "$ANDROID_BASELINE_FORWARDS_FILE"; then
+      adb -s "$DEVICE" forward --remove "$local_socket" >/dev/null 2>&1 || true
+    fi
+  done < <(adb -s "$DEVICE" forward --list 2>/dev/null)
+}
+
+remove_android_test_reverses() {
+  if [ "$PLATFORM" != android ] || [ "$PRESERVE_DEVICE" != true ]; then return; fi
+  if [ -z "$ANDROID_BASELINE_REVERSES_FILE" ] || [ ! -f "$ANDROID_BASELINE_REVERSES_FILE" ]; then
+    return
+  fi
+
+  local transport device_socket host_socket
+  while read -r transport device_socket host_socket; do
+    # Unlike `adb forward --list`, `adb -s <serial> reverse --list` identifies USB transports as
+    # `UsbFfs` rather than echoing the selected serial. The `-s` already scopes these rows to the
+    # requested device, so compare the socket pair and treat the transport label as informational.
+    if ! grep -Fqx "$device_socket $host_socket" "$ANDROID_BASELINE_REVERSES_FILE"; then
+      adb -s "$DEVICE" reverse --remove "$device_socket" >/dev/null 2>&1 || true
+    fi
+  done < <(adb -s "$DEVICE" reverse --list 2>/dev/null)
+}
 
 restore_android_device() {
   if [ "$PLATFORM" != android ]; then return; fi
@@ -22,7 +63,24 @@ restore_android_device() {
   # mappings behind; after enough accumulate, a later APK reaches the Dart VM but the host tool
   # never attaches and Android leaves the launch splash on screen indefinitely. This runner owns
   # the selected device for its duration, so clean up the forwards it may have allocated.
-  adb -s "$DEVICE" forward --remove-all >/dev/null 2>&1 || true
+  remove_android_test_forwards
+  remove_android_test_reverses
+  if [ "$PRESERVE_DEVICE" = true ]; then
+    # A Flutter integration test compiles its test entrypoint into the ordinary app-debug.apk path.
+    # Once the host-side harness and adb forward disappear, that APK waits for localhost forever
+    # and looks like a black-screen app. Restore the independently snapshotted lib/main.dart build,
+    # never the mutable Gradle output the last test happened to leave behind.
+    if [ -n "$ANDROID_MAIN_APP_APK" ] && [ -f "$ANDROID_MAIN_APP_APK" ]; then
+      adb -s "$DEVICE" install -r "$ANDROID_MAIN_APP_APK" >/dev/null 2>&1 ||
+        echo "warning: could not restore the normal OmniTerm Flutter debug APK" >&2
+      adb -s "$DEVICE" shell am force-stop com.jetsetslow.omniterm.app.flutter \
+        >/dev/null 2>&1 || true
+    fi
+    if [ -n "$ANDROID_MAIN_APP_TEMP_DIR" ]; then
+      rm -rf -- "$ANDROID_MAIN_APP_TEMP_DIR"
+    fi
+    return
+  fi
   if [ -z "$ANDROID_PREVIOUS_STAY" ]; then return; fi
   adb -s "$DEVICE" shell settings put global stay_on_while_plugged_in \
     "$ANDROID_PREVIOUS_STAY" >/dev/null 2>&1 || true
@@ -32,6 +90,40 @@ restore_android_device() {
   fi
 }
 trap restore_android_device EXIT
+
+snapshot_android_main_app() {
+  if [ "$PLATFORM" != android ] || [ "$PRESERVE_DEVICE" != true ]; then return; fi
+
+  # Preserve the user's side-by-side Flutter installation only when it existed on entry. A test on
+  # an otherwise clean device should leave that device clean, not install a development app as a
+  # side effect.
+  if ! adb -s "$DEVICE" shell pm path com.jetsetslow.omniterm.app.flutter 2>/dev/null |
+    grep -q '^package:'; then
+    return
+  fi
+
+  ANDROID_MAIN_APP_TEMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/omniterm-main-apk.XXXXXXXX")"
+  echo "Building a normal Flutter entrypoint to restore after the device suite"
+  (
+    cd "$FLUTTER_APP"
+    "$FLUTTER_BIN" build apk --debug --target=lib/main.dart
+  ) >"$RUN_DIR/main-app-restore-build.log" 2>&1
+
+  local built_apk="$FLUTTER_APP/build/app/outputs/flutter-apk/app-debug.apk"
+  [ -s "$built_apk" ] || {
+    echo "normal Flutter debug APK was not produced at $built_apk" >&2
+    return 1
+  }
+  cp "$built_apk" "$ANDROID_MAIN_APP_TEMP_DIR/app-debug.apk"
+  unzip -p "$ANDROID_MAIN_APP_TEMP_DIR/app-debug.apk" assets/flutter_assets/kernel_blob.bin \
+    >"$ANDROID_MAIN_APP_TEMP_DIR/kernel_blob.bin"
+  if grep -aEq 'patrol_test/test_bundle\.dart|localhost:8181' \
+    "$ANDROID_MAIN_APP_TEMP_DIR/kernel_blob.bin"; then
+    echo "refusing to restore an APK that contains the Patrol test entrypoint" >&2
+    return 1
+  fi
+  ANDROID_MAIN_APP_APK="$ANDROID_MAIN_APP_TEMP_DIR/app-debug.apk"
+}
 
 # Each integration-test entrypoint gets its own APK/harness connection. Flutter normally tears the
 # previous pair down before starting the next one, but Android's package manager can transiently
@@ -43,7 +135,7 @@ reset_android_flutter_harness() {
   if [ "$PLATFORM" != android ]; then return 0; fi
 
   adb -s "$DEVICE" wait-for-device
-  adb -s "$DEVICE" forward --remove-all
+  remove_android_test_forwards
 
   local package attempt removed
   for package in \
@@ -83,6 +175,8 @@ Options:
   --artifacts <directory>       Artifact root (default: artifacts/device-tests)
   --no-fixtures                 Do not start/reverse the disposable host fleet
   --allow-warnings              Record compiler/test warnings without failing the run
+  --preserve-device             Preserve system logs, global settings, lock state, and pre-existing
+                                adb mappings on a daily-use physical device
   --help                        Show this help
 
 Examples:
@@ -116,6 +210,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     --no-fixtures) USE_FIXTURES=false; shift ;;
     --allow-warnings) FAIL_ON_WARNING=false; shift ;;
+    --preserve-device) PRESERVE_DEVICE=true; shift ;;
     --help|-h) usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
@@ -166,6 +261,7 @@ START_ISO="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   fi
   echo "host_uname=$(uname -a)"
   echo "docker_host=${DOCKER_HOST:-default-context}"
+  echo "preserve_device=$PRESERVE_DEVICE"
 } >"$RUN_DIR/metadata.txt"
 git -C "$ROOT" status --short >"$RUN_DIR/git-status.txt" 2>&1 || true
 "$FLUTTER_BIN" --version >"$RUN_DIR/flutter-version.txt" 2>&1 || true
@@ -179,19 +275,30 @@ if [ "$PLATFORM" = android ]; then
     adb -s "$DEVICE" forward --list 2>/dev/null |
       awk -v device="$DEVICE" '$1 == device { count++ } END { print count + 0 }'
   )"
-  adb -s "$DEVICE" forward --remove-all
-  ANDROID_PREVIOUS_STAY="$(adb -s "$DEVICE" shell settings get global stay_on_while_plugged_in 2>/dev/null | tr -d '\r')"
-  case "$ANDROID_PREVIOUS_STAY" in ''|*[!0-9]*) ANDROID_PREVIOUS_STAY=0 ;; esac
-  adb -s "$DEVICE" shell settings put global stay_on_while_plugged_in 7 >/dev/null 2>&1 || true
-  if [ "$(adb -s "$DEVICE" shell settings get global stay_on_while_plugged_in 2>/dev/null | tr -d '\r')" != 7 ]; then
-    # A rooted development device can grant what some vendor builds withhold from the shell user.
-    # Failure remains non-fatal for ordinary unrooted devices, but the captured value explains a
-    # later sleep-related timeout instead of making it look like an app hang.
-    adb -s "$DEVICE" shell su -c \
-      'settings put global stay_on_while_plugged_in 7' >/dev/null 2>&1 || true
+  if [ "$PRESERVE_DEVICE" = true ]; then
+    ANDROID_BASELINE_FORWARDS_FILE="$RUN_DIR/android-forwards-before.txt"
+    ANDROID_BASELINE_REVERSES_FILE="$RUN_DIR/android-reverses-before.txt"
+    adb -s "$DEVICE" forward --list 2>/dev/null |
+      awk -v device="$DEVICE" '$1 == device { print $1, $2, $3 }' \
+      >"$ANDROID_BASELINE_FORWARDS_FILE"
+    adb -s "$DEVICE" reverse --list 2>/dev/null |
+      awk '{ print $2, $3 }' \
+      >"$ANDROID_BASELINE_REVERSES_FILE"
+  else
+    ANDROID_PREVIOUS_STAY="$(adb -s "$DEVICE" shell settings get global stay_on_while_plugged_in 2>/dev/null | tr -d '\r')"
+    case "$ANDROID_PREVIOUS_STAY" in ''|*[!0-9]*) ANDROID_PREVIOUS_STAY=0 ;; esac
+    adb -s "$DEVICE" shell settings put global stay_on_while_plugged_in 7 >/dev/null 2>&1 || true
+    if [ "$(adb -s "$DEVICE" shell settings get global stay_on_while_plugged_in 2>/dev/null | tr -d '\r')" != 7 ]; then
+      # A rooted development device can grant what some vendor builds withhold from the shell user.
+      # Failure remains non-fatal for ordinary unrooted devices, but the captured value explains a
+      # later sleep-related timeout instead of making it look like an app hang.
+      adb -s "$DEVICE" shell su -c \
+        'settings put global stay_on_while_plugged_in 7' >/dev/null 2>&1 || true
+    fi
+    adb -s "$DEVICE" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+    adb -s "$DEVICE" shell wm dismiss-keyguard >/dev/null 2>&1 || true
   fi
-  adb -s "$DEVICE" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
-  adb -s "$DEVICE" shell wm dismiss-keyguard >/dev/null 2>&1 || true
+  remove_android_test_forwards
   adb -s "$DEVICE" shell getprop >"$RUN_DIR/android-getprop.txt" 2>&1 || true
   {
     adb -s "$DEVICE" shell wm size
@@ -203,7 +310,9 @@ if [ "$PLATFORM" = android ]; then
     echo "stay_on_while_plugged_in_during=$(adb -s "$DEVICE" shell settings get global stay_on_while_plugged_in 2>/dev/null | tr -d '\r')"
     adb -s "$DEVICE" shell id
   } >"$RUN_DIR/android-display-and-access.txt" 2>&1 || true
-  adb -s "$DEVICE" logcat -c >/dev/null 2>&1 || true
+  if [ "$PRESERVE_DEVICE" != true ]; then
+    adb -s "$DEVICE" logcat -c >/dev/null 2>&1 || true
+  fi
   if $USE_FIXTURES; then
     if ! "$ROOT/scripts/test-hosts.sh" up >"$RUN_DIR/fixture-startup.log" 2>&1; then
       echo "fixture startup failed; see $RUN_DIR/fixture-startup.log" >&2
@@ -214,6 +323,7 @@ if [ "$PLATFORM" = android ]; then
       *) "$ROOT/scripts/test-hosts.sh" android "$DEVICE" >>"$RUN_DIR/fixture-startup.log" 2>&1 ;;
     esac
   fi
+  snapshot_android_main_app
 else
   command -v xcrun >/dev/null || { echo "xcrun is required for iOS simulator tests" >&2; exit 2; }
   xcrun simctl list --json >"$RUN_DIR/ios-simulators.json" 2>&1 || true
