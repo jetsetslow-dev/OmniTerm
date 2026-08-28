@@ -14,6 +14,7 @@ USE_FIXTURES=true
 FAIL_ON_WARNING=true
 PRESERVE_DEVICE=false
 PLAIN_TRANSPORT_ATTEMPTS=2
+PLAIN_TEST_TIMEOUT="${OMNITERM_PLAIN_TEST_TIMEOUT:-12m}"
 ANDROID_PREVIOUS_STAY=""
 ANDROID_STALE_FORWARD_COUNT=0
 ANDROID_BASELINE_FORWARDS_FILE=""
@@ -161,6 +162,33 @@ reset_android_flutter_harness() {
       return 1
     fi
   done
+}
+
+recover_android_flutter_transport() {
+  if [ "$PLATFORM" != android ] || [ "$PRESERVE_DEVICE" = true ] || [[ "$DEVICE" != emulator-* ]]; then
+    return 1
+  fi
+
+  echo "Rebooting the disposable emulator after Flutter DDS failed to start"
+  adb -s "$DEVICE" reboot >/dev/null
+  adb -s "$DEVICE" wait-for-device
+
+  local attempt boot_completed=false
+  for attempt in $(seq 1 180); do
+    if [ "$(adb -s "$DEVICE" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; then
+      boot_completed=true
+      break
+    fi
+    sleep 1
+  done
+  if [ "$boot_completed" != true ]; then
+    echo "disposable emulator did not finish rebooting after Flutter DDS failure" >&2
+    return 1
+  fi
+
+  adb -s "$DEVICE" shell input keyevent KEYCODE_WAKEUP >/dev/null 2>&1 || true
+  adb -s "$DEVICE" shell wm dismiss-keyguard >/dev/null 2>&1 || true
+  remove_android_test_forwards
 }
 
 usage() {
@@ -408,6 +436,10 @@ done
 echo "Device test artifacts: $RUN_DIR"
 set +e
 TEST_RC=0
+# Hosted Android runners can leave the emulator's VM-service transport half-open when DDS fails to
+# start. Retrying against that same device state can hang after APK installation until the outer job
+# timeout. Keep every entrypoint bounded and reboot only the repository-owned disposable emulator
+# before the one permitted transport retry. App assertions and physical devices are never retried.
 if [ "${#PLAIN_TESTS[@]}" -gt 0 ]; then
   for test_file in "${PLAIN_TESTS[@]}"; do
     for attempt in $(seq 1 "$PLAIN_TRANSPORT_ATTEMPTS"); do
@@ -420,10 +452,19 @@ if [ "${#PLAIN_TESTS[@]}" -gt 0 ]; then
 
       safe_test_name="$(printf '%s' "$test_file" | tr -c '[:alnum:]_.-' '_')"
       attempt_log="$RUN_DIR/plain-${safe_test_name}-attempt-${attempt}.log"
-      (
-        cd "$FLUTTER_APP" &&
-          "$FLUTTER_BIN" test "$test_file" -d "$DEVICE" --reporter expanded "${TEST_ARGS[@]}"
-      ) 2>&1 | tee -a "$RUN_DIR/test.log" "$attempt_log"
+      if [ "$PLATFORM" = android ] && [ "$PLAIN_TEST_TIMEOUT" != 0 ] && command -v timeout >/dev/null; then
+        (
+          cd "$FLUTTER_APP" &&
+            timeout --foreground --signal=INT --kill-after=30s "$PLAIN_TEST_TIMEOUT" \
+              "$FLUTTER_BIN" test "$test_file" -d "$DEVICE" --reporter expanded \
+                "${TEST_ARGS[@]}"
+        ) 2>&1 | tee -a "$RUN_DIR/test.log" "$attempt_log"
+      else
+        (
+          cd "$FLUTTER_APP" &&
+            "$FLUTTER_BIN" test "$test_file" -d "$DEVICE" --reporter expanded "${TEST_ARGS[@]}"
+        ) 2>&1 | tee -a "$RUN_DIR/test.log" "$attempt_log"
+      fi
       rc=${PIPESTATUS[0]}
       reset_android_flutter_harness
       cleanup_rc=$?
@@ -434,15 +475,10 @@ if [ "${#PLAIN_TESTS[@]}" -gt 0 ]; then
         break
       fi
 
-      # Flutter can finish one APK with DELETE_FAILED_INTERNAL_ERROR and then fail the next
-      # entrypoint before its first test because the new VM-service forward cannot start DDS. The
-      # harness reset above has already removed every package/forward again, so one fresh launch is
-      # safe. Match only Flutter's startup error: assertion failures and app crashes are never
-      # retried and remain immediately visible.
-      if [ "$PLATFORM" = android ] &&
-        [ "$attempt" -lt "$PLAIN_TRANSPORT_ATTEMPTS" ] &&
-        grep -Fq 'Failed to start Dart Development Service' "$attempt_log"; then
-        echo "Retrying $test_file after Flutter DDS startup failure ($attempt/$PLAIN_TRANSPORT_ATTEMPTS)" \
+      if [ "$cleanup_rc" -eq 0 ] && [ "$attempt" -lt "$PLAIN_TRANSPORT_ATTEMPTS" ] &&
+        grep -Fq 'Failed to start Dart Development Service' "$attempt_log" &&
+        recover_android_flutter_transport; then
+        echo "Retrying $test_file after rebooting the disposable emulator ($attempt/$PLAIN_TRANSPORT_ATTEMPTS)" \
           | tee -a "$RUN_DIR/test.log"
         continue
       fi
@@ -468,7 +504,7 @@ fi
 PATROL_TEST_PORT="${PATROL_TEST_PORT:-8181}"
 PATROL_APP_PORT="${PATROL_APP_PORT:-8182}"
 PATROL_BIN="${PATROL_BIN:-$HOME/.pub-cache/bin/patrol}"
-if [ "${#PATROL_TESTS[@]}" -gt 0 ]; then
+if [ "$TEST_RC" -eq 0 ] && [ "${#PATROL_TESTS[@]}" -gt 0 ]; then
   if [ -x "$PATROL_BIN" ]; then
     FLUTTER_DIR="$(dirname "$(command -v "$FLUTTER_BIN")")"
     for test_file in "${PATROL_TESTS[@]}"; do
