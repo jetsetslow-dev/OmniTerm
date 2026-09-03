@@ -778,24 +778,23 @@ class _BatterySaverDialog extends StatelessWidget {
       child: Center(
         child: AlertDialog(
           key: const ValueKey('batterySaver.dialog'),
-          title: const Text('Battery saver engaged'),
+          title: const Text('Battery saver available'),
           content: Text(
             'Battery reached ${controller.engagedAtPercent}% (threshold '
-            '${controller.thresholdPercent}%). Keep-screen-on was turned off, auto-refresh is '
-            'paused, and persistent tmux terminals were parked. They keep running on the host and '
-            'reattach on your next connect.\n\nEverything resumes when you charge, the battery '
-            'recovers, or you pull to refresh.',
+            '${controller.thresholdPercent}%). OmniTerm can release keep-screen-on, pause '
+            'auto-refresh, and park persistent tmux terminals. Nothing will change unless you '
+            'choose Start saving.',
           ),
           actions: [
             TextButton(
-              key: const ValueKey('batterySaver.keepSaving'),
+              key: const ValueKey('batterySaver.notNow'),
               onPressed: controller.dismissDialog,
-              child: const Text('Keep saving'),
+              child: const Text('Not now'),
             ),
             TextButton(
-              key: const ValueKey('batterySaver.resume'),
-              onPressed: controller.resume,
-              child: const Text('Resume now'),
+              key: const ValueKey('batterySaver.confirm'),
+              onPressed: controller.confirm,
+              child: const Text('Start saving'),
             ),
           ],
         ),

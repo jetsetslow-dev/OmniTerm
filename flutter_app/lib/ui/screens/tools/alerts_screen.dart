@@ -277,7 +277,18 @@ class _RefreshButtonState extends State<_RefreshButton> {
                     .where((s) => s.id == widget.serverId)
                     .firstOrNull;
                 if (srv != null) {
-                  await context.read<TelemetryPoller>().pollOne(srv);
+                  final error = await context.read<TelemetryPoller>().pollOne(srv);
+                  if (error != null && context.mounted) {
+                    ScaffoldMessenger.of(context)
+                      ..hideCurrentSnackBar()
+                      ..showSnackBar(SnackBar(content: Text('Refresh failed: $error')));
+                  }
+                } else if (context.mounted) {
+                  ScaffoldMessenger.of(context)
+                    ..hideCurrentSnackBar()
+                    ..showSnackBar(
+                      const SnackBar(content: Text('Refresh failed: host was removed.')),
+                    );
                 }
               } finally {
                 if (mounted) setState(() => _busy = false);

@@ -498,7 +498,7 @@ class _ConnectPrompt extends StatelessWidget {
           FilledButton.icon(
             key: const ValueKey('shell.connect'),
             icon: const Icon(Icons.play_arrow, size: 18),
-            label: const Text('Connect'),
+            label: Text(vm.error == null ? 'Connect' : 'Retry'),
             onPressed: vm.canConnect
                 ? () => vm.connect(server, controlMode: vm.useControlMode)
                 : null,

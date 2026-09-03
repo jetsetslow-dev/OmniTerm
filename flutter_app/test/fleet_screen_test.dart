@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
@@ -264,6 +266,32 @@ void main() {
       expect(find.byKey(const ValueKey('fleet.results')), findsOneWidget);
       expect(find.text('OK'), findsNWidgets(2));
       expect(find.textContaining('up 3 days'), findsWidgets);
+      vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+
+    testWidgets('a running broadcast exposes a cancel action', (tester) async {
+      await repo.insertServer(server(name: 'alpha', host: '10.0.0.1'));
+      final stall = Completer<void>();
+      final transport = BroadcastTransport()..stalls = {'10.0.0.1': stall};
+      await pump(tester, transport: transport);
+      await goToBroadcast(tester);
+
+      await tester.enterText(find.byKey(const ValueKey('fleet.command')), 'sleep 600');
+      await tester.tap(find.byKey(const ValueKey('fleet.targets.all')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('fleet.run')));
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('run.confirm')));
+      await tester.pump();
+
+      expect(find.text('Cancel'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('fleet.run')));
+      await tester.pumpAndSettle();
+      expect(find.text('CANCELLED'), findsOneWidget);
+
+      stall.complete();
       vm.dispose();
       scriptsVm.dispose();
       await tester.pump(const Duration(milliseconds: 10));

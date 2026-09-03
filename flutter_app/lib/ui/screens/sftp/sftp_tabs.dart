@@ -1550,12 +1550,19 @@ class SftpTransfersTab extends StatelessWidget {
           ),
         Align(
           alignment: Alignment.centerRight,
-          child: TextButton.icon(
-            key: const ValueKey('sftp.transfers.clear'),
-            icon: const Icon(Icons.clear_all, size: 16),
-            label: const Text('Clear finished', style: TextStyle(fontSize: 12)),
-            onPressed: vm.clearFinishedTransfers,
-          ),
+          child: vm.activeTransferCount > 0
+              ? TextButton.icon(
+                  key: const ValueKey('sftp.transfers.cancelAll'),
+                  icon: const Icon(Icons.close, size: 16),
+                  label: const Text('Cancel all', style: TextStyle(fontSize: 12)),
+                  onPressed: vm.cancelAllTransfers,
+                )
+              : TextButton.icon(
+                  key: const ValueKey('sftp.transfers.clear'),
+                  icon: const Icon(Icons.clear_all, size: 16),
+                  label: const Text('Clear finished', style: TextStyle(fontSize: 12)),
+                  onPressed: vm.clearFinishedTransfers,
+                ),
         ),
         Expanded(
           child: ListView.separated(
@@ -1568,6 +1575,7 @@ class SftpTransfersTab extends StatelessWidget {
                 TransferStatus.running => (OmniColors.cyan, 'RUNNING'),
                 TransferStatus.done => (OmniColors.green, 'DONE'),
                 TransferStatus.failed => (OmniColors.red, 'FAILED'),
+                TransferStatus.cancelled => (OmniColors.amber, 'CANCELLED'),
               };
               return OmniCard(
                 key: ValueKey('sftp.transfer.${transfer.id}'),
@@ -1593,6 +1601,22 @@ class SftpTransfersTab extends StatelessWidget {
                           ),
                         ),
                         OmniTag(label: label, color: color),
+                        if (transfer.status == TransferStatus.running)
+                          IconButton(
+                            key: ValueKey('sftp.transfer.${transfer.id}.cancel'),
+                            tooltip: 'Cancel transfer',
+                            onPressed: () => vm.cancelTransfer(transfer.id),
+                            icon: const Icon(Icons.close, size: 16, color: OmniColors.amber),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        if (transfer.canRetry)
+                          IconButton(
+                            key: ValueKey('sftp.transfer.${transfer.id}.retry'),
+                            tooltip: 'Retry upload',
+                            onPressed: () => vm.retryUpload(transfer.id),
+                            icon: const Icon(Icons.refresh, size: 16, color: OmniColors.cyan),
+                            visualDensity: VisualDensity.compact,
+                          ),
                       ],
                     ),
                     if (transfer.status == TransferStatus.running) ...[

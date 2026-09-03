@@ -32,6 +32,14 @@ class AppState extends ChangeNotifier {
   bool _loaded = false;
   bool get isLoaded => _loaded;
 
+  bool _settingsLoaded = false;
+
+  /// Whether the first authoritative preferences snapshot has replaced the in-memory defaults.
+  ///
+  /// Platform controllers must not act on [AppPreferences.defaults] during cold start: doing so
+  /// can briefly enable a feature the user explicitly disabled before the database read finishes.
+  bool get settingsLoaded => _settingsLoaded;
+
   int? _selectedServerId;
 
   /// Called when the selected host changes, so a feature holding host-scoped draft state (the
@@ -129,6 +137,7 @@ class AppState extends ChangeNotifier {
     homelabPresetsEnabled = values['homelab_presets'] == 'true';
     alertPresetsEnabled = values['alert_presets'] == 'true';
     fleetPresetsEnabled = values['fleet_presets'] == 'true';
+    _settingsLoaded = true;
     notifyListeners();
   }
 

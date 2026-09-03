@@ -16,6 +16,9 @@ class MainActivity : FlutterActivity() {
         SmbBridge.register(flutterEngine)
         // Keeps the process — and with it the Dart isolate's SSH sessions — alive in the background.
         SessionServiceBridge.register(flutterEngine, this)
+        // Keeps user-started transfers and other long operations scheduled after app switching.
+        LongOperationBridge.register(flutterEngine, this)
+        BatterySaverNotificationBridge.register(flutterEngine, this)
         // Launcher/widget/notification entry points must be consumed once and then held behind the
         // Dart app-lock gate. Keeping this at the Activity boundary also handles warm singleTop
         // launches, which do not recreate the Flutter engine.

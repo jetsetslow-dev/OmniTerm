@@ -261,6 +261,21 @@ class _HoldingSpeedTest implements SpeedTestClient {
   }) => operation;
 }
 
+class _QueuedSpeedTest implements SpeedTestClient {
+  final List<_FakeSpeedOperation> operations = [];
+
+  @override
+  SpeedTestOperation download(
+    String url, {
+    required void Function(SpeedTestSample sample) onProgress,
+    Duration maximumDuration = const Duration(seconds: 15),
+  }) {
+    final operation = _FakeSpeedOperation();
+    operations.add(operation);
+    return operation;
+  }
+}
+
 void main() {
   late AppDatabase db;
   late AppRepository repo;
@@ -772,6 +787,36 @@ void main() {
       expect(client.operation.cancelled, isTrue);
       expect(vm.speedTestRunning, isFalse);
       expect(vm.speedTestError, isNull);
+      vm.dispose();
+    });
+
+    test('a cancelled run finishing late cannot clear a replacement run', () async {
+      final client = _QueuedSpeedTest();
+      final vm = await boot(FakeProbe(), speedTest: client);
+
+      final first = vm.runSpeedTest();
+      await Future<void>.delayed(Duration.zero);
+      vm.cancelSpeedTest();
+      final second = vm.runSpeedTest();
+      await Future<void>.delayed(Duration.zero);
+
+      expect(client.operations, hasLength(2));
+      expect(vm.speedTestRunning, isTrue);
+      await first;
+      expect(
+        vm.speedTestRunning,
+        isTrue,
+        reason: 'the cancelled run must not stop its replacement',
+      );
+
+      client.operations.last.complete(
+        const SpeedTestResult(bytes: 4096, mbps: 32, latency: Duration(milliseconds: 8)),
+      );
+      await second;
+
+      expect(vm.speedTestBytes, 4096);
+      expect(vm.speedTestMbps, 32);
+      expect(vm.speedTestRunning, isFalse);
       vm.dispose();
     });
   });

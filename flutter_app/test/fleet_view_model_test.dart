@@ -62,7 +62,11 @@ class BroadcastTransport implements SshTransport {
     SshCancellationToken? cancellation,
     required Future<void> Function(String chunk) onChunk,
   }) async {
-    final result = await _run(creds, command);
+    final work = _run(creds, command);
+    final result = cancellation == null
+        ? await work
+        : await Future.any([work, cancellation.onCancel.first.then((_) => 'Cancelled')]);
+    if (cancellation?.isCancelled ?? false) return 'Cancelled';
     if (result.isNotEmpty) await onChunk(result);
     return result;
   }
@@ -428,6 +432,37 @@ void main() {
       await run;
       vm.clearResults();
       expect(vm.results, isEmpty);
+      vm.dispose();
+    });
+
+    test('a user-cancelled broadcast is stopped and never reported as failed', () async {
+      await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
+      final stall = Completer<void>();
+      final transport = BroadcastTransport()..stalls = {'10.0.0.1': stall};
+      final vm = await boot(transport: transport);
+      await Future<void>.delayed(Duration.zero);
+      vm
+        ..commandText = 'sleep 600'
+        ..selectAllTargets();
+
+      final run = vm.runBroadcast(vm.resolvedTargets);
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.executing, isTrue);
+
+      vm.cancelBroadcast();
+      await run;
+
+      expect(vm.executing, isFalse);
+      expect(vm.failureCount, 0);
+      expect(vm.results.single.status, BroadcastStatus.cancelled);
+      expect(vm.results.single.note, 'Cancelled.');
+      stall.complete();
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        vm.results.single.status,
+        BroadcastStatus.cancelled,
+        reason: 'the abandoned SSH future must not overwrite the cancellation later',
+      );
       vm.dispose();
     });
 

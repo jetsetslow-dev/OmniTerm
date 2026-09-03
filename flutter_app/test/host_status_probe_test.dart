@@ -61,6 +61,27 @@ class _FakeSshTransport implements SshTransport {
   noSuchMethod(Invocation invocation) => throw UnimplementedError();
 }
 
+class _CompletingNetworkProbe implements NetworkProbe {
+  final Completer<void> started = Completer<void>();
+  final Completer<Duration?> result = Completer<Duration?>();
+
+  @override
+  Future<Duration?> tcpPing(
+    String host,
+    int port, {
+    Duration timeout = const Duration(seconds: 1),
+  }) {
+    if (!started.isCompleted) started.complete();
+    return result.future;
+  }
+
+  @override
+  Future<void> sendMagicPacket(Uint8List packet, String broadcast, int port) async {}
+
+  @override
+  noSuchMethod(Invocation invocation) => throw UnimplementedError();
+}
+
 class _CompletingSshTransport implements SshTransport {
   final Completer<void> started = Completer<void>();
   final Completer<String?> result = Completer<String?>();
@@ -345,6 +366,55 @@ void main() {
     await probe.sweep();
 
     expect(fake.probed, isEmpty);
+  });
+
+  test('stopping for battery saver invalidates an in-flight SSH verdict', () async {
+    await repo.insertServer(server(name: 'nas', status: 'unknown'));
+    final ssh = _CompletingSshTransport();
+    final probe = HostStatusProbe(repo, probe: _FakeProbe(), transport: ssh);
+
+    final sweep = probe.sweep();
+    await ssh.started.future;
+    probe.stop();
+    ssh.result.complete(null);
+    await sweep;
+
+    expect((await only()).status, 'unknown');
+    expect(probe.hasProbed(1), isFalse);
+    probe.dispose();
+  });
+
+  test('battery saver restores an offline host left in the temporary connecting state', () async {
+    await repo.insertServer(server(name: 'nas', status: 'offline'));
+    final network = _CompletingNetworkProbe();
+    final probe = HostStatusProbe(repo, probe: network);
+
+    final sweep = probe.sweep();
+    await network.started.future;
+    probe.stop();
+    network.result.complete(null);
+    await sweep;
+
+    expect((await only()).status, 'offline');
+    probe.dispose();
+  });
+
+  test('battery stop cannot restore offline over a shell that connected meanwhile', () async {
+    await repo.insertServer(server(name: 'nas', status: 'offline'));
+    final network = _CompletingNetworkProbe();
+    final probe = HostStatusProbe(repo, probe: network);
+
+    final sweep = probe.sweep();
+    await network.started.future;
+    probe.stop();
+    final row = await only();
+    probe.setLiveSessionServers({row.id});
+    await probe.markReachable(row);
+    network.result.complete(null);
+    await sweep;
+
+    expect((await only()).status, 'online');
+    probe.dispose();
   });
 
   /// "Has anything actually looked at this host?", ported from Kotlin's `probedServerIds`

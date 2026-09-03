@@ -54,6 +54,17 @@ void main() {
     });
   });
 
+  test('a failed input write visibly disconnects instead of dropping keystrokes', () async {
+    build();
+    channel.writeFailure = StateError('socket closed');
+
+    expect(session.write(Uint8List.fromList('x'.codeUnits)), isTrue);
+    await settle();
+
+    expect(session.endReason, ShellSessionEnd.disconnected);
+    expect(session.write(Uint8List.fromList('y'.codeUnits)), isFalse);
+  });
+
   group('viewport', () {
     test('follows the tail by default', () async {
       build(rows: 5);

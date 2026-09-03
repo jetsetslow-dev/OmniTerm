@@ -98,6 +98,10 @@ class FakeFsClient extends RemoteFsClient {
   final List<(String, String)> renamed = [];
   final List<String> uploaded = [];
   int closeCalls = 0;
+  int cancelTransferCalls = 0;
+  bool transferCancelled = false;
+  Completer<void>? downloadGate;
+  int uploadFailuresRemaining = 0;
 
   /// Path to contents, for the editor.
   final Map<String, String> files = {};
@@ -168,8 +172,17 @@ class FakeFsClient extends RemoteFsClient {
   }) async {
     if (failFor.contains(path)) throw Exception('read failed');
     onProgress?.call(50, 100);
+    await downloadGate?.future;
+    if (transferCancelled) throw StateError('Transfer cancelled');
     onProgress?.call(100, 100);
     return 100;
+  }
+
+  @override
+  void cancelActiveTransfers() {
+    cancelTransferCalls++;
+    transferCancelled = true;
+    if (!(downloadGate?.isCompleted ?? true)) downloadGate!.complete();
   }
 
   @override
@@ -179,8 +192,11 @@ class FakeFsClient extends RemoteFsClient {
     int totalBytes, {
     void Function(int copied, int total)? onProgress,
   }) async {
-    if (failFor.contains(path)) throw Exception('write failed');
     uploaded.add(path);
+    if (failFor.contains(path) || uploadFailuresRemaining > 0) {
+      if (uploadFailuresRemaining > 0) uploadFailuresRemaining--;
+      throw Exception('write failed');
+    }
     onProgress?.call(totalBytes, totalBytes);
   }
 
@@ -1315,6 +1331,24 @@ void main() {
       vm.dispose();
     });
 
+    test('a running download can be cancelled without being reported as failed', () async {
+      final client = homeTree()..downloadGate = Completer<void>();
+      final vm = await booted(client);
+      final sink = StreamController<List<int>>()..stream.listen((_) {});
+
+      final downloading = vm.download(entry('large.iso', size: 100), sink.sink);
+      await Future<void>.delayed(Duration.zero);
+      final id = vm.transfers.single.id;
+      vm.cancelTransfer(id);
+      await downloading;
+
+      expect(client.cancelTransferCalls, 1);
+      expect(vm.transfers.single.status, TransferStatus.cancelled);
+      expect(vm.transfers.single.error, isNull);
+      await sink.close();
+      vm.dispose();
+    });
+
     test('an upload never silently overwrites', () async {
       // Replacing a file the user did not mean to touch is unrecoverable.
       final client = homeTree();
@@ -1322,7 +1356,8 @@ void main() {
 
       await vm.upload('notes.txt', Stream.value([1, 2, 3]), 3);
 
-      expect(client.uploaded, ['/home/root/notes (2).txt']);
+      expect(client.uploaded.single, startsWith('/home/root/.notes (2).txt.omniterm-upload-'));
+      expect(client.renamed.single.$2, '/home/root/notes (2).txt');
       vm.dispose();
     });
 
@@ -1331,7 +1366,8 @@ void main() {
       final vm = await booted(client);
 
       await vm.upload('fresh.txt', Stream.value([1]), 1);
-      expect(client.uploaded, ['/home/root/fresh.txt']);
+      expect(client.uploaded.single, startsWith('/home/root/.fresh.txt.omniterm-upload-'));
+      expect(client.renamed.single.$2, '/home/root/fresh.txt');
       vm.dispose();
     });
 
@@ -2366,7 +2402,8 @@ void main() {
 
       await vm.uploadFromDevice(source.path);
 
-      expect(client.uploaded, contains('/home/root/notes.txt'));
+      expect(client.uploaded.single, startsWith('/home/root/.notes.txt.omniterm-upload-'));
+      expect(client.renamed.single.$2, '/home/root/notes.txt');
       vm.dispose();
     });
 
@@ -2384,8 +2421,35 @@ void main() {
 
       expect(client.uploaded.single, isNot('/home/root/notes.txt'));
       expect(client.uploaded.single, contains('notes'));
+      expect(client.renamed.single.$2, '/home/root/notes (2).txt');
       vm.dispose();
     });
+
+    test(
+      'a failed upload removes its staging file and can retry the original destination',
+      () async {
+        final client = FakeFsClient(tree: {'/home/root': [], '/somewhere/else': []})
+          ..uploadFailuresRemaining = 1;
+        final vm = await booted(client);
+        final source = localFile('archive.tar', 'payload');
+
+        await vm.uploadFromDevice(source.path);
+
+        final failed = vm.transfers.single;
+        expect(failed.status, TransferStatus.failed);
+        expect(failed.canRetry, isTrue);
+        expect(client.deleted, contains(client.uploaded.single));
+        expect(client.renamed, isEmpty);
+
+        await vm.openPath('/somewhere/else');
+        await vm.retryUpload(failed.id);
+
+        expect(failed.status, TransferStatus.done);
+        expect(client.uploaded.last, startsWith('/home/root/.archive.tar.omniterm-upload-'));
+        expect(client.renamed.single.$2, '/home/root/archive.tar');
+        vm.dispose();
+      },
+    );
 
     test('a transfer row is recorded', () async {
       final client = FakeFsClient(tree: {'/home/root': []});

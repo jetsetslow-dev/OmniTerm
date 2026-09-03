@@ -254,15 +254,15 @@ class _FleetBroadcastTabState extends State<FleetBroadcastTab> {
                 const SizedBox(width: 8),
                 FilledButton.icon(
                   key: const ValueKey('fleet.run'),
-                  onPressed: vm.canRun ? () => _confirmAndRun(context, vm) : null,
+                  onPressed: vm.executing
+                      ? vm.cancelBroadcast
+                      : vm.canRun
+                      ? () => _confirmAndRun(context, vm)
+                      : null,
                   icon: vm.executing
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
+                      ? const Icon(Icons.stop, size: 18)
                       : const Icon(Icons.play_arrow, size: 18),
-                  label: Text(vm.executing ? 'Running…' : 'Run'),
+                  label: Text(vm.executing ? 'Cancel' : 'Run'),
                 ),
               ],
             ),
@@ -420,6 +420,7 @@ class _ResultCardState extends State<_ResultCard> {
       BroadcastStatus.running => (OmniColors.cyan, 'RUNNING'),
       BroadcastStatus.success => (OmniColors.green, 'OK'),
       BroadcastStatus.failure => (OmniColors.red, 'FAILED'),
+      BroadcastStatus.cancelled => (OmniColors.amber, 'CANCELLED'),
     };
     final body = result.output.toString().trim();
 

@@ -14,6 +14,7 @@ import '../../data/ssh/ssh_tunnel_manager.dart';
 import '../../domain/network_tools.dart';
 import '../../domain/whois.dart';
 import '../../domain/server_credentials.dart';
+import '../../platform/long_operation_notifications.dart';
 import 'app_state.dart';
 
 /// The Network tool's tabs, in the Kotlin's order.
@@ -50,6 +51,7 @@ class NetworkViewModel extends ChangeNotifier {
     DeviceNetworkCommandRunner? deviceCommands,
     Future<Map<String, String>> Function()? arpReader,
     this.tunnels,
+    this.operationNotifications,
   }) : probe = probe ?? const SocketNetworkProbe(),
        whois = whois ?? const SocketWhoisClient(),
        speedTest = speedTest ?? DioSpeedTestClient(),
@@ -57,6 +59,24 @@ class NetworkViewModel extends ChangeNotifier {
        arpReader = arpReader ?? readSystemArpTable;
 
   final AppState _app;
+  final LongOperationNotifications? operationNotifications;
+  int _operationSequence = 0;
+
+  String _startOperation(String label) {
+    final id = 'network-${DateTime.now().microsecondsSinceEpoch}-${_operationSequence++}';
+    final notifications = operationNotifications;
+    if (notifications != null) {
+      unawaited(notifications.start(id: id, label: label, destination: 'network'));
+    }
+    return id;
+  }
+
+  void _finishOperation(String id, bool success, {bool cancelled = false}) {
+    final notifications = operationNotifications;
+    if (notifications != null) {
+      unawaited(notifications.finish(id: id, success: success, cancelled: cancelled));
+    }
+  }
 
   /// The forwarder. Nullable and injected (convention 4): without it the Tunnels tab says tunnels
   /// are unavailable rather than offering switches that do nothing.
@@ -151,6 +171,8 @@ class NetworkViewModel extends ChangeNotifier {
       return;
     }
 
+    final operationId = _startOperation('Scanning local network');
+    var succeeded = false;
     _scanning = true;
     _error = null;
     _scanResults = const [];
@@ -186,10 +208,12 @@ class NetworkViewModel extends ChangeNotifier {
       final workers = found.length < 16 ? found.length : 16;
       await Future.wait([for (var i = 0; i < workers; i++) resolveWorker()]);
       _scanResults = found;
+      succeeded = true;
     } catch (e) {
       _error = e.toString();
     } finally {
       _scanning = false;
+      _finishOperation(operationId, succeeded);
       _safeNotify();
     }
   }
@@ -307,6 +331,8 @@ class NetworkViewModel extends ChangeNotifier {
       return;
     }
 
+    final operationId = _startOperation('Looking up $target');
+    var succeeded = false;
     _whoisRunning = true;
     _error = null;
     _whoisResult = '';
@@ -338,6 +364,8 @@ class NetworkViewModel extends ChangeNotifier {
       _whoisServers = servers;
       if (text.trim().isEmpty) {
         _error = 'No registration records came back for $target.';
+      } else {
+        succeeded = true;
       }
     } on WhoisException catch (e) {
       _error = 'WHOIS lookup failed: ${e.message}';
@@ -345,6 +373,7 @@ class NetworkViewModel extends ChangeNotifier {
       _error = 'WHOIS lookup failed: $e';
     } finally {
       _whoisRunning = false;
+      _finishOperation(operationId, succeeded);
       _safeNotify();
     }
   }
@@ -375,6 +404,9 @@ class NetworkViewModel extends ChangeNotifier {
   int _speedTestBytes = 0;
   Duration? _speedTestLatency;
   SpeedTestOperation? _speedTestOperation;
+  String? _activeSpeedTestOperationId;
+  final Set<String> _cancelledSpeedTestOperationIds = {};
+  int _speedTestRunGeneration = 0;
 
   bool get speedTestRunning => _speedTestRunning;
   String? get speedTestError => _speedTestError;
@@ -397,6 +429,10 @@ class NetworkViewModel extends ChangeNotifier {
       return;
     }
 
+    final operationId = _startOperation('Testing download speed');
+    final generation = ++_speedTestRunGeneration;
+    var succeeded = false;
+    _activeSpeedTestOperationId = operationId;
     _speedTestRunning = true;
     _speedTestError = null;
     _speedTestMbps = null;
@@ -408,6 +444,7 @@ class NetworkViewModel extends ChangeNotifier {
       final operation = speedTest.download(
         url,
         onProgress: (sample) {
+          if (generation != _speedTestRunGeneration) return;
           _speedTestBytes = sample.bytes;
           _speedTestMbps = sample.mbps;
           _safeNotify();
@@ -415,19 +452,36 @@ class NetworkViewModel extends ChangeNotifier {
       );
       _speedTestOperation = operation;
       final result = await operation.result;
+      if (generation != _speedTestRunGeneration ||
+          _cancelledSpeedTestOperationIds.contains(operationId)) {
+        return;
+      }
       _speedTestBytes = result.bytes;
       _speedTestMbps = result.mbps;
       _speedTestLatency = result.latency;
+      succeeded = true;
     } catch (e) {
-      if (_speedTestRunning) _speedTestError = 'Speed test failed: $e';
+      if (generation == _speedTestRunGeneration && _speedTestRunning) {
+        _speedTestError = 'Speed test failed: $e';
+      }
     } finally {
-      _speedTestOperation = null;
-      _speedTestRunning = false;
-      _safeNotify();
+      final cancelled = _cancelledSpeedTestOperationIds.remove(operationId);
+      _finishOperation(operationId, succeeded, cancelled: cancelled);
+      if (generation == _speedTestRunGeneration) {
+        _speedTestOperation = null;
+        _speedTestRunning = false;
+        if (_activeSpeedTestOperationId == operationId) {
+          _activeSpeedTestOperationId = null;
+        }
+        _safeNotify();
+      }
     }
   }
 
   void cancelSpeedTest() {
+    if (!_speedTestRunning) return;
+    final operationId = _activeSpeedTestOperationId;
+    if (operationId != null) _cancelledSpeedTestOperationIds.add(operationId);
     _speedTestRunning = false;
     _speedTestOperation?.cancel();
     _speedTestOperation = null;

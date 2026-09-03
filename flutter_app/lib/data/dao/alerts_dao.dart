@@ -62,6 +62,10 @@ class AlertsDao extends DatabaseAccessor<AppDatabase> with _$AlertsDaoMixin {
     activeAlerts,
   )..where((a) => a.id.equals(id))).write(ActiveAlertsCompanion(mutedUntil: Value(mutedUntil)));
 
+  Future<void> updateAlertCurrentValue(int id, double currentValue) => (update(
+    activeAlerts,
+  )..where((a) => a.id.equals(id))).write(ActiveAlertsCompanion(currentValue: Value(currentValue)));
+
   Future<void> deleteAlertsExceptServers(List<int> keepServerIds) => (delete(
     activeAlerts,
   )..where((a) => a.serverId.equals(0).not() & a.serverId.isNotIn(keepServerIds))).go();

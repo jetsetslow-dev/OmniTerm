@@ -10,6 +10,7 @@ import '../../data/backup/backup_payload.dart';
 import '../../domain/backup_selection.dart';
 import 'app_state.dart';
 import '../../platform/crash_log.dart';
+import '../../platform/long_operation_notifications.dart';
 
 @immutable
 class BackupHostOption {
@@ -42,11 +43,34 @@ class BackupInspection {
 /// without a file dialog, and it is why the reporting helpers below exist — the outcome of writing
 /// the file is something only the caller knows.
 class BackupViewModel extends ChangeNotifier {
-  BackupViewModel(this._app, {CrashLog? crashLog, SshHostKeyTrust? hostKeyTrust})
-    : crashLog = crashLog ?? CrashLog.instance,
-      hostKeyTrust = hostKeyTrust ?? SshHostKeyTrust(SecureHostKeyStore());
+  BackupViewModel(
+    this._app, {
+    CrashLog? crashLog,
+    SshHostKeyTrust? hostKeyTrust,
+    this.operationNotifications,
+  }) : crashLog = crashLog ?? CrashLog.instance,
+       hostKeyTrust = hostKeyTrust ?? SshHostKeyTrust(SecureHostKeyStore());
 
   final AppState _app;
+  final LongOperationNotifications? operationNotifications;
+  int _operationSequence = 0;
+
+  String _startOperation(String label) {
+    final id = 'backup-${DateTime.now().microsecondsSinceEpoch}-${_operationSequence++}';
+    final notifications = operationNotifications;
+    if (notifications != null) {
+      unawaited(notifications.start(id: id, label: label, destination: 'backup'));
+    }
+    return id;
+  }
+
+  void _finishOperation(String id, bool success) {
+    final notifications = operationNotifications;
+    if (notifications != null) {
+      unawaited(notifications.finish(id: id, success: success));
+    }
+  }
+
   final CrashLog crashLog;
 
   /// Pinned host keys, which travel with the hosts in a backup.
@@ -173,6 +197,8 @@ class BackupViewModel extends ChangeNotifier {
       return null;
     }
 
+    final operationId = _startOperation('Exporting OmniTerm backup');
+    var succeeded = false;
     _busy = true;
     _error = null;
     _safeNotify();
@@ -200,7 +226,9 @@ class BackupViewModel extends ChangeNotifier {
       // No status here on purpose. The export is only half the job now that the file dialog
       // follows it, and "Backup ready." left standing after a cancelled save would claim a file
       // that was never written. The save reports the real outcome.
-      return passphrase.isEmpty ? json : await encryptBackup(json, passphrase);
+      final output = passphrase.isEmpty ? json : await encryptBackup(json, passphrase);
+      succeeded = true;
+      return output;
     } on BackupException catch (e) {
       _error = e.message;
       return null;
@@ -209,6 +237,7 @@ class BackupViewModel extends ChangeNotifier {
       return null;
     } finally {
       _busy = false;
+      _finishOperation(operationId, succeeded);
       _safeNotify();
     }
   }
@@ -373,6 +402,8 @@ class BackupViewModel extends ChangeNotifier {
     BackupSelection? selection,
     Set<int>? selectedServerIds,
   }) async {
+    final operationId = _startOperation('Restoring OmniTerm backup');
+    var succeeded = false;
     _busy = true;
     _error = null;
     _status = null;
@@ -515,6 +546,7 @@ class BackupViewModel extends ChangeNotifier {
           ? 'Restored $restored items.'
           : 'Restored $restored items. ${skips.join(' and ')} were skipped because the hosts they '
                 'belong to were not in this backup.';
+      succeeded = true;
       return counts;
     } on BackupException catch (e) {
       _error = e.message;
@@ -524,6 +556,7 @@ class BackupViewModel extends ChangeNotifier {
       return null;
     } finally {
       _busy = false;
+      _finishOperation(operationId, succeeded);
       _safeNotify();
     }
   }

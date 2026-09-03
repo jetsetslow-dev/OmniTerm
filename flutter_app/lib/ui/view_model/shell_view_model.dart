@@ -15,6 +15,7 @@ import '../../data/term/terminal_emulator.dart';
 import '../../data/term/tmux_bootstrap.dart';
 import '../../domain/app_preferences.dart';
 import '../../domain/server_credentials.dart';
+import '../../domain/ssh_failure.dart';
 import '../../domain/terminal_key_encoder.dart';
 import '../../platform/session_service.dart';
 import 'app_state.dart';
@@ -187,7 +188,7 @@ class ShellViewModel extends ChangeNotifier {
     }
     final online = connectableServers;
     return online.where((s) => s.id == _app.selectedServerId).firstOrNull ??
-        (online.isNotEmpty ? online.first : null);
+        (online.isNotEmpty ? online.first : _failedConnectTarget);
   }
 
   /// Whether any host is saved at all.
@@ -362,11 +363,18 @@ class ShellViewModel extends ChangeNotifier {
 
   String? _error;
   String? get error => _error;
+  Server? _failedConnectTarget;
 
   void clearError() {
     if (_error == null) return;
     _error = null;
+    _failedConnectTarget = null;
     _safeNotify();
+  }
+
+  void _recordConnectFailure(Server server, String message) {
+    _failedConnectTarget = server;
+    _error = describeSshFailure(message);
   }
 
   /// Decides which tmux session a connection to [server] should join, creating a row if needed.
@@ -387,8 +395,8 @@ class ShellViewModel extends ChangeNotifier {
     final existing = resumeName ?? (rows.isEmpty ? null : rows.last.tmuxName);
 
     if (existing != null) {
-      // Resume, not plain attach. A remembered row outlives the server rebooting, and a plain
-      // attach to a session that is gone silently leaves an ordinary, non-persistent shell.
+      // The exact-name probe in connect() has already proved this row still exists. Attach only:
+      // recreating an absent session here would disguise data loss as a successful recovery.
       return (
         existing,
         tmuxResumeCommand(existing, historyLimit: scrollback, controlMode: controlMode),
@@ -622,9 +630,9 @@ class ShellViewModel extends ChangeNotifier {
       final answer = await ssh.exec(creds, tmuxCheckCommand);
       return answer.trim().endsWith('yes');
     } catch (_) {
-      // A probe that could not run is not evidence tmux is missing, and refusing to connect over it
-      // would be worse than the silent degradation this replaces. Treat it as present and let the
-      // self-guarding bootstrap command decide.
+      // A probe that could not run is not evidence tmux is missing. Treat it as present so a fresh
+      // connection can report its real transport error; remembered rows receive the stricter
+      // exact-name authenticated probe in connect() before any shell is opened.
       return true;
     }
   }
@@ -672,6 +680,7 @@ class ShellViewModel extends ChangeNotifier {
     final generation = ++_connectGeneration;
     _phase = 'Connecting…';
     _error = null;
+    _failedConnectTarget = null;
     _safeNotify();
 
     try {
@@ -685,6 +694,43 @@ class ShellViewModel extends ChangeNotifier {
         keys: await _app.repository.getAllKeys(),
         profiles: await _app.repository.getAllProfiles(),
       );
+      if (server.persistentSession && !forcePlainShell) {
+        final remembered =
+            resumeName ??
+            (await _app.repository.getPersistentSessions())
+                .where((row) => row.serverId == server.id)
+                .lastOrNull
+                ?.tmuxName;
+        if (remembered != null) {
+          String rawPresence;
+          try {
+            rawPresence = await ssh.exec(creds, tmuxSessionProbeCommand(remembered));
+          } catch (error) {
+            throw SshConnectException(
+              'Could not verify the saved tmux session because the host could not be reached. '
+              'The recovery entry was kept; retry when the connection is available. $error',
+              error,
+            );
+          }
+          final presence = parseTmuxSessionProbe(rawPresence);
+          if (presence == null) {
+            throw SshConnectException(
+              'Could not verify the saved tmux session. The recovery entry was kept; retry when '
+              'the connection is available. ${describeSshFailure(rawPresence)}',
+            );
+          }
+          if (!presence) {
+            await _app.repository.deletePersistentSession(remembered);
+            await _reloadSaved();
+            unawaited(markReachable?.call(server) ?? Future<void>.value());
+            _failedConnectTarget = server;
+            _error =
+                'Connected to ${server.name}, but tmux confirmed that "$remembered" no longer '
+                'exists. Its recovery entry was removed; no empty replacement was created.';
+            return;
+          }
+        }
+      }
       // Connect at the size the surface is already showing, so the remote's first prompt is drawn
       // for the real window. Opening at 80×24 and resizing afterwards makes every shell redraw and
       // leaves full-screen apps briefly wrong.
@@ -737,6 +783,7 @@ class ShellViewModel extends ChangeNotifier {
       session.addListener(_syncReachabilityEvidence);
       _sessions.add(session);
       _currentId = session.id;
+      _failedConnectTarget = null;
       _syncReachabilityEvidence();
 
       // A shell channel opened, so any earlier advisory reachability result is stale. Do not make
@@ -761,12 +808,15 @@ class ShellViewModel extends ChangeNotifier {
       }
       _syncBackgroundSessions();
     } on CredentialResolutionException catch (e) {
-      if (generation == _connectGeneration) _error = e.message;
+      if (generation == _connectGeneration) {
+        _recordConnectFailure(server, e.message);
+      }
     } on SshHostKeyException catch (e) {
       // Named separately from an auth failure because the fix is different and the stakes are
       // different: "wrong password" is a nuisance, "this host's key changed" is either a rebuilt
       // server or someone standing between you and it, and the app must not blur the two.
       if (generation == _connectGeneration) {
+        _failedConnectTarget = server;
         _error = switch (e.verdict) {
           HostKeyVerdict.changed =>
             'The host key for ${server.name} has CHANGED. This is what a machine-in-the-middle looks '
@@ -778,10 +828,12 @@ class ShellViewModel extends ChangeNotifier {
         };
       }
     } on SshConnectException catch (e) {
-      if (generation == _connectGeneration) _error = e.message;
+      if (generation == _connectGeneration) {
+        _recordConnectFailure(server, e.message);
+      }
     } catch (e) {
       if (generation == _connectGeneration) {
-        _error = 'Could not open a shell on ${server.name}: $e';
+        _recordConnectFailure(server, e.toString());
       }
     } finally {
       if (generation == _connectGeneration) {
@@ -1052,7 +1104,9 @@ class ShellViewModel extends ChangeNotifier {
   Future<int> resyncTmuxScrollback(ShellSession session) async {
     final name = session.tmuxName;
     final ssh = transport;
-    if (name == null || ssh == null || !session.scrollbackDirty || _resyncing) return 0;
+    if (name == null || ssh == null || !session.scrollbackDirty || _resyncing) {
+      return 0;
+    }
     final host = _app.servers.where((s) => s.id == session.serverId).firstOrNull;
     if (host == null) return 0;
 

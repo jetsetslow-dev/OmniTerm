@@ -8,6 +8,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/data/ssh/ssh_transport.dart';
+import 'package:omniterm/data/term/tmux_bootstrap.dart';
 import 'package:omniterm/domain/app_preferences.dart';
 import 'package:omniterm/domain/terminal_key_encoder.dart';
 import 'package:omniterm/platform/secret_store.dart';
@@ -618,15 +619,14 @@ void main() {
 
       await vm.connect(host);
       final name = (await repo.getPersistentSessions()).single.tmuxName;
+      transport.execAnswers['has-session -t $name'] = tmuxSessionPresentMarker;
 
       await vm.connect(host);
       final second = sent(transport);
 
       expect(second, contains('has-session -t $name'));
       expect(second, contains('attach-session -t $name'));
-      // Recreated under the *same* name if the server lost it, rather than the reconnect silently
-      // dropping the user into an ordinary, non-persistent shell.
-      expect(second, contains('new-session -d -s $name'));
+      expect(second, isNot(contains('new-session -d -s $name')));
       expect(
         await repo.getPersistentSessions(),
         hasLength(1),
@@ -726,6 +726,7 @@ void main() {
         ),
       );
       await vm.refreshResumable();
+      transport.execAnswers['has-session -t omniterm-1-older'] = tmuxSessionPresentMarker;
 
       await vm.resume(vm.resumableSessions.firstWhere((r) => r.tmuxName == 'omniterm-1-older'));
 
@@ -768,6 +769,61 @@ void main() {
 
       expect(vm.error, contains('no longer saved'));
     });
+
+    test(
+      'an unreachable resume keeps the recovery row and explains that it can be retried',
+      () async {
+        await repo.insertServer(server(name: 'nas', persistent: true));
+        await repo.upsertPersistentSession(
+          PersistentSessionsCompanion.insert(
+            tmuxName: 'omniterm-1-kept',
+            serverId: 1,
+            serverName: 'nas',
+            createdAt: 1,
+            backgroundedAt: 2,
+          ),
+        );
+        final transport = FakeShellTransport()
+          ..execAnswers['command -v tmux'] = 'yes'
+          ..execAnswers['has-session -t omniterm-1-kept'] = 'SSH Error: No route to host';
+        final model = await start(ssh: transport);
+        await model.refreshResumable();
+
+        await model.resume(model.resumableSessions.single);
+
+        expect(await repo.getPersistentSessions(), hasLength(1));
+        expect(transport.opened, isEmpty);
+        expect(model.error, contains('recovery entry was kept'));
+      },
+    );
+
+    test(
+      'only a confirmed missing tmux session removes the recovery row, with a warning',
+      () async {
+        await repo.insertServer(server(name: 'nas', persistent: true));
+        await repo.upsertPersistentSession(
+          PersistentSessionsCompanion.insert(
+            tmuxName: 'omniterm-1-gone',
+            serverId: 1,
+            serverName: 'nas',
+            createdAt: 1,
+            backgroundedAt: 2,
+          ),
+        );
+        final transport = FakeShellTransport()
+          ..execAnswers['command -v tmux'] = 'yes'
+          ..execAnswers['has-session -t omniterm-1-gone'] = tmuxSessionAbsentMarker;
+        final model = await start(ssh: transport);
+        await model.refreshResumable();
+
+        await model.resume(model.resumableSessions.single);
+
+        expect(await repo.getPersistentSessions(), isEmpty);
+        expect(transport.opened, isEmpty);
+        expect(model.error, contains('tmux confirmed'));
+        expect(model.error, contains('no empty replacement'));
+      },
+    );
 
     test('the tmux name never carries anything a shell would act on', () async {
       // The name is interpolated into a command the *remote* runs. It is derived from the host id
@@ -829,6 +885,8 @@ void main() {
       final host = vm.connectableServers.single;
 
       await vm.connect(host);
+      final name = (await repo.getPersistentSessions()).single.tmuxName;
+      ssh.execAnswers['has-session -t $name'] = tmuxSessionPresentMarker;
       await vm.connect(host);
 
       expect(

@@ -10,6 +10,7 @@ import '../../data/remote_parsers.dart';
 import '../../data/ssh/ssh_transport.dart';
 import '../../domain/server_credentials.dart';
 import '../../domain/stack_summary.dart';
+import '../../platform/long_operation_notifications.dart';
 // Widget-free data and logic that happens to live under ui/screens; importing it here is a
 // directory-layout wrinkle, not a layering inversion.
 import '../screens/infra/compose_builder_logic.dart';
@@ -20,7 +21,7 @@ enum InfraTab { stacks, builder, images, volumes, networks }
 
 /// The Infra (containers) screen's state and actions, split out of `ui/AppViewModel.kt` per §5.2.
 class InfraViewModel extends ChangeNotifier {
-  InfraViewModel(this._app, {this.transport}) {
+  InfraViewModel(this._app, {this.transport, this.operationNotifications}) {
     _app.addListener(_onAppChanged);
   }
 
@@ -30,6 +31,8 @@ class InfraViewModel extends ChangeNotifier {
   /// inspection is unavailable rather than showing empty lists, which would read as "this host runs
   /// no containers".
   final SshTransport? transport;
+  final LongOperationNotifications? operationNotifications;
+  int _operationSequence = 0;
 
   bool get canInspect => transport != null;
 
@@ -247,6 +250,14 @@ class InfraViewModel extends ChangeNotifier {
   }) async {
     final serverId = inspectedServer?.id;
     if (serverId == null) return false;
+    final operationId = 'compose-${DateTime.now().microsecondsSinceEpoch}-${_operationSequence++}';
+    final notifications = operationNotifications;
+    if (notifications != null) {
+      unawaited(
+        notifications.start(id: operationId, label: 'Deploying $project', destination: 'infra'),
+      );
+    }
+    var succeeded = false;
     _composeBusy = true;
     _composeError = null;
     _safeNotify();
@@ -263,6 +274,7 @@ class InfraViewModel extends ChangeNotifier {
       );
       if (inspectedServer?.id != serverId || output == null) return false;
       final success = output.contains('OMNITERM_DEPLOY_OK');
+      succeeded = success;
       _actionOutput = output.replaceAll('OMNITERM_DEPLOY_OK', '').trim();
       if (_actionOutput!.isEmpty) {
         _actionOutput = success
@@ -273,6 +285,9 @@ class InfraViewModel extends ChangeNotifier {
       return success;
     } finally {
       _composeBusy = false;
+      if (notifications != null) {
+        unawaited(notifications.finish(id: operationId, success: succeeded));
+      }
       _safeNotify();
     }
   }

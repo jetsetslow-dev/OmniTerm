@@ -295,6 +295,25 @@ void main() {
         findsOneWidget,
         reason: 'a failed automatic check must never remove the user\'s direct SSH path',
       );
+
+      await tester.tap(find.text('SSH ANYWAY'));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('offline.connect.dialog')), findsOneWidget);
+      await tapKey(tester, 'offline.connect.confirm');
+      for (
+        var attempt = 0;
+        attempt < 100 && find.byKey(const ValueKey('shell.error')).evaluate().isEmpty;
+        attempt++
+      ) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(
+        find.byKey(const ValueKey('shell.error')),
+        findsOneWidget,
+        reason: 'the refused real SSH attempt must explain why it returned to the shell page',
+      );
+      expect(find.text(name), findsOneWidget, reason: 'the failed target must remain identified');
+      expect(find.text('Retry'), findsOneWidget, reason: 'the failed attempt must be retryable');
     });
   });
 }

@@ -10,6 +10,7 @@ import '../../data/ssh/ssh_transport.dart';
 import '../../domain/command_danger.dart';
 import '../../domain/health_scoring.dart';
 import '../../domain/server_credentials.dart';
+import '../../platform/long_operation_notifications.dart';
 import 'app_state.dart';
 import 'telemetry_poller.dart';
 
@@ -19,7 +20,7 @@ enum FleetTab { dashboard, broadcast, logs }
 /// Whether a broadcast targets individually picked hosts or whole groups.
 enum FleetTargetMode { servers, groups }
 
-enum BroadcastStatus { pending, running, success, failure }
+enum BroadcastStatus { pending, running, success, failure, cancelled }
 
 /// One host's result within a broadcast.
 class BroadcastResult {
@@ -37,17 +38,22 @@ class BroadcastResult {
   /// Set when the run failed, or when it succeeded with nothing to show.
   String? note;
 
-  bool get isDone => status == BroadcastStatus.success || status == BroadcastStatus.failure;
+  bool get isDone =>
+      status == BroadcastStatus.success ||
+      status == BroadcastStatus.failure ||
+      status == BroadcastStatus.cancelled;
 }
 
 /// The Fleet screen's state and actions, split out of `ui/AppViewModel.kt` per §5.2.
 class FleetViewModel extends ChangeNotifier {
-  FleetViewModel(this._app, {this.transport, this.poller}) {
+  FleetViewModel(this._app, {this.transport, this.poller, this.operationNotifications}) {
     _app.addListener(_onAppChanged);
     poller?.addListener(_safeNotify);
   }
 
   final AppState _app;
+  final LongOperationNotifications? operationNotifications;
+  int _operationSequence = 0;
 
   /// Null in tests and in any build without a transport wired; broadcasting is then unavailable and
   /// says so, rather than reporting a run that never happened.
@@ -243,6 +249,8 @@ class FleetViewModel extends ChangeNotifier {
   /// going; without this they would write into whatever run is current when they finally return,
   /// resurrecting a finished card as "running" or mixing one run's output into the next.
   int _runGeneration = 0;
+  SshCancellationToken? _broadcastCancellation;
+  int? _userCancelledGeneration;
 
   bool get executing => _executing;
   List<BroadcastResult> get results => List.unmodifiable(_results);
@@ -268,7 +276,21 @@ class FleetViewModel extends ChangeNotifier {
     if (command.isEmpty || _executing || targets.isEmpty) return;
     if (ssh == null) return;
 
+    final operationId = 'fleet-${DateTime.now().microsecondsSinceEpoch}-${_operationSequence++}';
+    final notifications = operationNotifications;
+    if (notifications != null) {
+      unawaited(
+        notifications.start(
+          id: operationId,
+          label: 'Running command on ${targets.length} hosts',
+          destination: 'fleet',
+        ),
+      );
+    }
+
     final generation = ++_runGeneration;
+    final cancellation = SshCancellationToken();
+    _broadcastCancellation = cancellation;
     _executing = true;
     _results = [
       for (final server in targets) BroadcastResult(serverId: server.id, serverName: server.name),
@@ -289,12 +311,16 @@ class FleetViewModel extends ChangeNotifier {
           final output = await ssh.execStream(
             creds,
             command,
+            cancellation: cancellation,
             onChunk: (chunk) async {
-              if (generation != _runGeneration) return;
+              if (generation != _runGeneration || cancellation.isCancelled) {
+                return;
+              }
               result.output.write(chunk);
               _safeNotify();
             },
           );
+          if (generation != _runGeneration || cancellation.isCancelled) return;
           result.status = BroadcastStatus.success;
           // "Done (no output)" beats a blank card: a command that legitimately prints nothing is
           // otherwise indistinguishable from one whose output was lost.
@@ -306,6 +332,7 @@ class FleetViewModel extends ChangeNotifier {
             ..status = BroadcastStatus.failure
             ..note = e.message;
         } catch (e) {
+          if (generation != _runGeneration || cancellation.isCancelled) return;
           result
             ..status = BroadcastStatus.failure
             ..note = e.toString();
@@ -315,6 +342,7 @@ class FleetViewModel extends ChangeNotifier {
       }
     }
 
+    var timedOut = false;
     try {
       // Read inside the `try`, not before it. These are ordinary database calls, but a throw here
       // used to escape before `_executing` was ever cleared — and unlike a stranded spinner, a
@@ -326,24 +354,56 @@ class FleetViewModel extends ChangeNotifier {
         for (var i = 0; i < broadcastConcurrency; i++) worker(keys, profiles),
       ]).timeout(broadcastTimeout);
     } on TimeoutException {
+      timedOut = true;
+      cancellation.cancel();
       _markUnfinished('Timed out after ${broadcastTimeout.inMinutes} minutes.');
     } catch (e) {
       // Reported on the rows rather than swallowed: a run that never started must not look like a
       // run that finished with nothing to say.
       _markUnfinished('Could not start the run: $e');
     } finally {
+      final cancelled = _userCancelledGeneration == generation;
       // Anything still pending or running after the workers returned never completed — leaving it
       // showing a spinner would misreport an abandoned run as one still in progress.
-      _markUnfinished('Did not complete.');
+      _markUnfinished(
+        cancelled ? 'Cancelled.' : 'Did not complete.',
+        status: cancelled ? BroadcastStatus.cancelled : BroadcastStatus.failure,
+      );
       _executing = false;
+      if (identical(_broadcastCancellation, cancellation)) {
+        _broadcastCancellation = null;
+      }
+      if (_userCancelledGeneration == generation) {
+        _userCancelledGeneration = null;
+      }
+      // Invalidate callbacks from futures that outlive Dart's non-cancelling timeout wrapper.
+      if (timedOut && _runGeneration == generation) _runGeneration++;
+      await cancellation.close();
+      if (notifications != null) {
+        unawaited(
+          notifications.finish(
+            id: operationId,
+            success: _results.every((result) => result.status == BroadcastStatus.success),
+            cancelled: cancelled,
+          ),
+        );
+      }
       _safeNotify();
     }
   }
 
-  void _markUnfinished(String note) {
+  /// Stops the current fan-out without turning the user's action into a failure.
+  void cancelBroadcast() {
+    if (!_executing) return;
+    _userCancelledGeneration = _runGeneration;
+    _broadcastCancellation?.cancel();
+    _safeNotify();
+  }
+
+  void _markUnfinished(String note, {BroadcastStatus status = BroadcastStatus.failure}) {
     for (final result in _results.where((r) => !r.isDone)) {
       result
-        ..status = BroadcastStatus.failure
+        ..status = status
         ..note = result.note ?? note;
     }
   }
@@ -441,6 +501,8 @@ class FleetViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _userCancelledGeneration = _runGeneration;
+    _broadcastCancellation?.cancel();
     poller?.removeListener(_safeNotify);
     _app.removeListener(_onAppChanged);
     super.dispose();

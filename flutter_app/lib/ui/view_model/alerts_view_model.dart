@@ -357,10 +357,19 @@ class AlertsViewModel extends ChangeNotifier {
       final existing = active
           .where((a) => a.ruleId == rule.id && a.serverId == server.id)
           .firstOrNull;
+      var currentAlert = existing;
+      if (currentAlert != null && value != null && currentAlert.currentValue != value) {
+        // Update only the reading. Replacing the whole row would reset acknowledgement or mute
+        // state and make a refresh itself change the user's incident actions.
+        await _app.repository.updateAlertCurrentValue(currentAlert.id, value);
+        final refreshed = currentAlert.copyWith(currentValue: value);
+        active[active.indexOf(currentAlert)] = refreshed;
+        currentAlert = refreshed;
+      }
 
       if (triggered) {
-        final muted = existing != null && existing.mutedUntil > now;
-        if (existing == null && !muted) {
+        final muted = currentAlert != null && currentAlert.mutedUntil > now;
+        if (currentAlert == null && !muted) {
           final alert = ActiveAlert(
             id: 0,
             ruleId: rule.id,
@@ -381,14 +390,14 @@ class AlertsViewModel extends ChangeNotifier {
           raised.add(stored);
           await _notifyRaised(server, rule, stored);
         }
-      } else if (!over && _tracker.clearedFor(key) && existing != null) {
+      } else if (!over && _tracker.clearedFor(key) && currentAlert != null) {
         // Resolved — but only after enough consecutive clean samples, so one jittery dip does not
         // flap the incident closed and straight back open.
-        await _archive(existing, 'resolved');
-        await _app.repository.deleteAlert(existing.id);
+        await _archive(currentAlert, 'resolved');
+        await _app.repository.deleteAlert(currentAlert.id);
         // The banner goes when the incident does. A notification left in the shade for a host that
         // recovered hours ago is how a user learns to swipe them all away unread.
-        await notifier?.clear(alertNotificationId(existing.ruleId, existing.serverId));
+        await notifier?.clear(alertNotificationId(currentAlert.ruleId, currentAlert.serverId));
       }
     }
 

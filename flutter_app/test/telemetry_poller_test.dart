@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
@@ -127,6 +129,24 @@ void main() {
 
       expect(poller.metricsForServer(app.servers.first.id), isNull);
       expect(poller.isCycling, isFalse, reason: 'the cycle still finished');
+      poller.dispose();
+    });
+
+    test('a manual poll returns and stores a useful transport failure', () async {
+      final id = await repo.insertServer(server(name: 'a'));
+      await app.start();
+      await settle();
+
+      final poller = TelemetryPoller(
+        app,
+        transport: RecordingTransport()..failure = Exception('Connection refused'),
+      );
+      final error = await poller.pollOne(app.servers.single);
+
+      expect(error, contains('Connection refused'));
+      final stored = (await repo.getAllServers()).singleWhere((s) => s.id == id);
+      expect(stored.authStatus, 'failed');
+      expect(stored.authError, error);
       poller.dispose();
     });
 
@@ -337,6 +357,28 @@ void main() {
   });
 
   group('the cadence', () {
+    test('stopping for battery saver discards a sample already in flight', () async {
+      final id = await repo.insertServer(server(name: 'a'));
+      await app.start();
+      await settle();
+      final transport = RecordingTransport(fallback: metricsReply(memUsedPct: 77));
+      final gate = Completer<void>();
+      transport.gate = gate;
+      final poller = TelemetryPoller(app, transport: transport);
+
+      final cycle = poller.cycle();
+      while (transport.commands.isEmpty) {
+        await settle();
+      }
+      poller.stop();
+      gate.complete();
+      await cycle;
+
+      expect(poller.metricsForServer(id), isNull);
+      expect(poller.historyForServer(id), isEmpty);
+      poller.dispose();
+    });
+
     test('the countdown is anchored to the cycle that actually ran', () async {
       await repo.insertServer(server(name: 'a'));
       await app.start();

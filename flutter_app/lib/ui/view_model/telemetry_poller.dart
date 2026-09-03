@@ -116,6 +116,8 @@ class TelemetryPoller extends ChangeNotifier {
   DateTime? get nextCycleAt => _lastCycleStart?.add(effectiveInterval);
 
   bool _cycling = false;
+  int _workGeneration = 0;
+  int _cycleRunId = 0;
 
   /// True while a cycle is in flight, for the refresh indicator.
   bool get isCycling => _cycling;
@@ -125,6 +127,9 @@ class TelemetryPoller extends ChangeNotifier {
   /// Poll now, then keep polling at [effectiveInterval].
   void start() {
     if (!canPoll) return;
+    _workGeneration++;
+    _cycleRunId++;
+    _cycling = false;
     _timer?.cancel();
     unawaited(cycle());
     final cadence = effectiveInterval;
@@ -133,8 +138,13 @@ class TelemetryPoller extends ChangeNotifier {
   }
 
   void stop() {
+    _workGeneration++;
+    _cycleRunId++;
+    final wasCycling = _cycling;
+    _cycling = false;
     _timer?.cancel();
     _timer = null;
+    if (wasCycling) _safeNotify();
   }
 
   /// One pass over every online host.
@@ -143,6 +153,8 @@ class TelemetryPoller extends ChangeNotifier {
     // doubling up: two cycles in flight would probe the same host twice at once and each would
     // measure its rates against the other's baseline.
     if (_cycling || _disposed || !canPoll) return;
+    final generation = _workGeneration;
+    final runId = ++_cycleRunId;
     _cycling = true;
     _lastCycleStart = _clock();
     _safeNotify();
@@ -150,12 +162,12 @@ class TelemetryPoller extends ChangeNotifier {
     try {
       final servers = _app.servers.where((s) => s.status == 'online').toList();
       _forgetVanishedHosts();
-      if (servers.isEmpty || _disposed) return;
+      if (servers.isEmpty || !_workIsCurrent(generation)) return;
 
       final queue = servers.iterator;
       Future<void> worker() async {
-        while (!_disposed && queue.moveNext()) {
-          await pollOne(queue.current);
+        while (_workIsCurrent(generation) && queue.moveNext()) {
+          await pollOne(queue.current, workGeneration: generation);
         }
       }
 
@@ -165,14 +177,16 @@ class TelemetryPoller extends ChangeNotifier {
           (_) => worker(),
         ),
       );
-      await _pruneHistory();
+      if (_workIsCurrent(generation)) await _pruneHistory();
     } catch (_) {
       // A cycle that fails wholesale must not stop the next one. The screens keep the last sample
       // they were given, which is honest as long as nothing claims it is current — the countdown
       // above them is what says when it was taken.
     } finally {
-      _cycling = false;
-      _safeNotify();
+      if (runId == _cycleRunId) {
+        _cycling = false;
+        _safeNotify();
+      }
     }
   }
 
@@ -188,15 +202,24 @@ class TelemetryPoller extends ChangeNotifier {
     _history.removeWhere((id, _) => !live.contains(id));
   }
 
-  Future<void> pollOne(Server server) async {
+  bool _workIsCurrent(int generation) => !_disposed && generation == _workGeneration;
+
+  /// Polls one host and returns a user-facing failure for an explicit/manual caller.
+  ///
+  /// Background cycles intentionally ignore the return value so one host cannot stop the fleet,
+  /// while buttons can surface the same failure instead of completing as if refresh succeeded.
+  Future<String?> pollOne(Server server, {int? workGeneration}) async {
     final ssh = transport;
-    if (ssh == null) return;
+    if (ssh == null) return 'SSH is unavailable in this build.';
+    final generation = workGeneration ?? _workGeneration;
+    if (!_workIsCurrent(generation)) return null;
     try {
       final creds = resolveCredentials(
         server,
         keys: await _app.repository.getAllKeys(),
         profiles: await _app.repository.getAllProfiles(),
       );
+      if (!_workIsCurrent(generation)) return null;
 
       // The OS decides which metrics command to send, and sending the wrong one produces output the
       // parser reads as a host with no memory and no disks. Probed once per host and cached in
@@ -204,18 +227,20 @@ class TelemetryPoller extends ChangeNotifier {
       var os = _app.osForServer(server.id);
       if (os.isEmpty) {
         final probe = await ssh.exec(creds, osProbeCommand);
-        if (_disposed) return;
+        if (!_workIsCurrent(generation)) return null;
         os = normaliseOs(probe);
         // `exec` returns `'SSH Error: …'` rather than throwing, and the cache is consulted once per
         // host and then trusted forever. Caching what a failed probe normalises to would send the
         // wrong metrics command for the life of the host — exactly the "no memory and no disks"
         // reading described above, from one transient failure. Compose guards the same way at
         // `ui/AppViewModel.kt:2404`.
-        if (!probe.startsWith('SSH Error')) _app.recordOsForServer(server.id, os);
+        if (!probe.startsWith('SSH Error')) {
+          _app.recordOsForServer(server.id, os);
+        }
       }
 
       final raw = await ssh.exec(creds, metricsFor(os));
-      if (_disposed) return;
+      if (!_workIsCurrent(generation)) return null;
       // A failed probe is not a reading. Parsing it yields a plausible-looking sample — the OS
       // defaults to Linux and every gauge to zero — which is then written to history, charted, and
       // fed back into the OS cache as if the host had answered. Compose branches on the same prefix
@@ -225,8 +250,9 @@ class TelemetryPoller extends ChangeNotifier {
         // and the words "authentication failed". Nothing in this port ever wrote the column, so a
         // host with a wrong key looked identical to a healthy one no matter how often it failed.
         // `serversStream` is a drift watch, so the write reaches AppState on its own.
-        await _app.repository.updateAuthState(server.id, 'failed', describeSshFailure(raw));
-        return;
+        final failure = describeSshFailure(raw);
+        await _app.repository.updateAuthState(server.id, 'failed', failure);
+        return failure;
       }
 
       final now = _clock();
@@ -239,7 +265,9 @@ class TelemetryPoller extends ChangeNotifier {
 
       // The host may have been deleted while this probe was in flight. Writing now would recreate
       // rows for a host the user removed.
-      if (!_app.servers.any((s) => s.id == server.id)) return;
+      if (!_workIsCurrent(generation) || !_app.servers.any((s) => s.id == server.id)) {
+        return null;
+      }
 
       _metrics[server.id] = sample.metrics;
       if (sample.baseline != null) _baselines[server.id] = sample.baseline!;
@@ -254,15 +282,21 @@ class TelemetryPoller extends ChangeNotifier {
       // old `failed` forever. The poller already writes metrics and a history row here, so one
       // more small update is proportionate.
       await _app.repository.updateAuthState(server.id, 'ok', null);
+      if (!_workIsCurrent(generation)) return null;
 
-      await _persist(server, sample.metrics, now);
+      await _persist(server, sample.metrics, now, generation);
+      if (!_workIsCurrent(generation)) return null;
       _safeNotify();
       await onSample?.call(server, sample.metrics);
-    } catch (_) {
+      return null;
+    } catch (error) {
       // One unreachable or unauthenticated host must not end the cycle for the rest of the fleet.
       // Its status is [HostStatusProbe]'s to write, not this poller's: a metrics command that fails
       // says nothing certain about reachability, and marking the host offline from here would fight
       // the probe that actually measured it.
+      final failure = describeSshFailure(error.toString());
+      await _app.repository.updateAuthState(server.id, 'failed', failure);
+      return failure;
     }
   }
 
@@ -273,7 +307,7 @@ class TelemetryPoller extends ChangeNotifier {
         : samples.sublist(samples.length - historyLength);
   }
 
-  Future<void> _persist(Server server, HostMetrics metrics, DateTime at) async {
+  Future<void> _persist(Server server, HostMetrics metrics, DateTime at, int generation) async {
     final health = _app.healthScoring.score(
       metrics.cpuPercent,
       metrics.memPercent,
@@ -296,6 +330,7 @@ class TelemetryPoller extends ChangeNotifier {
         cpuTemperatureC: Value(metrics.cpuTempC),
       ),
     );
+    if (!_workIsCurrent(generation)) return;
     // The status stays whatever the reachability probe last wrote — this call is here for the
     // health score, which is the one column only real telemetry can fill in.
     await _app.repository.updateConnectionState(

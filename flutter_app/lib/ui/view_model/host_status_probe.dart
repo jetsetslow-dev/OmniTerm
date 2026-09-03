@@ -46,19 +46,31 @@ class HostStatusProbe extends ChangeNotifier {
   Timer? _timer;
   bool _running = false;
   bool _disposed = false;
+  int _workGeneration = 0;
+  int _sweepRunId = 0;
 
   bool get isRunning => _running;
 
   /// Probe now, then keep probing on [interval].
   void start() {
+    _workGeneration++;
+    _sweepRunId++;
+    _running = false;
+    _activeHostProbes.clear();
     _timer?.cancel();
     unawaited(sweep());
     _timer = Timer.periodic(interval, (_) => unawaited(sweep()));
   }
 
   void stop() {
+    _workGeneration++;
+    _sweepRunId++;
+    final wasRunning = _running;
+    _running = false;
+    _activeHostProbes.clear();
     _timer?.cancel();
     _timer = null;
+    if (wasRunning) _safeNotify();
   }
 
   /// One pass over every saved host.
@@ -66,17 +78,19 @@ class HostStatusProbe extends ChangeNotifier {
     // Overlapping sweeps would double the socket count and race each other's writes; a slow sweep
     // simply skips the tick it could not keep up with.
     if (_running || _disposed) return;
+    final generation = _workGeneration;
+    final runId = ++_sweepRunId;
     _running = true;
     _safeNotify();
 
     try {
       final servers = await _repository.getAllServers();
-      if (servers.isEmpty || _disposed) return;
+      if (servers.isEmpty || !_workIsCurrent(generation)) return;
 
       final queue = servers.iterator;
       Future<void> worker() async {
-        while (!_disposed && queue.moveNext()) {
-          await _probeOne(queue.current);
+        while (_workIsCurrent(generation) && queue.moveNext()) {
+          await _probeOne(queue.current, generation);
         }
       }
 
@@ -90,8 +104,10 @@ class HostStatusProbe extends ChangeNotifier {
       // A sweep that fails wholesale must not stop the next one; the statuses simply stay as they
       // were, which is the honest outcome for "we could not check".
     } finally {
-      _running = false;
-      _safeNotify();
+      if (runId == _sweepRunId) {
+        _running = false;
+        _safeNotify();
+      }
     }
   }
 
@@ -145,7 +161,9 @@ class HostStatusProbe extends ChangeNotifier {
     }
   }
 
-  Future<void> probeOne(Server server) => _probeOne(server);
+  bool _workIsCurrent(int generation) => !_disposed && generation == _workGeneration;
+
+  Future<void> probeOne(Server server) => _probeOne(server, _workGeneration);
 
   /// Promote a host after a real shell has authenticated and opened.
   Future<void> markReachable(Server server) async {
@@ -165,11 +183,12 @@ class HostStatusProbe extends ChangeNotifier {
     ]);
   }
 
-  Future<void> _probeOne(Server server) {
+  Future<void> _probeOne(Server server, int generation) {
+    if (!_workIsCurrent(generation)) return Future<void>.value();
     final existing = _activeHostProbes[server.id];
     if (existing != null) return existing;
     late final Future<void> running;
-    running = _probeOneInner(server).whenComplete(() {
+    running = _probeOneInner(server, generation).whenComplete(() {
       if (identical(_activeHostProbes[server.id], running)) {
         _activeHostProbes.remove(server.id);
       }
@@ -183,10 +202,11 @@ class HostStatusProbe extends ChangeNotifier {
     if (inFlight != null) await inFlight;
     if (_disposed || _liveSessionServers.contains(serverId)) return;
     final server = await _repository.getServerById(serverId);
-    if (server != null) await _probeOne(server);
+    if (server != null) await _probeOne(server, _workGeneration);
   }
 
-  Future<void> _probeOneInner(Server server) async {
+  Future<void> _probeOneInner(Server server, int generation) async {
+    if (!_workIsCurrent(generation)) return;
     if (_liveSessionServers.contains(server.id)) {
       _probed.add(server.id);
       await _preserveInteractiveSuccess(server);
@@ -194,18 +214,21 @@ class HostStatusProbe extends ChangeNotifier {
     }
     final evidenceGeneration = _evidenceGeneration[server.id] ?? 0;
     final stopwatch = Stopwatch()..start();
+    var markedConnecting = false;
     try {
       // Shown as "connecting" while a previously offline host is retried, so a slow probe reads as
       // work in progress rather than a host that is simply still down.
       if (server.status == 'offline') {
         await _repository.updateConnectionState(server.id, 'connecting', server.healthScore, 0);
+        markedConnecting = true;
+        if (!_workIsCurrent(generation)) return;
       }
       // A direct socket to the final host bypasses every configured proxy. Do not let that result
       // overrule the route the user actually asked SSH to use.
       final rtt = server.proxyType == 'none'
           ? await probe.tcpPing(server.host, server.port, timeout: timeout)
           : null;
-      if (_disposed) return;
+      if (!_workIsCurrent(generation)) return;
       if (rtt != null) {
         _probed.add(server.id);
         // The health score is left alone: it is Monitor's business, computed from real telemetry,
@@ -224,7 +247,7 @@ class HostStatusProbe extends ChangeNotifier {
         // Compatibility for transport-less tests/builds. Production always wires the configured
         // SSH fallback, so a direct failure there never becomes a verdict by itself.
         _probed.add(server.id);
-        await _markOfflineUnlessSshSucceeded(server, evidenceGeneration);
+        await _markOfflineUnlessSshSucceeded(server, evidenceGeneration, generation);
         return;
       }
       final creds = resolveCredentials(
@@ -232,8 +255,9 @@ class HostStatusProbe extends ChangeNotifier {
         keys: await _repository.getAllKeys(),
         profiles: await _repository.getAllProfiles(),
       );
+      if (!_workIsCurrent(generation)) return;
       final failure = await ssh.testConnection(creds);
-      if (_disposed) return;
+      if (!_workIsCurrent(generation)) return;
       _probed.add(server.id);
       if (failure == null) {
         await Future.wait([
@@ -245,12 +269,12 @@ class HostStatusProbe extends ChangeNotifier {
           ),
           _repository.updateAuthState(server.id, 'ok', null),
         ]);
-      } else if (!_mayMarkOffline(server.id, evidenceGeneration)) {
+      } else if (!_mayMarkOffline(server.id, evidenceGeneration, generation)) {
         // A shell opened while this independent check was in flight. Do not replace its successful
         // authentication with the second connection's failure either.
         await _preserveInteractiveSuccess(server);
       } else if (sshFailureProvesEndpointUnreachable(failure)) {
-        await _markOfflineUnlessSshSucceeded(server, evidenceGeneration);
+        await _markOfflineUnlessSshSucceeded(server, evidenceGeneration, generation);
       } else {
         // Auth/host-key failures prove that an SSH server answered. Ambiguous transport errors do
         // not justify hiding the host from online-only screens or preventing a manual attempt.
@@ -265,8 +289,8 @@ class HostStatusProbe extends ChangeNotifier {
         ]);
       }
     } catch (_) {
-      if (_disposed) return;
-      if (!_mayMarkOffline(server.id, evidenceGeneration)) {
+      if (!_workIsCurrent(generation)) return;
+      if (!_mayMarkOffline(server.id, evidenceGeneration, generation)) {
         await _preserveInteractiveSuccess(server).catchError((Object _) {});
         return;
       }
@@ -275,22 +299,49 @@ class HostStatusProbe extends ChangeNotifier {
       await _repository
           .updateConnectionState(server.id, server.status, server.healthScore, server.lastLatency)
           .catchError((Object _) {});
+    } finally {
+      // Battery saver can invalidate a probe after its temporary "connecting" write. Restore the
+      // previous state only if no newer probe or live shell has supplied stronger evidence; leaving
+      // a host permanently "connecting" makes every tab wait on work that no longer exists.
+      if (markedConnecting && !_workIsCurrent(generation) && !_disposed) {
+        if (_liveSessionServers.contains(server.id) ||
+            (_evidenceGeneration[server.id] ?? 0) != evidenceGeneration) {
+          await _preserveInteractiveSuccess(server);
+        } else {
+          final current = await _repository.getServerById(server.id);
+          if (current?.status == 'connecting') {
+            await _repository.updateConnectionState(
+              server.id,
+              server.status,
+              server.healthScore,
+              server.lastLatency,
+            );
+          }
+        }
+      }
     }
   }
 
-  bool _mayMarkOffline(int serverId, int evidenceGeneration) =>
+  bool _mayMarkOffline(int serverId, int evidenceGeneration, int generation) =>
+      _workIsCurrent(generation) &&
       !_liveSessionServers.contains(serverId) &&
       (_evidenceGeneration[serverId] ?? 0) == evidenceGeneration;
 
-  Future<void> _markOfflineUnlessSshSucceeded(Server server, int evidenceGeneration) async {
-    if (!_mayMarkOffline(server.id, evidenceGeneration)) {
+  Future<void> _markOfflineUnlessSshSucceeded(
+    Server server,
+    int evidenceGeneration,
+    int generation,
+  ) async {
+    if (!_workIsCurrent(generation)) return;
+    if (!_mayMarkOffline(server.id, evidenceGeneration, generation)) {
       await _preserveInteractiveSuccess(server);
       return;
     }
     await _repository.updateConnectionState(server.id, 'offline', 0, 0);
     // Database writes yield. Reconcile once more in case a shell opened while the offline write was
     // being committed; the successful SSH result must be the final visible state.
-    if (!_mayMarkOffline(server.id, evidenceGeneration)) {
+    if (!_workIsCurrent(generation)) return;
+    if (!_mayMarkOffline(server.id, evidenceGeneration, generation)) {
       await _preserveInteractiveSuccess(server);
     }
   }

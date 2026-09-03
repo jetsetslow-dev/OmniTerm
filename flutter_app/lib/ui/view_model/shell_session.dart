@@ -428,7 +428,10 @@ class ShellSession extends ChangeNotifier {
     try {
       await _channel.write(_encodeForChannel(bytes));
     } catch (_) {
-      // The channel's own close signal decides the session's fate; a failed write is a symptom.
+      // A write can fail before the output stream notices the dead socket. Marking the session
+      // disconnected here prevents further keystrokes from being accepted and gives the terminal
+      // an immediate visible "Connection lost" state instead of silently dropping input.
+      _finish(ShellSessionEnd.disconnected);
     }
   }
 

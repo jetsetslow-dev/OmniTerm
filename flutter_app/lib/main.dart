@@ -26,6 +26,7 @@ import 'platform/alert_notifier.dart';
 import 'platform/ads_controller.dart';
 import 'platform/biometric_auth.dart';
 import 'platform/battery_saver_controller.dart';
+import 'platform/battery_saver_notifications.dart';
 import 'domain/startup_recovery.dart';
 import 'platform/crash_log.dart';
 import 'platform/distribution.dart';
@@ -50,6 +51,7 @@ import 'ui/theme/colors.dart';
 import 'ui/shell_state.dart';
 import 'ui/view_model/app_state.dart';
 import 'platform/legacy_secret_channel.dart';
+import 'platform/long_operation_notifications.dart';
 import 'platform/secret_store.dart';
 import 'ui/view_model/alerts_view_model.dart';
 import 'ui/view_model/backup_view_model.dart';
@@ -231,6 +233,11 @@ class OmniTermApp extends StatelessWidget {
         Provider<ExternalLaunch>(create: (_) => ExternalLaunch()),
         Provider<ShortcutHelper>(create: (_) => ShortcutHelper()),
         Provider<PlatformPermissions>(create: (_) => PlatformPermissions()),
+        Provider<LongOperationNotifications>(
+          create: (context) => LongOperationNotifications(
+            requestNotificationPermission: context.read<PlatformPermissions>().requestNotifications,
+          ),
+        ),
         ChangeNotifierProvider<ExternalUiRequests>(create: (_) => ExternalUiRequests()),
         ChangeNotifierProvider(
           create: (_) =>
@@ -339,8 +346,11 @@ class OmniTermApp extends StatelessWidget {
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, InfraViewModel>(
-          create: (context) =>
-              InfraViewModel(context.read<AppState>(), transport: context.read<SshTransport>()),
+          create: (context) => InfraViewModel(
+            context.read<AppState>(),
+            transport: context.read<SshTransport>(),
+            operationNotifications: context.read<LongOperationNotifications>(),
+          ),
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, FleetViewModel>(
@@ -348,6 +358,7 @@ class OmniTermApp extends StatelessWidget {
             context.read<AppState>(),
             transport: context.read<SshTransport>(),
             poller: context.read<TelemetryPoller>(),
+            operationNotifications: context.read<LongOperationNotifications>(),
           ),
           update: (_, app, previous) => previous!,
         ),
@@ -361,11 +372,15 @@ class OmniTermApp extends StatelessWidget {
             shareClientFor: _shareClientFor(context.read<DartSshTransport>()),
             // A shell, for the questions SFTP itself cannot answer — currently `du`.
             transport: context.read<SshTransport>(),
+            operationNotifications: context.read<LongOperationNotifications>(),
           ),
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, SharesViewModel>(
-          create: (context) => SharesViewModel(context.read<AppState>()),
+          create: (context) => SharesViewModel(
+            context.read<AppState>(),
+            operationNotifications: context.read<LongOperationNotifications>(),
+          ),
           update: (_, app, previous) => previous!,
         ),
         ChangeNotifierProxyProvider<AppState, AuthKeysViewModel>(
@@ -380,12 +395,18 @@ class OmniTermApp extends StatelessWidget {
           update: (_, app, previous) => previous ?? ScriptsViewModel(app),
         ),
         ChangeNotifierProxyProvider<AppState, NetworkViewModel>(
-          create: (context) =>
-              NetworkViewModel(context.read<AppState>(), tunnels: context.read<SshTunnelManager>()),
+          create: (context) => NetworkViewModel(
+            context.read<AppState>(),
+            tunnels: context.read<SshTunnelManager>(),
+            operationNotifications: context.read<LongOperationNotifications>(),
+          ),
           update: (_, app, previous) => previous ?? NetworkViewModel(app),
         ),
         ChangeNotifierProxyProvider<AppState, BackupViewModel>(
-          create: (context) => BackupViewModel(context.read<AppState>()),
+          create: (context) => BackupViewModel(
+            context.read<AppState>(),
+            operationNotifications: context.read<LongOperationNotifications>(),
+          ),
           update: (_, app, previous) => previous ?? BackupViewModel(app),
         ),
         ChangeNotifierProxyProvider<AppState, HealthScoringViewModel>(
@@ -411,7 +432,9 @@ class OmniTermApp extends StatelessWidget {
             context.read<AppState>(),
             context.read<ShellState>(),
             context.read<TelemetryPoller>(),
+            context.read<HostStatusProbe>(),
             context.read<ShellViewModel>(),
+            notifier: BatterySaverNotifications(),
           )..start(),
         ),
         ChangeNotifierProxyProvider<AppState, SettingsViewModel>(
@@ -767,8 +790,17 @@ class _RuntimeBindingsState extends State<_RuntimeBindings> with WidgetsBindingO
         await poller.cycle();
       case 'open_sftp':
         nav.navigateTo(Screen.sftp);
+      case 'open_transfers':
+        sftp.activeTab = SftpTab.transfers;
+        nav.navigateTo(Screen.sftp);
       case 'open_network':
         nav.navigateTo(Screen.network);
+      case 'open_fleet':
+        nav.navigateTo(Screen.fleet);
+      case 'open_infra':
+        nav.navigateTo(Screen.infra);
+      case 'open_backup':
+        nav.navigateTo(Screen.backup);
       case 'open_servers':
       default:
         nav.navigateTo(Screen.servers);

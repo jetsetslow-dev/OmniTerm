@@ -15,6 +15,7 @@ import '../../domain/endpoint_bookmark.dart';
 import '../../domain/file_edit.dart';
 import '../../domain/image_preview.dart';
 import '../../platform/device_file_store.dart';
+import '../../platform/long_operation_notifications.dart';
 import '../../domain/remote_path.dart';
 import '../../domain/server_credentials.dart';
 import '../../domain/sftp_sort.dart';
@@ -29,7 +30,14 @@ enum SftpTab { bookmarks, files, shares, transfers }
 
 enum TransferDirection { download, upload }
 
-enum TransferStatus { running, done, failed }
+enum TransferStatus { running, done, failed, cancelled }
+
+class _TransferCancelled implements Exception {
+  const _TransferCancelled();
+
+  @override
+  String toString() => 'Transfer cancelled';
+}
 
 class _ClipboardEndpoint {
   const _ClipboardEndpoint({this.serverId, this.share, required this.label});
@@ -72,11 +80,22 @@ class SftpTransfer {
 
   /// When the transfer began, so a rate can be derived. Injectable for tests, which cannot wait a
   /// real second to observe a speed.
-  final DateTime startedAt;
+  DateTime startedAt;
 
   int copiedBytes = 0;
   TransferStatus status = TransferStatus.running;
   String? error;
+
+  String? _retrySourcePath;
+  _ClipboardEndpoint? _retryEndpoint;
+  String? _retryRemotePath;
+
+  bool get canRetry =>
+      direction == TransferDirection.upload &&
+      status == TransferStatus.failed &&
+      _retrySourcePath != null &&
+      _retryEndpoint != null &&
+      _retryRemotePath != null;
 
   /// 0..1, or null when the size is unknown — a determinate bar showing a made-up fraction is
   /// worse than an indeterminate one.
@@ -96,11 +115,35 @@ class SftpTransfer {
 
 /// The SFTP screen's state and actions, split out of `ui/AppViewModel.kt` per §5.2.
 class SftpViewModel extends ChangeNotifier {
-  SftpViewModel(this._app, {this.fsClientFor, this.shareClientFor, this.transport}) {
+  SftpViewModel(
+    this._app, {
+    this.fsClientFor,
+    this.shareClientFor,
+    this.transport,
+    this.operationNotifications,
+  }) {
     _app.addListener(_onAppChanged);
   }
 
   final AppState _app;
+  final LongOperationNotifications? operationNotifications;
+  int _backgroundOperationSequence = 0;
+
+  String _startBackgroundOperation(String label, {String destination = 'transfers'}) {
+    final id = 'sftp-${DateTime.now().microsecondsSinceEpoch}-${_backgroundOperationSequence++}';
+    final notifications = operationNotifications;
+    if (notifications != null) {
+      unawaited(notifications.start(id: id, label: label, destination: destination));
+    }
+    return id;
+  }
+
+  void _finishBackgroundOperation(String id, bool success) {
+    final notifications = operationNotifications;
+    if (notifications != null) {
+      unawaited(notifications.finish(id: id, success: success));
+    }
+  }
 
   /// Resolves the file client **for a given host**.
   ///
@@ -673,6 +716,8 @@ class SftpViewModel extends ChangeNotifier {
     final server = browsedServer;
     if (ssh == null || server == null || _browsedShare != null) return null;
 
+    final operationId = _startBackgroundOperation('Measuring ${entry.name}');
+    var succeeded = false;
     _loading = true;
     _error = null;
     _safeNotify();
@@ -689,6 +734,7 @@ class SftpViewModel extends ChangeNotifier {
         // zero, which would read as "this folder is empty".
         _error = 'Could not measure "${entry.name}" — the host refused or has no `du`.';
       }
+      succeeded = size != null;
       return size;
     } on CredentialResolutionException catch (e) {
       _error = e.message;
@@ -698,6 +744,7 @@ class SftpViewModel extends ChangeNotifier {
       return null;
     } finally {
       _loading = false;
+      _finishBackgroundOperation(operationId, succeeded);
       _safeNotify();
     }
   }
@@ -776,6 +823,8 @@ class SftpViewModel extends ChangeNotifier {
     final term = query.trim();
     if (share == null || term.isEmpty || _searching) return;
 
+    final operationId = _startBackgroundOperation('Searching files for “$term”');
+    var succeeded = false;
     _searching = true;
     _searchHits = null;
     _searchTruncated = false;
@@ -823,11 +872,13 @@ class SftpViewModel extends ChangeNotifier {
       }
       hits.sort((a, b) => a.path.toLowerCase().compareTo(b.path.toLowerCase()));
       _searchHits = hits;
+      succeeded = true;
     } catch (e) {
       _error = 'Search failed: $e';
       _searchHits = const [];
     } finally {
       _searching = false;
+      _finishBackgroundOperation(operationId, succeeded);
       _safeNotify();
     }
   }
@@ -845,6 +896,9 @@ class SftpViewModel extends ChangeNotifier {
     if (ssh == null || server == null || _browsedShare != null) return;
     if (query.trim().isEmpty) return;
 
+    final term = query.trim();
+    final operationId = _startBackgroundOperation('Searching files for “$term”');
+    var succeeded = false;
     _searching = true;
     _searchHits = null;
     _searchTruncated = false;
@@ -874,12 +928,14 @@ class SftpViewModel extends ChangeNotifier {
       final result = parseRemoteSearch(output, base: base);
       _searchHits = result.hits;
       _searchTruncated = result.truncated;
+      succeeded = true;
     } on CredentialResolutionException catch (e) {
       _error = e.message;
     } catch (e) {
       _error = 'Search failed: $e';
     } finally {
       _searching = false;
+      _finishBackgroundOperation(operationId, succeeded);
       _safeNotify();
     }
   }
@@ -1035,6 +1091,10 @@ class SftpViewModel extends ChangeNotifier {
     final server = browsedServer;
     final ssh = transport;
     if (server == null || ssh == null || _browsedShare != null) return false;
+    final operationId = _startBackgroundOperation(
+      success.startsWith('Created') ? 'Creating archive' : 'Extracting archive',
+    );
+    var succeeded = false;
     _loading = true;
     _error = null;
     _safeNotify();
@@ -1057,12 +1117,14 @@ class SftpViewModel extends ChangeNotifier {
       if (clearSelection) _selected.clear();
       _status = success;
       await openPath(_path);
+      succeeded = true;
       return true;
     } catch (e) {
       _error = '$failurePrefix: $e';
       return false;
     } finally {
       _loading = false;
+      _finishBackgroundOperation(operationId, succeeded);
       _safeNotify();
     }
   }
@@ -1472,16 +1534,24 @@ class SftpViewModel extends ChangeNotifier {
     _transfers.add(transfer);
     final tempDirectory = await Directory.systemTemp.createTemp('omniterm-cross-');
     final temp = File('${tempDirectory.path}/payload');
+    _startOperation(transfer, copying: true);
+    _activeTransferAborters[transfer.id] = () {
+      source.cancelActiveTransfers();
+      if (!identical(source, destination)) destination.cancelActiveTransfers();
+    };
     try {
       final sink = temp.openWrite();
       await source.downloadTo(
         from,
         sink,
         onProgress: (copied, total) {
+          _throwIfTransferCancelled(transfer.id);
           transfer.copiedBytes = copied ~/ 2;
+          _updateOperation(transfer, copying: true);
           _safeNotify();
         },
       );
+      _throwIfTransferCancelled(transfer.id);
       await sink.close();
       final size = await temp.length();
       await destination.uploadStream(
@@ -1489,20 +1559,30 @@ class SftpViewModel extends ChangeNotifier {
         temp.openRead(),
         size,
         onProgress: (copied, total) {
+          _throwIfTransferCancelled(transfer.id);
           transfer.copiedBytes = (size / 2 + copied / 2).round();
+          _updateOperation(transfer, copying: true);
           _safeNotify();
         },
       );
+      _throwIfTransferCancelled(transfer.id);
       transfer
         ..copiedBytes = size
         ..status = TransferStatus.done;
       if (move) await source.delete(from, isDirectory: false);
     } catch (error) {
-      transfer
-        ..status = TransferStatus.failed
-        ..error = error.toString();
+      if (_cancelledTransferIds.contains(transfer.id) || error is _TransferCancelled) {
+        transfer.status = TransferStatus.cancelled;
+      } else {
+        transfer
+          ..status = TransferStatus.failed
+          ..error = error.toString();
+      }
       rethrow;
     } finally {
+      final cancelled = _finishWasCancelled(transfer.id);
+      if (cancelled) transfer.status = TransferStatus.cancelled;
+      _finishOperation(transfer);
       if (await temp.exists()) await temp.delete();
       if (await tempDirectory.exists()) await tempDirectory.delete();
       _safeNotify();
@@ -1859,11 +1939,86 @@ class SftpViewModel extends ChangeNotifier {
   // ── transfers ───────────────────────────────────────────────────────────────
 
   final List<SftpTransfer> _transfers = [];
+  final Set<String> _cancelledTransferIds = {};
+  final Map<String, void Function()> _activeTransferAborters = {};
+
+  String _operationLabel(SftpTransfer transfer, {bool copying = false}) {
+    if (copying) return 'Copy: ${transfer.name}';
+    final verb = transfer.direction == TransferDirection.download ? 'Download' : 'Upload';
+    return '$verb: ${transfer.name}';
+  }
+
+  void _startOperation(SftpTransfer transfer, {bool copying = false}) {
+    final notifications = operationNotifications;
+    if (notifications == null) return;
+    unawaited(
+      notifications.start(
+        id: transfer.id,
+        label: _operationLabel(transfer, copying: copying),
+        totalBytes: transfer.totalBytes,
+      ),
+    );
+  }
+
+  void _updateOperation(SftpTransfer transfer, {bool copying = false}) {
+    final notifications = operationNotifications;
+    if (notifications == null) return;
+    unawaited(
+      notifications.update(
+        id: transfer.id,
+        label: _operationLabel(transfer, copying: copying),
+        bytesDone: transfer.copiedBytes,
+        totalBytes: transfer.totalBytes,
+      ),
+    );
+  }
+
+  void _finishOperation(SftpTransfer transfer) {
+    final notifications = operationNotifications;
+    if (notifications == null) return;
+    unawaited(
+      notifications.finish(
+        id: transfer.id,
+        success: transfer.status == TransferStatus.done,
+        cancelled: transfer.status == TransferStatus.cancelled,
+      ),
+    );
+  }
 
   /// Newest first — the one the user just started is the one they want to see.
   List<SftpTransfer> get transfers => List.unmodifiable(_transfers.reversed);
 
   int get activeTransferCount => _transfers.where((t) => t.status == TransferStatus.running).length;
+
+  void cancelTransfer(String id) {
+    if (!_transfers.any(
+      (transfer) => transfer.id == id && transfer.status == TransferStatus.running,
+    )) {
+      return;
+    }
+    _cancelledTransferIds.add(id);
+    try {
+      _activeTransferAborters[id]?.call();
+    } catch (_) {
+      // The progress callback is the second cancellation boundary. A protocol aborter throwing
+      // synchronously must not crash the UI or turn a user cancellation into an app failure.
+    }
+  }
+
+  void cancelAllTransfers() {
+    for (final transfer in _transfers.where((item) => item.status == TransferStatus.running)) {
+      cancelTransfer(transfer.id);
+    }
+  }
+
+  void _throwIfTransferCancelled(String id) {
+    if (_cancelledTransferIds.contains(id)) throw const _TransferCancelled();
+  }
+
+  bool _finishWasCancelled(String id) {
+    _activeTransferAborters.remove(id);
+    return _cancelledTransferIds.remove(id);
+  }
 
   void clearFinishedTransfers() {
     _transfers.removeWhere((t) => t.status != TransferStatus.running);
@@ -1891,7 +2046,7 @@ class SftpViewModel extends ChangeNotifier {
       await directory.delete(recursive: true).catchError((Object _) => directory);
       return null;
     }
-    if (_transfers.isNotEmpty && _transfers.last.status == TransferStatus.failed) {
+    if (_transfers.isNotEmpty && _transfers.last.status != TransferStatus.done) {
       await directory.delete(recursive: true).catchError((Object _) => directory);
       return null;
     }
@@ -2107,7 +2262,11 @@ class SftpViewModel extends ChangeNotifier {
 
   Future<void> download(SftpFile entry, StreamSink<List<int>> sink) async {
     final client = await _client;
-    if (client == null) return;
+    if (client == null) {
+      _error = _unavailable(browsedServer, 'File downloads are unavailable in this build.');
+      _safeNotify();
+      return;
+    }
     final transfer = SftpTransfer(
       id: '${DateTime.now().microsecondsSinceEpoch}-${entry.name}',
       name: entry.name,
@@ -2115,6 +2274,8 @@ class SftpViewModel extends ChangeNotifier {
       totalBytes: entry.size,
     );
     _transfers.add(transfer);
+    _activeTransferAborters[transfer.id] = client.cancelActiveTransfers;
+    _startOperation(transfer);
     _safeNotify();
 
     try {
@@ -2122,17 +2283,28 @@ class SftpViewModel extends ChangeNotifier {
         joinPath(_path, entry.name),
         sink,
         onProgress: (copied, total) {
+          _throwIfTransferCancelled(transfer.id);
           transfer.copiedBytes = copied;
+          _updateOperation(transfer);
           _safeNotify();
         },
       );
+      _throwIfTransferCancelled(transfer.id);
       transfer.status = TransferStatus.done;
     } catch (e) {
-      transfer
-        ..status = TransferStatus.failed
-        ..error = e.toString();
+      if (_cancelledTransferIds.contains(transfer.id) || e is _TransferCancelled) {
+        transfer.status = TransferStatus.cancelled;
+      } else {
+        transfer
+          ..status = TransferStatus.failed
+          ..error = e.toString();
+      }
+    } finally {
+      final cancelled = _finishWasCancelled(transfer.id);
+      if (cancelled) transfer.status = TransferStatus.cancelled;
+      _finishOperation(transfer);
+      _safeNotify();
     }
-    _safeNotify();
   }
 
   /// The size of a file on this device, or 0 when it cannot be read.
@@ -2162,42 +2334,156 @@ class SftpViewModel extends ChangeNotifier {
       _safeNotify();
       return;
     }
-    await upload(baseName(sourcePath), file.openRead(), size);
+    await upload(baseName(sourcePath), file.openRead(), size, sourcePath: sourcePath);
   }
 
   /// Uploads [bytes] into the current directory as [name].
   ///
   /// A clashing name is given a `(2)` suffix rather than overwriting: an upload that silently
   /// replaces a file the user did not mean to touch is unrecoverable.
-  Future<void> upload(String name, Stream<List<int>> bytes, int totalBytes) async {
-    final client = await _client;
-    if (client == null) return;
+  Future<void> upload(
+    String name,
+    Stream<List<int>> bytes,
+    int totalBytes, {
+    String? sourcePath,
+  }) async {
+    // Capture all destination state before opening a client. The user can switch host/share or
+    // navigate while that await is in flight; the upload must still land where it was started.
+    final endpoint = _currentEndpoint;
+    final directory = _path;
+    final client = await _clientForEndpoint(endpoint);
+    if (client == null) {
+      _error = _unavailable(browsedServer, 'File uploads are unavailable in this build.');
+      _safeNotify();
+      return;
+    }
     final safe = uniqueName(name, _entries.map((e) => e.name).toSet());
-    final transfer = SftpTransfer(
-      id: '${DateTime.now().microsecondsSinceEpoch}-$safe',
-      name: safe,
-      direction: TransferDirection.upload,
-      totalBytes: totalBytes,
-    );
+    final remotePath = joinPath(directory, safe);
+    final transfer =
+        SftpTransfer(
+            id: '${DateTime.now().microsecondsSinceEpoch}-$safe',
+            name: safe,
+            direction: TransferDirection.upload,
+            totalBytes: totalBytes,
+          )
+          .._retrySourcePath = sourcePath
+          .._retryEndpoint = sourcePath == null ? null : endpoint
+          .._retryRemotePath = sourcePath == null ? null : remotePath;
     _transfers.add(transfer);
+    await _runUpload(
+      transfer: transfer,
+      client: client,
+      remotePath: remotePath,
+      bytes: bytes,
+      totalBytes: totalBytes,
+      endpoint: endpoint,
+    );
+  }
+
+  /// Replays a failed picker upload against its original endpoint and destination.
+  Future<void> retryUpload(String id) async {
+    final transfer = _transfers.where((item) => item.id == id).firstOrNull;
+    if (transfer == null || !transfer.canRetry) return;
+    final sourcePath = transfer._retrySourcePath!;
+    final endpoint = transfer._retryEndpoint!;
+    final remotePath = transfer._retryRemotePath!;
+    final file = File(sourcePath);
+    final int size;
+    try {
+      size = await file.length();
+    } catch (error) {
+      transfer.error = 'Could not read the original file for retry: $error';
+      _safeNotify();
+      return;
+    }
+    final client = await _clientForEndpoint(endpoint);
+    if (client == null) {
+      transfer.error = 'Could not reopen ${endpoint.label} for retry.';
+      _safeNotify();
+      return;
+    }
+
+    transfer
+      ..startedAt = DateTime.now()
+      ..copiedBytes = 0
+      ..status = TransferStatus.running
+      ..error = null;
+    await _runUpload(
+      transfer: transfer,
+      client: client,
+      remotePath: remotePath,
+      bytes: file.openRead(),
+      totalBytes: size,
+      endpoint: endpoint,
+    );
+  }
+
+  Future<void> _runUpload({
+    required SftpTransfer transfer,
+    required RemoteFsClient client,
+    required String remotePath,
+    required Stream<List<int>> bytes,
+    required int totalBytes,
+    required _ClipboardEndpoint endpoint,
+  }) async {
+    final stagePath = joinPath(
+      parentPath(remotePath),
+      '.${baseName(remotePath)}.omniterm-upload-${DateTime.now().microsecondsSinceEpoch}.part',
+    );
+    var committed = false;
+    _activeTransferAborters[transfer.id] = client.cancelActiveTransfers;
+    _startOperation(transfer);
     _safeNotify();
 
     try {
       await client.uploadStream(
-        joinPath(_path, safe),
+        stagePath,
         bytes,
         totalBytes,
         onProgress: (copied, total) {
+          _throwIfTransferCancelled(transfer.id);
           transfer.copiedBytes = copied;
+          _updateOperation(transfer);
           _safeNotify();
         },
       );
+      _throwIfTransferCancelled(transfer.id);
+      // Recheck immediately before commit. A file may have appeared since the directory listing
+      // used to choose the name, and rename implementations may overwrite by default.
+      final finalName = baseName(remotePath);
+      final destinationNow = await client.list(parentPath(remotePath));
+      if (destinationNow.any((entry) => entry.name == finalName)) {
+        throw StateError(
+          '"$finalName" appeared while the upload was running; nothing was replaced.',
+        );
+      }
+      _throwIfTransferCancelled(transfer.id);
+      await client.rename(stagePath, remotePath);
+      committed = true;
       transfer.status = TransferStatus.done;
-      await refresh();
+      if (_currentEndpoint.key == endpoint.key && _path == parentPath(remotePath)) {
+        await refresh();
+      }
     } catch (e) {
-      transfer
-        ..status = TransferStatus.failed
-        ..error = e.toString();
+      if (_cancelledTransferIds.contains(transfer.id) || e is _TransferCancelled) {
+        transfer.status = TransferStatus.cancelled;
+      } else {
+        transfer
+          ..status = TransferStatus.failed
+          ..error = e.toString();
+      }
+    } finally {
+      if (!committed) {
+        try {
+          await client.delete(stagePath, isDirectory: false);
+        } catch (cleanupError) {
+          final prefix = transfer.error == null ? '' : '${transfer.error}\n';
+          transfer.error = '${prefix}Temporary upload cleanup also failed: $cleanupError';
+        }
+      }
+      final cancelled = _finishWasCancelled(transfer.id);
+      if (cancelled) transfer.status = TransferStatus.cancelled;
+      _finishOperation(transfer);
       _safeNotify();
     }
   }

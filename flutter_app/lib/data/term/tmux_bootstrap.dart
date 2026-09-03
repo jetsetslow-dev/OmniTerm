@@ -82,32 +82,36 @@ String tmuxAttachCommand(String name, {int historyLimit = 10000}) {
   return '${_existingBootstrap(safe, historyLimit)}exec tmux attach-session -t $safe\n';
 }
 
-/// Reconnects to a remembered session, **creating it again if the server no longer has it**.
+/// Reconnects to a remembered session after [tmuxSessionProbeCommand] confirmed it exists.
 ///
-/// This is what a reconnect must use, and the distinction is not academic. A plain attach is a
-/// chain of `&&`: when `has-session` fails — the server rebooted, someone ran `tmux kill-server`,
-/// the session timed out — every later step is skipped and the user is dropped into a perfectly
-/// ordinary shell **that is no longer persistent, with nothing saying so**. Worse, the remembered
-/// name never becomes valid again, so every future reconnect degrades the same way. Verified
-/// against a real server: the chain exits 1 and leaves a plain prompt.
-///
-/// `has-session || new-session` rather than tmux's own `new-session -A`: that flag reports failure
-/// when the session already exists on the tmux shipped by the lab's image, which would reintroduce
-/// exactly the silent degrade this exists to remove.
-/// [controlMode] attaches with `tmux -C` once the session is known to exist. There is no
-/// control-mode `attach` that also creates: `tmuxControlAttachCommand` fails on a vanished session
-/// and would leave an ordinary shell whose bytes the control-mode parser reads as a protocol and
-/// renders as nothing — a worse failure than the plain one this function exists to prevent.
+/// It deliberately never creates a replacement. A server reboot can remove the old shell and all
+/// of its work; silently making a new empty session under the same name would claim that recovery
+/// succeeded. The caller keeps an unverifiable recovery row, or removes a confirmed-missing row
+/// with an explicit warning, before this command is ever sent.
 String tmuxResumeCommand(String name, {int historyLimit = 10000, bool controlMode = false}) {
+  return controlMode
+      ? tmuxControlAttachCommand(name, historyLimit: historyLimit)
+      : tmuxAttachCommand(name, historyLimit: historyLimit);
+}
+
+const tmuxSessionPresentMarker = 'OMNITERM_TMUX_PRESENT';
+const tmuxSessionAbsentMarker = 'OMNITERM_TMUX_ABSENT';
+
+/// Checks one exact remembered name. Exit codes other than tmux's documented 0/1 stay unknown.
+String tmuxSessionProbeCommand(String name) {
   final safe = tmuxSafeName(name);
-  final limit = _boundedHistory(historyLimit);
-  return 'command -v tmux >/dev/null 2>&1 && '
-      '{ tmux has-session -t $safe 2>/dev/null || '
-      'tmux start-server \\; set-option -g history-limit $limit \\; '
-      'new-session -d -s $safe; } && '
-      '(tmux set-option -t $safe history-limit $limit >/dev/null 2>&1 || true) && '
-      '(tmux set-option -t $safe mouse off >/dev/null 2>&1 || true) && '
-      'exec tmux ${controlMode ? '-C ' : ''}attach-session -t $safe\n';
+  return 'tmux has-session -t $safe >/dev/null 2>&1; OT_TMUX_STATUS=\$?; '
+      'if [ "\$OT_TMUX_STATUS" = 0 ]; then echo $tmuxSessionPresentMarker; '
+      'elif [ "\$OT_TMUX_STATUS" = 1 ]; then echo $tmuxSessionAbsentMarker; '
+      'else echo OMNITERM_TMUX_UNKNOWN; fi';
+}
+
+bool? parseTmuxSessionProbe(String raw) {
+  final response = raw.trim();
+  if (response.startsWith('SSH Error:')) return null;
+  if (response == tmuxSessionPresentMarker) return true;
+  if (response == tmuxSessionAbsentMarker) return false;
+  return null;
 }
 
 /// Attaches in **control mode** (`tmux -C`).

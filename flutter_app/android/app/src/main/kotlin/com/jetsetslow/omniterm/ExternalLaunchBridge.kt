@@ -61,6 +61,15 @@ object ExternalLaunchBridge {
                 "com.jetsetslow.omniterm.action.SFTP" -> add(message("open_sftp"))
                 "com.jetsetslow.omniterm.action.NETWORK_TOOLS" -> add(message("open_network"))
             }
+            if (intent.data?.scheme == "omniterm" && intent.data?.host == "notification") {
+                when (intent.data?.lastPathSegment) {
+                    "transfers" -> add(message("open_transfers"))
+                    "network" -> add(message("open_network"))
+                    "fleet" -> add(message("open_fleet"))
+                    "infra" -> add(message("open_infra"))
+                    "backup" -> add(message("open_backup"))
+                }
+            }
             intent.intExtra("shortcut_server_id")?.let {
                 add(message("connect_server", targetId = it))
             }
@@ -79,6 +88,9 @@ object ExternalLaunchBridge {
         intent.removeExtra("shortcut_split_server1_id")
         intent.removeExtra("shortcut_split_server2_id")
         intent.removeExtra("shortcut_share_id")
+        if (intent.data?.scheme == "omniterm" && intent.data?.host == "notification") {
+            intent.data = null
+        }
         if (intent.action?.startsWith("com.jetsetslow.omniterm.action.") == true) {
             intent.action = Intent.ACTION_MAIN
         }

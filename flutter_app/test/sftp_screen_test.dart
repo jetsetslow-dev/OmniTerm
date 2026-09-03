@@ -151,6 +151,35 @@ void main() {
     vm.dispose();
   });
 
+  testWidgets('the transfers tab exposes cancellation and distinguishes cancelled work', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester, client: homeTree());
+    vm.debugAddTransfers([
+      SftpTransfer(
+        id: 'running',
+        name: 'large.iso',
+        direction: TransferDirection.download,
+        totalBytes: 1024,
+      ),
+      SftpTransfer(
+        id: 'cancelled',
+        name: 'old.tar',
+        direction: TransferDirection.upload,
+        totalBytes: 2048,
+      )..status = TransferStatus.cancelled,
+    ]);
+
+    await tester.tap(find.byKey(const ValueKey('sftp.tab.transfers')));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('sftp.transfers.cancelAll')), findsOneWidget);
+    expect(find.byKey(const ValueKey('sftp.transfer.running.cancel')), findsOneWidget);
+    expect(find.text('CANCELLED'), findsOneWidget);
+    vm.dispose();
+  });
+
   testWidgets('the browser lists the home directory with breadcrumbs', (tester) async {
     await repo.insertServer(server(name: 'nas'));
     await pump(tester, client: homeTree());

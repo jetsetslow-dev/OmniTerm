@@ -269,6 +269,8 @@ class AppRepository {
   Future<void> acknowledgeAlert(int id) => _db.alertsDao.setAcknowledged(id, true);
   Future<void> acknowledgeAll() => _db.alertsDao.acknowledgeAll();
   Future<void> muteAlert(int id, int mutedUntil) => _db.alertsDao.muteAlert(id, mutedUntil);
+  Future<void> updateAlertCurrentValue(int id, double currentValue) =>
+      _db.alertsDao.updateAlertCurrentValue(id, currentValue);
 
   Stream<List<AlertHistoryRow>> get alertHistoryStream => _db.alertsDao.watchAlertHistory();
   Future<List<AlertHistoryRow>> getAlertHistory() => _db.alertsDao.getAlertHistory();

@@ -197,6 +197,28 @@ void main() {
       await finish(tester);
     });
 
+    testWidgets('a forced offline connect keeps its target, failure and retry action', (
+      tester,
+    ) async {
+      final id = await repo.insertServer(server(name: 'offline-nas', status: 'offline'));
+      await pump(tester);
+      final target = app.servers.singleWhere((item) => item.id == id);
+      transport.failure = StateError('Connection refused');
+
+      await vm.connect(target, confirmedOffline: true);
+      await tester.pumpAndSettle();
+
+      expect(find.text('offline-nas'), findsOneWidget);
+      expect(find.byKey(const ValueKey('shell.error')), findsOneWidget);
+      expect(find.textContaining('Connection refused'), findsOneWidget);
+      expect(
+        find.text('Retry'),
+        findsOneWidget,
+        reason: 'an offline target must not disappear after its real SSH attempt fails',
+      );
+      await finish(tester);
+    });
+
     testWidgets('the connecting view names the phase', (tester) async {
       await repo.insertServer(server(name: 'nas'));
       transport = FakeShellTransport(phases: const ['Authenticating…'])..gate = Completer<void>();

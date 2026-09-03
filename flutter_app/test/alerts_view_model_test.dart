@@ -433,6 +433,33 @@ void main() {
       vm.dispose();
     });
 
+    test('refreshing an acknowledged incident updates its value without unacknowledging', () async {
+      final (vm, host) = await fired();
+      await vm.acknowledge(vm.activeAlerts.single);
+      await settle();
+
+      await fire(vm, host, const AlertSample(cpuPercent: 98), nowMs: 140000);
+      await settle();
+
+      expect(vm.activeAlerts.single.currentValue, 98);
+      expect(vm.activeAlerts.single.acknowledged, isTrue);
+      vm.dispose();
+    });
+
+    test('refreshing a muted incident updates its value without unmuting', () async {
+      final (vm, host) = await fired();
+      await vm.mute(vm.activeAlerts.single, const Duration(hours: 1));
+      await settle();
+      final mutedUntil = vm.activeAlerts.single.mutedUntil;
+
+      await fire(vm, host, const AlertSample(cpuPercent: 99), nowMs: 140000);
+      await settle();
+
+      expect(vm.activeAlerts.single.currentValue, 99);
+      expect(vm.activeAlerts.single.mutedUntil, mutedUntil);
+      vm.dispose();
+    });
+
     test('dismissing archives it and drops the breach window', () async {
       final (vm, host) = await fired();
       await vm.dismiss(vm.activeAlerts.single);

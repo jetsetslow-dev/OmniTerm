@@ -63,6 +63,10 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
         <service
+            android:name=".LongOperationService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+        <service
             android:name=".OmniTermWidgetService"
             android:exported="false"
             android:permission="android.permission.BIND_REMOTEVIEWS" />

@@ -96,20 +96,11 @@ void main() {
       expect(tmuxAttachCommand('a', historyLimit: 5000), contains('history-limit 5000'));
     });
 
-    test('resuming recreates a session the server no longer has', () {
-      // The defect this fixes, found against a real server: a plain attach is a chain of `&&`, so
-      // when `has-session` fails the user lands in an ordinary shell that is **no longer
-      // persistent, with nothing saying so** — and the remembered name never becomes valid again,
-      // so every later reconnect degrades the same way.
+    test('resuming never creates a replacement for missing work', () {
       final command = tmuxResumeCommand('nas-1');
 
       expect(command, contains('has-session -t nas-1'));
-      expect(
-        command,
-        contains('new-session -d -s nas-1'),
-        reason: 'a vanished session has to be recreated, not silently skipped',
-      );
-      expect(command, contains('||'), reason: 'create is the fallback, not a second condition');
+      expect(command, isNot(contains('new-session -d -s nas-1')));
       expect(command, contains('exec tmux attach-session -t nas-1'));
     });
 
@@ -127,7 +118,7 @@ void main() {
       final command = tmuxResumeCommand('evil; rm -rf ~');
       expect(command, isNot(contains('rm -rf')));
       expect(command, contains('has-session -t evilrm-rf'));
-      expect(command, contains('new-session -d -s evilrm-rf'));
+      expect(command, isNot(contains('new-session -d -s evilrm-rf')));
     });
 
     test('a dangerous name is sanitised everywhere it appears in the command', () {
@@ -152,15 +143,11 @@ void main() {
   });
 
   group('control-mode resume', () {
-    test('resuming in control mode still recreates a vanished session', () {
-      // The reason there is no plain control-mode attach here: it fails on a session the server no
-      // longer has, and the fallback would be an ordinary shell whose bytes the control-mode parser
-      // reads as a protocol and renders as nothing — worse than the non-persistent shell that
-      // `tmuxResumeCommand` exists to prevent.
+    test('resuming in control mode never creates a vanished session', () {
       final command = tmuxResumeCommand('nas-1', controlMode: true);
 
       expect(command, contains('has-session -t nas-1'));
-      expect(command, contains('new-session -d -s nas-1'));
+      expect(command, isNot(contains('new-session -d -s nas-1')));
       expect(command, contains('exec tmux -C attach-session -t nas-1'));
     });
 

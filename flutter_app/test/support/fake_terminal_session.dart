@@ -21,6 +21,7 @@ class FakeTerminalSession implements TerminalSession {
   Completer<void>? gateResize;
 
   bool closeCalled = false;
+  Object? writeFailure;
 
   @override
   Stream<Uint8List> get output => _output.stream;
@@ -35,7 +36,11 @@ class FakeTerminalSession implements TerminalSession {
   final ValueNotifier<bool> remoteExited = ValueNotifier(false);
 
   @override
-  Future<void> write(Uint8List bytes) async => writes.add(bytes);
+  Future<void> write(Uint8List bytes) async {
+    final failure = writeFailure;
+    if (failure != null) throw failure;
+    writes.add(bytes);
+  }
 
   @override
   Future<void> resize(int cols, int rows) async {
