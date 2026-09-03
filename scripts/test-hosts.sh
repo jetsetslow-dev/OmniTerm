@@ -279,7 +279,7 @@ case "${1:-}" in
     cat <<EOF
 Enter these in OmniTerm. From an Android emulator the host machine is 10.0.2.2
 (use 127.0.0.1 when testing from this machine directly). For a physical device, first run
-`./scripts/test-hosts.sh android <serial>` and use 127.0.0.1 for every address below.
+\`./scripts/test-hosts.sh android <serial>\` and use 127.0.0.1 for every address below.
 
   direct              10.0.2.2:2201  user=$USER_NAME  password=$PASSWORD    proxy: none
   key auth            10.0.2.2:2202  user=$USER_NAME  key=$PLAIN_KEY        proxy: none
@@ -303,8 +303,8 @@ Also served, for the Network Tools and tunnel suites (see fixtures/lab-http/ngin
   FTP share           10.0.2.2:21    path=/         user=$USER_NAME  password=$PASSWORD
   WebDAV share        10.0.2.2:8082  path=fixture   user=$USER_NAME  password=$PASSWORD  HTTP
 
-The share volume starts with fixture.txt and nested/hello.txt, stays writable across `up` calls,
-and is discarded only by `down`.
+The share volume starts with fixture.txt and nested/hello.txt, stays writable across \`up\` calls,
+and is discarded only by \`down\`.
 
 Fixture files mounted read-only into direct:
 
