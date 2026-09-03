@@ -170,6 +170,9 @@ interface ActiveAlertDao {
     @Query("UPDATE active_alerts SET mutedUntil = :mutedUntil WHERE id = :id")
     suspend fun muteAlert(id: Int, mutedUntil: Long)
 
+    @Query("UPDATE active_alerts SET currentValue = :currentValue WHERE id = :id")
+    suspend fun updateCurrentValue(id: Int, currentValue: Float)
+
     @Query("DELETE FROM active_alerts WHERE serverId != 0 AND serverId NOT IN (:keepServerIds)")
     suspend fun deleteExceptServers(keepServerIds: List<Int>)
 

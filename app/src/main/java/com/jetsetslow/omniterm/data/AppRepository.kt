@@ -87,6 +87,8 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun setAcknowledged(id: Int, ack: Boolean) = db.activeAlertDao().setAcknowledged(id, ack)
     suspend fun acknowledgeAll() = db.activeAlertDao().acknowledgeAll()
     suspend fun muteAlert(id: Int, mutedUntil: Long) = db.activeAlertDao().muteAlert(id, mutedUntil)
+    suspend fun updateAlertCurrentValue(id: Int, currentValue: Float) =
+        db.activeAlertDao().updateCurrentValue(id, currentValue)
 
     // Alert History functions
     val alertHistoryFlow: Flow<List<AlertHistoryEntity>> = db.alertHistoryDao().getAlertHistoryFlow()

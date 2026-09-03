@@ -11,6 +11,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.jetsetslow.omniterm.MainActivity
+import com.jetsetslow.omniterm.LongOperationNotifications
 import com.jetsetslow.omniterm.R
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
@@ -274,6 +275,16 @@ private const val MAX_RETAINED_DEAD_SESSIONS = 3
 internal fun isCleanShellExit(exitStatus: Int?): Boolean = exitStatus != null && exitStatus >= 0
 
 /**
+ * Accept only an exact tmux presence answer. Transport failures can contain arbitrary text (even a
+ * trailing "no") and must never be mistaken for proof that a recovery session disappeared.
+ */
+internal fun parseRemoteTmuxSessionPresence(raw: String): Boolean? = when (raw.trim()) {
+    "yes" -> true
+    "no" -> false
+    else -> null
+}
+
+/**
  * A shell can report its remote EOF/exit status just before the output collector gets back to the
  * main thread and removes its [ShellSession]. During that short window [ShellSession.isConnected]
  * is stale. Navigation must not offer to disconnect/background that already-finished shell, or a
@@ -349,7 +360,11 @@ sealed interface ExternalLaunchRequest {
     data class OpenShare(val shareId: Int) : ExternalLaunchRequest
     data object AddServer : ExternalLaunchRequest
     data object OpenSftp : ExternalLaunchRequest
+    data object OpenTransfers : ExternalLaunchRequest
     data object OpenNetworkTools : ExternalLaunchRequest
+    data object OpenFleet : ExternalLaunchRequest
+    data object OpenInfra : ExternalLaunchRequest
+    data object OpenBackup : ExternalLaunchRequest
 }
 
 sealed interface SshConnectionPhase {
@@ -1100,6 +1115,10 @@ class AppViewModel @JvmOverloads constructor(
     var batterySaverActive by mutableStateOf(false); private set
     var showBatterySaverDialog by mutableStateOf(false)
     var batterySaverEngagedAtPct by mutableStateOf(0); private set
+    private var batterySettingsLoaded = false
+    private var lastBatteryPercent: Int? = null
+    private var lastBatteryCharging = false
+    private var batterySaverSuppressedUntilRecovery = false
 
     // MULTI-SELECT SERVER MODE
     var isMultiSelectMode by mutableStateOf(false)
@@ -1542,6 +1561,9 @@ class AppViewModel @JvmOverloads constructor(
     )
     var speedTestUrl by mutableStateOf("https://speed.cloudflare.com/__down?bytes=52428800")
     var isSpeedTestRunning by mutableStateOf(false)
+    private var activeSpeedTestOperationId: String? = null
+    private val cancelledSpeedTestOperationIds = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+    private var speedTestRunGeneration = 0L
     var speedTestError by mutableStateOf<String?>(null)
     /** Live/last measured download rate, in megabits per second. */
     var speedTestMbps by mutableStateOf<Double?>(null)
@@ -1580,12 +1602,22 @@ class AppViewModel @JvmOverloads constructor(
         // Reuse the cache only when it's still fresh. A non-forced call with stale results falls
         // through and re-sweeps, so pickers that reuse the cache never present an outdated network.
         if (!force && isLanScanFresh()) return
+        val operationId = "lan-scan-${UUID.randomUUID()}"
+        LongOperationNotifications.start(
+            getApplication(),
+            operationId,
+            "Scanning local network",
+            destination = "network",
+        )
         isLanScanInProgress = true
+        var succeeded = false
         try {
             hostScanResults = scanHosts()
             lastLanScanTime = System.currentTimeMillis()
+            succeeded = true
         } finally {
             isLanScanInProgress = false
+            LongOperationNotifications.finish(getApplication(), operationId, succeeded)
         }
     }
 
@@ -2138,6 +2170,8 @@ class AppViewModel @JvmOverloads constructor(
         closeShareBrowserClient()
         // Tear down any live port-forward tunnels so their sockets don't leak.
         com.jetsetslow.omniterm.data.ssh.SshTunnelManager.stopAll()
+        // A foreground progress row with no surviving ViewModel/work behind it would be a lie.
+        LongOperationNotifications.stopAll(getApplication())
     }
 
     // Ensures the cold-start lock is evaluated once, not on every settings write.
@@ -2166,6 +2200,14 @@ class AppViewModel @JvmOverloads constructor(
             )
             useBiometrics =
                 hasPinLock && initial.find { it.key == "biometrics_enabled" }?.value == "true"
+            // The sticky battery broadcast can arrive before this database read. Apply the saved
+            // preference to that cached sample now, rather than waiting for another OS broadcast
+            // that may not arrive until the battery percentage changes.
+            batterySaverEnabled = initial.find { it.key == "battery_saver_enabled" }?.value == "true"
+            batterySaverThresholdPct = initial.find { it.key == "battery_saver_threshold" }?.value
+                ?.toIntOrNull()?.coerceIn(5, 50) ?: 20
+            batterySettingsLoaded = true
+            evaluateCachedBatterySample()
             if (!coldStartLockEvaluated) {
                 coldStartLockEvaluated = true
                 isAppLocked = hasPinLock
@@ -2221,6 +2263,7 @@ class AppViewModel @JvmOverloads constructor(
                 batterySaverEnabled = list.find { it.key == "battery_saver_enabled" }?.value == "true"
                 batterySaverThresholdPct = list.find { it.key == "battery_saver_threshold" }?.value
                     ?.toIntOrNull()?.coerceIn(5, 50) ?: 20
+                if (batterySettingsLoaded) evaluateCachedBatterySample()
                 list.find { it.key == "text_scale" }?.value?.let { textScale = it }
                 list.find { it.key == "accessibility" }?.value?.let { isAccessibilityEnabled = it == "true" }
                 list.find { it.key == "amoled" }?.value?.let { isAmoledEnabled = it == "true" }
@@ -2378,6 +2421,8 @@ class AppViewModel @JvmOverloads constructor(
         pollingJob?.cancel()
         activeProbes.values.forEach { it.cancel() }
         activeProbes.clear()
+        networkShareAvailabilityJob?.cancel()
+        networkShareAvailabilityJob = null
 
         pollingJob = viewModelScope.launch(Dispatchers.IO) {
             while (isActive) {
@@ -2637,11 +2682,33 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /** Retry a single host (used by the per-host RETRY button) without touching other hosts. */
+    var manualRefreshError by mutableStateOf<String?>(null)
+        private set
+
+    fun dismissManualRefreshError() {
+        manualRefreshError = null
+    }
+
     fun refreshServer(serverId: Int) {
         viewModelScope.launch(Dispatchers.IO) {
+            withContext(Dispatchers.Main) { manualRefreshError = null }
             repository.updateConnectionState(serverId, "connecting", 100, 0)
-            val srv = repository.getAllServers().find { it.id == serverId } ?: return@launch
+            val srv = repository.getAllServers().find { it.id == serverId }
+            if (srv == null) {
+                withContext(Dispatchers.Main) { manualRefreshError = "Refresh failed: host was removed." }
+                return@launch
+            }
             probeServer(srv)
+            val refreshed = repository.getServerById(serverId)
+            val failure = when {
+                refreshed == null -> "Refresh failed: host was removed."
+                refreshed.status == "offline" ->
+                    "Refresh failed for ${srv.name}: the host did not respond on its configured SSH route."
+                refreshed.authStatus == "failed" ->
+                    "Refresh failed for ${srv.name}: ${refreshed.authError ?: "SSH authentication failed."}"
+                else -> null
+            }
+            withContext(Dispatchers.Main) { manualRefreshError = failure }
         }
     }
 
@@ -2688,12 +2755,23 @@ class AppViewModel @JvmOverloads constructor(
                 staleGapMs = staleGapMs,
             )
 
+            val existing = activeAlerts.find { it.ruleId == r.id && it.serverId == srv.id }
+            val currentAlert = existing?.let { alert ->
+                if (currentValue != null && alert.currentValue != currentValue) {
+                    // Refresh the reading without replacing the incident row. Re-inserting it
+                    // would silently clear acknowledgement and mute state.
+                    repository.updateAlertCurrentValue(alert.id, currentValue)
+                    alert.copy(currentValue = currentValue)
+                } else {
+                    alert
+                }
+            }
+
             if (triggered) {
                 // Check the incident for this rule on this concrete host. Global rules share the
                 // same rule id across hosts, so serverId must be part of the match.
-                val existing = activeAlerts.find { it.ruleId == r.id && it.serverId == srv.id }
-                val currentlyActive = existing != null
-                val isMuted = existing?.mutedUntil?.let { it > now } ?: false
+                val currentlyActive = currentAlert != null
+                val isMuted = currentAlert?.mutedUntil?.let { it > now } ?: false
 
                 if (!currentlyActive && !isMuted) {
                     val alert = ActiveAlertEntity(
@@ -2711,10 +2789,9 @@ class AppViewModel @JvmOverloads constructor(
             } else if (!overThreshold && alertBreachTracker.clearedFor(breachKey)) {
                 // Recovered — but only after enough consecutive clean samples (hysteresis),
                 // so one jittery dip doesn't flap an incident closed and re-open.
-                val firingAlert = activeAlerts.find { it.ruleId == r.id && it.serverId == srv.id }
-                if (firingAlert != null) {
-                    recordAlertHistory(firingAlert, "resolved", srv.name)
-                    repository.deleteAlert(firingAlert.id)
+                if (currentAlert != null) {
+                    recordAlertHistory(currentAlert, "resolved", srv.name)
+                    repository.deleteAlert(currentAlert.id)
                     clearAlertNotification(r.id, srv.id)
                 }
             }
@@ -3268,7 +3345,14 @@ class AppViewModel @JvmOverloads constructor(
                 is ExternalLaunchRequest.OpenShare -> openShareBrowserById(request.shareId)
                 ExternalLaunchRequest.AddServer -> requestAddServerFromShortcut()
                 ExternalLaunchRequest.OpenSftp -> navigateTo(Screen.SFTP)
+                ExternalLaunchRequest.OpenTransfers -> {
+                    activeSftpTab = 3
+                    navigateTo(Screen.SFTP)
+                }
                 ExternalLaunchRequest.OpenNetworkTools -> navigateTo(Screen.Network)
+                ExternalLaunchRequest.OpenFleet -> navigateTo(Screen.Fleet)
+                ExternalLaunchRequest.OpenInfra -> navigateTo(Screen.Infra)
+                ExternalLaunchRequest.OpenBackup -> navigateTo(Screen.Backup)
             }
         }
     }
@@ -5385,7 +5469,14 @@ class AppViewModel @JvmOverloads constructor(
             return
         }
         val sessionEntity = restorablePersistentSessions.find { it.tmuxName == tmuxName } ?: return
-        val srv = servers.value.find { it.id == sessionEntity.serverId } ?: return
+        val srv = servers.value.find { it.id == sessionEntity.serverId }
+        if (srv == null) {
+            terminalConnectError =
+                "The saved host for this tmux session is unavailable. The recovery entry was kept."
+            terminalConnectionFailure = SshConnectionFailure.HostNotFound
+            _terminalConnectionState.value = TerminalConnectionState.Failed(SshConnectionFailure.HostNotFound)
+            return
+        }
 
         if (isTerminalConnecting) return
         val targetMultiSshPane = multiSshFocusedPane.takeIf { activeSshTab == 1 }
@@ -5408,7 +5499,9 @@ class AppViewModel @JvmOverloads constructor(
                         isTerminalConnecting = false
                         val failure = SshConnectionFailure.Dropped
                         terminalConnectionFailure = failure
-                        terminalConnectError = "Server disconnected; tmux session is no longer running."
+                        terminalConnectError =
+                            "Connected to ${srv.name}, but tmux confirmed that \"$tmuxName\" no longer exists. " +
+                                "Its recovery entry was removed; no empty replacement was created."
                         _terminalConnectionState.value = TerminalConnectionState.Failed(failure)
                         return@launch
                     }
@@ -5416,7 +5509,9 @@ class AppViewModel @JvmOverloads constructor(
                         isTerminalConnecting = false
                         val failure = SshConnectionFailure.NetworkUnreachable
                         terminalConnectionFailure = failure
-                        terminalConnectError = "Unable to reach server; tmux session may still be running."
+                        terminalConnectError =
+                            "The saved tmux session could not be verified because the server is unavailable. " +
+                                "Its recovery entry was kept; retry when the connection is available."
                         _terminalConnectionState.value = TerminalConnectionState.Failed(failure)
                         return@launch
                     }
@@ -5518,13 +5613,15 @@ class AppViewModel @JvmOverloads constructor(
                         msg.contains("HostKey has been changed", ignoreCase = true)) {
                         val failure = SshConnectionFailure.HostKeyVerification
                         terminalConnectionFailure = failure
-                        terminalConnectError = failure.userMessage
+                        terminalConnectError =
+                            failure.userMessage + " The saved tmux recovery entry was kept."
                         _terminalConnectionState.value = TerminalConnectionState.Failed(failure)
                         hostKeyChangedServer = srv
                     } else {
                         val failure = classifySshConnectionFailure(msg)
                         terminalConnectionFailure = failure
-                        terminalConnectError = failure.userMessage
+                        terminalConnectError =
+                            failure.userMessage + " The saved tmux recovery entry was kept."
                         _terminalConnectionState.value = TerminalConnectionState.Failed(failure)
                     }
                 }
@@ -5580,7 +5677,21 @@ class AppViewModel @JvmOverloads constructor(
                 synchronized(inputQueue) {
                     inputQueue.queuedBytes = (inputQueue.queuedBytes - bytes.size).coerceAtLeast(0)
                 }
-                try { shellSession.session.write(bytes) } catch (_: Exception) {}
+                try {
+                    shellSession.session.write(bytes)
+                } catch (error: Exception) {
+                    // Output EOF can lag a failed socket write. Stop accepting input immediately
+                    // and close the channel so the output owner takes the normal visible reconnect
+                    // path instead of silently dropping every subsequent key.
+                    withContext(Dispatchers.Main) {
+                        shellSession.disconnectError =
+                            "Could not send terminal input: ${error.message ?: "connection lost"}"
+                        shellSession.isConnected = false
+                        TerminalSessionManager.updateKeepaliveCount()
+                    }
+                    runCatching { shellSession.session.close() }
+                    break
+                }
             }
         }
 
@@ -5781,11 +5892,7 @@ class AppViewModel @JvmOverloads constructor(
 
     private suspend fun remoteTmuxSessionExists(creds: SshCredentials, tmuxName: String): Boolean? {
         val out = sshTransport.exec(creds, RemoteCommands.tmuxHasSessionCommand(tmuxName)).trim()
-        return when {
-            out.endsWith("yes") -> true
-            out.endsWith("no") -> false
-            else -> null
-        }
+        return parseRemoteTmuxSessionPresence(out)
     }
 
     /**
@@ -5822,10 +5929,13 @@ class AppViewModel @JvmOverloads constructor(
                             false -> {
                                 withContext(Dispatchers.Main) {
                                     shellSession.reconnecting = false
-                                    shellSession.disconnectError = "Server disconnected; tmux session is no longer running."
+                                    shellSession.disconnectError =
+                                        "Connected to the server, but tmux confirmed that this session no longer exists."
                                     forgetPersistentSession(shellSession.tmuxName)
                                     cleanupSession(shellSession)
-                                    terminalConnectError = "Server disconnected; tmux session is no longer running."
+                                    terminalConnectError =
+                                        "Connected to the server, but tmux confirmed that this session no longer exists. " +
+                                            "Its recovery entry was removed; no empty replacement was created."
                                 }
                                 return@launch
                             }
@@ -6410,7 +6520,16 @@ class AppViewModel @JvmOverloads constructor(
                 action = com.jetsetslow.omniterm.SessionService.ACTION_UPDATE_SESSIONS
                 putStringArrayListExtra(com.jetsetslow.omniterm.SessionService.EXTRA_SESSIONS, encodeSessionNotificationPayload(connected))
             }
-            try { androidx.core.content.ContextCompat.startForegroundService(context, svcIntent) } catch (_: Exception) {}
+            try {
+                androidx.core.content.ContextCompat.startForegroundService(context, svcIntent)
+            } catch (error: Exception) {
+                android.widget.Toast.makeText(
+                    context,
+                    "Session is still open, but background protection could not start: " +
+                        (error.message ?: "Android refused the service"),
+                    android.widget.Toast.LENGTH_LONG,
+                ).show()
+            }
         }
     }
 
@@ -6848,30 +6967,47 @@ class AppViewModel @JvmOverloads constructor(
         val srv = servers.value.find { it.id == expectedServerId }
             ?: return onResult(false, "The Compose file's host is no longer available.")
         viewModelScope.launch {
-            val b64 = android.util.Base64.encodeToString(yaml.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
-            val cmd = RemoteCommands.composeDeploy(composeFilePath, project, b64, workingDir, configFiles, runtime)
-            val out = executeSshCommand(srv, cmd)
+            val operationId = "compose-deploy-${UUID.randomUUID()}"
+            LongOperationNotifications.start(
+                getApplication(),
+                operationId,
+                "Deploying $project",
+                destination = "infra",
+            )
+            var operationSucceeded = false
+            try {
+                val b64 = android.util.Base64.encodeToString(yaml.toByteArray(Charsets.UTF_8), android.util.Base64.NO_WRAP)
+                val cmd = RemoteCommands.composeDeploy(composeFilePath, project, b64, workingDir, configFiles, runtime)
+                val out = executeSshCommand(srv, cmd)
             // Success only when the runtime printed our end-of-pipeline sentinel AND the transport
             // didn't report an SSH/command failure. Any compose validation or `up` error trips this.
-            val ok = !out.startsWith("SSH Error") && out.contains("OMNITERM_DEPLOY_OK")
+                val ok = !out.startsWith("SSH Error") && out.contains("OMNITERM_DEPLOY_OK")
             // Strip the transport-wrapper prefix ("SSH Error: command failed (N): ") so the user
             // sees the actual docker/compose error text, not the JSch bookkeeping noise.
-            val cleaned = out
+                val cleaned = out
                 .replace("OMNITERM_DEPLOY_OK", "")
                 .replace(Regex("^SSH Error: command failed \\(\\d+\\): "), "")
                 .trim()
             // If compose up -d ran but nothing actually changed, every line ends with "Running"
             // or "Healthy" and no action verb appears. Flag it so the user knows what happened.
-            val anyContainerChanged = ok && cleaned.contains(
+                val anyContainerChanged = ok && cleaned.contains(
                 Regex("""(?m)^\s*Container\s+\S+\s+(Created|Recreated|Started|Stopped|Removed)\s*$""")
             )
-            val msg = when {
+                val msg = when {
                 ok && anyContainerChanged -> cleaned.ifBlank { "Stack deployed." }
                 ok -> cleaned.ifBlank { "Stack deployed — no containers changed (config already up to date)." }
                 else -> cleaned.ifBlank { "Deploy failed." }
             }
-            onResult(ok, msg)
-            if (ok) loadDocker()
+                operationSucceeded = ok
+                onResult(ok, msg)
+                if (ok) loadDocker()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                onResult(false, e.message ?: "Deploy failed.")
+            } finally {
+                LongOperationNotifications.finish(getApplication(), operationId, operationSucceeded)
+            }
         }
     }
 
@@ -7482,6 +7618,14 @@ class AppViewModel @JvmOverloads constructor(
             "Scanning share services for $protocolLabel."
         }
         viewModelScope.launch(Dispatchers.IO) {
+            val operationId = "share-scan-${UUID.randomUUID()}"
+            LongOperationNotifications.start(
+                getApplication(),
+                operationId,
+                "Scanning for network shares",
+                destination = "network",
+            )
+            var succeeded = false
             val ports = listOf("SMB" to 445, "FTP" to 21, "SFTP" to 22, "NFS" to 2049, "WEBDAV" to 80, "WEBDAV" to 443)
                 .filter { it.first in enabledProtocols }
             val semaphore = Semaphore(64)
@@ -7552,8 +7696,10 @@ class AppViewModel @JvmOverloads constructor(
                 withContext(Dispatchers.Main) {
                     networkShareScanStatus = "Scan complete: ${networkShareScanHits.size} candidate share service(s)."
                 }
+                succeeded = true
             } finally {
                 withContext(NonCancellable + Dispatchers.Main) { networkShareScanRunning = false }
+                LongOperationNotifications.finish(getApplication(), operationId, succeeded)
             }
         }
     }
@@ -9061,6 +9207,14 @@ class AppViewModel @JvmOverloads constructor(
         if (q.isEmpty()) return
         sftpSearchJob?.cancel()
         sftpSearchJob = viewModelScope.launch {
+            val operationId = "file-search-${UUID.randomUUID()}"
+            LongOperationNotifications.start(
+                getApplication(),
+                operationId,
+                "Searching files for “$q”",
+                destination = "transfers",
+            )
+            var succeeded = false
             sftpSearchRunning = true
             sftpSearchResults = null
             sftpSearchTruncated = false
@@ -9093,12 +9247,14 @@ class AppViewModel @JvmOverloads constructor(
                     .toList()
                 sftpSearchTruncated = hits.size > SFTP_SEARCH_MAX_HITS
                 sftpSearchResults = hits.take(SFTP_SEARCH_MAX_HITS)
+                succeeded = true
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 sftpError = e.message ?: "Search failed"
             } finally {
                 if (sftpSearchJob == coroutineContext[Job]) sftpSearchRunning = false
+                LongOperationNotifications.finish(getApplication(), operationId, succeeded)
             }
         }
     }
@@ -9332,6 +9488,14 @@ class AppViewModel @JvmOverloads constructor(
         val base = if (names.size == 1) names.first().substringBeforeLast('.', names.first()) else "archive-$stamp"
         val archiveName = "$base.$ext"
         viewModelScope.launch {
+            val operationId = "archive-${UUID.randomUUID()}"
+            LongOperationNotifications.start(
+                getApplication(),
+                operationId,
+                "Creating $archiveName",
+                destination = "transfers",
+            )
+            var succeeded = false
             sftpError = null
             try {
                 val cmd = RemoteCommands.archiveCreate(sftpPath.ifBlank { "." }, archiveName, names, format)
@@ -9341,9 +9505,11 @@ class AppViewModel @JvmOverloads constructor(
                 if (err != null) { sftpError = "Archive failed: $err"; return@launch }
                 sftpClearSelection()
                 sftpStatus = "Created $archiveName${sudoTag()}"
+                succeeded = true
                 loadSftp(sftpPath)
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { sftpError = "Archive failed: ${e.message}" }
+            finally { LongOperationNotifications.finish(getApplication(), operationId, succeeded) }
         }
     }
 
@@ -9351,6 +9517,14 @@ class AppViewModel @JvmOverloads constructor(
     fun sftpExtractArchive(file: SftpFile) {
         val srv = selectedServer ?: return
         viewModelScope.launch {
+            val operationId = "extract-${UUID.randomUUID()}"
+            LongOperationNotifications.start(
+                getApplication(),
+                operationId,
+                "Extracting ${file.name}",
+                destination = "transfers",
+            )
+            var succeeded = false
             sftpError = null
             try {
                 val cmd = RemoteCommands.archiveExtract(sftpPath.ifBlank { "." }, file.name)
@@ -9359,9 +9533,11 @@ class AppViewModel @JvmOverloads constructor(
                 val err = sftpReadError(out)
                 if (err != null) { sftpError = "Extract failed: $err"; return@launch }
                 sftpStatus = "Extracted ${file.name}${sudoTag()}"
+                succeeded = true
                 loadSftp(sftpPath)
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { sftpError = "Extract failed: ${e.message}" }
+            finally { LongOperationNotifications.finish(getApplication(), operationId, succeeded) }
         }
     }
 
@@ -9959,6 +10135,12 @@ class AppViewModel @JvmOverloads constructor(
     private fun addTransfer(endpointId: Int, endpointName: String, direction: String, name: String, remotePath: String, sourceUri: String? = null): String {
         val item = SftpTransferItem(serverId = endpointId, serverName = endpointName, direction = direction, name = name, remotePath = remotePath, sourceUri = sourceUri)
         sftpTransfers.add(0, item)
+        LongOperationNotifications.start(
+            getApplication(),
+            item.id,
+            "$direction: $name",
+            item.totalBytes,
+        )
         // Trim the oldest finished entries so the log can't grow without bound across a session.
         for (i in sftpTransfers.indices.reversed()) {
             if (sftpTransfers.size <= SFTP_TRANSFER_LOG_MAX) break
@@ -10006,6 +10188,13 @@ class AppViewModel @JvmOverloads constructor(
                     speedKbps = speed,
                     etaSeconds = eta,
                 )
+                LongOperationNotifications.update(
+                    getApplication(),
+                    id,
+                    "${current.direction}: ${current.name}",
+                    bytesTransferred,
+                    totalBytes,
+                )
             }
         }
     }
@@ -10032,6 +10221,12 @@ class AppViewModel @JvmOverloads constructor(
                 retryable = !wasCancelled && status == SftpTransferStatus.Failure && current.direction == "Upload" && current.sourceUri != null,
             )
         }
+        LongOperationNotifications.finish(
+            getApplication(),
+            id,
+            status == SftpTransferStatus.Success,
+            cancelled = wasCancelled,
+        )
     }
 
     fun retrySftpTransfer(item: SftpTransferItem) {
@@ -10190,6 +10385,15 @@ class AppViewModel @JvmOverloads constructor(
                 isBroadcastExecuting = false
                 return@launch
             }
+            val operationId = "fleet-broadcast-${UUID.randomUUID()}"
+            LongOperationNotifications.start(
+                getApplication(),
+                operationId,
+                "Running command on ${selected.size} hosts",
+                destination = "fleet",
+            )
+            var succeeded = false
+            var cancelled = false
             broadcastResults.addAll(selected.map { BroadcastResultItem(serverId = it.id, serverName = it.name) })
             val limiter = Semaphore(6)
             try {
@@ -10218,13 +10422,21 @@ class AppViewModel @JvmOverloads constructor(
                         }
                     }.awaitAll()
                 }
+                succeeded = broadcastResults.none { it.status == BroadcastStatus.Failure }
             } catch (e: TimeoutCancellationException) {
                 markRunningBroadcastsFailed("Timed out after ${BROADCAST_TIMEOUT_MS / 60_000} minutes.")
             } catch (e: CancellationException) {
+                cancelled = true
                 markRunningBroadcastsFailed("Cancelled.")
             } finally {
                 isBroadcastExecuting = false
                 broadcastJob = null
+                LongOperationNotifications.finish(
+                    getApplication(),
+                    operationId,
+                    succeeded,
+                    cancelled = cancelled,
+                )
             }
         }
     }
@@ -10283,6 +10495,14 @@ class AppViewModel @JvmOverloads constructor(
         portScannerResults.clear()
 
         viewModelScope.launch {
+            val operationId = "port-scan-${UUID.randomUUID()}"
+            LongOperationNotifications.start(
+                getApplication(),
+                operationId,
+                "Scanning ${ports.size} ports on $target",
+                destination = "network",
+            )
+            var succeeded = false
             try {
                 val results = withContext(Dispatchers.IO) {
                     val limiter = Semaphore(32)
@@ -10300,8 +10520,10 @@ class AppViewModel @JvmOverloads constructor(
                     }.awaitAll().sortedBy { it.first }
                 }
                 portScannerResults.addAll(results)
+                succeeded = true
             } finally {
                 isPortScannerScanning = false
+                LongOperationNotifications.finish(getApplication(), operationId, succeeded)
             }
         }
     }
@@ -10483,6 +10705,8 @@ class AppViewModel @JvmOverloads constructor(
 
     // SPEED TEST MODULE
     fun cancelSpeedTest() {
+        if (!isSpeedTestRunning) return
+        activeSpeedTestOperationId?.let(cancelledSpeedTestOperationIds::add)
         speedTestJob?.cancel()
         speedTestJob = null
         isSpeedTestRunning = false
@@ -10503,7 +10727,17 @@ class AppViewModel @JvmOverloads constructor(
         speedTestMbps = null
         speedTestBytes = 0L
         speedTestLatencyMs = null
+        val runGeneration = ++speedTestRunGeneration
         speedTestJob = viewModelScope.launch {
+            val operationId = "speed-test-${UUID.randomUUID()}"
+            activeSpeedTestOperationId = operationId
+            LongOperationNotifications.start(
+                getApplication(),
+                operationId,
+                "Testing download speed",
+                destination = "network",
+            )
+            var succeeded = false
             try {
                 withContext(Dispatchers.IO) {
                     val parsed = java.net.URL(url)
@@ -10521,7 +10755,9 @@ class AppViewModel @JvmOverloads constructor(
                     try {
                         conn.connect()
                         val ttfb = (System.nanoTime() - startedAt) / 1_000_000
-                        withContext(Dispatchers.Main) { speedTestLatencyMs = ttfb }
+                        withContext(Dispatchers.Main) {
+                            if (runGeneration == speedTestRunGeneration) speedTestLatencyMs = ttfb
+                        }
                         val code = conn.responseCode
                         if (code !in 200..299) {
                             throw java.io.IOException("HTTP $code from server")
@@ -10544,9 +10780,18 @@ class AppViewModel @JvmOverloads constructor(
                                     val mbps = if (secs > 0) (total * 8.0) / 1e6 / secs else 0.0
                                     val snapshotTotal = total
                                     withContext(Dispatchers.Main) {
-                                        speedTestBytes = snapshotTotal
-                                        speedTestMbps = mbps
+                                        if (runGeneration == speedTestRunGeneration) {
+                                            speedTestBytes = snapshotTotal
+                                            speedTestMbps = mbps
+                                        }
                                     }
+                                    LongOperationNotifications.update(
+                                        getApplication(),
+                                        operationId,
+                                        "Testing download speed",
+                                        snapshotTotal,
+                                        conn.contentLengthLong.coerceAtLeast(0L),
+                                    )
                                 }
                                 if (now > deadline) break
                             }
@@ -10554,9 +10799,12 @@ class AppViewModel @JvmOverloads constructor(
                             val mbps = if (secs > 0) (total * 8.0) / 1e6 / secs else 0.0
                             val finalTotal = total
                             withContext(Dispatchers.Main) {
-                                speedTestBytes = finalTotal
-                                speedTestMbps = mbps
+                                if (runGeneration == speedTestRunGeneration) {
+                                    speedTestBytes = finalTotal
+                                    speedTestMbps = mbps
+                                }
                             }
+                            succeeded = isActive
                         }
                     } finally {
                         conn.disconnect()
@@ -10565,9 +10813,18 @@ class AppViewModel @JvmOverloads constructor(
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                speedTestError = "Speed test failed: ${e.message}"
+                if (runGeneration == speedTestRunGeneration) {
+                    speedTestError = "Speed test failed: ${e.message}"
+                }
             } finally {
-                isSpeedTestRunning = false
+                if (runGeneration == speedTestRunGeneration) isSpeedTestRunning = false
+                LongOperationNotifications.finish(
+                    getApplication(),
+                    operationId,
+                    succeeded,
+                    cancelled = cancelledSpeedTestOperationIds.remove(operationId),
+                )
+                if (activeSpeedTestOperationId == operationId) activeSpeedTestOperationId = null
             }
         }
     }
@@ -10687,12 +10944,18 @@ class AppViewModel @JvmOverloads constructor(
 
     fun saveBatterySaverEnabled(on: Boolean) {
         batterySaverEnabled = on
-        if (!on && batterySaverActive) resumeFromBatterySaver()
+        if (!on) {
+            batterySaverSuppressedUntilRecovery = false
+            deactivateBatterySaver()
+        } else {
+            evaluateCachedBatterySample()
+        }
         viewModelScope.launch { repository.insertSetting("battery_saver_enabled", on.toString()) }
     }
 
     fun saveBatterySaverThreshold(pct: Int) {
         batterySaverThresholdPct = pct.coerceIn(5, 50)
+        evaluateCachedBatterySample()
         viewModelScope.launch { repository.insertSetting("battery_saver_threshold", batterySaverThresholdPct.toString()) }
     }
 
@@ -10721,19 +10984,61 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     private fun onBatterySample(pct: Int, charging: Boolean) {
-        if (!batterySaverEnabled) return
+        lastBatteryPercent = pct
+        lastBatteryCharging = charging
+        evaluateCachedBatterySample()
+    }
+
+    private fun evaluateCachedBatterySample() {
+        val pct = lastBatteryPercent ?: return
+        if (!batterySettingsLoaded || !batterySaverEnabled) return
+        val charging = lastBatteryCharging
+        val recovered = charging || pct >= batterySaverThresholdPct + 5
+        if (recovered) {
+            batterySaverSuppressedUntilRecovery = false
+            if (showBatterySaverDialog && !batterySaverActive) {
+                showBatterySaverDialog = false
+                cancelBatterySaverNotification()
+            }
+        }
         if (batterySaverActive) {
             // Recover automatically once plugged in or comfortably above the threshold (+5 of
             // hysteresis so the boundary doesn't flap the saver on/off).
-            if (charging || pct >= batterySaverThresholdPct + 5) resumeFromBatterySaver()
-        } else if (!charging && pct <= batterySaverThresholdPct) {
-            activateBatterySaver(pct)
+            if (recovered) deactivateBatterySaver()
+        } else if (
+            !showBatterySaverDialog &&
+            !batterySaverSuppressedUntilRecovery &&
+            !charging &&
+            pct <= batterySaverThresholdPct
+        ) {
+            requestBatterySaver(pct)
         }
+    }
+
+    private fun requestBatterySaver(pct: Int) {
+        batterySaverEngagedAtPct = pct
+        showBatterySaverDialog = true
+        postBatterySaverNotification(pct, active = false)
+    }
+
+    /** Applies the power-saving actions only after the user accepts the low-battery prompt. */
+    fun confirmBatterySaver() {
+        if (!showBatterySaverDialog || !batterySaverEnabled) return
+        activateBatterySaver(batterySaverEngagedAtPct)
+    }
+
+    /** Declines this low-battery episode without repeatedly prompting at the same percentage. */
+    fun dismissBatterySaverPrompt() {
+        if (!showBatterySaverDialog || batterySaverActive) return
+        batterySaverSuppressedUntilRecovery = true
+        showBatterySaverDialog = false
+        cancelBatterySaverNotification()
     }
 
     private fun activateBatterySaver(pct: Int) {
         batterySaverActive = true
         batterySaverEngagedAtPct = pct
+        showBatterySaverDialog = false
         isKeepScreenOnEnabled = false
         // Pause the auto-refresh loop and any probes in flight.
         pollingJob?.cancel()
@@ -10743,19 +11048,32 @@ class AppViewModel @JvmOverloads constructor(
         // running and reattaches on the next connect. Non-persistent shells are left alone:
         // closing them would kill the remote shell, which is the opposite of resumable.
         activeSessions.filter { it.persistent }.map { it.id }.forEach { leaveSessionResumable(it) }
-        showBatterySaverDialog = true
-        postBatterySaverNotification(pct)
+        postBatterySaverNotification(pct, active = true)
     }
 
     /** Manual or automatic exit from battery saver: restart the paused auto-refresh loop. */
     fun resumeFromBatterySaver() {
-        batterySaverActive = false
-        showBatterySaverDialog = false
-        startTelemetryPolling()
+        // A manual override must survive subsequent broadcasts at the same low percentage. Re-arm
+        // automatic saving only after charging or the configured hysteresis point is reached.
+        batterySaverSuppressedUntilRecovery = true
+        deactivateBatterySaver()
     }
 
-    /** Surfaces the saver engaging as a system notification, mirroring postAlertNotification. */
-    private fun postBatterySaverNotification(pct: Int) {
+    private fun deactivateBatterySaver() {
+        batterySaverActive = false
+        showBatterySaverDialog = false
+        cancelBatterySaverNotification()
+        startTelemetryPolling()
+        startNetworkShareAvailabilityProbe()
+    }
+
+    private fun cancelBatterySaverNotification() {
+        getApplication<Application>().getSystemService(NotificationManager::class.java)
+            ?.cancel(BATTERY_SAVER_CHANNEL_ID.hashCode())
+    }
+
+    /** Surfaces both the opt-in prompt and the accepted state while the app is backgrounded. */
+    private fun postBatterySaverNotification(pct: Int, active: Boolean) {
         val app = getApplication<Application>()
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(app, android.Manifest.permission.POST_NOTIFICATIONS) !=
@@ -10767,12 +11085,28 @@ class AppViewModel @JvmOverloads constructor(
                 NotificationChannel(BATTERY_SAVER_CHANNEL_ID, "Battery saver", NotificationManager.IMPORTANCE_DEFAULT)
             )
         }
+        val openApp = PendingIntent.getActivity(
+            app,
+            BATTERY_SAVER_CHANNEL_ID.hashCode(),
+            Intent(app, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
         val n = NotificationCompat.Builder(app, BATTERY_SAVER_CHANNEL_ID)
-            .setContentTitle("OmniTerm battery saver on")
-            .setContentText("Battery at $pct% — keep-screen-on released, auto-refresh paused, tmux terminals parked.")
+            .setContentTitle(if (active) "OmniTerm battery saver on" else "Start OmniTerm battery saver?")
+            .setContentText(
+                if (active) {
+                    "Battery at $pct% — keep-screen-on released, auto-refresh paused, tmux terminals parked."
+                } else {
+                    "Battery at $pct%. Open OmniTerm to start saving; nothing has been interrupted."
+                }
+            )
             .setSmallIcon(R.drawable.ic_stat_omniterm)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
-            .setAutoCancel(true)
+            .setContentIntent(openApp)
+            .setOngoing(active)
+            .setAutoCancel(!active)
             .build()
         nm.notify(BATTERY_SAVER_CHANNEL_ID.hashCode(), n)
     }
@@ -11459,6 +11793,14 @@ class AppViewModel @JvmOverloads constructor(
         if (backupExportRunning) return
         backupExportRunning = true
         viewModelScope.launch {
+            val operationId = "backup-export-${UUID.randomUUID()}"
+            LongOperationNotifications.start(
+                getApplication(),
+                operationId,
+                "Exporting OmniTerm backup",
+                destination = "backup",
+            )
+            var operationSucceeded = false
             try {
                 val srvs = repository.getAllServers()
                 val keys = repository.getAllKeys()
@@ -11512,9 +11854,11 @@ class AppViewModel @JvmOverloads constructor(
                     lastBackupExportTime = now
                     repository.insertSetting("backup_last_export_time", now.toString())
                 }
+                operationSucceeded = ok
                 onResult(ok, if (ok) "$mode backup written: ${if (closedSelection.servers) srvs.size else 0} servers, ${if (closedSelection.sshKeys) keys.size else 0} keys, ${if (closedSelection.credentialProfiles) profiles.size else 0} profiles, ${if (closedSelection.scripts) scriptsForCount.size else 0} scripts, ${if (closedSelection.alertRules) rulesForCount else 0} rules, ${if (closedSelection.alertHistory) historyForCount else 0} alert history, ${if (closedSelection.wolTargets) wolTargets.size else 0} WoL, ${if (closedSelection.networkShares) networkShares.size else 0} shares, ${if (closedSelection.portForwards) portForwardsForCount else 0} tunnels, ${if (closedSelection.settings) settings.size else 0} settings." else "Export failed.")
             } finally {
                 backupExportRunning = false
+                LongOperationNotifications.finish(getApplication(), operationId, operationSucceeded)
             }
         }
     }
@@ -11536,6 +11880,14 @@ class AppViewModel @JvmOverloads constructor(
         if (backupRestoreRunning) return
         backupRestoreRunning = true
         viewModelScope.launch {
+            val operationId = "backup-restore-${UUID.randomUUID()}"
+            LongOperationNotifications.start(
+                getApplication(),
+                operationId,
+                "Restoring OmniTerm backup",
+                destination = "backup",
+            )
+            var operationSucceeded = false
             try {
                 val result = withContext(Dispatchers.IO) {
                     backupRestoreMutex.withLock {
@@ -12105,9 +12457,11 @@ class AppViewModel @JvmOverloads constructor(
                     }
                 }
                 reconcileHostLimit("Restored data exceeds the free Play Store host limit. Choose the one host to keep.")
+                operationSucceeded = result.first
                 onResult(result.first, result.second)
             } finally {
                 backupRestoreRunning = false
+                LongOperationNotifications.finish(getApplication(), operationId, operationSucceeded)
             }
         }
     }

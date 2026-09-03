@@ -267,6 +267,22 @@ fun AlertsPopup(
                     onDismiss = onDismiss,
                 )
 
+                viewModel.manualRefreshError?.let { message ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 6.dp)
+                            .background(OmniColors.red.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                            .padding(start = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(message, color = OmniColors.red, fontSize = OmniTextSize.Meta, modifier = Modifier.weight(1f))
+                        IconButton(onClick = viewModel::dismissManualRefreshError) {
+                            Icon(Icons.Filled.Close, contentDescription = "Dismiss refresh error", tint = OmniColors.red)
+                        }
+                    }
+                }
+
                 if (active.isEmpty() && muted.isEmpty()) {
                     Box(
                         modifier = Modifier.fillMaxWidth().heightIn(min = 140.dp),
@@ -515,6 +531,22 @@ fun AlertsToolView(viewModel: AppViewModel) {
                             "fire in the background or when the app is closed — keep the app running to monitor.",
                         fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                }
+            }
+
+            viewModel.manualRefreshError?.let { message ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp)
+                        .background(OmniColors.red.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                        .padding(start = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(message, color = OmniColors.red, fontSize = OmniTextSize.Meta, modifier = Modifier.weight(1f))
+                    IconButton(onClick = viewModel::dismissManualRefreshError) {
+                        Icon(Icons.Filled.Close, contentDescription = "Dismiss refresh error", tint = OmniColors.red)
+                    }
                 }
             }
 

@@ -175,9 +175,9 @@
     <string name="omniterm">"OmniTerm"</string>
     <string name="unlock">"Unlock"</string>
     <string name="use_biometrics">"Use biometrics"</string>
-    <string name="battery_saver_engaged">"Battery saver engaged"</string>
-    <string name="keep_saving">"Keep saving"</string>
-    <string name="resume_now">"Resume now"</string>
+    <string name="battery_saver_available">"Battery saver available"</string>
+    <string name="start_saving">"Start saving"</string>
+    <string name="battery_saver_not_now">"Not now"</string>
     <string name="keep_screen_on">"Keep Screen On?"</string>
     <string name="keeping_the_screen_on_prevents_display">"Keeping the screen on prevents display sleep and will increase battery consumption."</string>
     <string name="enable">"Enable"</string>
