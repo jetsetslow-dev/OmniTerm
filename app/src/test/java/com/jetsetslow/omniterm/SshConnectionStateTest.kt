@@ -6,6 +6,7 @@ import com.jetsetslow.omniterm.ui.SshConnectionPhase
 import com.jetsetslow.omniterm.ui.TerminalConnectionState
 import com.jetsetslow.omniterm.ui.classifySshConnectionFailure
 import com.jetsetslow.omniterm.ui.classifySshConnectionPhase
+import com.jetsetslow.omniterm.ui.parseRemoteTmuxSessionPresence
 import com.jetsetslow.omniterm.ui.shouldProbeSshPortDirectly
 import com.jetsetslow.omniterm.ui.sshFailureProvesEndpointUnreachable
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,6 +19,14 @@ import kotlinx.coroutines.yield
 import org.junit.Test
 
 class SshConnectionStateTest {
+    @Test
+    fun onlyAnExactTmuxAnswerCanDeleteRecoveryState() {
+        assertThat(parseRemoteTmuxSessionPresence("yes\n")).isTrue()
+        assertThat(parseRemoteTmuxSessionPresence("no")).isFalse()
+        assertThat(parseRemoteTmuxSessionPresence("SSH Error: No route to host: no")).isNull()
+        assertThat(parseRemoteTmuxSessionPresence("connection closed")).isNull()
+    }
+
     @Test
     fun bastionHandshakeProgressesThroughTypedStateFlow() = runTest {
         val state = MutableStateFlow<TerminalConnectionState>(TerminalConnectionState.Idle)
