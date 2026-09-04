@@ -237,6 +237,31 @@ services:
       USER_PASSWORD: "${OMNITERM_TEST_PASSWORD:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
     networks: [internal]
 
+  # The sanitized endpoint the Play-review recording flows point at.
+  #
+  # Those flows must show a plausible production host on camera without ever exposing a real one, so
+  # the container's hostname is `atlas-prod` and its account is `demo`. It exists as a fixture rather
+  # than being created by `docker run` from inside the test, because that required a Docker daemon on
+  # whichever lab host happened to be seeded -- `omniterm-test-direct` has tmux but no docker, which
+  # is what made E2eForegroundServiceProofTest unrunnable. As a fixture it is reachable on a physical
+  # device through the reverse mapping for 2299 (see ANDROID_PORTS in scripts/test-hosts.sh).
+  #
+  # The password comes from the generated .env like every other fixture; it is deliberately NOT
+  # hard-coded here or in the test, because a throwaway credential committed to a public repository
+  # is still a secret-scanning finding and still an example other people copy.
+  demo:
+    <<: *ssh-common
+    container_name: omniterm-test-demo
+    hostname: atlas-prod
+    environment:
+      <<: *ssh-env
+      PASSWORD_ACCESS: "true"
+      USER_NAME: "demo"
+      USER_PASSWORD: "${OMNITERM_TEST_PASSWORD:?generate scripts/test-hosts/.env via ./scripts/test-hosts.sh up}"
+    ports:
+      - "127.0.0.1:2299:2222"
+    networks: [edge]
+
   # One container serving both proxy protocols the app supports, so http and socks5 can be tested
   # without a second image. On both networks: reachable from the emulator, can dial internal-a.
   proxy:

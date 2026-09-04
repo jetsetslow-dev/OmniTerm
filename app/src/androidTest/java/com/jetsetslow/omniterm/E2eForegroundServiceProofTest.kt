@@ -126,47 +126,38 @@ class E2eForegroundServiceProofTest {
         var demoId: Int? = null
         TerminalSessionManager.clearAll()
         try {
-            // ---- Off-camera setup under FLAG_SECURE: bring up the demo container. ----
+            // ---- Off-camera setup under FLAG_SECURE: point at the demo fixture. ----
+            //
+            // This used to SSH into whichever host was seeded and `docker run` an alpine sshd there,
+            // which made the whole flow depend on that host having a Docker daemon -- the seeded
+            // `omniterm-test-direct` has tmux but no docker, so the case simply could not run. The
+            // demo endpoint is now a first-class fixture (`omniterm-test-demo`, hostname
+            // `atlas-prod`, user `demo`, published on 2299); see scripts/test-hosts/docker-compose.yml.
+            //
+            // The row is created against the endpoint that actually answers and is only relabelled
+            // to the sanitized address once the session is live. Inserting `192.0.2.10` up front and
+            // connecting to it could never work off a lab where that TEST-NET-1 address is routed;
+            // this is the same connect-then-relabel order E2ePlayStoreScreenshotFixture already uses.
             composeRule.runOnUiThread { vm.saveFlagSecureToggle(true) }
             await("private setup window", 5_000) { vm.isFlagSecureEnabled }
-            await("sanitized fixture host", 15_000) { vm.servers.value.any { it.name == SAFE_HOST_LABEL } }
-            val labHost = requireNotNull(vm.servers.value.find { it.name == SAFE_HOST_LABEL })
-            composeRule.runOnUiThread {
-                vm.navigateTo(Screen.Shell)
-                vm.selectedServerId = labHost.id
-                vm.connectTerminal()
+
+            val args = InstrumentationRegistry.getArguments()
+            val demoHost = args.getString("omniterm_e2e_demo_host") ?: "127.0.0.1"
+            val demoPort = args.getString("omniterm_e2e_demo_port")?.toIntOrNull() ?: 2299
+            val demoPassword = requireNotNull(args.getString("omniterm_e2e_demo_password")) {
+                "-e omniterm_e2e_demo_password <secret> is required; it is the generated fixture " +
+                    "password from scripts/test-hosts/.env and is deliberately not hard-coded here"
             }
-            await("setup shell", 45_000) {
-                if (vm.offlineConnectPromptServer != null) composeRule.runOnUiThread { vm.connectTerminalConfirmedOffline() }
-                if (vm.pendingHostKeyApproval != null) composeRule.runOnUiThread { vm.approveHostKey(true) }
-                !vm.isTerminalConnecting && vm.currentSession != null
-            }
-            assertNull(vm.terminalConnectError)
-            val setup = requireNotNull(vm.currentSession)
-            await("setup prompt", 10_000) { vm.terminalBufferTextFor(setup, full = true).isNotBlank() }
-            vm.pasteText(
-                "docker rm -f omniterm-demo >/dev/null 2>&1; " +
-                    "docker run -d --name omniterm-demo --hostname atlas-prod -p 2299:22 alpine:latest " +
-                    "sh -c 'apk add --no-cache openssh >/dev/null 2>&1 && ssh-keygen -A && " +
-                    "adduser -D demo && echo demo:omni-demo-pass | chpasswd && exec /usr/sbin/sshd -D' " +
-                    "&& printf '%s%s\\n' 'DEMO-' 'STARTED'\n",
-            )
-            await("demo container", 120_000) { vm.terminalBufferTextFor(setup, full = true).contains("DEMO-STARTED") }
-            vm.pasteText(
-                "i=0; until docker exec omniterm-demo pgrep -x sshd >/dev/null 2>&1; " +
-                    "do i=\$((i+1)); [ \$i -gt 90 ] && break; sleep 1; done; printf '%s%s\\n' 'DEMO-' 'READY'\n",
-            )
-            await("demo sshd", 120_000) { vm.terminalBufferTextFor(setup, full = true).contains("DEMO-READY") }
 
             repository.getAllServers().filter { it.name == "atlas-prod" }.forEach { repository.deleteServerAndDependents(it.id) }
             val id = repository.insertServer(
                 ServerEntity(
-                    name = "atlas-prod", host = "192.0.2.10", port = 2299, username = "demo",
-                    authPassword = "omni-demo-pass", groupName = "Production", status = "online", lastLatency = 12,
+                    name = "atlas-prod", host = demoHost, port = demoPort, username = "demo",
+                    authPassword = demoPassword, groupName = "Production", status = "online", lastLatency = 12,
                 ),
             ).toInt()
             demoId = id
-            composeRule.runOnUiThread { vm.removeKnownHost("192.0.2.10:2299") }
+            composeRule.runOnUiThread { vm.removeKnownHost("$demoHost:$demoPort") }
             await("demo row visible", 10_000) { vm.servers.value.any { it.id == id } }
             composeRule.runOnUiThread { vm.closeAllSessions() }
             await("setup session closed", 20_000) { vm.activeSessions.isEmpty() }
@@ -189,6 +180,13 @@ class E2eForegroundServiceProofTest {
             await("demo prompt", 15_000) { vm.terminalBufferTextFor(session, full = true).contains("atlas-prod") }
             vm.pasteText("clear; i=0; while true; do i=\$((i+1)); printf 'session heartbeat %04d\\n' \"\$i\"; sleep 1; done\n")
             await("heartbeat stream", 15_000) { vm.terminalBufferTextFor(session, full = true).contains("session heartbeat 0003") }
+
+            // Only now, with the session established and the screen still private, swap the visible
+            // address for the sanitized one. Nothing reconnects, so the live session is unaffected.
+            repository.getServerById(id)?.let { repository.updateServer(it.copy(host = "192.0.2.10")) }
+            await("sanitized address on screen", 10_000) {
+                vm.servers.value.find { it.id == id }?.host == "192.0.2.10"
+            }
 
             // ---- Disclosure + permission, exactly as the proof flow (background to About). ----
             composeRule.runOnUiThread {

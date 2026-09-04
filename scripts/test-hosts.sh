@@ -71,10 +71,11 @@ EDGE_HOSTS=(
   "omniterm-test-runtime-docker:2205:password"
   "omniterm-test-runtime-podman:2206:password"
   "omniterm-test-bastion:2203:password"
+  "omniterm-test-demo:2299:password"
 )
 PROXY_PORTS=(1080 8888)
 SHARE_PORTS=(21 445 8082)
-ANDROID_PORTS=(21 445 1080 2201 2202 2203 2204 2205 2206 8080 8081 8082 8888)
+ANDROID_PORTS=(21 445 1080 2201 2202 2203 2204 2205 2206 2299 8080 8081 8082 8888)
 
 compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
 ssh_opts=(-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10)
