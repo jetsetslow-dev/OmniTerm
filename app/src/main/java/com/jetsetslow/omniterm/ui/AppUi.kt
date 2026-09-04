@@ -887,6 +887,33 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                     onAlerts = { viewModel.openAlertsPopup() },
                     onToggleKeepScreenOn = { viewModel.requestKeepScreenOnToggle() },
                 )
+                // Pull-to-refresh is a global gesture, so its failure has to be reported globally.
+                // This banner previously existed only inside ToolsScreen, which meant a refresh
+                // that failed on the Servers list -- where the gesture is used most -- said nothing.
+                viewModel.manualRefreshError?.let { message ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                            .background(OmniColors.red.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                            .padding(start = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            message,
+                            color = OmniColors.red,
+                            fontSize = OmniTextSize.Meta,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = viewModel::dismissManualRefreshError) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = stringResource(R.string.dismiss_refresh_error),
+                                tint = OmniColors.red,
+                            )
+                        }
+                    }
+                }
                 if (showMonetizationUi && !licenseState.unlocked) {
                     FreePlanBanner(licenseState, licenseController)
                 }
