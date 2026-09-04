@@ -11,16 +11,20 @@ void main() {
   setUp(() {
     channel = const MethodChannel(BatterySaverNotifications.channelName);
     calls = [];
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, (call) async {
-          calls.add(call);
-          return true;
-        });
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      channel,
+      (call) async {
+        calls.add(call);
+        return true;
+      },
+    );
   });
 
   tearDown(() {
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      channel,
+      null,
+    );
   });
 
   test('shows the advisory and accepted states, then cancels them', () async {
@@ -30,17 +34,15 @@ void main() {
     await notifications.showActive(percent: 18);
     await notifications.cancel();
 
-    expect(calls.map((call) => call.method), [
-      'showPrompt',
-      'showActive',
-      'cancel',
-    ]);
+    expect(calls.map((call) => call.method), ['showPrompt', 'showActive', 'cancel']);
     expect((calls.first.arguments as Map)['percent'], 18);
   });
 
   test('a platform without the bridge remains usable', () async {
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      channel,
+      null,
+    );
 
     await BatterySaverNotifications().showPrompt(percent: 10);
   });

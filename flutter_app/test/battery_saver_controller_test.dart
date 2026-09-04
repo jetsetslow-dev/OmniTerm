@@ -36,12 +36,10 @@ class _Notifier implements BatterySaverNotifier {
   Future<void> cancel() async => calls.add('cancel');
 
   @override
-  Future<void> showActive({required int percent}) async =>
-      calls.add('active:$percent');
+  Future<void> showActive({required int percent}) async => calls.add('active:$percent');
 
   @override
-  Future<void> showPrompt({required int percent}) async =>
-      calls.add('prompt:$percent');
+  Future<void> showPrompt({required int percent}) async => calls.add('prompt:$percent');
 }
 
 void main() {
@@ -58,10 +56,7 @@ void main() {
 
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
-    repository = AppRepository(
-      db,
-      SecretStore(storage: FakeSecureStorage(<String, String>{})),
-    );
+    repository = AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{})));
     app = AppState(repository);
     shell = ShellState();
     poller = TelemetryPoller(app);
@@ -94,23 +89,20 @@ void main() {
     notifier: notifier,
   );
 
-  test(
-    'waits for persisted settings and never acts on cold-start defaults',
-    () async {
-      await repository.insertSetting('battery_saver_enabled', 'false');
-      monitor.percent = 5;
-      controller = build()..start();
+  test('waits for persisted settings and never acts on cold-start defaults', () async {
+    await repository.insertSetting('battery_saver_enabled', 'false');
+    monitor.percent = 5;
+    controller = build()..start();
 
-      await settle();
-      expect(controller!.showDialog, isFalse);
+    await settle();
+    expect(controller!.showDialog, isFalse);
 
-      await app.start();
-      await settle();
-      expect(app.settingsLoaded, isTrue);
-      expect(controller!.showDialog, isFalse);
-      expect(notifier.calls, isEmpty);
-    },
-  );
+    await app.start();
+    await settle();
+    expect(app.settingsLoaded, isTrue);
+    expect(controller!.showDialog, isFalse);
+    expect(notifier.calls, isEmpty);
+  });
 
   test('threshold only prompts until the user explicitly confirms', () async {
     await app.start();
@@ -132,52 +124,41 @@ void main() {
     expect(notifier.calls, ['prompt:10', 'active:10']);
   });
 
-  test(
-    'not now suppresses repeats until charging or hysteresis recovery',
-    () async {
-      await app.start();
-      monitor.percent = 10;
-      controller = build()..start();
-      await settle();
-      controller!.dismissDialog();
-      await settle();
+  test('not now suppresses repeats until charging or hysteresis recovery', () async {
+    await app.start();
+    monitor.percent = 10;
+    controller = build()..start();
+    await settle();
+    controller!.dismissDialog();
+    await settle();
 
-      monitor.statesController.add(DevicePowerState.discharging);
-      await settle();
-      expect(controller!.showDialog, isFalse);
+    monitor.statesController.add(DevicePowerState.discharging);
+    await settle();
+    expect(controller!.showDialog, isFalse);
 
-      monitor.percent = 30;
-      monitor.statesController.add(DevicePowerState.discharging);
-      await settle();
-      monitor.percent = 10;
-      monitor.statesController.add(DevicePowerState.discharging);
-      await settle();
-      expect(controller!.showDialog, isTrue);
-      expect(
-        notifier.calls.where((call) => call.startsWith('prompt:')).length,
-        2,
-      );
-    },
-  );
+    monitor.percent = 30;
+    monitor.statesController.add(DevicePowerState.discharging);
+    await settle();
+    monitor.percent = 10;
+    monitor.statesController.add(DevicePowerState.discharging);
+    await settle();
+    expect(controller!.showDialog, isTrue);
+    expect(notifier.calls.where((call) => call.startsWith('prompt:')).length, 2);
+  });
 
-  test(
-    'a stale level read cannot engage after the preference is disabled',
-    () async {
-      await app.start();
-      final pending = Completer<int>();
-      monitor.pendingLevel = pending;
-      controller = build()..start();
-      await settle();
+  test('a stale level read cannot engage after the preference is disabled', () async {
+    await app.start();
+    final pending = Completer<int>();
+    monitor.pendingLevel = pending;
+    controller = build()..start();
+    await settle();
 
-      app.applyPreferences(
-        app.preferences.copyWith(batterySaverEnabled: false),
-      );
-      pending.complete(5);
-      await settle();
+    app.applyPreferences(app.preferences.copyWith(batterySaverEnabled: false));
+    pending.complete(5);
+    await settle();
 
-      expect(controller!.showDialog, isFalse);
-      expect(controller!.active, isFalse);
-      expect(notifier.calls, isEmpty);
-    },
-  );
+    expect(controller!.showDialog, isFalse);
+    expect(controller!.active, isFalse);
+    expect(notifier.calls, isEmpty);
+  });
 }

@@ -16,12 +16,10 @@ class BatterySaverNotifications implements BatterySaverNotifier {
   final MethodChannel _channel;
 
   @override
-  Future<void> showPrompt({required int percent}) =>
-      _invoke('showPrompt', percent);
+  Future<void> showPrompt({required int percent}) => _invoke('showPrompt', percent);
 
   @override
-  Future<void> showActive({required int percent}) =>
-      _invoke('showActive', percent);
+  Future<void> showActive({required int percent}) => _invoke('showActive', percent);
 
   @override
   Future<void> cancel() => _invoke('cancel');

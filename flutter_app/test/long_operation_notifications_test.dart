@@ -12,17 +12,21 @@ void main() {
   setUp(() {
     channel = const MethodChannel(LongOperationNotifications.channelName);
     calls = [];
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, (call) async {
-          calls.add(call);
-          return true;
-        });
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      channel,
+      (call) async {
+        calls.add(call);
+        return true;
+      },
+    );
     notifications = LongOperationNotifications();
   });
 
   tearDown(() {
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      channel,
+      null,
+    );
   });
 
   test(
@@ -54,34 +58,30 @@ void main() {
     },
   );
 
-  test(
-    'requests notification access once and keeps cancellation distinct from failure',
-    () async {
-      var permissionRequests = 0;
-      notifications = LongOperationNotifications(
-        requestNotificationPermission: () async {
-          permissionRequests++;
-          return false;
-        },
-      );
+  test('requests notification access once and keeps cancellation distinct from failure', () async {
+    var permissionRequests = 0;
+    notifications = LongOperationNotifications(
+      requestNotificationPermission: () async {
+        permissionRequests++;
+        return false;
+      },
+    );
 
-      await notifications.start(id: 'a', label: 'Download: a');
-      await notifications.start(id: 'b', label: 'Download: b');
-      await notifications.finish(id: 'a', success: false, cancelled: true);
+    await notifications.start(id: 'a', label: 'Download: a');
+    await notifications.start(id: 'b', label: 'Download: b');
+    await notifications.finish(id: 'a', success: false, cancelled: true);
 
-      expect(permissionRequests, 1);
-      expect((calls.last.arguments as Map)['cancelled'], isTrue);
-      expect((calls.last.arguments as Map)['success'], isFalse);
-    },
-  );
+    expect(permissionRequests, 1);
+    expect((calls.last.arguments as Map)['cancelled'], isTrue);
+    expect((calls.last.arguments as Map)['success'], isFalse);
+  });
 
   test('missing native plugin degrades to unsupported', () async {
-    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-        .setMockMethodCallHandler(channel, null);
-
-    expect(
-      await notifications.start(id: 'a', label: 'Upload: a', totalBytes: 1),
-      isFalse,
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      channel,
+      null,
     );
+
+    expect(await notifications.start(id: 'a', label: 'Upload: a', totalBytes: 1), isFalse);
   });
 }

@@ -7,10 +7,8 @@ import 'package:flutter/services.dart';
 /// Calls intentionally degrade to `false` on iOS, desktop and widget tests: those platforms either
 /// have no equivalent execution contract or no registered Android plugin.
 class LongOperationNotifications {
-  LongOperationNotifications({
-    MethodChannel? channel,
-    this.requestNotificationPermission,
-  }) : _channel = channel ?? const MethodChannel(channelName);
+  LongOperationNotifications({MethodChannel? channel, this.requestNotificationPermission})
+    : _channel = channel ?? const MethodChannel(channelName);
 
   static const channelName = 'omniterm/long_operations';
 
@@ -62,11 +60,7 @@ class LongOperationNotifications {
     'destination': destination,
   });
 
-  Future<bool> finish({
-    required String id,
-    required bool success,
-    bool cancelled = false,
-  }) =>
+  Future<bool> finish({required String id, required bool success, bool cancelled = false}) =>
       _invoke('finish', {'id': id, 'success': success, 'cancelled': cancelled});
 
   Future<bool> stopAll() => _invoke('stopAll');
