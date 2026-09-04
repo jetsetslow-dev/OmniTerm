@@ -2089,6 +2089,14 @@ class AppViewModel @JvmOverloads constructor(
 
     private val activeProbes = java.util.concurrent.ConcurrentHashMap<Int, kotlinx.coroutines.Job>()
 
+    /**
+     * How long a pull-to-refresh waits for its probes before telling the user a host is still not
+     * answering. Long enough for a genuinely slow host (a blocked network mount bounds a metrics
+     * probe at a few seconds), short enough that the spinner is not a hang.
+     */
+    private val REFRESH_REPORT_TIMEOUT_MS = 30_000L
+    private val REFRESH_POLL_MS = 250L
+
     init {
         TerminalSessionManager.init(application)
         SshHostKeyTrust.init(application)
@@ -2419,8 +2427,13 @@ class AppViewModel @JvmOverloads constructor(
     // Real telemetry: TCP reachability + SSH metrics for every reachable host, concurrently.
     private fun startTelemetryPolling() {
         pollingJob?.cancel()
-        activeProbes.values.forEach { it.cancel() }
-        activeProbes.clear()
+        // Prune finished probes, but never cancel a live one. A polling restart -- pull-to-refresh,
+        // interval change, battery-saver resume -- used to abort every in-flight probe. That reset a
+        // slow host's probe to zero on each pull, so a host that takes seconds to answer (one whose
+        // `df` is blocked on a stale NFS mount, say) was starved by repeated pulls and never reached
+        // a terminal state: it sat on "Checking host…" with no error. Duplicate work is already
+        // prevented by telemetryProbeMutexes and the isActive guard below.
+        activeProbes.entries.removeIf { !it.value.isActive }
         networkShareAvailabilityJob?.cancel()
         networkShareAvailabilityJob = null
 
@@ -2444,7 +2457,11 @@ class AppViewModel @JvmOverloads constructor(
                 // We use independent jobs so a slow probe doesn't block the global interval tick.
                 for (srv in currentServers) {
                     if (activeProbes[srv.id]?.isActive != true) {
-                        activeProbes[srv.id] = launch {
+                        // Deliberately owned by viewModelScope rather than launched as a child of
+                        // pollingJob: `pollingJob.cancel()` above would otherwise cancel every probe
+                        // on each restart no matter what the pruning does, which is exactly the
+                        // starvation described there.
+                        activeProbes[srv.id] = viewModelScope.launch(Dispatchers.IO) {
                             probeServer(srv)
                         }
                     }
@@ -2474,6 +2491,7 @@ class AppViewModel @JvmOverloads constructor(
 
     private suspend fun probeServer(srv: ServerEntity) {
         telemetryProbeMutexes.computeIfAbsent(srv.id) { Mutex() }.withLock {
+            var completed = false
             try {
                 // Make the periodic retry visible: an offline host shows "connecting" while its
                 // direct and configured-SSH routes are checked instead of silently sitting Offline.
@@ -2515,10 +2533,37 @@ class AppViewModel @JvmOverloads constructor(
                         }
                     }
                 }
+                completed = true
+            } catch (e: CancellationException) {
+                // A cancelled probe proves nothing, and it must not strand the row in "connecting":
+                // the UI reads that state as "Checking host…", so a probe killed mid-flight left the
+                // host spinning forever with no error until the remote machine was rebooted.
+                //
+                // NonCancellable is load-bearing. The coroutine is already cancelled by the time we
+                // get here, so every suspension point rethrows immediately -- the restore below (and
+                // the old `finally`) simply never ran. Restore what was known before this probe
+                // rather than inventing an Offline we never observed, and deliberately leave the
+                // host unprobed so the next polling pass checks it again.
+                withContext(NonCancellable) {
+                    repository.updateConnectionState(
+                        srv.id,
+                        srv.status,
+                        srv.healthScore.coerceAtLeast(0),
+                        srv.lastLatency.coerceAtLeast(0),
+                    )
+                }
+                throw e
             } catch (e: Exception) {
                 markServerOfflineUnlessConnected(srv)
+                completed = true
             } finally {
-                withContext(Dispatchers.Main) { probedServerIds[srv.id] = true }
+                // Only a probe that actually reached a verdict counts as probed; see the
+                // cancellation branch above for why this is NonCancellable.
+                if (completed) {
+                    withContext(NonCancellable) {
+                        withContext(Dispatchers.Main) { probedServerIds[srv.id] = true }
+                    }
+                }
             }
         }
     }
@@ -3125,19 +3170,63 @@ class AppViewModel @JvmOverloads constructor(
         // saver — resume it fully rather than restarting polling behind the saver's back.
         if (batterySaverActive) resumeFromBatterySaver()
         viewModelScope.launch(Dispatchers.IO) {
-            withContext(Dispatchers.Main) { isRefreshing = true }
+            withContext(Dispatchers.Main) {
+                isRefreshing = true
+                manualRefreshError = null
+            }
             try {
                 val list = repository.getAllServers()
                 for (s in list) {
                     repository.updateConnectionState(s.id, "connecting", 100, 0)
                 }
-                delay(1200) // Small simulation lag for spinner fidelity
                 startTelemetryPolling() // Restart polling immediately
+                // Wait for this pull's probes to actually reach a verdict. The old code span a
+                // fixed 1.2s spinner and walked away while the probes were still in flight, so a
+                // pull that ended in failure reported nothing at all -- and a host marked
+                // "connecting" just above whose probe never completed simply stayed on
+                // "Checking host…" forever, with no error and nothing to retry.
+                val failure = awaitRefreshOutcome(list)
+                withContext(Dispatchers.Main) { manualRefreshError = failure }
             } finally {
                 withContext(Dispatchers.Main) { isRefreshing = false }
             }
         }
     }
+
+    /**
+     * Wait for the probes started by a pull-to-refresh to settle, then say what the user should be
+     * told. Returns null when every host ended in a good state.
+     *
+     * This polls the same DB status (and [probedServerIds]) that the row UI reads rather than
+     * joining probe jobs, because [startTelemetryPolling] launches those asynchronously and they
+     * may not exist yet when this is called. Reporting on exactly what the UI shows is also what
+     * makes a stuck host reportable at all: a host still "connecting" at the deadline is precisely
+     * the "Checking host…" spinner that used to be silent.
+     */
+    private suspend fun awaitRefreshOutcome(list: List<ServerEntity>): String? {
+        if (list.isEmpty()) return null
+        val deadline = System.currentTimeMillis() + REFRESH_REPORT_TIMEOUT_MS
+        while (System.currentTimeMillis() < deadline) {
+            if (currentRefreshStates(list).none { RefreshOutcome.isStillChecking(it) }) break
+            delay(REFRESH_POLL_MS)
+        }
+        return RefreshOutcome.describe(
+            currentRefreshStates(list),
+            REFRESH_REPORT_TIMEOUT_MS / 1000,
+        )
+    }
+
+    private suspend fun currentRefreshStates(list: List<ServerEntity>): List<RefreshHostState> =
+        list.mapNotNull { s ->
+            val row = repository.getServerById(s.id) ?: return@mapNotNull null
+            RefreshHostState(
+                name = s.name,
+                status = row.status,
+                probed = probedServerIds.containsKey(s.id),
+                authStatus = row.authStatus,
+                authError = row.authError,
+            )
+        }
 
     fun refreshCurrentScreen() {
         when (currentScreen) {
@@ -3166,8 +3255,9 @@ class AppViewModel @JvmOverloads constructor(
 
     /**
      * Wrap a fire-and-forget loader in the shared pull-to-refresh spinner. The loaders keep their
-     * own fine-grained loading flags; this just acknowledges the pull gesture visibly (same
-     * fixed-lag approach as refreshAllServers) so every tab responds consistently.
+     * own fine-grained loading flags; this just acknowledges the pull gesture visibly with a fixed
+     * lag so every tab responds consistently. `refreshAllServers` deliberately does not use this —
+     * it waits for its probes to reach a verdict so it can report one.
      */
     private fun pullSpin(work: () -> Unit) {
         viewModelScope.launch {

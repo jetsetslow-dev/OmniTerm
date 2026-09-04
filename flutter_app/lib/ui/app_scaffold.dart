@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../data/app_database.dart';
+import '../data/app_repository.dart';
 import '../domain/alert_evaluation.dart';
 import '../domain/external_ui_requests.dart';
+import '../domain/refresh_outcome.dart';
 import '../platform/license_controller.dart';
 import '../platform/ads_controller.dart';
 import '../platform/battery_saver_controller.dart';
@@ -131,7 +133,7 @@ class AppCoreScaffold extends StatelessWidget {
       );
     }
 
-    final overlayBody = Stack(
+    Widget overlayBody = Stack(
       // The permission host is normally a zero-sized, non-positioned child. The expanded fit makes
       // the real screen establish the viewport while every conditional dialog layers over it.
       fit: StackFit.expand,
@@ -173,6 +175,19 @@ class AppCoreScaffold extends StatelessWidget {
         const _PermissionPromptHost(),
       ],
     );
+
+    // Pull-to-refresh is a global gesture, so its failure has to be reported globally -- including
+    // on the Servers list, where the gesture is used most and where a silent failure previously
+    // left a host spinning on "Checking host…" with nothing to act on. Mirrors the Kotlin banner in
+    // `ui/AppUi.kt`.
+    if (shell.refreshError != null) {
+      overlayBody = Column(
+        children: [
+          _RefreshErrorBanner(message: shell.refreshError!, onDismiss: shell.dismissRefreshError),
+          Expanded(child: overlayBody),
+        ],
+      );
+    }
 
     // A phone in landscape has tablet width but very little height. Keeping the 52dp app bar,
     // 96dp free-plan banner and bottom navigation left less than half the display for several
@@ -265,7 +280,12 @@ class AppCoreScaffold extends StatelessWidget {
     );
   }
 
-  Future<void> _refreshScreen(BuildContext context, Screen screen) async {
+  /// How long a pull-to-refresh waits for the host sweep before telling the user a host is still
+  /// not answering. Matches Kotlin's `REFRESH_REPORT_TIMEOUT_MS`.
+  static const _refreshReportTimeout = Duration(seconds: 30);
+
+  /// Returns a user-facing failure, or null when the refresh was clean.
+  Future<String?> _refreshScreen(BuildContext context, Screen screen) async {
     context.read<BatterySaverController>().resume();
     switch (screen) {
       case Screen.servers:
@@ -273,8 +293,13 @@ class AppCoreScaffold extends StatelessWidget {
       case Screen.alerts:
         final probe = context.read<HostStatusProbe>();
         final poller = context.read<TelemetryPoller>();
+        final repository = context.read<AppState>().repository;
+        // `sweep()` and `cycle()` return immediately when one is already in flight, so awaiting
+        // them alone can report success on a pull that did nothing. Report on the state the rows
+        // actually end up in instead.
         await probe.sweep();
         await poller.cycle();
+        return _describeHostRefresh(repository, probe);
       case Screen.monitor:
         await context.read<MonitorViewModel>().loadActiveTab();
       case Screen.infra:
@@ -294,8 +319,31 @@ class AppCoreScaffold extends StatelessWidget {
       case Screen.healthScoring:
       case Screen.settings:
       case Screen.about:
-        return;
+        return null;
     }
+    return null;
+  }
+
+  /// Waits for every host to leave the "Checking host…" state, then says what is still wrong.
+  Future<String?> _describeHostRefresh(AppRepository repository, HostStatusProbe probe) async {
+    Future<List<RefreshHostState>> current() async => [
+      for (final s in await repository.getAllServers())
+        RefreshHostState(
+          name: s.name,
+          status: s.status,
+          probed: probe.hasProbed(s.id),
+          authStatus: s.authStatus,
+          authError: s.authError,
+        ),
+    ];
+
+    final deadline = DateTime.now().add(_refreshReportTimeout);
+    var hosts = await current();
+    while (hosts.any(isStillChecking) && DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      hosts = await current();
+    }
+    return describeRefreshOutcome(hosts, waitedSeconds: _refreshReportTimeout.inSeconds);
   }
 
   Future<void> _refreshNetwork(NetworkViewModel vm) => switch (vm.activeTab) {
@@ -1138,4 +1186,37 @@ class _PopupIncident extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// Reports a pull-to-refresh that did not come back clean.
+class _RefreshErrorBanner extends StatelessWidget {
+  const _RefreshErrorBanner({required this.message, required this.onDismiss});
+
+  final String message;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: OmniColors.red.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      padding: const EdgeInsets.only(left: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(message, style: const TextStyle(color: OmniColors.red, fontSize: 11)),
+          ),
+          IconButton(
+            onPressed: onDismiss,
+            tooltip: 'Dismiss refresh error',
+            icon: const Icon(Icons.close, color: OmniColors.red),
+          ),
+        ],
+      ),
+    );
+  }
 }

@@ -201,6 +201,7 @@
     <string name="no_servers_found">"No servers found"</string>
     <string name="add_host_server">"Add Host Server"</string>
     <string name="checking_host">"Checking host…"</string>
+    <string name="dismiss_refresh_error">Dismiss refresh error</string>
     <string name="offline_unreachable">"Offline · unreachable"</string>
     <string name="edit_server_configuration">"Edit Server Configuration"</string>
     <string name="duplicate_host_reuse_credentials">"Duplicate Host (reuse credentials)"</string>

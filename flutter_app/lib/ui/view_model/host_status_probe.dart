@@ -214,13 +214,11 @@ class HostStatusProbe extends ChangeNotifier {
     }
     final evidenceGeneration = _evidenceGeneration[server.id] ?? 0;
     final stopwatch = Stopwatch()..start();
-    var markedConnecting = false;
     try {
       // Shown as "connecting" while a previously offline host is retried, so a slow probe reads as
       // work in progress rather than a host that is simply still down.
       if (server.status == 'offline') {
         await _repository.updateConnectionState(server.id, 'connecting', server.healthScore, 0);
-        markedConnecting = true;
         if (!_workIsCurrent(generation)) return;
       }
       // A direct socket to the final host bypasses every configured proxy. Do not let that result
@@ -303,7 +301,13 @@ class HostStatusProbe extends ChangeNotifier {
       // Battery saver can invalidate a probe after its temporary "connecting" write. Restore the
       // previous state only if no newer probe or live shell has supplied stronger evidence; leaving
       // a host permanently "connecting" makes every tab wait on work that no longer exists.
-      if (markedConnecting && !_workIsCurrent(generation) && !_disposed) {
+      //
+      // Deliberately not gated on this probe having been the one to write "connecting": a row left
+      // that way by an earlier invalidated probe would otherwise stay stranded forever, which is
+      // the "Checking host…" spinner that never resolves and never reports an error. Restoring is
+      // skipped when the snapshot was itself "connecting", because then there is no earlier state
+      // to go back to and inventing one would be a guess.
+      if (!_workIsCurrent(generation) && !_disposed && server.status != 'connecting') {
         if (_liveSessionServers.contains(server.id) ||
             (_evidenceGeneration[server.id] ?? 0) != evidenceGeneration) {
           await _preserveInteractiveSuccess(server);

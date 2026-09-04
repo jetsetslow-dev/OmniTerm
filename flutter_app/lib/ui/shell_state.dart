@@ -11,6 +11,7 @@ class ShellState extends ChangeNotifier {
 
   final Future<void> Function(bool enabled)? keepScreenOnSetter;
   bool _isRefreshing = false;
+  String? _refreshError;
   bool _isKeepScreenOnEnabled = false;
   bool _showKeepScreenOnWarning = false;
   bool _showAlertsPopup = false;
@@ -26,6 +27,20 @@ class ShellState extends ChangeNotifier {
   String _hostLimitReconciliationReason = '';
 
   bool get isRefreshing => _isRefreshing;
+
+  /// What went wrong in the last pull-to-refresh, or null when it succeeded.
+  ///
+  /// A refresh used to await its work and then discard whatever it found, so a pull that ended with
+  /// a host stuck on "Checking host…" told the user nothing at all. Mirrors Kotlin's
+  /// `AppViewModel.manualRefreshError`.
+  String? get refreshError => _refreshError;
+
+  void dismissRefreshError() {
+    if (_refreshError == null) return;
+    _refreshError = null;
+    notifyListeners();
+  }
+
   bool get isKeepScreenOnEnabled => _isKeepScreenOnEnabled;
   bool get showKeepScreenOnWarning => _showKeepScreenOnWarning;
   bool get showAlertsPopup => _showAlertsPopup;
@@ -134,12 +149,19 @@ class ShellState extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> refreshCurrentScreen([Future<void> Function()? refresh]) async {
+  /// Runs one pull-to-refresh. [refresh] returns a user-facing failure, or null when the refresh
+  /// was clean; whatever it returns is what the banner shows.
+  Future<void> refreshCurrentScreen([Future<String?> Function()? refresh]) async {
     if (_isRefreshing || refresh == null) return;
     _isRefreshing = true;
+    _refreshError = null;
     notifyListeners();
     try {
-      await refresh();
+      _refreshError = await refresh();
+    } catch (error) {
+      // A refresh that throws is still a refresh the user asked for and watched spin. Swallowing it
+      // here is what made a failing pull indistinguishable from a successful one.
+      _refreshError = 'Refresh failed: $error';
     } finally {
       _isRefreshing = false;
       notifyListeners();
