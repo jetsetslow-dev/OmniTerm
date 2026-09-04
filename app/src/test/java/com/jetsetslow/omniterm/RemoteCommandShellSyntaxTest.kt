@@ -60,6 +60,7 @@ class RemoteCommandShellSyntaxTest {
             "dockerPruneNetworks" to RemoteCommands.dockerPruneNetworks(),
             "tmuxHasSessionCommand" to RemoteCommands.tmuxHasSessionCommand("omniterm-1"),
             "tmuxCaptureHistoryCommand" to RemoteCommands.tmuxCaptureHistoryCommand("omniterm-1", 5_000),
+            "tmuxInstallCommand" to RemoteCommands.tmuxInstallCommand(),
         )
 
         commands.forEach { (label, script) -> assertParses(label, script) }
@@ -92,6 +93,32 @@ class RemoteCommandShellSyntaxTest {
         commands.forEach { (label, script) ->
             if (usesOt.containsMatchIn(script)) {
                 check(script.contains("ot(){")) { "$label calls `ot` but never defines it (missing OT_HELPER)" }
+            }
+        }
+    }
+
+    /**
+     * The tmux install must bound every package-manager step through its own `pm` helper.
+     *
+     * Same class of trap as [everyCommandThatCallsOtAlsoDefinesIt]: `pm 600 apt-get install` parses
+     * happily and then dies with "pm: not found", turning a bounded install back into the unbounded
+     * one this guards against. Unbounded is the real regression -- an apt lock held by
+     * unattended-upgrades hangs until the transport cuts the stream half an hour later, and the user
+     * is told only "command timed out", with no hint that a lock was the cause.
+     */
+    @Test
+    fun theTmuxInstallBoundsEveryPackageManagerStep() {
+        val script = RemoteCommands.tmuxInstallCommand()
+        check(script.contains("pm(){")) { "tmuxInstallCommand calls `pm` but never defines it" }
+        listOf(
+            "apt-get update", "apt-get install", "dnf install", "yum install",
+            "pacman -Sy", "apk add", "zypper install", "pkg install",
+        ).forEach { invocation ->
+            // Normal string, not a raw one: in `"""..."""` a `\$` is not an escape and `$SUDO`
+            // would still be read as Kotlin interpolation.
+            val bounded = Regex("pm \\d+ \\\$SUDO " + Regex.escape(invocation))
+            check(bounded.containsMatchIn(script)) {
+                "`" + invocation + "` is not wrapped in a `pm <seconds>` bound:\n" + script
             }
         }
     }

@@ -1105,6 +1105,12 @@ String compareForConflicts(String destDir, List<String> sources) {
 /// Ported from `RemoteCommands.TMUX_CHECK` in `data/RemoteParsers.kt:140`.
 const tmuxCheckCommand = 'command -v tmux >/dev/null 2>&1 && echo yes || echo no';
 
+/// Bound for a package-index refresh. Long enough for a slow mirror, short enough to report.
+const pmUpdateSeconds = 180;
+
+/// Bound for the install itself; well under the transport's 30-minute stream cap.
+const pmInstallSeconds = 600;
+
 /// Installs tmux with whichever package manager the host has.
 ///
 /// Ported verbatim from `RemoteCommands.tmuxInstallCommand()` in `data/RemoteParsers.kt:303`.
@@ -1119,13 +1125,23 @@ const tmuxCheckCommand = 'command -v tmux >/dev/null 2>&1 && echo yes || echo no
 String tmuxInstallCommand() =>
     "set -e; if command -v tmux >/dev/null 2>&1; then echo 'tmux already installed'; exit 0; fi; "
     'if [ "\$(id -u)" = 0 ]; then SUDO=; else SUDO=\'sudo -S\'; fi; '
-    'if command -v apt-get >/dev/null 2>&1; then \$SUDO apt-get update && \$SUDO apt-get install -y tmux; '
-    'elif command -v dnf >/dev/null 2>&1; then \$SUDO dnf install -y tmux; '
-    'elif command -v yum >/dev/null 2>&1; then \$SUDO yum install -y tmux; '
-    'elif command -v pacman >/dev/null 2>&1; then \$SUDO pacman -Sy --noconfirm tmux; '
-    'elif command -v apk >/dev/null 2>&1; then \$SUDO apk add tmux; '
-    'elif command -v zypper >/dev/null 2>&1; then \$SUDO zypper install -y tmux; '
-    'elif command -v pkg >/dev/null 2>&1; then \$SUDO pkg install -y tmux; '
+    // Every package step is bounded and explains a timeout in its own words. A dpkg/apt or dnf lock
+    // held by unattended-upgrades blocks forever; the transport would eventually cut the stream at
+    // _streamTimeout and the user would see a bare "command timed out" half an hour later, with
+    // nothing saying a lock was the reason or that nothing had been installed.
+    'pm(){ n=\$1; shift; s=0; '
+    'if command -v timeout >/dev/null 2>&1; then timeout "\$n" "\$@" || s=\$?; else "\$@" || s=\$?; fi; '
+    'if [ "\$s" = 124 ]; then '
+    'echo "OmniTerm: \$* did not finish within \${n}s. Another package manager is most likely '
+    'holding the lock (unattended-upgrades, an interrupted install, or a stale lock file). '
+    'Nothing was installed - retry once that finishes." >&2; fi; return "\$s"; }; '
+    'if command -v apt-get >/dev/null 2>&1; then pm $pmUpdateSeconds \$SUDO apt-get update && pm $pmInstallSeconds \$SUDO apt-get install -y tmux; '
+    'elif command -v dnf >/dev/null 2>&1; then pm $pmInstallSeconds \$SUDO dnf install -y tmux; '
+    'elif command -v yum >/dev/null 2>&1; then pm $pmInstallSeconds \$SUDO yum install -y tmux; '
+    'elif command -v pacman >/dev/null 2>&1; then pm $pmInstallSeconds \$SUDO pacman -Sy --noconfirm tmux; '
+    'elif command -v apk >/dev/null 2>&1; then pm $pmInstallSeconds \$SUDO apk add tmux; '
+    'elif command -v zypper >/dev/null 2>&1; then pm $pmInstallSeconds \$SUDO zypper install -y tmux; '
+    'elif command -v pkg >/dev/null 2>&1; then pm $pmInstallSeconds \$SUDO pkg install -y tmux; '
     "else echo 'No supported package manager found; install tmux manually.' >&2; exit 1; fi; "
     "command -v tmux >/dev/null 2>&1 && echo 'tmux installed' || { echo 'tmux install failed' >&2; exit 1; }";
 

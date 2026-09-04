@@ -34,6 +34,7 @@ void main() {
     'dockerVolumesCommand': dockerVolumesCommand,
     'dockerNetworksCommand': dockerNetworksCommand,
     'servicesCommand': servicesCommand,
+    'tmuxInstallCommand': tmuxInstallCommand(),
   };
 
   test('every generated remote command parses as POSIX sh', () {
@@ -65,6 +66,36 @@ void main() {
           reason: '${entry.key} calls `ot` but never defines it (missing otHelper)',
         );
       }
+    }
+  });
+
+  test('the tmux install bounds every package-manager step', () {
+    // Mirror of Kotlin's `theTmuxInstallBoundsEveryPackageManagerStep`. Same trap as `ot`:
+    // `pm 600 apt-get install` parses happily and then dies with "pm: not found", turning a bounded
+    // install back into the unbounded one this guards. Unbounded is the real regression -- an apt
+    // lock held by unattended-upgrades hangs until the transport cuts the stream half an hour
+    // later, and the user is told only "command timed out".
+    final script = tmuxInstallCommand();
+    expect(
+      script.contains('pm(){'),
+      isTrue,
+      reason: 'tmuxInstallCommand calls `pm` but never defines it',
+    );
+    for (final invocation in const [
+      'apt-get update',
+      'apt-get install',
+      'dnf install',
+      'yum install',
+      'pacman -Sy',
+      'apk add',
+      'zypper install',
+      'pkg install',
+    ]) {
+      expect(
+        RegExp('pm \\d+ \\\$SUDO ${RegExp.escape(invocation)}').hasMatch(script),
+        isTrue,
+        reason: '`$invocation` is not wrapped in a `pm <seconds>` bound:\n$script',
+      );
     }
   });
 }
