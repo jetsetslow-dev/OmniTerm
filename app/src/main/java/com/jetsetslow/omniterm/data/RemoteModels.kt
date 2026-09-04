@@ -183,6 +183,15 @@ data class HostMetrics(
     // from the delta between two /proc/diskstats samples. Linux only; 0 elsewhere/first poll.
     val diskReadPerSec: Long = 0,
     val diskWritePerSec: Long = 0,
+    /**
+     * Why a metric section could not be collected, keyed by section name (e.g. "DISKS").
+     *
+     * A section the probe could not read emits `!UNAVAILABLE <reason>` rather than staying silent,
+     * because an empty disk list and a disk list that could not be read look identical on screen
+     * and mean very different things. Surfacing the reason turns "this host has no partitions" into
+     * "df was blocked by an unreachable network mount", which is actionable.
+     */
+    val unavailable: Map<String, String> = emptyMap(),
     // Remote OS family detected by the probe: "Linux" | "FreeBSD" | "Darwin" | "Windows" | "".
     val os: String = "",
     // Detected platform capabilities (e.g. "linux", "proxmox", "casaos", "homeassistant",

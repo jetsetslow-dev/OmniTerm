@@ -2537,7 +2537,17 @@ class AppViewModel @JvmOverloads constructor(
             }
             val raw = executeSshCommand(srv, RemoteCommands.metricsFor(os))
             if (raw.startsWith("SSH Error")) {
-                repository.updateAuthState(srv.id, "failed", cleanSshError(raw))
+                // A metrics command that timed out says nothing about authentication: this line is
+                // only reached *after* an authenticated exec succeeded. Reporting it as an auth
+                // failure made a host whose only problem was one wedged NFS mount display
+                // "Automatic SSH check failed" while ssh to it worked perfectly -- the telemetry was
+                // incomplete, the login was not. Keep the auth state truthful and let the metrics
+                // simply stay unavailable.
+                if (raw.trimEnd().endsWith("command timed out")) {
+                    repository.updateAuthState(srv.id, "ok", null)
+                } else {
+                    repository.updateAuthState(srv.id, "failed", cleanSshError(raw))
+                }
                 val health = (100 - healthConfig.latency.penaltyFor(rtt.toFloat())).coerceIn(0, 100)
                 repository.updateConnectionState(srv.id, "online", health, rtt)
             } else {
@@ -9130,11 +9140,16 @@ class AppViewModel @JvmOverloads constructor(
 
         val paths = directories.map { joinPath(currentPath, it.name) }
         val script = buildString {
+            // `du` recurses, so one unreachable network mount under a listed directory blocks it
+            // forever and the whole folder-size pass never returns. Per-directory bound: a wedged
+            // subtree costs that one size, and every other directory still gets a number. See
+            // RemoteCommands.OT_HELPER for why `timeout` is guarded rather than assumed.
+            append(RemoteCommands.OT_HELPER)
             append("for p in ")
             append(paths.joinToString(" ") { shellQuote(it) })
             append("; do ")
-            append("b=${'$'}(du -sb -- \"${'$'}p\" 2>/dev/null | awk '{print ${'$'}1}'); ")
-            append("if [ -z \"${'$'}b\" ]; then k=${'$'}(du -sk -- \"${'$'}p\" 2>/dev/null | awk '{print ${'$'}1}'); ")
+            append("b=${'$'}(ot 10 du -sb -- \"${'$'}p\" 2>/dev/null | awk '{print ${'$'}1}'); ")
+            append("if [ -z \"${'$'}b\" ]; then k=${'$'}(ot 10 du -sk -- \"${'$'}p\" 2>/dev/null | awk '{print ${'$'}1}'); ")
             append("[ -n \"${'$'}k\" ] && b=${'$'}((k * 1024)); fi; ")
             append("[ -n \"${'$'}b\" ] && printf '%s\\t%s\\n' \"${'$'}b\" \"${'$'}p\"; ")
             append("done")
@@ -11088,9 +11103,11 @@ class AppViewModel @JvmOverloads constructor(
         val openApp = PendingIntent.getActivity(
             app,
             BATTERY_SAVER_CHANNEL_ID.hashCode(),
+            // Explicit by construction; the package is pinned too so the PendingIntent's target
+            // cannot be re-resolved, and so CodeQL's implicit-PendingIntent dataflow can see it.
             Intent(app, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            },
+            }.setPackage(app.packageName),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val n = NotificationCompat.Builder(app, BATTERY_SAVER_CHANNEL_ID)

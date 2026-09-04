@@ -523,6 +523,7 @@ HostMetrics _parseMetricsLinux(Map<String, String> sections) {
     disks: disks,
     os: osLabel,
     platforms: platforms,
+    unavailable: parseUnavailable(sections),
   );
 }
 
@@ -853,6 +854,22 @@ Map<String, (int rx, int tx)> parseNetDev(String output) {
 // ── helpers ──
 
 /// Splits a probe response into its `@SECTION` blocks.
+/// Section name -> reason, for sections the probe reported as `!UNAVAILABLE <reason>`.
+Map<String, String> parseUnavailable(Map<String, String> sections) {
+  const marker = '!UNAVAILABLE';
+  final out = <String, String>{};
+  sections.forEach((name, body) {
+    for (final line in body.split('\n')) {
+      if (line.startsWith(marker)) {
+        final reason = line.substring(marker.length).trim();
+        if (reason.isNotEmpty) out[name] = reason;
+        break;
+      }
+    }
+  });
+  return out;
+}
+
 Map<String, String> _splitSections(String output) {
   final map = <String, String>{};
   String? key;

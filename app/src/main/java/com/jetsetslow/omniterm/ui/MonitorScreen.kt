@@ -770,7 +770,16 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                 val mounts = m.disks.ifEmpty {
                     if (m.diskTotalBytes > 0) listOf(DiskUsage("/", "", m.diskTotalBytes, m.diskUsedBytes)) else emptyList()
                 }
-                if (mounts.isEmpty()) {
+                // A bare "—" reads as "this host has no disks", which is wrong and unhelpful when the
+                // truth is that the probe was blocked. If the host told us why, say so.
+                val disksUnavailable = m.unavailable["DISKS"] ?: m.unavailable["DISK"]
+                if (mounts.isEmpty() && disksUnavailable != null) {
+                    Text(
+                        disksUnavailable,
+                        fontSize = 11.sp,
+                        color = OmniColors.amber,
+                    )
+                } else if (mounts.isEmpty()) {
                     Text("—", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 } else {
                     mounts.forEach { d ->
@@ -794,6 +803,12 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                         }
                         Spacer(modifier = Modifier.height(4.dp))
                         GaugeBar(value = d.percent, color = OmniColors.purple, height = 6.dp)
+                    }
+                    // The root summary can succeed while the full per-mount listing is blocked, so
+                    // explain the partial result rather than quietly showing one row.
+                    if (m.disks.isEmpty() && disksUnavailable != null) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(disksUnavailable, fontSize = 10.sp, color = OmniColors.amber)
                     }
                 }
             }

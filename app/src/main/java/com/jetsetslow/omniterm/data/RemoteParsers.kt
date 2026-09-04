@@ -9,8 +9,8 @@ object RemoteCommands {
     // neither can run `ps` (for example Docker exists but the user lacks socket access), fall back
     // to a present binary so the command still returns the runtime's real permission/install error.
     private const val CR =
-        "\"\$(if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then command -v docker; " +
-        "elif command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then command -v podman; " +
+        "\"\$(if command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1; then command -v docker; " +
+        "elif command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then command -v podman; " +
         "elif command -v docker >/dev/null 2>&1; then command -v docker; else command -v podman; fi)\""
 
     // Compose entrypoint resolved at run time. Docker prefers its plugin. Podman's `compose`
@@ -67,10 +67,27 @@ object RemoteCommands {
         "{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}\\t{{.Label \"com.docker.compose.project\"}}\\t{{.Label \"com.docker.compose.service\"}}\\t{{.Label \"com.docker.compose.project.working_dir\"}}\\t{{.Label \"com.docker.compose.project.config_files\"}}\\t{{.CreatedAt}}"
     private const val PS_FIELDS_PODMAN =
         "{{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}\\t{{index .Labels \"com.docker.compose.project\"}}\\t{{index .Labels \"com.docker.compose.service\"}}\\t{{index .Labels \"com.docker.compose.project.working_dir\"}}\\t{{index .Labels \"com.docker.compose.project.config_files\"}}\\t{{.CreatedAt}}"
+    /**
+     * POSIX `sh` snippet defining `ot <seconds> <cmd...>`: run a command with a hard deadline.
+     *
+     * Remote hosts are not vanilla. A stale NFS/CIFS mount makes `df`/`du` block forever rather than
+     * error, because the mount is unreachable rather than absent. A Docker or Podman socket that
+     * accepts connections but never answers hangs `docker ps` the same way, as does a degraded
+     * systemd for `systemctl`. None of these return, so a probe that runs them unbounded never
+     * finishes and the app sits on a spinner with nothing to report.
+     *
+     * `timeout` is in coreutils and BusyBox, so it is present almost everywhere; a host without it
+     * simply runs the command unbounded, which is the old behaviour rather than a new failure.
+     * POSIX only: no arrays, no `${@:2}`, so dash/ash/BusyBox all accept it.
+     */
+    const val OT_HELPER =
+        "ot(){ n=\$1; shift; if command -v timeout >/dev/null 2>&1; then timeout \"\$n\" \"\$@\"; else \"\$@\"; fi; }; "
+
     const val DOCKER_PS =
+        OT_HELPER +
         "found=0; " +
-        "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; docker ps -a --no-trunc --format 'docker\\t$PS_FIELDS_DOCKER'; fi; " +
-        "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; podman ps -a --no-trunc --format 'podman\\t$PS_FIELDS_PODMAN'; fi; " +
+        "if command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1; then found=1; ot 15 docker ps -a --no-trunc --format 'docker\\t$PS_FIELDS_DOCKER'; fi; " +
+        "if command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then found=1; ot 15 podman ps -a --no-trunc --format 'podman\\t$PS_FIELDS_PODMAN'; fi; " +
         "if [ \"\$found\" = 0 ]; then if $CR --version | grep -qi podman; then $CR ps -a --no-trunc --format 'podman\\t$PS_FIELDS_PODMAN'; else $CR ps -a --no-trunc --format 'docker\\t$PS_FIELDS_DOCKER'; fi; fi"
 
     // One line per usable container runtime on the host ("docker" / "podman"). Gated on `ps`
@@ -78,21 +95,24 @@ object RemoteCommands {
     // matching how DOCKER_PS decides which runtimes to query. Drives the compose-builder runtime
     // picker when a host has both.
     const val DOCKER_RUNTIMES =
-        "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then echo docker; fi; " +
-        "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then echo podman; fi"
+        OT_HELPER +
+        "if command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1; then echo docker; fi; " +
+        "if command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then echo podman; fi"
 
     // Per-container restart counts, keyed by container ID. Docker and Podman name the inspect ID
     // placeholder differently: Docker's template field is `.Id`, Podman's is `.ID` (its inspect
     // JSON prints "Id" but the Go-template struct field is `ID`, so `.Id` errors with
     // `can't evaluate field Id`). `.RestartCount` is identical on both. Branch like DOCKER_PS.
     const val DOCKER_RESTARTS =
-        "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then ids=\$(docker ps -aq); [ -n \"\$ids\" ] && docker inspect --format 'docker\\t{{.Id}}\\t{{.RestartCount}}' \$ids 2>/dev/null || true; fi; " +
-        "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then ids=\$(podman ps -aq); [ -n \"\$ids\" ] && podman inspect --format 'podman\\t{{.ID}}\\t{{.RestartCount}}' \$ids 2>/dev/null || true; fi"
+        OT_HELPER +
+        "if command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1; then ids=\$(docker ps -aq); [ -n \"\$ids\" ] && docker inspect --format 'docker\\t{{.Id}}\\t{{.RestartCount}}' \$ids 2>/dev/null || true; fi; " +
+        "if command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then ids=\$(podman ps -aq); [ -n \"\$ids\" ] && podman inspect --format 'podman\\t{{.ID}}\\t{{.RestartCount}}' \$ids 2>/dev/null || true; fi"
 
     const val DOCKER_IMAGES =
+        OT_HELPER +
         "found=0; " +
-        "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; docker images --no-trunc --format 'docker\\t{{.ID}}\\t{{.Repository}}\\t{{.Tag}}\\t{{.Size}}\\t{{.CreatedSince}}'; fi; " +
-        "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; podman images --no-trunc --format 'podman\\t{{.ID}}\\t{{.Repository}}\\t{{.Tag}}\\t{{.Size}}\\t{{.CreatedSince}}'; fi; " +
+        "if command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1; then found=1; ot 15 docker images --no-trunc --format 'docker\\t{{.ID}}\\t{{.Repository}}\\t{{.Tag}}\\t{{.Size}}\\t{{.CreatedSince}}'; fi; " +
+        "if command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then found=1; ot 15 podman images --no-trunc --format 'podman\\t{{.ID}}\\t{{.Repository}}\\t{{.Tag}}\\t{{.Size}}\\t{{.CreatedSince}}'; fi; " +
         "if [ \"\$found\" = 0 ]; then if $CR --version | grep -qi podman; then $CR images --no-trunc --format 'podman\\t{{.ID}}\\t{{.Repository}}\\t{{.Tag}}\\t{{.Size}}\\t{{.CreatedSince}}'; else $CR images --no-trunc --format 'docker\\t{{.ID}}\\t{{.Repository}}\\t{{.Tag}}\\t{{.Size}}\\t{{.CreatedSince}}'; fi; fi"
 
     // Tab-separated: name \t driver \t mountpoint \t size \t links. Three layered fallbacks so we
@@ -107,6 +127,7 @@ object RemoteCommands {
     //      $3=size maps cleanly. Volume names with spaces are out of scope (extremely rare).
     //   3. `volume ls` template — always available; no size/links, but the list is still correct.
     const val DOCKER_VOLUMES =
+        OT_HELPER +
         "ot_vols() { rt=\"\$1\"; \"\$rt\" system df -v --format '{{range .Volumes}}{{.Name}}\\t{{.Driver}}\\t{{.Mountpoint}}\\t{{.Size}}\\t{{.Links}}\\n{{end}}' 2>/dev/null " +
         "|| \"\$rt\" system df -v 2>/dev/null | awk '" +
             "/^Local Volumes/ { f=1; seen=0; next } " +                       // enter the section
@@ -115,14 +136,15 @@ object RemoteCommands {
             "f && seen && /^[A-Za-z].*:/ { f=0 } " +                          // next \"Header:\" ends it
             "f && seen && NF>=3 { print \\$1 \"\\tlocal\\t\\t\" \\$3 \"\\t\" \\$2 }' " +
         "|| \"\$rt\" volume ls --format '{{.Name}}\\t{{.Driver}}\\t{{.Mountpoint}}\\t\\t'; }; " +
-        "found=0; if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; ot_vols docker | sed 's/^/docker\\t/'; fi; " +
-        "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; ot_vols podman | sed 's/^/podman\\t/'; fi; " +
+        "found=0; if command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1; then found=1; ot_vols docker | sed 's/^/docker\\t/'; fi; " +
+        "if command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then found=1; ot_vols podman | sed 's/^/podman\\t/'; fi; " +
         "if [ \"\$found\" = 0 ]; then if $CR --version | grep -qi podman; then ot_vols $CR | sed 's/^/podman\\t/'; else ot_vols $CR | sed 's/^/docker\\t/'; fi; fi"
 
     const val DOCKER_NETWORKS =
+        OT_HELPER +
         "found=0; " +
-        "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; docker network ls --format 'docker\\t{{.ID}}\\t{{.Name}}\\t{{.Driver}}' 2>/dev/null; fi; " +
-        "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; podman network ls --format 'podman\\t{{.ID}}\\t{{.Name}}\\t{{.Driver}}' 2>/dev/null; fi; " +
+        "if command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1; then found=1; ot 15 docker network ls --format 'docker\\t{{.ID}}\\t{{.Name}}\\t{{.Driver}}' 2>/dev/null; fi; " +
+        "if command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then found=1; ot 15 podman network ls --format 'podman\\t{{.ID}}\\t{{.Name}}\\t{{.Driver}}' 2>/dev/null; fi; " +
         "if [ \"\$found\" = 0 ]; then if $CR --version | grep -qi podman; then $CR network ls --format 'podman\\t{{.ID}}\\t{{.Name}}\\t{{.Driver}}'; else $CR network ls --format 'docker\\t{{.ID}}\\t{{.Name}}\\t{{.Driver}}'; fi; fi"
 
     // ── Remote OS detection ──
@@ -382,9 +404,10 @@ object RemoteCommands {
     // rc-status output (marked so the parser switches format); other inits return a marker the
     // UI can turn into an explanation instead of a silently blank tab.
     const val SERVICES =
+        OT_HELPER +
         "if command -v systemctl >/dev/null 2>&1; then " +
-        "{ systemctl list-units --type=service --all --no-pager --no-legend --plain; " +
-        "echo '---ENABLED---'; systemctl list-unit-files --type=service --no-pager --no-legend --plain 2>/dev/null; }; " +
+        "{ ot 15 systemctl list-units --type=service --all --no-pager --no-legend --plain; " +
+        "echo '---ENABLED---'; ot 15 systemctl list-unit-files --type=service --no-pager --no-legend --plain 2>/dev/null; }; " +
         "elif command -v rc-status >/dev/null 2>&1; then echo '---OPENRC---'; rc-status -a 2>/dev/null; " +
         "else echo '---NOSYSTEMD---'; fi"
 
@@ -405,9 +428,10 @@ object RemoteCommands {
             // and exits. The old `elif` chain stopped there, printed nothing, and never reached the
             // ---NOLOGS--- marker, so the Logs tab showed an empty pane with no explanation on most
             // containers. Found by running the Flutter port against a real Alpine host.
-            "L=\"\"; " +
+            OT_HELPER +
+                "L=\"\"; " +
                 "if command -v journalctl >/dev/null 2>&1; then " +
-                "L=\$(journalctl -n $lines --no-pager -o short-iso 2>/dev/null); fi; " +
+                "L=\$(ot 20 journalctl -n $lines --no-pager -o short-iso 2>/dev/null); fi; " +
                 "if [ -z \"\$L\" ] && command -v logread >/dev/null 2>&1; then " +
                 "L=\$(logread 2>/dev/null | tail -n $lines); fi; " +
                 "if [ -z \"\$L\" ] && [ -r /var/log/messages ]; then " +
@@ -526,13 +550,13 @@ object RemoteCommands {
         return "$cr $verb ${shellQuote(id)} 2>&1"
     }
 
-    fun dockerPruneImages() = "{ command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1 && docker image prune -a -f; true; } 2>&1; { command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1 && podman image prune -a -f; true; } 2>&1"
+    fun dockerPruneImages() = OT_HELPER + "{ command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1 && docker image prune -a -f; true; } 2>&1; { command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1 && podman image prune -a -f; true; } 2>&1"
 
     // `volume prune -f` removes only anonymous unused volumes on current Docker and Podman.
     // `-a/--all` prunes unused named volumes too, matching the UI's "unused volumes" wording.
-    fun dockerPruneVolumes() = "{ command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1 && docker volume prune -a -f; true; } 2>&1; { command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1 && podman volume prune -a -f; true; } 2>&1"
+    fun dockerPruneVolumes() = OT_HELPER + "{ command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1 && docker volume prune -a -f; true; } 2>&1; { command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1 && podman volume prune -a -f; true; } 2>&1"
 
-    fun dockerPruneNetworks() = "{ command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1 && docker network prune -f; true; } 2>&1; { command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1 && podman network prune -f; true; } 2>&1"
+    fun dockerPruneNetworks() = OT_HELPER + "{ command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1 && docker network prune -f; true; } 2>&1; { command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1 && podman network prune -f; true; } 2>&1"
 
     fun dockerLogs(id: String, runtime: String = "") = "${runtimeCommand(runtime)} logs --tail 200 ${shellQuote(id)} 2>&1"
 
@@ -794,6 +818,19 @@ object RemoteCommands {
 
     /** Single round-trip host metrics probe (Linux). Sections delimited by @MARKER lines. */
     val METRICS = buildString {
+        // Bound the commands that can block forever on a wedged filesystem.
+        //
+        // `df` walks every mount, and a stale NFS/CIFS mount makes it hang indefinitely rather than
+        // error -- the mount is unreachable, not absent, so the kernel keeps waiting. `smartctl` can
+        // stall the same way on a device that will not answer. Because this probe is one round trip,
+        // a single wedged mount used to hang the *whole* metrics read, so the host sat on
+        // "Checking host..." forever with no error until the remote machine was rebooted. Observed
+        // on a host with two unreachable NFS4 mounts, where plain `df` never returned.
+        //
+        // `ot` is POSIX sh: no arrays, no `${@:2}`, works under dash/BusyBox. Hosts without
+        // `timeout` (rare; it is in coreutils and BusyBox) simply run the command unbounded, which
+        // is the old behaviour rather than a regression.
+        append(OT_HELPER)
         append("echo '@OS'; uname -s 2>/dev/null || echo Linux; ")
         // Distro pretty-name so homelab OSes (Raspberry Pi OS, Ubuntu, Debian, Proxmox, OpenWrt,
         // Alpine, …) show by name instead of a bare "Linux".
@@ -813,25 +850,37 @@ object RemoteCommands {
         // /proc/meminfo fallback (kB) for BusyBox/Alpine where `free -b`/columns differ or are absent.
         append("echo '@MEMINFO'; grep -iE '^(MemTotal|MemFree|MemAvailable):' /proc/meminfo 2>/dev/null || true; ")
         // BusyBox df has no -B; fall back to -Pk with a KB1024 marker so the parser scales ×1024.
-        append("echo '@DISK'; df -PB1 / 2>/dev/null | tail -1 || df -Pk / 2>/dev/null | tail -1 | sed 's/^/KB1024 /' || true; ")
+        // A section that cannot be collected emits `!UNAVAILABLE <reason>` instead of nothing, so
+        // the UI can say *why* a metric is missing rather than implying the host has no disks. The
+        // reason is written for a person reading a host card, not for a log.
+        append("echo '@DISK'; d=\$(ot 5 df -PB1 / 2>/dev/null | tail -1); ")
+        append("[ -z \"\$d\" ] && d=\$(ot 5 df -Pk / 2>/dev/null | tail -1 | sed 's/^/KB1024 /'); ")
+        append("if [ -n \"\$d\" ]; then printf '%s\\n' \"\$d\"; ")
+        append("else echo '!UNAVAILABLE df / did not answer within 5s'; fi; ")
         // All real filesystem mounts (capacity per partition); pseudo-fs are filtered when parsed.
-        append("echo '@DISKS'; df -PB1 2>/dev/null | tail -n +2 || df -Pk 2>/dev/null | tail -n +2 | sed 's/^/KB1024 /' || true; ")
+        append("echo '@DISKS'; d=\$(ot 5 df -PB1 2>/dev/null | tail -n +2); ")
+        append("[ -z \"\$d\" ] && d=\$(ot 5 df -Pk 2>/dev/null | tail -n +2 | sed 's/^/KB1024 /'); ")
+        append("if [ -n \"\$d\" ]; then printf '%s\\n' \"\$d\"; ")
+        append("else echo '!UNAVAILABLE df did not answer within 5s - an unreachable network mount (NFS/SMB) blocks it'; fi; ")
         append("echo '@LOAD'; cat /proc/loadavg 2>/dev/null || true; ")
         append("echo '@UP'; cat /proc/uptime 2>/dev/null || true; ")
         // Per-core CPU jiffies (rates computed from the delta between polls).
         append("echo '@STAT'; grep -E '^cpu[0-9]* ' /proc/stat 2>/dev/null || true; ")
         // CPU temperature (millidegrees); take the hottest thermal zone.
-        append("echo '@TEMP'; cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null || true; ")
+        append("echo '@TEMP'; t=\$(cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null); ")
+        append("if [ -n \"\$t\" ]; then printf '%s\\n' \"\$t\"; ")
+        append("else echo '!UNAVAILABLE this host exposes no thermal sensors'; fi; ")
         // Per-interface cumulative RX/TX bytes (rates computed from the delta between polls).
         append("echo '@NETDEV'; cat /proc/net/dev 2>/dev/null || true; ")
         // Per-device cumulative read/write sectors (rates computed from the delta between polls).
         append("echo '@DISKIO'; cat /proc/diskstats 2>/dev/null || true; ")
         // Best-effort SMART health per whole disk (needs smartctl + root; silently empty otherwise).
-        append("echo '@SMART'; command -v smartctl >/dev/null 2>&1 && ")
+        append("echo '@SMART'; if command -v smartctl >/dev/null 2>&1; then ")
         append("for d in /sys/block/sd? /sys/block/nvme?n? /sys/block/vd?; do ")
         append("[ -e \"\$d\" ] || continue; n=\$(basename \"\$d\"); ")
-        append("h=\$(smartctl -H /dev/\$n 2>/dev/null | grep -iE 'overall-health|test result' | sed 's/.*: *//'); ")
-        append("[ -n \"\$h\" ] && printf '%s\\t%s\\n' \"\$n\" \"\$h\"; done || true; ")
+        append("h=\$(ot 5 smartctl -H /dev/\$n 2>/dev/null | grep -iE 'overall-health|test result' | sed 's/.*: *//'); ")
+        append("[ -n \"\$h\" ] && printf '%s\\t%s\\n' \"\$n\" \"\$h\"; done; ")
+        append("else echo '!UNAVAILABLE smartctl is not installed, so drive health cannot be read'; fi; ")
         // Active TCP connection count (ss preferred, /proc fallback).
         append("echo '@TCP'; (ss -taH 2>/dev/null | wc -l) || (cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -c ':') || true; ")
         append("echo '@PROC'; ps -e --no-headers 2>/dev/null | wc -l || true")
@@ -1482,7 +1531,7 @@ object RemoteParsers {
         return HostMetrics(
             cpu, memUsed, memTotal, diskUsed, diskTotal, l1, l5, l15, uptime, procCount,
             cpuTempC = cpuTempC, tcpConnections = tcpConnections, disks = disks, os = osLabel,
-            platforms = platforms,
+            platforms = platforms, unavailable = parseUnavailable(sections),
         )
     }
 
@@ -1699,6 +1748,19 @@ object RemoteParsers {
     }
 
     // ── helpers ──
+
+    /** Section name -> reason, for sections the probe reported as `!UNAVAILABLE <reason>`. */
+    internal fun parseUnavailable(sections: Map<String, String>): Map<String, String> =
+        sections.mapNotNull { (name, body) ->
+            body.lineSequence()
+                .firstOrNull { it.startsWith(UNAVAILABLE_MARKER) }
+                ?.removePrefix(UNAVAILABLE_MARKER)
+                ?.trim()
+                ?.takeIf { it.isNotEmpty() }
+                ?.let { name to it }
+        }.toMap()
+
+    internal const val UNAVAILABLE_MARKER = "!UNAVAILABLE"
 
     private fun splitSections(output: String): Map<String, String> {
         val map = HashMap<String, String>()

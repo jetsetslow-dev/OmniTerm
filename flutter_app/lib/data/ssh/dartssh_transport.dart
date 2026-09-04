@@ -222,6 +222,15 @@ class DartSshTransport implements SshTransport {
     try {
       return await _execOnce(creds, command, stdin).timeout(_execTimeout);
     } on TimeoutException {
+      // A timeout must also retire the connection it timed out on. `Future.timeout` only completes
+      // *this* future; the underlying request keeps waiting on a peer that has stopped answering,
+      // and without this the wedged client stays in the pool and every later caller inherits it —
+      // the host then reports itself unreachable while a plain `ssh` to it still works.
+      //
+      // The Kotlin side has the same hazard for a different reason: there the read is blocking JVM
+      // IO that `withTimeout` cannot interrupt at all, so it needs a watchdog to force the socket
+      // shut. See JschSshTransport.exec.
+      _pool.evict(creds);
       return 'SSH Error: command timed out';
     } catch (e) {
       // The request may already have reached the server. The suspect connection was already

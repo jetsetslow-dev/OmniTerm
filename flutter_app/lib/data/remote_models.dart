@@ -349,6 +349,7 @@ class HostMetrics {
     this.diskWritePerSec = 0,
     this.os = '',
     this.platforms = const {},
+    this.unavailable = const {},
   });
 
   final double cpuPercent;
@@ -366,6 +367,13 @@ class HostMetrics {
   final int tcpConnections;
   final List<DiskUsage> disks;
   final List<NetInterface> netInterfaces;
+
+  /// Why a metric section could not be collected, keyed by section name (e.g. `DISKS`).
+  ///
+  /// A section the probe could not read emits `!UNAVAILABLE <reason>` instead of staying silent,
+  /// because an empty disk list and a disk list that could not be read look identical on screen and
+  /// mean very different things. Mirrors `HostMetrics.unavailable` on the Kotlin side.
+  final Map<String, String> unavailable;
 
   /// Aggregate disk I/O throughput across all block devices (bytes/sec), derived by the poller from
   /// the delta between two /proc/diskstats samples. Linux only; 0 elsewhere/first poll.

@@ -107,9 +107,10 @@ String processesFor(String os) => switch (normaliseOs(os)) {
 /// format; anything else returns a marker the UI turns into an explanation, instead of a silently
 /// blank tab that looks like "this host runs nothing".
 const servicesCommand =
+    '$otHelper'
     'if command -v systemctl >/dev/null 2>&1; then '
-    '{ systemctl list-units --type=service --all --no-pager --no-legend --plain; '
-    "echo '---ENABLED---'; systemctl list-unit-files --type=service --no-pager --no-legend --plain 2>/dev/null; }; "
+    '{ ot 15 systemctl list-units --type=service --all --no-pager --no-legend --plain; '
+    "echo '---ENABLED---'; ot 15 systemctl list-unit-files --type=service --no-pager --no-legend --plain 2>/dev/null; }; "
     "elif command -v rc-status >/dev/null 2>&1; then echo '---OPENRC---'; rc-status -a 2>/dev/null; "
     "else echo '---NOSYSTEMD---'; fi";
 
@@ -195,7 +196,28 @@ const osProbeCommand = 'uname -s 2>/dev/null || echo Windows';
 /// Linux host metrics: one round trip, sections delimited by `@NAME` markers that
 /// `parseMetrics` splits on. Every probe is `|| true` so a missing tool degrades one section rather
 /// than failing the whole poll.
+/// POSIX `sh` snippet defining `ot <seconds> <cmd...>`: run a command with a hard deadline.
+///
+/// Remote hosts are not vanilla. A stale NFS/CIFS mount makes `df`/`du` block forever rather than
+/// error, because the mount is unreachable rather than absent. A Docker or Podman socket that
+/// accepts connections but never answers hangs `docker ps` the same way, as does a degraded systemd
+/// for `systemctl`. None of these return, so an unbounded probe never finishes and the app sits on a
+/// spinner with nothing to report.
+///
+/// `timeout` ships in coreutils and BusyBox, so it is present almost everywhere; a host without it
+/// runs the command unbounded, which is the old behaviour rather than a new failure. POSIX only: no
+/// arrays, no `${@:2}`, so dash/ash/BusyBox all accept it. Mirrors `RemoteCommands.OT_HELPER`.
+const otHelper =
+    'ot(){ n=\$1; shift; if command -v timeout >/dev/null 2>&1; then timeout "\$n" "\$@"; else "\$@"; fi; }; ';
+
 const metricsLinux =
+    // Bound the commands that can block forever on a wedged filesystem. `df` walks every mount and
+    // a stale NFS/CIFS mount makes it hang rather than error, because the mount is unreachable
+    // rather than absent; `smartctl` can stall the same way. This probe is one round trip, so a
+    // single wedged mount used to hang the whole metrics read and leave the host on
+    // "Checking host..." with no error until the remote machine was rebooted. Mirrors
+    // RemoteCommands.METRICS on the Kotlin side. POSIX sh only, for dash/BusyBox.
+    '$otHelper'
     "echo '@OS'; uname -s 2>/dev/null || echo Linux; "
     // Distro pretty-name, so homelab OSes show by name instead of a bare "Linux".
     "echo '@DISTRO'; (. /etc/os-release 2>/dev/null && printf '%s\\n' \"\$PRETTY_NAME\") || true; "
@@ -214,22 +236,34 @@ const metricsLinux =
     // /proc/meminfo fallback (kB) for BusyBox/Alpine, where `free -b` differs or is absent.
     "echo '@MEMINFO'; grep -iE '^(MemTotal|MemFree|MemAvailable):' /proc/meminfo 2>/dev/null || true; "
     // BusyBox df has no -B; the -Pk fallback is marked so the parser scales by 1024.
-    "echo '@DISK'; df -PB1 / 2>/dev/null | tail -1 || df -Pk / 2>/dev/null | tail -1 | sed 's/^/KB1024 /' || true; "
-    "echo '@DISKS'; df -PB1 2>/dev/null | tail -n +2 || df -Pk 2>/dev/null | tail -n +2 | sed 's/^/KB1024 /' || true; "
+    // A section that cannot be collected emits `!UNAVAILABLE <reason>` rather than staying silent:
+    // an empty disk list and a disk list that could not be read look identical on screen and mean
+    // very different things. Mirrors RemoteCommands.METRICS on the Kotlin side.
+    "echo '@DISK'; d=\$(ot 5 df -PB1 / 2>/dev/null | tail -1); "
+    "[ -z \"\$d\" ] && d=\$(ot 5 df -Pk / 2>/dev/null | tail -1 | sed 's/^/KB1024 /'); "
+    "if [ -n \"\$d\" ]; then printf '%s\\n' \"\$d\"; "
+    "else echo '!UNAVAILABLE df / did not answer within 5s'; fi; "
+    "echo '@DISKS'; d=\$(ot 5 df -PB1 2>/dev/null | tail -n +2); "
+    "[ -z \"\$d\" ] && d=\$(ot 5 df -Pk 2>/dev/null | tail -n +2 | sed 's/^/KB1024 /'); "
+    "if [ -n \"\$d\" ]; then printf '%s\\n' \"\$d\"; "
+    "else echo '!UNAVAILABLE df did not answer within 5s - an unreachable network mount (NFS/SMB) blocks it'; fi; "
     "echo '@LOAD'; cat /proc/loadavg 2>/dev/null || true; "
     "echo '@UP'; cat /proc/uptime 2>/dev/null || true; "
     // Per-core CPU jiffies; rates come from the delta between polls.
     "echo '@STAT'; grep -E '^cpu[0-9]* ' /proc/stat 2>/dev/null || true; "
     // CPU temperature in millidegrees; the hottest thermal zone wins.
-    "echo '@TEMP'; cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null || true; "
+    "echo '@TEMP'; t=\$(cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null); "
+    "if [ -n \"\$t\" ]; then printf '%s\\n' \"\$t\"; "
+    "else echo '!UNAVAILABLE this host exposes no thermal sensors'; fi; "
     "echo '@NETDEV'; cat /proc/net/dev 2>/dev/null || true; "
     "echo '@DISKIO'; cat /proc/diskstats 2>/dev/null || true; "
     // Best-effort SMART health per whole disk; needs smartctl and root, silently empty otherwise.
-    "echo '@SMART'; command -v smartctl >/dev/null 2>&1 && "
+    "echo '@SMART'; if command -v smartctl >/dev/null 2>&1; then "
     'for d in /sys/block/sd? /sys/block/nvme?n? /sys/block/vd?; do '
     '[ -e "\$d" ] || continue; n=\$(basename "\$d"); '
-    "h=\$(smartctl -H /dev/\$n 2>/dev/null | grep -iE 'overall-health|test result' | sed 's/.*: *//'); "
-    '[ -n "\$h" ] && printf \'%s\\t%s\\n\' "\$n" "\$h"; done || true; '
+    "h=\$(ot 5 smartctl -H /dev/\$n 2>/dev/null | grep -iE 'overall-health|test result' | sed 's/.*: *//'); "
+    '[ -n "\$h" ] && printf \'%s\\t%s\\n\' "\$n" "\$h"; done; '
+    "else echo '!UNAVAILABLE smartctl is not installed, so drive health cannot be read'; fi; "
     // Active TCP connections: ss preferred, /proc as the fallback.
     "echo '@TCP'; (ss -taH 2>/dev/null | wc -l) || (cat /proc/net/tcp /proc/net/tcp6 2>/dev/null | grep -c ':') || true; "
     "echo '@PROC'; ps -e --no-headers 2>/dev/null | wc -l || true";
@@ -300,8 +334,8 @@ String metricsFor(String os) => switch (normaliseOs(os)) {
 /// A binary whose daemon or socket the user cannot reach does not count — it would otherwise be
 /// selected and then fail on every call.
 const _cr =
-    r'"$(if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then command -v docker; '
-    r'elif command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then command -v podman; '
+    r'"$(if command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1; then command -v docker; '
+    r'elif command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then command -v podman; '
     r'elif command -v docker >/dev/null 2>&1; then command -v docker; else command -v podman; fi)"';
 
 /// The container binary for an explicit [runtime], falling back to the run-time probe.
@@ -324,34 +358,38 @@ const _psFieldsPodman =
 
 /// All containers including stopped ones, tab-separated and `--no-trunc` so parsing is unambiguous.
 const dockerPsCommand =
+    '$otHelper'
     'found=0; '
-    "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; docker ps -a --no-trunc --format 'docker\\t$_psFieldsDocker'; fi; "
-    "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; podman ps -a --no-trunc --format 'podman\\t$_psFieldsPodman'; fi; "
+    "if command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1; then found=1; docker ps -a --no-trunc --format 'docker\\t$_psFieldsDocker'; fi; "
+    "if command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then found=1; podman ps -a --no-trunc --format 'podman\\t$_psFieldsPodman'; fi; "
     'if [ "\$found" = 0 ]; then if $_cr --version | grep -qi podman; then '
     "$_cr ps -a --no-trunc --format 'podman\\t$_psFieldsPodman'; else "
     "$_cr ps -a --no-trunc --format 'docker\\t$_psFieldsDocker'; fi; fi";
 
 /// One line per usable runtime on the host, gated on `ps` actually answering.
 const dockerRuntimesCommand =
-    'if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then echo docker; fi; '
-    'if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then echo podman; fi';
+    '$otHelper'
+    'if command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1; then echo docker; fi; '
+    'if command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then echo podman; fi';
 
 /// Per-container restart counts.
 ///
 /// Docker's inspect template field is `.Id`; Podman's is `.ID` (its JSON prints "Id" but the Go
 /// struct field is `ID`, so `.Id` errors). `.RestartCount` is identical on both.
 const dockerRestartsCommand =
-    'if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then ids=\$(docker ps -aq); '
+    '$otHelper'
+    'if command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1; then ids=\$(docker ps -aq); '
     "[ -n \"\$ids\" ] && docker inspect --format 'docker\\t{{.Id}}\\t{{.RestartCount}}' \$ids 2>/dev/null || true; fi; "
-    'if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then ids=\$(podman ps -aq); '
+    'if command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then ids=\$(podman ps -aq); '
     "[ -n \"\$ids\" ] && podman inspect --format 'podman\\t{{.ID}}\\t{{.RestartCount}}' \$ids 2>/dev/null || true; fi";
 
 const _imageFields = r'{{.ID}}\t{{.Repository}}\t{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}';
 
 const dockerImagesCommand =
+    '$otHelper'
     'found=0; '
-    "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; docker images --no-trunc --format 'docker\\t$_imageFields'; fi; "
-    "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; podman images --no-trunc --format 'podman\\t$_imageFields'; fi; "
+    "if command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1; then found=1; ot 15 docker images --no-trunc --format 'docker\\t$_imageFields'; fi; "
+    "if command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then found=1; ot 15 podman images --no-trunc --format 'podman\\t$_imageFields'; fi; "
     'if [ "\$found" = 0 ]; then if $_cr --version | grep -qi podman; then '
     "$_cr images --no-trunc --format 'podman\\t$_imageFields'; else "
     "$_cr images --no-trunc --format 'docker\\t$_imageFields'; fi; fi";
@@ -368,7 +406,8 @@ const dockerImagesCommand =
 ///
 /// Volume names containing spaces are out of scope for the text fallback.
 const dockerVolumesCommand =
-    r"""ot_vols() { rt="$1"; "$rt" system df -v --format '{{range .Volumes}}{{.Name}}\t{{.Driver}}\t{{.Mountpoint}}\t{{.Size}}\t{{.Links}}\n{{end}}' 2>/dev/null || "$rt" system df -v 2>/dev/null | awk '/^Local Volumes/ { f=1; seen=0; next } f && $1=="VOLUME" && $2=="NAME" { seen=1; next } f && seen && /^[[:space:]]*$/ { f=0; next } f && seen && /^[A-Za-z].*:/ { f=0 } f && seen && NF>=3 { print $1 "\tlocal\t\t" $3 "\t" $2 }' || "$rt" volume ls --format '{{.Name}}\t{{.Driver}}\t{{.Mountpoint}}\t\t'; }; found=0; if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; ot_vols docker | sed 's/^/docker\t/'; fi; if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; ot_vols podman | sed 's/^/podman\t/'; fi; if [ "$found" = 0 ]; then if """
+    '$otHelper'
+    r"""ot_vols() { rt="$1"; "$rt" system df -v --format '{{range .Volumes}}{{.Name}}\t{{.Driver}}\t{{.Mountpoint}}\t{{.Size}}\t{{.Links}}\n{{end}}' 2>/dev/null || "$rt" system df -v 2>/dev/null | awk '/^Local Volumes/ { f=1; seen=0; next } f && $1=="VOLUME" && $2=="NAME" { seen=1; next } f && seen && /^[[:space:]]*$/ { f=0; next } f && seen && /^[A-Za-z].*:/ { f=0 } f && seen && NF>=3 { print $1 "\tlocal\t\t" $3 "\t" $2 }' || "$rt" volume ls --format '{{.Name}}\t{{.Driver}}\t{{.Mountpoint}}\t\t'; }; found=0; if command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1; then found=1; ot_vols docker | sed 's/^/docker\t/'; fi; if command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then found=1; ot_vols podman | sed 's/^/podman\t/'; fi; if [ "$found" = 0 ]; then if """
     '$_cr'
     r""" --version | grep -qi podman; then ot_vols """
     '$_cr'
@@ -379,9 +418,10 @@ const dockerVolumesCommand =
 const _networkFields = r'{{.ID}}\t{{.Name}}\t{{.Driver}}';
 
 const dockerNetworksCommand =
+    '$otHelper'
     'found=0; '
-    "if command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1; then found=1; docker network ls --format 'docker\\t$_networkFields' 2>/dev/null; fi; "
-    "if command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1; then found=1; podman network ls --format 'podman\\t$_networkFields' 2>/dev/null; fi; "
+    "if command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1; then found=1; ot 15 docker network ls --format 'docker\\t$_networkFields' 2>/dev/null; fi; "
+    "if command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1; then found=1; ot 15 podman network ls --format 'podman\\t$_networkFields' 2>/dev/null; fi; "
     'if [ "\$found" = 0 ]; then if $_cr --version | grep -qi podman; then '
     "$_cr network ls --format 'podman\\t$_networkFields'; else "
     "$_cr network ls --format 'docker\\t$_networkFields'; fi; fi";
@@ -419,21 +459,21 @@ String dockerNetworkAction(String id, String action, {String runtime = ''}) {
 
 /// Removes every unused image, on each runtime the host actually has.
 String dockerPruneImages() =>
-    '{ command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1 && docker image prune -a -f; true; } 2>&1; '
-    '{ command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1 && podman image prune -a -f; true; } 2>&1';
+    '{ command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1 && docker image prune -a -f; true; } 2>&1; '
+    '{ command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1 && podman image prune -a -f; true; } 2>&1';
 
 /// Removes every unused volume.
 ///
 /// `-a` is deliberate: plain `volume prune -f` removes only *anonymous* unused volumes on current
 /// Docker and Podman, which would not match the UI's "unused volumes" wording.
 String dockerPruneVolumes() =>
-    '{ command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1 && docker volume prune -a -f; true; } 2>&1; '
-    '{ command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1 && podman volume prune -a -f; true; } 2>&1';
+    '{ command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1 && docker volume prune -a -f; true; } 2>&1; '
+    '{ command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1 && podman volume prune -a -f; true; } 2>&1';
 
 /// Removes every network that no container uses, on each available runtime.
 String dockerPruneNetworks() =>
-    '{ command -v docker >/dev/null 2>&1 && docker ps >/dev/null 2>&1 && docker network prune -f; true; } 2>&1; '
-    '{ command -v podman >/dev/null 2>&1 && podman ps >/dev/null 2>&1 && podman network prune -f; true; } 2>&1';
+    '{ command -v docker >/dev/null 2>&1 && ot 10 docker ps >/dev/null 2>&1 && docker network prune -f; true; } 2>&1; '
+    '{ command -v podman >/dev/null 2>&1 && ot 10 podman ps >/dev/null 2>&1 && podman network prune -f; true; } 2>&1';
 
 // ── docker compose ─────────────────────────────────────────────────────────────
 

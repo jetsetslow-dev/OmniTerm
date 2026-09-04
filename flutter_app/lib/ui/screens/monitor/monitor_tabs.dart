@@ -363,6 +363,8 @@ class _DiskCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     // Every real mount when the host reported them, else the root summary — a host that only
     // answered the root probe should still show something.
+    // Why the per-mount listing is missing, when the host was able to tell us.
+    final disksUnavailable = metrics.unavailable['DISKS'] ?? metrics.unavailable['DISK'];
     final mounts = metrics.disks.isNotEmpty
         ? metrics.disks
         : metrics.diskTotalBytes > 0
@@ -397,7 +399,11 @@ class _DiskCard extends StatelessWidget {
                 ),
             ],
           ),
-          if (mounts.isEmpty)
+          // A bare em dash reads as "this host has no disks", which is wrong and unhelpful when the
+          // truth is that the probe was blocked. If the host told us why, say so instead.
+          if (mounts.isEmpty && disksUnavailable != null)
+            Text(disksUnavailable, style: const TextStyle(fontSize: 11, color: OmniColors.amber))
+          else if (mounts.isEmpty)
             Text('—', style: TextStyle(fontSize: 14, color: scheme.onSurfaceVariant))
           else
             for (final disk in mounts)
