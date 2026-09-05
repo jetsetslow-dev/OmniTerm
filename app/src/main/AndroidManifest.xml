@@ -15,6 +15,7 @@
     -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- Android 14+ requires a connectedDevice runtime prerequisite before startForeground().
          This normal permission represents the app's user-initiated network connection lifecycle. -->
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
@@ -75,6 +76,11 @@
         <service
             android:name=".SessionService"
             android:foregroundServiceType="connectedDevice"
+            android:exported="false" />
+
+        <service
+            android:name=".LongOperationService"
+            android:foregroundServiceType="dataSync"
             android:exported="false" />
 
         <!-- Shares the saved crash report as a file attachment via the Android share sheet.

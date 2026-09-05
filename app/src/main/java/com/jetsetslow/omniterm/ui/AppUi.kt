@@ -887,6 +887,33 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                     onAlerts = { viewModel.openAlertsPopup() },
                     onToggleKeepScreenOn = { viewModel.requestKeepScreenOnToggle() },
                 )
+                // Pull-to-refresh is a global gesture, so its failure has to be reported globally.
+                // This banner previously existed only inside ToolsScreen, which meant a refresh
+                // that failed on the Servers list -- where the gesture is used most -- said nothing.
+                viewModel.manualRefreshError?.let { message ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                            .background(OmniColors.red.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                            .padding(start = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            message,
+                            color = OmniColors.red,
+                            fontSize = OmniTextSize.Meta,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = viewModel::dismissManualRefreshError) {
+                            Icon(
+                                Icons.Filled.Close,
+                                contentDescription = stringResource(R.string.dismiss_refresh_error),
+                                tint = OmniColors.red,
+                            )
+                        }
+                    }
+                }
                 if (showMonetizationUi && !licenseState.unlocked) {
                     FreePlanBanner(licenseState, licenseController)
                 }
@@ -988,26 +1015,25 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
             // Biometric/PIN gate for privileged (sudo) actions, shown when one is staged.
             SudoAuthDialog(viewModel)
 
-            // Low-battery saver engaged: tell the user what was shed and offer an instant resume.
+            // Reaching the threshold is advisory: do not interrupt foreground work until the user
+            // explicitly accepts the power-saving actions.
             if (viewModel.showBatterySaverDialog) {
                 AlertDialog(
-                    onDismissRequest = { viewModel.showBatterySaverDialog = false },
-                    title = { Text(stringResource(R.string.battery_saver_engaged)) },
+                    onDismissRequest = viewModel::dismissBatterySaverPrompt,
+                    title = { Text(stringResource(R.string.battery_saver_available)) },
                     text = {
                         Text(
                             "Battery reached ${viewModel.batterySaverEngagedAtPct}% (threshold " +
-                                "${viewModel.batterySaverThresholdPct}%). To conserve power, keep-screen-on was " +
-                                "turned off, auto-refresh is paused, and persistent (tmux) terminals were parked — " +
-                                "they keep running on the host and reattach on your next connect. Non-persistent " +
-                                "shells were left connected.\n\nEverything resumes when you charge, when the " +
-                                "battery recovers, or when you pull to refresh."
+                                "${viewModel.batterySaverThresholdPct}%). OmniTerm can release keep-screen-on, " +
+                                "pause auto-refresh, and park persistent tmux terminals. Nothing will change " +
+                                "unless you choose Start saving."
                         )
                     },
                     confirmButton = {
-                        TextButton(onClick = { viewModel.showBatterySaverDialog = false }) { Text(stringResource(R.string.keep_saving)) }
+                        TextButton(onClick = viewModel::confirmBatterySaver) { Text(stringResource(R.string.start_saving)) }
                     },
                     dismissButton = {
-                        TextButton(onClick = { viewModel.resumeFromBatterySaver() }) { Text(stringResource(R.string.resume_now)) }
+                        TextButton(onClick = viewModel::dismissBatterySaverPrompt) { Text(stringResource(R.string.battery_saver_not_now)) }
                     },
                 )
             }

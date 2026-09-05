@@ -29,6 +29,20 @@ import org.junit.Test
  *   -e class com.jetsetslow.omniterm.E2eLabHostProvisioner#trustLabHostKey $R
  * ```
  *
+ * A third step is required before any suite that drives the UI through accessibility:
+ *
+ * ```
+ * adb shell dumpsys deviceidle whitelist +com.jetsetslow.omniterm.app.oss
+ * ```
+ *
+ * [E2eLabSeedTest] writes `background_keep_alive=true`, and `AppUi`'s `needsPermissions` is
+ * `backgroundKeepAlive && activeSessionCount > 0 && (!hasNotif || !hasBatt)`. A fresh device is
+ * never exempt from battery optimisation, so `hasBatt` is false and `FirstRunDialog`
+ * ("Keep sessions active in background?") covers the app the moment a session opens. Granting
+ * POST_NOTIFICATIONS alone is not enough. The dialog is modal, so
+ * `uiAutomation.rootInActiveWindow` then exposes only its own five nodes and every
+ * `hasDescription`/`hasText` lookup for the screen underneath fails with no hint as to why.
+ *
  * Idempotent: re-running while the host already exists is a no-op.
  */
 class E2eLabHostProvisioner {

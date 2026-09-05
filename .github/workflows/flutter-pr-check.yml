@@ -1,0 +1,327 @@
+name: Flutter PR Check
+
+# actions/checkout initializes a temporary repository; define its branch name so Git does not emit
+# the legacy-default-branch warning on every job.
+env:
+  GIT_CONFIG_COUNT: 1
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+  # Pinned rather than "stable": a toolchain that moves on its own turns an unrelated PR red, and
+  # the whole point of a gate is that a red result means *this change* broke something.
+  FLUTTER_VERSION: 3.44.9
+
+on:
+  pull_request:
+    branches:
+      - main
+      - migration-to-flutter
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Same shape as the Kotlin gate: heavy jobs skip PRs that cannot affect the build, and each one
+  # that is a REQUIRED check has a companion no-op reporting the same name — a required check that
+  # simply does not report leaves the PR unmergeable.
+  changes:
+    name: Detect Flutter changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.filter.outputs.code }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - id: filter
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -uo pipefail
+          if ! changed=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA" 2>/dev/null); then
+            echo "git diff failed; running the full gate to be safe."
+            echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          echo "Changed files:"; echo "$changed"
+          if echo "$changed" | grep -qE '^(flutter_app/|\.github/(cyclonedx\.init\.gradle\.kts|release-engine)$|scripts/(flutter-pub-cyclonedx\.jq|generate-flutter-sboms\.sh|verify-flutter-release-apk\.sh|resolve-release-version\.sh|test-release-engine\.sh|test-release-resolution\.sh)$|\.github/workflows/(flutter-pr-check|flutter-release|android-release)\.yml$)'; then
+            echo "code=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "code=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  analyze-and-test:
+    name: Analyze & Test
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: flutter_app
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The SDK is checked out rather than installed through a third-party action: the repository's
+      # Actions policy allows a specific SHA-pinned set, and this needs nothing outside it.
+      - name: Check out Flutter SDK
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: flutter/flutter
+          ref: ${{ env.FLUTTER_VERSION }}
+          path: _flutter
+          persist-credentials: false
+      - name: Put Flutter on PATH
+        run: echo "$GITHUB_WORKSPACE/_flutter/bin" >> "$GITHUB_PATH"
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Validate the sole release publisher
+        run: |
+          ../scripts/test-release-engine.sh
+          ../scripts/test-flutter-device-preservation.sh
+
+      # `--output=none` so this reports rather than rewrites: a gate that edits the tree would
+      # "pass" locally by fixing the thing it was meant to catch.
+      - name: Check formatting
+        run: |
+          mapfile -d '' dart_files < <(git ls-files -z -- '*.dart')
+          ((${#dart_files[@]} > 0)) || { echo "No tracked Dart files found" >&2; exit 1; }
+          dart format --output=none --set-exit-if-changed --line-length 100 "${dart_files[@]}"
+
+      # `--fatal-infos`: an analyzer hint that nothing fails on is a hint that accumulates.
+      - name: Analyze
+        run: flutter analyze --fatal-infos
+
+      - name: Run tests
+        run: flutter test --coverage
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v5.0.0
+        with:
+          name: coverage
+          path: flutter_app/coverage/lcov.info
+          if-no-files-found: warn
+          retention-days: 7
+
+  analyze-and-test-skip:
+    name: Analyze & Test
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "No Flutter files changed; skipping Analyze & Test."
+
+  build-release:
+    name: Build release artifacts
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: flutter_app
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out Flutter SDK
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: flutter/flutter
+          ref: ${{ env.FLUTTER_VERSION }}
+          path: _flutter
+          persist-credentials: false
+      - name: Put Flutter on PATH
+        run: echo "$GITHUB_WORKSPACE/_flutter/bin" >> "$GITHUB_PATH"
+
+      - name: Set up JDK
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          # AGP 9.3.1's lint JavaDoc parser calls List.removeLast. Under JDK 17 the release build
+          # aborts while linting Flutter plugin sources; JDK 21 supplies that API.
+          java-version: "21"
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      # **Release, not debug.** PR checks once built only debug variants, so a broken release
+      # classpath first failed after merge. Everything release-only lives here — R8, the shrinker,
+      # the release resource pipeline — and none of it is exercised by a debug build.
+      #
+      # No signing secrets are available to a pull request, so this is deliberately an *unsigned*
+      # verification build: `KEYSTORE_PATH` is unset, which `app/build.gradle.kts` handles by
+      # signing debug rather than by pretending it produced something distributable.
+      - name: Build release APK
+        env:
+          ADMOB_APP_ID: ca-app-pub-3940256099942544~3347511713
+        run: >-
+          flutter build apk --release
+          --dart-define=OMNITERM_PLAY_STORE=true
+          --dart-define=ADMOB_BANNER_UNIT_ID=ca-app-pub-3940256099942544/6300978111
+
+      - name: Build release App Bundle
+        env:
+          ADMOB_APP_ID: ca-app-pub-3940256099942544~3347511713
+        run: >-
+          flutter build appbundle --release
+          --dart-define=OMNITERM_PLAY_STORE=true
+          --dart-define=ADMOB_BANNER_UNIT_ID=ca-app-pub-3940256099942544/6300978111
+
+      - name: Generate and validate release SBOMs
+        run: ../scripts/generate-flutter-sboms.sh build/release-sboms v0.0.0-pr
+
+      - name: Prove development test code is not shipped
+        run: ../scripts/verify-flutter-release-apk.sh build/app/outputs/flutter-apk/app-release.apk
+
+      - name: Report artifact sizes
+        run: |
+          ls -la build/app/outputs/flutter-apk/app-release.apk
+          ls -la build/app/outputs/bundle/release/app-release.aab
+
+  build-release-skip:
+    name: Build release artifacts
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "No Flutter files changed; skipping the release build."
+
+  # iOS is first-class (requirement 3) and nothing else in this pipeline would notice it breaking.
+  # `--no-codesign` needs no certificates, so this runs on every PR without secrets.
+  build-ios:
+    name: Build iOS
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: macos-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: flutter_app
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out Flutter SDK
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: flutter/flutter
+          ref: ${{ env.FLUTTER_VERSION }}
+          path: _flutter
+          persist-credentials: false
+      - name: Put Flutter on PATH
+        run: echo "$GITHUB_WORKSPACE/_flutter/bin" >> "$GITHUB_PATH"
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      # Archive, rather than only compiling Runner.app: the archive path embeds and validates the
+      # WidgetKit extension and catches bundle-version/entitlement mistakes an app-only build can
+      # miss. It remains unsigned because pull requests do not receive distribution credentials.
+      - name: Build unsigned iOS archive
+        run: >-
+          flutter build ipa --release --no-codesign
+          --dart-define=OMNITERM_PLAY_STORE=true
+
+  build-ios-skip:
+    name: Build iOS
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "No Flutter files changed; skipping the iOS build."
+
+  # The device suites. Both halves run: the Dart-only flows through `flutter test`, and Patrol's
+  # native flows through its own runner; the two harnesses cannot share a runner.
+  e2e:
+    name: End-to-end on an emulator
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out Flutter SDK
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: flutter/flutter
+          ref: ${{ env.FLUTTER_VERSION }}
+          path: _flutter
+          persist-credentials: false
+      - name: Put Flutter on PATH
+        run: echo "$GITHUB_WORKSPACE/_flutter/bin" >> "$GITHUB_PATH"
+
+      - name: Set up JDK
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Resolve dependencies
+        run: flutter pub get
+        working-directory: flutter_app
+
+      - name: Install the Patrol CLI
+        run: dart pub global activate patrol_cli 4.6.1
+        working-directory: flutter_app
+
+      # KVM is what makes an emulator usable rather than nominally present.
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' \
+            | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      # API 35, deliberately. Emulator 37.x crash-loops on every image from API 36 up in the local
+      # bisect, and that failure impersonates an app bug, so pinning below it keeps a red run meaning
+      # what it says.
+      - name: Run the device suites
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.35.0
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          working-directory: flutter_app
+          script: >-
+            ../scripts/flutter-device-test.sh
+            --device emulator-5554
+            --platform android
+            --profile core
+            --no-fixtures
+            --artifacts "$GITHUB_WORKSPACE/artifacts/device-tests"
+
+  e2e-skip:
+    name: End-to-end on an emulator
+    needs: changes
+    if: needs.changes.outputs.code != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - run: echo "No Flutter files changed; skipping the device suites."

@@ -83,7 +83,9 @@ jobs:
       - name: Validate release and CI tooling
         run: |
           ./scripts/test-release-version.sh
+          ./scripts/test-release-engine.sh
           ./scripts/test-ci-gradle-gate.sh
+          ./scripts/test-flutter-device-preservation.sh
 
       # Verification APKs never need signing continuity. Always use an ephemeral key so untrusted
       # build/test code cannot access the stable sideload signing key.
@@ -165,7 +167,8 @@ jobs:
           # API 29 and 35 stable, API 36.1 and 37 crash-loop. The symptom impersonates an app bug
           # (`adb install` succeeds, then `am start` reports "Activity class ... does not exist"),
           # so check a system app before suspecting OmniTerm. Raise this only once a stable
-          # emulator boots API >= 36; see the local modern-target note in AGENTS.md.
+          # emulator boots API >= 36. Keep the bisect above with this pin so the reason remains
+          # visible where the workaround is configured.
           api-level: 29
           arch: x86_64
           emulator-boot-timeout: 900
@@ -176,8 +179,8 @@ jobs:
           # and API 29 cannot gate the modern-device defects UI tests are here to catch: the ICU
           # regex engine that rejects a bare `}` only backs java.util.regex from API 34 on. Running
           # UI suites here would add runtime and still pass on the exact defect class. Screen
-          # coverage is therefore a local API 34+ gate; see "Open every screen you touched on a real
-          # device" in AGENTS.md. Widen this once a stable emulator boots API >= 36 on hosted CI.
+          # coverage is therefore a local API 34+ gate. Widen this once a stable emulator boots API
+          # >= 36 on hosted CI.
           script: >-
             ./gradlew connectedOpenSourceDebugAndroidTest --no-daemon
             -Domniterm.publishScan=true

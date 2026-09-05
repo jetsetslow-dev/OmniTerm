@@ -108,4 +108,58 @@ class MetricsParsersTest {
         assertEquals(5000000L, m["eth0"]!!.first)
         assertEquals(2000000L, m["eth0"]!!.second)
     }
+
+    /**
+     * A section the probe could not read must surface *why*, not vanish.
+     *
+     * An empty disk list and a disk list that could not be read render identically, so a host with
+     * one wedged NFS mount used to show a bare "—" that reads as "this machine has no partitions".
+     * The probe emits `!UNAVAILABLE <reason>` for exactly this case; losing that in the parser would
+     * put the misleading dash straight back with no test failing.
+     */
+    @Test
+    fun parseMetricsSurfacesWhyABlockedSectionIsMissing() {
+        val out = """
+            @OS
+            Linux
+            @DISK
+            !UNAVAILABLE df / did not answer within 5s
+            @DISKS
+            !UNAVAILABLE df did not answer within 5s - an unreachable network mount (NFS/SMB) blocks it
+            @LOAD
+            0.10 0.20 0.30 1/200 1234
+            @TEMP
+            !UNAVAILABLE this host exposes no thermal sensors
+        """.trimIndent()
+
+        val m = RemoteParsers.parseMetrics(out)
+
+        assertEquals(
+            "df did not answer within 5s - an unreachable network mount (NFS/SMB) blocks it",
+            m.unavailable["DISKS"],
+        )
+        assertEquals("df / did not answer within 5s", m.unavailable["DISK"])
+        assertEquals("this host exposes no thermal sensors", m.unavailable["TEMP"])
+        // The blocked section must not be mistaken for a real reading of zero.
+        assertTrue(m.disks.isEmpty())
+        assertEquals(0L, m.diskTotalBytes)
+    }
+
+    /** A healthy host reports no reasons at all, so the UI shows values rather than warnings. */
+    @Test
+    fun parseMetricsReportsNoReasonsWhenEverySectionAnswered() {
+        val out = """
+            @OS
+            Linux
+            @DISK
+            /dev/sda1 20000000000 8000000000 12000000000 40% /
+            @LOAD
+            0.10 0.20 0.30 1/200 1234
+        """.trimIndent()
+
+        val m = RemoteParsers.parseMetrics(out)
+
+        assertTrue(m.unavailable.isEmpty())
+        assertEquals(20000000000L, m.diskTotalBytes)
+    }
 }

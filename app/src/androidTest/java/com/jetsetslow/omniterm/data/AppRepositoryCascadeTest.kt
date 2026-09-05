@@ -57,6 +57,31 @@ class AppRepositoryCascadeTest {
         assertEquals(0, count("alert_history", "serverId != 0"))
     }
 
+    @Test fun refreshingAlertValuePreservesAcknowledgementAndMuteState() = runBlocking {
+        val mutedUntil = 9_999L
+        db.activeAlertDao().insertAlert(
+            ActiveAlertEntity(
+                id = 42,
+                ruleId = 7,
+                serverId = 3,
+                metricName = "CPU Usage",
+                currentValue = 91f,
+                thresholdValue = 90f,
+                severity = "WARNING",
+                triggeredTime = 1,
+                acknowledged = true,
+                mutedUntil = mutedUntil,
+            ),
+        )
+
+        repository.updateAlertCurrentValue(42, 97f)
+
+        val refreshed = repository.getActiveAlerts().single()
+        assertEquals(97f, refreshed.currentValue)
+        assertEquals(true, refreshed.acknowledged)
+        assertEquals(mutedUntil, refreshed.mutedUntil)
+    }
+
     private fun count(table: String, where: String? = null): Int {
         val sql = "SELECT COUNT(*) FROM $table" + (where?.let { " WHERE $it" } ?: "")
         return db.openHelper.readableDatabase.query(sql).use { cursor ->
