@@ -210,13 +210,19 @@ class LongOperationService : Service() {
     private fun openOperationIntent(activeDestination: String): PendingIntent = PendingIntent.getActivity(
         this,
         activeDestination.hashCode(),
+        // The component is already fixed by the two-argument constructor, so this Intent can only
+        // ever reach MainActivity. The package is pinned as well because this Intent carries an
+        // ACTION_VIEW and a data URI into a PendingIntent, which a third party would be able to
+        // redirect if resolution were ever left open -- and because CodeQL's
+        // java/android/implicit-pendingintents dataflow does not see the constructor's component
+        // through the `apply` block, so without it the build reports a high-severity alert.
         Intent(this, MainActivity::class.java).apply {
             action = Intent.ACTION_VIEW
             if (activeDestination.isNotBlank()) {
                 data = Uri.parse("omniterm://notification/$activeDestination")
             }
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        },
+        }.setPackage(packageName),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
 

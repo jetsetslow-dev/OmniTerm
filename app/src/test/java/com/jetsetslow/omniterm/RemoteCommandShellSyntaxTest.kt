@@ -69,7 +69,7 @@ class RemoteCommandShellSyntaxTest {
     /**
      * The bound helper must be *defined* in every command that calls `ot`.
      *
-     * A command that uses `ot` without the OT_HELPER prefix parses fine — `ot 5 df` is a valid
+     * A command that uses `ot` without [RemoteCommands.OT_HELPER] parses fine — `ot 5 df` is a valid
      * command invocation — and then fails at runtime with "ot: not found", losing that section on
      * every host. `sh -n` cannot catch it, so it is checked explicitly.
      */

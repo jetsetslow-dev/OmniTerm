@@ -445,6 +445,12 @@ internal fun sshFailureProvesEndpointUnreachable(failure: SshConnectionFailure):
     is SshConnectionFailure.Unknown -> false
 }
 
+/** Live interactive SSH evidence is stronger than any second connection's probe failure. */
+internal fun sshFailureShouldMarkHostOffline(
+    failure: SshConnectionFailure,
+    hasLiveSshSession: Boolean,
+): Boolean = !hasLiveSshSession && sshFailureProvesEndpointUnreachable(failure)
+
 /** A target behind any configured proxy/jump host must not be judged by a direct socket probe. */
 internal fun shouldProbeSshPortDirectly(proxyType: String): Boolean =
     proxyType.equals("none", ignoreCase = true)
@@ -1864,17 +1870,34 @@ class AppViewModel @JvmOverloads constructor(
 
     private suspend fun markServerReachableAfterSsh(srv: ServerEntity) {
         if (srv.id <= 0) return
-        // A real interactive SSH session is stronger evidence than the background TCP probe.
-        // Promote the host immediately so a stale "unreachable" badge cannot survive a successful
-        // connection while the next telemetry refresh is pending.
-        repository.updateAuthState(srv.id, "ok", null)
-        repository.updateConnectionState(
-            srv.id,
-            "online",
-            srv.healthScore.takeIf { it > 0 } ?: 100,
-            srv.lastLatency.coerceAtLeast(0),
-        )
-        withContext(Dispatchers.Main) { probedServerIds[srv.id] = true }
+        // Serialize with that host's background probe. If the probe started first, this online write
+        // lands last; if it starts later, it sees the live session and cannot write offline.
+        telemetryProbeMutexes.computeIfAbsent(srv.id) { Mutex() }.withLock {
+            repository.updateAuthState(srv.id, "ok", null)
+            repository.updateConnectionState(
+                srv.id,
+                "online",
+                srv.healthScore.takeIf { it > 0 } ?: 100,
+                srv.lastLatency.coerceAtLeast(0),
+            )
+            withContext(Dispatchers.Main) { probedServerIds[srv.id] = true }
+        }
+    }
+
+    private fun hasLiveSshSession(serverId: Int): Boolean =
+        activeSessions.any { it.serverId == serverId && it.isConnected && !it.userClosed }
+
+    private suspend fun markServerOfflineUnlessConnected(srv: ServerEntity) {
+        if (hasLiveSshSession(srv.id)) {
+            repository.updateConnectionState(
+                srv.id,
+                "online",
+                srv.healthScore.takeIf { it > 0 } ?: 100,
+                srv.lastLatency.coerceAtLeast(0),
+            )
+        } else {
+            repository.updateConnectionState(srv.id, "offline", 0, 0)
+        }
     }
 
     fun onReviewPromptLaunched() {
@@ -2494,8 +2517,13 @@ class AppViewModel @JvmOverloads constructor(
                         val sshRtt = (System.currentTimeMillis() - startedAt).toInt().coerceAtLeast(0)
                         if (osProbe.startsWith("SSH Error")) {
                             val failure = classifySshConnectionFailure(osProbe)
-                            if (sshFailureProvesEndpointUnreachable(failure)) {
-                                repository.updateConnectionState(srv.id, "offline", 0, 0)
+                            val hasLiveSession = hasLiveSshSession(srv.id)
+                            if (hasLiveSession) {
+                                // Do not replace a live terminal's successful authentication with
+                                // a second background connection's failure.
+                                markServerOfflineUnlessConnected(srv)
+                            } else if (sshFailureShouldMarkHostOffline(failure, hasLiveSession)) {
+                                markServerOfflineUnlessConnected(srv)
                             } else {
                                 repository.updateAuthState(srv.id, "failed", failure.userMessage)
                                 repository.updateConnectionState(srv.id, "online", 100, sshRtt)
@@ -2526,10 +2554,7 @@ class AppViewModel @JvmOverloads constructor(
                 }
                 throw e
             } catch (e: Exception) {
-                // This branch has no markServerOfflineUnlessConnected/hasLiveSshSession; that
-                // live-session guard is a separate migration-branch change and is deliberately not
-                // dragged in here. Only the `completed` flag belongs to this fix.
-                repository.updateConnectionState(srv.id, "offline", 0, 0)
+                markServerOfflineUnlessConnected(srv)
                 completed = true
             } finally {
                 // Only a probe that actually reached a verdict counts as probed; see the
@@ -2557,7 +2582,17 @@ class AppViewModel @JvmOverloads constructor(
             }
             val raw = executeSshCommand(srv, RemoteCommands.metricsFor(os))
             if (raw.startsWith("SSH Error")) {
-                repository.updateAuthState(srv.id, "failed", cleanSshError(raw))
+                // A metrics command that timed out says nothing about authentication: this line is
+                // only reached *after* an authenticated exec succeeded. Reporting it as an auth
+                // failure made a host whose only problem was one wedged NFS mount display
+                // "Automatic SSH check failed" while ssh to it worked perfectly -- the telemetry was
+                // incomplete, the login was not. Keep the auth state truthful and let the metrics
+                // simply stay unavailable.
+                if (raw.trimEnd().endsWith("command timed out")) {
+                    repository.updateAuthState(srv.id, "ok", null)
+                } else {
+                    repository.updateAuthState(srv.id, "failed", cleanSshError(raw))
+                }
                 val health = (100 - healthConfig.latency.penaltyFor(rtt.toFloat())).coerceIn(0, 100)
                 repository.updateConnectionState(srv.id, "online", health, rtt)
             } else {
@@ -6057,6 +6092,12 @@ class AppViewModel @JvmOverloads constructor(
                             TerminalSessionManager.startKeepAliveService()
                         }
                     }
+                    // The dropped channel may have made telemetry mark this host offline while the
+                    // reconnect loop was running. This newly authenticated channel is stronger and
+                    // must restore the visible state immediately.
+                    repository.getServerById(shellSession.serverId)?.let {
+                        markServerReachableAfterSsh(it)
+                    }
                     currentCoroutineContext().ensureActive()
                     // Cleanup and this handoff share the ownership lock. Either cleanup wins and
                     // this check refuses to install jobs, or wiring wins and cleanup subsequently
@@ -9189,11 +9230,16 @@ class AppViewModel @JvmOverloads constructor(
 
         val paths = directories.map { joinPath(currentPath, it.name) }
         val script = buildString {
+            // `du` recurses, so one unreachable network mount under a listed directory blocks it
+            // forever and the whole folder-size pass never returns. Per-directory bound: a wedged
+            // subtree costs that one size, and every other directory still gets a number. See
+            // RemoteCommands.OT_HELPER for why `timeout` is guarded rather than assumed.
+            append(RemoteCommands.OT_HELPER)
             append("for p in ")
             append(paths.joinToString(" ") { shellQuote(it) })
             append("; do ")
-            append("b=${'$'}(du -sb -- \"${'$'}p\" 2>/dev/null | awk '{print ${'$'}1}'); ")
-            append("if [ -z \"${'$'}b\" ]; then k=${'$'}(du -sk -- \"${'$'}p\" 2>/dev/null | awk '{print ${'$'}1}'); ")
+            append("b=${'$'}(ot 10 du -sb -- \"${'$'}p\" 2>/dev/null | awk '{print ${'$'}1}'); ")
+            append("if [ -z \"${'$'}b\" ]; then k=${'$'}(ot 10 du -sk -- \"${'$'}p\" 2>/dev/null | awk '{print ${'$'}1}'); ")
             append("[ -n \"${'$'}k\" ] && b=${'$'}((k * 1024)); fi; ")
             append("[ -n \"${'$'}b\" ] && printf '%s\\t%s\\n' \"${'$'}b\" \"${'$'}p\"; ")
             append("done")
@@ -11147,9 +11193,11 @@ class AppViewModel @JvmOverloads constructor(
         val openApp = PendingIntent.getActivity(
             app,
             BATTERY_SAVER_CHANNEL_ID.hashCode(),
+            // Explicit by construction; the package is pinned too so the PendingIntent's target
+            // cannot be re-resolved, and so CodeQL's implicit-PendingIntent dataflow can see it.
             Intent(app, MainActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            },
+            }.setPackage(app.packageName),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val n = NotificationCompat.Builder(app, BATTERY_SAVER_CHANNEL_ID)
