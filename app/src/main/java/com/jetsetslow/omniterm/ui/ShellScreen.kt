@@ -369,7 +369,8 @@ fun ShellScreen(viewModel: AppViewModel) {
         ?: viewModel.selectedServer.takeIf {
             viewModel.activeSessions.isNotEmpty() ||
                 viewModel.restorablePersistentSessions.isNotEmpty() ||
-                viewModel.isTerminalConnecting
+                viewModel.isTerminalConnecting ||
+                viewModel.terminalConnectError != null
         }
     // Quick connect is hosted here rather than inside a branch below, so it stays mounted whether
     // the screen is showing a host, the session picker, or the no-hosts empty state. The
@@ -977,7 +978,7 @@ private fun ConnectPrompt(srv: ServerEntity, viewModel: AppViewModel) {
                 fontSize = 14.sp,
                 modifier = Modifier.padding(vertical = 4.dp),
             )
-            viewModel.terminalDisconnectError?.let {
+            (viewModel.terminalConnectError ?: viewModel.terminalDisconnectError)?.let {
                 Spacer(Modifier.height(12.dp))
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
@@ -1011,7 +1012,14 @@ private fun ConnectPrompt(srv: ServerEntity, viewModel: AppViewModel) {
                     .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
                     .padding(horizontal = 22.dp, vertical = 12.dp),
             ) {
-                Text(stringResource(R.string.connect), color = MaterialTheme.colorScheme.onPrimaryContainer, fontWeight = FontWeight.Bold, letterSpacing = 1.sp)
+                Text(
+                    stringResource(
+                        if (viewModel.terminalConnectError == null) R.string.connect else R.string.retry,
+                    ),
+                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    fontWeight = FontWeight.Bold,
+                    letterSpacing = 1.sp,
+                )
             }
             Spacer(Modifier.height(10.dp))
             TextButton(onClick = { viewModel.quickConnectSheetOpen = true }) {

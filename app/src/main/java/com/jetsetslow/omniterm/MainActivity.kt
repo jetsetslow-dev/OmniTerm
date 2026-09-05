@@ -152,6 +152,15 @@ class MainActivity : AppCompatActivity() {
         "com.jetsetslow.omniterm.action.SFTP" -> add(ExternalLaunchRequest.OpenSftp)
         "com.jetsetslow.omniterm.action.NETWORK_TOOLS" -> add(ExternalLaunchRequest.OpenNetworkTools)
       }
+      if (intent.data?.scheme == "omniterm" && intent.data?.host == "notification") {
+        when (intent.data?.lastPathSegment) {
+          "transfers" -> add(ExternalLaunchRequest.OpenTransfers)
+          "network" -> add(ExternalLaunchRequest.OpenNetworkTools)
+          "fleet" -> add(ExternalLaunchRequest.OpenFleet)
+          "infra" -> add(ExternalLaunchRequest.OpenInfra)
+          "backup" -> add(ExternalLaunchRequest.OpenBackup)
+        }
+      }
 
       intent.getIntExtra("shortcut_server_id", 0)
         .takeIf { intent.hasExtra("shortcut_server_id") && it > 0 }
@@ -182,6 +191,9 @@ class MainActivity : AppCompatActivity() {
     intent.removeExtra("shortcut_split_server1_id")
     intent.removeExtra("shortcut_split_server2_id")
     intent.removeExtra("shortcut_share_id")
+    if (intent.data?.scheme == "omniterm" && intent.data?.host == "notification") {
+      intent.data = null
+    }
     if (intent.action?.startsWith("com.jetsetslow.omniterm.action.") == true) {
       intent.action = Intent.ACTION_MAIN
     }

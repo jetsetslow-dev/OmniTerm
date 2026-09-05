@@ -6,6 +6,7 @@ import com.jcraft.jsch.Session
 import com.jetsetslow.omniterm.data.term.Utf8StreamDecoder
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.currentCoroutineContext
@@ -22,6 +23,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.InputStream
 import java.io.OutputStream
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.concurrent.thread
 
 private const val EXEC_OUTPUT_MAX_CHARS = 240_000
@@ -42,10 +44,39 @@ class JschSshTransport : SshTransport {
 
     private fun newSession(creds: SshCredentials): Session = buildJschSession(creds)
 
+    /**
+     * The channel and session a call is currently blocked on, so a watchdog can force them shut.
+     *
+     * JSch reads are blocking JVM IO on a socket with no SO_TIMEOUT. `withTimeout` cannot end that:
+     * coroutine cancellation is cooperative, and a thread parked in `SocketInputStream.read` never
+     * reaches a suspension point to observe it. Closing the channel/session from another thread is
+     * the only thing that makes the blocked read throw.
+     */
+    private class InFlightExec(val session: Session, @Volatile var channel: ChannelExec? = null) {
+        fun abort() {
+            // Disconnecting the channel is usually enough; the session is torn down too because a
+            // peer that stopped answering one channel will not answer the next one either, and the
+            // pooled session must not be handed to the following caller.
+            runCatching { channel?.disconnect() }
+            runCatching { session.disconnect() }
+        }
+    }
+
     override suspend fun exec(creds: SshCredentials, command: String, stdin: String?): String =
         withContext(Dispatchers.IO) {
+            val inFlight = AtomicReference<InFlightExec?>(null)
+            // A sibling watchdog rather than a plain `withTimeout` around the blocking body.
+            //
+            // Without it a peer that accepts the TCP connection, completes authentication and then
+            // stops responding parks this coroutine forever: the exec never returns, so the caller's
+            // `finally` never runs. That is what leaves a host stuck on "Checking host…" with no
+            // error until the remote end is rebooted and the socket finally errors.
+            val watchdog = launch {
+                delay(EXEC_TIMEOUT_MS)
+                inFlight.get()?.abort()
+            }
             try {
-                withTimeout(EXEC_TIMEOUT_MS) { execOnce(creds, command, stdin) }
+                withTimeout(EXEC_TIMEOUT_MS + ABORT_GRACE_MS) { execOnce(creds, command, stdin, inFlight) }
             } catch (e: TimeoutCancellationException) {
                 "SSH Error: command timed out"
             } catch (e: CancellationException) {
@@ -55,6 +86,8 @@ class JschSshTransport : SshTransport {
                 // for the next call, but never retry an arbitrary command and risk executing a
                 // mutation twice.
                 "SSH Error: ${e.message}"
+            } finally {
+                watchdog.cancel()
             }
         }
 
@@ -65,13 +98,20 @@ class JschSshTransport : SshTransport {
      * session), so they take an un-pooled jumped path instead. HTTP/SOCKS5 proxies ride along in
      * [buildJschSession] and work on the pooled path too.
      */
-    private suspend fun execOnce(creds: SshCredentials, command: String, stdin: String? = null): String {
+    private suspend fun execOnce(
+        creds: SshCredentials,
+        command: String,
+        stdin: String? = null,
+        inFlight: AtomicReference<InFlightExec?>? = null,
+    ): String {
         if (isJump(creds)) return execOnceJumped(creds, command, stdin)
         val lease = pool.acquire(creds)
         val session = lease.session
+        val tracked = InFlightExec(session).also { inFlight?.set(it) }
         var channel: ChannelExec? = null
         return try {
             channel = (session.openChannel("exec") as ChannelExec).apply {
+                tracked.channel = this
                 setCommand(command)
                 // Secrets (sudo passwords) travel via the channel's stdin, never the command string.
                 setInputStream(stdin?.byteInputStream(Charsets.UTF_8))
@@ -376,6 +416,13 @@ class JschSshTransport : SshTransport {
         const val CONNECT_TIMEOUT_MS = 15_000
         const val TEST_COMMAND_TIMEOUT_MS = 10_000L
         const val EXEC_TIMEOUT_MS = 120_000L
+
+        /**
+         * How long the outer bound outlives the watchdog. The watchdog aborts the socket at
+         * [EXEC_TIMEOUT_MS]; this leaves the blocked read a moment to unwind and report a real
+         * error before the coroutine bound gives up on it.
+         */
+        const val ABORT_GRACE_MS = 5_000L
         const val STREAM_TIMEOUT_MS = 30 * 60_000L
     }
 }
