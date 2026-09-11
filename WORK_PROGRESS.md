@@ -11,9 +11,11 @@ secrets here: moving it later does not erase Git history.
 ## Resume here
 
 1. Read `AGENTS.md`. Inspect `git status`, `git log -5`, and the remote branch before editing.
-2. Check PR #92's **actual head SHA** and all its checks. This first recovery checkpoint is being
-   prepared for publication; its GitHub checks have not yet been observed. Do not infer CI success
-   from the local results below. On resumption, inspect GitHub rather than trusting a stale note.
+2. Check PR #92's **actual head SHA** and all its checks. Signed recovery checkpoint `64d8e23`
+   was pushed; GitHub's secret scan passed, but merge conflicts prevented the required PR checks
+   from starting. This follow-up reconciles `main` (`bf227d2`) into the working branch, preserving
+   the exact validated source. CI for the follow-up head must still be observed to completion.
+   Do not infer CI success from local results. Inspect GitHub rather than trusting a stale note.
 3. Preserve the existing fixes. Finish the remaining investigations below in small batches; run
    the required validation, update this tracker, commit with signing enabled, push, and monitor
    every selected check to completion before publishing the next replacement head.
@@ -29,6 +31,12 @@ git log -5 --oneline
 gh pr view 92 --json headRefOid,statusCheckRollup,reviewDecision
 gh run list --branch migration-to-flutter
 ```
+
+The merge conflicts were only in `AppUi.kt` and `AppViewModel.kt`: preserve visible recovery
+feedback, transport-generation ownership/cancellation, and batched recovery persistence. All
+incoming hotfixes were already present. Before this tracker-only edit, the resolved merge tree
+was byte-identical to checkpoint `64d8e23` (tree `44ac3dc54ff8690544e4a36d00abab5a1a33647a`).
+No build-affecting source changed; the full local validation below applies to that same source.
 
 ## Implemented and regression-tested in this checkpoint
 
