@@ -12,6 +12,7 @@
 library;
 
 import 'terminal_cell.dart';
+import 'terminal_unicode.dart';
 
 /// What a row's ending means.
 ///
@@ -26,6 +27,7 @@ class ReflowResult {
     required this.softWrapped,
     required this.cursorRow,
     required this.cursorCol,
+    this.cursorWrapPending = false,
   });
 
   /// Every row, oldest first: scrollback then screen, for the caller to split.
@@ -37,6 +39,7 @@ class ReflowResult {
   /// Where the cursor's character ended up.
   final int cursorRow;
   final int cursorCol;
+  final bool cursorWrapPending;
 }
 
 /// Re-wraps [rows] to [newCols].
@@ -49,6 +52,7 @@ ReflowResult reflowRows({
   required int newCols,
   required int cursorRow,
   required int cursorCol,
+  bool cursorWrapPending = false,
 }) {
   final cols = newCols < 1 ? 1 : newCols;
 
@@ -72,10 +76,26 @@ ReflowResult reflowRows({
     }
     if (r == cursorRow) {
       cursorLogical = logical.length - 1;
-      cursorOffset = current.length + cursorCol;
+      cursorOffset = current.length;
+      for (
+        var c = 0;
+        c < row.length && (c < cursorCol || (cursorWrapPending && c <= cursorCol));
+        c++
+      ) {
+        cursorOffset += row[c].width == 1 && clusterDisplayWidth(row[c].text) == 2 ? 2 : 1;
+      }
     }
     for (var c = 0; c < take && c < row.length; c++) {
-      current.add(row[c].copy());
+      final cell = row[c].copy();
+      // A one-column viewport temporarily paints wide glyphs in one cell. Recover their real
+      // width when flattening, so growing the viewport does not permanently downgrade them.
+      if (cell.width == 1 && clusterDisplayWidth(cell.text) == 2) {
+        cell.width = 2;
+        current.add(cell);
+        current.add(cell.copy()..set('', cell.fg, cell.bg, width: 0));
+      } else {
+        current.add(cell);
+      }
     }
     // No soft wrap means the logical line ends here.
     if (wrapAt == null) current = null;
@@ -86,6 +106,7 @@ ReflowResult reflowRows({
   final soft = <List<TerminalCell>>{};
   var outCursorRow = 0;
   var outCursorCol = 0;
+  var outCursorWrapPending = false;
 
   for (var i = 0; i < logical.length; i++) {
     final line = logical[i];
@@ -100,13 +121,14 @@ ReflowResult reflowRows({
         // A double-width glyph that does not fit is pushed whole to the next row, leaving the last
         // column blank — splitting it would render half a character and desynchronise every column
         // after it.
-        if (cell.width == 2 && column == cols - 1) break;
+        if (cols > 1 && cell.width == 2 && column == cols - 1) break;
         // Continuation cells are rebuilt by the wide glyph that owns them, never carried alone.
         if (cell.width == 0) {
           index++;
           continue;
         }
         _copyInto(cell, row[column]);
+        if (cols == 1 && cell.width == 2) row[column].width = 1;
         if (cell.width == 2 && column + 1 < cols) {
           row[column + 1]
             ..set('', cell.fg, cell.bg, width: 0)
@@ -116,6 +138,7 @@ ReflowResult reflowRows({
           column += 1;
         }
         index++;
+        if (cell.width == 2 && index < line.length && line[index].width == 0) index++;
       }
       out.add(row);
       // Every row of this logical line except the last one ends in a soft wrap.
@@ -129,6 +152,13 @@ ReflowResult reflowRows({
       final placed = _placeOffset(line, cursorOffset, cols);
       outCursorRow = firstRowOfLine + placed.$1;
       outCursorCol = placed.$2.clamp(0, cols - 1);
+      if (cursorWrapPending && placed.$1 > 0 && placed.$2 == 0) {
+        // The insertion point is just beyond a full row, not column zero of the next row.
+        // Keep the deferred wrap so the next character advances instead of overwriting text.
+        outCursorRow--;
+        outCursorCol = cols - 1;
+        outCursorWrapPending = true;
+      }
     }
   }
 
@@ -143,6 +173,7 @@ ReflowResult reflowRows({
     softWrapped: soft,
     cursorRow: outCursorRow.clamp(0, out.length - 1),
     cursorCol: outCursorCol.clamp(0, cols - 1),
+    cursorWrapPending: outCursorWrapPending,
   );
 }
 
@@ -154,11 +185,11 @@ ReflowResult reflowRows({
     if (i == offset) return (row, column);
     final cell = line[i];
     if (cell.width == 0) continue;
-    if (cell.width == 2 && column == cols - 1) {
+    if (cols > 1 && cell.width == 2 && column == cols - 1) {
       row++;
       column = 0;
     }
-    column += cell.width == 2 ? 2 : 1;
+    column += cell.width == 2 && cols > 1 ? 2 : 1;
     if (column >= cols) {
       row++;
       column = 0;

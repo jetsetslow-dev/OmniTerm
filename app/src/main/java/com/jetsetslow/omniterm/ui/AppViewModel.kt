@@ -158,7 +158,7 @@ internal object NetworkTab {
 }
 
 private const val BACKUP_SCHEMA_VERSION = 5
-private const val BACKUP_MAX_INPUT_CHARS = 20 * 1024 * 1024
+internal const val BACKUP_MAX_INPUT_CHARS = 20 * 1024 * 1024
 private const val BACKUP_MAX_CIPHERTEXT_BYTES = 12 * 1024 * 1024
 private const val BACKUP_MAX_PLAIN_BYTES = 32 * 1024 * 1024
 private const val BACKUP_MAX_COLLECTION_ITEMS = 50_000
@@ -852,6 +852,14 @@ class AppViewModel @JvmOverloads constructor(
     private var pendingTerminalNavigationSessionIds by mutableStateOf<List<String>>(emptyList())
     var pendingTerminalNavigationIncludesConnectAttempt by mutableStateOf(false)
         private set
+    var isLeavingTerminalSessions by mutableStateOf(false)
+        private set
+    var terminalLeaveError by mutableStateOf<String?>(null)
+        private set
+    var terminalLeaveNotice by mutableStateOf<String?>(null)
+        private set
+    private var terminalLeaveJob: Job? = null
+    private var terminalLeaveGeneration = 0L
 
     // SECURITY PIN & APP LOCK STATE
     var savedPin by mutableStateOf<String?>(null)
@@ -3005,6 +3013,7 @@ class AppViewModel @JvmOverloads constructor(
 
     /** Returns true when navigation was intercepted for one terminal decision dialog. */
     private fun beginTerminalNavigation(target: Screen): Boolean {
+        if (isLeavingTerminalSessions) return true
         val sessionIds = foregroundTerminalIdsNeedingDecision()
         val includesConnectAttempt = isTerminalConnecting
         if (sessionIds.isEmpty() && !includesConnectAttempt) return false
@@ -3018,6 +3027,11 @@ class AppViewModel @JvmOverloads constructor(
 
     /** Cancel/dismiss the leave-terminal transaction without mutating any session. */
     fun cancelTerminalNavigation() {
+        terminalLeaveGeneration++
+        terminalLeaveJob?.cancel()
+        terminalLeaveJob = null
+        isLeavingTerminalSessions = false
+        terminalLeaveError = null
         showDisconnectTerminalDialog = false
         pendingNavigationScreen = null
         pendingTerminalNavigationSessionIds = emptyList()
@@ -3030,11 +3044,19 @@ class AppViewModel @JvmOverloads constructor(
      * visible simply disappear from [activeSessions] and are skipped.
      */
     fun completeTerminalNavigation(disconnect: Boolean) {
+        if (isLeavingTerminalSessions) return
         val target = pendingNavigationScreen ?: run {
             cancelTerminalNavigation()
             return
         }
         val sessionIds = pendingTerminalNavigationSessionIds
+        if (!disconnect && pendingTerminalNavigationSessions.any { it.persistent }) {
+            persistAndLeaveSessions(sessionIds) {
+                cancelTerminalNavigation()
+                commitNavigation(target)
+            }
+            return
+        }
         val cancelConnectionAttempt = pendingTerminalNavigationIncludesConnectAttempt && disconnect
         cancelTerminalNavigation()
 
@@ -3059,8 +3081,8 @@ class AppViewModel @JvmOverloads constructor(
 
     /** Number of inner subtabs for a screen that supports horizontal subtab paging (0 = none). */
     private fun subtabCount(screen: Screen): Int = when (screen) {
-        Screen.Monitor -> 6
-        Screen.Infra -> 5
+        Screen.Monitor -> if (servers.value.any { it.status == "online" }) 6 else 0
+        Screen.Infra -> if (servers.value.any { it.id == selectedServerId || it.status == "online" }) 5 else 0
         Screen.Fleet -> 3
         Screen.SFTP -> 4
         Screen.Network -> 9
@@ -3481,6 +3503,14 @@ class AppViewModel @JvmOverloads constructor(
                 return@launch
             }
 
+            val matchingServer = repository.findMatchingServer(ServerEntity(
+                name = name, host = host, port = port, username = username,
+                authType = authType, authProfileId = profileId,
+            ))
+            if (matchingServer != null) {
+                onResult("The same host, port, SSH user and authentication method already exist as \"${matchingServer.name}\". Existing server unchanged.")
+                return@launch
+            }
             if (createProfile && authType == "password" && password != null && password.isNotBlank()) {
                 // Mirror every other credential path: the free-tier limit counts profiles + keys combined.
                 if (repository.getAllProfiles().size + repository.getAllKeys().size >= credentialProfileLimit) {
@@ -3519,7 +3549,13 @@ class AppViewModel @JvmOverloads constructor(
                 authStatus = "unknown",
                 authError = null,
             )
-            val newId = repository.insertServer(server)
+            val newId = try {
+                repository.saveUniqueServer(server)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                onResult(error.message ?: "Could not save server.")
+                return@launch
+            }
             refreshHomeWidgets()
             onResult(null)
             // Use the same proxy-aware, SSH-fallback probe as periodic telemetry. A direct socket
@@ -3531,12 +3567,18 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    fun updateServer(server: ServerEntity) {
+    fun updateServer(server: ServerEntity, onResult: (String?) -> Unit = {}) {
         viewModelScope.launch {
             val previousCreds = repository.getServerById(server.id)?.let {
                 runCatching { buildCredentials(it) }.getOrNull()
             }
-            repository.updateServer(server)
+            try {
+                repository.saveUniqueServer(server, update = true)
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                onResult(error.message ?: "Could not save server.")
+                return@launch
+            }
             // Keep any existing launcher shortcut label in sync with a rename.
             runCatching { ShortcutHelper.refreshServerShortcutIfPresent(getApplication(), server) }
             refreshHomeWidgets()
@@ -3544,6 +3586,7 @@ class AppViewModel @JvmOverloads constructor(
                 sshTransport.forgetCredentials(it)
                 JschSftp.forgetCredentials(it)
             }
+            onResult(null)
         }
     }
 
@@ -3815,19 +3858,25 @@ class AppViewModel @JvmOverloads constructor(
 
     fun addCredentialProfile(name: String, user: String, type: String, pass: String?, key: String?, onResult: (Boolean, String) -> Unit = { _, _ -> }) {
         viewModelScope.launch {
-            if (repository.getAllProfiles().size + repository.getAllKeys().size >= credentialProfileLimit) {
-                onResult(false, credentialProfileLimitMessage())
-                return@launch
+            try {
+                if (repository.getAllProfiles().size + repository.getAllKeys().size >= credentialProfileLimit) {
+                    onResult(false, credentialProfileLimitMessage())
+                    return@launch
+                }
+                val profile = CredentialProfileEntity(
+                    profileName = name,
+                    username = user,
+                    authType = type,
+                    password = pass,
+                    keyAlias = key
+                )
+                repository.insertProfile(profile)
+                onResult(true, "Saved profile '$name'.")
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                onResult(false, "Could not save the credential profile. No changes were saved. Please try again.")
             }
-            val profile = CredentialProfileEntity(
-                profileName = name,
-                username = user,
-                authType = type,
-                password = pass,
-                keyAlias = key
-            )
-            repository.insertProfile(profile)
-            onResult(true, "Saved profile '$name'.")
         }
     }
 
@@ -3907,20 +3956,28 @@ class AppViewModel @JvmOverloads constructor(
     ) {
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
-                val name = newName.trim()
-                val user = newUser.trim()
-                if (name.isBlank()) return@withContext Pair(false, "Profile name is required.")
-                if (user.isBlank()) return@withContext Pair(false, "Username is required.")
-                if (repository.getAllProfiles().any { it.profileName == name && it.id != original.id }) {
-                    return@withContext Pair(false, "Profile name already exists.")
+                try {
+                    val name = newName.trim()
+                    val user = newUser.trim()
+                    if (name.isBlank()) return@withContext Pair(false, "Profile name is required.")
+                    if (user.isBlank()) return@withContext Pair(false, "Username is required.")
+                    if (repository.getAllProfiles().any { it.profileName == name && it.id != original.id }) {
+                        return@withContext Pair(false, "Profile name already exists.")
+                    }
+                    val password = if (original.authType == "password") {
+                        newPass.ifBlank { original.password }
+                    } else original.password
+                    repository.insertProfile(
+                        original.copy(profileName = name, username = user, password = password)
+                    )
+                    Pair(true, "Updated profile '$name'.")
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: com.jetsetslow.omniterm.data.ProfileServerConflictException) {
+                    Pair(false, error.message ?: "Profile conflicts with an existing server login.")
+                } catch (_: Exception) {
+                    Pair(false, "Could not save the credential profile. No changes were saved. Please try again.")
                 }
-                val password = if (original.authType == "password") {
-                    newPass.ifBlank { original.password }
-                } else original.password
-                repository.insertProfile(
-                    original.copy(profileName = name, username = user, password = password)
-                )
-                Pair(true, "Updated profile '$name'.")
             }
             onResult(result.first, result.second)
         }
@@ -5054,9 +5111,8 @@ class AppViewModel @JvmOverloads constructor(
                         // happens in initControlModeSession AFTER I/O is wired.
                         session.write(RemoteCommands.tmuxControlCreateAttachCommand(shellSession.tmuxName, terminalScrollbackLimit).toByteArray())
                     } else {
-                        // Seed real tmux history into local scrollback before the attach repaint
-                        // (no-op for a brand-new session), so back-scroll works immediately.
-                        seedTmuxHistory(emulator, creds, shellSession.tmuxName)
+                        // This name is newly allocated, so there is no history to capture before
+                        // creation. An optional side channel must not delay an already-open shell.
                         session.write(RemoteCommands.tmuxCreateAttachCommand(shellSession.tmuxName, terminalScrollbackLimit).toByteArray())
                     }
                     check(!session.closed.value) { "SSH channel closed while attaching tmux" }
@@ -5129,17 +5185,6 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /**
-     * Pre-fill a fresh emulator's scrollback with the pane's real tmux history (side-channel
-     * `capture-pane`) so scrolling back right after an attach shows what actually happened in the
-     * session — not just what has streamed since this client connected. Must run BEFORE the attach
-     * output arrives: the emulator is still on the normal screen, so the fed lines flow cleanly
-     * into scrollback; a screen-height of line feeds then pushes the tail rows off so the attach
-     * repaint starts from a blank grid. `capture-pane` stops at the last history line above the
-     * visible pane (the repaint provides the screen itself), and the whole thing is a no-op when
-     * the tmux session doesn't exist yet or has no history. Only ever seeds an emulator with no
-     * scrollback — a reconnect keeps its accumulated buffer and must not get a duplicated copy.
-     */
-    /**
      * Fetch a pane's full history WITHOUT the transport's flat 240K exec cap. `exec()` returns a
      * CappedTextBuffer tail that silently drops the oldest output mid-line AND injects a
      * "[Output truncated…]" banner — for a large colourful history that manufactured exactly the
@@ -5147,7 +5192,7 @@ class AppViewModel @JvmOverloads constructor(
      * the configured scrollback limit; if a freak capture still exceeds it, whole leading chars
      * are dropped (oldest first, like the emulator's own scrollback trim) with no banner.
      */
-    private suspend fun captureTmuxHistoryFull(creds: SshCredentials, tmuxName: String): String? = runCatching {
+    private suspend fun captureTmuxHistoryFull(creds: SshCredentials, tmuxName: String): String? = try {
         val budget = terminalScrollbackLimit * 300 + 65_536
         val sb = StringBuilder()
         val result = sshTransport.execStream(creds, RemoteCommands.tmuxCaptureHistoryCommand(tmuxName, terminalScrollbackLimit)) { chunk ->
@@ -5156,54 +5201,10 @@ class AppViewModel @JvmOverloads constructor(
         }
         check(!result.startsWith("SSH Error:")) { result }
         sb.toString()
-    }.getOrNull()
-
-    private suspend fun seedTmuxHistory(emulator: TerminalEmulator, creds: SshCredentials, tmuxName: String) {
-        val history = withContext(Dispatchers.IO) {
-            captureTmuxHistoryFull(creds, tmuxName)
-        }?.trimEnd('\n')
-        if (history.isNullOrBlank()) return
-        // Large history can contain megabytes of ANSI and wide Unicode. Parsing it on Main froze
-        // the whole Activity during resume; the emulator is not observable until this call returns,
-        // so building it on the CPU dispatcher is safe.
-        withContext(Dispatchers.Default) {
-            synchronized(emulator) {
-                if (emulator.scrollbackRowCount() > 0) return@withContext
-                emulator.feed(history.replace("\n", "\r\n").toByteArray())
-                emulator.feed("\r\n".repeat(emulator.rows).toByteArray())
-            }
-        }
-    }
-
-    /**
-     * Paint the currently visible tmux pane into a fresh emulator before the interactive attach
-     * starts delivering output. tmux may not redraw an unchanged pane immediately, which used to
-     * leave a resumed session blank until an IME resize sent SIGWINCH and forced a repaint.
-     */
-    private suspend fun paintTmuxVisibleScreen(
-        emulator: TerminalEmulator,
-        creds: SshCredentials,
-        tmuxName: String,
-    ): Boolean {
-        return try {
-            val screenResult = sshTransport.exec(creds, RemoteCommands.tmuxCaptureScreenCommand(tmuxName))
-            check(!screenResult.startsWith("SSH Error:")) { screenResult }
-            val cursorResult = sshTransport.exec(creds, RemoteCommands.tmuxCursorQuery(tmuxName))
-            check(!cursorResult.startsWith("SSH Error:")) { cursorResult }
-            currentCoroutineContext().ensureActive()
-            val cursor = cursorResult.trim().split(' ')
-            val cx = cursor.getOrNull(0)?.toIntOrNull() ?: 0
-            val cy = cursor.getOrNull(1)?.toIntOrNull() ?: 0
-            val repaint = "\u001B[r\u001B[0m\u001B[2J\u001B[H" +
-                screenResult.trimEnd('\n').replace("\n", "\r\n") +
-                "\u001B[${cy + 1};${cx + 1}H\u001B[0m"
-            synchronized(emulator) { emulator.feed(repaint.toByteArray()) }
-            true
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (_: Exception) {
-            false
-        }
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
     }
 
     /**
@@ -5238,6 +5239,8 @@ class AppViewModel @JvmOverloads constructor(
         val creds = session.creds ?: return 0
         if (!session.persistent || !session.scrollbackDirty || !session.scrollbackSyncMutex.tryLock()) return 0
         try {
+            val expectedTransport = session.session
+            val paneRevision = session.controlPaneChangeRevision.get()
             val emulator = session.emulator
             val altGuardApplies = !allowAlternateScreen && session.controlMode
             val cols: Int
@@ -5262,13 +5265,15 @@ class AppViewModel @JvmOverloads constructor(
                 return 0
             }
             val result = withContext(kotlinx.coroutines.Dispatchers.Default) {
-                // Same trick as seedTmuxHistory: feed the history, then a screen-height of LFs
+                // Feed the history, then a screen-height of LFs
                 // pushes the tail rows off the scratch screen so its scrollback holds everything.
                 val scratch = TerminalEmulator(cols, rows, scrollbackLimit = terminalScrollbackLimit)
                 scratch.feed(history.replace("\n", "\r\n").toByteArray())
                 scratch.feed("\r\n".repeat(rows).toByteArray())
                 synchronized(emulator) {
-                    if ((altGuardApplies && emulator.isAlternateScreenActive()) ||
+                    if (session.userClosed || session.session !== expectedTransport ||
+                        session.controlPaneChangeRevision.get() != paneRevision ||
+                        (altGuardApplies && emulator.isAlternateScreenActive()) ||
                         !terminalGeometryMatches(
                             cols,
                             rows,
@@ -5297,6 +5302,28 @@ class AppViewModel @JvmOverloads constructor(
             return delta
         } finally {
             session.scrollbackSyncMutex.unlock()
+        }
+    }
+
+    /** Optional history never gates attachment, the visible pane, or queued input. */
+    private fun hydrateTmuxHistory(shellSession: ShellSession, allowAlternateScreen: Boolean = false) {
+        shellSession.historyHydrationJob?.cancel()
+        shellSession.scrollbackDirty = true
+        shellSession.historyHydrationJob = TerminalSessionManager.scope.launch {
+            try {
+                // The first Compose measure can resize the initial grid during capture. Retry
+                // against the settled geometry; adoption changes scrollback, never the live screen.
+                repeat(3) { attempt ->
+                    resyncTmuxScrollbackFor(shellSession, allowAlternateScreen)
+                    if (!shellSession.scrollbackDirty) return@launch
+                    if (attempt < 2) delay(250L * (attempt + 1))
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                shellSession.scrollbackDirty = true
+                android.util.Log.w("OmniTermSession", "Initial tmux history hydration failed", e)
+            }
         }
     }
 
@@ -5486,8 +5513,9 @@ class AppViewModel @JvmOverloads constructor(
      * control mode renders nothing on its own — tmux only streams %output for NEW bytes — so the
      * client must: match the tmux client size to our grid, learn the active pane id (early
      * %output for an unknown pane is dropped; the screen seed below repaints whatever that
-     * missed), seed history into scrollback, paint the current screen + cursor, and flush any
-     * input the user typed before the pane id was known. Pane/cursor/screen come over the side
+     * missed), paint the current screen + cursor, and flush any input the user typed before the
+     * pane id was known. Full history is hydrated independently after input is ready, so a slow
+     * history capture cannot freeze the terminal. Pane/cursor/screen come over the side
      * exec channel — correlating in-band %begin replies by order is avoidable complexity.
      */
     private fun initControlModeSession(shellSession: ShellSession, creds: SshCredentials) {
@@ -5520,11 +5548,6 @@ class AppViewModel @JvmOverloads constructor(
                     error("tmux pane was not found after 10 seconds")
                 }
                 shellSession.activePaneId = pane
-                // Seed history BEFORE sizing the client: refresh-client SIGWINCHes the pane app,
-                // whose redraw can flood %output and overflow the screen — a non-empty scrollback
-                // then makes the fresh-emulator seed skip entirely ("scroll doesn't go all the
-                // way back"). Seeding first sees the guaranteed-empty buffer.
-                seedTmuxHistory(shellSession.emulator, creds, shellSession.tmuxName)
                 repaintControlPane(shellSession, creds, pane, expectedTransport)
                 ensureActive()
                 check(shellSession.session === expectedTransport && shellSession.activePaneId == pane)
@@ -5532,10 +5555,9 @@ class AppViewModel @JvmOverloads constructor(
                 if (shellSession.controlPaneChangeRevision.get() != paneRevisionAtStart) {
                     refreshControlActivePane(shellSession)
                 }
-                // Insurance: if live %output raced the seed/repaint above (e.g. a resize-redraw
-                // flood), the first scroll-up rebuilds scrollback from the pane's authoritative
-                // history via the existing capture-pane re-sync.
-                shellSession.scrollbackDirty = true
+                // Rebuild authoritative history even if resize output already added local rows;
+                // unlike the old fresh-emulator seed, this cannot skip a nonempty scrollback.
+                hydrateTmuxHistory(shellSession)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
@@ -5643,16 +5665,14 @@ class AppViewModel @JvmOverloads constructor(
                 // this re-attach — the remote session (and whatever runs in it) is that old.
                 shellSession.startedAtMs = sessionEntity.createdAt
                 emulator.setCaptureAlternateScreenScrollback(!shellSession.controlMode)
-                val initialScreenPainted = if (shellSession.controlMode) {
+                if (shellSession.controlMode) {
                     session.write(RemoteCommands.tmuxControlAttachCommand(tmuxName, terminalScrollbackLimit).toByteArray())
-                    false
                 } else {
-                    // Paint the current pane and attach immediately. Potentially megabytes of old
-                    // history are hydrated after the live terminal is usable; making history a
-                    // connection prerequisite caused long blank/frozen resumes on slower devices.
-                    val painted = paintTmuxVisibleScreen(emulator, creds, tmuxName)
+                    // A regular tmux client paints its own screen on attach. Do not block an
+                    // already-open SSH channel on optional side-channel screen/cursor captures:
+                    // each could wait for the command timeout while the UI said Opening channel.
+                    // History hydration below preserves the live screen and runs independently.
                     session.write(RemoteCommands.tmuxAttachCommand(tmuxName, terminalScrollbackLimit).toByteArray())
-                    painted
                 }
                 check(!session.closed.value) { "SSH channel closed while attaching tmux" }
 
@@ -5669,35 +5689,13 @@ class AppViewModel @JvmOverloads constructor(
                     }
                     _terminalConnectionState.value = TerminalConnectionState.Connected(shellSession.id)
                 }
-                if (initialScreenPainted) TerminalSessionManager.publishTerminalSnapshot(shellSession)
                 wireSessionIo(shellSession)
                 if (shellSession.controlMode) {
                     initControlModeSession(shellSession, creds)
                 } else {
-                    // The existing re-sync path captures and parses on background dispatchers, then
-                    // atomically adopts the finished scrollback without blocking terminal input/UI.
-                    shellSession.scrollbackDirty = true
-                    shellSession.historyHydrationJob = TerminalSessionManager.scope.launch {
-                        try {
-                            // A normal tmux client itself owns the outer alternate screen by the
-                            // time this background parse finishes. Initial hydration may still
-                            // replace only scrollback; adoptScrollbackFrom leaves that live screen
-                            // untouched. Later gesture-driven syncs keep the stricter TUI guard.
-                            // The first Compose measure commonly resizes the initial 80x24 grid.
-                            // A large capture may span that resize, so retry a few times until one
-                            // capture belongs to the stable geometry (or a live TUI keeps it dirty).
-                            repeat(3) { attempt ->
-                                resyncTmuxScrollbackFor(shellSession, allowAlternateScreen = true)
-                                if (!shellSession.scrollbackDirty) return@launch
-                                if (attempt < 2) delay(250L * (attempt + 1))
-                            }
-                        } catch (e: kotlinx.coroutines.CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            shellSession.scrollbackDirty = true
-                            android.util.Log.w("OmniTermSession", "Initial tmux history hydration failed", e)
-                        }
-                    }
+                    // A regular tmux client owns the outer alternate screen, but hydration only
+                    // adopts scrollback. Control mode keeps the stricter inner-TUI guard.
+                    hydrateTmuxHistory(shellSession, allowAlternateScreen = true)
                 }
                 setupComplete = true
                 markServerReachableAfterSsh(srv)
@@ -5778,18 +5776,22 @@ class AppViewModel @JvmOverloads constructor(
                     inputQueue.queuedBytes = (inputQueue.queuedBytes - bytes.size).coerceAtLeast(0)
                 }
                 try {
-                    shellSession.session.write(bytes)
+                    session.write(bytes)
                 } catch (error: Exception) {
+                    if (error is kotlinx.coroutines.CancellationException) throw error
                     // Output EOF can lag a failed socket write. Stop accepting input immediately
                     // and close the channel so the output owner takes the normal visible reconnect
                     // path instead of silently dropping every subsequent key.
                     withContext(Dispatchers.Main) {
+                        if (shellSession.session !== session || shellSession.userClosed) return@withContext
                         shellSession.disconnectError =
                             "Could not send terminal input: ${error.message ?: "connection lost"}"
                         shellSession.isConnected = false
                         TerminalSessionManager.updateKeepaliveCount()
                     }
-                    runCatching { shellSession.session.close() }
+                    // This worker belongs to one transport generation. A cancelled/late write
+                    // from the previous channel must never close its successful replacement.
+                    runCatching { session.close() }
                     break
                 }
             }
@@ -5956,22 +5958,29 @@ class AppViewModel @JvmOverloads constructor(
     private val persistentSessionMutationMutex = Mutex()
 
     private suspend fun rememberRestorablePersistentSession(shellSession: ShellSession) {
-        if (!shellSession.persistent) return
+        rememberRestorablePersistentSessions(listOf(shellSession))
+    }
+
+    private suspend fun rememberRestorablePersistentSessions(sessions: List<ShellSession>) {
+        val persistent = sessions.filter { it.persistent }
+        if (persistent.isEmpty()) return
         persistentSessionMutationMutex.withLock {
-            // The tmux session's own age is fixed at first creation and must survive every
-            // resume/background cycle; "backgrounded since" restarts on each of them. Reuse the
-            // stored createdAt when we already know this session, so only the former is preserved.
-            val known = restorablePersistentSessions.find { it.tmuxName == shellSession.tmuxName }
-            val entity = PersistentSessionEntity(
-                shellSession.tmuxName,
-                shellSession.serverId,
-                shellSession.serverName,
-                createdAt = known?.createdAt ?: shellSession.startedAtMs,
-                backgroundedAt = System.currentTimeMillis(),
-            )
-            repository.upsertPersistentSession(entity)
-            restorablePersistentSessions =
-                restorablePersistentSessions.filterNot { it.tmuxName == entity.tmuxName } + entity
+            // Commit every pane together. A failed later write must not partially update recovery
+            // state, and no session is closed until this transaction has actually committed.
+            val saved = repository.inTransaction {
+                val known = repository.getPersistentSessions().associateBy { it.tmuxName }
+                persistent.forEach { shellSession ->
+                    repository.upsertPersistentSession(PersistentSessionEntity(
+                        shellSession.tmuxName,
+                        shellSession.serverId,
+                        shellSession.serverName,
+                        createdAt = known[shellSession.tmuxName]?.createdAt ?: shellSession.startedAtMs,
+                        backgroundedAt = System.currentTimeMillis(),
+                    ))
+                }
+                repository.getPersistentSessions()
+            }
+            restorablePersistentSessions = saved
         }
     }
 
@@ -6701,20 +6710,58 @@ class AppViewModel @JvmOverloads constructor(
         pendingDisconnectSessionId = sessionId
     }
 
-    fun leaveSessionResumable(sessionId: String) {
-        val s = activeSessions.find { it.id == sessionId } ?: return
+    fun leaveSessionResumable(sessionId: String): Job? {
+        val s = activeSessions.find { it.id == sessionId } ?: return null
         if (!s.persistent) {
             disconnectSession(sessionId)
-            return
+            return null
         }
-        s.userClosed = true
-        s.reconnectJob?.cancel()
-        viewModelScope.launch {
-            rememberRestorablePersistentSession(s)
-            // cleanupSession closes the socket off the main thread (see disconnectSession).
-            cleanupSession(s)
-            if (currentSessionId == sessionId) currentSessionId = null
+        return persistAndLeaveSessions(listOf(sessionId))
+    }
+
+    fun dismissTerminalLeaveError() { terminalLeaveError = null }
+    fun consumeTerminalLeaveNotice(): String? = terminalLeaveNotice.also { terminalLeaveNotice = null }
+
+    /** Persist all recovery records before changing any live channel, split pane or navigation. */
+    private fun persistAndLeaveSessions(sessionIds: List<String>, onSaved: () -> Unit = {}): Job? {
+        if (isLeavingTerminalSessions) return null
+        val sessions = sessionIds.mapNotNull { id -> activeSessions.find { it.id == id && !it.userClosed } }
+        if (sessions.isEmpty()) { onSaved(); return null }
+        val generation = ++terminalLeaveGeneration
+        isLeavingTerminalSessions = true
+        terminalLeaveError = null
+        terminalLeaveJob = viewModelScope.launch {
+            try {
+                rememberRestorablePersistentSessions(sessions)
+                currentCoroutineContext().ensureActive()
+                if (generation != terminalLeaveGeneration) return@launch
+                sessions.filter { it in activeSessions && !it.userClosed }.forEach { session ->
+                    if (session.persistent) {
+                        session.userClosed = true
+                        session.reconnectJob?.cancel()
+                        cleanupSession(session)
+                    } else sendSessionToBackground(session.id)
+                }
+                // Clear ownership before the completion callback resets the navigation guard.
+                terminalLeaveJob = null
+                isLeavingTerminalSessions = false
+                onSaved()
+                terminalLeaveNotice = "Session recovery saved. Persistent sessions are ready to resume."
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (generation == terminalLeaveGeneration) {
+                    terminalLeaveError = "Could not save session recovery. No sessions were intentionally closed. " +
+                        "Check device storage and retry. " + (e.message ?: "Storage unavailable.")
+                }
+            } finally {
+                if (generation == terminalLeaveGeneration) {
+                    isLeavingTerminalSessions = false
+                    terminalLeaveJob = null
+                }
+            }
         }
+        return terminalLeaveJob
     }
 
     fun requestDisconnectAllSessions() {
@@ -6876,17 +6923,17 @@ class AppViewModel @JvmOverloads constructor(
      * (the same panel Docker stack actions use). [onComplete] runs once the stream ends, e.g. to
      * refresh the relevant list.
      */
-    fun runStreamingAction(title: String, command: String, stdin: String? = null, onComplete: (() -> Unit)? = null) {
-        val srv = selectedServer ?: return
+    fun runStreamingAction(title: String, command: String, stdin: String? = null, server: ServerEntity? = selectedServer, onComplete: (() -> Unit)? = null) {
+        val srv = server ?: return showActionMessage(title, "No host is selected. Select a host and retry.")
         // Supersede any previous action so its late chunks can't bleed into this one.
         actionStreamJob?.cancel()
         val epoch = ++actionStreamEpoch
+        actionStreamTitle = title
+        actionStreamOutput = ""
+        actionStreamRunning = true
         actionStreamJob = viewModelScope.launch {
-            actionStreamTitle = title
-            actionStreamOutput = ""
-            actionStreamRunning = true
             try {
-                sshTransport.execStream(buildCredentials(srv), command, stdin) { chunk ->
+                val result = sshTransport.execStream(buildCredentials(srv), command, stdin) { chunk ->
                     // onChunk runs on the IO dispatcher; apply the snapshot-state write on Main.
                     if (epoch == actionStreamEpoch) withContext(Dispatchers.Main) {
                         if (epoch == actionStreamEpoch) {
@@ -6897,6 +6944,18 @@ class AppViewModel @JvmOverloads constructor(
                         }
                     }
                 }
+                if (epoch == actionStreamEpoch) {
+                    if (actionStreamOutput.isBlank()) actionStreamOutput = result
+                    else if (result.startsWith("SSH Error:") && !actionStreamOutput.contains(result)) {
+                        actionStreamOutput = (actionStreamOutput + "\n" + result).takeLast(ACTION_STREAM_MAX_CHARS)
+                    }
+                }
+            } catch (e: CancellationException) {
+                if (epoch == actionStreamEpoch) actionStreamOutput += "\nStopped waiting for command output."
+                throw e
+            } catch (e: Exception) {
+                if (epoch == actionStreamEpoch) actionStreamOutput =
+                    (actionStreamOutput + "\nCommand failed: ${e.message ?: "SSH operation failed"}").takeLast(ACTION_STREAM_MAX_CHARS)
             } finally {
                 if (epoch == actionStreamEpoch) {
                     actionStreamRunning = false
@@ -9178,7 +9237,7 @@ class AppViewModel @JvmOverloads constructor(
         loadSftp(sftpSessionPaths[srv.id]?.takeIf { it.isNotBlank() })
     }
 
-    fun loadSftp(path: String? = null, clearError: Boolean = true) {
+    fun loadSftp(path: String? = null, clearError: Boolean = true): Job {
         sftpJob?.cancel()
         sftpJob = viewModelScope.launch {
             val targetServerId = selectedServerId
@@ -9218,6 +9277,7 @@ class AppViewModel @JvmOverloads constructor(
                 if (sftpJob == coroutineContext[Job]) sftpLoading = false
             }
         }
+        return requireNotNull(sftpJob)
     }
 
     private suspend fun enrichSftpFolderSizes(
@@ -11152,7 +11212,7 @@ class AppViewModel @JvmOverloads constructor(
         // Park persistent (tmux) terminals in their resumable state — the remote session keeps
         // running and reattaches on the next connect. Non-persistent shells are left alone:
         // closing them would kill the remote shell, which is the opposite of resumable.
-        activeSessions.filter { it.persistent }.map { it.id }.forEach { leaveSessionResumable(it) }
+        persistAndLeaveSessions(activeSessions.filter { it.persistent }.map { it.id })
         postBatterySaverNotification(pct, active = true)
     }
 
@@ -11775,6 +11835,7 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     private fun validateBackupRoot(root: org.json.JSONObject) {
+        normalizeBackupDocument(root)
         require(root.optString("format") == "omniterm-backup") { "Not an OmniTerm backup file." }
         val schema = root.optInt("schema", -1)
         require(schema in 1..BACKUP_SCHEMA_VERSION) {
@@ -11787,9 +11848,15 @@ class AppViewModel @JvmOverloads constructor(
             "crashLogs",
         )
         arrays.forEach { name ->
+            require(!root.has(name) || root.opt(name) is org.json.JSONArray) {
+                "Backup contains an invalid $name section."
+            }
             require((root.optJSONArray(name)?.length() ?: 0) <= BACKUP_MAX_COLLECTION_ITEMS) {
                 "Backup contains too many $name entries."
             }
+        }
+        require(!root.has("settings") || root.opt("settings") is org.json.JSONObject) {
+            "Backup contains an invalid settings section."
         }
         require((root.optJSONObject("settings")?.length() ?: 0) <= BACKUP_MAX_COLLECTION_ITEMS) {
             "Backup contains too many settings."
@@ -12011,10 +12078,25 @@ class AppViewModel @JvmOverloads constructor(
                             val oldId = o.optInt("id", 0).takeIf { it != 0 } ?: (index + 1)
                             return oldId in selectedBackupServerIds
                         }
-                        fun sameServerEndpoint(existing: ServerEntity, backup: org.json.JSONObject): Boolean =
-                            existing.host.equals(backup.optString("host"), ignoreCase = true) &&
-                                existing.port == backup.optInt("port", 22) &&
-                                existing.username == backup.optString("username")
+                        val backupProfiles = root.optJSONArray("credentialProfiles")?.let { rows ->
+                            (0 until rows.length()).map { index ->
+                                val row = rows.getJSONObject(index)
+                                CredentialProfileEntity(
+                                    id = row.optInt("id"), profileName = row.optString("profileName"),
+                                    username = row.optString("username"), authType = row.optString("authType", "password"),
+                                )
+                            }
+                        } ?: emptyList()
+                        suspend fun sameServerEndpoint(existing: ServerEntity, backup: org.json.JSONObject): Boolean {
+                            val candidate = ServerEntity(
+                                name = backup.optString("name"), host = backup.optString("host"),
+                                port = backup.optInt("port", 22), username = backup.optString("username"),
+                                authType = backup.optString("authType", "password"),
+                                authProfileId = backup.optInt("authProfileId", 0),
+                            )
+                            val incoming = com.jetsetslow.omniterm.data.serverIdentity(candidate, backupProfiles)
+                            return incoming != null && incoming == com.jetsetslow.omniterm.data.serverIdentity(existing, repository.getAllProfiles())
+                        }
 
                         val allowedKeyAliases = mutableSetOf<String>()
                         val allowedProfileOldIds = mutableSetOf<Int>()
@@ -12025,7 +12107,8 @@ class AppViewModel @JvmOverloads constructor(
                                 val o = arr.getJSONObject(i)
                                 if (!serverSelected(o, i)) continue
                                 val nm = o.getString("name")
-                                val existingNamedServer = repository.getServerByName(nm)
+                                val existingNamedServer = repository.getAllServers().firstOrNull { sameServerEndpoint(it, o) }
+                                    ?: repository.getServerByName(nm)
                                 if (existingNamedServer != null) {
                                     require(sameServerEndpoint(existingNamedServer, o)) {
                                         "Host name '$nm' already belongs to a different endpoint; rename one host before restoring."
@@ -12143,6 +12226,7 @@ class AppViewModel @JvmOverloads constructor(
                         // restore never leaves orphaned trust entries for servers that don't exist.
                         val restoredHosts = mutableSetOf<Pair<String, Int>>()
                         var imported = 0
+                        val skippedExistingServers = mutableListOf<String>()
                         var skippedServersByLimit = 0
                         var availableHostSlots = (hostLimit - repository.getAllServers().size).coerceAtLeast(0)
                         for (i in 0 until arr.length()) {
@@ -12150,13 +12234,18 @@ class AppViewModel @JvmOverloads constructor(
                             if (!serverSelected(o, i)) continue
                             val nm = o.getString("name")
                             val oldId = o.optInt("id", 0)
-                            val existing = repository.getServerByName(nm)
+                            val existing = repository.getAllServers().firstOrNull { sameServerEndpoint(it, o) }
+                                ?: repository.getServerByName(nm)
                             if (existing != null) {
                                 require(sameServerEndpoint(existing, o)) {
                                     "Host name '$nm' already belongs to a different endpoint; rename one host before restoring."
                                 }
                                 if (oldId != 0) serverIdMap[oldId] = existing.id
                                 restoredHosts.add(existing.host to existing.port)
+                                skippedExistingServers.add(
+                                    "Skipped \"$nm\": the same host, port, SSH user and authentication method " +
+                                        "already exist as \"${existing.name}\". Existing server unchanged."
+                                )
                                 continue
                             }
                             if (!closedSelection.servers) continue
@@ -12544,7 +12633,8 @@ class AppViewModel @JvmOverloads constructor(
                             true,
                             "Restored $imported server(s), $importedKeys key(s), $importedProfiles profile(s), " +
                                 "$importedScripts script(s), $importedRules rule(s), $importedActiveAlerts active alert(s), $importedHistory alert history, $importedWol WoL, " +
-                                "$importedNetworkShares share(s), $importedPortForwards tunnel(s), $importedSettings setting(s), $importedCrashLogs crash log(s)." + skippedSuffix,
+                                "$importedNetworkShares share(s), $importedPortForwards tunnel(s), $importedSettings setting(s), $importedCrashLogs crash log(s)." + skippedSuffix +
+                                skippedExistingServers.joinToString(separator = "\n", prefix = if (skippedExistingServers.isEmpty()) "" else "\n"),
                         )
                         }
                         } catch (e: Throwable) {

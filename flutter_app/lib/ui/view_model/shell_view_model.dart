@@ -22,6 +22,8 @@ import 'app_state.dart';
 import 'shell_session.dart';
 import '../../platform/shortcut_helper.dart';
 
+class _LeaveSuperseded implements Exception {}
+
 /// The Shell screen's state and actions, split out of `ui/AppViewModel.kt` per §5.2.
 ///
 /// Owns the open sessions, which one is focused, the sticky modifier keys, and the one path every
@@ -76,6 +78,133 @@ class ShellViewModel extends ChangeNotifier {
   /// (Convention 4).
   final SshTransport? transport;
 
+  final _sessionCredentials = <ShellSession, SshCredentials>{};
+  final _reconnectRuns = <ShellSession, _ReconnectRun>{};
+
+  void _onSessionChanged() {
+    for (final session in _sessions.toList()) {
+      if (session.endReason == ShellSessionEnd.disconnected &&
+          !session.reconnecting &&
+          session.reconnectError == null) {
+        retrySession(session);
+      }
+    }
+    _safeNotify();
+  }
+
+  /// A genuine socket loss reconnects in place. Navigation never enters this path.
+  void retrySession(ShellSession session) {
+    if (_disposed ||
+        !_sessions.contains(session) ||
+        session.isOpen ||
+        session.endReason != ShellSessionEnd.disconnected ||
+        _reconnectRuns.containsKey(session)) {
+      return;
+    }
+    if (transport == null || !_sessionCredentials.containsKey(session)) return;
+    final run = _ReconnectRun();
+    _reconnectRuns[session] = run;
+    session.reconnecting = true;
+    session.reconnectError = null;
+    session.publishNow();
+    _scheduleReconnect(session, run);
+  }
+
+  bool _ownsReconnect(ShellSession session, _ReconnectRun run) =>
+      !_disposed && identical(_reconnectRuns[session], run) && _sessions.contains(session);
+
+  void _scheduleReconnect(ShellSession session, _ReconnectRun run) {
+    final seconds = math.min(1 << math.min(run.attempt, 5), 30);
+    run.timer = Timer(Duration(seconds: seconds), () => unawaited(_reconnect(session, run)));
+  }
+
+  Future<void> _reconnect(ShellSession session, _ReconnectRun run) async {
+    if (!_ownsReconnect(session, run)) return;
+    run.attempt++;
+    TerminalSession? replacement;
+    var adopted = false;
+    try {
+      final creds = _sessionCredentials[session]!;
+      final ssh = transport!;
+      final name = session.tmuxName;
+      if (name != null) {
+        final presence = parseTmuxSessionProbe(
+          await ssh.exec(creds, tmuxSessionProbeCommand(name)),
+        );
+        if (!_ownsReconnect(session, run)) return;
+        if (presence == null) {
+          throw SshConnectException('Could not verify the saved tmux session.');
+        }
+        if (!presence) {
+          await _app.repository.deletePersistentSession(name);
+          if (!_ownsReconnect(session, run)) return;
+          await _reloadSaved();
+          if (!_ownsReconnect(session, run)) return;
+          _finishReconnect(
+            session,
+            run,
+            'Tmux confirmed that this session no longer exists. No empty replacement was created.',
+          );
+          return;
+        }
+      }
+      replacement = await ssh.openShell(creds, session.cols, session.rows);
+      if (!_ownsReconnect(session, run)) return;
+      if (name != null) {
+        await replacement.write(
+          Uint8List.fromList(
+            utf8.encode(
+              tmuxResumeCommand(
+                name,
+                historyLimit: preferences.terminalScrollbackLimit,
+                controlMode: session.controlMode,
+              ),
+            ),
+          ),
+        );
+      }
+      if (!_ownsReconnect(session, run)) return;
+      if (replacement.closed.value) {
+        throw SshConnectException('SSH channel closed during reconnect.');
+      }
+      _reconnectRuns.remove(session);
+      adopted = session.reconnectWith(replacement);
+      if (!adopted) return;
+      final server = _app.servers.where((s) => s.id == session.serverId).firstOrNull;
+      if (server != null) unawaited(markReachable?.call(server) ?? Future<void>.value());
+      _syncReachabilityEvidence();
+      _syncBackgroundSessions();
+    } catch (error) {
+      if (!_ownsReconnect(session, run)) return;
+      if (run.attempt >= 12) {
+        _finishReconnect(
+          session,
+          run,
+          'Connection lost — reconnect failed. ${describeSshFailure('$error')}',
+        );
+      } else {
+        _scheduleReconnect(session, run);
+      }
+    } finally {
+      if (!adopted) {
+        try {
+          replacement?.close();
+        } catch (_) {
+          // A replacement can die before adoption too. Cleanup must not escape the retry loop.
+        }
+      }
+    }
+  }
+
+  void _finishReconnect(ShellSession session, _ReconnectRun run, String message) {
+    if (!_ownsReconnect(session, run)) return;
+    _reconnectRuns.remove(session);
+    session.reconnecting = false;
+    session.reconnectError = message;
+    session.publishNow();
+    _syncBackgroundSessions();
+  }
+
   bool get canConnect => transport != null;
 
   /// Keeps the process alive while sessions are open in the background. Null in tests and on
@@ -85,6 +214,7 @@ class ShellViewModel extends ChangeNotifier {
 
   StreamSubscription<SessionServiceAction>? _actionsSub;
   bool _terminalVisible = true;
+  List<BackgroundSession>? _lastBackgroundSessions;
 
   void setTerminalVisible(bool visible) {
     if (_terminalVisible == visible) return;
@@ -104,7 +234,7 @@ class ShellViewModel extends ChangeNotifier {
           close(session);
         }
       case ResumeSession(:final sessionId):
-        if (_sessions.any((s) => s.id == sessionId)) select(sessionId);
+        resumeExisting(sessionId);
     }
   }
 
@@ -115,7 +245,8 @@ class ShellViewModel extends ChangeNotifier {
   void _syncBackgroundSessions() {
     final live = [
       for (final session in _sessions)
-        if (session.isOpen) BackgroundSession(id: session.id, serverName: session.serverName),
+        if (session.isOpen || session.reconnecting)
+          BackgroundSession(id: session.id, serverName: session.serverName),
     ];
     // An explicit "Send to background" navigation keeps the session alive even when the general
     // preference is off. Otherwise the preference mirrors Kotlin's TerminalSessionManager: when
@@ -123,7 +254,19 @@ class ShellViewModel extends ChangeNotifier {
     // into the background.
     final shouldKeepAlive =
         live.isNotEmpty && (!_terminalVisible || preferences.backgroundKeepAlive);
-    unawaited(shouldKeepAlive ? sessionService?.sync(live) : sessionService?.stop());
+    final desired = shouldKeepAlive ? live : const <BackgroundSession>[];
+    // Terminal repaint notifications are not service-state changes. Sending a foreground start
+    // for every output frame floods Android and races rapid background/foreground transitions.
+    if (listEquals(_lastBackgroundSessions, desired)) return;
+    _lastBackgroundSessions = desired;
+    final operation = shouldKeepAlive ? sessionService?.sync(live) : sessionService?.stop();
+    if (operation != null) {
+      unawaited(
+        operation.then((ok) {
+          if (!ok && identical(_lastBackgroundSessions, desired)) _lastBackgroundSessions = null;
+        }),
+      );
+    }
   }
 
   bool _disposed = false;
@@ -227,6 +370,19 @@ class ShellViewModel extends ChangeNotifier {
     if (_currentId == id) return;
     _currentId = id;
     _safeNotify();
+  }
+
+  int _terminalResumeRevision = 0;
+  int get terminalResumeRevision => _terminalResumeRevision;
+
+  /// An explicit notification/shortcut resume supersedes a pending leave, even when this tab
+  /// was already selected. Ordinary tab selection is not an external navigation decision.
+  bool resumeExisting(String id) {
+    if (!_sessions.any((session) => session.id == id)) return false;
+    _terminalResumeRevision++;
+    _currentId = id;
+    _safeNotify();
+    return true;
   }
 
   // ── split view ──────────────────────────────────────────────────────────────
@@ -451,7 +607,13 @@ class ShellViewModel extends ChangeNotifier {
       _safeNotify();
       return;
     }
-    await connect(server, resumeName: row.tmuxName);
+    // The saved row identifies existing remote work. Changing a host's default for NEW sessions
+    // must not turn Resume into a fresh plain shell, nor ignore the selected control-mode setting.
+    await connect(
+      server.copyWith(persistentSession: true),
+      resumeName: row.tmuxName,
+      controlMode: useControlMode,
+    );
   }
 
   /// Stamps when [tmuxName] stopped being watched.
@@ -459,11 +621,18 @@ class ShellViewModel extends ChangeNotifier {
   /// Read-then-write rather than a partial update: the row carries the host it belongs to, and
   /// rewriting it from anything but itself would be how a session ends up attributed to the wrong
   /// machine.
-  Future<void> _markBackgrounded(String tmuxName) async {
+  Future<void> _markBackgrounded(
+    String tmuxName, {
+    bool requireRecord = false,
+    bool reload = true,
+  }) async {
     final row = (await _app.repository.getPersistentSessions())
         .where((r) => r.tmuxName == tmuxName)
         .firstOrNull;
-    if (row == null) return;
+    if (row == null) {
+      if (requireRecord) throw StateError('The saved tmux recovery record is missing.');
+      return;
+    }
     await _app.repository.upsertPersistentSession(
       PersistentSessionsCompanion.insert(
         tmuxName: row.tmuxName,
@@ -473,7 +642,7 @@ class ShellViewModel extends ChangeNotifier {
         backgroundedAt: DateTime.now().millisecondsSinceEpoch,
       ),
     );
-    await _reloadSaved();
+    if (reload) await _reloadSaved();
   }
 
   /// Re-reads the saved sessions.
@@ -774,14 +943,13 @@ class ShellViewModel extends ChangeNotifier {
         // asked for it would have its ordinary output parsed as a protocol and rendered as nothing.
         controlMode: controlMode && persistent != null,
       )..setViewportRows(_preferredRows);
-      // Fire-and-forget: the parser must not block on an SSH round trip, and until the query comes
-      // back the old pane id keeps working, which is the pre-existing behaviour rather than a
-      // regression.
+      // The parser must not block on repaint; the session buffers input until the pane is ready.
       session.onPaneChanged = (changed) => unawaited(refreshControlActivePane(changed));
-      session.addListener(_safeNotify);
+      session.addListener(_onSessionChanged);
       session.addListener(_syncBackgroundSessions);
       session.addListener(_syncReachabilityEvidence);
       _sessions.add(session);
+      _sessionCredentials[session] = creds;
       _currentId = session.id;
       _failedConnectTarget = null;
       _syncReachabilityEvidence();
@@ -800,7 +968,13 @@ class ShellViewModel extends ChangeNotifier {
       // the shell's first input rather than run as a channel command, so a host without tmux is
       // left at a perfectly ordinary prompt (the command guards itself with `command -v tmux`).
       if (persistent != null) {
-        session.write(Uint8List.fromList(utf8.encode(persistent.$2)));
+        // This is the shell bootstrap, not user input on an established control channel.
+        try {
+          await channel.write(Uint8List.fromList(utf8.encode(persistent.$2)));
+        } catch (_) {
+          session.closeByUser();
+          rethrow;
+        }
         await _reloadSaved();
       }
       if (initialCommand != null && initialCommand.trim().isNotEmpty) {
@@ -850,11 +1024,23 @@ class ShellViewModel extends ChangeNotifier {
   /// server, which is the entire point of marking a host persistent. So closing the tab starts that
   /// session's "left running since" clock — without it the resumable list cannot tell a session
   /// abandoned two minutes ago from one abandoned last month, and Forget is a decision made blind.
-  void close(ShellSession session) {
+  void close(ShellSession session) => _close(session);
+
+  void _close(ShellSession session, {bool saveRecovery = true}) {
+    _reconnectRuns.remove(session)?.timer?.cancel();
+    _sessionCredentials.remove(session);
+    session.reconnecting = false;
     final tmuxName = session.tmuxName;
-    if (tmuxName != null) unawaited(_markBackgrounded(tmuxName));
+    if (tmuxName != null && saveRecovery) {
+      unawaited(
+        _markBackgrounded(tmuxName).catchError((Object error) {
+          _error = 'Could not update the saved tmux recovery record: $error';
+          _safeNotify();
+        }),
+      );
+    }
     session.closeByUser();
-    session.removeListener(_safeNotify);
+    session.removeListener(_onSessionChanged);
     session.removeListener(_syncBackgroundSessions);
     session.removeListener(_syncReachabilityEvidence);
     _sessions.remove(session);
@@ -876,6 +1062,7 @@ class ShellViewModel extends ChangeNotifier {
       return;
     }
     final server = _app.servers.where((server) => server.id == session.serverId).firstOrNull;
+    var confirmedStopped = false;
     try {
       if (server == null || transport == null) {
         throw StateError('The host or SSH transport is no longer available.');
@@ -885,14 +1072,21 @@ class ShellViewModel extends ChangeNotifier {
         keys: await _app.repository.getAllKeys(),
         profiles: await _app.repository.getAllProfiles(),
       );
-      await transport!.exec(creds, tmuxKillCommand(tmuxName));
+      final result = await transport!.exec(creds, tmuxKillCommand(tmuxName));
+      if (result.startsWith('SSH Error:')) throw StateError(result);
+      final presence = parseTmuxSessionProbe(
+        await transport!.exec(creds, tmuxSessionProbeCommand(tmuxName)),
+      );
+      if (presence != false) throw StateError('Tmux did not confirm that this session is gone.');
       await _app.repository.deletePersistentSession(tmuxName);
+      await _reloadSaved();
+      confirmedStopped = true;
     } catch (e) {
       _error =
           'Disconnected locally, but the remote tmux session could not be confirmed stopped. '
           'It remains available for recovery: $e';
     }
-    close(session);
+    _close(session, saveRecovery: !confirmedStopped);
   }
 
   Future<void> disconnectAll({bool terminatePersistent = true}) async {
@@ -906,12 +1100,51 @@ class ShellViewModel extends ChangeNotifier {
     }
   }
 
-  /// Detaches persistent sessions so tmux can be resumed; ordinary sessions stay connected.
-  void leaveOrBackgroundAll() {
-    for (final session in _sessions.toList()) {
-      if (session.tmuxName != null) close(session);
+  bool _isLeavingSessions = false;
+  bool get isLeavingSessions => _isLeavingSessions;
+
+  Future<bool> leaveResumable(ShellSession session) => _leaveResumableSessions([session]);
+
+  /// Save recovery metadata before closing a client. Never claim a successful leave first.
+  Future<bool> _leaveResumableSessions(List<ShellSession> sessions) async {
+    if (_isLeavingSessions || _disposed) return false;
+    _isLeavingSessions = true;
+    _error = null;
+    _safeNotify();
+    final resumeRevision = _terminalResumeRevision;
+    try {
+      final persistent = sessions
+          .where((session) => session.tmuxName != null && _sessions.contains(session))
+          .toList();
+      // Match Kotlin: commit every recovery record before closing any client. Neither an
+      // intermediate saved-list notification nor a failed later write can leave half the split.
+      await _app.repository.inTransaction(() async {
+        for (final session in persistent) {
+          if (_disposed || resumeRevision != _terminalResumeRevision) throw _LeaveSuperseded();
+          await _markBackgrounded(session.tmuxName!, requireRecord: true, reload: false);
+          if (_disposed || resumeRevision != _terminalResumeRevision) throw _LeaveSuperseded();
+        }
+      });
+      if (_disposed || resumeRevision != _terminalResumeRevision) return false;
+      await _reloadSaved();
+      if (_disposed || resumeRevision != _terminalResumeRevision) return false;
+      for (final session in persistent) {
+        if (_sessions.contains(session)) _close(session, saveRecovery: false);
+      }
+      return true;
+    } catch (error) {
+      if (_disposed || resumeRevision != _terminalResumeRevision) return false;
+      _error =
+          'Could not save session recovery. Every live tab was kept open; retry leaving: $error';
+      return false;
+    } finally {
+      _isLeavingSessions = false;
+      _safeNotify();
     }
   }
+
+  /// Detaches persistent sessions so tmux can be resumed; ordinary sessions stay connected.
+  Future<bool> leaveOrBackgroundAll() => _leaveResumableSessions(_sessions.toList());
 
   /// Drop a session that ended on its own.
   ///
@@ -1058,6 +1291,9 @@ class ShellViewModel extends ChangeNotifier {
       return false;
     }
 
+    session.controlRefreshing = true;
+    session.controlRefreshError = null;
+    session.publishNow();
     try {
       final creds = resolveCredentials(
         host,
@@ -1066,7 +1302,7 @@ class ShellViewModel extends ChangeNotifier {
       );
       // Retry rather than return: a switch that lands while the query is in flight would otherwise
       // be answered with the pane the user has just left.
-      while (true) {
+      while (session.isOpen) {
         final revision = session.paneChangeRevision;
         final buffer = StringBuffer();
         await ssh.execStream(
@@ -1077,18 +1313,23 @@ class ShellViewModel extends ChangeNotifier {
         final paneId = buffer.toString().trim();
         // `%0`, not "whatever came back": the command ends in `|| true`, so a tmux that has gone
         // away answers with an empty string, and adopting that would address input to nothing.
-        if (!RegExp(r'^%\d+$').hasMatch(paneId)) return false;
+        if (!RegExp(r'^%\d+$').hasMatch(paneId)) {
+          throw StateError('The active tmux pane could not be resolved');
+        }
         if (session.paneChangeRevision != revision) continue;
-        if (session.adoptControlPane(paneId, revision)) return true;
-        if (session.paneChangeRevision == revision) return false;
+        if (await session.repaintControlPane(paneId, revision)) return true;
       }
-    } catch (_) {
-      // Leave `paneChangePending` set: the pane is still unresolved, and the next notification or
-      // reconnect retries. Failing loudly here would take down a session whose only problem is that
-      // one side-channel exec did not come back.
+      return false;
+    } catch (error) {
+      if (session.isOpen) {
+        session.controlRefreshError =
+            'Could not refresh the tmux pane: $error. Retry to send held input.';
+      }
       return false;
     } finally {
       _paneRefreshing.remove(session);
+      session.controlRefreshing = false;
+      session.publishNow();
     }
   }
 
@@ -1200,10 +1441,15 @@ class ShellViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    for (final run in _reconnectRuns.values) {
+      run.timer?.cancel();
+    }
+    _reconnectRuns.clear();
+    _sessionCredentials.clear();
     _app.removeListener(_onAppChanged);
     unawaited(_actionsSub?.cancel());
     for (final session in _sessions) {
-      session.removeListener(_safeNotify);
+      session.removeListener(_onSessionChanged);
       session.removeListener(_syncBackgroundSessions);
       session.removeListener(_syncReachabilityEvidence);
       session.dispose();
@@ -1216,4 +1462,9 @@ class ShellViewModel extends ChangeNotifier {
     unawaited(sessionService?.stop());
     super.dispose();
   }
+}
+
+class _ReconnectRun {
+  int attempt = 0;
+  Timer? timer;
 }

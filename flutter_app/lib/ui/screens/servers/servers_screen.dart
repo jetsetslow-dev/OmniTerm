@@ -242,6 +242,7 @@ Future<void> openServerForm(
   // Read the saved key aliases before opening: the form's Auth tab offers them, and a picker with
   // no options would make a key-authenticated host impossible to create.
   final aliases = (await vm.savedKeyAliases()).toList();
+  final profiles = await vm.savedProfiles();
   if (!context.mounted) return;
   return showModalBottomSheet<void>(
     context: context,
@@ -255,6 +256,7 @@ Future<void> openServerForm(
       suggestedName: suggestedName,
       existingServers: vm.servers,
       savedKeyAliases: aliases,
+      savedProfiles: profiles,
       onSave: (server) =>
           mode == ServerFormMode.edit ? vm.updateServer(server) : vm.saveServer(server),
       onTestConnection: vm.canTestConnections ? vm.testConnection : null,

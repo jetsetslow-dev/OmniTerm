@@ -5,9 +5,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Reaching hosts on the local network, and knowing whether there is a network at all. -->
     <!-- The foreground service is what stops Android descheduling the process and killing every
-         open SSH session the moment the user switches app. DATA_SYNC is the honest type: the app is
-         maintaining network connections the user explicitly opened. -->
+         open SSH session the moment the user switches app. Like Kotlin, interactive remote-host
+         connections use connectedDevice; finite file transfers keep the separate dataSync type. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- Taken with a timeout and renewed, never held open-endedly; see SessionService.kt. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -61,7 +63,7 @@
         <service
             android:name=".SessionService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="connectedDevice" />
         <service
             android:name=".LongOperationService"
             android:exported="false"

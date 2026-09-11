@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:drift/drift.dart' show Value;
 
@@ -10,6 +11,7 @@ import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/data/backup/backup_envelope.dart';
 import 'package:omniterm/data/backup/backup_payload.dart';
+import 'package:omniterm/data/backup/backup_document.dart';
 import 'package:omniterm/data/script_presets.dart';
 import 'package:omniterm/domain/backup_selection.dart';
 import 'package:omniterm/platform/secret_store.dart';
@@ -194,7 +196,7 @@ void main() {
       final vm = await boot();
 
       final document = await exportedDocument(vm, passphrase: 'a-long-enough-passphrase');
-      final keys = (document['settings'] as List).map((s) => (s as Map)['key'] as String).toList();
+      final keys = (document['settings'] as Map).keys.toList();
       expect(keys, contains('theme'));
       for (final localKey in const [
         'app_pin',
@@ -230,7 +232,7 @@ void main() {
 
       final vm = await boot();
       final document = await exportedDocument(vm, passphrase: 'a-long-enough-passphrase');
-      final exported = (document['scripts'] as List).cast<Map<String, dynamic>>();
+      final exported = (document['quickScripts'] as List).cast<Map<String, dynamic>>();
 
       expect(exported, hasLength(1));
       expect(exported.single['command'], 'my own command');
@@ -489,17 +491,105 @@ void main() {
       vm.dispose();
     });
 
-    test('is additive, so restoring the wrong file is recoverable', () async {
-      // There is no undo for a restore; wiping first would make one mistake permanent.
-      await repo.insertServer(server(name: 'existing'));
+    test('reuses a renamed server and preserves its current credentials', () async {
+      final id = await repo.insertServer(server(name: 'backup name', password: 'old-password'));
       final vm = await boot();
       final contents = await vm.exportBackup('a-long-enough-passphrase');
-      await vm.importBackup(contents!, 'a-long-enough-passphrase');
+      await repo.updateServer(
+        server(name: 'current name', password: 'new-password').copyWith(id: id),
+      );
+      final counts = await vm.importBackup(contents!, 'a-long-enough-passphrase');
       await settle();
 
       final all = await repo.getAllServers();
-      expect(all, hasLength(2));
-      expect(all.map((s) => s.name), everyElement('existing'));
+      expect(all, hasLength(1));
+      expect(all.single.id, id);
+      expect(all.single.name, 'current name');
+      expect(all.single.authPassword, 'new-password');
+      expect(counts?['servers'] ?? 0, 0);
+      expect(counts?['serversSkipped'], 1);
+      expect(vm.status, contains('Skipped "backup name"'));
+      expect(vm.status, contains('already exist as "current name"'));
+      vm.dispose();
+    });
+
+    test('renamed duplicate maps restored alerts and bookmarks to the existing host', () async {
+      final id = await repo.insertServer(server(name: 'local name'));
+      final vm = await boot();
+      final counts = await vm.importBackup(
+        jsonEncode({
+          'v': 2,
+          'servers': [
+            {
+              'id': 77,
+              'name': 'old name',
+              'host': '10.0.0.1',
+              'port': 2222,
+              'username': 'root',
+              'authType': 'password',
+            },
+            {
+              'id': 78,
+              'name': 'another alias',
+              'host': '10.0.0.1',
+              'port': 2222,
+              'username': 'root',
+              'authType': 'password',
+            },
+          ],
+          'alertRules': [
+            {
+              'id': 5,
+              'serverId': 77,
+              'metricName': 'CPU Usage',
+              'thresholdValue': 80,
+              'severity': 'WARNING',
+            },
+          ],
+          'settings': [
+            {'key': 'sftp_bookmarks_78', 'value': '/fixture'},
+          ],
+        }),
+        '',
+      );
+      expect(vm.error, isNull);
+      expect(await repo.getAllServers(), hasLength(1));
+      expect(counts?['servers'] ?? 0, 0);
+      expect((await repo.getAllRules()).single.serverId, id);
+      expect(await repo.getSetting('sftp_bookmarks_$id'), '/fixture');
+      expect(counts?['serversSkipped'], 2);
+      expect(vm.status, contains('Skipped "old name"'));
+      expect(vm.status, contains('Skipped "another alias"'));
+      vm.dispose();
+    });
+
+    test('different port, SSH user, or authentication method remains a separate server', () async {
+      await repo.insertServer(server(name: 'local name'));
+      final vm = await boot();
+      final counts = await vm.importBackup(
+        jsonEncode({
+          'v': 2,
+          'servers': [
+            for (final (name, port, user, auth) in [
+              ('other port', 22, 'root', 'password'),
+              ('other user', 2222, 'deploy', 'password'),
+              ('other auth', 2222, 'root', 'key'),
+            ])
+              {
+                'id': port,
+                'name': name,
+                'host': '10.0.0.1',
+                'port': port,
+                'username': user,
+                'authType': auth,
+              },
+          ],
+        }),
+        '',
+      );
+      expect(vm.error, isNull);
+      expect(counts?['servers'], 3);
+      expect(await repo.getAllServers(), hasLength(4));
       vm.dispose();
     });
 
@@ -524,7 +614,7 @@ void main() {
       final freshApp = AppState(freshRepo);
       await freshApp.start();
       // Something already occupies id 1, so the restored host cannot keep its old id.
-      await freshRepo.insertServer(server(name: 'unrelated'));
+      await freshRepo.insertServer(server(name: 'unrelated', host: '10.0.0.99'));
       final freshVm = BackupViewModel(freshApp);
       await freshVm.importBackup(contents!, 'a-long-enough-passphrase');
 
@@ -648,10 +738,10 @@ void main() {
     });
 
     test('an unknown section in the file is ignored, not fatal', () async {
-      // A backup from a newer build must not be unreadable by an older one.
+      // Extra metadata is safe within a supported schema; a future schema is refused separately.
       final vm = await boot();
       const withExtra =
-          '{"v":99,"somethingNew":[{"a":1}],'
+          '{"v":2,"somethingNew":[{"a":1}],'
           '"wolTargets":[{"name":"nas","macAddress":"aa:bb:cc:dd:ee:ff"}]}';
       await vm.importBackup(withExtra, '');
 
@@ -671,7 +761,7 @@ void main() {
     final vm = await boot();
     final document = await exportedDocument(vm, passphrase: 'a-long-enough-passphrase');
     expect(
-      document['scripts'],
+      document['quickScripts'],
       isEmpty,
       reason: 'a fresh install re-seeds these, so exporting them would duplicate defaults',
     );
@@ -1018,6 +1108,84 @@ void main() {
     expect(vm.error, contains('newer version'));
     vm.dispose();
     await freshDb.close();
+  });
+
+  group('published Kotlin and historical Flutter backup compatibility', () {
+    for (final fixture in ['kotlin-schema5.json', 'flutter-v2.json']) {
+      test('$fixture restores every selected section and remaps bookmarks', () async {
+        final vm = await boot();
+        final text = File('../app/src/androidTest/assets/backup/$fixture').readAsStringSync();
+        final inspection = await vm.inspectBackup(text, '');
+        expect(inspection, isNotNull, reason: vm.error);
+        expect(inspection!.counts[BackupSection.scripts], 1);
+        expect(inspection.counts[BackupSection.settings], 3);
+        final result = await vm.importBackup(
+          text,
+          '',
+          selection: inspection.available,
+          selectedServerIds: {11},
+        );
+        expect(result, isNotNull, reason: vm.error);
+        final restored = (await repo.getAllServers()).single;
+        expect(restored.persistentSession, isTrue);
+        expect((await repo.getAllScripts()).any((s) => s.command == 'printf fixture'), isTrue);
+        expect(await repo.getSetting('dark_mode'), 'false');
+        expect(await repo.getSetting('sftp_bookmarks_${restored.id}'), '/config');
+        expect(await repo.getSetting('app_pin'), isNull);
+        final wake = (await repo.getAllWolTargets()).single;
+        expect(wake.notes, 'Wake fixture');
+        expect(wake.lastWokenTime, 1786406400000);
+        vm.dispose();
+      });
+    }
+
+    test('Flutter export uses the published Kotlin schema', () async {
+      final vm = await boot();
+      vm.selectNone();
+      vm.toggleSection(BackupSection.settings, enabled: true);
+      await repo.insertSetting('dark_mode', 'false');
+      final text = await vm.exportBackup('');
+      final root = jsonDecode(text!) as Map;
+      expect(root['format'], 'omniterm-backup');
+      expect(root['schema'], 5);
+      expect(root['settings'], isA<Map>());
+      expect(
+        (readBackupDocument(text)['settings'] as List)
+            .where((row) => row['key'] == 'dark_mode')
+            .single,
+        {'key': 'dark_mode', 'value': 'false'},
+      );
+      vm.dispose();
+    });
+
+    test('future Kotlin schema is refused before selective restore writes anything', () async {
+      final vm = await boot();
+      final root =
+          jsonDecode(
+                File('../app/src/androidTest/assets/backup/kotlin-schema5.json').readAsStringSync(),
+              )
+              as Map;
+      root['schema'] = 6;
+      expect(await vm.inspectBackup(jsonEncode(root), ''), isNull);
+      expect(await vm.importBackup(jsonEncode(root), '', selectedServerIds: {11}), isNull);
+      expect(vm.error, contains('newer version'));
+      expect(await repo.getAllServers(), isEmpty);
+      vm.dispose();
+    });
+
+    test('malformed later section cannot leave a partial restore', () async {
+      final vm = await boot();
+      final root =
+          jsonDecode(
+                File('../app/src/androidTest/assets/backup/kotlin-schema5.json').readAsStringSync(),
+              )
+              as Map;
+      root['quickScripts'] = 'not a list';
+      expect(await vm.importBackup(jsonEncode(root), ''), isNull);
+      expect(vm.error, contains('invalid scripts'));
+      expect(await repo.getAllServers(), isEmpty);
+      vm.dispose();
+    });
   });
 
   group('the document version', () {

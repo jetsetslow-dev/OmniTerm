@@ -25,6 +25,18 @@ class BackupScreen extends StatefulWidget {
 }
 
 class _BackupScreenState extends State<BackupScreen> {
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  void _revealFeedback() {
+    if (mounted && _scrollController.hasClients) _scrollController.jumpTo(0);
+  }
+
   @override
   void initState() {
     super.initState();
@@ -42,109 +54,139 @@ class _BackupScreenState extends State<BackupScreen> {
     final vm = context.watch<BackupViewModel>();
     final scheme = Theme.of(context).colorScheme;
 
-    return ListView(
-      key: const ValueKey('backup.list'),
-      padding: const EdgeInsets.all(12),
+    return Stack(
       children: [
-        if (vm.status != null || vm.error != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: OmniCard(
-              key: const ValueKey('backup.message'),
-              leftAccent: vm.error != null ? OmniColors.red : OmniColors.green,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      vm.error ?? vm.status!,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: vm.error != null ? OmniColors.red : null,
+        ListView(
+          controller: _scrollController,
+          key: const ValueKey('backup.list'),
+          padding: const EdgeInsets.all(12),
+          children: [
+            if (vm.status != null || vm.error != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: OmniCard(
+                  key: const ValueKey('backup.message'),
+                  leftAccent: vm.error != null ? OmniColors.red : OmniColors.green,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          vm.error ?? vm.status!,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: vm.error != null ? OmniColors.red : null,
+                          ),
+                        ),
                       ),
-                    ),
+                      IconButton(
+                        tooltip: 'Dismiss',
+                        key: const ValueKey('backup.message.dismiss'),
+                        icon: const Icon(Icons.close, size: 16),
+                        onPressed: vm.dismissMessages,
+                      ),
+                    ],
                   ),
-                  IconButton(
-                    tooltip: 'Dismiss',
-                    key: const ValueKey('backup.message.dismiss'),
-                    icon: const Icon(Icons.close, size: 16),
-                    onPressed: vm.dismissMessages,
-                  ),
-                ],
+                ),
+              ),
+            const SectionHeader(title: 'What to include'),
+            Row(
+              children: [
+                TextButton(
+                  key: const ValueKey('backup.selectAll'),
+                  onPressed: vm.selectAll,
+                  child: const Text('All', style: TextStyle(fontSize: 12)),
+                ),
+                TextButton(
+                  key: const ValueKey('backup.selectNone'),
+                  onPressed: vm.selectNone,
+                  child: const Text('None', style: TextStyle(fontSize: 12)),
+                ),
+              ],
+            ),
+            for (final section in BackupSection.values)
+              CheckboxListTile(
+                key: ValueKey('backup.section.${section.name}'),
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                controlAffinity: ListTileControlAffinity.leading,
+                title: Text(section.label, style: const TextStyle(fontSize: 13)),
+                subtitle: _dependencyNote(section, scheme),
+                value: vm.selection.contains(section),
+                onChanged: (value) => vm.toggleSection(section, enabled: value ?? false),
+              ),
+            const SizedBox(height: 8),
+            if (vm.requiresPassphrase)
+              Text(
+                // Saying *why* rather than just demanding it: a passphrase prompt with no explanation
+                // reads as an obstacle, and this one is protecting stored passwords and private keys.
+                'This selection contains credentials and host details, so the file will be encrypted '
+                'with a passphrase. There is no way to recover the backup without it.',
+                key: const ValueKey('backup.sensitiveNote'),
+                style: const TextStyle(fontSize: 11, color: OmniColors.amber),
+              ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              key: const ValueKey('backup.export'),
+              icon: const Icon(Icons.upload_file, size: 18),
+              label: Text(vm.busy ? 'Working…' : 'Create backup'),
+              onPressed: vm.canExport ? () => _export(context, vm) : null,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              // The whole value of this line is the "Never" case: a user who believes they have a
+              // backup and does not is exactly who this screen is for.
+              vm.lastExportTime == null
+                  ? 'Last backup: Never'
+                  : 'Last backup: ${DateFormat.yMMMd().add_jm().format(vm.lastExportTime!)}',
+              key: const ValueKey('backup.lastExport'),
+              style: TextStyle(
+                fontSize: 11,
+                color: vm.lastExportTime == null ? OmniColors.amber : scheme.onSurfaceVariant,
               ),
             ),
-          ),
-        const SectionHeader(title: 'What to include'),
-        Row(
-          children: [
-            TextButton(
-              key: const ValueKey('backup.selectAll'),
-              onPressed: vm.selectAll,
-              child: const Text('All', style: TextStyle(fontSize: 12)),
+            const SizedBox(height: 24),
+            const SectionHeader(title: 'Restore'),
+            Text(
+              // The two things a user needs to know before tapping: nothing is destroyed, and the
+              // passphrase is not recoverable.
+              'Restoring adds the backup\'s contents alongside what is already here — nothing is '
+              'deleted or overwritten. An encrypted backup needs the passphrase it was made with.',
+              style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
             ),
-            TextButton(
-              key: const ValueKey('backup.selectNone'),
-              onPressed: vm.selectNone,
-              child: const Text('None', style: TextStyle(fontSize: 12)),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              key: const ValueKey('backup.import'),
+              icon: const Icon(Icons.restore, size: 18),
+              label: const Text('Restore from backup'),
+              onPressed: vm.busy ? null : () => _import(context, vm),
             ),
           ],
         ),
-        for (final section in BackupSection.values)
-          CheckboxListTile(
-            key: ValueKey('backup.section.${section.name}'),
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            controlAffinity: ListTileControlAffinity.leading,
-            title: Text(section.label, style: const TextStyle(fontSize: 13)),
-            subtitle: _dependencyNote(section, scheme),
-            value: vm.selection.contains(section),
-            onChanged: (value) => vm.toggleSection(section, enabled: value ?? false),
+        if (vm.busy) ...[
+          const Positioned.fill(child: ModalBarrier(dismissible: false, color: Colors.black38)),
+          Center(
+            child: Semantics(
+              liveRegion: true,
+              child: Card(
+                key: const ValueKey('backup.progress'),
+                margin: const EdgeInsets.all(24),
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      CircularProgressIndicator(semanticsLabel: vm.busyMessage),
+                      const SizedBox(height: 16),
+                      Text(vm.busyMessage),
+                      const SizedBox(height: 8),
+                      const Text('This may take a little while. Please wait.'),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ),
-        const SizedBox(height: 8),
-        if (vm.requiresPassphrase)
-          Text(
-            // Saying *why* rather than just demanding it: a passphrase prompt with no explanation
-            // reads as an obstacle, and this one is protecting stored passwords and private keys.
-            'This selection contains credentials and host details, so the file will be encrypted '
-            'with a passphrase. There is no way to recover the backup without it.',
-            key: const ValueKey('backup.sensitiveNote'),
-            style: const TextStyle(fontSize: 11, color: OmniColors.amber),
-          ),
-        const SizedBox(height: 12),
-        FilledButton.icon(
-          key: const ValueKey('backup.export'),
-          icon: const Icon(Icons.upload_file, size: 18),
-          label: Text(vm.busy ? 'Working…' : 'Create backup'),
-          onPressed: vm.canExport ? () => _export(context, vm) : null,
-        ),
-        const SizedBox(height: 6),
-        Text(
-          // The whole value of this line is the "Never" case: a user who believes they have a
-          // backup and does not is exactly who this screen is for.
-          vm.lastExportTime == null
-              ? 'Last backup: Never'
-              : 'Last backup: ${DateFormat.yMMMd().add_jm().format(vm.lastExportTime!)}',
-          key: const ValueKey('backup.lastExport'),
-          style: TextStyle(
-            fontSize: 11,
-            color: vm.lastExportTime == null ? OmniColors.amber : scheme.onSurfaceVariant,
-          ),
-        ),
-        const SizedBox(height: 24),
-        const SectionHeader(title: 'Restore'),
-        Text(
-          // The two things a user needs to know before tapping: nothing is destroyed, and the
-          // passphrase is not recoverable.
-          'Restoring adds the backup\'s contents alongside what is already here — nothing is '
-          'deleted or overwritten. An encrypted backup needs the passphrase it was made with.',
-          style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-        ),
-        const SizedBox(height: 12),
-        OutlinedButton.icon(
-          key: const ValueKey('backup.import'),
-          icon: const Icon(Icons.restore, size: 18),
-          label: const Text('Restore from backup'),
-          onPressed: vm.busy ? null : () => _import(context, vm),
-        ),
+        ],
       ],
     );
   }
@@ -182,6 +224,7 @@ class _BackupScreenState extends State<BackupScreen> {
     }
 
     final contents = await vm.exportBackup(passphrase);
+    _revealFeedback();
     if (contents == null || !context.mounted) return;
 
     final result = await widget.fileStore.save(vm.suggestedFileName(), contents);
@@ -199,6 +242,7 @@ class _BackupScreenState extends State<BackupScreen> {
       case BackupSaveOutcome.failed:
         vm.reportSaveFailed(result.error);
     }
+    _revealFeedback();
   }
 
   Future<void> _import(BuildContext context, BackupViewModel vm) async {
@@ -207,6 +251,7 @@ class _BackupScreenState extends State<BackupScreen> {
       contents = await widget.fileStore.open();
     } on BackupReadException catch (e) {
       if (context.mounted) vm.reportSaveFailed(e.message);
+      _revealFeedback();
       return;
     }
     if (contents == null || contents.trim().isEmpty || !context.mounted) return;
@@ -224,6 +269,7 @@ class _BackupScreenState extends State<BackupScreen> {
     }
 
     final inspection = await vm.inspectBackup(contents, passphrase);
+    _revealFeedback();
     if (inspection == null || !context.mounted) return;
     // Read before the dialog: `context` is not safe to use across the await inside it.
     final license = context.read<LicenseController?>();
@@ -267,6 +313,7 @@ class _BackupScreenState extends State<BackupScreen> {
       selection: choice.selection,
       selectedServerIds: choice.hostIds,
     );
+    _revealFeedback();
   }
 }
 

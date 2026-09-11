@@ -8,6 +8,7 @@ import '../../data/remote_models.dart';
 import '../../data/ssh/ssh_host_key_trust.dart';
 import '../../domain/ssh_key_import.dart';
 import '../../domain/ssh_keygen.dart';
+import '../../domain/server_identity.dart';
 import 'app_state.dart';
 
 /// Produces a keypair for [AuthKeysViewModel.generateKey].
@@ -288,19 +289,25 @@ class AuthKeysViewModel extends ChangeNotifier {
       return 'Pick a key for a key-authenticated profile.';
     }
 
-    await _app.repository.insertProfile(
-      CredentialProfile(
-        id: existing?.id ?? 0,
-        profileName: name,
-        username: username.trim(),
-        authType: authType,
-        // A key profile must not also carry a password: a server that rejects the key could
-        // otherwise harvest it. Same rule the credential resolver enforces at connect time.
-        password: authType == 'key' ? null : (password.isEmpty ? existing?.password : password),
-        keyAlias: authType == 'key' ? keyAlias.trim() : null,
-        groupName: groupName,
-      ),
-    );
+    try {
+      await _app.repository.insertProfile(
+        CredentialProfile(
+          id: existing?.id ?? 0,
+          profileName: name,
+          username: username.trim(),
+          authType: authType,
+          // A key profile must not also carry a password: a server that rejects the key could
+          // otherwise harvest it. Same rule the credential resolver enforces at connect time.
+          password: authType == 'key' ? null : (password.isEmpty ? existing?.password : password),
+          keyAlias: authType == 'key' ? keyAlias.trim() : null,
+          groupName: groupName,
+        ),
+      );
+    } on ProfileServerConflictException catch (error) {
+      return error.toString();
+    } catch (_) {
+      return 'Could not save the credential profile. No changes were saved. Please try again.';
+    }
     _status = "Saved profile '$name'.";
     _safeNotify();
     return null;

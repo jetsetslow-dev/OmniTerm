@@ -158,13 +158,13 @@ class TerminalEmulator implements TerminalSink {
     // scrollback. The alternate screen is never reflowed: it is a full-screen application's canvas,
     // not a transcript, and re-wrapping it would scramble a drawn layout. That is what xterm does
     // too, and the application is told the new size and redraws.
-    if (nc != _cols && !_altActive) {
-      _reflow(nc, nr);
-    } else {
-      _screen = _resizeGrid(_screen, nc, nr);
+    if (_altActive) {
+      _resizeAlternate(nc, nr);
+      return;
     }
-    final saved = _savedScreen;
-    if (saved != null) _savedScreen = _resizeGrid(saved, nc, nr);
+    // Height-only keyboard/layout changes must also move the live tail into the new screen.
+    // Clipping the grid discarded its bottom rows, including the latest output and prompt.
+    _reflow(nc, nr);
 
     _cols = nc;
     _rows = nr;
@@ -173,9 +173,32 @@ class TerminalEmulator implements TerminalSink {
     // Clamped, not recomputed: a reflow has already placed the cursor on the character it was on.
     _curRow = _curRow.clamp(0, _rows - 1);
     _curCol = _curCol.clamp(0, _cols - 1);
-    _wrapPending = false;
+    _wrapPending = _wrapPending && _curCol == _cols - 1;
     // Cached spans were built at the old width.
     _scrollbackSpanCache.clear();
+  }
+
+  void _resizeAlternate(int nc, int nr) {
+    final alternate = _screen;
+    final alternateCursorRow = _curRow;
+    final alternateCursorCol = _curCol;
+    _screen = _savedScreen ?? List.generate(_rows, (_) => blankRow(_cols), growable: false);
+    _savedScreen = null;
+    _curRow = _altSavedCursorRow.clamp(0, _rows - 1);
+    _curCol = _altSavedCursorCol.clamp(0, _cols - 1);
+    _wrapPending = _altSavedWrapPending && _curCol == _cols - 1;
+    _altActive = false;
+    // The hidden normal buffer is still a transcript, even while vim/less/tmux owns the canvas.
+    resize(nc, nr);
+    _savedScreen = _screen;
+    _altSavedCursorRow = _curRow;
+    _altSavedCursorCol = _curCol;
+    _altSavedWrapPending = _wrapPending;
+    _screen = _resizeGrid(alternate, nc, nr);
+    _altActive = true;
+    _curRow = alternateCursorRow.clamp(0, _rows - 1);
+    _curCol = alternateCursorCol.clamp(0, _cols - 1);
+    _wrapPending = false;
   }
 
   /// Re-wraps the scrollback and screen together at [nc], then re-splits them at [nr].
@@ -191,6 +214,7 @@ class TerminalEmulator implements TerminalSink {
       newCols: nc,
       cursorRow: _scrollback.length + _curRow,
       cursorCol: _curCol,
+      cursorWrapPending: _wrapPending,
     );
 
     // Blank rows below the last content are padding the old screen happened to have, not text.
@@ -223,6 +247,7 @@ class TerminalEmulator implements TerminalSink {
     _screen = screen;
     _curRow = (result.cursorRow - screenStart).clamp(0, nr - 1);
     _curCol = result.cursorCol.clamp(0, nc - 1);
+    _wrapPending = result.cursorWrapPending;
     _scrollbackSpanCache.clear();
     _trimScrollbackToLimit();
   }

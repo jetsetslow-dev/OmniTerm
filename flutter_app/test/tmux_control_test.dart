@@ -112,6 +112,11 @@ void main() {
       expect(events.single, const TmuxReply('line one\nline two', isError: false));
     });
 
+    test('capture preserves leading blank rows and client reply flags', () {
+      final events = TmuxControlParser().feed(b('%begin 1 2 1\n\n\nquiet pane\n%end 1 2 1\n'));
+      expect(events.single, const TmuxReply('\n\nquiet pane', isError: false, flags: 1));
+    });
+
     test('%error marks the reply as failed', () {
       final events = TmuxControlParser().feed(b('%begin 1 1 0\nnope\n%error 1 1 0\n'));
       expect(events.single, const TmuxReply('nope', isError: true));

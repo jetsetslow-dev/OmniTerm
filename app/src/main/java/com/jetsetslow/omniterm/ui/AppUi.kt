@@ -183,7 +183,7 @@ fun ServerSelectorBar(
                 }
             }
         }
-        DropdownMenu(
+        OverflowDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
             modifier = if (anchorWidth > 0.dp) Modifier.width(anchorWidth) else Modifier,
@@ -282,7 +282,7 @@ fun ActionStreamDialog(viewModel: AppViewModel) {
             LaunchedEffect(viewModel.actionStreamOutput) { outScroll.scrollTo(outScroll.maxValue) }
             Box(
                 Modifier.fillMaxWidth().height(300.dp).background(Color.Black)
-                    .verticalScroll(outScroll).padding(8.dp)
+                    .verticalScrollWithIndicators(outScroll).padding(8.dp)
             ) {
                 if (viewModel.actionStreamRunning && viewModel.actionStreamOutput.isBlank()) {
                     Text(stringResource(R.string.running_2), fontFamily = OmniFonts.mono, fontSize = 11.sp, color = Color.Gray)
@@ -526,6 +526,11 @@ fun MainAppScreen(viewModel: AppViewModel) {
     if (viewModel.isAppLocked && viewModel.isAppLockEnabled) {
         PinLockGateway(viewModel)
     } else {
+        LaunchedEffect(viewModel.terminalLeaveNotice) {
+            viewModel.consumeTerminalLeaveNotice()?.let { message ->
+                android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_SHORT).show()
+            }
+        }
         CompositionLocalProvider(LocalFullScreenEditorHost provides fullScreenEditorHost) {
             AppCoreScaffold(viewModel)
         }
@@ -640,7 +645,7 @@ fun TmuxInstallDialog(viewModel: AppViewModel) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(max = 180.dp)
-                            .verticalScroll(rememberScrollState())
+                            .verticalScrollWithIndicators(rememberScrollState())
                             .background(MaterialTheme.colorScheme.surfaceContainerHighest)
                             .padding(8.dp),
                     ) {
@@ -1038,6 +1043,31 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                 )
             }
 
+            // Toolbar and automatic leave actions share the same persistence feedback as navigation.
+            if (!viewModel.showDisconnectTerminalDialog &&
+                (viewModel.isLeavingTerminalSessions || viewModel.terminalLeaveError != null)) {
+                AlertDialog(
+                    onDismissRequest = {
+                        if (!viewModel.isLeavingTerminalSessions) viewModel.dismissTerminalLeaveError()
+                    },
+                    title = { Text(if (viewModel.isLeavingTerminalSessions) "Saving session recovery" else "Session recovery not saved") },
+                    text = {
+                        Column(Modifier.verticalScrollWithIndicators(rememberScrollState())) {
+                            if (viewModel.isLeavingTerminalSessions) {
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                                Text("Saving resumable sessions… Please wait.")
+                            }
+                            viewModel.terminalLeaveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                        }
+                    },
+                    confirmButton = {
+                        if (!viewModel.isLeavingTerminalSessions) {
+                            TextButton(onClick = { viewModel.dismissTerminalLeaveError() }) { Text("Close") }
+                        }
+                    },
+                )
+            }
+
             // Disconnect dialog safety check
             if (viewModel.showKeepScreenOnBatteryWarning) {
                 AlertDialog(
@@ -1071,7 +1101,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                 val hasNormal = sessions.any { !it.persistent }
                 val connecting = viewModel.pendingTerminalNavigationIncludesConnectAttempt
                 AlertDialog(
-                    onDismissRequest = { viewModel.cancelTerminalNavigation() },
+                    onDismissRequest = { if (!viewModel.isLeavingTerminalSessions) viewModel.cancelTerminalNavigation() },
                     title = {
                         Text(
                             when {
@@ -1083,6 +1113,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                         )
                     },
                     text = {
+                        Column(Modifier.verticalScrollWithIndicators(rememberScrollState())) {
                         Text(
                             when {
                                 count == 1 && allPersistent ->
@@ -1102,9 +1133,16 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                                         "Sending sessions to the background keeps OmniTerm active and may increase battery consumption."
                             }
                         )
+                            if (viewModel.isLeavingTerminalSessions) {
+                                LinearProgressIndicator(Modifier.fillMaxWidth())
+                                Text("Saving resumable sessions… Please wait.")
+                            }
+                            viewModel.terminalLeaveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                        }
                     },
                     confirmButton = {
                         TextButton(
+                            enabled = !viewModel.isLeavingTerminalSessions,
                             onClick = { viewModel.completeTerminalNavigation(disconnect = true) }
                         ) {
                             Text(
@@ -1120,6 +1158,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                     dismissButton = {
                         Row {
                             TextButton(
+                                enabled = !viewModel.isLeavingTerminalSessions,
                                 onClick = { viewModel.completeTerminalNavigation(disconnect = false) }
                             ) {
                                 Text(
@@ -1132,6 +1171,7 @@ fun AppCoreScaffold(viewModel: AppViewModel) {
                                 )
                             }
                             TextButton(
+                                enabled = !viewModel.isLeavingTerminalSessions,
                                 onClick = { viewModel.cancelTerminalNavigation() }
                             ) {
                                 Text(stringResource(R.string.stay))
@@ -1313,7 +1353,7 @@ private fun HostLimitReconciliationDialog(viewModel: AppViewModel) {
         title = { Text(stringResource(R.string.choose_host_to_keep)) },
         text = {
             Column(
-                modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                modifier = Modifier.heightIn(max = 420.dp).verticalScrollWithIndicators(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
@@ -1744,7 +1784,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                     }
                 }
             } else {
-                LazyColumn(
+                OverflowLazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f)
@@ -2167,7 +2207,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                                 },
                                 modifier = Modifier.fillMaxWidth()
                             )
-                            DropdownMenu(expanded = groupMenuOpen, onDismissRequest = { groupMenuOpen = false }) {
+                            OverflowDropdownMenu(expanded = groupMenuOpen, onDismissRequest = { groupMenuOpen = false }) {
                                 existingGroups.forEach { g ->
                                     DropdownMenuItem(text = { Text(g) }, onClick = { bulkGroupName = g; groupMenuOpen = false })
                                 }
@@ -2326,6 +2366,7 @@ fun AddServerSheet(
     var proxyKeyAlias by remember { mutableStateOf(src?.proxyKeyAlias ?: "") }
 
     var errorText by remember { mutableStateOf<String?>(null) }
+    var savingServer by remember { mutableStateOf(false) }
     var testingConnection by remember { mutableStateOf(false) }
     var testResultText by remember { mutableStateOf<String?>(null) }
     var confirmDuplicateHost by remember { mutableStateOf<ServerEntity?>(null) }
@@ -2375,6 +2416,8 @@ fun AddServerSheet(
     }
 
     fun saveServerDraft() {
+        if (savingServer) return
+        savingServer = true
         if (serverToEdit != null) {
             viewModel.updateServer(
                 serverToEdit.copy(
@@ -2402,10 +2445,13 @@ fun AddServerSheet(
                     proxyPassword = effectiveProxyPassword(),
                     proxyKeyAlias = proxyKeyAlias.takeIf { it.isNotBlank() && proxyType == "ssh" }
                 )
-            )
-            onDismiss()
+            ) { error ->
+                savingServer = false
+                if (error == null) onDismiss() else errorText = error
+            }
         } else {
             if (viewModel.hasHostLimit && allServers.size >= viewModel.hostLimit) {
+                savingServer = false
                 errorText = "The free Play Store build supports 1 saved host. Unlock OmniTerm to add unlimited hosts."
                 return
             }
@@ -2435,6 +2481,7 @@ fun AddServerSheet(
                 proxyPassword = proxyPassword,
                 proxyKeyAlias = proxyKeyAlias.takeIf { it.isNotBlank() && proxyType == "ssh" },
             ) { err ->
+                savingServer = false
                 if (err != null) {
                     errorText = err
                 } else {
@@ -2445,14 +2492,14 @@ fun AddServerSheet(
     }
 
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = { if (!savingServer) onDismiss() },
         title = { Text(if (isDuplicate) "Duplicate Host" else if (serverToEdit == null) "Add Linux Remote Host" else "Edit Linux Remote Host") },
         text = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 560.dp)
-                    .verticalScroll(rememberScrollState())
+                    .verticalScrollWithIndicators(rememberScrollState())
             ) {
                 PrimaryTabRow(selectedTabIndex = activeTab) {
                     Tab(selected = activeTab == 0, onClick = { activeTab = 0 }) { Text(stringResource(R.string.connection), fontSize = 12.sp, modifier = Modifier.padding(8.dp)) }
@@ -2496,7 +2543,7 @@ fun AddServerSheet(
                                     }
                                 }
                             )
-                            DropdownMenu(expanded = groupMenuOpen, onDismissRequest = { groupMenuOpen = false }) {
+                            OverflowDropdownMenu(expanded = groupMenuOpen, onDismissRequest = { groupMenuOpen = false }) {
                                 existingGroups.forEach { g ->
                                     DropdownMenuItem(text = { Text(g) }, onClick = { group = g; groupMenuOpen = false })
                                 }
@@ -2599,7 +2646,7 @@ fun AddServerSheet(
                                 Text(stringResource(R.string.no_credentials_profiles_found_go_to), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
                             } else {
                                 Text(stringResource(R.string.select_credentials_profile))
-                                LazyColumn(modifier = Modifier.height(100.dp)) {
+                                OverflowLazyColumn(modifier = Modifier.height(100.dp)) {
                                     items(savedProfiles) { profile ->
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
@@ -2797,6 +2844,20 @@ fun AddServerSheet(
             } else {
                 Button(
                     onClick = {
+                        if (savingServer) return@Button
+                        val candidate = ServerEntity(
+                            id = serverToEdit?.id ?: 0, name = name, host = host,
+                            port = port.toIntOrNull() ?: 22, username = user,
+                            authType = authType, authProfileId = selectedProfileId,
+                        )
+                        val identity = com.jetsetslow.omniterm.data.serverIdentity(candidate, savedProfiles)
+                        val sameLogin = if (identity == null) null else allServers.firstOrNull {
+                            it.id != candidate.id && com.jetsetslow.omniterm.data.serverIdentity(it, savedProfiles) == identity
+                        }
+                        if (sameLogin != null) {
+                            errorText = "The same host, port, SSH user and authentication method already exist as \"${sameLogin.name}\". Existing server unchanged."
+                            return@Button
+                        }
                         if (connectionSignature() != testedOkSignature) {
                             errorText = "Run Test Connection first — it verifies the login and lets you trust the server's host key, so the host can't end up saved but unable to connect."
                             activeTab = 1
@@ -2809,12 +2870,16 @@ fun AddServerSheet(
                         if (serverToEdit == null && duplicate != null) confirmDuplicateHost = duplicate else saveServerDraft()
                     }
                 ) {
-                    Text(if (serverToEdit != null) "Update Server" else "Save Server")
+                    if (savingServer) {
+                        CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Saving server…")
+                    } else Text(if (serverToEdit != null) "Update Server" else "Save Server")
                 }
             }
         },
         dismissButton = {
-            TextButton(onClick = { if (activeTab > 0) activeTab -= 1 else onDismiss() }) {
+            TextButton(enabled = !savingServer, onClick = { if (activeTab > 0) activeTab -= 1 else onDismiss() }) {
                 Text(if (activeTab > 0) "Back" else "Cancel")
             }
         }

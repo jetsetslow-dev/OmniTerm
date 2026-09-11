@@ -124,8 +124,8 @@ class SessionService : Service() {
     }
 
     private fun startForegroundWith(notification: Notification) {
-        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
+        val type = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
         } else {
             0
         }
@@ -261,6 +261,13 @@ class SessionService : Service() {
     }
 
     private fun stopEverything() {
+        clearSessionNotifications()
+        releaseWakeLock()
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        stopSelf()
+    }
+
+    private fun clearSessionNotifications() {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
         manager?.let { nm ->
             shownSessionIds.forEach(nm::cancel)
@@ -274,12 +281,11 @@ class SessionService : Service() {
             }
         }
         shownSessionIds.clear()
-        releaseWakeLock()
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        stopSelf()
     }
 
     override fun onDestroy() {
+        // stopService() does not go through onStartCommand; remove child rows on that path too.
+        clearSessionNotifications()
         releaseWakeLock()
         super.onDestroy()
     }

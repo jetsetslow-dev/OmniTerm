@@ -86,6 +86,8 @@ class ServersViewModel extends ChangeNotifier {
   Future<List<String>> savedKeyAliases() async =>
       (await _app.repository.getAllKeys()).map((k) => k.alias).toList();
 
+  Future<List<CredentialProfile>> savedProfiles() => _app.repository.getAllProfiles();
+
   /// Attempts a connection with [candidate]'s settings. Returns null on success, otherwise a
   /// message to show the user.
   ///
@@ -209,10 +211,10 @@ class ServersViewModel extends ChangeNotifier {
 
   // ── actions ────────────────────────────────────────────────────────────────
 
-  Future<int> saveServer(Server server) => _app.repository.insertServer(server);
+  Future<int> saveServer(Server server) => _app.repository.saveUniqueServer(server);
 
   Future<void> updateServer(Server server) async {
-    await _app.repository.updateServer(server);
+    await _app.repository.saveUniqueServer(server, update: true);
     await shortcuts?.pushServer(server);
   }
 

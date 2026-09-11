@@ -1,10 +1,17 @@
+import 'dart:async';
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:omniterm/data/app_database.dart';
+import 'package:omniterm/data/backup/backup_envelope.dart';
 import 'package:omniterm/main.dart' as app;
 import 'package:omniterm/ui/navigation.dart';
+import 'package:omniterm/ui/screens/servers/servers_screen.dart';
+import 'package:omniterm/ui/screens/servers/server_form_state.dart';
+import 'package:omniterm/ui/view_model/servers_view_model.dart';
+import 'package:omniterm/ui/view_model/backup_view_model.dart';
 import 'package:omniterm/ui/view_model/alerts_view_model.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/fleet_view_model.dart';
@@ -42,6 +49,96 @@ void main() {
     final network = initialContext.read<NetworkViewModel>();
     final originalPreferences = settings.saved;
     final renderFailures = <String>[];
+
+    // Exercise the actual scaffold gesture before inserting a host. Hidden Monitor/Infra tabs
+    // must not consume swipes, including a remembered subtab from a previously online host.
+    expect(appState.servers, isEmpty);
+    for (final (screen, previous, next) in [
+      (Screen.monitor, Screen.fleet, Screen.shell),
+      (Screen.infra, Screen.sftp, Screen.tools),
+    ]) {
+      for (final forward in [false, true]) {
+        navigation.navigateTo(screen);
+        navigation.setSubtab(screen, 2);
+        if (screen == Screen.monitor) monitor.activeTab = MonitorTab.values[2];
+        if (screen == Screen.infra) infra.activeTab = InfraTab.values[2];
+        await tester.pumpAndSettle();
+        await tester.fling(
+          find.byKey(const ValueKey('app.screenSwipe')),
+          Offset(forward ? -240 : 240, 0),
+          1000,
+        );
+        await tester.pumpAndSettle();
+        expect(navigation.currentScreen, forward ? next : previous);
+      }
+    }
+    navigation.navigateTo(Screen.servers);
+    await tester.pumpAndSettle();
+
+    // Open the real host form, including the previously missing profile picker.
+    await tester.runAsync(
+      () => appState.repository.insertProfile(
+        const CredentialProfile(
+          id: 0,
+          profileName: 'Surface fixture login',
+          username: 'fixture',
+          authType: 'password',
+          password: 'synthetic fixture secret',
+          groupName: 'E2E',
+        ),
+      ),
+    );
+    final serversContext = tester.element(find.byKey(const ValueKey('screen.servers')));
+    await tester.runAsync(() async {
+      unawaited(
+        openServerForm(
+          serversContext,
+          serversContext.read<ServersViewModel>(),
+          mode: ServerFormMode.add,
+        ),
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Auth'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Profile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('serverForm.profile')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Surface fixture login').last);
+    await tester.pumpAndSettle();
+    expect(find.text('Surface fixture login'), findsOneWidget);
+    Navigator.of(tester.element(find.byKey(const ValueKey('serverForm.profile')))).pop();
+    await tester.pumpAndSettle();
+
+    // Exercise real decryption while Backup is visible; a Future must not hide the busy state
+    // or prevent frames from being pumped during the expensive password derivation.
+    final encrypted = (await tester.runAsync(
+      () => encryptBackup(
+        '{"v":2,"settings":[{"key":"surface_fixture","value":"yes"}]}',
+        'surface-fixture-passphrase',
+      ),
+    ))!;
+    navigation.navigateTo(Screen.backup);
+    await tester.pumpAndSettle();
+    final backup = tester
+        .element(find.byKey(const ValueKey('screen.backup')))
+        .read<BackupViewModel>();
+    Future<BackupInspection?>? inspection;
+    await tester.runAsync(() async {
+      inspection = backup.inspectBackup(encrypted, 'surface-fixture-passphrase');
+    });
+    await tester.pump();
+    expect(find.byKey(const ValueKey('backup.progress')), findsOneWidget);
+    expect(find.text('Decrypting backup…'), findsOneWidget);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.byType(CircularProgressIndicator), findsWidgets);
+    expect(await tester.runAsync(() => inspection!), isNotNull);
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('backup.progress')), findsNothing);
+    navigation.navigateTo(Screen.servers);
+    await tester.pumpAndSettle();
 
     addTearDown(() async {
       hostProbe.stop();
@@ -88,6 +185,69 @@ void main() {
       await tester.pump(const Duration(milliseconds: 100));
     }
     expect(appState.servers, hasLength(1));
+
+    // A selected offline host must still allow local Compose editing, with a valid picker value.
+    final fixture = appState.servers.single;
+    await _exerciseProfileCollision(tester, appState, navigation, fixture);
+    appState.selectedServerId = fixture.id;
+    await appState.repository.updateServer(fixture.copyWith(status: 'offline'));
+    for (var attempt = 0; attempt < 20 && appState.servers.single.status != 'offline'; attempt++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(appState.servers.single.status, 'offline');
+    navigation.navigateTo(Screen.infra);
+    infra.activeTab = InfraTab.stacks;
+    await tester.pumpAndSettle();
+    await tester.fling(find.byKey(const ValueKey('app.screenSwipe')), const Offset(-240, 0), 1000);
+    await tester.pumpAndSettle();
+    expect(infra.activeTab, InfraTab.builder);
+    expect(find.byKey(const ValueKey('infra.builder')), findsOneWidget);
+    expect(find.text('Containers · Surface Fixture'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await appState.repository.updateServer(fixture);
+    for (var attempt = 0; attempt < 20 && appState.servers.single.status != 'online'; attempt++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(appState.servers.single.status, 'online');
+
+    // Swipes must update the actual visible feature tab, and start from a tab selected elsewhere.
+    for (final (screen, readTab, selectTab) in <(Screen, int Function(), void Function(int))>[
+      (Screen.fleet, () => fleet.activeTab.index, (i) => fleet.activeTab = FleetTab.values[i]),
+      (
+        Screen.monitor,
+        () => monitor.activeTab.index,
+        (i) => monitor.activeTab = MonitorTab.values[i],
+      ),
+      (Screen.sftp, () => sftp.activeTab.index, (i) => sftp.activeTab = SftpTab.values[i]),
+      (Screen.infra, () => infra.activeTab.index, (i) => infra.activeTab = InfraTab.values[i]),
+      (Screen.alerts, () => alerts.activeTab.index, (i) => alerts.activeTab = AlertsTab.values[i]),
+      (
+        Screen.quickScripts,
+        () => scripts.activeTab.index,
+        (i) => scripts.activeTab = ScriptsTab.values[i],
+      ),
+      (
+        Screen.network,
+        () => network.activeTab.index,
+        (i) => network.activeTab = NetworkTab.values[i],
+      ),
+    ]) {
+      navigation.navigateTo(screen);
+      selectTab(1);
+      await tester.pumpAndSettle();
+      await tester.fling(find.byKey(const ValueKey('app.screenSwipe')), const Offset(240, 0), 1000);
+      await tester.pumpAndSettle();
+      expect(navigation.currentScreen, screen);
+      expect(readTab(), 0, reason: '${screen.name} swipe follows the selected feature tab');
+      await tester.fling(
+        find.byKey(const ValueKey('app.screenSwipe')),
+        const Offset(-240, 0),
+        1000,
+      );
+      await tester.pumpAndSettle();
+      expect(navigation.currentScreen, screen);
+      expect(readTab(), 1, reason: '${screen.name} swipe updates the visible feature tab');
+    }
 
     // The five schemes `themeModeFor` can select, crossed with every text size the app offers.
     //
@@ -249,6 +409,71 @@ void main() {
 
     expect(renderFailures, isEmpty, reason: renderFailures.join('\n'));
   });
+}
+
+Future<void> _exerciseProfileCollision(
+  WidgetTester tester,
+  AppState appState,
+  NavigationController navigation,
+  Server fixture,
+) async {
+  final original = (await tester.runAsync(
+    appState.repository.getAllProfiles,
+  ))!.singleWhere((profile) => profile.profileName == 'Surface fixture login');
+  final indirectId = (await tester.runAsync(() async {
+    await appState.repository.insertProfile(original.copyWith(username: 'deploy'));
+    return appState.repository.insertServer(
+      fixture.copyWith(
+        id: 0,
+        name: 'Surface profile fixture',
+        authType: 'profile',
+        authProfileId: Value(original.id),
+        status: 'offline',
+      ),
+    );
+  }))!;
+  try {
+    navigation.navigateTo(Screen.authKeys);
+    await tester.pumpAndSettle();
+    final edit = find.byKey(ValueKey('authKeys.profile.${original.id}.edit'));
+    await tester.ensureVisible(edit);
+    await tester.tap(edit);
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('authKeys.profile.username')),
+      fixture.username,
+    );
+    final save = find.byKey(const ValueKey('authKeys.profile.save'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    final error = find.byKey(const ValueKey('authKeys.profile.error'));
+    for (var attempt = 0; attempt < 50 && error.evaluate().isEmpty; attempt++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    await tester.ensureVisible(error);
+    expect(tester.widget<Text>(error).data, contains('Surface Fixture'));
+    expect(tester.widget<Text>(error).data, contains('Surface profile fixture'));
+    final saved = await tester.runAsync(
+      () => appState.repository.getCredentialProfileById(original.id),
+    );
+    expect(saved!.username, 'deploy');
+    expect(saved.password, original.password);
+    final close = find.byKey(const ValueKey('authKeys.profile.close'));
+    await tester.ensureVisible(close);
+    await tester.tap(close);
+    await tester.pumpAndSettle();
+  } finally {
+    await tester.runAsync(() async {
+      await appState.repository.deleteServerAndDependents(indirectId);
+      await appState.repository.insertProfile(original);
+    });
+  }
+  for (var attempt = 0; attempt < 50 && appState.servers.length != 1; attempt++) {
+    await tester.pump(const Duration(milliseconds: 100));
+  }
+  expect(appState.servers, hasLength(1));
+  navigation.navigateTo(Screen.servers);
+  await tester.pumpAndSettle();
 }
 
 /// Waits until the live text scaler is the one the preference asked for.

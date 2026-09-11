@@ -95,6 +95,132 @@ void main() {
     return vm = ShellViewModel(app, transport: ssh ?? transport);
   }
 
+  group('automatic reconnect preserves the terminal', () {
+    Future<void> until(bool Function() ready) async {
+      await Future<void>(() async {
+        while (!ready()) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      }).timeout(const Duration(seconds: 5));
+    }
+
+    test('a socket drop replaces only the channel and keeps scrollback and selection', () async {
+      await repo.insertServer(server(name: 'nas'));
+      await start();
+      await vm.connect(vm.server!);
+      final session = vm.current!;
+      transport.opened.single.emit('before-drop\r\n');
+      await Future<void>.delayed(const Duration(milliseconds: 30));
+      await transport.opened.single.dropConnection();
+      await until(() => session.reconnecting);
+      expect(vm.current, same(session));
+      await until(() => transport.opened.length == 2 && session.isOpen);
+      expect(vm.current, same(session));
+      expect(session.reconnecting, isFalse);
+      expect(
+        session.emulator.snapshot().rows.expand((r) => r.spans).map((s) => s.text).join(),
+        contains('before-drop'),
+      );
+      expect(vm.typeText('after'), isTrue);
+      await Future<void>.delayed(Duration.zero);
+      expect(utf8.decode(transport.opened.last.writes.last), 'after');
+    });
+
+    test('backgrounding and switching live tabs never reopen SSH', () async {
+      await repo.insertServer(server(name: 'nas'));
+      await start();
+      await vm.connect(vm.server!);
+      await vm.connect(vm.server!);
+      final first = vm.sessions.first;
+      for (var i = 0; i < 3; i++) {
+        vm.setTerminalVisible(false);
+        vm.setTerminalVisible(true);
+        vm.select(first.id);
+        vm.select(vm.sessions.last.id);
+      }
+      expect(transport.opened, hasLength(2));
+      expect(vm.sessions.every((s) => s.isOpen && !s.reconnecting), isTrue);
+      expect(transport.opened.every((s) => !s.closeCalled), isTrue);
+    });
+
+    test('tmux reconnect attaches the exact saved session without creating another', () async {
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await start();
+      await vm.connect(vm.server!);
+      final session = vm.current!;
+      transport.execAnswers['has-session -t ${session.tmuxName}'] = tmuxSessionPresentMarker;
+      await transport.opened.single.dropConnection();
+      await until(() => transport.opened.length == 2 && session.isOpen);
+      final command = transport.opened.last.writes.map(utf8.decode).join();
+      expect(command, contains('attach-session -t ${session.tmuxName}'));
+      expect(command, isNot(contains('new-session')));
+      expect(vm.current, same(session));
+      expect(await repo.getPersistentSessions(), hasLength(1));
+    });
+
+    test('confirmed absent tmux stops retrying and never opens an empty shell', () async {
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await start();
+      await vm.connect(vm.server!);
+      final session = vm.current!;
+      transport.execAnswers['has-session -t ${session.tmuxName}'] = tmuxSessionAbsentMarker;
+      await transport.opened.single.dropConnection();
+      await until(() => session.reconnectError != null);
+      expect(session.reconnectError, contains('no longer exists'));
+      expect(session.reconnecting, isFalse);
+      expect(transport.opened, hasLength(1));
+      expect(await repo.getPersistentSessions(), isEmpty);
+    });
+
+    test('control client detach probes and resumes the still-live tmux session', () async {
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await start();
+      await vm.connect(vm.server!, controlMode: true);
+      final session = vm.current!;
+      transport.execAnswers['has-session -t ${session.tmuxName}'] = tmuxSessionPresentMarker;
+      transport.opened.single.emit('%exit detached\r\n');
+      await until(() => session.endReason != ShellSessionEnd.open);
+      expect(session.reconnecting, isTrue);
+      await until(() => transport.opened.length == 2 && session.isOpen);
+      expect(vm.current, same(session));
+      expect(transport.opened.last.writes.map(utf8.decode).join(), contains('attach-session'));
+      expect(await repo.getPersistentSessions(), hasLength(1));
+    });
+
+    test('a quiet control attach resolves its input pane without waiting for output', () async {
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await start();
+      await vm.connect(vm.server!, controlMode: true);
+      final session = vm.current!;
+      transport.streamChunks = ['%9\n'];
+      transport.opened.single.onWrite = (command) {
+        final body = command.startsWith('display-message') ? '0 0\n' : '';
+        transport.opened.single.emit('%begin 1 1 1\n$body%end 1 1 1\n');
+      };
+      transport.opened.single.emit('%session-changed \$0 quiet\r\n');
+      await until(() => session.paneChangeRevision > 0);
+      await until(() => session.controlPaneId == '%9');
+      await until(() => !session.paneChangePending);
+      expect(vm.typeText('x'), isTrue);
+      await Future<void>.delayed(Duration.zero);
+      expect(transport.opened.single.writes.map(utf8.decode).join(), contains('send-keys -t %9'));
+    });
+
+    test('closing while a reconnect is opening disposes the late replacement', () async {
+      await repo.insertServer(server(name: 'nas'));
+      await start();
+      await vm.connect(vm.server!);
+      final session = vm.current!;
+      transport.gate = Completer<void>();
+      await transport.opened.single.dropConnection();
+      await until(() => transport.openedWith.length == 2);
+      vm.close(session);
+      transport.gate!.complete();
+      await until(() => transport.opened.length == 2 && transport.opened.last.closeCalled);
+      expect(vm.sessions, isEmpty);
+    });
+  });
+
   group('the split launcher shortcut', () {
     /// Defect 76. `ShortcutHelper.pushSplit` and its whole native implementation existed, and
     /// nothing ever called it — so the shortcut Kotlin offers whenever two hosts share the screen
@@ -450,12 +576,21 @@ void main() {
         final session = vm.current!;
         expect(session.controlMode, isTrue, reason: 'the guard under test only applies here');
         transport.streamChunks = ['%9\n'];
+        transport.opened.last.onWrite = (command) {
+          final body = command.startsWith('capture-pane')
+              ? 'quiet pane\n'
+              : command.startsWith('display-message')
+              ? '0 0\n'
+              : '';
+          transport.opened.last.emit('%begin 1 1 1\n$body%end 1 1 1\n');
+        };
 
         expect(await vm.refreshControlActivePane(session), isTrue);
 
         expect(transport.commands.last, contains("display-message -p -t"));
         expect(transport.commands.last, contains("'#{pane_id}'"));
         expect(session.controlPaneId, '%9');
+        expect(session.snapshot.rows.map((row) => row.text).join('\n'), contains('quiet pane'));
         expect(
           session.scrollbackDirty,
           isTrue,
@@ -661,6 +796,129 @@ void main() {
       expect(vm.resumableSessions.single.serverName, 'nas');
     });
 
+    test(
+      'leaving resumable finishes saving recovery metadata before reporting completion',
+      () async {
+        final transport = FakeShellTransport();
+        final vm = await start(ssh: transport);
+        await repo.insertServer(server(name: 'nas', persistent: true));
+        await Future<void>.delayed(Duration.zero);
+        await vm.connect((await repo.getAllServers()).single);
+        final name = vm.current!.tmuxName;
+        await Future.sync(vm.leaveOrBackgroundAll);
+        expect(vm.sessions, isEmpty);
+        expect(vm.resumableSessions.single.tmuxName, name);
+        expect(vm.resumableSessions.single.backgroundedAt, greaterThan(0));
+      },
+    );
+
+    test(
+      'a missing recovery record keeps the live tab open and reports the leave failure',
+      () async {
+        final transport = FakeShellTransport();
+        final vm = await start(ssh: transport);
+        await repo.insertServer(server(name: 'nas', persistent: true));
+        await Future<void>.delayed(Duration.zero);
+        await vm.connect((await repo.getAllServers()).single);
+        final session = vm.current!;
+        await repo.deletePersistentSession(session.tmuxName!);
+        expect(await vm.leaveResumable(session), isFalse);
+        expect(vm.current, same(session));
+        expect(session.isOpen, isTrue);
+        expect(vm.error, contains('tab was kept open'));
+        expect(vm.isLeavingSessions, isFalse);
+      },
+    );
+
+    test('a later recovery write failure keeps every tab open and rolls back the batch', () async {
+      await start();
+      await repo.insertServer(server(name: 'first', persistent: true));
+      await repo.insertServer(server(name: 'second', persistent: true));
+      await Future<void>.delayed(Duration.zero);
+      for (final host in await repo.getAllServers()) {
+        await vm.connect(host);
+      }
+      final sessions = vm.sessions.toList();
+      expect(sessions, hasLength(2));
+      final before = await repo.getPersistentSessions();
+      final rejected = sessions.last.tmuxName!.replaceAll("'", "''");
+      await db.customStatement(
+        "CREATE TRIGGER reject_leave BEFORE INSERT ON persistent_sessions "
+        "WHEN NEW.tmuxName = '$rejected' BEGIN SELECT RAISE(ABORT, 'fixture storage unavailable'); END",
+      );
+      try {
+        expect(await vm.leaveOrBackgroundAll(), isFalse);
+        expect(vm.sessions, orderedEquals(sessions));
+        expect(sessions.every((session) => session.isOpen), isTrue);
+        expect(vm.error, contains('fixture storage unavailable'));
+        final after = await repo.getPersistentSessions();
+        for (final row in before) {
+          expect(
+            after.singleWhere((saved) => saved.tmuxName == row.tmuxName).backgroundedAt,
+            row.backgroundedAt,
+          );
+        }
+      } finally {
+        await db.customStatement('DROP TRIGGER reject_leave');
+      }
+      expect(await vm.leaveOrBackgroundAll(), isTrue);
+      expect(vm.sessions, isEmpty);
+      expect(vm.resumableSessions, hasLength(2));
+      expect(vm.error, isNull);
+      for (final row in before) {
+        expect(
+          vm.resumableSessions.singleWhere((saved) => saved.tmuxName == row.tmuxName).createdAt,
+          row.createdAt,
+        );
+      }
+    });
+
+    test('a failed tmux termination never forgets the remote recovery pointer', () async {
+      final transport = FakeShellTransport();
+      final vm = await start(ssh: transport);
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await Future<void>.delayed(Duration.zero);
+      await vm.connect((await repo.getAllServers()).single);
+      final session = vm.current!;
+      transport.execAnswers['kill-session'] = 'SSH Error: connection lost';
+      await vm.terminate(session);
+      expect((await repo.getPersistentSessions()).single.tmuxName, session.tmuxName);
+      expect(vm.error, contains('could not be confirmed stopped'));
+    });
+
+    test(
+      'termination forgets only a session confirmed absent and clears the resumable list',
+      () async {
+        final transport = FakeShellTransport();
+        final vm = await start(ssh: transport);
+        await repo.insertServer(server(name: 'nas', persistent: true));
+        await Future<void>.delayed(Duration.zero);
+        await vm.connect((await repo.getAllServers()).single);
+        final session = vm.current!;
+        transport.execAnswers['kill-session'] = '';
+        transport.execAnswers['has-session -t ${session.tmuxName}'] = tmuxSessionAbsentMarker;
+        await vm.terminate(session);
+        expect(await repo.getPersistentSessions(), isEmpty);
+        expect(vm.resumableSessions, isEmpty);
+        expect(vm.sessions, isEmpty);
+        expect(vm.error, isNull);
+      },
+    );
+
+    test('an ambiguous post-termination probe keeps the recovery entry', () async {
+      final transport = FakeShellTransport();
+      final vm = await start(ssh: transport);
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await Future<void>.delayed(Duration.zero);
+      await vm.connect((await repo.getAllServers()).single);
+      final session = vm.current!;
+      transport.execAnswers['kill-session'] = '';
+      transport.execAnswers['has-session -t ${session.tmuxName}'] = 'SSH Error: timed out';
+      await vm.terminate(session);
+      expect((await repo.getPersistentSessions()).single.tmuxName, session.tmuxName);
+      expect(vm.error, contains('could not be confirmed stopped'));
+    });
+
     test('closing a tab starts the left-running clock', () async {
       // The whole point of a persistent host is that closing the tab does not end the work — so the
       // moment it stops being watched is the only thing that makes the resumable list actionable.
@@ -732,6 +990,29 @@ void main() {
 
       expect(sent(transport), contains('attach-session -t omniterm-1-older'));
       expect(sent(transport), isNot(contains('omniterm-1-newer')));
+    });
+
+    test('resume keeps tmux identity even after the host default changes to plain SSH', () async {
+      await repo.insertServer(server(name: 'nas', persistent: false));
+      await repo.upsertPersistentSession(
+        PersistentSessionsCompanion.insert(
+          tmuxName: 'omniterm-kept-default-changed',
+          serverId: 1,
+          serverName: 'nas',
+          createdAt: 1,
+          backgroundedAt: 2,
+        ),
+      );
+      await start();
+      await vm.refreshResumable();
+      transport.execAnswers['has-session -t omniterm-kept-default-changed'] =
+          tmuxSessionPresentMarker;
+      vm.useControlMode = true;
+      await vm.resume(vm.resumableSessions.single);
+      expect(vm.current!.tmuxName, 'omniterm-kept-default-changed');
+      expect(vm.current!.controlMode, isTrue);
+      expect(sent(transport), contains('tmux -C attach-session -t omniterm-kept-default-changed'));
+      expect(sent(transport), isNot(contains('new-session')));
     });
 
     test('forgetting removes the pointer and says the server keeps running it', () async {

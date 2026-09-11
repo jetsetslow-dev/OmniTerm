@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../../domain/server_identity.dart';
 
 import '../../../data/app_database.dart';
 import '../../../domain/host_display.dart';
@@ -24,6 +25,7 @@ class ServerFormSheet extends StatefulWidget {
     this.onTestConnection,
     this.existingServers = const [],
     this.savedKeyAliases = const [],
+    this.savedProfiles = const [],
     this.prefillHost,
     this.prefillPort,
     this.suggestedName,
@@ -35,6 +37,7 @@ class ServerFormSheet extends StatefulWidget {
   final ConnectionTester? onTestConnection;
   final List<Server> existingServers;
   final List<String> savedKeyAliases;
+  final List<CredentialProfile> savedProfiles;
   final String? prefillHost;
   final int? prefillPort;
   final String? suggestedName;
@@ -53,6 +56,7 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
   );
 
   bool _testing = false;
+  bool _saving = false;
   String? _testResult;
   bool _testPassed = false;
   String? _saveError;
@@ -88,17 +92,42 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
     final validation = _form.validationError;
     if (validation != null) {
       setState(() => _saveError = validation);
       return;
     }
+    final candidate = _form.toServer();
+    final identity = serverIdentity(candidate, widget.savedProfiles);
+    if (identity == null) {
+      setState(() => _saveError = 'Select an existing credential profile.');
+      return;
+    }
+    for (final existing in [...widget.existingServers, if (widget.source != null) widget.source!]) {
+      if (existing.id != candidate.id &&
+          serverIdentity(existing, widget.savedProfiles) == identity) {
+        setState(() => _saveError = DuplicateServerException(existing.name).toString());
+        return;
+      }
+    }
     if (_form.requiresConnectionTest && !await _confirmUnverifiedSave()) return;
     final duplicate = _duplicateHost();
     if (duplicate != null && !await _confirmDuplicate(duplicate)) return;
 
-    await widget.onSave(_form.toServer());
-    if (mounted) Navigator.of(context).pop();
+    if (!mounted) return;
+    setState(() {
+      _saving = true;
+      _saveError = null;
+    });
+    try {
+      await widget.onSave(_form.toServer());
+      if (mounted) Navigator.of(context).pop();
+    } catch (error) {
+      if (mounted) setState(() => _saveError = 'Could not save host: $error');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   /// Keeps host-key verification prominent without making an advisory network check a hard gate.
@@ -170,8 +199,8 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
         title: const Text('Duplicate IP address'),
         content: Text(
           'Host ${display.name(duplicate)} already uses ${display.host(duplicate)}. '
-          'You can still save this server if it intentionally uses a different '
-          'credential profile.',
+          'A different SSH user, authentication method or port is a separate connection. '
+          'A different display name alone is not.',
         ),
         actions: [
           TextButton(
@@ -230,7 +259,11 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
                   builder: (context, _) => TabBarView(
                     children: [
                       _ConnectTab(form: _form, existingServers: widget.existingServers),
-                      _AuthTab(form: _form, savedKeyAliases: widget.savedKeyAliases),
+                      _AuthTab(
+                        form: _form,
+                        savedKeyAliases: widget.savedKeyAliases,
+                        savedProfiles: widget.savedProfiles,
+                      ),
                       _AdvancedTab(form: _form),
                     ],
                   ),
@@ -281,11 +314,20 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
                         listenable: _form,
                         builder: (context, _) => FilledButton(
                           key: const ValueKey('serverForm.save'),
-                          onPressed: _save,
-                          child: Text(
-                            _form.requiresConnectionTest ? 'Save anyway' : 'Save',
-                            style: TextStyle(color: scheme.onPrimary),
-                          ),
+                          onPressed: _saving ? null : _save,
+                          child: _saving
+                              ? const SizedBox(
+                                  width: 18,
+                                  height: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    semanticsLabel: 'Saving host…',
+                                  ),
+                                )
+                              : Text(
+                                  _form.requiresConnectionTest ? 'Save anyway' : 'Save',
+                                  style: TextStyle(color: scheme.onPrimary),
+                                ),
                         ),
                       ),
                     ),
@@ -359,10 +401,11 @@ class _ConnectTab extends StatelessWidget {
 }
 
 class _AuthTab extends StatelessWidget {
-  const _AuthTab({required this.form, required this.savedKeyAliases});
+  const _AuthTab({required this.form, required this.savedKeyAliases, required this.savedProfiles});
 
   final ServerFormState form;
   final List<String> savedKeyAliases;
+  final List<CredentialProfile> savedProfiles;
 
   @override
   Widget build(BuildContext context) {
@@ -405,8 +448,21 @@ class _AuthTab extends StatelessWidget {
             onChanged: (v) => form.update(() => form.selectedKeyAlias = v ?? ''),
           ),
         if (form.authType == 'profile')
+          DropdownButtonFormField<int>(
+            key: const ValueKey('serverForm.profile'),
+            initialValue: savedProfiles.any((p) => p.id == form.selectedProfileId)
+                ? form.selectedProfileId
+                : null,
+            decoration: omniInputDecoration(context, labelText: 'Credential profile'),
+            items: [
+              for (final profile in savedProfiles)
+                DropdownMenuItem(value: profile.id, child: Text(profile.profileName)),
+            ],
+            onChanged: (id) => form.update(() => form.selectedProfileId = id),
+          ),
+        if (form.authType == 'profile' && savedProfiles.isEmpty)
           Text(
-            'Credential profiles are managed in Tools → Auth keys.',
+            'No credential profiles saved. Add one in Tools → Auth keys.',
             style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
           ),
       ],

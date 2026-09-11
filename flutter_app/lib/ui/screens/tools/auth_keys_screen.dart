@@ -957,6 +957,8 @@ Future<void> _openProfileEditor(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
+    isDismissible: false,
+    enableDrag: false,
     builder: (_) => _ProfileSheet(vm: vm, existing: existing),
   );
 }
@@ -978,6 +980,7 @@ class _ProfileSheetState extends State<_ProfileSheet> {
   late String _authType = widget.existing?.authType ?? 'password';
   late String _keyAlias = widget.existing?.keyAlias ?? '';
   String? _failure;
+  bool _saving = false;
 
   bool get _hasStoredPassword => (widget.existing?.password ?? '').isNotEmpty;
 
@@ -990,6 +993,11 @@ class _ProfileSheetState extends State<_ProfileSheet> {
   }
 
   Future<void> _save() async {
+    if (_saving) return;
+    setState(() {
+      _saving = true;
+      _failure = null;
+    });
     final failure = await widget.vm.saveProfile(
       existing: widget.existing,
       profileName: _name.text,
@@ -1002,88 +1010,125 @@ class _ProfileSheetState extends State<_ProfileSheet> {
     if (failure == null) {
       Navigator.of(context).pop();
     } else {
-      setState(() => _failure = failure);
+      setState(() {
+        _saving = false;
+        _failure = failure;
+      });
     }
   }
 
   @override
   Widget build(BuildContext context) {
     final aliases = widget.vm.keys.map((k) => k.alias).toList();
-    return Padding(
-      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text(
-                widget.existing == null ? 'New credential profile' : 'Edit profile',
-                style: Theme.of(context).textTheme.titleLarge,
-              ),
-              const SizedBox(height: 12),
-              TextField(
-                key: const ValueKey('authKeys.profile.name'),
-                controller: _name,
-                decoration: omniInputDecoration(context, labelText: 'Profile name'),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                key: const ValueKey('authKeys.profile.username'),
-                controller: _username,
-                decoration: omniInputDecoration(context, labelText: 'Username'),
-              ),
-              const SizedBox(height: 10),
-              SegmentedButton<String>(
-                key: const ValueKey('authKeys.profile.authType'),
-                segments: const [
-                  ButtonSegment(value: 'password', label: Text('Password')),
-                  ButtonSegment(value: 'key', label: Text('Key')),
+    return PopScope(
+      canPop: !_saving,
+      child: Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+        child: SafeArea(
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          widget.existing == null ? 'New credential profile' : 'Edit profile',
+                          style: Theme.of(context).textTheme.titleLarge,
+                        ),
+                      ),
+                      IconButton(
+                        key: const ValueKey('authKeys.profile.close'),
+                        tooltip: 'Close',
+                        onPressed: _saving ? null : () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.close),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    key: const ValueKey('authKeys.profile.name'),
+                    enabled: !_saving,
+                    controller: _name,
+                    decoration: omniInputDecoration(context, labelText: 'Profile name'),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    key: const ValueKey('authKeys.profile.username'),
+                    enabled: !_saving,
+                    controller: _username,
+                    decoration: omniInputDecoration(context, labelText: 'Username'),
+                  ),
+                  const SizedBox(height: 10),
+                  SegmentedButton<String>(
+                    key: const ValueKey('authKeys.profile.authType'),
+                    segments: const [
+                      ButtonSegment(value: 'password', label: Text('Password')),
+                      ButtonSegment(value: 'key', label: Text('Key')),
+                    ],
+                    selected: {_authType},
+                    onSelectionChanged: _saving ? null : (s) => setState(() => _authType = s.first),
+                  ),
+                  const SizedBox(height: 10),
+                  if (_authType == 'password')
+                    TextField(
+                      key: const ValueKey('authKeys.profile.password'),
+                      enabled: !_saving,
+                      controller: _password,
+                      obscureText: true,
+                      decoration: omniInputDecoration(
+                        context,
+                        labelText: 'Password',
+                        // Same rule as the host form: a stored secret is never rendered into a field,
+                        // and an empty one means "unchanged".
+                        hintText: _hasStoredPassword ? 'Saved — leave blank to keep' : null,
+                      ),
+                    )
+                  else
+                    DropdownButtonFormField<String>(
+                      key: const ValueKey('authKeys.profile.key'),
+                      initialValue: aliases.contains(_keyAlias) ? _keyAlias : null,
+                      decoration: omniInputDecoration(context, labelText: 'Key'),
+                      items: [
+                        for (final alias in aliases)
+                          DropdownMenuItem(value: alias, child: Text(alias)),
+                      ],
+                      onChanged: _saving ? null : (v) => setState(() => _keyAlias = v ?? ''),
+                    ),
+                  if (_failure != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 10),
+                      child: Text(
+                        _failure!,
+                        key: const ValueKey('authKeys.profile.error'),
+                        style: const TextStyle(color: OmniColors.red, fontSize: 12),
+                      ),
+                    ),
+                  const SizedBox(height: 14),
+                  FilledButton(
+                    key: const ValueKey('authKeys.profile.save'),
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                              SizedBox(width: 8),
+                              Text('Saving…'),
+                            ],
+                          )
+                        : const Text('Save'),
+                  ),
                 ],
-                selected: {_authType},
-                onSelectionChanged: (s) => setState(() => _authType = s.first),
               ),
-              const SizedBox(height: 10),
-              if (_authType == 'password')
-                TextField(
-                  key: const ValueKey('authKeys.profile.password'),
-                  controller: _password,
-                  obscureText: true,
-                  decoration: omniInputDecoration(
-                    context,
-                    labelText: 'Password',
-                    // Same rule as the host form: a stored secret is never rendered into a field,
-                    // and an empty one means "unchanged".
-                    hintText: _hasStoredPassword ? 'Saved — leave blank to keep' : null,
-                  ),
-                )
-              else
-                DropdownButtonFormField<String>(
-                  key: const ValueKey('authKeys.profile.key'),
-                  initialValue: aliases.contains(_keyAlias) ? _keyAlias : null,
-                  decoration: omniInputDecoration(context, labelText: 'Key'),
-                  items: [
-                    for (final alias in aliases) DropdownMenuItem(value: alias, child: Text(alias)),
-                  ],
-                  onChanged: (v) => setState(() => _keyAlias = v ?? ''),
-                ),
-              if (_failure != null)
-                Padding(
-                  padding: const EdgeInsets.only(top: 10),
-                  child: Text(
-                    _failure!,
-                    key: const ValueKey('authKeys.profile.error'),
-                    style: const TextStyle(color: OmniColors.red, fontSize: 12),
-                  ),
-                ),
-              const SizedBox(height: 14),
-              FilledButton(
-                key: const ValueKey('authKeys.profile.save'),
-                onPressed: _save,
-                child: const Text('Save'),
-              ),
-            ],
+            ),
           ),
         ),
       ),

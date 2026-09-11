@@ -44,19 +44,21 @@ class InfraViewModel extends ChangeNotifier {
 
   // ── which host is inspected ─────────────────────────────────────────────────
 
-  /// The host whose containers are shown: the explicitly selected one **if it is still online**,
-  /// else the first online host. Same rule as Monitor; the Kotlin app's
-  /// unconditional version left the screen showing a host its own picker no longer listed.
+  /// Preserve the explicitly selected host even offline, matching Kotlin: Compose drafts do not
+  /// require a live connection. The picker includes offline hosts so its label stays consistent.
+  /// Without an explicit selection, prefer the first online host.
   Server? get inspectedServer {
     final online = _app.servers.where((s) => s.status == 'online');
     final selectedId = _app.selectedServerId;
-    for (final server in online) {
+    for (final server in _app.servers) {
       if (server.id == selectedId) return server;
     }
     return online.firstOrNull;
   }
 
   List<Server> get onlineServers => _app.servers.where((s) => s.status == 'online').toList();
+
+  List<Server> get selectableServers => List.unmodifiable(_app.servers);
 
   bool get hasNoOnlineHosts => inspectedServer == null;
 
@@ -601,16 +603,7 @@ class InfraViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
-  Future<void> _runAction(String command) async {
-    final output = await _exec(command);
-    if (output != null) {
-      _actionOutput = output.trim();
-      _safeNotify();
-      // Actions change what is running, so the lists are refetched rather than patched locally —
-      // guessing the new state is how a UI ends up disagreeing with the host.
-      await load();
-    }
-  }
+  Future<void> _runAction(String command) => _runStreamingAction('Container action', command);
 
   Future<void> _runStreamingAction(String title, String command) async {
     final server = inspectedServer;
@@ -650,6 +643,10 @@ class InfraViewModel extends ChangeNotifier {
       );
       if (epoch == _actionEpoch && (_actionOutput ?? '').isEmpty) {
         _actionOutput = result;
+      } else if (epoch == _actionEpoch &&
+          result.startsWith('SSH Error:') &&
+          !(_actionOutput ?? '').contains(result)) {
+        _actionOutput = '${_actionOutput ?? ''}\n$result';
       }
     } on CredentialResolutionException catch (error) {
       if (epoch == _actionEpoch) _actionOutput = error.message;

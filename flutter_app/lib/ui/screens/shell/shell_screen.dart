@@ -42,6 +42,19 @@ class ShellScreen extends StatelessWidget {
       child: Column(
         children: [
           if (vm.sessions.isNotEmpty || session != null) _SessionBar(vm: vm),
+          if (vm.isLeavingSessions) ...[
+            const LinearProgressIndicator(),
+            const Text('Saving resumable sessions…'),
+          ],
+          if (session != null && vm.error != null)
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Text(
+                vm.error!,
+                key: const ValueKey('shell.active.error'),
+                style: const TextStyle(color: OmniColors.red),
+              ),
+            ),
           Expanded(
             child: session == null
                 ? _ConnectPane(vm: vm, licenseController: licenseController)
@@ -699,7 +712,7 @@ Future<void> _requestCloseSession(
     ),
   );
   if (choice == 'leave') {
-    vm.close(session);
+    await vm.leaveResumable(session);
   } else if (choice == 'disconnect') {
     if (persistent) {
       await vm.terminate(session);
@@ -980,6 +993,15 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
         return Column(
           children: [
             _TerminalStatusRow(vm: widget.vm, session: session),
+            if (session.controlRefreshError != null)
+              Padding(
+                padding: const EdgeInsets.all(8),
+                child: Text(
+                  session.controlRefreshError!,
+                  key: const ValueKey('shell.pane.error'),
+                  style: const TextStyle(color: OmniColors.red),
+                ),
+              ),
             Expanded(
               child: Focus(
                 focusNode: _keyFocus,
@@ -1120,6 +1142,15 @@ class _TerminalStatusRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8),
       child: Row(
         children: [
+          if (session.controlRefreshing)
+            const Padding(
+              padding: EdgeInsets.only(right: 8),
+              child: SizedBox(
+                width: 12,
+                height: 12,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
           Expanded(
             child: Text(
               _status(),
@@ -1133,6 +1164,12 @@ class _TerminalStatusRow extends StatelessWidget {
               ),
             ),
           ),
+          if (!ended && session.paneChangePending && !session.controlRefreshing)
+            TextButton(
+              key: const ValueKey('shell.refreshPane'),
+              onPressed: () => vm.refreshControlActivePane(session),
+              child: const Text('Retry pane', style: TextStyle(fontSize: 11)),
+            ),
           if (!ended)
             _Toggle(
               label: 'RO',
@@ -1141,6 +1178,13 @@ class _TerminalStatusRow extends StatelessWidget {
               keyName: 'shell.readOnly',
               onTap: () => session.setReadOnly(!session.readOnly),
             ),
+          if (ended)
+            if (session.endReason == ShellSessionEnd.disconnected && !session.reconnecting)
+              TextButton(
+                key: const ValueKey('shell.retry'),
+                onPressed: () => vm.retrySession(session),
+                child: const Text('Retry', style: TextStyle(fontSize: 11)),
+              ),
           if (ended)
             TextButton(
               key: const ValueKey('shell.dismiss'),
@@ -1152,19 +1196,25 @@ class _TerminalStatusRow extends StatelessWidget {
     );
   }
 
-  String _status() => switch (session.endReason) {
-    ShellSessionEnd.open =>
-      session.readOnly
-          ? 'READ ONLY · ${session.cols}×${session.rows} · drag to scroll'
-          : '${session.serverName} · ${session.cols}×${session.rows}',
-    // The exit status is the useful part of a clean exit, so it is shown rather than summarised.
-    ShellSessionEnd.remoteExited =>
-      'Session ended (exit ${session.exitStatus ?? 0}). Scrollback kept.',
-    // Named as a connection problem, not as an exit: the remote may well still be running, and
-    // telling the user their shell "ended" would be a lie they act on.
-    ShellSessionEnd.disconnected => 'Connection lost. Scrollback kept.',
-    ShellSessionEnd.closedByUser => 'Closed.',
-  };
+  String _status() => session.reconnecting
+      ? 'Reconnecting… Scrollback kept.'
+      : switch (session.endReason) {
+          ShellSessionEnd.open =>
+            session.controlRefreshError ??
+                (session.paneChangePending
+                    ? 'Loading tmux pane… Input held.'
+                    : session.readOnly
+                    ? 'READ ONLY · ${session.cols}×${session.rows} · drag to scroll'
+                    : '${session.serverName} · ${session.cols}×${session.rows}'),
+          // The exit status is the useful part of a clean exit, so it is shown rather than summarised.
+          ShellSessionEnd.remoteExited =>
+            'Session ended (exit ${session.exitStatus ?? 0}). Scrollback kept.',
+          // Named as a connection problem, not as an exit: the remote may well still be running, and
+          // telling the user their shell "ended" would be a lie they act on.
+          ShellSessionEnd.disconnected =>
+            session.reconnectError ?? 'Connection lost. Scrollback kept.',
+          ShellSessionEnd.closedByUser => 'Closed.',
+        };
 }
 
 class _Toggle extends StatelessWidget {

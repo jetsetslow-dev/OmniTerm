@@ -1,11 +1,10 @@
-import 'dart:convert';
-
 import 'package:drift/drift.dart' show Value;
 
 import '../../domain/backup_selection.dart';
 import '../app_database.dart';
 import '../app_repository.dart';
 import '../script_presets.dart';
+import 'backup_document.dart';
 import 'backup_envelope.dart';
 import '../../platform/crash_log.dart';
 
@@ -108,6 +107,7 @@ class BackupPayload {
             'sshCompression': server.sshCompression,
             'persistentSession': server.persistentSession,
             'agentForwarding': server.agentForwarding,
+            'proxyCommand': server.proxyCommand,
             'proxyType': server.proxyType,
             'proxyHost': server.proxyHost,
             'proxyPort': server.proxyPort,
@@ -270,6 +270,8 @@ class BackupPayload {
             'anonymous': share.anonymous,
             'useHttps': share.useHttps,
             'notes': share.notes,
+            'lastChecked': share.lastChecked,
+            'lastStatus': share.lastStatus,
           },
       ];
     }
@@ -283,6 +285,8 @@ class BackupPayload {
             'broadcastIp': target.broadcastIp,
             'ipAddress': target.ipAddress,
             'port': target.port,
+            'notes': target.notes,
+            'lastWokenTime': target.lastWokenTime,
           },
       ];
     }
@@ -298,7 +302,7 @@ class BackupPayload {
       ];
     }
 
-    return jsonEncode(document);
+    return writeBackupDocument(document);
   }
 
   static bool _isPristinePreset(QuickScript script) {
@@ -316,13 +320,12 @@ class BackupPayload {
   /// there is no undo for that.
   ///
   /// Returns a per-section count of what was written.
-  static Future<Map<String, int>> restore(AppRepositoryLike repository, String json) async {
-    final Map<String, dynamic> document;
-    try {
-      document = jsonDecode(json) as Map<String, dynamic>;
-    } catch (_) {
-      throw const BackupException('That backup file could not be read.');
-    }
+  static Future<Map<String, int>> restore(
+    AppRepositoryLike repository,
+    String json, {
+    List<String>? skippedServerMessages,
+  }) async {
+    final document = readBackupDocument(json);
 
     final counts = <String, int>{};
 
@@ -348,10 +351,21 @@ class BackupPayload {
     for (final raw in _list(document, 'servers')) {
       final oldId = raw['id'] as int? ?? 0;
       final oldProfileId = raw['authProfileId'] as int?;
-      final newId = await repository.insertRestoredServer({
+      final row = <String, dynamic>{
         ...raw,
         'authProfileId': oldProfileId == null ? null : profileIdMap[oldProfileId],
-      });
+      };
+      final existing = await repository.findRestoredServer(row);
+      if (existing != null) {
+        if (oldId != 0) serverIdMap[oldId] = existing.id;
+        counts['serversSkipped'] = (counts['serversSkipped'] ?? 0) + 1;
+        skippedServerMessages?.add(
+          'Skipped "${raw['name'] ?? 'Restored host'}": the same host, port, SSH user and '
+          'authentication method already exist as "${existing.name}". Existing server unchanged.',
+        );
+        continue;
+      }
+      final newId = await repository.insertRestoredServer(row);
       if (oldId != 0) serverIdMap[oldId] = newId;
       counts['servers'] = (counts['servers'] ?? 0) + 1;
     }
@@ -471,6 +485,7 @@ class BackupPayload {
 /// Narrow on purpose: a restore writes rows and nothing else, and this keeps the payload logic
 /// testable without a database while making the write surface obvious at a glance.
 abstract interface class AppRepositoryLike {
+  Future<({int id, String name})?> findRestoredServer(Map<String, dynamic> row);
   Future<int> insertRestoredServer(Map<String, dynamic> row);
   Future<void> insertRestoredKey(Map<String, dynamic> row);
   Future<int> insertRestoredProfile(Map<String, dynamic> row);
@@ -493,39 +508,54 @@ class RepositoryRestoreTarget implements AppRepositoryLike {
   final AppRepository _repository;
 
   @override
-  Future<int> insertRestoredServer(Map<String, dynamic> row) => _repository.insertServer(
-    Server(
-      id: 0,
-      name: row['name'] as String? ?? 'Restored host',
-      host: row['host'] as String? ?? '',
-      port: row['port'] as int? ?? 22,
-      username: row['username'] as String? ?? '',
-      groupName: row['groupName'] as String?,
-      serverColor: row['serverColor'] as String? ?? 'Default',
-      authType: row['authType'] as String? ?? 'password',
-      authKeyAlias: row['authKeyAlias'] as String?,
-      authPassword: row['authPassword'] as String?,
-      sudoPassword: row['sudoPassword'] as String? ?? '',
-      authProfileId: row['authProfileId'] as int?,
-      notes: row['notes'] as String? ?? '',
-      keepAlive: row['keepAlive'] as int? ?? 30,
-      sshCompression: row['sshCompression'] as bool? ?? false,
-      persistentSession: row['persistentSession'] as bool? ?? false,
-      proxyCommand: '',
-      proxyType: row['proxyType'] as String? ?? 'none',
-      proxyHost: row['proxyHost'] as String? ?? '',
-      proxyPort: row['proxyPort'] as int? ?? 0,
-      proxyUser: row['proxyUser'] as String? ?? '',
-      proxyPassword: row['proxyPassword'] as String? ?? '',
-      proxyKeyAlias: row['proxyKeyAlias'] as String?,
-      agentForwarding: row['agentForwarding'] as bool? ?? false,
-      // A restored host has not been probed yet; carrying its old score would show a health
-      // figure for a connection that has never been made on this device.
-      healthScore: 100,
-      lastLatency: 0,
-      status: 'offline',
-      authStatus: 'unknown',
-    ),
+  Future<({int id, String name})?> findRestoredServer(Map<String, dynamic> row) async {
+    final existing = await _repository.findMatchingServer(_serverFromRow(row));
+    if (existing != null) return (id: existing.id, name: existing.name);
+    final servers = await _repository.getAllServers();
+    if (servers.any((server) => server.name == row['name'])) {
+      throw BackupException(
+        'Host name "${row['name']}" already belongs to a different endpoint or SSH login; '
+        'rename one host before restoring.',
+      );
+    }
+    return null;
+  }
+
+  @override
+  Future<int> insertRestoredServer(Map<String, dynamic> row) =>
+      _repository.saveUniqueServer(_serverFromRow(row));
+
+  static Server _serverFromRow(Map<String, dynamic> row) => Server(
+    id: 0,
+    name: row['name'] as String? ?? 'Restored host',
+    host: row['host'] as String? ?? '',
+    port: row['port'] as int? ?? 22,
+    username: row['username'] as String? ?? '',
+    groupName: row['groupName'] as String?,
+    serverColor: row['serverColor'] as String? ?? 'Default',
+    authType: row['authType'] as String? ?? 'password',
+    authKeyAlias: row['authKeyAlias'] as String?,
+    authPassword: row['authPassword'] as String?,
+    sudoPassword: row['sudoPassword'] as String? ?? '',
+    authProfileId: row['authProfileId'] as int?,
+    notes: row['notes'] as String? ?? '',
+    keepAlive: row['keepAlive'] as int? ?? 30,
+    sshCompression: row['sshCompression'] as bool? ?? false,
+    persistentSession: row['persistentSession'] as bool? ?? false,
+    proxyCommand: row['proxyCommand'] as String? ?? '',
+    proxyType: row['proxyType'] as String? ?? 'none',
+    proxyHost: row['proxyHost'] as String? ?? '',
+    proxyPort: row['proxyPort'] as int? ?? 0,
+    proxyUser: row['proxyUser'] as String? ?? '',
+    proxyPassword: row['proxyPassword'] as String? ?? '',
+    proxyKeyAlias: row['proxyKeyAlias'] as String?,
+    agentForwarding: row['agentForwarding'] as bool? ?? false,
+    // A restored host has not been probed yet; carrying its old score would show a health
+    // figure for a connection that has never been made on this device.
+    healthScore: 100,
+    lastLatency: 0,
+    status: 'offline',
+    authStatus: 'unknown',
   );
 
   @override
@@ -657,6 +687,8 @@ class RepositoryRestoreTarget implements AppRepositoryLike {
       broadcastIp: Value(row['broadcastIp'] as String? ?? '255.255.255.255'),
       ipAddress: Value(row['ipAddress'] as String? ?? ''),
       port: Value(row['port'] as int? ?? 9),
+      notes: Value(row['notes'] as String? ?? ''),
+      lastWokenTime: Value(row['lastWokenTime'] as int? ?? 0),
     ),
   );
 

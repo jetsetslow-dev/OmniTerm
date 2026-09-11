@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'package:drift/drift.dart' show Value;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
@@ -50,6 +53,8 @@ void main() {
     String? testFailure,
     bool withTester = true,
     List<Server> existingServers = const [],
+    List<CredentialProfile> savedProfiles = const [],
+    Future<void> Function(Server)? onSave,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -59,7 +64,8 @@ void main() {
             mode: mode,
             source: source,
             existingServers: existingServers,
-            onSave: (s) async => savedRows.add(s),
+            savedProfiles: savedProfiles,
+            onSave: onSave ?? (s) async => savedRows.add(s),
             onTestConnection: withTester
                 ? (candidate) async {
                     tested.add(candidate);
@@ -73,12 +79,112 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('saving is visible, blocks repeat taps and keeps a failed draft open', (
+    tester,
+  ) async {
+    final pending = Completer<void>();
+    var calls = 0;
+    await pump(
+      tester,
+      mode: ServerFormMode.edit,
+      source: saved(),
+      onSave: (_) {
+        calls++;
+        return pending.future;
+      },
+    );
+    await tester.tap(find.byKey(const ValueKey('serverForm.save')));
+    await tester.pump();
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    expect(
+      tester.widget<FilledButton>(find.byKey(const ValueKey('serverForm.save'))).onPressed,
+      isNull,
+    );
+    expect(calls, 1);
+    pending.completeError(StateError('already exists as "Current name"'));
+    await tester.pumpAndSettle();
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    expect(find.textContaining('already exists as "Current name"'), findsOneWidget);
+    expect(find.byKey(const ValueKey('serverForm.save')), findsOneWidget);
+  });
+
   Future<void> fillNewHost(WidgetTester tester) async {
     await tester.enterText(find.byKey(const ValueKey('serverForm.name')), 'nas');
     await tester.enterText(find.byKey(const ValueKey('serverForm.host')), '10.0.0.9');
     await tester.enterText(find.byKey(const ValueKey('serverForm.username')), 'root');
     await tester.pumpAndSettle();
   }
+
+  testWidgets('an identical login is rejected without offering Save anyway', (tester) async {
+    await pump(
+      tester,
+      existingServers: [saved().copyWith(name: 'Current name', host: '10.0.0.9', port: 22)],
+    );
+    await fillNewHost(tester);
+    await tester.tap(find.byKey(const ValueKey('serverForm.save')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('already exist as "Current name"'), findsOneWidget);
+    expect(find.byKey(const ValueKey('serverForm.duplicate.dialog')), findsNothing);
+    expect(find.byKey(const ValueKey('serverForm.unverified.dialog')), findsNothing);
+    expect(savedRows, isEmpty);
+  });
+
+  testWidgets('a profile can be selected and supplies the SSH username', (tester) async {
+    const profile = CredentialProfile(
+      id: 9,
+      profileName: 'Fixture login',
+      username: 'deploy',
+      authType: 'password',
+      password: 'fixture secret',
+      groupName: 'General',
+    );
+    await pump(tester, savedProfiles: [profile]);
+    await fillNewHost(tester);
+    await tester.enterText(find.byKey(const ValueKey('serverForm.username')), '');
+    await tester.tap(find.text('Auth'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Profile'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('serverForm.profile')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Fixture login').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('serverForm.test')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('serverForm.save')));
+    await tester.pumpAndSettle();
+    expect(savedRows.single.authType, 'profile');
+    expect(savedRows.single.authProfileId, 9);
+    expect(savedRows.single.username, isEmpty, reason: 'the profile owns the SSH username');
+  });
+
+  testWidgets('different profile names cannot disguise an existing SSH login', (tester) async {
+    const profile = CredentialProfile(
+      id: 9,
+      profileName: 'New profile name',
+      username: 'root',
+      authType: 'password',
+      password: 'fixture secret',
+      groupName: 'General',
+    );
+    await pump(
+      tester,
+      mode: ServerFormMode.edit,
+      source: saved().copyWith(
+        id: 8,
+        name: 'Edited row',
+        authType: 'profile',
+        authProfileId: const Value(9),
+        username: '',
+      ),
+      savedProfiles: [profile],
+      existingServers: [saved()],
+    );
+    await tester.tap(find.byKey(const ValueKey('serverForm.save')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('already exist as "nas"'), findsOneWidget);
+    expect(savedRows, isEmpty);
+  });
 
   testWidgets('a new host can be created end to end', (tester) async {
     await pump(tester);
@@ -306,14 +412,15 @@ void main() {
     expect(find.byKey(const ValueKey('serverForm.proxyHost')), findsOneWidget);
   });
 
-  testWidgets('a duplicate seeds the secrets but still faces the gate', (tester) async {
+  testWidgets('a duplicate retains credentials but needs a distinct connection', (tester) async {
     await pump(tester, mode: ServerFormMode.duplicate, source: saved());
     expect(find.text('Duplicate host'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('serverForm.save')));
     await tester.pumpAndSettle();
-    expect(savedRows, isEmpty, reason: 'a copy shares no trust state with its source');
-    await tester.tap(find.byKey(const ValueKey('serverForm.unverified.review')));
+    expect(savedRows, isEmpty);
+    expect(find.textContaining('already exist as "nas"'), findsOneWidget);
+    await tester.enterText(find.byKey(const ValueKey('serverForm.port')), '2223');
     await tester.pumpAndSettle();
 
     await tester.tap(find.byKey(const ValueKey('serverForm.test')));

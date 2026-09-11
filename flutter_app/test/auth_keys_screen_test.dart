@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
@@ -105,6 +107,77 @@ void main() {
     expect(find.byKey(const ValueKey('authKeys.keys.empty')), findsOneWidget);
     // With no trust store wired, the section says that rather than showing an empty list.
     expect(find.byKey(const ValueKey('authKeys.trust.unavailable')), findsOneWidget);
+    await finish(tester);
+  });
+
+  testWidgets('profile save has progress and prevents duplicate submissions until it finishes', (
+    tester,
+  ) async {
+    app.dispose();
+    final delayed = _DelayedProfileRepository(db, SecretStore(storage: FakeSecureStorage({})));
+    repo = delayed;
+    app = AppState(repo);
+    await pump(tester);
+    addTearDown(() {
+      if (!delayed.release.isCompleted) delayed.release.complete();
+    });
+    await tester.tap(find.byKey(const ValueKey('authKeys.addProfile')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('authKeys.profile.name')), 'Fixture profile');
+    await tester.enterText(find.byKey(const ValueKey('authKeys.profile.username')), 'deploy');
+    final save = find.byKey(const ValueKey('authKeys.profile.save'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pump();
+    expect(find.text('Saving…'), findsOneWidget);
+    expect(tester.widget<FilledButton>(save).onPressed, isNull);
+    expect(
+      tester.widget<IconButton>(find.byKey(const ValueKey('authKeys.profile.close'))).onPressed,
+      isNull,
+    );
+    expect(delayed.calls, 1);
+    delayed.release.complete();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('authKeys.profile.save')), findsNothing);
+    expect((await repo.getAllProfiles()).single.profileName, 'Fixture profile');
+    await finish(tester);
+  });
+
+  testWidgets('conflicting profile edit keeps a scrollable editor open with both server names', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 500);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final id = await repo.insertProfile(
+      const CredentialProfile(
+        id: 0,
+        profileName: 'Shared',
+        username: 'deploy',
+        authType: 'password',
+        groupName: 'General',
+      ),
+    );
+    final original = (await repo.getCredentialProfileById(id))!;
+    await repo.insertServer(server(name: 'Existing root'));
+    await repo.insertServer(
+      server(name: 'Profile deploy').copyWith(authType: 'profile', authProfileId: Value(id)),
+    );
+    await pump(tester);
+    await tester.tap(find.byKey(ValueKey('authKeys.profile.$id.edit')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const ValueKey('authKeys.profile.username')), 'root');
+    final save = find.byKey(const ValueKey('authKeys.profile.save'));
+    await tester.ensureVisible(save);
+    await tester.tap(save);
+    await tester.pumpAndSettle();
+    final error = find.byKey(const ValueKey('authKeys.profile.error'));
+    await tester.ensureVisible(error);
+    expect(tester.widget<Text>(error).data, contains('Existing root'));
+    expect(tester.widget<Text>(error).data, contains('Profile deploy'));
+    expect(await repo.getCredentialProfileById(id), original);
+    expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
     await finish(tester);
   });
 
@@ -468,4 +541,17 @@ void main() {
       await finish(tester);
     });
   });
+}
+
+class _DelayedProfileRepository extends AppRepository {
+  _DelayedProfileRepository(super.db, super.secrets);
+  final release = Completer<void>();
+  var calls = 0;
+
+  @override
+  Future<int> insertProfile(CredentialProfile profile) async {
+    calls++;
+    await release.future;
+    return super.insertProfile(profile);
+  }
 }

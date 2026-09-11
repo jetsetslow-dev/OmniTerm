@@ -188,7 +188,8 @@ class ServerFormState extends ChangeNotifier {
   String? get validationError {
     if (name.trim().isEmpty) return 'Name is required';
     if (host.trim().isEmpty) return 'Host is required';
-    if (username.trim().isEmpty) return 'Username is required';
+    if (authType != 'profile' && username.trim().isEmpty) return 'Username is required';
+    if (authType == 'profile' && selectedProfileId == null) return 'Select a credential profile';
 
     // The shared validator, not a second copy of the same range: two hand-rolled port checks that
     // agree today are two that can disagree after one of them is edited.

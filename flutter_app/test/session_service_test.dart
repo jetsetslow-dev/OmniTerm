@@ -216,6 +216,22 @@ void main() {
       expect(service.stops, greaterThan(0));
     });
 
+    test('output frames and visibility changes do not restart unchanged protection', () async {
+      await repo.insertServer(server(name: 'nas'));
+      await repo.insertSetting('background_keep_alive', 'true');
+      await boot();
+      await vm.connect(vm.server!);
+      final starts = service.synced.length;
+      final stops = service.stops;
+      for (var i = 0; i < 30; i++) {
+        vm.current!.publishNow();
+        vm.setTerminalVisible(false);
+        vm.setTerminalVisible(true);
+      }
+      expect(service.synced, hasLength(starts));
+      expect(service.stops, stops);
+    });
+
     test('a session that dies on its own drops out of the notification', () async {
       // The shade must not keep offering to resume a session the network already took away.
       await repo.insertServer(server(name: 'nas'));
@@ -253,6 +269,35 @@ void main() {
       await Future<void>.delayed(Duration.zero);
 
       expect(vm.sessions, isEmpty);
+    });
+
+    test('notification resume supersedes a pending leave without closing the live tab', () async {
+      await repo.insertServer(server(name: 'nas').copyWith(persistentSession: true));
+      await boot();
+      await vm.connect(vm.server!);
+      final session = vm.current!;
+      final locked = Completer<void>();
+      final release = Completer<void>();
+      final holding = db.transaction(() async {
+        await db.customSelect('SELECT 1').get();
+        locked.complete();
+        await release.future;
+      });
+      await locked.future;
+      final leaving = vm.leaveResumable(session);
+      try {
+        expect(vm.isLeavingSessions, isTrue);
+        service.push(ResumeSession(session.id));
+        await Future<void>.delayed(Duration.zero);
+      } finally {
+        release.complete();
+        await holding;
+      }
+      expect(await leaving.timeout(const Duration(seconds: 5)), isFalse);
+      expect(vm.current, same(session));
+      expect(session.isOpen, isTrue);
+      expect(vm.isLeavingSessions, isFalse);
+      expect(vm.error, isNull);
     });
 
     test('an action for an unknown session is ignored', () async {

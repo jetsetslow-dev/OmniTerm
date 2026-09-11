@@ -43,6 +43,7 @@ import 'ui/view_model/tunnel_autostart.dart';
 import 'ui/widgets/app_lock_gate.dart';
 import 'ui/widgets/host_key_approval_host.dart';
 import 'ui/widgets/navigation_guard_host.dart';
+import 'ui/widgets/popup_scroll_behavior.dart';
 import 'ui/widgets/connection_prompt_host.dart';
 import 'ui/app_scaffold.dart';
 import 'domain/back_exit_policy.dart';
@@ -457,6 +458,7 @@ class OmniTermApp extends StatelessWidget {
             amoled: prefs.amoled,
           );
           return MaterialApp(
+            scrollBehavior: const PopupScrollBehavior(),
             title: 'OmniTerm',
             debugShowCheckedModeBanner: false,
             theme: omniTheme(mode, brightness),
@@ -765,8 +767,7 @@ class _RuntimeBindingsState extends State<_RuntimeBindings> with WidgetsBindingO
         }
       case 'resume_session':
         final id = action.target;
-        if (id != null && shell.sessions.any((session) => session.id == id)) {
-          shell.select(id);
+        if (id != null && shell.resumeExisting(id)) {
           nav.navigateTo(Screen.shell);
         }
       case 'open_share':

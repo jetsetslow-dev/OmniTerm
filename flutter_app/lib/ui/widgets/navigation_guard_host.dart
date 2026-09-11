@@ -22,10 +22,26 @@ class _NavigationGuardHostState extends State<NavigationGuardHost> {
   NavigationController? _nav;
   _PendingGuard? _pending;
   Screen? _target;
+  ShellViewModel? _shell;
+  int _resumeRevision = 0;
+
+  void _onShellChanged() {
+    final revision = _shell!.terminalResumeRevision;
+    if (revision == _resumeRevision) return;
+    _resumeRevision = revision;
+    if (_pending == _PendingGuard.shell) _stay();
+  }
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    final shell = context.read<ShellViewModel>();
+    if (!identical(shell, _shell)) {
+      _shell?.removeListener(_onShellChanged);
+      _shell = shell;
+      _resumeRevision = shell.terminalResumeRevision;
+      shell.addListener(_onShellChanged);
+    }
     final nav = context.read<NavigationController>();
     if (identical(nav, _nav)) return;
     _nav?.guards.remove(_guard);
@@ -75,6 +91,7 @@ class _NavigationGuardHostState extends State<NavigationGuardHost> {
 
   @override
   void dispose() {
+    _shell?.removeListener(_onShellChanged);
     _nav?.guards.remove(_guard);
     super.dispose();
   }
@@ -127,6 +144,7 @@ class _NavigationGuardHostState extends State<NavigationGuardHost> {
         child: Center(
           child: AlertDialog(
             key: const ValueKey('navigation.shellLeave'),
+            scrollable: true,
             title: Text(
               sessions.length > 1
                   ? '${sessions.length} active SSH sessions'
@@ -136,18 +154,32 @@ class _NavigationGuardHostState extends State<NavigationGuardHost> {
                   ? 'SSH connection in progress'
                   : 'Active SSH session',
             ),
-            content: Text(
-              allPersistent
-                  ? 'Leave the tmux session resumable, or terminate it and stop anything running there?'
-                  : 'Choose what to do with the active terminal session. Keeping it in the background may increase battery use.',
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  allPersistent
+                      ? 'Leave the tmux session resumable, or terminate it and stop anything running there?'
+                      : 'Choose what to do with the active terminal session. Keeping it in the background may increase battery use.',
+                ),
+                if (vm.isLeavingSessions) ...[
+                  const SizedBox(height: 12),
+                  const LinearProgressIndicator(),
+                  const Text('Saving resumable sessions…'),
+                ],
+                if (vm.error != null)
+                  Text(vm.error!, style: const TextStyle(color: OmniColors.red)),
+              ],
             ),
             actions: [
               TextButton(
                 key: const ValueKey('navigation.shell.disconnect'),
-                onPressed: () async {
-                  await vm.disconnectAll(terminatePersistent: true);
-                  if (mounted) _commit();
-                },
+                onPressed: vm.isLeavingSessions
+                    ? null
+                    : () async {
+                        await vm.disconnectAll(terminatePersistent: true);
+                        if (mounted) _commit();
+                      },
                 child: Text(
                   vm.isConnecting && sessions.isEmpty ? 'Cancel connection' : 'Disconnect all',
                   style: const TextStyle(color: OmniColors.red),
@@ -155,15 +187,17 @@ class _NavigationGuardHostState extends State<NavigationGuardHost> {
               ),
               TextButton(
                 key: const ValueKey('navigation.shell.background'),
-                onPressed: () {
-                  vm.leaveOrBackgroundAll();
-                  _commit();
-                },
+                onPressed: vm.isLeavingSessions
+                    ? null
+                    : () async {
+                        final ok = await vm.leaveOrBackgroundAll();
+                        if (mounted && ok) _commit();
+                      },
                 child: Text(allPersistent ? 'Leave resumable' : 'Send to background'),
               ),
               TextButton(
                 key: const ValueKey('navigation.shell.stay'),
-                onPressed: _stay,
+                onPressed: vm.isLeavingSessions ? null : _stay,
                 child: const Text('Stay'),
               ),
             ],

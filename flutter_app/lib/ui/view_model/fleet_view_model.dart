@@ -61,6 +61,23 @@ class FleetViewModel extends ChangeNotifier {
 
   bool get canBroadcast => transport != null;
 
+  /// Dashboard diagnostics never overwrite the user's broadcast draft, targets or results.
+  Future<String> runHostDiagnostic(
+    Server server,
+    String command, {
+    required Future<void> Function(String) onChunk,
+    required SshCancellationToken cancellation,
+  }) async {
+    final ssh = transport;
+    if (ssh == null) throw StateError('SSH is unavailable in this build.');
+    final credentials = resolveCredentials(
+      server,
+      keys: await _app.repository.getAllKeys(),
+      profiles: await _app.repository.getAllProfiles(),
+    );
+    return ssh.execStream(credentials, command, onChunk: onChunk, cancellation: cancellation);
+  }
+
   /// The fleet-wide telemetry loop, when one is running.
   ///
   /// Fleet reads the poller rather than fetching for itself. It is the one screen showing every

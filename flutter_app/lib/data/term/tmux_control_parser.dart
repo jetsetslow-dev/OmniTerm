@@ -36,6 +36,8 @@ class TmuxControlParser {
 
   Uint8List _pending = Uint8List(0);
   bool _inReply = false;
+  int _replyFlags = 0;
+  int _replyLines = 0;
   final StringBuffer _replyBody = StringBuffer();
 
   /// Feed raw bytes from the control-mode channel; returns the events completed by this chunk.
@@ -79,15 +81,15 @@ class TmuxControlParser {
       final text = _decode(buf, start, e);
       if (text.startsWith('%end ')) {
         _inReply = false;
-        out.add(TmuxReply(_replyBody.toString(), isError: false));
+        out.add(TmuxReply(_replyBody.toString(), isError: false, flags: _replyFlags));
       } else if (text.startsWith('%error ')) {
         _inReply = false;
-        out.add(TmuxReply(_replyBody.toString(), isError: true));
+        out.add(TmuxReply(_replyBody.toString(), isError: true, flags: _replyFlags));
       } else {
         if (_replyBody.length + text.length + 1 > maxBufferedBytes) {
           throw ArgumentError('tmux control reply exceeds $maxBufferedBytes characters');
         }
-        if (_replyBody.isNotEmpty) _replyBody.write('\n');
+        if (_replyLines++ > 0) _replyBody.write('\n');
         _replyBody.write(text);
       }
       return;
@@ -133,6 +135,8 @@ class TmuxControlParser {
     final text = _decode(buf, start, e);
     if (text.startsWith('%begin ')) {
       _inReply = true;
+      _replyFlags = int.tryParse(text.split(' ').last) ?? 0;
+      _replyLines = 0;
       _replyBody.clear();
     } else if (text.startsWith('%session-changed ')) {
       final rest = text.substring('%session-changed '.length);

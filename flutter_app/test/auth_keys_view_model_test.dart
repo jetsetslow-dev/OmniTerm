@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
@@ -187,6 +188,31 @@ void main() {
   });
 
   group('credential profiles', () {
+    test('profile collision returns a named error and keeps the original profile', () async {
+      final vm = await boot();
+      try {
+        await vm.saveProfile(profileName: 'Shared', username: 'deploy', authType: 'password');
+        final original = (await repo.getAllProfiles()).single;
+        await repo.insertServer(server(name: 'Root login'));
+        await repo.insertServer(
+          server(
+            name: 'Deploy login',
+          ).copyWith(authType: 'profile', authProfileId: Value(original.id), username: ''),
+        );
+        final result = await vm.saveProfile(
+          existing: original,
+          profileName: 'Shared',
+          username: 'root',
+          authType: 'password',
+        );
+        expect(result, contains('Root login'));
+        expect(result, contains('Deploy login'));
+        expect((await repo.getAllProfiles()).single, original);
+      } finally {
+        vm.dispose();
+      }
+    });
+
     test('a password profile is saved and encrypted', () async {
       final vm = await boot();
       expect(

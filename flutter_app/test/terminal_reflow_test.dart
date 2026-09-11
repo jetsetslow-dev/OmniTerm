@@ -1,10 +1,33 @@
 import 'dart:convert';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/term/terminal_emulator.dart';
 
+void _oneColumnResize(SendPort result) {
+  final term = TerminalEmulator(cols: 6, rows: 3);
+  term.feed(Uint8List.fromList(utf8.encode('ab漢字')));
+  term.resize(1, 3);
+  term.resize(6, 3);
+  term.feed(Uint8List.fromList(utf8.encode('!')));
+  result.send(
+    term.snapshot().rows.map((row) => row.spans.map((span) => span.text).join().trimRight()).join(),
+  );
+}
+
 void main() {
+  test('one-column resize of wide text terminates and preserves its characters', () async {
+    final result = ReceivePort();
+    final isolate = await Isolate.spawn(_oneColumnResize, result.sendPort);
+    try {
+      expect(await result.first.timeout(const Duration(seconds: 2)), contains('ab漢字!'));
+    } finally {
+      isolate.kill(priority: Isolate.immediate);
+      result.close();
+    }
+  });
+
   /// Every row of the whole buffer as plain text, oldest first.
   List<String> allText(TerminalEmulator term) {
     final snap = term.snapshot();
@@ -142,6 +165,50 @@ void main() {
     term.resize(10, 8);
 
     expect(allText(term).where((l) => l.isNotEmpty).toList(), ['abcdefghij']);
+  });
+
+  test('keyboard height shrink preserves every output line and the live cursor', () {
+    final term = TerminalEmulator(cols: 52, rows: 30);
+    write(term, List.generate(200, (i) => 'copy-row-${i + 1}\r\n').join());
+    term.resize(52, 22);
+    write(term, 'prompt');
+    expect(allText(term).where((line) => line.isNotEmpty).toList(), [
+      ...List.generate(200, (i) => 'copy-row-${i + 1}'),
+      'prompt',
+    ]);
+    term.resize(52, 40);
+    term.resize(52, 10);
+    write(term, '-ready');
+    expect(allText(term).where((line) => line.isNotEmpty).last, 'prompt-ready');
+    expect(allText(term).where((line) => line.startsWith('copy-row-')).length, 200);
+  });
+
+  test('resizing an alternate canvas preserves hidden normal output', () {
+    final term = emulatorWith('normal-long-line\r\nlast-line', cols: 20, rows: 6);
+    write(term, '\x1b[?1049hALT-CANVAS');
+    term.resize(8, 3);
+    expect(allText(term)[term.scrollbackRowCount()], 'ALT-CANV');
+    write(term, '\x1b[?1049l');
+    expect(allText(term).join(), contains('normal-long-line'));
+    expect(allText(term).join(), contains('last-line'));
+    write(term, '!');
+    expect(allText(term).join(), contains('last-line!'));
+  });
+
+  test('height-only resize retains a pending wrap at the right edge', () {
+    final term = emulatorWith('abcde', cols: 5, rows: 4);
+    term.resize(5, 2);
+    write(term, 'f');
+    expect(allText(term).where((line) => line.isNotEmpty).join(), 'abcdef');
+  });
+
+  test('width reflow preserves the insertion point after a pending wrap', () {
+    for (final width in [2, 10]) {
+      final term = emulatorWith('abcd', cols: 4, rows: 4);
+      term.resize(width, 4);
+      write(term, 'e');
+      expect(allText(term).where((line) => line.isNotEmpty).join(), 'abcde');
+    }
   });
 
   test('a resize to the same size is a no-op', () {

@@ -6,11 +6,17 @@ import 'package:flutter/foundation.dart';
 import '../../data/ssh/secure_host_key_store.dart';
 import '../../data/ssh/ssh_host_key_trust.dart';
 import '../../data/backup/backup_envelope.dart';
+import '../../data/backup/backup_document.dart';
 import '../../data/backup/backup_payload.dart';
 import '../../domain/backup_selection.dart';
 import 'app_state.dart';
 import '../../platform/crash_log.dart';
 import '../../platform/long_operation_notifications.dart';
+
+// PBKDF2 and compression are CPU work. A Future alone does not keep the UI isolate responsive.
+// Pass only the payload and passphrase, never the view model or database, to the worker isolate.
+Future<String> _decryptInBackground((String, String) input) => decryptBackup(input.$1, input.$2);
+Future<String> _encryptInBackground((String, String) input) => encryptBackup(input.$1, input.$2);
 
 @immutable
 class BackupHostOption {
@@ -157,10 +163,12 @@ class BackupViewModel extends ChangeNotifier {
   bool get canExport => !_selection.isEmpty && !_busy;
 
   bool _busy = false;
+  String _busyMessage = 'Working…';
   String? _error;
   String? _status;
 
   bool get busy => _busy;
+  String get busyMessage => _busyMessage;
   String? get error => _error;
   String? get status => _status;
 
@@ -177,6 +185,7 @@ class BackupViewModel extends ChangeNotifier {
   /// The passphrase is required whenever the selection is sensitive — this is not a preference the
   /// caller can skip, because the alternative is every stored secret in plain text on disk.
   Future<String?> exportBackup(String passphrase) async {
+    if (_busy) return null;
     if (_selection.isEmpty) {
       _error = 'Choose at least one thing to back up.';
       _safeNotify();
@@ -200,6 +209,7 @@ class BackupViewModel extends ChangeNotifier {
     final operationId = _startOperation('Exporting OmniTerm backup');
     var succeeded = false;
     _busy = true;
+    _busyMessage = 'Creating backup…';
     _error = null;
     _safeNotify();
 
@@ -226,7 +236,9 @@ class BackupViewModel extends ChangeNotifier {
       // No status here on purpose. The export is only half the job now that the file dialog
       // follows it, and "Backup ready." left standing after a cancelled save would claim a file
       // that was never written. The save reports the real outcome.
-      final output = passphrase.isEmpty ? json : await encryptBackup(json, passphrase);
+      final output = passphrase.isEmpty
+          ? json
+          : await compute(_encryptInBackground, (json, passphrase));
       succeeded = true;
       return output;
     } on BackupException catch (e) {
@@ -308,8 +320,14 @@ class BackupViewModel extends ChangeNotifier {
   /// Lets the UI ask for a passphrase only when one is needed, instead of demanding one for a file
   /// that does not have any.
   static bool looksEncrypted(String contents) {
-    final trimmed = contents.trimLeft();
-    return trimmed.startsWith('{') && trimmed.contains('"iv"') && trimmed.contains('"salt"');
+    if (contents.length > BackupLimits.maxInputChars) return false;
+    try {
+      validateBackupJsonDepth(contents);
+      final root = jsonDecode(contents);
+      return root is Map && ['salt', 'iv', 'data'].any(root.containsKey);
+    } catch (_) {
+      return false;
+    }
   }
 
   static const _sectionKeys = <BackupSection, String>{
@@ -332,20 +350,17 @@ class BackupViewModel extends ChangeNotifier {
   /// Restore is deliberately two-phase, matching the native app: the user first sees exactly what
   /// the file contains and chooses sections/hosts, then confirms the additive write.
   Future<BackupInspection?> inspectBackup(String contents, String passphrase) async {
+    if (_busy) return null;
     _busy = true;
+    _busyMessage = looksEncrypted(contents) ? 'Decrypting backup…' : 'Reading backup…';
     _error = null;
     _status = null;
     _safeNotify();
     try {
-      final json = looksEncrypted(contents) ? await decryptBackup(contents, passphrase) : contents;
-      final decoded = jsonDecode(json);
-      if (decoded is! Map<String, dynamic>) {
-        throw const BackupException('That backup file could not be read.');
-      }
-      // Checked before anything is parsed out of it: refusing a file whole is honest, whereas
-      // reading half of an unfamiliar shape and restoring that is not.
-      final incompatible = BackupPayload.incompatibleVersionMessage(decoded['v']);
-      if (incompatible != null) throw BackupException(incompatible);
+      final json = looksEncrypted(contents)
+          ? await compute(_decryptInBackground, (contents, passphrase))
+          : contents;
+      final decoded = readBackupDocument(json);
       final counts = <BackupSection, int>{};
       final present = <BackupSection>{};
       for (final entry in _sectionKeys.entries) {
@@ -374,7 +389,7 @@ class BackupViewModel extends ChangeNotifier {
         }
       }
       return BackupInspection(
-        plainJson: json,
+        plainJson: jsonEncode(decoded),
         available: BackupSelection(present).withReferentialClosure(),
         counts: Map.unmodifiable(counts),
         hosts: List.unmodifiable(hosts),
@@ -402,15 +417,24 @@ class BackupViewModel extends ChangeNotifier {
     BackupSelection? selection,
     Set<int>? selectedServerIds,
   }) async {
+    if (_busy) return null;
     final operationId = _startOperation('Restoring OmniTerm backup');
     var succeeded = false;
     _busy = true;
+    _busyMessage = looksEncrypted(contents) ? 'Decrypting backup…' : 'Restoring backup…';
     _error = null;
     _status = null;
     _safeNotify();
 
     try {
-      var json = looksEncrypted(contents) ? await decryptBackup(contents, passphrase) : contents;
+      var json = looksEncrypted(contents)
+          ? await compute(_decryptInBackground, (contents, passphrase))
+          : contents;
+      _busyMessage = 'Restoring backup…';
+      _safeNotify();
+      // Normalize before filtering; otherwise selecting Kotlin scripts/settings silently removes
+      // the wrong fields, and selecting hosts can accidentally bypass version validation.
+      json = jsonEncode(readBackupDocument(json));
 
       if (selection != null || selectedServerIds != null) {
         final root = jsonDecode(json) as Map<String, dynamic>;
@@ -483,8 +507,13 @@ class BackupViewModel extends ChangeNotifier {
       // Every database row is one restore operation. A malformed later section must roll the
       // earlier sections back, otherwise the UI reports failure after silently leaving half a
       // backup behind. Crash logs live outside Drift and are merged only after this commits.
+      final skippedServerMessages = <String>[];
       final counts = await _app.repository.inTransaction(
-        () => BackupPayload.restore(RepositoryRestoreTarget(_app.repository), json),
+        () => BackupPayload.restore(
+          RepositoryRestoreTarget(_app.repository),
+          json,
+          skippedServerMessages: skippedServerMessages,
+        ),
       );
       final root = jsonDecode(json) as Map<String, Object?>;
 
@@ -546,6 +575,9 @@ class BackupViewModel extends ChangeNotifier {
           ? 'Restored $restored items.'
           : 'Restored $restored items. ${skips.join(' and ')} were skipped because the hosts they '
                 'belong to were not in this backup.';
+      if (skippedServerMessages.isNotEmpty) {
+        _status = '$_status\n${skippedServerMessages.join('\n')}';
+      }
       succeeded = true;
       return counts;
     } on BackupException catch (e) {

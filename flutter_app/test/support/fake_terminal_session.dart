@@ -22,6 +22,7 @@ class FakeTerminalSession implements TerminalSession {
 
   bool closeCalled = false;
   Object? writeFailure;
+  void Function(String command)? onWrite;
 
   @override
   Stream<Uint8List> get output => _output.stream;
@@ -40,6 +41,7 @@ class FakeTerminalSession implements TerminalSession {
     final failure = writeFailure;
     if (failure != null) throw failure;
     writes.add(bytes);
+    onWrite?.call(String.fromCharCodes(bytes));
   }
 
   @override

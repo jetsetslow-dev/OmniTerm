@@ -96,11 +96,13 @@ class E2eAppSurfaceStressTest {
             // layout with -e omniterm_e2e_sftp_home /home/<user>.
             val sftpHome = InstrumentationRegistry.getArguments().getString("omniterm_e2e_sftp_home")
                 ?: "/config"
-            vm.loadSftp(sftpHome)
-            await("SFTP listing applied", 20_000) {
-                vm.sftpPath == sftpHome && !vm.sftpLoading
-            }
+            // Join the exact request, not a brief loading pulse or a success-only predicate
+            // that hides a completed failure behind a generic timeout.
+            lateinit var sftpLoad: kotlinx.coroutines.Job
+            composeRule.runOnUiThread { sftpLoad = vm.loadSftp(sftpHome) }
+            withTimeout(20_000) { sftpLoad.join() }
             assertTrue("SFTP loader failed: ${vm.sftpError}", vm.sftpError.isNullOrBlank())
+            assertEquals("SFTP path after completed load", sftpHome, vm.sftpPath)
 
             vm.runFleetBroadcast("printf 'FLEET-SURFACE-OK\\n'", resolvedIds = listOf(host.id))
             await("Fleet broadcast", 30_000) { !vm.isBroadcastExecuting && vm.broadcastResults.isNotEmpty() }

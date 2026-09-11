@@ -34,11 +34,13 @@ import 'theme/colors.dart';
 import 'theme/typography.dart';
 import 'view_model/alerts_view_model.dart';
 import 'view_model/app_state.dart';
+import 'view_model/fleet_view_model.dart';
 import 'view_model/host_status_probe.dart';
 import 'view_model/infra_view_model.dart';
 import 'view_model/monitor_view_model.dart';
 import 'view_model/network_view_model.dart';
 import 'view_model/servers_view_model.dart';
+import 'view_model/scripts_view_model.dart';
 import 'view_model/sftp_view_model.dart';
 import 'view_model/shell_view_model.dart';
 import 'view_model/telemetry_poller.dart';
@@ -117,12 +119,13 @@ class AppCoreScaffold extends StatelessWidget {
 
     if (allowGlobalGestures) {
       body = GestureDetector(
+        key: const ValueKey('app.screenSwipe'),
         behavior: HitTestBehavior.translucent,
         onHorizontalDragEnd: (details) {
           final v = details.primaryVelocity ?? 0;
           if (v == 0) return;
           // A leftward fling (negative velocity) advances to the next tab.
-          nav.swipeNavigate(forward: v < 0);
+          _swipeNavigate(context, forward: v < 0);
         },
         child: RefreshIndicator(
           onRefresh: () => shell.refreshCurrentScreen(() => _refreshScreen(context, current)),
@@ -278,6 +281,51 @@ class AppCoreScaffold extends StatelessWidget {
             ),
       body: overlayBody,
     );
+  }
+
+  void _swipeNavigate(BuildContext context, {required bool forward}) {
+    final nav = context.read<NavigationController>();
+    final screen = nav.currentScreen;
+    // The feature models own the visible tabs (including taps and deep links). Read that state
+    // before paging, then apply the result back; a navigator-only index pages invisible tabs.
+    final (int, void Function(int))? tab = switch (screen) {
+      Screen.fleet => (
+        context.read<FleetViewModel>().activeTab.index,
+        (int i) => context.read<FleetViewModel>().activeTab = FleetTab.values[i],
+      ),
+      Screen.monitor => (
+        context.read<MonitorViewModel>().activeTab.index,
+        (int i) => context.read<MonitorViewModel>().activeTab = MonitorTab.values[i],
+      ),
+      Screen.sftp => (
+        context.read<SftpViewModel>().activeTab.index,
+        (int i) => context.read<SftpViewModel>().activeTab = SftpTab.values[i],
+      ),
+      Screen.infra => (
+        context.read<InfraViewModel>().activeTab.index,
+        (int i) => context.read<InfraViewModel>().activeTab = InfraTab.values[i],
+      ),
+      Screen.alerts => (
+        context.read<AlertsViewModel>().activeTab.index,
+        (int i) => context.read<AlertsViewModel>().activeTab = AlertsTab.values[i],
+      ),
+      Screen.quickScripts => (
+        context.read<ScriptsViewModel>().activeTab.index,
+        (int i) => context.read<ScriptsViewModel>().activeTab = ScriptsTab.values[i],
+      ),
+      Screen.network => (
+        context.read<NetworkViewModel>().activeTab.index,
+        (int i) => context.read<NetworkViewModel>().activeTab = NetworkTab.values[i],
+      ),
+      _ => null,
+    };
+    if (tab != null) nav.setSubtab(screen, tab.$1);
+    nav.swipeNavigate(
+      forward: forward,
+      hasOnlineHosts: context.read<AppState>().servers.any((s) => s.status == 'online'),
+      hasInfraHost: context.read<InfraViewModel>().inspectedServer != null,
+    );
+    if (tab != null && nav.currentScreen == screen) tab.$2(nav.currentSubtab(screen));
   }
 
   /// How long a pull-to-refresh waits for the host sweep before telling the user a host is still

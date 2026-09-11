@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
+import 'package:omniterm/data/ssh/ssh_transport.dart';
 import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/fleet/fleet_screen.dart';
@@ -19,6 +20,26 @@ import 'package:provider/provider.dart';
 import 'fleet_view_model_test.dart' show BroadcastTransport;
 import 'monitor_view_model_test.dart' show RecordingTransport;
 import 'support/fake_secure_storage.dart';
+
+class _StreamingDiagnosticTransport extends BroadcastTransport {
+  final finish = Completer<void>();
+
+  @override
+  Future<String> execStream(
+    SshCredentials creds,
+    String command, {
+    String? stdin,
+    SshCancellationToken? cancellation,
+    required Future<void> Function(String chunk) onChunk,
+  }) async {
+    hosts.add(creds.host);
+    commands.add(command);
+    await onChunk('first diagnostic chunk\n');
+    await finish.future;
+    await onChunk('last diagnostic chunk\n');
+    return 'first diagnostic chunk\nlast diagnostic chunk\n';
+  }
+}
 
 void main() {
   late AppDatabase db;
@@ -102,6 +123,40 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('fleet.tab.broadcast')));
     await tester.pumpAndSettle();
   }
+
+  testWidgets('host diagnostics stream in a popup without changing broadcast state', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'diagnostic host', host: '10.0.0.8'));
+    final transport = _StreamingDiagnosticTransport();
+    await pump(tester, transport: transport);
+    vm.commandText = 'my unsent broadcast';
+    final host = vm.servers.single;
+    try {
+      final uptime = find.byKey(ValueKey('fleet.host.${host.id}.uptime'));
+      expect(uptime, findsOneWidget);
+      await tester.ensureVisible(uptime);
+      await tester.tap(uptime);
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const ValueKey('command.stream.dialog')), findsOneWidget);
+      expect(find.textContaining('first diagnostic chunk'), findsOneWidget);
+      expect(find.textContaining('last diagnostic chunk'), findsNothing);
+      expect(find.byType(CircularProgressIndicator), findsWidgets);
+      expect(vm.activeTab, FleetTab.dashboard);
+      expect(vm.commandText, 'my unsent broadcast');
+      expect(vm.targetServerIds, isEmpty);
+      expect(transport.hosts, ['10.0.0.8']);
+      expect(transport.commands, ['uptime']);
+      transport.finish.complete();
+      await tester.pumpAndSettle();
+      expect(find.textContaining('last diagnostic chunk'), findsOneWidget);
+    } finally {
+      if (!transport.finish.isCompleted) transport.finish.complete();
+      vm.dispose();
+      scriptsVm.dispose();
+    }
+  });
 
   testWidgets('the summary shows the online count and average score', (tester) async {
     await repo.insertServer(server(name: 'a', host: '10.0.0.1', healthScore: 80));

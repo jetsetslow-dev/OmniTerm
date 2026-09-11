@@ -547,9 +547,15 @@ String dockerComposeAction(
   if (action == 'update') {
     const c = r'$OT_COMPOSE';
     final tail =
-        '{ $c $flags pull --ignore-buildable 2>/dev/null || $c $flags pull 2>/dev/null || true; } && '
-        '$c $flags build --pull && $c $flags up -d$orphans && $c $flags ps';
-    return '$resolver && cd ${shellQuote(workingDir)} && $tail 2>&1';
+        "printf '[1/4] Pulling images\\n'; "
+        'if ! $c $flags pull --ignore-buildable; then '
+        "printf 'Warning: selective pull failed; retrying a full pull.\\n'; "
+        '$c $flags pull || '
+        "printf 'Warning: image pull failed; continuing with build/local images. Review the errors above.\\n'; fi; "
+        "printf '[2/4] Building images\\n' && BUILDKIT_PROGRESS=plain $c $flags build --pull && "
+        "printf '[3/4] Recreating services\\n' && $c $flags up -d$orphans && "
+        "printf '[4/4] Checking services\\n' && $c $flags ps";
+    return '$resolver && cd ${shellQuote(workingDir)} && { $tail; } 2>&1';
   }
 
   final quotedService = shellQuote(service ?? '');

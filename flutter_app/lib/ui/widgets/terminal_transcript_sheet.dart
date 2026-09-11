@@ -129,18 +129,6 @@ class _TranscriptSheetState extends State<_TranscriptSheet> {
                     ],
                   ),
                 ),
-                TextButton(
-                  key: const ValueKey('transcript.toggleRange'),
-                  onPressed: () => setState(
-                    () => _range = showingAll
-                        ? TranscriptRange.visibleScreen
-                        : TranscriptRange.fullBuffer,
-                  ),
-                  child: Text(
-                    showingAll ? 'Visible screen' : 'Full buffer',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                ),
                 IconButton(
                   key: const ValueKey('transcript.copyAll'),
                   tooltip: showingAll ? 'Copy the whole buffer' : 'Copy what is on screen',
@@ -172,6 +160,21 @@ class _TranscriptSheetState extends State<_TranscriptSheet> {
                   onPressed: () => Navigator.of(context).pop(),
                 ),
               ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: SizedBox(
+              width: double.infinity,
+              child: OutlinedButton(
+                key: const ValueKey('transcript.toggleRange'),
+                onPressed: () => setState(
+                  () => _range = showingAll
+                      ? TranscriptRange.visibleScreen
+                      : TranscriptRange.fullBuffer,
+                ),
+                child: Text(showingAll ? 'Show visible screen' : 'Show full buffer'),
+              ),
             ),
           ),
           Expanded(

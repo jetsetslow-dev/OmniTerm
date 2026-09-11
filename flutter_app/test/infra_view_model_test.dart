@@ -425,6 +425,24 @@ void main() {
   });
 
   group('actions', () {
+    test('individual container actions expose progress before SSH completes', () async {
+      await repo.insertServer(server(name: 'nas'));
+      final transport = RecordingTransport(
+        replies: {'ps -a --no-trunc': psRow(id: 'a1', name: 'web_front_1')},
+      );
+      final vm = await boot(transport: transport);
+      await Future<void>.delayed(Duration.zero);
+      await vm.load();
+      final work = vm.containerAction(vm.containers.single, 'restart');
+      try {
+        expect(vm.actionRunning, isTrue);
+        expect(vm.actionOutput, isNotNull);
+      } finally {
+        await work;
+        vm.dispose();
+      }
+    });
+
     test('a container action targets that container on its own runtime', () async {
       await repo.insertServer(server(name: 'nas'));
       final transport = RecordingTransport(
@@ -497,9 +515,9 @@ void main() {
     });
   });
 
-  test('a selected host that goes offline is not inspected', () async {
+  test('a selected host stays selected offline so Compose drafts remain editable', () async {
     final aId = await repo.insertServer(server(name: 'a'));
-    final bId = await repo.insertServer(server(name: 'b'));
+    await repo.insertServer(server(name: 'b'));
     final vm = await boot(transport: RecordingTransport());
     app.selectedServerId = aId;
     await Future<void>.delayed(Duration.zero);
@@ -508,7 +526,9 @@ void main() {
     await repo.updateServer((await repo.getServerById(aId))!.copyWith(status: 'offline'));
     await Future<void>.delayed(Duration.zero);
 
-    expect(vm.inspectedServer?.id, bId);
+    expect(vm.inspectedServer?.id, aId);
+    expect(vm.selectableServers.any((s) => s.id == aId), isTrue);
+    expect(vm.onlineServers.any((s) => s.id == aId), isFalse);
     vm.dispose();
   });
 

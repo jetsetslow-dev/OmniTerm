@@ -168,9 +168,14 @@ class NavigationController extends ChangeNotifier {
 
   /// Horizontal swipe: page through the current screen's subtabs, and at either edge move to the
   /// adjacent top-level tab.
-  void swipeNavigate({required bool forward}) {
+  void swipeNavigate({required bool forward, bool hasOnlineHosts = true, bool? hasInfraHost}) {
     final screen = _current;
-    final subCount = subtabCount(screen);
+    // Monitor and Containers render an empty state without their tab bars when no host is
+    // available. A swipe must leave that state immediately instead of paging invisible tabs.
+    final hiddenTabs =
+        (screen == Screen.monitor && !hasOnlineHosts) ||
+        (screen == Screen.infra && !(hasInfraHost ?? hasOnlineHosts));
+    final subCount = hiddenTabs ? 0 : subtabCount(screen);
     if (subCount > 1) {
       final next = currentSubtab(screen) + (forward ? 1 : -1);
       if (next >= 0 && next < subCount) {

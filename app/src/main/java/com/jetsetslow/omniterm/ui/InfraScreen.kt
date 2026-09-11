@@ -38,6 +38,7 @@ internal const val INFRA_TAB_BUILDER = 1
 fun InfraScreen(viewModel: AppViewModel) {
     val servers by viewModel.servers.collectAsStateWithLifecycle()
     val onlineServers = servers.filter { it.status == "online" }
+    // Keep an explicit host selected when it goes offline: Compose drafts remain editable.
     val explicitlySelected = servers.find { it.id == viewModel.selectedServerId }
     val srv = explicitlySelected ?: onlineServers.firstOrNull()
     // Load real container runtime state whenever the selected host changes.
@@ -50,7 +51,7 @@ fun InfraScreen(viewModel: AppViewModel) {
 
     Column(modifier = Modifier.fillMaxSize()) {
         // Host picker (mirrors SFTP/Cron) so the user can switch which host's containers they inspect.
-        ServerSelectorBar(viewModel, onlineOnly = true, onServerChange = { viewModel.loadDocker() })
+        ServerSelectorBar(viewModel, overrideServer = srv, onServerChange = { viewModel.loadDocker() })
         if (srv == null) {
             Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(stringResource(R.string.no_online_hosts_available_container_data), color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -118,7 +119,7 @@ private fun ContainerRuntimeError(error: String) {
                 .padding(top = 8.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(Color.Black)
-                .verticalScroll(scroll)
+                .verticalScrollWithIndicators(scroll)
                 .padding(10.dp),
         ) {
             androidx.compose.foundation.text.selection.SelectionContainer {
@@ -253,7 +254,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
     // container list: per-item `remember` dies when the row scrolls out of the LazyColumn viewport,
     // so an expanded stack silently collapsed itself as soon as the user scrolled past it.
     val expandedStacks = remember { mutableStateMapOf<String, Boolean>() }
-    LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    OverflowLazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         editBuilderError?.let { msg ->
             item {
                 Row(
@@ -737,7 +738,7 @@ private fun ImageList(viewModel: AppViewModel, images: List<SimDockerImage>) {
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
     fun imageKey(img: SimDockerImage) = "${img.runtime}:${img.id}"
 
-    LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    OverflowLazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { isSelectionMode = !isSelectionMode; if (!isSelectionMode) selectedIds = setOf() }) {
@@ -839,7 +840,7 @@ private fun VolumeList(viewModel: AppViewModel, volumes: List<SimDockerVolume>) 
     var selectedIds by remember { mutableStateOf(setOf<String>()) }
     fun volumeKey(vol: SimDockerVolume) = "${vol.runtime}:${vol.name}"
 
-    LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    OverflowLazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { isSelectionMode = !isSelectionMode; if (!isSelectionMode) selectedIds = setOf() }) {
@@ -939,7 +940,7 @@ private fun NetworkList(viewModel: AppViewModel, networks: List<SimDockerNetwork
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
 
-    LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+    OverflowLazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         item {
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                 Button(

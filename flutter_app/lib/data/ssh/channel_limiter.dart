@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:collection';
 
+import 'ssh_command_scope.dart';
+
 /// Caps how many channels this app opens at once on a single SSH connection.
 ///
 /// SSH multiplexes sessions over one connection, and the server decides how many it will grant:
@@ -32,16 +34,18 @@ class ChannelLimiter {
   final Map<String, Queue<Completer<void>>> _waiting = {};
 
   /// Runs [action] once a slot on [key] is free.
-  Future<T> run<T>(String key, Future<T> Function() action) async {
-    await _take(key);
+  Future<T> run<T>(String key, Future<T> Function() action, {SshCommandScope? scope}) async {
+    scope?.check();
+    await _take(key, scope);
     try {
+      scope?.check();
       return await action();
     } finally {
       _release(key);
     }
   }
 
-  Future<void> _take(String key) async {
+  Future<void> _take(String key, SshCommandScope? scope) async {
     final current = _inFlight[key] ?? 0;
     if (current < maxConcurrent) {
       _inFlight[key] = current + 1;
@@ -49,7 +53,23 @@ class ChannelLimiter {
     }
     final waiter = Completer<void>();
     (_waiting[key] ??= Queue<Completer<void>>()).add(waiter);
-    return waiter.future;
+    try {
+      if (scope == null) {
+        await waiter.future;
+      } else {
+        await scope.wait(() => waiter.future);
+      }
+    } catch (_) {
+      if (waiter.isCompleted) {
+        // Cancellation can race a slot handoff. Return the granted slot exactly once.
+        _release(key);
+      } else {
+        final queue = _waiting[key];
+        queue?.remove(waiter);
+        if (queue?.isEmpty ?? false) _waiting.remove(key);
+      }
+      rethrow;
+    }
   }
 
   void _release(String key) {

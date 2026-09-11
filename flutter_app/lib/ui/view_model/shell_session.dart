@@ -49,13 +49,7 @@ class ShellSession extends ChangeNotifier {
   }) : _channel = channel,
        startedAt = startedAt ?? DateTime.now(),
        _control = controlMode ? TmuxControlParser() : null {
-    _subscription = channel.output.listen(
-      _onOutput,
-      onError: (Object _) => _finish(ShellSessionEnd.disconnected),
-      onDone: _onStreamDone,
-      cancelOnError: false,
-    );
-    channel.closed.addListener(_onChannelClosed);
+    _listenTo(channel);
   }
 
   final String id;
@@ -85,12 +79,56 @@ class ShellSession extends ChangeNotifier {
   final bool controlMode;
 
   /// Splits the control-mode conversation into events. Null for an ordinary attach.
-  final TmuxControlParser? _control;
+  TmuxControlParser? _control;
 
   /// Why tmux said the session ended, when it said anything.
   String? controlExitReason;
 
-  final TerminalSession _channel;
+  TerminalSession _channel;
+
+  bool reconnecting = false;
+  String? reconnectError;
+
+  /// Replace a dropped transport without replacing this tab, its scrollback, or split ownership.
+  bool reconnectWith(TerminalSession channel) {
+    if (_disposed || _endReason != ShellSessionEnd.disconnected || channel.closed.value) {
+      return false;
+    }
+    _channel = channel;
+    _control = controlMode ? TmuxControlParser() : null;
+    _commandsSent = 0;
+    _repliesSeen = 0;
+    _controlPaneId = null;
+    _paneChangeRevision++;
+    paneChangePending = false;
+    controlExitReason = null;
+    _endReason = ShellSessionEnd.open;
+    _exitStatus = null;
+    reconnecting = false;
+    reconnectError = null;
+    controlRefreshError = null;
+    scrollbackDirty = tmuxName != null;
+    _listenTo(channel);
+    publishNow();
+    return true;
+  }
+
+  void _listenTo(TerminalSession channel) {
+    // A cancelled subscription can still have asynchronous work in flight. Only the current
+    // transport owns output and closure; an old channel must never finish its replacement.
+    _subscription = channel.output.listen(
+      (bytes) {
+        if (identical(channel, _channel) && isOpen) _onOutput(bytes);
+      },
+      onError: (Object _) {
+        if (identical(channel, _channel)) _finish(ShellSessionEnd.disconnected);
+      },
+      onDone: () {
+        if (identical(channel, _channel)) _onStreamDone();
+      },
+    );
+    channel.closed.addListener(_onChannelClosed);
+  }
 
   /// Exposed for the key encoder's DECCKM lookup; input and scrolling go through this class.
   final TerminalEmulator emulator;
@@ -139,22 +177,32 @@ class ShellSession extends ChangeNotifier {
           // from the output rather than from a `list-panes` round trip means input works from the
           // first byte the session receives.
           _controlPaneId ??= paneId;
-          emulator.feed(data);
+          // A control client receives output from background panes too. Match Kotlin's active
+          // pane filter so another window's output cannot corrupt the visible terminal.
+          if (paneId == _controlPaneId) emulator.feed(data);
         case TmuxExit(:final reason):
           controlExitReason = reason;
-          // tmux saying %exit is the remote finishing, not the link failing: the session should
-          // disappear rather than linger with its scrollback for a network that never dropped.
-          _finish(ShellSessionEnd.remoteExited);
+          // %exit ends a *client*, not necessarily its persistent tmux session. Let the owner
+          // probe the exact saved name before deciding whether recovery metadata can be removed.
+          _finish(tmuxName != null ? ShellSessionEnd.disconnected : ShellSessionEnd.remoteExited);
           return;
-        // A session change re-points the client at a different window, so the pane behind it moves
-        // too. The *first* one is the attach completing and the pane is still whatever %output
-        // reports; only later ones mean the user moved.
+        // Resolve the input pane on the initial attach too. An existing quiet shell need not
+        // emit any %output, so waiting for output would make reattached terminals ignore input.
         case TmuxSessionChanged():
-          if (_controlPaneId != null) _notePaneChange();
+          _notePaneChange();
         case TmuxNotification(:final line):
           if (_paneChanging.hasMatch(line)) _notePaneChange();
-        case TmuxReply():
-          break;
+        case TmuxReply(:final flags):
+          if (flags & 1 != 0) {
+            final waiter = _controlReplies.remove(++_repliesSeen);
+            if (waiter != null) {
+              if (event.isError) {
+                waiter.completeError(StateError('tmux: ${event.body}'));
+              } else {
+                waiter.complete(event.body);
+              }
+            }
+          }
       }
     }
     _schedulePublish();
@@ -308,17 +356,14 @@ class ShellSession extends ChangeNotifier {
     _resizing = true;
     var next = (cols, rows);
     while (true) {
+      final channel = _channel;
       try {
-        await _channel.resize(next.$1, next.$2);
+        await channel.resize(next.$1, next.$2);
         // Control mode also needs telling explicitly: tmux sizes a control client from
         // `refresh-client -C`, so without this the panes keep the geometry they were attached at
         // and output wraps against the old width. Kotlin does the same at `AppViewModel.kt:5970`.
-        if (controlMode && _controlPaneId != null) {
-          await _channel.write(
-            Uint8List.fromList(
-              utf8.encode('${TmuxControlCommands.refreshClientSize(next.$1, next.$2)}\n'),
-            ),
-          );
+        if (identical(channel, _channel) && isOpen && controlMode && _controlPaneId != null) {
+          await _sendControlLines([TmuxControlCommands.refreshClientSize(next.$1, next.$2)]);
         }
       } catch (_) {
         // A failed resize must not stop the consumer: the next layout change can still recover, and
@@ -351,6 +396,10 @@ class ShellSession extends ChangeNotifier {
   void setReadOnly(bool value) {
     if (value == readOnly) return;
     readOnly = value;
+    if (value && _pendingInput.isNotEmpty) {
+      _pendingInput.clear();
+      controlRefreshError = 'Held input was cancelled because this terminal is now read-only.';
+    }
     notifyListeners();
   }
 
@@ -368,6 +417,18 @@ class ShellSession extends ChangeNotifier {
   /// a key bar that reports success on a dead session teaches the user to distrust the whole screen.
   bool write(Uint8List bytes) {
     if (_disposed || !isOpen || readOnly || bytes.isEmpty) return false;
+    if (controlMode && (_controlPaneId == null || paneChangePending)) {
+      // Hold input across pane discovery/repaint, never send raw keys as tmux commands or to the
+      // old pane. Bound pasted input while a remote is unresponsive.
+      if (_pendingInput.length + bytes.length > 65536) {
+        controlRefreshError =
+            'Input buffer is full while the tmux pane loads. This input was not sent.';
+        publishNow();
+        return false;
+      }
+      _pendingInput.addAll(bytes);
+      return true;
+    }
     // Typing is an implicit "show me the bottom": every terminal behaves this way, and reading old
     // output while your keystrokes land somewhere off-screen is disorienting.
     if (!_followTail) scrollToTail();
@@ -393,6 +454,9 @@ class ShellSession extends ChangeNotifier {
 
   /// True once tmux has reported a pane change that has not been resolved yet.
   bool paneChangePending = false;
+  bool controlRefreshing = false;
+  String? controlRefreshError;
+  final _pendingInput = <int>[];
 
   /// Adopt a pane id resolved out of band, from `tmux display-message -p '#{pane_id}'`.
   ///
@@ -404,7 +468,97 @@ class ShellSession extends ChangeNotifier {
     _controlPaneId = paneId;
     paneChangePending = false;
     scrollbackDirty = true;
+    if (_pendingInput.isNotEmpty) {
+      final bytes = Uint8List.fromList(_pendingInput);
+      _pendingInput.clear();
+      write(bytes);
+    }
     return true;
+  }
+
+  int _commandsSent = 0;
+  int _repliesSeen = 0;
+  final _controlReplies = <int, Completer<String>>{};
+
+  Future<void> _sendControlLines(List<String> lines) {
+    if (_disposed || !isOpen) throw StateError('Terminal disconnected');
+    _commandsSent += lines.length;
+    return _channel.write(Uint8List.fromList(utf8.encode('${lines.join('\n')}\n')));
+  }
+
+  /// Every command (including input/resize) participates in reply ordering. Only awaited replies
+  /// allocate storage. The attach reply has flag 0 and must not consume a client-command slot.
+  Future<String> _controlCommand(String command) async {
+    if (_disposed || !isOpen) throw StateError('Terminal disconnected');
+    final channel = _channel;
+    final ordinal = _commandsSent + 1;
+    final reply = Completer<String>();
+    _controlReplies[ordinal] = reply;
+    // Attach the error handler before writing: an immediate disconnect may fail all waiters.
+    final result = reply.future.timeout(const Duration(seconds: 5));
+    try {
+      unawaited(
+        _sendControlLines([command]).catchError((Object error) {
+          if (!reply.isCompleted) reply.completeError(error);
+          if (identical(channel, _channel)) _finish(ShellSessionEnd.disconnected);
+        }),
+      );
+      return await result;
+    } on TimeoutException {
+      // A client stuck while paused must detach, not leave a permanently frozen screen. A late
+      // reply on this transport must never complete a command on its replacement.
+      if (identical(channel, _channel)) _finish(ShellSessionEnd.disconnected);
+      rethrow;
+    } finally {
+      if (identical(_controlReplies[ordinal], reply)) _controlReplies.remove(ordinal);
+    }
+  }
+
+  /// Seed a quiet pane before enabling input. Pause/continue are client-local, and replies arrive
+  /// on the same ordered stream as pane output, so pre-capture output cannot overtake the repaint.
+  Future<bool> repaintControlPane(String paneId, int revision) async {
+    final channel = _channel;
+    bool ownsPane() =>
+        !_disposed && isOpen && identical(channel, _channel) && revision == _paneChangeRevision;
+    if (!ownsPane()) return false;
+    paneChangePending = true;
+    await _controlCommand(TmuxControlCommands.refreshClientSize(cols, rows));
+    if (!ownsPane()) return false;
+    try {
+      await _controlCommand(TmuxControlCommands.paneOutputState(paneId, 'pause'));
+      if (!ownsPane()) return false;
+      final width = cols;
+      final height = rows;
+      final screen = await _controlCommand(TmuxControlCommands.capturePaneScreen(paneId));
+      final cursor = await _controlCommand(TmuxControlCommands.paneCursorQuery(paneId));
+      if (!ownsPane() || width != cols || height != rows) return false;
+      final xy = cursor.trim().split(RegExp(r'\s+'));
+      final x = xy.length == 2 ? int.tryParse(xy[0]) : null;
+      final y = xy.length == 2 ? int.tryParse(xy[1]) : null;
+      if (x == null || y == null || x < 0 || y < 0 || x >= width || y >= height) {
+        throw StateError('tmux returned an invalid cursor position');
+      }
+      _controlPaneId = paneId;
+      emulator.feed(
+        Uint8List.fromList(
+          utf8.encode(
+            '\x1b[r\x1b[0m\x1b[2J\x1b[H${screen.replaceAll('\n', '\r\n')}'
+            '\x1b[${y + 1};${x + 1}H\x1b[0m',
+          ),
+        ),
+      );
+      publishNow();
+    } finally {
+      if (!_disposed && isOpen && identical(channel, _channel)) {
+        try {
+          await _controlCommand(TmuxControlCommands.paneOutputState(paneId, 'continue'));
+        } catch (_) {
+          if (identical(channel, _channel)) _finish(ShellSessionEnd.disconnected);
+          rethrow;
+        }
+      }
+    }
+    return ownsPane() && adoptControlPane(paneId, revision);
   }
 
   /// tmux notifications that mean "the pane your keystrokes are addressed to may have moved".
@@ -425,28 +579,19 @@ class ShellSession extends ChangeNotifier {
   void Function(ShellSession session)? onPaneChanged;
 
   Future<void> _write(Uint8List bytes) async {
+    final channel = _channel;
     try {
-      await _channel.write(_encodeForChannel(bytes));
+      if (controlMode) {
+        await _sendControlLines(TmuxControlCommands.sendKeysHex(_controlPaneId!, bytes));
+      } else {
+        await channel.write(bytes);
+      }
     } catch (_) {
       // A write can fail before the output stream notices the dead socket. Marking the session
       // disconnected here prevents further keystrokes from being accepted and gives the terminal
       // an immediate visible "Connection lost" state instead of silently dropping input.
-      _finish(ShellSessionEnd.disconnected);
+      if (identical(channel, _channel)) _finish(ShellSessionEnd.disconnected);
     }
-  }
-
-  /// What actually goes down the channel.
-  ///
-  /// **In control mode the channel is a command channel, not a PTY.** `tmux -CC` reads its stdin as
-  /// tmux command lines, so raw keystrokes are parsed as commands and the pane never receives them —
-  /// typing simply does nothing. Input has to be wrapped in `send-keys -H`, which is what
-  /// [TmuxControlCommands.sendKeysHex] builds, chunked so a long paste cannot exceed tmux's
-  /// command-line limit.
-  Uint8List _encodeForChannel(Uint8List bytes) {
-    final paneId = _controlPaneId;
-    if (!controlMode || paneId == null) return bytes;
-    final commands = TmuxControlCommands.sendKeysHex(paneId, bytes);
-    return Uint8List.fromList(utf8.encode(commands.map((line) => '$line\n').join()));
   }
 
   // ── lifecycle ───────────────────────────────────────────────────────────────
@@ -469,6 +614,7 @@ class ShellSession extends ChangeNotifier {
   void _finish(ShellSessionEnd reason) {
     if (_disposed || _endReason != ShellSessionEnd.open) return;
     _endReason = reason;
+    _failControlReplies();
     _exitStatus = _channel.exitStatus.value;
     _channel.closed.removeListener(_onChannelClosed);
     unawaited(_subscription?.cancel());
@@ -485,10 +631,20 @@ class ShellSession extends ChangeNotifier {
 
   bool _disposed = false;
 
+  void _failControlReplies() {
+    for (final reply in _controlReplies.values) {
+      if (!reply.isCompleted) reply.completeError(StateError('Terminal disconnected'));
+    }
+    _controlReplies.clear();
+    // Never replay uncertain keystrokes after reconnect.
+    _pendingInput.clear();
+  }
+
   @override
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    _failControlReplies();
     _publishTimer?.cancel();
     _publishTimer = null;
     _channel.closed.removeListener(_onChannelClosed);

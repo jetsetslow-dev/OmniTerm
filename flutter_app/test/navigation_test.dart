@@ -5,6 +5,28 @@ import 'package:omniterm/ui/navigation.dart';
 /// `navigateBack`, `swipeNavigate`). They are assertions about the *ported contract*, not about
 /// any particular device, so they stay host-independent.
 void main() {
+  test('offline selected Infra host retains visible builder subtabs', () {
+    final nav = NavigationController()..navigateTo(Screen.infra);
+    nav.swipeNavigate(forward: true, hasOnlineHosts: false, hasInfraHost: true);
+    expect(nav.currentScreen, Screen.infra);
+    expect(nav.currentSubtab(Screen.infra), 1);
+  });
+
+  test('empty host screens skip hidden subtabs in both directions', () {
+    for (final (screen, before, after) in [
+      (Screen.monitor, Screen.fleet, Screen.shell),
+      (Screen.infra, Screen.sftp, Screen.tools),
+    ]) {
+      for (final forward in [false, true]) {
+        final nav = NavigationController()..navigateTo(screen);
+        nav.setSubtab(screen, 2); // Also covers a host disappearing on a later tab.
+        nav.swipeNavigate(forward: forward, hasOnlineHosts: false);
+        expect(nav.currentScreen, forward ? after : before);
+        expect(nav.currentSubtab(screen), 2);
+      }
+    }
+  });
+
   group('Screen', () {
     test('has the 15 legacy destinations in declaration order', () {
       expect(Screen.values.map((s) => s.wireName).toList(), <String>[

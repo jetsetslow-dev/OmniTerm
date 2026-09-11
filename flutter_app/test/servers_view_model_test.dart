@@ -91,6 +91,27 @@ void main() {
     await db.close();
   });
 
+  test(
+    'manual add and edit reject renamed duplicate connections with an actionable error',
+    () async {
+      final original = hostFixture(name: 'current name');
+      final originalId = await vm.saveServer(original);
+      await expectLater(
+        vm.saveServer(original.copyWith(name: 'renamed clone')),
+        throwsA(predicate((error) => '$error'.contains('already exist as "current name"'))),
+      );
+      final otherId = await vm.saveServer(original.copyWith(name: 'other', host: '10.0.0.2'));
+      await expectLater(
+        vm.updateServer(original.copyWith(id: otherId, name: 'other')),
+        throwsA(predicate((error) => '$error'.contains('already exist as "current name"'))),
+      );
+      await vm.updateServer(original.copyWith(id: originalId, name: 'new display name'));
+      expect((await repo.getServerById(originalId))!.name, 'new display name');
+      expect((await repo.getServerById(otherId))!.host, '10.0.0.2');
+      expect(await repo.getAllServers(), hasLength(2));
+    },
+  );
+
   Server server({required String name, String host = '10.0.0.1', String? group}) => Server(
     id: 0,
     name: name,

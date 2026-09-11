@@ -1,6 +1,7 @@
 import 'package:drift/drift.dart';
 
 import '../platform/secret_store.dart';
+import '../domain/server_identity.dart';
 import 'app_database.dart';
 
 /// The single boundary between the database and everything above it, ported from
@@ -127,6 +128,28 @@ class AppRepository {
   Future<Server?> getServerByName(String name) async =>
       _decryptServerOrNull(await _db.serverDao.getServerByName(name));
 
+  Future<Server?> findMatchingServer(Server candidate) async {
+    final profiles = await getAllProfiles();
+    final identity = serverIdentity(candidate, profiles);
+    if (identity == null) return null;
+    return (await getAllServers())
+        .where(
+          (server) => server.id != candidate.id && serverIdentity(server, profiles) == identity,
+        )
+        .firstOrNull;
+  }
+
+  /// User-facing add/clone/edit paths share one transactional identity guard.
+  Future<int> saveUniqueServer(Server server, {bool update = false}) => _db.transaction(() async {
+    final existing = await findMatchingServer(server);
+    if (existing != null) throw DuplicateServerException(existing.name);
+    if (update) {
+      await updateServer(server);
+      return server.id;
+    }
+    return insertServer(server);
+  });
+
   Future<int> insertServer(Server server) async {
     final encrypted = await _encryptServer(server);
     return _db.serverDao.insertServer(
@@ -243,12 +266,21 @@ class AppRepository {
   Future<void> deleteProfile(CredentialProfile profile) =>
       _db.appDataDao.deleteProfileById(profile.id);
 
-  Future<int> insertProfile(CredentialProfile profile) async {
+  Future<int> insertProfile(CredentialProfile profile) => _db.transaction(() async {
+    if (profile.id > 0) {
+      // Login identity uses no secret fields; do not decrypt unrelated credentials for this check.
+      final conflicts = profileServerConflicts(
+        await _db.serverDao.getAllServers(),
+        await _db.appDataDao.getAllProfiles(),
+        profile,
+      );
+      if (conflicts.isNotEmpty) throw ProfileServerConflictException(conflicts);
+    }
     final encrypted = await _encryptProfile(profile);
     return _db.appDataDao.insertProfile(
       encrypted.toCompanion(false).copyWith(id: _newOrExisting(profile.id)),
     );
-  }
+  });
 
   Future<void> deleteProfileById(int id) => _db.appDataDao.deleteProfileById(id);
 

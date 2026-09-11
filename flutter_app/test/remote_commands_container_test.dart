@@ -5,6 +5,15 @@ import 'package:omniterm/data/remote_commands.dart';
 /// A mis-escaped `$` produces a command that still *looks* right in source but silently expands to
 /// nothing on the host, so the shape of the generated text is asserted directly.
 void main() {
+  test('compose update exposes pull output and labels each stage', () {
+    final command = dockerComposeAction('fixture', '/srv/fixture', 'compose.yml', 'update');
+    expect(command, isNot(contains('pull --ignore-buildable 2>/dev/null')));
+    expect(command, contains('[1/4] Pulling images'));
+    expect(command, contains('[2/4] Building images'));
+    expect(command, contains('[3/4] Recreating services'));
+    expect(command, contains('[4/4] Checking services'));
+    expect(command, contains('Warning:'));
+  });
   group('shell variables survive Dart interpolation', () {
     test('the runtime-detection subshell is intact, not expanded by Dart', () {
       // `$(…)` must reach the host verbatim.

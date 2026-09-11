@@ -397,11 +397,14 @@ case "$PROFILE" in
     TESTS=()
     while IFS= read -r test_file; do TESTS+=("$test_file"); done < <(
       cd "$FLUTTER_APP" && find integration_test -name '*_test.dart' \
-        ! -name 'host_backed_e2e_test.dart' -print | sort
+        ! -name 'host_backed_e2e_test.dart' ! -name 'terminal_lifecycle_test.dart' -print | sort
     )
     ;;
   host)
     TESTS=(integration_test/host_backed_e2e_test.dart)
+    if [ "$PLATFORM" = android ]; then
+      TESTS+=(integration_test/native/terminal_lifecycle_test.dart)
+    fi
     ;;
   all)
     TESTS=()

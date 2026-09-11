@@ -1,0 +1,8 @@
+{
+  "format": "omniterm-backup",
+  "schema": 5,
+  "servers": [{"id": 11, "name": "Backup fixture", "host": "192.0.2.11", "port": 22, "username": "fixture", "authType": "password", "persistentSession": true}],
+  "quickScripts": [{"name": "Fixture script", "emoji": ">", "command": "printf fixture", "color": "cyan"}],
+  "settings": {"dark_mode": "false", "sftp_bookmarks_11": "/config", "app_pin": "must-not-restore"},
+  "wolTargets": [{"name": "Fixture wake", "macAddress": "02:00:00:00:00:11", "notes": "Wake fixture", "lastWokenTime": 1786406400000}]
+}

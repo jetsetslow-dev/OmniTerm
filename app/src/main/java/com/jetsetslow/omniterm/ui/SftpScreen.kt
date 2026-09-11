@@ -209,7 +209,7 @@ private fun NetworkSharesTab(viewModel: AppViewModel) {
                 Text(stringResource(R.string.no_network_shares_saved_yet), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
-            LazyColumn(
+            OverflowLazyColumn(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
@@ -340,7 +340,7 @@ private fun NetworkShareScanDialog(
                 if (!scanning && hits.isEmpty()) {
                     Text(stringResource(R.string.no_shares_yet_run_a_scan), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                LazyColumn(
+                OverflowLazyColumn(
                     modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -735,7 +735,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                         tint = if (viewModel.shareSortOption != SftpSortOption.NameAsc) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                DropdownMenu(expanded = sortMenuExpanded, onDismissRequest = { sortMenuExpanded = false }) {
+                OverflowDropdownMenu(expanded = sortMenuExpanded, onDismissRequest = { sortMenuExpanded = false }) {
                     SftpSortOption.entries.forEach { option ->
                         DropdownMenuItem(
                             text = { Text(option.label, fontSize = 13.sp) },
@@ -963,7 +963,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                         Text("No matches under $currentDir", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
-                    LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OverflowLazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(recursiveResults, key = { it.path }) { hit ->
                             OmniCard(
                                 modifier = Modifier.fillMaxWidth().clickable {
@@ -1021,7 +1021,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                 }
             }
             else -> {
-                LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), state = listState) {
+                OverflowLazyColumn(modifier = Modifier.fillMaxWidth().weight(1f), state = listState) {
                     items(displayedFiles, key = { it.name }) { file ->
                         val isSelected = file.name in viewModel.shareSelected
                         Row(
@@ -1070,7 +1070,7 @@ private fun ShareBrowserView(viewModel: AppViewModel, share: NetworkShareEntity)
                                 IconButton(onClick = { menuForName = file.name }) {
                                     Icon(Icons.Filled.MoreVert, contentDescription = "Actions for ${file.name}")
                                 }
-                                DropdownMenu(
+                                OverflowDropdownMenu(
                                     expanded = menuForName == file.name,
                                     onDismissRequest = { menuForName = null },
                                 ) {
@@ -1362,7 +1362,7 @@ private fun NetworkShareDialog(
         title = { Text(if (initial == null) "Add network share" else "Edit network share") },
         text = {
             Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
+                modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text(stringResource(R.string.custom_name)) }, modifier = Modifier.fillMaxWidth(), singleLine = true, colors = omniTextFieldColors())
@@ -1379,7 +1379,13 @@ private fun NetworkShareDialog(
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = menuExpanded) },
                         colors = omniTextFieldColors(),
                     )
-                    ExposedDropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    val menuScroll = rememberScrollState()
+                    ExposedDropdownMenu(
+                        expanded = menuExpanded,
+                        onDismissRequest = { menuExpanded = false },
+                        scrollState = menuScroll,
+                        modifier = Modifier.scrollOverflowIndicators({ menuScroll.canScrollBackward }, { menuScroll.canScrollForward }),
+                    ) {
                         protocols.forEach { option ->
                             DropdownMenuItem(
                                 text = { Text(option) },
@@ -1758,7 +1764,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                             IconButton(onClick = { archiveMenu = true }) {
                                 Icon(Icons.Filled.Archive, contentDescription = "Compress to archive")
                             }
-                            DropdownMenu(expanded = archiveMenu, onDismissRequest = { archiveMenu = false }) {
+                            OverflowDropdownMenu(expanded = archiveMenu, onDismissRequest = { archiveMenu = false }) {
                                 listOf(
                                     "zip" to "ZIP (.zip)",
                                     "tar.gz" to "Gzipped tar (.tar.gz)",
@@ -1861,7 +1867,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                 softWrap = false,
                                 modifier = Modifier
                                     .weight(1f)
-                                    .horizontalScroll(pathScroll),
+                                    .horizontalScrollWithIndicators(pathScroll),
                             )
                             Spacer(modifier = Modifier.width(8.dp))
                             Icon(Icons.Filled.Edit, contentDescription = "Edit path", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(16.dp))
@@ -1873,7 +1879,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                     if (!editingPath) Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
+                            .horizontalScrollWithIndicators(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
@@ -1911,7 +1917,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                                     tint = if (viewModel.sftpSortOption != SftpSortOption.NameAsc) OmniColors.cyan else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            DropdownMenu(
+                            OverflowDropdownMenu(
                                 expanded = sortMenuExpanded,
                                 onDismissRequest = { sortMenuExpanded = false },
                             ) {
@@ -2270,7 +2276,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                     Text("No matches under $currentPath", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
-                LazyColumn(
+                OverflowLazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f),
@@ -2334,7 +2340,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                 Text(stringResource(R.string.no_matches_in_this_folder), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
-            LazyColumn(
+            OverflowLazyColumn(
                 state = fileListState,
                 modifier = Modifier
                     .fillMaxWidth()
@@ -2428,7 +2434,7 @@ fun SftpFilesTab(viewModel: AppViewModel) {
                 title = { Text(file.name, fontFamily = OmniFonts.mono) },
                 text = {
                     Column(
-                        modifier = Modifier.verticalScroll(rememberScrollState()),
+                        modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()),
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         if (!file.isDirectory) {
@@ -2800,7 +2806,7 @@ private fun SftpSecondPane(viewModel: AppViewModel, confirm: ConfirmController, 
                     Text(srvName, fontSize = 13.sp, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Icon(Icons.Filled.ArrowDropDown, null)
                 }
-                DropdownMenu(expanded = serverMenu, onDismissRequest = { serverMenu = false }) {
+                OverflowDropdownMenu(expanded = serverMenu, onDismissRequest = { serverMenu = false }) {
                     servers.forEach { s ->
                         DropdownMenuItem(text = { Text(s.name) }, onClick = { serverMenu = false; viewModel.paneBSelectServer(s.id) })
                     }
@@ -2833,7 +2839,7 @@ private fun SftpSecondPane(viewModel: AppViewModel, confirm: ConfirmController, 
             viewModel.paneBEntries.isEmpty() -> Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                 Text(stringResource(R.string.empty_folder), color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp)
             }
-            else -> LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+            else -> OverflowLazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
                 items(viewModel.paneBEntries, key = { it.name }) { file ->
                     var menu by remember(file.name) { mutableStateOf(false) }
                     Row(
@@ -2856,7 +2862,7 @@ private fun SftpSecondPane(viewModel: AppViewModel, confirm: ConfirmController, 
                             IconButton(onClick = { menu = true }, modifier = Modifier.size(30.dp)) {
                                 Icon(Icons.Filled.MoreVert, contentDescription = "Actions", modifier = Modifier.size(16.dp))
                             }
-                            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                            OverflowDropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                                 DropdownMenuItem(
                                     text = { Text(stringResource(R.string.copy_other_pane)) },
                                     leadingIcon = { Icon(Icons.Filled.ContentCopy, null) },
@@ -2962,7 +2968,7 @@ fun SftpTransfersTab(viewModel: AppViewModel) {
                 TransferAggregateBar(viewModel)
                 Spacer(modifier = Modifier.height(12.dp))
             }
-            LazyColumn(
+            OverflowLazyColumn(
                 modifier = Modifier.fillMaxWidth().weight(1f),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
@@ -3200,7 +3206,7 @@ fun SftpBookmarksTab(viewModel: AppViewModel) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        } else LazyColumn(
+        } else OverflowLazyColumn(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -3313,7 +3319,7 @@ private fun BookmarkEditDialog(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(endpointLabel, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
-                    DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    OverflowDropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
                         servers.forEach { server ->
                             DropdownMenuItem(
                                 text = { Text(server.name) },
@@ -3415,7 +3421,7 @@ fun PasteConflictDialog(viewModel: AppViewModel) {
                     }
                 }
                 HorizontalDivider()
-                LazyColumn(
+                OverflowLazyColumn(
                     modifier = Modifier.heightIn(max = 320.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {

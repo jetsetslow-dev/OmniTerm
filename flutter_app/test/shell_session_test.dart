@@ -65,6 +65,134 @@ void main() {
     expect(session.write(Uint8List.fromList('y'.codeUnits)), isFalse);
   });
 
+  group('ordered control repaint', () {
+    String transcript() => session.snapshot.rows.map((row) => row.text).join('\n');
+
+    test('quiet capture is painted before resumed output and buffered input', () async {
+      build(controlMode: true);
+      channel.emit('%session-changed \$0 main\n');
+      await settle();
+      expect(session.write(Uint8List.fromList('x'.codeUnits)), isTrue);
+      expect(channel.writes, isEmpty, reason: 'input waits for a known, painted pane');
+      channel.onWrite = (command) {
+        var body = '';
+        if (command.startsWith('capture-pane')) body = '\nquiet pane\n';
+        if (command.startsWith('display-message')) body = '10 1\n';
+        channel.emit('%begin 1 1 1\n$body%end 1 1 1\n');
+        if (command.contains(':continue')) channel.emit('%output %9 NEW\n');
+      };
+      expect(await session.repaintControlPane('%9', session.paneChangeRevision), isTrue);
+      await settle();
+      expect(session.snapshot.rows[0].text.trim(), isEmpty);
+      expect(transcript(), contains('quiet paneNEW'));
+      expect(String.fromCharCodes(channel.writes.last), 'send-keys -t %9 -H 78\n');
+      expect(session.paneChangePending, isFalse);
+    });
+
+    test('attach, input and resize replies cannot satisfy a capture command', () async {
+      build(controlMode: true);
+      session.adoptControlPane('%7', 0);
+      session.write(Uint8List.fromList('x'.codeUnits));
+      await session.resize(81, 25);
+      final repaint = session.repaintControlPane('%9', 0);
+      await settle();
+      final before = channel.writes.length;
+      channel.emit('%begin 1 0 0\n%end 1 0 0\n');
+      channel.emit('%begin 1 1 1\n%end 1 1 1\n');
+      channel.emit('%begin 1 2 1\n%end 1 2 1\n');
+      await settle();
+      expect(channel.writes.length, before, reason: 'still waiting for repaint resize reply');
+      channel.onWrite = (command) {
+        final body = command.startsWith('capture-pane')
+            ? 'correct capture\n'
+            : command.startsWith('display-message')
+            ? '0 0\n'
+            : '';
+        channel.emit('%begin 1 4 1\n$body%end 1 4 1\n');
+      };
+      channel.emit('%begin 1 3 1\n%end 1 3 1\n');
+      expect(await repaint, isTrue);
+      expect(transcript(), contains('correct capture'));
+    });
+
+    test('pane switch during capture discards stale screen and resumes old pane', () async {
+      build(controlMode: true);
+      channel.emit('%output %7 original\n');
+      await settle();
+      channel.onWrite = (command) {
+        if (command.startsWith('capture-pane')) channel.emit('%window-pane-changed @0 %11\n');
+        final body = command.startsWith('capture-pane')
+            ? 'stale capture\n'
+            : command.startsWith('display-message')
+            ? '0 0\n'
+            : '';
+        channel.emit('%begin 1 1 1\n$body%end 1 1 1\n');
+      };
+      expect(await session.repaintControlPane('%9', 0), isFalse);
+      expect(transcript(), contains('original'));
+      expect(transcript(), isNot(contains('stale capture')));
+      expect(String.fromCharCodes(channel.writes.last), contains('%9:continue'));
+      expect(session.paneChangePending, isTrue);
+    });
+
+    test('capture error still resumes output and leaves input guarded', () async {
+      build(controlMode: true);
+      channel.onWrite = (command) {
+        final error = command.startsWith('capture-pane');
+        channel.emit('%begin 1 1 1\n${error ? 'no pane\n%error' : '%end'} 1 1 1\n');
+      };
+      await expectLater(session.repaintControlPane('%9', 0), throwsStateError);
+      expect(String.fromCharCodes(channel.writes.last), contains('%9:continue'));
+      expect(session.paneChangePending, isTrue);
+      expect(session.isOpen, isTrue);
+    });
+
+    test('disconnect fails outstanding capture without waiting for timeout', () async {
+      build(controlMode: true);
+      final repaint = session.repaintControlPane('%9', 0);
+      final failed = expectLater(repaint, throwsStateError);
+      await channel.dropConnection();
+      await failed;
+      expect(session.endReason, ShellSessionEnd.disconnected);
+    });
+
+    test('reconnect cannot receive cleanup commands or a capture from the old transport', () async {
+      build(controlMode: true);
+      final old = channel;
+      final repaint = session.repaintControlPane('%9', 0);
+      final failed = expectLater(repaint, throwsStateError);
+      await old.dropConnection();
+      await settle();
+      channel = FakeTerminalSession();
+      expect(session.reconnectWith(channel), isTrue);
+      await failed;
+      expect(channel.writes, isEmpty);
+      expect(session.controlPaneId, isNull);
+      expect(session.isOpen, isTrue);
+      await old.dispose();
+    });
+
+    test('read-only cancels held input and reports why', () async {
+      build(controlMode: true);
+      session.write(Uint8List.fromList('x'.codeUnits));
+      session.setReadOnly(true);
+      expect(session.controlRefreshError, contains('cancelled'));
+      session.setReadOnly(false);
+      session.adoptControlPane('%9', 0);
+      await settle();
+      expect(channel.writes, isEmpty);
+    });
+
+    test('oversized held paste is refused explicitly and never sent partially', () async {
+      build(controlMode: true);
+      expect(session.write(Uint8List(65537)), isFalse);
+      expect(session.controlRefreshError, contains('not sent'));
+      session.adoptControlPane('%9', 0);
+      await settle();
+      expect(channel.writes, isEmpty);
+    });
+  });
+
   group('viewport', () {
     test('follows the tail by default', () async {
       build(rows: 5);
@@ -367,6 +495,10 @@ void main() {
 
       expect(session.controlPaneId, '%7');
       expect(session.paneChangePending, isFalse);
+      expect(
+        session.snapshot.rows.map((row) => row.text).join('\n'),
+        isNot(contains('background noise')),
+      );
     });
 
     test('a pane resolved against a stale revision is refused', () async {
@@ -398,15 +530,14 @@ void main() {
       expect(session.scrollbackDirty, isTrue, reason: 'the new pane has its own history to fetch');
     });
 
-    test('the first session-changed is the attach completing, not a move', () async {
-      // Before any %output there is no pane to have moved away from, and treating the attach as a
-      // change would fire a query for a session that has not started streaming.
+    test('the first session-changed resolves input even when the pane is quiet', () async {
+      // A reattached prompt may emit no bytes until the user types. Input cannot wait for output.
       build(controlMode: true);
       channel.emit('%session-changed \$0 main\n');
       await settle();
 
-      expect(session.paneChangePending, isFalse);
-      expect(session.paneChangeRevision, 0);
+      expect(session.paneChangePending, isTrue);
+      expect(session.paneChangeRevision, 1);
     });
 
     test('an ordinary attach still writes raw bytes', () async {

@@ -658,7 +658,7 @@ fun HostPickerDialog(
                         }
                     }
                 }
-                androidx.compose.foundation.lazy.LazyColumn(
+                OverflowLazyColumn(
                     modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
                 ) {
                     if (allHostsOption && query.isBlank()) {

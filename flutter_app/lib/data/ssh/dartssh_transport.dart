@@ -32,6 +32,8 @@ import 'channel_limiter.dart';
 import 'ssh_session_pool.dart';
 import 'ssh_transport.dart';
 import 'terminal_close.dart';
+import 'shell_channel.dart';
+import 'ssh_command_scope.dart';
 
 const _execOutputMaxChars = 240000;
 
@@ -129,12 +131,19 @@ class DartSshTransport implements SshTransport {
     bool forwardAgent = false,
   }) async {
     SSHClient? jump;
+    SSHClient? target;
+    SSHSocket? jumpSocket;
+    SSHSocket? targetSocket;
     try {
-      final SSHSocket socket;
       if (_isJump(creds)) {
         onPhaseChange?.call('Authenticating bastion…');
+        jumpSocket = await SSHSocket.connect(
+          creds.proxyHost,
+          creds.proxyPort,
+          timeout: _connectTimeout,
+        );
         jump = SSHClient(
-          await SSHSocket.connect(creds.proxyHost, creds.proxyPort, timeout: _connectTimeout),
+          jumpSocket,
           username: creds.proxyUser,
           onPasswordRequest: () => creds.proxyPassword,
           // The passphrase field belongs to the *target* key, not the bastion's — feeding it here
@@ -146,14 +155,14 @@ class DartSshTransport implements SshTransport {
         );
         // Tunnel the target connection through the bastion, exactly as `ssh -J` does: the target's
         // own host key is still verified end-to-end below.
-        socket = await jump.forwardLocal(creds.host, creds.port);
+        targetSocket = await jump.forwardLocal(creds.host, creds.port);
       } else if (_isProxied(creds)) {
         // Previously missing entirely: an `http` or `socks5` proxy was silently ignored and the app
         // connected straight to the target. That fails on exactly the hosts a proxy exists to
         // reach, and where it *does* succeed it has quietly bypassed a route the user chose
         // deliberately (§15.11).
         onPhaseChange?.call('Connecting through proxy…');
-        socket = await connectThroughProxy(
+        targetSocket = await connectThroughProxy(
           type: creds.proxyType,
           proxyHost: creds.proxyHost,
           proxyPort: creds.proxyPort,
@@ -164,13 +173,13 @@ class DartSshTransport implements SshTransport {
           timeout: _connectTimeout,
         );
       } else {
-        socket = await SSHSocket.connect(creds.host, creds.port, timeout: _connectTimeout);
+        targetSocket = await SSHSocket.connect(creds.host, creds.port, timeout: _connectTimeout);
       }
 
       onPhaseChange?.call('Authenticating target…');
       final identities = _keyPairs(creds.privateKeyPem, creds.passphrase);
       final client = SSHClient(
-        socket,
+        targetSocket,
         username: creds.username,
         onPasswordRequest: () => creds.password,
         identities: identities,
@@ -182,16 +191,29 @@ class DartSshTransport implements SshTransport {
         compression: creds.compression,
         printDebug: printDebug,
       );
+      target = client;
       await client.authenticated;
 
       // The bastion must outlive the target client, so tie its teardown to the target's.
       if (jump != null) {
         final bastion = jump;
-        unawaited(client.done.whenComplete(bastion.close));
+        unawaited(
+          client.done.then<void>(
+            (_) => bastion.close(),
+            onError: (Object _, StackTrace _) {
+              bastion.close();
+            },
+          ),
+        );
       }
       return client;
     } catch (e) {
+      // Keep ownership from the instant each socket opens, including key parsing/constructor
+      // failures before a client exists and authentication failures before it can be returned.
+      target?.close();
+      targetSocket?.destroy();
       jump?.close();
+      jumpSocket?.destroy();
       rethrow;
     }
   }
@@ -219,44 +241,58 @@ class DartSshTransport implements SshTransport {
 
   @override
   Future<String> exec(SshCredentials creds, String command, {String? stdin}) async {
+    final scope = SshCommandScope(_execTimeout);
     try {
-      return await _execOnce(creds, command, stdin).timeout(_execTimeout);
+      return await _execOnce(creds, command, stdin, scope);
     } on TimeoutException {
-      // A timeout must also retire the connection it timed out on. `Future.timeout` only completes
-      // *this* future; the underlying request keeps waiting on a peer that has stopped answering,
-      // and without this the wedged client stays in the pool and every later caller inherits it —
-      // the host then reports itself unreachable while a plain `ssh` to it still works.
-      //
-      // The Kotlin side has the same hazard for a different reason: there the read is blocking JVM
-      // IO that `withTimeout` cannot interrupt at all, so it needs a watchdog to force the socket
-      // shut. See JschSshTransport.exec.
-      _pool.evict(creds);
+      // The operation retires only its own suspect client. A timeout while queued must not evict
+      // a healthy connection being used by other commands.
       return 'SSH Error: command timed out';
     } catch (e) {
       // The request may already have reached the server. The suspect connection was already
       // evicted at the point of failure; never retry an arbitrary command and risk executing a
       // mutation twice.
       return 'SSH Error: ${_describe(e)}';
+    } finally {
+      await scope.dispose();
     }
   }
 
   /// Bounds how many channels this app opens at once on one connection; see [ChannelLimiter].
   final _channels = ChannelLimiter();
 
-  Future<String> _execOnce(SshCredentials creds, String command, String? stdin) =>
-      _channels.run(SshSessionPool.poolKey(creds), () => _execOnceUnlimited(creds, command, stdin));
+  Future<String> _execOnce(
+    SshCredentials creds,
+    String command,
+    String? stdin,
+    SshCommandScope scope,
+  ) => _channels.run(
+    SshSessionPool.poolKey(creds),
+    () => _execOnceUnlimited(creds, command, stdin, scope),
+    scope: scope,
+  );
 
-  Future<String> _execOnceUnlimited(SshCredentials creds, String command, String? stdin) async {
-    final lease = await _acquire(creds);
+  Future<String> _execOnceUnlimited(
+    SshCredentials creds,
+    String command,
+    String? stdin,
+    SshCommandScope scope,
+  ) async {
+    final lease = await scope.wait(() => _acquire(creds), onLateResult: (lease) => lease.close());
     SSHSession? session;
     try {
-      session = await lease.client.execute(command);
+      session = await scope.wait<SSHSession>(
+        () => lease.client.execute(command),
+        onLateResult: (session) => session.close(),
+      );
+      scope.check();
       _writeStdin(session, stdin);
 
       final out = CappedTextBuffer(_execOutputMaxChars);
       final err = CappedTextBuffer(_execOutputMaxChars);
-      await Future.wait([_drain(session.stdout, out), _drain(session.stderr, err)]);
-      await session.done;
+      final active = session;
+      await scope.wait(() => Future.wait([_drain(active.stdout, out), _drain(active.stderr, err)]));
+      await scope.wait(() => active.done);
 
       final combined = StringBuffer(out.text());
       final errText = err.text();
@@ -286,14 +322,9 @@ class DartSshTransport implements SshTransport {
     SshCancellationToken? cancellation,
     required Future<void> Function(String chunk) onChunk,
   }) async {
+    final scope = SshCommandScope(_streamTimeout, cancellation: cancellation);
     try {
-      return await _execStreamOnce(
-        creds,
-        command,
-        stdin,
-        onChunk,
-        cancellation,
-      ).timeout(_streamTimeout);
+      return await _execStreamOnce(creds, command, stdin, onChunk, scope);
     } on TimeoutException {
       const error = 'SSH Error: command timed out';
       await onChunk(error);
@@ -305,6 +336,8 @@ class DartSshTransport implements SshTransport {
       final message = 'SSH Error: ${_describe(e)}';
       await onChunk(message);
       return message;
+    } finally {
+      await scope.dispose();
     }
   }
 
@@ -313,10 +346,11 @@ class DartSshTransport implements SshTransport {
     String command,
     String? stdin,
     Future<void> Function(String chunk) onChunk,
-    SshCancellationToken? cancellation,
+    SshCommandScope scope,
   ) => _channels.run(
     SshSessionPool.poolKey(creds),
-    () => _execStreamOnceUnlimited(creds, command, stdin, onChunk, cancellation),
+    () => _execStreamOnceUnlimited(creds, command, stdin, onChunk, scope),
+    scope: scope,
   );
 
   Future<String> _execStreamOnceUnlimited(
@@ -324,35 +358,42 @@ class DartSshTransport implements SshTransport {
     String command,
     String? stdin,
     Future<void> Function(String chunk) onChunk,
-    SshCancellationToken? cancellation,
+    SshCommandScope scope,
   ) async {
-    final lease = await _acquire(creds);
+    final lease = await scope.wait(() => _acquire(creds), onLateResult: (lease) => lease.close());
     SSHSession? session;
-    StreamSubscription<void>? cancellationSubscription;
     try {
-      session = await lease.client.execute(command);
-      if (cancellation?.isCancelled ?? false) {
-        session.close();
-        return 'Cancelled';
-      }
-      cancellationSubscription = cancellation?.onCancel.listen((_) => session?.close());
+      session = await scope.wait<SSHSession>(
+        () => lease.client.execute(command),
+        onLateResult: (session) => session.close(),
+      );
+      scope.check();
       _writeStdin(session, stdin);
 
       final accumulated = CappedTextBuffer(_execOutputMaxChars);
       // stdout and stderr are decoded separately: a multi-byte character split across a read
       // boundary on one stream must not be reassembled using bytes from the other.
-      await Future.wait([
-        _pump(session.stdout, accumulated, onChunk),
-        _pump(session.stderr, accumulated, onChunk),
-      ]);
-      await session.done;
+      final active = session;
+      Future<void> deliver(String chunk) async {
+        scope.check();
+        await onChunk(chunk);
+      }
+
+      await scope.wait(
+        () => Future.wait([
+          _pump(active.stdout, accumulated, deliver),
+          _pump(active.stderr, accumulated, deliver),
+        ]),
+      );
+      await scope.wait(() => active.done);
 
       return _withExitStatus(accumulated.text(), session.exitCode);
-    } catch (_) {
-      _pool.evict(creds, lease.client);
+    } catch (error) {
+      // Stopping a healthy, already-open stream only needs its channel closed. Retiring the
+      // shared client on every user Stop would force the next probe/action to authenticate again.
+      if (error is! SshCommandCancelled || session == null) _pool.evict(creds, lease.client);
       rethrow;
     } finally {
-      await cancellationSubscription?.cancel();
       session?.close();
       lease.close();
     }
@@ -447,11 +488,7 @@ class DartSshTransport implements SshTransport {
   /// because a server that allows it renders 24-bit colour correctly, then retried without, because
   /// a rejected optional request must never cost the user their shell (§15.9).
   Future<SSHSession> _openShellChannel(SSHClient client, SSHPtyConfig pty) async {
-    try {
-      return await client.shell(pty: pty, environment: const {'COLORTERM': 'truecolor'});
-    } on SSHChannelRequestError {
-      return client.shell(pty: pty);
-    }
+    return openInteractiveShellChannel(client, pty);
   }
 
   @override
@@ -489,7 +526,8 @@ class DartSshTransport implements SshTransport {
         // means reconnecting without it rather than retrying the channel.
         if (!creds.agentForwarding) rethrow;
         client.close();
-        client = await _connect(creds, forwardAgent: false);
+        client = await _connect(creds, onPhaseChange: onPhaseChange, forwardAgent: false);
+        onPhaseChange?.call('Opening channel…');
         session = await _openShellChannel(client, pty);
       }
       return _DartSshTerminalSession(client, session);

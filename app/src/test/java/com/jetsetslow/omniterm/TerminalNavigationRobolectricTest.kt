@@ -8,6 +8,9 @@ import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.Screen
 import com.jetsetslow.omniterm.ui.ShellSession
 import com.jetsetslow.omniterm.ui.TerminalSessionManager
+import com.jetsetslow.omniterm.ui.normalizeBackupDocument
+import java.io.File
+import org.json.JSONObject
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
@@ -45,6 +48,38 @@ class TerminalNavigationRobolectricTest {
     fun tearDown() {
         if (::viewModel.isInitialized) viewModel.cancelTerminalNavigation()
         TerminalSessionManager.clearAll()
+    }
+
+    @Test
+    fun historicalFlutterBackupNormalizesToPublishedKotlinSchema() {
+        val fixture = listOf(File("src/androidTest/assets/backup"), File("app/src/androidTest/assets/backup"))
+            .first { it.isDirectory }
+        val flutter = JSONObject(File(fixture, "flutter-v2.json").readText())
+        val kotlin = JSONObject(File(fixture, "kotlin-schema5.json").readText())
+        normalizeBackupDocument(flutter)
+        normalizeBackupDocument(kotlin)
+        assertEquals("omniterm-backup", flutter.getString("format"))
+        assertEquals(5, flutter.getInt("schema"))
+        assertEquals(kotlin.getJSONArray("quickScripts").toString(), flutter.getJSONArray("quickScripts").toString())
+        for (key in kotlin.getJSONObject("settings").keys()) {
+            assertEquals(kotlin.getJSONObject("settings").getString(key), flutter.getJSONObject("settings").getString(key))
+        }
+    }
+
+    @Test
+    fun emptyHostScreensSkipHiddenSubtabsInBothDirections() {
+        for ((screen, before, after) in listOf(
+            Triple(Screen.Monitor, Screen.Fleet, Screen.Shell),
+            Triple(Screen.Infra, Screen.SFTP, Screen.Tools),
+        )) {
+            for (forward in listOf(false, true)) {
+                viewModel.navigateTo(screen)
+                viewModel.activeMonitorTab = 2
+                viewModel.activeInfraTab = 2
+                viewModel.swipeNavigate(forward)
+                assertEquals(if (forward) after else before, viewModel.currentScreen)
+            }
+        }
     }
 
     @Test

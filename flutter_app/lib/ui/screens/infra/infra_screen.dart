@@ -131,7 +131,7 @@ class _HeaderBar extends StatelessWidget {
             Expanded(
               child: HostSelectorBar(
                 keyPrefix: 'infra.hostPicker',
-                hosts: vm.onlineServers,
+                hosts: vm.selectableServers,
                 selected: server,
                 onChanged: vm.selectServer,
                 labelPrefix: 'Containers · ',

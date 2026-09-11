@@ -102,6 +102,19 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('selected offline host keeps its picker label and editable builder', (tester) async {
+    final id = await repo.insertServer(server(name: 'Offline draft host', status: 'offline'));
+    await pump(tester);
+    app.selectedServerId = id;
+    vm.activeTab = InfraTab.builder;
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('infra.noHosts')), findsNothing);
+    expect(find.text('Containers · Offline draft host'), findsOneWidget);
+    expect(find.byKey(const ValueKey('infra.builder')), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    vm.dispose();
+  });
+
   RecordingTransport withStack() => RecordingTransport(
     replies: {
       'ps -a --no-trunc': [
@@ -114,9 +127,11 @@ void main() {
     },
   );
 
-  testWidgets('with nothing online it says so', (tester) async {
+  testWidgets('with no selected or online host it says so', (tester) async {
     await repo.insertServer(server(name: 'a', status: 'offline'));
     await pump(tester);
+    app.selectedServerId = null;
+    await tester.pumpAndSettle();
 
     expect(find.byKey(const ValueKey('infra.noHosts')), findsOneWidget);
     vm.dispose();

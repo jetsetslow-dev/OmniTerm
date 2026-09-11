@@ -12,6 +12,8 @@ import '../../widgets/health_breakdown_dialog.dart';
 import '../../widgets/metric_line_chart.dart';
 import '../../widgets/omni_components.dart';
 import '../../widgets/run_command_dialog.dart';
+import '../../widgets/streaming_command_dialog.dart';
+import '../tools/scripts_screen.dart' show showScriptEditorSheet;
 
 /// Every host at a glance, worst first.
 class FleetDashboardTab extends StatelessWidget {
@@ -148,6 +150,34 @@ class _HostCard extends StatelessWidget {
               color: accent,
               label: 'CPU',
             ),
+            Wrap(
+              spacing: 8,
+              children: [
+                for (final (label, command) in [
+                  ('Uptime', 'uptime'),
+                  ('DF', 'df -h'),
+                  ('PS', 'ps aux | head -5'),
+                ])
+                  OutlinedButton(
+                    key: ValueKey('fleet.host.${server.id}.${label.toLowerCase()}'),
+                    onPressed: () => showDialog<void>(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (_) => StreamingCommandDialog(
+                        title: '$label · ${display.name(server)}',
+                        command: command,
+                        run: (onChunk, cancellation) => vm.runHostDiagnostic(
+                          server,
+                          command,
+                          onChunk: onChunk,
+                          cancellation: cancellation,
+                        ),
+                      ),
+                    ),
+                    child: Text(label),
+                  ),
+              ],
+            ),
           ],
         ],
       ),
@@ -202,12 +232,6 @@ class _FleetBroadcastTabState extends State<FleetBroadcastTab> {
                   : _GroupTargets(vm: vm),
             ),
             const SizedBox(height: 8),
-            _PresetRow(
-              onPick: (command) {
-                _controller.text = command;
-                vm.commandText = command;
-              },
-            ),
             TextField(
               key: const ValueKey('fleet.command'),
               controller: _controller,
@@ -218,6 +242,33 @@ class _FleetBroadcastTabState extends State<FleetBroadcastTab> {
                 hintText: 'Command to run on every target',
                 prefixIcon: const Icon(Icons.terminal, size: 18),
               ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 12,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                const Text('Command presets', style: TextStyle(fontWeight: FontWeight.bold)),
+                OutlinedButton.icon(
+                  key: const ValueKey('fleet.saveCommand'),
+                  onPressed: vm.commandText.trim().isEmpty
+                      ? null
+                      : () => showScriptEditorSheet(
+                          context,
+                          context.read<ScriptsViewModel>(),
+                          forFleet: true,
+                          initialCommand: vm.commandText,
+                        ),
+                  icon: const Icon(Icons.save_outlined),
+                  label: const Text('Save command'),
+                ),
+              ],
+            ),
+            _PresetRow(
+              onPick: (command) {
+                _controller.text = command;
+                vm.commandText = command;
+              },
             ),
             if (vm.dangerWarning != null)
               Padding(

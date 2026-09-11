@@ -79,4 +79,15 @@ abstract final class TmuxControlCommands {
 
   /// Active pane id + cursor for the initial repaint seed (reply body: `%N x y`).
   static String activePaneQuery() => "display-message -p '#{pane_id} #{cursor_x} #{cursor_y}'";
+
+  static String paneCursorQuery(String paneId) {
+    _requirePaneId(paneId);
+    return "display-message -p -t $paneId '#{cursor_x} #{cursor_y}'";
+  }
+
+  /// Preserve physical rows; -J would unwrap them and invalidate cursor coordinates.
+  static String capturePaneScreen(String paneId) {
+    _requirePaneId(paneId);
+    return 'capture-pane -p -e -t $paneId';
+  }
 }

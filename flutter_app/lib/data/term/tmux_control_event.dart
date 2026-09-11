@@ -22,17 +22,20 @@ class TmuxOutput extends TmuxControlEvent {
 
 /// A completed `%begin`…`%end`/`%error` command reply, body newline-joined.
 class TmuxReply extends TmuxControlEvent {
-  const TmuxReply(this.body, {required this.isError});
+  const TmuxReply(this.body, {required this.isError, this.flags = 0});
 
   final String body;
   final bool isError;
 
-  @override
-  bool operator ==(Object other) =>
-      other is TmuxReply && other.body == body && other.isError == isError;
+  /// Bit 0 distinguishes client-command replies from the initial attach reply.
+  final int flags;
 
   @override
-  int get hashCode => Object.hash(body, isError);
+  bool operator ==(Object other) =>
+      other is TmuxReply && other.body == body && other.isError == isError && other.flags == flags;
+
+  @override
+  int get hashCode => Object.hash(body, isError, flags);
 
   @override
   String toString() => 'TmuxReply(${isError ? 'error' : 'ok'}, $body)';

@@ -659,7 +659,7 @@ void main() {
       await transport.opened.single.dropConnection();
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('Connection lost'), findsOneWidget);
+      expect(find.textContaining('Reconnecting'), findsOneWidget);
       expect(find.textContaining('exit'), findsNothing);
       await finish(tester);
     });
@@ -709,6 +709,47 @@ void main() {
   });
 
   group('the transcript', () {
+    testWidgets('switching sessions copies the selected visible screen and its full buffer', (
+      tester,
+    ) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+      final first = vm.current!;
+      for (var i = 0; i < 200; i++) {
+        transport.opened.first.emit('FIRST_HOST_LINE_$i\r\n');
+      }
+      await vm.connect(vm.server!);
+      final second = vm.current!;
+      for (var i = 0; i < 200; i++) {
+        transport.opened.last.emit('SECOND_HOST_LINE_$i\r\n');
+      }
+      await tester.pump(const Duration(milliseconds: 50));
+      for (final (session, own, other) in [
+        (first, 'FIRST_HOST', 'SECOND_HOST'),
+        (second, 'SECOND_HOST', 'FIRST_HOST'),
+        (first, 'FIRST_HOST', 'SECOND_HOST'),
+      ]) {
+        vm.select(session.id);
+        await tester.pumpAndSettle();
+        await tester.longPress(find.byKey(const ValueKey('shell.surface')));
+        await tester.pumpAndSettle();
+        String shown() =>
+            tester.widget<SelectableText>(find.byKey(const ValueKey('transcript.text'))).data!;
+        expect(shown(), contains('${own}_LINE_199'));
+        expect(shown(), isNot(contains('${own}_LINE_0\n')));
+        expect(shown(), isNot(contains(other)));
+        expect(find.byKey(const ValueKey('transcript.copyAll')), findsOneWidget);
+        await tester.tap(find.byKey(const ValueKey('transcript.toggleRange')));
+        await tester.pumpAndSettle();
+        expect(shown(), contains('${own}_LINE_0\n'));
+        expect(shown(), isNot(contains(other)));
+        await tester.tap(find.byKey(const ValueKey('transcript.close')));
+        await tester.pumpAndSettle();
+      }
+      await finish(tester);
+    });
+
     testWidgets('a long press opens the scrollback as selectable text', (tester) async {
       // The surface paints a grid, so there is nothing on it to select — which left the one thing
       // people do with terminal output, copy it, impossible.

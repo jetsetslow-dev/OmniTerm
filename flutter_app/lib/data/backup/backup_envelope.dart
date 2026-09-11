@@ -100,7 +100,7 @@ Future<String> decryptBackup(String envelopeText, String passphrase) async {
   if (envelopeText.length > BackupLimits.maxInputChars) {
     throw const BackupException('That backup file is too large to open.');
   }
-  _assertJsonDepth(envelopeText);
+  validateBackupJsonDepth(envelopeText);
 
   final Map<String, dynamic> envelope;
   try {
@@ -113,6 +113,12 @@ Future<String> decryptBackup(String envelopeText, String passphrase) async {
     if (envelope[field] is! String) {
       throw const BackupException('That backup file is missing required fields.');
     }
+  }
+  if (envelope['v'] != 2) {
+    throw const BackupException('Unsupported encrypted backup version.');
+  }
+  if (envelope['kdf'] != 'PBKDF2WithHmacSHA256') {
+    throw const BackupException('Unsupported backup key derivation.');
   }
   if (envelope['compression'] != 'gzip') {
     throw const BackupException('That backup uses a compression this version cannot read.');
@@ -158,7 +164,7 @@ Future<String> decryptBackup(String envelopeText, String passphrase) async {
   }
 
   final json = utf8.decode(gunzipBounded(Uint8List.fromList(compressed)));
-  _assertJsonDepth(json);
+  validateBackupJsonDepth(json);
   return json;
 }
 
@@ -205,23 +211,43 @@ Uint8List gunzipBounded(
     max(bytes.length * maxExpansionRatio, min(1024 * 1024, maxPlainBytes)),
   );
 
-  final Uint8List decoded;
+  final sink = _BoundedBackupSink(ratioLimit);
   try {
-    decoded = Uint8List.fromList(gzip.decode(bytes));
+    final decoder = gzip.decoder.startChunkedConversion(sink);
+    for (var offset = 0; offset < bytes.length; offset += 4096) {
+      decoder.add(bytes.sublist(offset, min(offset + 4096, bytes.length)));
+    }
+    decoder.close();
+  } on BackupException {
+    rethrow;
   } catch (_) {
     throw const BackupException('That backup file is damaged.');
   }
-  if (decoded.length > ratioLimit || decoded.length > maxPlainBytes) {
-    throw const BackupException('That backup expands beyond the safe restore limit.');
+  return sink.bytes.takeBytes();
+}
+
+class _BoundedBackupSink extends ByteConversionSinkBase {
+  _BoundedBackupSink(this.limit);
+  final int limit;
+  final bytes = BytesBuilder(copy: false);
+
+  @override
+  void add(List<int> chunk) {
+    if (chunk.length > limit - bytes.length) {
+      throw const BackupException('That backup expands beyond the safe restore limit.');
+    }
+    bytes.add(chunk);
   }
-  return decoded;
+
+  @override
+  void close() {}
 }
 
 /// Rejects JSON nested deeply enough to threaten the parser's stack.
 ///
 /// Counted over the raw text before decoding, because by the time a parser has recursed far enough
 /// to matter it has already done the damage.
-void _assertJsonDepth(String text, {int maxDepth = BackupLimits.maxJsonDepth}) {
+void validateBackupJsonDepth(String text, {int maxDepth = BackupLimits.maxJsonDepth}) {
   var depth = 0;
   var inString = false;
   var escaped = false;

@@ -98,6 +98,157 @@ void main() {
   }
 
   group('credentials never reach the database in the clear', () {
+    test(
+      'profile edits reject newly conflicting server logins without changing any rows',
+      () async {
+        final id = await repo.insertProfile(
+          const CredentialProfile(
+            id: 0,
+            profileName: 'Shared login',
+            username: 'deploy',
+            authType: 'password',
+            password: 'original fixture secret',
+            groupName: 'General',
+          ),
+        );
+        await repo.insertServer(server(name: 'Direct root'));
+        await repo.insertServer(
+          server(
+            name: 'Profile deploy',
+          ).copyWith(authType: 'profile', authProfileId: Value(id), username: ''),
+        );
+        final beforeProfiles = await db.appDataDao.getAllProfiles();
+        final beforeServers = await db.serverDao.getAllServers();
+        final profile = (await repo.getAllProfiles()).single;
+        await expectLater(
+          repo.insertProfile(
+            profile.copyWith(username: 'root', password: const Value('replacement')),
+          ),
+          throwsA(
+            predicate(
+              (error) =>
+                  error.toString().contains('Direct root') &&
+                  error.toString().contains('Profile deploy'),
+            ),
+          ),
+        );
+        expect(await db.appDataDao.getAllProfiles(), beforeProfiles);
+        expect(await db.serverDao.getAllServers(), beforeServers);
+      },
+    );
+
+    test('profile name and secret edits remain allowed with legacy duplicate hosts', () async {
+      final id = await repo.insertProfile(
+        const CredentialProfile(
+          id: 0,
+          profileName: 'Old profile',
+          username: 'root',
+          authType: 'password',
+          password: 'original fixture secret',
+          groupName: 'General',
+        ),
+      );
+      await repo.insertServer(server(name: 'Legacy direct'));
+      await repo.insertServer(
+        server(
+          name: 'Legacy profile',
+        ).copyWith(authType: 'profile', authProfileId: Value(id), username: ''),
+      );
+      final original = (await repo.getAllProfiles()).single;
+      await repo.insertProfile(
+        original.copyWith(
+          profileName: 'Renamed profile',
+          password: const Value('rotated fixture secret'),
+        ),
+      );
+      final saved = (await repo.getAllProfiles()).single;
+      expect(saved.profileName, 'Renamed profile');
+      expect(saved.password, 'rotated fixture secret');
+      expect(await repo.getAllServers(), hasLength(2));
+    });
+
+    test('auth-method edits report every new direct and profile collision', () async {
+      final id = await repo.insertProfile(
+        const CredentialProfile(
+          id: 0,
+          profileName: 'Edited',
+          username: 'root',
+          authType: 'key',
+          groupName: 'General',
+        ),
+      );
+      final otherId = await repo.insertProfile(
+        const CredentialProfile(
+          id: 0,
+          profileName: 'Other',
+          username: 'root',
+          authType: 'password',
+          groupName: 'General',
+        ),
+      );
+      await repo.insertServer(server(name: 'Direct root'));
+      await repo.insertServer(
+        server(
+          name: 'Other profile root',
+        ).copyWith(authType: 'profile', authProfileId: Value(otherId)),
+      );
+      await repo.insertServer(
+        server(name: 'Edited key root').copyWith(authType: 'profile', authProfileId: Value(id)),
+      );
+      final edited = (await repo.getCredentialProfileById(id))!;
+      await expectLater(
+        repo.insertProfile(edited.copyWith(authType: 'password')),
+        throwsA(
+          predicate(
+            (error) => [
+              'Direct root',
+              'Other profile root',
+              'Edited key root',
+            ].every(error.toString().contains),
+          ),
+        ),
+      );
+      expect(await repo.getCredentialProfileById(id), edited);
+    });
+
+    test('concurrent host add and profile edit cannot both create the same login', () async {
+      final id = await repo.insertProfile(
+        const CredentialProfile(
+          id: 0,
+          profileName: 'Shared',
+          username: 'deploy',
+          authType: 'password',
+          groupName: 'General',
+        ),
+      );
+      await repo.insertServer(
+        server(name: 'Indirect').copyWith(authType: 'profile', authProfileId: Value(id)),
+      );
+      final original = (await repo.getCredentialProfileById(id))!;
+      Future<bool> attempt(Future<int> write) async {
+        try {
+          await write;
+          return true;
+        } catch (_) {
+          return false;
+        }
+      }
+
+      final results = await Future.wait([
+        attempt(repo.saveUniqueServer(server(name: 'Direct'))),
+        attempt(repo.insertProfile(original.copyWith(username: 'root'))),
+      ]);
+      expect(results.where((saved) => saved), hasLength(1));
+      final profiles = await repo.getAllProfiles();
+      final servers = await repo.getAllServers();
+      final rootLogins = servers.where(
+        (row) => row.authType == 'profile'
+            ? profiles.singleWhere((profile) => profile.id == row.authProfileId).username == 'root'
+            : row.username == 'root',
+      );
+      expect(rootLogins, hasLength(1));
+    });
+
     test('server passwords are encrypted at rest and decrypted on read', () async {
       final id = await repo.insertServer(
         server(
