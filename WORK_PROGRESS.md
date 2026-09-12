@@ -1,6 +1,6 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
-Updated: 2026-09-12. Working branch: `migration-to-flutter`; review PR: #92.
+Updated: 2026-09-13. Working branch: `migration-to-flutter`; review PR: #92.
 This is an in-progress checkpoint, **not** a parity-complete or release-ready declaration.
 
 This sanitized tracker is intentionally committed so work can resume on another machine.
@@ -14,8 +14,12 @@ secrets here: moving it later does not erase Git history.
 2. Check PR #92's **actual head SHA** and all its checks. Signed checkpoints `64d8e23` and
    `925ae3c` were pushed; the latter reconciles `main` (`bf227d2`) into this branch without changing
    the validated source. All `925ae3c` checks finished, but three jobs failed (details below).
-   The replacement CI-repair checkpoint passed full local validation; push it and observe every
-   exact-head check to completion. Never infer CI success from local results.
+   Replacement CI-repair checkpoint `500f35d` was signed and pushed. Native Build & Test, API 29
+   Room, native release SBOMs, CodeQL, dependency review, Scorecard analysis, both secret scans,
+   Flutter analysis/tests, Android/iOS builds and emulator testing passed. All selected jobs on
+   that exact head reached terminal success; the separate Scorecard result is neutral. Skipped
+   jobs are unused docs-only companions, not missing platform gates. Never infer CI success from
+   local results or reuse these results for the next source checkpoint.
 3. Preserve the existing fixes. Finish the remaining investigations below in small batches; run
    the required validation, update this tracker, commit with signing enabled, push, and monitor
    every selected check to completion before publishing the next replacement head.
@@ -32,13 +36,63 @@ gh pr view 92 --json headRefOid,statusCheckRollup,reviewDecision
 gh run list --branch migration-to-flutter
 ```
 
-The merge conflicts were only in `AppUi.kt` and `AppViewModel.kt`: preserve visible recovery
+The earlier `925ae3c` merge conflicts were only in `AppUi.kt` and `AppViewModel.kt`: preserve visible recovery
 feedback, transport-generation ownership/cancellation, and batched recovery persistence. All
 incoming hotfixes were already present. Before this tracker-only edit, the resolved merge tree
 was byte-identical to checkpoint `64d8e23` (tree `44ac3dc54ff8690544e4a36d00abab5a1a33647a`).
-No build-affecting source changed; the full local validation below applies to that same source.
+That merge changed no build-affecting source. The newer SSH setup batch below has its own validation.
 
-## CI repair checkpoint — local validation passed; replacement CI still required
+## Next SSH setup checkpoint — locally validated; push and exact-head CI pending
+
+- Reproduced two indefinite Flutter setup waits: a loopback peer accepted TCP but never sent an
+  SSH banner, both directly and as a bastion. Both new guards failed on the unfixed transport.
+- Added a 15-second network budget per authentication and bastion-forwarding stage. It pauses only
+  around the actual host-key decision; the existing 120-second approval limit stays intact.
+  Trust-store reads/writes remain bounded. Failed setup closes its owned connections, suppresses
+  late approval prompts/answers, and retires late forwarding channels without retrying requests.
+  Bastion forwarding has its own visible phase, and returned timeout errors retain the failed stage.
+- Final focused Flutter tests: **60 passed / 0 skipped**, including eight deterministic clock/trust
+  tests, four real loopback socket cases and the explicitly enabled live-compression test.
+  Analyzer clean. Real repository OpenSSH relay tests:
+  **3 passed / 0 skipped** — delayed approval beyond 15 seconds, stalled authentication and stalled
+  forwarding. No fixture daemon/network configuration was changed by these tests.
+- New Kotlin counterpart guards use real JSch and loopback sockets, replacing only Android-backed
+  trust storage with a fail-closed in-memory store. Final focused run: **2 passed / 0 skipped per
+  variant**. No native production behavior changed in this batch.
+- API 35 Flutter `host`: **2 passed / 0 skipped** (one Dart fixture case and one native Patrol
+  Home/background/tmux lifecycle case). `surface`: **1 passed / 0 skipped**, all routes/subtabs,
+  themes and rotations. No unexpected warnings; normal debug launcher restored afterward.
+- The first full-validation wrapper stopped before the gate because its restricted PATH lacked
+  `rg`; this was not an app/test failure or a passing gate. The corrected wrapper completed
+  `./scripts/local-pr-check.sh --full`, then the separate API 35 Room matrix (**4 passed / 0 skipped**),
+  and rebuilt/reinstalled/reopened the normal Flutter debug launcher successfully.
+- Full gate: Flutter **2,668 passed / 4 optional live-test skips**, analyzer clean; native unit
+  suites each **558 passed / 2 optional tmux replay skips**, 560 discovered, no failures/errors.
+  This x86_64 host executed the Robolectric classes; there was no ARM discovery exclusion here.
+  The four Flutter skips are the three setup fixture cases and one compression case, all separately
+  enabled and passed above. The two native replay captures remain unavailable, not passing.
+- Strict fresh dependency verification, release APK/AAB builds, native/Flutter SBOM graphs and
+  release test-code checks passed. The owned emulator was intentionally stopped during the heavy
+  gate, so its in-script connected matrix was deferred, not counted as passing; separate runtime
+  and Room evidence is listed above. The new head still needs its own API 29 migration/platform CI.
+- Update this tracker, repeat staged secret scanning and both diff checks, sign/commit/push, then
+  observe every selected check for the replacement PR head. No merge or release is implied.
+
+The three new live setup tests are opt-in in the ordinary unit suite. Run
+`flutter test test/dartssh_setup_live_test.dart` with `OMNITERM_SETUP_FIXTURE=yes` and privately
+loaded `OMNITERM_TEST_USER` / `OMNITERM_TEST_PASSWORD` from the repository fixture configuration.
+They use only the fixed loopback fixture ports. Report these default skips separately from the
+existing optional live-compression test; neither is default unit-suite coverage.
+
+## CI repair checkpoint (`500f35d`) — local and exact-head CI validation completed
+
+All selected jobs finished successfully: native Build & Test, API 29 Room/backup tests (7 cases),
+both native release SBOM graphs, CodeQL, dependency review, Scorecard analysis, both history secret
+scans, Flutter analysis/unit tests, Android release artifacts/SBOMs, unsigned iOS archive and
+API 35 core emulator tests (**30 passed / 0 skipped**). Flutter CI unit tests reported **2,658
+passed / 1 optional compression skip**. Host-backed/lifecycle tests are not selected by CI's
+`core --no-fixtures` profile. The separate Scorecard result is **neutral**, not success.
+Only unused docs-only companion jobs were skipped. No failed workflow was rerun unchanged.
 
 All checks for `925ae3c6a755810d59525a42658cc004b37e67df` reached a terminal state:
 
@@ -94,10 +148,10 @@ Current repair tree validation:
 - Full-history secret scanning passed. Both diff whitespace checks passed; repeat the staged secret
   scan and diff checks immediately before the signed checkpoint.
 
-The replacement PR head still requires all selected GitHub checks. The prior head's native Room
-and SBOM skips remain skips; only replacement-head CI can close those gates.
+The failed prior head's native Room and SBOM skips remain skips in that historical run; both
+gates passed on replacement head `500f35d`. Every future pushed head needs its own complete checks.
 
-## Implemented and regression-tested in this checkpoint
+## Implemented and regression-tested in the earlier reliability checkpoints
 
 | Area | Changes and evidence |
 | --- | --- |
@@ -115,7 +169,8 @@ and SBOM skips remain skips; only replacement-head CI can close those gates.
 Important cancellation boundary: once a request is handed to the SSH library/server, Stop cannot
 guarantee the remote command did not run or has terminated. Never claim otherwise or retry it
 automatically. Shared Flutter authentication and internal channel negotiation can outlive a
-cancelled caller; later resources are cleaned up, but setup deadlines still need investigation.
+cancelled caller; later resources are cleaned up. The new checkpoint bounds SSH setup while
+preserving the separate user-approval window; Activity/engine ownership remains open.
 
 ## Validation for the previous source checkpoint (`64d8e23` / `925ae3c`)
 
@@ -182,12 +237,11 @@ Do not cite plain `connectedAndroidTest` as opt-in E2E coverage.
 
 ## Remaining authorized work — do not replace this with unrelated tasks
 
-1. **SSH setup/background retention:** investigate remaining cold-connect and tmux latency;
-   bound stalled banner/authentication/bastion forwarding without timing out user host-key approval.
-   The pinned dartssh2 client already has `authTimeout` (starts after transport readiness) and
-   `handshakeTimeout` (includes host-key verification). Do not blindly set both to 15 seconds.
-   Add deterministic stalled-peer and approval-time tests. Audit Flutter Activity/engine destruction,
+1. **SSH background retention and remaining latency:** audit Flutter Activity/engine destruction,
    live-session ownership, foreground-service error visibility and disconnect-all feedback.
+   Continue measuring cold-connect and tmux startup latency; the new setup deadlines prevent hangs,
+   but are not a claim that healthy connections are faster. Verify blank bastion username fallback
+   and endpoint trimming against Kotlin with fixture regressions before changing them.
 2. **Fleet/container proof and consistency:** add a native fixture guard that taps all three Fleet
    diagnostics and proves popup streaming without changing Broadcast; Flutter has this live guard.
    Exercise real Compose Update with delayed output/stderr and local-build fallback. Audit mutation

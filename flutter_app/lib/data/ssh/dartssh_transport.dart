@@ -34,6 +34,7 @@ import 'ssh_transport.dart';
 import 'terminal_close.dart';
 import 'shell_channel.dart';
 import 'ssh_command_scope.dart';
+import 'ssh_setup_deadline.dart';
 
 const _execOutputMaxChars = 240000;
 
@@ -101,13 +102,18 @@ class DartSshTransport implements SshTransport {
   ///
   /// dartssh2 passes only `(type, fingerprint)`, so host and port are closed over here. Returning
   /// false aborts the handshake, which is what a declined or changed key must do.
-  Future<bool> Function(String, Uint8List) _verifier(String host, int port) {
+  Future<bool> Function(String, Uint8List) _verifier(
+    String host,
+    int port,
+    SshSetupDeadline deadline,
+  ) {
     return (String type, Uint8List fingerprint) async {
       final verdict = await _trust.check(
         host: host,
         port: port,
         keyType: type,
         fingerprint: SshHostKeyTrust.decodeHandlerFingerprint(fingerprint),
+        waitForApproval: deadline.awaitApproval,
       );
       return verdict == HostKeyVerdict.ok;
     };
@@ -142,6 +148,7 @@ class DartSshTransport implements SshTransport {
           creds.proxyPort,
           timeout: _connectTimeout,
         );
+        final jumpDeadline = SshSetupDeadline(phase: 'Bastion SSH authentication');
         jump = SSHClient(
           jumpSocket,
           username: creds.proxyUser,
@@ -150,12 +157,17 @@ class DartSshTransport implements SshTransport {
           // would try to decrypt the jump key with the wrong secret. Matches the Kotlin, which
           // passed null. (Encrypted jump keys are consequently unsupported, as before.)
           identities: _keyPairs(creds.proxyKeyPem, null),
-          onVerifyHostKey: _verifier(creds.proxyHost, creds.proxyPort),
+          onVerifyHostKey: _verifier(creds.proxyHost, creds.proxyPort, jumpDeadline),
           printDebug: printDebug,
         );
+        await jumpDeadline.run(() => jump!.authenticated);
+        onPhaseChange?.call('Opening bastion tunnel…');
         // Tunnel the target connection through the bastion, exactly as `ssh -J` does: the target's
         // own host key is still verified end-to-end below.
-        targetSocket = await jump.forwardLocal(creds.host, creds.port);
+        targetSocket = await SshSetupDeadline(phase: 'Bastion SSH forwarding').run<SSHSocket>(
+          () => jump!.forwardLocal(creds.host, creds.port),
+          onLateResult: (socket) => socket.destroy(),
+        );
       } else if (_isProxied(creds)) {
         // Previously missing entirely: an `http` or `socks5` proxy was silently ignored and the app
         // connected straight to the target. That fails on exactly the hosts a proxy exists to
@@ -178,12 +190,13 @@ class DartSshTransport implements SshTransport {
 
       onPhaseChange?.call('Authenticating target…');
       final identities = _keyPairs(creds.privateKeyPem, creds.passphrase);
+      final targetDeadline = SshSetupDeadline(phase: 'Target SSH authentication');
       final client = SSHClient(
         targetSocket,
         username: creds.username,
         onPasswordRequest: () => creds.password,
         identities: identities,
-        onVerifyHostKey: _verifier(creds.host, creds.port),
+        onVerifyHostKey: _verifier(creds.host, creds.port, targetDeadline),
         keepAliveInterval: creds.keepAliveSeconds > 0
             ? Duration(seconds: creds.keepAliveSeconds)
             : null,
@@ -192,7 +205,7 @@ class DartSshTransport implements SshTransport {
         printDebug: printDebug,
       );
       target = client;
-      await client.authenticated;
+      await targetDeadline.run(() => client.authenticated);
 
       // The bastion must outlive the target client, so tie its teardown to the target's.
       if (jump != null) {
@@ -244,10 +257,10 @@ class DartSshTransport implements SshTransport {
     final scope = SshCommandScope(_execTimeout);
     try {
       return await _execOnce(creds, command, stdin, scope);
-    } on TimeoutException {
+    } on TimeoutException catch (e) {
       // The operation retires only its own suspect client. A timeout while queued must not evict
       // a healthy connection being used by other commands.
-      return 'SSH Error: command timed out';
+      return 'SSH Error: ${e.message ?? 'command timed out'}';
     } catch (e) {
       // The request may already have reached the server. The suspect connection was already
       // evicted at the point of failure; never retry an arbitrary command and risk executing a
@@ -325,8 +338,8 @@ class DartSshTransport implements SshTransport {
     final scope = SshCommandScope(_streamTimeout, cancellation: cancellation);
     try {
       return await _execStreamOnce(creds, command, stdin, onChunk, scope);
-    } on TimeoutException {
-      const error = 'SSH Error: command timed out';
+    } on TimeoutException catch (e) {
+      final error = 'SSH Error: ${e.message ?? 'command timed out'}';
       await onChunk(error);
       return error;
     } catch (e) {
@@ -445,6 +458,7 @@ class DartSshTransport implements SshTransport {
   }
 
   static String _describe(Object e) {
+    if (e is TimeoutException && e.message != null) return e.message!;
     if (e is InvalidPrivateKeyException) return e.message;
     if (e is SshHostKeyException) return e.message;
     if (e is SSHAuthAbortError) return e.message;

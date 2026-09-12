@@ -170,11 +170,14 @@ class SshHostKeyTrust {
   // ── the trust check ────────────────────────────────────────────────────────
 
   /// Checks a presented key, prompting for approval when nothing is pinned yet.
+  /// [waitForApproval] lets a connection pause its setup budget around only the user decision.
+  /// Storage access stays inside that budget; the approval itself still has its own deadline.
   Future<HostKeyVerdict> check({
     required String host,
     required int port,
     required String keyType,
     required String fingerprint,
+    Future<bool> Function(Future<bool> Function() request)? waitForApproval,
   }) async {
     final aliases = storageAliases(host, port);
     final all = await _store.readAll();
@@ -202,7 +205,7 @@ class SshHostKeyTrust {
       return HostKeyVerdict.notIncluded;
     }
 
-    final approved = await awaitApproval(
+    Future<bool> requestApproval() => awaitApproval(
       handler,
       HostKeyApprovalRequest(
         host: host,
@@ -211,6 +214,7 @@ class SshHostKeyTrust {
         completer: Completer<bool>(),
       ),
     );
+    final approved = await (waitForApproval?.call(requestApproval) ?? requestApproval());
     if (!approved) return HostKeyVerdict.notIncluded;
 
     return persistApprovedFirstPin(
