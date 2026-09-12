@@ -60,6 +60,7 @@ git diff --check
 ./scripts/test-ci-gradle-gate.sh
 ./scripts/test-secret-scan-coverage.sh
 ./scripts/test-flutter-device-preservation.sh
+python3 scripts/test-dependency-license-policy.py
 
 GRADLE_ARGS=(
   --no-daemon

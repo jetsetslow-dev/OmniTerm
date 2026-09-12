@@ -102,9 +102,12 @@ class TmuxResumeLatencyRobolectricTest {
             }
         } finally {
             transport.captureRelease.complete(Unit)
-            withContext(main) { store.clear(); TerminalSessionManager.clearAll() }
-            Dispatchers.resetMain()
-            main.close()
+            try {
+                clearViewModelsAndAwaitTerminalJobs(store, main)
+            } finally {
+                Dispatchers.resetMain()
+                main.close()
+            }
         }
     }
 

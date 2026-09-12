@@ -36,6 +36,20 @@ void main() {
     await $(const ValueKey('backup.section.settings')).tap();
   }
 
+  Future<void> cancelPicker(PatrolIntegrationTester $) async {
+    await $.platformAutomator.android.pressBack();
+    // A first backup also requests permission for background progress notifications. Android can
+    // place that prompt behind DocumentsUI; after Back it becomes the foreground Activity and
+    // Flutter cannot scroll or animate until it is answered. Exercise denial (backup still works)
+    // instead of pre-granting permission or leaving a native modal over a supposedly usable app.
+    if (await $.platformAutomator.mobile.isPermissionDialogVisible(
+      timeout: const Duration(seconds: 2),
+    )) {
+      await $.platformAutomator.mobile.denyPermission();
+    }
+    await $.pumpAndSettle();
+  }
+
   patrolTest('cancelling the save claims nothing was written', ($) async {
     // The failure this guards against is a screen that reports success on the way *into* the
     // picker rather than on the way out of it — "Backup ready." left standing over a file that was
@@ -61,14 +75,16 @@ void main() {
       timeout: const Duration(seconds: 20),
     );
 
-    await $.platformAutomator.android.pressBack();
-    await $.pumpAndSettle();
+    await cancelPicker($);
 
     expect(
       $(const ValueKey('backup.message')).exists,
       false,
       reason: 'a cancelled save must not report a backup that does not exist',
     );
+    // Completion reveals feedback at the top of the lazy list. The export control has been
+    // disposed off-screen; scroll it back into view before checking that it is enabled again.
+    await $(const ValueKey('backup.export')).scrollTo();
     expect(
       $.tester.widget<FilledButton>($(const ValueKey('backup.export')).finder).onPressed,
       isNotNull,
@@ -108,8 +124,7 @@ void main() {
       reason: 'the picker must receive OmniTerm\'s dated .omnibak filename, not a generic default',
     );
 
-    await $.platformAutomator.android.pressBack();
-    await $.pumpAndSettle();
+    await cancelPicker($);
   });
 
   patrolTest('cancelling the restore picker changes nothing', ($) async {
@@ -126,14 +141,14 @@ void main() {
       timeout: const Duration(seconds: 20),
     );
 
-    await $.platformAutomator.android.pressBack();
-    await $.pumpAndSettle();
+    await cancelPicker($);
 
     expect(
       $(const ValueKey('backup.message')).exists,
       false,
       reason: 'a cancelled restore must not report one that did not happen',
     );
+    await $(const ValueKey('backup.import')).scrollTo();
     expect(
       $.tester.widget<OutlinedButton>($(const ValueKey('backup.import')).finder).onPressed,
       isNotNull,

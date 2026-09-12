@@ -1,6 +1,6 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
-Updated: 2026-09-11. Working branch: `migration-to-flutter`; review PR: #92.
+Updated: 2026-09-12. Working branch: `migration-to-flutter`; review PR: #92.
 This is an in-progress checkpoint, **not** a parity-complete or release-ready declaration.
 
 This sanitized tracker is intentionally committed so work can resume on another machine.
@@ -11,11 +11,11 @@ secrets here: moving it later does not erase Git history.
 ## Resume here
 
 1. Read `AGENTS.md`. Inspect `git status`, `git log -5`, and the remote branch before editing.
-2. Check PR #92's **actual head SHA** and all its checks. Signed recovery checkpoint `64d8e23`
-   was pushed; GitHub's secret scan passed, but merge conflicts prevented the required PR checks
-   from starting. This follow-up reconciles `main` (`bf227d2`) into the working branch, preserving
-   the exact validated source. CI for the follow-up head must still be observed to completion.
-   Do not infer CI success from local results. Inspect GitHub rather than trusting a stale note.
+2. Check PR #92's **actual head SHA** and all its checks. Signed checkpoints `64d8e23` and
+   `925ae3c` were pushed; the latter reconciles `main` (`bf227d2`) into this branch without changing
+   the validated source. All `925ae3c` checks finished, but three jobs failed (details below).
+   The replacement CI-repair checkpoint passed full local validation; push it and observe every
+   exact-head check to completion. Never infer CI success from local results.
 3. Preserve the existing fixes. Finish the remaining investigations below in small batches; run
    the required validation, update this tracker, commit with signing enabled, push, and monitor
    every selected check to completion before publishing the next replacement head.
@@ -38,6 +38,65 @@ incoming hotfixes were already present. Before this tracker-only edit, the resol
 was byte-identical to checkpoint `64d8e23` (tree `44ac3dc54ff8690544e4a36d00abab5a1a33647a`).
 No build-affecting source changed; the full local validation below applies to that same source.
 
+## CI repair checkpoint — local validation passed; replacement CI still required
+
+All checks for `925ae3c6a755810d59525a42658cc004b37e67df` reached a terminal state:
+
+- Native Build & Test failed in `TerminalLeavePersistenceRobolectricTest`: its teardown reset Main
+  while canceled IO work was still dispatching cleanup. Room and native release SBOM jobs were
+  consequently **skipped, not passing**. The fix waits for ViewModel and process-terminal jobs
+  before resetting the test dispatcher; it does not increase test deadlines or change app behavior.
+  A deterministic blocked-finalizer regression fails with the original teardown for the expected
+  reason. Apply the same cleanup to the tmux startup tests.
+- Flutter analysis/unit tests, Android release artifacts/SBOMs, and unsigned iOS archive passed.
+  Emulator testing failed in the native backup save-cancellation test: after the screen revealed
+  feedback at the top, the lazy list disposed its export button. Scroll back to the button before
+  asserting it is enabled. Native picker tests reached 2 passed / 1 failed / 0 skipped on that head.
+  Local retesting also exposed the first-operation notification prompt behind DocumentsUI: the
+  test now explicitly handles denial after closing the picker before interacting with Flutter.
+  The interrupted device run is not counted as a pass; the subsequent complete profile passed.
+- Dependency vulnerability review passed; the license step rejected `file_selector_android`
+  `0.5.2+9`'s non-SPDX identifier. The complete published LICENSE contains BSD-3-Clause and
+  Apache-2.0 notices, both already approved by the existing policy. Archive and LICENSE checksums
+  were independently checked. The new reviewer recognizes only the exact reviewed package,
+  version, manifest, ecosystem, source, and identifier, reports the normalization, and rejects
+  unrelated LicenseRefs or compounds. Eleven offline tests exercise the policy and gate alignment.
+  Missing GitHub license metadata still produces the existing explicit warning, not a reviewed
+  license claim. No dependency version, vulnerability threshold, or general allow-list changed.
+- CodeQL, Scorecard analysis, and both secret scans passed. The separate Scorecard result was
+  neutral, not success. No unchanged failed workflow was rerun, and no protections were weakened.
+
+Focused repair validation: native leave/cleanup and tmux startup tests passed **7 tests per
+variant, zero skips**; the new cleanup guard failed against the original teardown for the expected
+reason. Native Flutter backup picker retest passed **3 tests, zero failures/skips**, including
+actual notification denial. License-policy tests passed **11 tests**, and the reviewer accepted
+the recorded GitHub comparison with its unresolved-license warnings retained.
+
+Current repair tree validation:
+
+- `./scripts/local-pr-check.sh --full` **passed**. `refresh-verification-metadata.sh --write`
+  followed by strict fresh verification passed, with no checksum changes; the full gate repeated
+  `--verify`, including both native release SBOM graphs and Flutter release APK/AAB/SBOM checks.
+- Native unit suites: **556 passed / 2 optional replay skips per variant**, 558 discovered, zero
+  failures/errors. Skips remain the unavailable `TmuxAltScreenReplayTest` captures, not a new
+  exclusion. This x86_64 host executed the affected Robolectric classes.
+- Flutter: **2,658 passed / 1 optional live-compression skip**; analyzer clean. SSH production code
+  is unchanged from the separately enabled fixture-compression proof recorded below.
+- Flutter API 35 `core --no-fixtures`: **30 passed / 0 skipped** — 25 Dart integration cases,
+  3 native backup picker cases, 2 native permission cases. No unexpected warnings. This profile
+  excludes the host-backed and terminal-lifecycle fixture suites; their earlier evidence below
+  remains unchanged, not part of this core run.
+- The emulator was intentionally stopped during the memory-heavy gate, so the in-script device
+  matrix was deferred. Separate API 35 Room migrations afterward: **4 passed / 0 skipped**.
+- The wrapper's final launcher reopen failed because the Flutter package was absent after restart,
+  after both `--full` and Room had passed. Rebuilt/reinstalled the normal Flutter debug launcher
+  separately; this was an environment-restoration failure, not a failed app test or a green wrapper.
+- Full-history secret scanning passed. Both diff whitespace checks passed; repeat the staged secret
+  scan and diff checks immediately before the signed checkpoint.
+
+The replacement PR head still requires all selected GitHub checks. The prior head's native Room
+and SBOM skips remain skips; only replacement-head CI can close those gates.
+
 ## Implemented and regression-tested in this checkpoint
 
 | Area | Changes and evidence |
@@ -58,7 +117,7 @@ guarantee the remote command did not run or has terminated. Never claim otherwis
 automatically. Shared Flutter authentication and internal channel negotiation can outlive a
 cancelled caller; later resources are cleaned up, but setup deadlines still need investigation.
 
-## Validation for the current source tree
+## Validation for the previous source checkpoint (`64d8e23` / `925ae3c`)
 
 - `./scripts/local-pr-check.sh --full` **passed** for this source tree, including strict fresh
   dependency verification and both release SBOM graphs. The owned emulator was stopped during
@@ -136,7 +195,8 @@ Do not cite plain `connectedAndroidTest` as opt-in E2E coverage.
 3. **Complete parity/feedback audit:** use the release handover and existing migration records;
    inspect untested feature routes and error/cancellation paths. Keep progress, errors, skip summaries
    and overflow indicators consistent. Do not declare full Kotlin/Flutter parity based only on the
-   completed fixes above.
+   completed fixes above. Flutter backup picker cancellation still has legacy silent-result
+   handling; add explicit cancellation feedback consistently in both apps in the backup UX batch.
 4. **Publishing discipline:** checkpoint frequently, monitor every pushed head, fix failures from
    exact job logs, and leave required reviews/protections/signing/checks intact. This request does
    not authorize merging to `main`, publishing a release, or merging unrelated automated PRs.

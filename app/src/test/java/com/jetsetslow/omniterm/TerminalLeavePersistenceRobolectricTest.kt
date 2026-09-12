@@ -1,7 +1,9 @@
 package com.jetsetslow.omniterm
 
 import android.app.Application
+import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.viewModelScope
 import androidx.test.core.app.ApplicationProvider
 import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.AppRepository
@@ -16,6 +18,10 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
@@ -38,6 +44,74 @@ import java.util.concurrent.Executors
 @Config(sdk = [35])
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class TerminalLeavePersistenceRobolectricTest {
+    @Test
+    fun cleanupWaitsForIoFinalizersBeforeMainCanBeReset() = runBlocking {
+        val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        Dispatchers.setMain(main)
+        val store = ViewModelStore()
+        val model = object : ViewModel() {}
+        val modelRoot = model.viewModelScope.coroutineContext[Job]!!
+        store.put("cleanup-fixture", model)
+        val releaseModel = CompletableDeferred<Unit>()
+        val releaseTerminal = CompletableDeferred<Unit>()
+        val modelStarted = CompletableDeferred<Unit>()
+        val terminalStarted = CompletableDeferred<Unit>()
+        val modelFinalizing = CompletableDeferred<Unit>()
+        val terminalFinalizing = CompletableDeferred<Unit>()
+        val modelFinished = CompletableDeferred<Unit>()
+        val terminalFinished = CompletableDeferred<Unit>()
+        model.viewModelScope.launch(Dispatchers.IO) {
+            try {
+                modelStarted.complete(Unit)
+                awaitCancellation()
+            } finally {
+                withContext(NonCancellable) {
+                    modelFinalizing.complete(Unit)
+                    releaseModel.await()
+                    withContext(Dispatchers.Main) { modelFinished.complete(Unit) }
+                }
+            }
+        }
+        val terminalJob = TerminalSessionManager.scope.launch(Dispatchers.IO) {
+            try {
+                terminalStarted.complete(Unit)
+                awaitCancellation()
+            } finally {
+                withContext(NonCancellable) {
+                    terminalFinalizing.complete(Unit)
+                    releaseTerminal.await()
+                    withContext(Dispatchers.Main) { terminalFinished.complete(Unit) }
+                }
+            }
+        }
+        try {
+            withTimeout(5_000) {
+                modelStarted.await()
+                terminalStarted.await()
+                val cleanup = async { clearViewModelsAndAwaitTerminalJobs(store, main) }
+                modelFinalizing.await()
+                assertFalse("Teardown must wait for ViewModel IO cleanup", cleanup.isCompleted)
+                releaseModel.complete(Unit)
+                terminalFinalizing.await()
+                assertFalse("Teardown must also wait for process-owned terminal cleanup", cleanup.isCompleted)
+                releaseTerminal.complete(Unit)
+                cleanup.await()
+                assertTrue(modelFinished.isCompleted)
+                assertTrue(terminalFinished.isCompleted)
+                assertTrue(modelRoot.isCompleted)
+                assertTrue(terminalJob.isCompleted)
+            }
+        } finally {
+            releaseModel.complete(Unit)
+            releaseTerminal.complete(Unit)
+            withContext(main) { store.clear() }
+            modelRoot.join()
+            terminalJob.cancelAndJoin()
+            Dispatchers.resetMain()
+            main.close()
+        }
+    }
+
     @Test
     fun navigationAndLiveChannelWaitForDurableRecovery() = runBlocking {
         val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
@@ -85,9 +159,12 @@ class TerminalLeavePersistenceRobolectricTest {
             assertTrue(model.restorablePersistentSessions.any { it.tmuxName == shell.tmuxName })
         } finally {
             release.complete(Unit)
-            withContext(main) { store.clear(); TerminalSessionManager.clearAll() }
-            Dispatchers.resetMain()
-            main.close()
+            try {
+                clearViewModelsAndAwaitTerminalJobs(store, main)
+            } finally {
+                Dispatchers.resetMain()
+                main.close()
+            }
         }
     }
 
@@ -199,9 +276,12 @@ class TerminalLeavePersistenceRobolectricTest {
             store.put("test", model)
             block(model, AppRepository(db), db, main)
         } finally {
-            withContext(main) { store.clear(); TerminalSessionManager.clearAll() }
-            Dispatchers.resetMain()
-            main.close()
+            try {
+                clearViewModelsAndAwaitTerminalJobs(store, main)
+            } finally {
+                Dispatchers.resetMain()
+                main.close()
+            }
         }
     }
 
