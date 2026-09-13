@@ -1,7 +1,7 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
-Updated: 2026-09-13. Working branch: `migration-to-flutter`; review PR: #92.
-This is an in-progress checkpoint, **not** a parity-complete or release-ready declaration.
+Updated: 2026-09-13 at 10:34 AM IST, after the cutoff. Working branch: `migration-to-flutter`; PR: #92.
+Outgoing Codex session retired for handoff; **not** a parity-complete or release-ready declaration.
 
 This sanitized tracker is intentionally committed so work can resume on another machine.
 Before an authorized merge to `main`, consolidate it into the private handover under
@@ -11,15 +11,48 @@ secrets here: moving it later does not erase Git history.
 ## Resume here
 
 **Codex-to-Claude handoff cutoff: September 13, 2026 at 10:30 AM IST today (05:00 UTC), not tomorrow.**
-Stop starting new implementation batches at that time, finish a safe in-progress step, and record
-actual completed/pending work, dirty files, validation and running jobs. A local, exact-session
-external cutoff timer has been enabled; operational details are in the private handover
-`secrets/internal-docs/docs/CLAUDE_HANDOFF_2026-09-13.md`. Retire this Codex continuation schedule
-at handoff; stale `continue` messages must not restart implementation or recreate it. This is a
+Implementation stopped before cutoff. The external cutoff fired at 10:30:00 IST and queued
+finalization at 10:30:01; private handover finalized at 10:32, then this public summary was corrected
+after the queued cutoff message arrived. Both outgoing continuation and cutoff timers are now
+verified disabled/inactive, with successful delivery and no retry pending. Operational details:
+`secrets/internal-docs/docs/CLAUDE_HANDOFF_2026-09-13.md`.
+Stale `continue` messages must not restart implementation or recreate the retired schedule. This is a
 handoff, not a claim that the whole review is complete. Claude must return an equivalent detailed
 handover and a ready-to-use prompt for Codex to independently review and finalize the codebase.
 The cutoff retires the outgoing Codex session; it does not forbid Claude's subsequently authorized
 continuation from the handover.
+
+**Claude session resumed from that handover on 2026-09-13.** It did not revive the retired Codex
+schedule. Claude Code has no external, session-targeted `queue` command equivalent to the Codex
+adapter in `AGENTS.md`, so its 30-minute `continue` schedule runs on the client's own in-session
+scheduler instead of a `systemd --user` timer. That is a real weakening of the requirement and is
+recorded rather than glossed: the schedule does not survive the client process exiting, and it fires
+only while the session is idle. Everything else in the continuation rules is unchanged.
+
+### Final checkpoint and CI snapshot
+
+- Signed/pushed source checkpoint and actual PR head:
+  `b691ddd5ea66beebcdcfd3cd347b14216a4f88ee`, signature G. Worktree was clean at 10:33 IST.
+  This final documentation-only correction to `WORK_PROGRESS.md` is intentionally uncommitted;
+  no production/test edits remain. Preserve it for the incoming agent's next validated checkpoint.
+  Do not supersede still-running exact-head CI merely to publish a final status correction.
+- At 10:33 IST, native Build & Test and release SBOM succeeded; Room still running in run
+  `34738906013` (Room job `103675867004`). Flutter Analyze/Test, Android release/SBOM and iOS
+  succeeded; emulator still running in run `34738905988` (job `103675128133`).
+- CodeQL run `34738905986` reported success but actual Analyze Java/Kotlin job `103675129381`
+  was **skipped**. Only the no-code-change placeholder succeeded, despite native paths in the
+  detector's changed-file list. This is an unresolved security-gate bug, not CodeQL coverage.
+  The `echo "$changed" | grep -qE ...` detector under `pipefail` can reject an early match when
+  the writer receives SIGPIPE. A controlled small-pipe regression reproduced that mechanism;
+  default local runs did not reproduce it. Fix/test the detector and audit equivalent workflows.
+- Dependency review (`34738905957`), Scorecard analysis (`34738905964`) and both secret scans
+  (`34738905962`, `34738904792`) succeeded; separate Scorecard check neutral. Unselected docs-only
+  companions are skipped, not platform passes. Detailed new CI test counts remain to be audited.
+- PR remains REVIEW_REQUIRED and incomplete. A read-only exact-head watcher remains active;
+  its private service/log/recovery details are in the handover. Even a successful watcher exit
+  cannot prove the skipped real CodeQL analysis ran. Inspect actual jobs and terminal results.
+- No Claude launch, merge, release, test termination or protection changes. The incoming agent
+  must finish the CI/security gate and remaining work below and leave a reciprocal Codex handover.
 
 1. Read `AGENTS.md`. Inspect `git status`, `git log -5`, and the remote branch before editing.
 2. Check PR #92's **actual head SHA** and all its checks. Signed checkpoints `64d8e23` and
@@ -55,6 +88,91 @@ incoming hotfixes were already present. Before this tracker-only edit, the resol
 was byte-identical to checkpoint `64d8e23` (tree `44ac3dc54ff8690544e4a36d00abab5a1a33647a`).
 That merge changed no build-affecting source. The newer SSH setup batch below has its own validation.
 
+## Change-detector repair — CodeQL was never analysing this PR
+
+`b691ddd` is now terminal on every selected check and every one of them reports success, but
+**`Analyze Java/Kotlin` passed in 3 seconds**: that is the `analyze-skip` companion no-op, not
+CodeQL. The `Detect code changes` job (run `34738905986`, job `103675118702`) listed
+`app/build.gradle.kts` and 525 further `app/` paths in its own log and still set `code=false`,
+so the real analysis job `103675129381` was skipped. The green checks list was hiding the fact
+that no security analysis had run on this branch at all.
+
+**Cause.** All three PR detectors decided with `if echo "$changed" | grep -qE '<include paths>'`
+under `set -uo pipefail`. `grep -q` exits at its *first* match and closes the pipe. Once the
+changed-path list is longer than grep's first read, the producing `echo` is killed by SIGPIPE
+(141); `pipefail` reports the pipeline as 141 even though grep matched, the `if` takes the else
+branch, and a build-affecting PR is classified as docs-only. The longer the PR, the likelier the
+required analysis silently disappears.
+
+**Reproduction.** A default local run does *not* reproduce it — `b691ddd`'s real list is 28,959
+bytes across 580 paths, just under the buffer where it tips. Feeding the same detector a matching
+path followed by 40,000 further paths reproduces it deterministically on GNU grep 3.12
+(`PIPESTATUS` `141 0`, pipeline 141, `code=false`); the threshold on that host is between 16 KB
+and 48 KB of changed paths. Note the local host's `grep` in some interactive shells is `ugrep`,
+which does not reproduce this at any size — reproduce with `/usr/bin/grep`.
+
+**Fix.** `codeql.yml`, `android-pr-check.yml` and `flutter-pr-check.yml` now write the changed-path
+list to a file and match the file, so there is no pipe and no producer to kill. `grep` status 0 is
+a match, 1 is genuinely no match, and anything above 1 is a real error that fails safe to
+`code=true` exactly like the existing `git diff` failure path — previously a broken pattern or
+unreadable input would also have been read as "nothing changed". `mktemp`/write failures fail safe
+the same way. Behaviour is otherwise unchanged: include prefixes stay anchored, and `push`/
+`schedule` still force `code=true` so the main prerelease gate never skips.
+
+**Regression test.** `scripts/test-change-detectors.sh` extracts the *real* `run:` block out of each
+workflow (failing loudly if an unsupported `${{ }}` expression appears in one) and executes it
+against a stubbed `git`, so it tests the shipped detector rather than a copy. 39 checks across the
+three detectors: matching path first in a 40,000-path list; a deliberately non-draining matcher,
+which pins the behaviour independently of the host's grep; matching path last; the 580-path shape of
+the head that actually skipped CodeQL; docs-only; include prefixes still anchored (`docs/app/...`
+must not trigger); paths containing spaces, matching and not; an empty diff; `git diff` failure;
+`grep` error; and `push`/`schedule`/`workflow_dispatch` on CodeQL. It also fails if the
+`echo … | grep` shape reappears in a workflow.
+
+**Negative control.** The same script run against the unfixed `HEAD` detectors fails 12 of 39 —
+the SIGPIPE case and the grep-error case, in all three workflows, each returning the production
+symptom `code=false` for a genuinely matching list. The other 27 checks pass on the old code, so
+the suite is targeted rather than vacuous.
+
+The test is wired into `scripts/local-pr-check.sh` and into the same "validate tooling" steps that
+already run `test-release-engine.sh` in `codeql.yml`, `android-pr-check.yml` and
+`flutter-pr-check.yml`; `test-change-detectors.sh` was added to the Flutter detector's own include
+list so changes to it can trigger that gate. A detector job cannot catch its own false negative
+(if it skips, the test skips with it), but `push` to `main` always sets `code=true`, so the
+prerelease gate always executes it.
+
+**This does not mean CodeQL has now passed.** It means the next pushed head is the first one whose
+`Analyze Java/Kotlin` result can be believed. Until a real analysis job runs to completion on the
+replacement head, this branch has no CodeQL coverage.
+
+#### Validation for this tree
+
+`./scripts/local-pr-check.sh --full` **passed** with `flutter` and `adb` on PATH and
+`JAVA_HOME=/opt/java/temurin-17`. An earlier attempt exited 1 before the `--full` section purely
+because `flutter` was missing from that run's environment — a harness error, not a result.
+
+- Change-detector suite **39 passed / 0 failed**; the negative control against the unfixed detectors
+  fails **12 of 39**, all three workflows, each returning the production symptom `code=false`.
+- Flutter full suite **2676 passed / 4 optional live skips** — 3 `OMNITERM_SETUP_FIXTURE`
+  setup-relay cases and 1 `OMNITERM_COMPRESSION_*` case, both needing a disposable OpenSSH fixture.
+  `flutter analyze` clean in 6.5s.
+- Native unit tests, **freshly executed** this run (not reused UP-TO-DATE results): each variant
+  560 discovered = **558 passed / 2 skipped / 0 failures / 0 errors**. Both skips are
+  `TmuxAltScreenReplayTest` capture cases (`no capture dir provided`); captures are unavailable on
+  this host. No ARM discovery exclusion applies on x86_64; required CI still executes Robolectric.
+- Flutter release APK + App Bundle, both release SBOM graphs, release test-code exclusion and
+  strict forced-fresh dependency verification passed. No checksum metadata changed.
+- Full-history secret scan: 200 commits, 14.97 MB, no leaks.
+- **The connected device matrix actually ran this time** rather than being deferred:
+  `connectedOpenSourceDebugAndroidTest` on API 35 `emulator-5554`, **58 tests = 24 passed /
+  34 skipped / 0 failures**. Every one of the 34 is an opt-in `E2e*` case self-skipping through
+  `assumeTrue` because its instrumentation arguments were absent. That explicitly includes
+  `E2eAppSurfaceStressTest`, so **this run is not the required route/subtab/theme/rotation sweep**.
+  It is not re-run here because this checkpoint changes no application source — only workflow YAML,
+  `scripts/local-pr-check.sh` and a new test script. `b691ddd`'s device evidence still stands for
+  the app itself.
+- `git diff --check` and `git diff --cached --check` both clean.
+
 ## SSH setup checkpoint (`85f5cfe`) — pushed; one exact-head CI failure
 
 Signed and pushed `85f5cfe7392caafa4afdd249f635456a06777916`; all selected checks are terminal.
@@ -72,7 +190,7 @@ retention is not fixed yet. The guard currently proves engine identity, not a li
 recreation; that stronger fixture test is still required. The failing guard is preserved privately
 as a patch, not included in the swipe repair tree before its production ownership fix exists.
 
-### Swipe/runner repair checkpoint — local validation complete; replacement CI pending
+### Swipe/runner checkpoint (`b691ddd`) — signed/pushed; local validation complete, CI incomplete
 
 The deterministic paused-swipe guard failed on API 35 with unchanged production gesture code:
 the selected offline host stayed on Stacks instead of opening Builder. Flutter required nonzero
@@ -102,8 +220,9 @@ Fresh strict dependency/compile verification, both native release SBOM graphs, F
 and release test-code exclusion passed. No checksum metadata changes. Full-history secret scanning
 passed. The emulator was deliberately stopped for the heavy gate: its in-script device matrix was
 deferred, not counted as passing. Separate API 35 Room afterward: **4 passed / 0 skipped**. Normal
-Flutter debug launcher rebuilt/reinstalled/reopened successfully. Stage/secret-check/sign/push this
-validated tree and monitor every selected replacement exact-head job; do not infer CI success.
+Flutter debug launcher rebuilt/reinstalled/reopened successfully. Both diff checks and the staged
+secret scan passed before signing/pushing `b691ddd`; remote branch and PR head were verified.
+Monitor every selected exact-head job and fix the CodeQL false skip; do not infer CI success.
 
 ### Validation for the prior SSH deadline checkpoint (`85f5cfe`)
 
@@ -300,6 +419,12 @@ Do not cite plain `connectedAndroidTest` as opt-in E2E coverage.
 
 ## Remaining authorized work — do not replace this with unrelated tasks
 
+0. **Actual required CI coverage:** `b691ddd` finished terminal with every selected check green,
+   and that is precisely the problem — its `Analyze Java/Kotlin` was the placeholder. The detector
+   repair and its regression test are above. What remains: push the replacement head, watch every
+   selected job to a terminal state, and confirm from the job list that the **real** CodeQL
+   analysis ran for 30+ minutes rather than a 3-second no-op. Do not treat a green envelope,
+   a skipped companion, or a passing local gate as security analysis.
 1. **SSH background retention and remaining latency:** audit Flutter Activity/engine destruction,
    live-session ownership, foreground-service error visibility and disconnect-all feedback.
    Continue measuring cold-connect and tmux startup latency; the new setup deadlines prevent hangs,
@@ -343,7 +468,8 @@ on `migration-to-flutter`. First verify actual branch/HEAD, remote, dirty files,
 checks and running local jobs. Preserve existing changes and all completed fixes above. Private
 notes are supplementary; this tracked document must remain enough to recover on another machine.
 
-Address exact-head CI failures from their actual job logs, then the remaining SSH lifecycle and
+Start with exact-head CI and the false-skipped CodeQL analysis above; inspect actual job logs,
+fix the detector with a regression test and require real security analysis. Then address SSH lifecycle and
 latency, Fleet/container streaming/warning and app-wide feedback/parity work above. Use repository
 fixtures only. Add deterministic regression tests and real-runtime before/after proof where required;
 show progress, explicit results, cancellation/skip reasons and actionable errors. Preserve host
