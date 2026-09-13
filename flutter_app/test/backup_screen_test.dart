@@ -403,8 +403,12 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('cancelling the picker says nothing at all', (tester) async {
-      // The user cancelled; announcing it is noise, and nothing was written anywhere.
+    testWidgets('cancelling the picker says so, without calling it an error', (tester) async {
+      // This test used to assert silence, on the reasoning that announcing a cancel is noise and
+      // nothing was written. That holds for a cancel *before* any work — but by this point the
+      // backup has been built, and encrypted for a sensitive selection, behind a "Creating backup…"
+      // spinner. Ending visible work with no result at all left the user unable to tell a cancelled
+      // save from a finished one, which is exactly what AGENTS.md's app-wide feedback rule forbids.
       files.saveResult = const BackupSaveResult(BackupSaveOutcome.cancelled);
       await pump(tester);
       await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
@@ -415,8 +419,52 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('backup.export')));
       await tester.pumpAndSettle();
 
-      expect(vm.error, isNull);
-      expect(vm.status, isNull);
+      expect(vm.error, isNull, reason: 'the user chose this; it is not a failure');
+      expect(vm.status, contains('cancelled'));
+      expect(vm.status, contains('Nothing was written'));
+      await finish(tester);
+    });
+
+    testWidgets('a cancelled save clears a previous success message', (tester) async {
+      // The sharper half of the same defect: `exportBackup` did not clear `_status`, so the
+      // "Backup saved to …" from the previous export stayed on screen through the next one. A user
+      // who exported, then exported again and cancelled, was looking at a success message for a
+      // file that had just not been written.
+      await pump(tester);
+      await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
+      await tester.pumpAndSettle();
+
+      files.saveResult = const BackupSaveResult(BackupSaveOutcome.saved, location: 'somewhere');
+      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tester.pumpAndSettle();
+      expect(vm.status, contains('somewhere'));
+
+      files.saveResult = const BackupSaveResult(BackupSaveOutcome.cancelled);
+      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tester.pumpAndSettle();
+
+      expect(
+        vm.status,
+        isNot(contains('somewhere')),
+        reason: 'the old success message must not survive a later cancelled export',
+      );
+      expect(vm.status, contains('cancelled'));
+      await finish(tester);
+    });
+
+    testWidgets('an empty chosen file is an actionable error, not silence', (tester) async {
+      // Picking a file and having nothing happen is the worst of both: the user cannot tell whether
+      // the app failed, the file was wrong, or the tap missed.
+      files.openContents = '   \n  ';
+      await pump(tester);
+
+      await tester.tap(find.byKey(const ValueKey('backup.import')));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('empty'), findsWidgets);
+      expect(vm.error, contains('nothing to restore'));
       await finish(tester);
     });
 

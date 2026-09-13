@@ -179,6 +179,65 @@ because `flutter` was missing from that run's environment — a harness error, n
   the app itself.
 - `git diff --check` and `git diff --cached --check` both clean.
 
+## A cancelled backup showed a success message for a file that was never written
+
+Three defects in the export/import feedback, and one in this session's own tooling.
+
+**A stale success message survived a cancelled export.** `inspectBackup` and `importBackup` both
+clear `_status` at the start; `exportBackup` alone did not. A user who exported, then exported again
+and cancelled the file dialog, was left looking at "Backup saved to …" for a file that had just not
+been written. The screen actively asserted something false.
+
+**A cancelled save said nothing at all.** An existing widget test asserted exactly that silence, on
+the reasoning that announcing a cancel is noise and nothing was written. That holds for a cancel
+*before* any work — but by this point the backup has been built, and encrypted for a sensitive
+selection, behind a "Creating backup…" spinner. Ending visible work with no result is what
+AGENTS.md's app-wide rule forbids. The test was rewritten rather than deleted, with the old
+reasoning and why it no longer applies recorded in the test itself.
+
+**An empty chosen file was silently ignored on import.** Picking a file and having nothing happen is
+the worst of both: the user cannot tell whether the app failed, the file was wrong, or the tap
+missed. It now names the problem and says what a real backup file looks like.
+
+### The device suite caught the fix being wrong, which is what it is for
+
+A native Patrol test, `integration_test/native/backup_file_picker_test.dart`, asserted that a
+cancelled save shows **no message at all**, to catch "a screen that reports success on the way *into*
+the picker rather than on the way out of it". The first version of this fix failed it — and the
+failure was correct, not merely a collision:
+
+- The message card painted **every** non-error status green, the colour the user reads as success.
+  The new message would have said "Nothing was written" in the success colour, which is worse than
+  the silence it replaced. The view model now distinguishes a status that reports completed work
+  (`statusIsSuccess`) from one explaining why none happened, and only `reportSaved` and the restore
+  summary set it; the card uses the neutral accent otherwise.
+- The device assertion was then **strengthened, not relaxed**: "no message exists" was a fair proxy
+  only while the sole possible message was a success claim. It now reads the rendered text and
+  requires that it does not contain `Backup saved` **and** does contain `Nothing was written`,
+  which also catches a message that wrongly claims success — something the old form could not.
+
+### And one in this session's own tooling
+
+The validation wrapper ended with `exit $rc`, where `$rc` was only `local-pr-check`'s result. The
+run that failed the device core profile therefore exited **0** and reported green. That is the same
+defect class this whole session has been fixing — a layer reporting success without doing the work —
+sitting in the harness used to prove the fixes. The wrapper now records every stage and fails if any
+one of them did. Any earlier run in this session that reported only `local-pr-check rc=0` was still
+accompanied by an explicitly quoted `core rc=` / `host rc=` line, so no result already recorded here
+depends on the broken propagation; but re-read those lines rather than trusting the unit's status.
+
+### Validation for this tree
+
+Every stage green under the fixed wrapper: `core rc=0`, `host rc=0`, `local-pr-check rc=0`, both
+diff checks `0`, `FAILED=0`.
+
+- Flutter full suite **2707 passed / 4 optional live skips**; `flutter analyze` clean in 6.4s.
+- Device profiles on API 35 `emulator-5554`: `core` 30 passed / 0 skipped — including the native
+  picker test whose contract changed — and `host` 2 passed / 0 skipped.
+- Native unit tests reused UP-TO-DATE; no Kotlin changed. Release APK/AAB, both SBOM graphs and
+  strict dependency verification passed. Full-history secret scan: 208 commits, no leaks.
+- Control: **3 of 3** new widget tests fail against real `HEAD`.
+
 ## The backup screen forgot what the user chose, and mis-stated when it saved
 
 **A failed selection read reverted to "everything", permanently.** `loadSelection()` set

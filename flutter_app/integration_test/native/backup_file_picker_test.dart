@@ -77,10 +77,29 @@ void main() {
 
     await cancelPicker($);
 
+    // This asserted that no message existed at all, which was a fair proxy while the only message
+    // the screen could show was a success claim. It no longer is: a cancelled save now says so
+    // explicitly, because the backup had already been built behind a spinner and ending that with
+    // silence left the user unable to tell a cancelled save from a finished one. The property this
+    // test protects is unchanged and is now checked directly — and more strictly, since it would
+    // also catch a message that wrongly claimed success.
+    final message = $.tester
+        .widget<Text>(
+          find.descendant(
+            of: $(const ValueKey('backup.message')).finder,
+            matching: find.byType(Text),
+          ),
+        )
+        .data;
     expect(
-      $(const ValueKey('backup.message')).exists,
-      false,
+      message,
+      isNot(contains('Backup saved')),
       reason: 'a cancelled save must not report a backup that does not exist',
+    );
+    expect(
+      message,
+      contains('Nothing was written'),
+      reason: 'and it must say what did happen, rather than leaving finished work unexplained',
     );
     // Completion reveals feedback at the top of the lazy list. The export control has been
     // disposed off-screen; scroll it back into view before checking that it is enabled again.

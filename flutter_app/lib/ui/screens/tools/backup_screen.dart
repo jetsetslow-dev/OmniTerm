@@ -66,7 +66,13 @@ class _BackupScreenState extends State<BackupScreen> {
                 padding: const EdgeInsets.only(bottom: 8),
                 child: OmniCard(
                   key: const ValueKey('backup.message'),
-                  leftAccent: vm.error != null ? OmniColors.red : OmniColors.green,
+                  // Green means "this worked". A cancelled save did not, so it gets the neutral
+                  // accent rather than borrowing the colour the user reads as success.
+                  leftAccent: vm.error != null
+                      ? OmniColors.red
+                      : vm.statusIsSuccess
+                      ? OmniColors.green
+                      : OmniColors.amber,
                   child: Row(
                     children: [
                       Expanded(
@@ -236,9 +242,10 @@ class _BackupScreenState extends State<BackupScreen> {
         // repeating the passphrase warning at the moment the file becomes real and portable.
         vm.reportSaved(result.location, encrypted: passphrase.isNotEmpty);
       case BackupSaveOutcome.cancelled:
-        // Silent on purpose. The user cancelled; telling them so is noise, and the backup text was
-        // never written anywhere.
-        break;
+        // Said, not silent. The backup was already built — and encrypted, for a sensitive
+        // selection — behind a "Creating backup…" spinner. Ending that with no message at all left
+        // the user unable to tell a cancelled save from a finished one.
+        vm.reportSaveCancelled();
       case BackupSaveOutcome.failed:
         vm.reportSaveFailed(result.error);
     }
@@ -254,7 +261,17 @@ class _BackupScreenState extends State<BackupScreen> {
       _revealFeedback();
       return;
     }
-    if (contents == null || contents.trim().isEmpty || !context.mounted) return;
+    if (contents == null || !context.mounted) return;
+    if (contents.trim().isEmpty) {
+      // Picking a file and having nothing happen is the worst of both: the user cannot tell whether
+      // the app failed, the file was wrong, or the tap missed.
+      vm.reportSaveFailed(
+        'That file is empty, so there is nothing to restore. Choose the backup file you exported — '
+        'it ends in .json and is usually several kilobytes.',
+      );
+      _revealFeedback();
+      return;
+    }
 
     var passphrase = '';
     if (BackupViewModel.looksEncrypted(contents)) {

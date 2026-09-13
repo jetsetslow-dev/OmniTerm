@@ -203,9 +203,18 @@ class BackupViewModel extends ChangeNotifier {
   String? get error => _error;
   String? get status => _status;
 
+  /// Whether [status] reports work that finished, rather than explaining why none did.
+  ///
+  /// The message card is painted from this. Without it a cancelled save rendered in the same green
+  /// as a completed one, so the screen said "nothing was written" in the colour it uses for
+  /// success — which is worse than the silence it replaced.
+  bool get statusIsSuccess => _statusIsSuccess;
+  bool _statusIsSuccess = false;
+
   void dismissMessages() {
     _error = null;
     _status = null;
+    _statusIsSuccess = false;
     notifyListeners();
   }
 
@@ -242,6 +251,11 @@ class BackupViewModel extends ChangeNotifier {
     _busy = true;
     _busyMessage = 'Creating backup…';
     _error = null;
+    // Cleared at the start, as `inspectBackup` and `importBackup` already do. Without it a previous
+    // "Backup saved to …" stayed on screen through the next export — including one the user then
+    // cancelled — so the screen showed a success message for a file that was never written.
+    _status = null;
+    _statusIsSuccess = false;
     _hostKeysOmitted = false;
     _safeNotify();
 
@@ -344,6 +358,7 @@ class BackupViewModel extends ChangeNotifier {
           }),
     );
     _error = null;
+    _statusIsSuccess = true;
     _status = [
       location == null ? 'Backup saved.' : 'Backup saved to $location',
       if (encrypted)
@@ -361,8 +376,21 @@ class BackupViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
+  /// Report that the user backed out of the file dialog.
+  ///
+  /// Not an error, and not silence either. By this point the backup has been built and possibly
+  /// encrypted, and the screen has been showing "Creating backup…" while that happened. Ending
+  /// that with nothing at all leaves the user unsure whether a file exists somewhere.
+  void reportSaveCancelled() {
+    _error = null;
+    _statusIsSuccess = false;
+    _status = 'Backup not saved — the file dialog was cancelled. Nothing was written.';
+    _safeNotify();
+  }
+
   void reportSaveFailed(String? error) {
     _status = null;
+    _statusIsSuccess = false;
     _error = error ?? 'The file could not be saved.';
     _safeNotify();
   }
@@ -632,6 +660,7 @@ class BackupViewModel extends ChangeNotifier {
       if (skippedServerMessages.isNotEmpty) {
         _status = '$_status\n${skippedServerMessages.join('\n')}';
       }
+      _statusIsSuccess = true;
       succeeded = true;
       return counts;
     } on BackupException catch (e) {
