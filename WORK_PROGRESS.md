@@ -173,6 +173,56 @@ because `flutter` was missing from that run's environment — a harness error, n
   the app itself.
 - `git diff --check` and `git diff --cached --check` both clean.
 
+## Who owns the SSH channel before a session takes it
+
+Two defects between `openShell` returning a channel and a `ShellSession` adopting it.
+
+**The channel leaked when persistence failed.** `_persistentTarget` does real database work *after*
+the shell is open. When it threw, the exception unwound straight past an open SSH channel: not in
+`_sessions`, invisible to the user, and holding a shell on the server until the process died. Only
+the two generation checks closed it; nothing covered a throw. There is now an explicit ownership
+boundary — a `channelAdopted` flag flipped the instant `ShellSession` takes the channel, with a
+`finally` that closes it on every other exit. The two explicit closes were folded into that
+boundary rather than left duplicated.
+
+**A live session was reported as a failed connection.** `_reloadSaved()` runs *after* the session is
+registered and usable. Letting it throw sent a working shell's connect into the failure handlers, so
+the user was told the connection had failed while their terminal sat in front of them. It now keeps
+the session and says the true, narrower thing: connected, but the resumable-session list may be
+stale until the next change. That list is what Leave and resume read, so it is worth saying — it is
+simply not a failed connect.
+
+**Tests and control.** Three cases. Against real `HEAD`:
+
+| case | on `HEAD` | what it is |
+| --- | --- | --- |
+| a persistence failure closes the channel it opened | **fails** (`closeCalled` false) | real leak |
+| a live session is not reported as a failed connection | **fails** (`Bad state: fixture storage unavailable`) | real misreport |
+| a superseded attempt closes its channel | passes | preserved behaviour, not a find |
+
+The third is counted honestly: the original code already closed the channel at both generation
+checks. It is kept because the refactor replaced those explicit closes with the `finally`, and that
+is exactly the kind of change that silently drops a case. An earlier control run removed both the
+`finally` *and* the original explicit closes, which made all three fail and overstated the defect;
+the table above is from the real `HEAD` file.
+
+The post-registration test needed a repository double (`_FailsReadingAfterWriting`) whose
+persistent-session *reads* fail once one has been *written*. That lands the failure precisely in the
+window after ownership transfers, deterministically, without counting calls.
+
+### Validation for this tree
+
+`./scripts/local-pr-check.sh --full` passed (`rc=0`); both diff checks clean.
+
+- Flutter full suite **2698 passed / 4 optional live skips**; `flutter analyze` clean in 6.4s.
+- Device profiles on API 35 `emulator-5554`: `core` **30 passed / 0 skipped** (25 Dart across 9
+  entrypoints, every one first attempt, + 3 native backup-picker + 2 native permissions), `host`
+  **2 passed / 0 skipped**. These exercise the connect path this checkpoint changes.
+- Native unit tests reused UP-TO-DATE; no Kotlin changed. Release APK/AAB, both SBOM graphs and
+  strict dependency verification passed. Full-history secret scan: 204 commits, no leaks.
+- In-script connected matrix deferred (emulator stopped for the heavy gate); the device profiles
+  above are this checkpoint's device evidence.
+
 ## A refused background service told nobody
 
 `SessionService.sync`/`stop` returned `bool`, and `_syncBackgroundSessions` used that only to clear

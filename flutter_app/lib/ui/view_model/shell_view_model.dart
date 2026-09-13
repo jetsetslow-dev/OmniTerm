@@ -901,6 +901,7 @@ class ShellViewModel extends ChangeNotifier {
     _failedConnectTarget = null;
     _safeNotify();
 
+    (String, String)? persistent;
     try {
       // A host configured for persistent sessions but missing tmux used to connect as an ordinary
       // shell with no notice: the user believed their work survived a dropped link, and it did not.
@@ -989,36 +990,50 @@ class ShellViewModel extends ChangeNotifier {
           _safeNotify();
         },
       );
-      if (_disposed || generation != _connectGeneration) {
-        channel.close();
-        return;
-      }
-      final emulator = TerminalEmulator(
-        cols: _preferredCols,
-        rows: _preferredRows,
-        scrollbackLimit: scrollbackLimit,
-      );
-      // Resolved before the session is built so it can carry its own tmux name — that is what
-      // lets the resumable list tell "open in a tab" from "running with nobody watching".
-      final persistent = server.persistentSession && !forcePlainShell
-          ? await _persistentTarget(server, resumeName: resumeName, controlMode: controlMode)
-          : null;
-      if (_disposed || generation != _connectGeneration) {
-        channel.close();
-        return;
-      }
+      // From here until a ShellSession takes it, this attempt owns the channel — and owning it
+      // means closing it on *every* way out, not just the two that were checked. `_persistentTarget`
+      // below does real database work, and when that threw the exception unwound straight past an
+      // open SSH shell: not in `_sessions`, invisible to the user, holding a channel on the server
+      // until the process died. The flag flips the instant ownership transfers.
+      var channelAdopted = false;
+      final ShellSession session;
+      try {
+        if (_disposed || generation != _connectGeneration) return;
+        final emulator = TerminalEmulator(
+          cols: _preferredCols,
+          rows: _preferredRows,
+          scrollbackLimit: scrollbackLimit,
+        );
+        // Resolved before the session is built so it can carry its own tmux name — that is what
+        // lets the resumable list tell "open in a tab" from "running with nobody watching".
+        final persistentTarget = server.persistentSession && !forcePlainShell
+            ? await _persistentTarget(server, resumeName: resumeName, controlMode: controlMode)
+            : null;
+        if (_disposed || generation != _connectGeneration) return;
+        persistent = persistentTarget;
 
-      final session = ShellSession(
-        id: '${DateTime.now().microsecondsSinceEpoch}-${server.id}',
-        serverId: server.id,
-        serverName: server.name,
-        channel: channel,
-        emulator: emulator,
-        tmuxName: persistent?.$1,
-        // Only a host that actually went into tmux can be in control mode; a plain shell that was
-        // asked for it would have its ordinary output parsed as a protocol and rendered as nothing.
-        controlMode: controlMode && persistent != null,
-      )..setViewportRows(_preferredRows);
+        session = ShellSession(
+          id: '${DateTime.now().microsecondsSinceEpoch}-${server.id}',
+          serverId: server.id,
+          serverName: server.name,
+          channel: channel,
+          emulator: emulator,
+          tmuxName: persistentTarget?.$1,
+          // Only a host that actually went into tmux can be in control mode; a plain shell that
+          // was asked for it would have its ordinary output parsed as a protocol and rendered as
+          // nothing.
+          controlMode: controlMode && persistentTarget != null,
+        )..setViewportRows(_preferredRows);
+        channelAdopted = true;
+      } finally {
+        if (!channelAdopted) {
+          try {
+            channel.close();
+          } catch (_) {
+            // Closing a channel that already died must not replace the real failure being thrown.
+          }
+        }
+      }
       // The parser must not block on repaint; the session buffers input until the pane is ready.
       session.onPaneChanged = (changed) => unawaited(refreshControlActivePane(changed));
       session.addListener(_onSessionChanged);
@@ -1051,7 +1066,21 @@ class ShellViewModel extends ChangeNotifier {
           session.closeByUser();
           rethrow;
         }
-        await _reloadSaved();
+        // Bookkeeping, and the session is already registered and usable. Letting this throw sent a
+        // live shell's connection into the failure handlers below, which told the user the
+        // connection had failed while their working terminal sat in front of them. The list being
+        // stale is worth saying — it is what Leave and resume read — but it is not a failed
+        // connect, and the refresh is retried whenever anything else reloads it.
+        try {
+          await _reloadSaved();
+        } catch (error) {
+          if (generation == _connectGeneration) {
+            _error =
+                'Connected to ${server.name}. The resumable-session list could not be refreshed, '
+                'so it may be out of date until the next change: ${describeSshFailure('$error')}';
+            _safeNotify();
+          }
+        }
       }
       if (initialCommand != null && initialCommand.trim().isNotEmpty) {
         session.write(Uint8List.fromList(utf8.encode('${initialCommand.trim()}\r')));

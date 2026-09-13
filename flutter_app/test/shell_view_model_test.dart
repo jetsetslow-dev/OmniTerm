@@ -32,6 +32,30 @@ class _RecordingShortcuts extends ShortcutHelper {
   }
 }
 
+/// An [AppRepository] whose persistent-session reads start failing once one has been written.
+///
+/// That is exactly the window the ownership tests care about: `_persistentTarget` writes the row,
+/// the session is built and registered, and only then does `_reloadSaved` read the list back. A
+/// failure there is optional bookkeeping failing around a shell that is already live.
+class _FailsReadingAfterWriting extends AppRepository {
+  _FailsReadingAfterWriting(super.db, super.secrets);
+
+  bool _wrote = false;
+
+  @override
+  Future<int> upsertPersistentSession(PersistentSessionsCompanion session) async {
+    final id = await super.upsertPersistentSession(session);
+    _wrote = true;
+    return id;
+  }
+
+  @override
+  Future<List<PersistentSession>> getPersistentSessions() {
+    if (_wrote) throw StateError('fixture storage unavailable');
+    return super.getPersistentSessions();
+  }
+}
+
 void main() {
   late AppDatabase db;
   late AppRepository repo;
@@ -1129,6 +1153,92 @@ void main() {
   /// Flutter connected regardless: the bootstrap command guards itself with `command -v tmux`, so a
   /// host configured for persistent sessions but missing tmux quietly opened an ordinary shell. The
   /// user believed their work survived a dropped link, and it did not.
+  /// Who owns the SSH channel between `openShell` returning it and a `ShellSession` taking it.
+  group('channel ownership during connect', () {
+    Server persistentHost() => server(name: 'nas', persistent: true);
+
+    test('a persistence failure closes the channel it opened', () async {
+      // The defect: `_persistentTarget` does real database work *after* the shell is open. When it
+      // threw, the exception unwound straight past the channel — not in `_sessions`, invisible to
+      // the user, and holding a shell on the server until the process died.
+      final ssh = FakeShellTransport()..execAnswers['command -v tmux'] = 'yes';
+      await repo.insertServer(persistentHost());
+      final vm = await start(ssh: ssh);
+      await db.customStatement(
+        'CREATE TRIGGER reject_persist BEFORE INSERT ON persistent_sessions '
+        "BEGIN SELECT RAISE(ABORT, 'fixture storage unavailable'); END",
+      );
+
+      await vm.connect(vm.connectableServers.single);
+
+      expect(ssh.opened, hasLength(1), reason: 'the shell really was opened before the failure');
+      expect(
+        ssh.opened.single.closeCalled,
+        isTrue,
+        reason: 'an unowned channel must not be left open on the server',
+      );
+      expect(vm.sessions, isEmpty, reason: 'nothing took ownership, so nothing may be listed');
+      expect(vm.error, isNotNull);
+      expect(vm.isConnecting, isFalse);
+    });
+
+    test('a superseded attempt closes its channel instead of leaking it', () async {
+      final ssh = FakeShellTransport()
+        ..execAnswers['command -v tmux'] = 'yes'
+        ..gate = Completer<void>();
+      await repo.insertServer(persistentHost());
+      final vm = await start(ssh: ssh);
+
+      final pending = vm.connect(vm.connectableServers.single);
+      await pumpEventQueue();
+      vm.cancelConnect();
+      ssh.gate!.complete();
+      await pending;
+
+      // The shell still opens — the gate released after the cancel — so the question is purely
+      // who closes it. Nothing adopted it, so this attempt has to.
+      expect(ssh.opened, hasLength(1));
+      expect(
+        ssh.opened.single.closeCalled,
+        isTrue,
+        reason: 'a cancelled attempt still owns the channel it opened',
+      );
+      expect(vm.sessions, isEmpty);
+    });
+
+    test('a live session is not reported as a failed connection', () async {
+      // `_reloadSaved` runs after the session is registered and usable. Letting it throw sent a
+      // working shell's connect into the failure handlers, so the user was told the connection had
+      // failed while their terminal sat in front of them.
+      db = AppDatabase(NativeDatabase.memory());
+      final failing = _FailsReadingAfterWriting(
+        db,
+        SecretStore(storage: FakeSecureStorage(<String, String>{})),
+      );
+      app.dispose();
+      app = AppState(failing);
+      final ssh = FakeShellTransport()..execAnswers['command -v tmux'] = 'yes';
+      await failing.insertServer(persistentHost());
+      final vm = await start(ssh: ssh);
+
+      await vm.connect(vm.connectableServers.single);
+
+      expect(vm.sessions, hasLength(1), reason: 'the shell opened and was registered');
+      expect(vm.sessions.single.isOpen, isTrue, reason: 'it is a working terminal');
+      expect(
+        vm.error,
+        contains('Connected to nas'),
+        reason: 'stale bookkeeping is worth saying, but it is not a failed connection',
+      );
+      expect(vm.error, contains('may be out of date'));
+      expect(
+        vm.current,
+        isNotNull,
+        reason: 'the user is looking at a working terminal, not a failed-connection prompt',
+      );
+    });
+  });
+
   group('tmux availability', () {
     Server persistentHost({String name = 'nas'}) =>
         server(name: name).copyWith(persistentSession: true);
