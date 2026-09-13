@@ -1,10 +1,25 @@
 package com.jetsetslow.omniterm
 
+import android.content.Context
 import android.content.Intent
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 
 class MainActivity : FlutterActivity() {
+    /**
+     * Reuses the process-wide engine instead of creating one per Activity.
+     *
+     * The default lifecycle destroys the engine in `onDestroy`, so every Activity recreation —
+     * rotation, theme or font-scale change, a system-initiated restart — killed the Dart isolate
+     * that owns the SSH sessions. The foreground service kept the *process* alive; nothing kept the
+     * sessions alive. Returning an engine here makes the embedding treat it as host-owned, so it is
+     * not destroyed with this Activity and its entrypoint is not re-run while the isolate is
+     * already executing. `configureFlutterEngine` still runs on every attach, which is what
+     * re-points the Activity-scoped bridges below at the live Activity.
+     */
+    override fun provideFlutterEngine(context: Context): FlutterEngine =
+        RetainedFlutterEngine.obtain(context)
+
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         // Lets the Dart SecretStore read credentials the Kotlin app wrote during in-place upgrade.
@@ -28,6 +43,9 @@ class MainActivity : FlutterActivity() {
         DeviceInfoBridge.register(flutterEngine, this)
         SensitiveClipboardBridge.register(flutterEngine, this)
         CustomTabsBridge.register(flutterEngine, this)
+        // Explicit exit. With the engine retained, finishing the Activity no longer ends the
+        // isolate, so "Terminate & Exit" has to ask for that directly.
+        AppExitBridge.register(flutterEngine, this)
     }
 
     override fun onNewIntent(intent: Intent) {

@@ -179,6 +179,88 @@ because `flutter` was missing from that run's environment — a harness error, n
   the app itself.
 - `git diff --check` and `git diff --cached --check` both clean.
 
+## SSH sessions no longer die when Android recreates the Activity
+
+The defect the incoming handover called "proven unfixed". A default `FlutterActivity` creates its
+engine in `onCreate` and destroys it in `onDestroy`, so **any** Activity recreation — a rotation, a
+theme or font-scale change, a system-initiated restart — tore down the Dart isolate. In this app
+that isolate *owns the SSH sessions*: the foreground service kept the process alive, but nothing
+kept the sessions alive, so every shell died on a configuration change while the notification still
+claimed they were running.
+
+### Before-proof, re-established on this tree
+
+The parked patch applied cleanly. The guard failed, naming both engines:
+
+```
+AssertionError: Activity recreation must preserve the Dart engine that owns SSH sessions
+  expected same:<FlutterEngine@a0a718c> was not:<FlutterEngine@614aa53>
+```
+
+That run is also the clearest example of the handover's warning that Patrol's Dart summary is not
+the result: it reported **Successful: 1, Failed: 0** while the native JUnit run failed the build.
+Read the JUnit XML, not the pretty output.
+
+### What the embedding actually guarantees
+
+Checked against the Flutter engine source in the local SDK rather than assumed, because the whole
+design rests on it:
+
+- `FlutterActivityAndFragmentDelegate.onAttach:228` calls `host.configureFlutterEngine(...)` on
+  **every** attach, cached engine or not. That is what re-points the five Activity-holding bridges
+  (`ScreenSecurity`, `ExternalLaunch`, `PlatformPermissions`, `CustomTabs`, `DeviceInfo`) at the
+  live Activity, so none of them can capture a dead one.
+- `doInitialFlutterViewRun:508` returns early when `isExecutingDart()`, so a retained engine does
+  not re-run the entrypoint on the replacement Activity.
+- `FlutterActivity.shouldDestroyEngineWithHost:1084` returns false once `isFlutterEngineFromHost`
+  is set, which `provideFlutterEngine` does.
+
+`provideFlutterEngine` was chosen over `FlutterEngineCache` deliberately: the cached-engine path
+**throws** when the cache is empty and would require an Application subclass to pre-populate it.
+
+### Retention alone would have broken two promises
+
+**FLAG_SECURE.** A window flag belongs to a window, and a recreated Activity gets a new one. Dart
+caches its last applied setting and only sends a *change*, so nothing re-sends `setSecure` after a
+recreation — the replacement window would have come up unprotected, and on this app the
+task-switcher thumbnail is captured automatically and routinely contains a live root shell.
+`ScreenSecurityBridge` now remembers the requested state and reapplies it before the replacement
+window renders. The device guard asserts it survived, but only when the fixture had it set, so it
+cannot invent a protection the user never asked for.
+
+**Explicit Quit.** "Terminate & Exit" tells the user that exiting terminates active background SSH
+sessions, and that was true only by side effect: `SystemNavigator.pop()` finished the Activity and
+the engine died with it. Retention removes the side effect, which would have turned that sentence
+into a lie — a live isolate, open sessions and an ongoing notification after the user quit.
+`AppExitBridge` now stops the foreground services, finishes the task, then destroys the engine —
+replying *before* teardown, because destroying the engine closes the channel the call arrived on.
+`AppExit` falls back to `SystemNavigator.pop()` on a missing plugin, a `PlatformException`, or a
+`false` answer, so no build and no platform becomes unexitable.
+
+### Validation
+
+Every stage green: `core rc=0`, `host rc=0`, `local-pr-check rc=0`, both diff checks `0`,
+`FAILED=0`.
+
+- **The native engine guard now passes**: JUnit **1 test / 0 failures / 0 errors**, against
+  1 failure in the before-proof above. It is a permanent repo test now, not a parked patch.
+- Flutter full suite **2715 passed / 4 optional live skips**; `flutter analyze` clean in 6.3s.
+  4 of the new cases are `app_exit_test.dart`, covering the fallbacks.
+- Device profiles on API 35 `emulator-5554`: `core` 30 passed / 0 skipped, `host` 2 passed /
+  0 skipped, no unexpected warnings. The three extra known warnings are javac
+  `source/target 8 is obsolete` notices from the enlarged Java test file.
+- Native unit tests reused UP-TO-DATE — the Kotlin that changed is `flutter_app/android`, compiled
+  by the device debug builds and the release APK/AAB. Release artifacts, both SBOM graphs and strict
+  dependency verification passed. Full-history secret scan: 211 commits, no leaks.
+
+### Still open in this area
+
+The guard proves engine *identity* across recreation and that FLAG_SECURE survives. It does not yet
+prove a live shell keeps its server-side state through recreation — the stronger fixture test the
+handover asks for, driving a shell variable through recreate/finish/relaunch, remains to be written.
+App-lock behaviour across recreation and external-intent consume-once semantics with a retained
+engine are likewise unverified here.
+
 ## Two of the three Fleet diagnostics had no coverage at all
 
 The incoming handover said "Flutter already has this guard". True in shape, one third in coverage:

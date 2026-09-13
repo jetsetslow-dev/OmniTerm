@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
@@ -22,6 +21,7 @@ import 'domain/network_share_form.dart';
 import 'domain/external_action_guard.dart';
 import 'domain/external_ui_requests.dart';
 import 'domain/server_credentials.dart';
+import 'platform/app_exit.dart';
 import 'platform/alert_notifier.dart';
 import 'platform/ads_controller.dart';
 import 'platform/biometric_auth.dart';
@@ -892,6 +892,8 @@ class _BackHandler extends StatefulWidget {
 
 class _BackHandlerState extends State<_BackHandler> {
   DateTime? _lastBackPress;
+  // The channel is stubbable directly, so this needs no injection point of its own.
+  final AppExit _appExit = AppExit();
 
   bool get _hasLiveSessions =>
       context.read<ShellViewModel>().sessions.any((session) => session.isOpen);
@@ -920,7 +922,7 @@ class _BackHandlerState extends State<_BackHandler> {
           );
       case BackExitAction.exit:
         _lastBackPress = null;
-        await SystemNavigator.pop();
+        await _appExit.terminate();
       case BackExitAction.confirm:
         // Consumed either way: leaving it armed would let a Cancel be followed by a bare back press
         // that exits without asking again.
@@ -946,7 +948,7 @@ class _BackHandlerState extends State<_BackHandler> {
             ],
           ),
         );
-        if (confirmed == true) await SystemNavigator.pop();
+        if (confirmed == true) await _appExit.terminate();
     }
   }
 

@@ -22,29 +22,45 @@ import io.flutter.plugin.common.MethodChannel
 object ScreenSecurityBridge {
     private const val CHANNEL = "omniterm/screen_security"
 
+    /**
+     * The last state Dart asked for, remembered for the life of the process.
+     *
+     * A window flag belongs to a window, and a recreated Activity gets a new one. The Dart side
+     * caches its last applied setting and only sends a *change*, so once the engine is retained
+     * across Activity instances nothing would re-send `setSecure` and the replacement window would
+     * come up unprotected. On a terminal app that is the real exposure: the task-switcher thumbnail
+     * is captured automatically and routinely contains a live root shell.
+     */
+    private var secure = false
+
     fun register(engine: FlutterEngine, activity: Activity) {
+        // Reapplied before this Activity renders, not in response to a Dart call that will not come.
+        apply(activity, secure)
         MethodChannel(engine.dartExecutor.binaryMessenger, CHANNEL).setMethodCallHandler { call, result ->
             when (call.method) {
                 "setSecure" -> {
-                    val secure = call.argument<Boolean>("secure") ?: false
-                    // The flag must be set on the UI thread; `runOnUiThread` is a no-op when the
-                    // call already arrives there, which it does for a normal method channel.
-                    activity.runOnUiThread {
-                        if (secure) {
-                            activity.window.setFlags(
-                                WindowManager.LayoutParams.FLAG_SECURE,
-                                WindowManager.LayoutParams.FLAG_SECURE,
-                            )
-                        } else {
-                            activity.window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
-                        }
-                    }
+                    secure = call.argument<Boolean>("secure") ?: false
+                    apply(activity, secure)
                     result.success(true)
                 }
                 // Reported honestly rather than assumed by the Dart side, so the Settings screen can
                 // say the option does nothing on a platform that does not implement it.
                 "isSupported" -> result.success(true)
                 else -> result.notImplemented()
+            }
+        }
+    }
+
+    /** The flag must be set on the UI thread; `runOnUiThread` is a no-op when already there. */
+    private fun apply(activity: Activity, secure: Boolean) {
+        activity.runOnUiThread {
+            if (secure) {
+                activity.window.setFlags(
+                    WindowManager.LayoutParams.FLAG_SECURE,
+                    WindowManager.LayoutParams.FLAG_SECURE,
+                )
+            } else {
+                activity.window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
             }
         }
     }

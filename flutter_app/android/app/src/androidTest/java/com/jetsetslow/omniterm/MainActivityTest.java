@@ -1,9 +1,13 @@
 package com.jetsetslow.omniterm;
 
 import static org.junit.Assert.fail;
+import static org.junit.Assert.assertSame;
+import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertTrue;
 
 import android.app.Activity;
 import android.app.ActivityManager;
+import android.view.WindowManager;
 import android.content.Context;
 import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry;
@@ -11,6 +15,10 @@ import androidx.test.runner.lifecycle.Stage;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.lang.reflect.Method;
+import java.util.concurrent.atomic.AtomicReference;
+import io.flutter.embedding.android.FlutterActivity;
+import io.flutter.embedding.engine.FlutterEngine;
 import org.junit.After;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -57,11 +65,102 @@ public class MainActivityTest {
 
     private final String dartTestName;
 
+    /** Whether the fixture window was excluded from capture before the Activity was recreated. */
+    private boolean secureBeforeRecreation;
+
     @Test
-    public void runDartTest() {
+    public void runDartTest() throws Exception {
         PatrolJUnitRunner instrumentation =
                 (PatrolJUnitRunner) InstrumentationRegistry.getInstrumentation();
         instrumentation.runDartTest(dartTestName);
+        // This Dart flow is already opt-in through OMNITERM_E2E_HOSTS. Keep the extra native
+        // lifecycle check on that same fixture case, not on unrelated picker/permission cases.
+        if (dartTestName.contains("SSH survives Home and explicit background")) {
+            assertEngineSurvivesActivityRecreation();
+        }
+    }
+
+    /** Home does not destroy an Activity; recreation must preserve the SSH-owning Dart isolate. */
+    private void assertEngineSurvivesActivityRecreation() throws Exception {
+        AtomicReference<MainActivity> original = new AtomicReference<>();
+        AtomicReference<FlutterEngine> engine = new AtomicReference<>();
+        AtomicReference<ReflectiveOperationException> reflectionError = new AtomicReference<>();
+        // The embedding getter is protected. Reflection stays inside androidTest, avoiding a
+        // production test bridge or exposing an engine handle through the application's API.
+        Method getEngine = FlutterActivity.class.getDeclaredMethod("getFlutterEngine");
+        getEngine.setAccessible(true);
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            for (Activity activity : ActivityLifecycleMonitorRegistry.getInstance()
+                    .getActivitiesInStage(Stage.RESUMED)) {
+                if (activity instanceof MainActivity) original.set((MainActivity) activity);
+            }
+            try {
+                if (original.get() != null) {
+                    engine.set((FlutterEngine) getEngine.invoke(original.get()));
+                }
+            } catch (ReflectiveOperationException error) {
+                reflectionError.set(error);
+            }
+        });
+        // Assertions belong to the instrumentation thread. Throwing from runOnMainSync kills
+        // Android's UI thread instead of producing a useful JUnit failure for this regression.
+        assertNotNull("The fixture app must be resumed before recreation", original.get());
+        if (reflectionError.get() != null) throw reflectionError.get();
+        assertNotNull("The fixture must own an engine before recreation", engine.get());
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() ->
+                secureBeforeRecreation = (original.get().getWindow().getAttributes().flags
+                        & WindowManager.LayoutParams.FLAG_SECURE) != 0);
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> original.get().recreate());
+        AtomicReference<MainActivity> replacement = new AtomicReference<>();
+        long deadline = android.os.SystemClock.uptimeMillis() + 10_000L;
+        while (replacement.get() == null && android.os.SystemClock.uptimeMillis() < deadline) {
+            InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+                for (Activity activity : ActivityLifecycleMonitorRegistry.getInstance()
+                        .getActivitiesInStage(Stage.RESUMED)) {
+                    if (activity instanceof MainActivity && activity != original.get()) {
+                        replacement.set((MainActivity) activity);
+                    }
+                }
+            });
+            if (replacement.get() == null) Thread.sleep(50L);
+        }
+        assertNotNull("Android must actually create a replacement Activity", replacement.get());
+        AtomicReference<FlutterEngine> replacementEngine = new AtomicReference<>();
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
+            try {
+                replacementEngine.set((FlutterEngine) getEngine.invoke(replacement.get()));
+            } catch (ReflectiveOperationException error) {
+                reflectionError.set(error);
+            }
+        });
+        if (reflectionError.get() != null) throw reflectionError.get();
+        assertSame(
+                "Activity recreation must preserve the Dart engine that owns SSH sessions",
+                engine.get(), replacementEngine.get());
+        assertSecureFlagSurvived(replacement.get());
+    }
+
+    /**
+     * FLAG_SECURE belongs to a window, and a recreated Activity gets a new one.
+     *
+     * Retaining the engine is what makes this a real risk: the Dart side caches its last applied
+     * setting and only sends a change, so nothing re-sends `setSecure` after a recreation. Without
+     * the native side remembering and reapplying it, the replacement window comes up unprotected
+     * and the task-switcher thumbnail — captured automatically, and on this app routinely showing a
+     * live root shell — stops being excluded.
+     *
+     * Asserted only when the fixture had the flag set before recreation, so this never invents a
+     * protection the user did not ask for.
+     */
+    private void assertSecureFlagSurvived(MainActivity replacement) {
+        if (!secureBeforeRecreation) return;
+        AtomicReference<Boolean> secureAfter = new AtomicReference<>();
+        InstrumentationRegistry.getInstrumentation().runOnMainSync(() ->
+                secureAfter.set((replacement.getWindow().getAttributes().flags
+                        & WindowManager.LayoutParams.FLAG_SECURE) != 0));
+        assertTrue(
+                "A recreated window must keep the FLAG_SECURE the user asked for",
+                secureAfter.get());
     }
 
     /**
