@@ -143,21 +143,29 @@ class DartSshTransport implements SshTransport {
     try {
       if (_isJump(creds)) {
         onPhaseChange?.call('Authenticating bastion…');
-        jumpSocket = await SSHSocket.connect(
-          creds.proxyHost,
-          creds.proxyPort,
-          timeout: _connectTimeout,
-        );
+        // Trimmed for the dial and the host-key check, not only for the decision above. `_isJump`
+        // already tests `proxyHost.trim()`, so a host saved with a stray space passed the test and
+        // was then dialled verbatim — a lookup failure on a server Compose connects to, because
+        // `JschSession` dials `creds.proxyHost.trim()`. It matters twice over: the pinned key is
+        // stored under the trimmed name, so an untrimmed lookup would not match it either.
+        final jumpHost = creds.proxyHost.trim();
+        jumpSocket = await SSHSocket.connect(jumpHost, creds.proxyPort, timeout: _connectTimeout);
         final jumpDeadline = SshSetupDeadline(phase: 'Bastion SSH authentication');
         jump = SSHClient(
           jumpSocket,
-          username: creds.proxyUser,
+          // A blank bastion user means "the same account as the target", which is what Compose
+          // does (`JschSession.kt:164`, `creds.proxyUser.ifEmpty { creds.username }`). Without this
+          // the bastion was offered an empty username and refused the connection, so a saved server
+          // that works in the Kotlin app failed here. Only the jump path takes this fallback: for
+          // http/socks5 a blank user means *no proxy authentication at all*, which both sides
+          // already agree on.
+          username: creds.proxyUser.trim().isEmpty ? creds.username : creds.proxyUser,
           onPasswordRequest: () => creds.proxyPassword,
           // The passphrase field belongs to the *target* key, not the bastion's — feeding it here
           // would try to decrypt the jump key with the wrong secret. Matches the Kotlin, which
           // passed null. (Encrypted jump keys are consequently unsupported, as before.)
           identities: _keyPairs(creds.proxyKeyPem, null),
-          onVerifyHostKey: _verifier(creds.proxyHost, creds.proxyPort, jumpDeadline),
+          onVerifyHostKey: _verifier(jumpHost, creds.proxyPort, jumpDeadline),
           printDebug: printDebug,
         );
         await jumpDeadline.run(() => jump!.authenticated);
@@ -176,7 +184,9 @@ class DartSshTransport implements SshTransport {
         onPhaseChange?.call('Connecting through proxy…');
         targetSocket = await connectThroughProxy(
           type: creds.proxyType,
-          proxyHost: creds.proxyHost,
+          // Trimmed for the same reason as the bastion above; `applyProxy` in Compose dials
+          // `creds.proxyHost.trim()`.
+          proxyHost: creds.proxyHost.trim(),
           proxyPort: creds.proxyPort,
           host: creds.host,
           port: creds.port,

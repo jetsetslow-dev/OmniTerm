@@ -179,6 +179,51 @@ because `flutter` was missing from that run's environment — a harness error, n
   the app itself.
 - `git diff --check` and `git diff --cached --check` both clean.
 
+## A saved server that connects in Compose failed in Flutter
+
+Found by doing what the incoming handover asked *first* — "verify blank bastion user fallback/host
+trimming parity with Kotlin" — before any latency measurement. Both halves were real.
+
+| | Compose (`data/ssh/JschSession.kt`) | Flutter, before |
+| --- | --- | --- |
+| Blank bastion user | `proxyUser.ifEmpty { creds.username }` (`:164`) | passed `''`; the bastion refused authentication |
+| Bastion host | dials `proxyHost.trim()` (`:114`, `:173`) | trimmed only when *deciding* `_isJump`, then dialled and host-key-verified untrimmed |
+
+The trimming half is the sneakier one. `_isJump` tests `proxyHost.trim().isNotEmpty`, so a host
+saved with a trailing space — what a paste or a soft keyboard leaves — passed the test and was then
+dialled verbatim. It fails twice: the lookup, and the pinned host key, which is stored under the
+trimmed name, so trust would not match even if DNS tolerated it.
+
+The username fallback is scoped to the **jump** path only. For `http`/`socks5` a blank user means
+*no proxy authentication at all* on both sides — `applyProxy` guards with `isNotEmpty`, and
+`proxy_socket.dart` offers `_authNone` — so a fallback there would have invented credentials neither
+side sends.
+
+**Proven against the real fixture bastion, not a stub.** `omniterm-test-bastion` reaching the
+internal-only `omniterm-test-internal-a`: both new cases fail against real `HEAD` with genuine
+OpenSSH authentication refusals, and pass with the fix.
+
+**Skip accounting:** the optional live skips go from 4 to 6, because these two need
+`OMNITERM_SETUP_FIXTURE` and the Docker fixtures. In the ordinary gate they **skip** — their
+evidence is the explicit fixture run above, not the suite total.
+
+### Noticed while fixing this, not yet changed
+
+`SshSessionPool.poolKey` embeds `proxyUser` and `proxyHost` **raw**. Now that the effective bastion
+identity is `proxyUser.ifEmpty(username)` and `proxyHost.trim()`, two credential sets that dial the
+same bastion identically — `"h"` versus `" h "`, or a blank user versus an explicit one equal to the
+target account — still produce different pool keys and so open separate connections. That is
+conservative rather than unsafe (a differing key never reuses a connection authenticated with other
+credentials), but it defeats pooling in exactly the case the latency item is about. Normalising the
+key to the effective values is the obvious follow-up and is deliberately left as a separate change,
+because connection reuse is security-adjacent and deserves its own evidence.
+
+### Validation for this tree
+
+Every stage green: `core rc=0`, `host rc=0`, `local-pr-check rc=0`, both diff checks `0`,
+`FAILED=0`. Flutter **2715 passed / 6 optional live skips**; `flutter analyze` clean in 7.0s.
+Device profiles `core` 30/0 and `host` 2/0. Full-history secret scan: 212 commits, no leaks.
+
 ## SSH sessions no longer die when Android recreates the Activity
 
 The defect the incoming handover called "proven unfixed". A default `FlutterActivity` creates its

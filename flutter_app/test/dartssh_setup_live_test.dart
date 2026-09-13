@@ -13,6 +13,55 @@ void main() {
   final user = Platform.environment['OMNITERM_TEST_USER'];
   final password = Platform.environment['OMNITERM_TEST_PASSWORD'];
 
+  /// Parity with Compose for the two bastion fields a user can leave imperfect.
+  ///
+  /// `JschSession` dials `creds.proxyHost.trim()` and falls back to the target account with
+  /// `creds.proxyUser.ifEmpty { creds.username }`. Flutter trimmed the host only when *deciding*
+  /// whether a jump applied and then dialled the untrimmed value, and never had the username
+  /// fallback at all — so a saved server that connects in the Kotlin app failed here. Proven
+  /// against the real fixture bastion rather than a stub, because the failure is an actual
+  /// OpenSSH authentication refusal.
+  for (final variant in ['blank bastion user', 'untrimmed bastion host']) {
+    test(
+      'OpenSSH bastion: a $variant still reaches the target, as Compose does',
+      () async {
+        expect(user, isNotEmpty);
+        expect(password, isNotEmpty);
+        final trust = SshHostKeyTrust(InMemoryHostKeyStore());
+        final owner = Object();
+        trust.registerApprovalHandler(owner, (request) => request.completer.complete(true));
+        final transport = DartSshTransport(trust);
+        TerminalSession? shell;
+        try {
+          final credentials = SshCredentials(
+            host: 'omniterm-test-internal-a',
+            port: 2222,
+            username: user!,
+            password: password,
+            proxyType: 'ssh',
+            // A trailing space is exactly what a paste or a soft keyboard leaves behind.
+            proxyHost: variant == 'untrimmed bastion host'
+                ? ' ${InternetAddress.loopbackIPv4.address} '
+                : InternetAddress.loopbackIPv4.address,
+            proxyPort: 2203,
+            // Blank means "the same account as the target", which is what Compose does.
+            proxyUser: variant == 'blank bastion user' ? '' : user,
+            proxyPassword: password ?? '',
+          );
+          shell = await transport
+              .openShell(credentials, 80, 24)
+              .timeout(const Duration(seconds: 45));
+          expect(shell, isNotNull, reason: 'the jump host must accept this configuration');
+        } finally {
+          shell?.close();
+          trust.clearApprovalHandler(owner);
+        }
+      },
+      skip: enabled ? null : 'enable OMNITERM_SETUP_FIXTURE with repository SSH fixtures',
+      timeout: const Timeout(Duration(minutes: 2)),
+    );
+  }
+
   for (final stage in ['approval', 'authentication', 'forwarding']) {
     test(
       'OpenSSH setup: $stage preserves approval time and bounds network waits',
