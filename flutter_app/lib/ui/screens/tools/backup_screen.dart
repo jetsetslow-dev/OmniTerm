@@ -229,6 +229,12 @@ class _BackupScreenState extends State<BackupScreen> {
       passphrase = entered;
     }
 
+    // Sequenced before the export, because the export starts a foreground operation whose
+    // permission request would otherwise land on top of the file picker opened moments later.
+    // Import does not need this: it opens the picker before any operation begins.
+    await vm.operationNotifications?.ensureNotificationPermission();
+    if (!context.mounted) return;
+
     final contents = await vm.exportBackup(passphrase);
     _revealFeedback();
     if (contents == null || !context.mounted) return;

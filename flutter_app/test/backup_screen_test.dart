@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/ssh/secure_host_key_store.dart';
 import 'package:omniterm/data/ssh/ssh_host_key_trust.dart';
@@ -7,6 +10,7 @@ import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/domain/backup_selection.dart';
 import 'package:omniterm/platform/backup_file_store.dart';
+import 'package:omniterm/platform/long_operation_notifications.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/tools/backup_screen.dart';
 import 'package:omniterm/ui/theme/theme.dart';
@@ -16,6 +20,25 @@ import 'package:provider/provider.dart';
 
 import 'support/fake_backup_file_store.dart';
 import 'support/fake_secure_storage.dart';
+
+/// Records the order in which system surfaces were asked for.
+///
+/// The defect this exists for is invisible to a finder: both the permission dialog and the file
+/// picker are other apps' windows, so the only thing a test can observe is the sequence of calls
+/// the app made.
+class _SystemSurfaceLog {
+  final List<String> order = [];
+  Completer<void>? permissionGate;
+
+  Future<bool> requestPermission() async {
+    order.add('permission');
+    final gate = permissionGate;
+    if (gate != null) await gate.future;
+    return true;
+  }
+
+  void notePicker() => order.add('picker');
+}
 
 void main() {
   late AppDatabase db;
@@ -63,7 +86,7 @@ void main() {
     authStatus: 'unknown',
   );
 
-  Future<void> pump(WidgetTester tester) async {
+  Future<void> pump(WidgetTester tester, {LongOperationNotifications? notifications}) async {
     // The screen is a long scrolling form; the default 800x600 surface leaves the lower half
     // unlaid-out, so finders below the fold see nothing.
     tester.view.physicalSize = const Size(1000, 2400);
@@ -78,6 +101,7 @@ void main() {
       hostKeyTrust: SshHostKeyTrust(
         SecureHostKeyStore(storage: FakeSecureStorage(<String, String>{})),
       ),
+      operationNotifications: notifications,
     );
     await tester.pumpWidget(
       MultiProvider(
@@ -400,6 +424,70 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.textContaining('not encrypted'), findsOneWidget);
+      await finish(tester);
+    });
+
+    testWidgets('the picker waits for the permission answer, not just the request', (tester) async {
+      // Ordering alone cannot see this defect: `unawaited(request())` still *initiates* the call
+      // before the picker, so a test that records call order passes either way. What distinguishes
+      // them is whether the picker opens while the permission dialog is still on screen — so the
+      // permission is held open and the picker must not have happened yet.
+      final surfaces = _SystemSurfaceLog()..permissionGate = Completer<void>();
+      files.onSave = surfaces.notePicker;
+      await pump(
+        tester,
+        notifications: LongOperationNotifications(
+          channel: const MethodChannel('omniterm/long_operations.test'),
+          requestNotificationPermission: surfaces.requestPermission,
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tester.pumpAndSettle();
+
+      expect(surfaces.order, ['permission'], reason: 'the dialog is up and still unanswered');
+      expect(
+        files.saved,
+        isEmpty,
+        reason: 'opening the picker over a live permission dialog is the defect',
+      );
+
+      surfaces.permissionGate!.complete();
+      await tester.pumpAndSettle();
+
+      expect(surfaces.order, ['permission', 'picker']);
+      expect(files.saved, hasLength(1), reason: 'and the export still finishes afterwards');
+      await finish(tester);
+    });
+
+    testWidgets('a denied or slow permission never blocks the export', (tester) async {
+      // Asking is a courtesy. The work the user started must still happen.
+      final surfaces = _SystemSurfaceLog();
+      files.onSave = surfaces.notePicker;
+      await pump(
+        tester,
+        notifications: LongOperationNotifications(
+          channel: const MethodChannel('omniterm/long_operations.test'),
+          requestNotificationPermission: () async {
+            surfaces.order.add('permission');
+            throw PlatformException(code: 'denied');
+          },
+        ),
+      );
+      await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tester.pumpAndSettle();
+
+      expect(surfaces.order, ['permission', 'picker']);
+      expect(files.saved, hasLength(1), reason: 'the backup was still written');
       await finish(tester);
     });
 

@@ -16,8 +16,13 @@ class FakeBackupFileStore implements BackupFileStore {
   final List<({String fileName, String contents})> saved = [];
   int openCalls = 0;
 
+  /// Called when `save` is invoked, so a test can record when the picker would have appeared
+  /// relative to other system surfaces.
+  void Function()? onSave;
+
   @override
   Future<BackupSaveResult> save(String fileName, String contents) async {
+    onSave?.call();
     saved.add((fileName: fileName, contents: contents));
     return saveResult ??
         const BackupSaveResult(BackupSaveOutcome.saved, location: '/storage/Download/backup');

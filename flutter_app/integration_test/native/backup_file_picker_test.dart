@@ -36,17 +36,28 @@ void main() {
     await $(const ValueKey('backup.section.settings')).tap();
   }
 
-  Future<void> cancelPicker(PatrolIntegrationTester $) async {
-    await $.platformAutomator.android.pressBack();
-    // A first backup also requests permission for background progress notifications. Android can
-    // place that prompt behind DocumentsUI; after Back it becomes the foreground Activity and
-    // Flutter cannot scroll or animate until it is answered. Exercise denial (backup still works)
-    // instead of pre-granting permission or leaving a native modal over a supposedly usable app.
+  /// Answers the notification-permission prompt, which a first backup raises before the picker.
+  ///
+  /// This used to be handled *after* `pressBack` in [cancelPicker], with the comment that Android
+  /// "can place that prompt behind DocumentsUI; after Back it becomes the foreground Activity and
+  /// Flutter cannot scroll or animate until it is answered". That was the defect being worked
+  /// around: the export now settles the permission before opening the picker, so the prompt is
+  /// answered here, at the point it actually appears. Denial is exercised on purpose — a backup
+  /// must work without notification permission.
+  Future<void> answerNotificationPromptIfShown(PatrolIntegrationTester $) async {
     if (await $.platformAutomator.mobile.isPermissionDialogVisible(
-      timeout: const Duration(seconds: 2),
+      timeout: const Duration(seconds: 5),
     )) {
       await $.platformAutomator.mobile.denyPermission();
+      await $.pumpAndSettle();
     }
+  }
+
+  Future<void> cancelPicker(PatrolIntegrationTester $) async {
+    await $.platformAutomator.android.pressBack();
+    // Kept tolerant: if a prompt ever does end up behind the picker again, answering it here stops
+    // a native modal being left over a supposedly usable app.
+    await answerNotificationPromptIfShown($);
     await $.pumpAndSettle();
   }
 
@@ -68,6 +79,10 @@ void main() {
     // widgets rather than an invisible one. Both of these failed exactly there the first time these
     // tests were ever executed.
     await $(const ValueKey('backup.export')).scrollTo().tap();
+
+    // The permission prompt is raised and settled before the picker now, so it is answered here
+    // rather than being discovered behind DocumentsUI afterwards.
+    await answerNotificationPromptIfShown($);
 
     // The picker belongs to another app, so this is the only way to know it opened at all.
     await $.platformAutomator.android.waitUntilVisible(
@@ -118,6 +133,9 @@ void main() {
     await openBackup($);
     await selectSettingsOnly($);
     await $(const ValueKey('backup.export')).scrollTo().tap();
+
+    // Settled before the picker, as in the cancellation test above.
+    await answerNotificationPromptIfShown($);
 
     await $.platformAutomator.android.waitUntilVisible(
       AndroidSelector(applicationPackage: 'com.google.android.documentsui'),

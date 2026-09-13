@@ -29,14 +29,10 @@ class LongOperationNotifications {
     // permission is denied. Ask at the first user-started long operation, not at cold start, so
     // the permission has an immediate and understandable purpose. A denial does not cancel work:
     // Android still exposes the foreground service in its active-apps surface.
-    final requestPermission = requestNotificationPermission;
-    if (!_permissionRequested && requestPermission != null) {
-      _permissionRequested = true;
-      // Do not hold the service start behind the system dialog. The operation can finish while the
-      // user is deciding; if finish overtook a delayed start, Android would be left displaying an
-      // ongoing notification for work that no longer exists.
-      unawaited(requestPermission());
-    }
+    // Do not hold the service start behind the system dialog. The operation can finish while the
+    // user is deciding; if finish overtook a delayed start, Android would be left displaying an
+    // ongoing notification for work that no longer exists.
+    unawaited(ensureNotificationPermission());
     return _invoke('start', {
       'id': id,
       'label': label,
@@ -44,6 +40,35 @@ class LongOperationNotifications {
       'totalBytes': totalBytes,
       'destination': destination,
     });
+  }
+
+  /// Asks for the notification permission once, and lets a caller wait for the answer.
+  ///
+  /// [start] deliberately fires this without waiting, for the reason given there. But a caller that
+  /// is about to put *another* system surface on screen has to sequence them: the Backup export
+  /// opens DocumentsUI immediately after starting its operation, and Android was stacking the
+  /// permission request on top of the file picker, leaving the user with two system dialogs
+  /// fighting over the same moment. Awaiting this first makes [start]'s own call a no-op.
+  ///
+  /// A denial, or a platform that cannot ask, never cancels the work this was requested for.
+  ///
+  /// Bounded, and that bound is not defensive padding. `PlatformPermissionsBridge.request` keeps the
+  /// pending `MethodChannel.Result` in a field and completes it from `onRequestPermissionsResult`,
+  /// so an Activity recreated while the dialog is up loses the callback and this future would never
+  /// complete. Waiting forever on a platform callback would trade an overlapping dialog for an
+  /// export that can never start, which is the worse failure.
+  Future<void> ensureNotificationPermission({
+    Duration timeout = const Duration(seconds: 30),
+  }) async {
+    final request = requestNotificationPermission;
+    if (_permissionRequested || request == null) return;
+    _permissionRequested = true;
+    try {
+      await request().timeout(timeout);
+    } catch (_) {
+      // Asking is a courtesy; failing to ask, being denied, or never hearing back is not a reason
+      // to abandon what the user started.
+    }
   }
 
   Future<bool> update({

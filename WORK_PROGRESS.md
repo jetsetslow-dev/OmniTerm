@@ -179,6 +179,62 @@ because `flutter` was missing from that run's environment — a harness error, n
   the app itself.
 - `git diff --check` and `git diff --cached --check` both clean.
 
+## The notification prompt was landing on top of the file picker
+
+`LongOperationNotifications.start()` fires the notification-permission request `unawaited`, and the
+Backup **export** starts its operation and then opens DocumentsUI moments later — so Android stacked
+two system surfaces on the same moment. The repository already knew: the device test's own helper
+carried the comment *"Android can place that prompt behind DocumentsUI; after Back it becomes the
+foreground Activity and Flutter cannot scroll or animate until it is answered"*, and worked around
+it in the test rather than fixing it.
+
+`ensureNotificationPermission()` is now separately awaitable. `start()` still fires it without
+waiting — its original reasoning, that a delayed service start could outlive finished work and leave
+Android showing an ongoing notification for nothing, is sound and preserved — and export awaits it
+first, which makes `start()`'s own call a no-op. Deliberately narrow: there are **seven** `start()`
+call sites across six view models, all `unawaited`, so changing `start()`'s contract would have
+altered six unrelated flows. Import needs nothing: it opens the picker *before* any operation begins.
+
+**The wait is bounded at 30 seconds, and that bound is not padding.**
+`PlatformPermissionsBridge.request` keeps the pending `MethodChannel.Result` in a field and
+completes it from `onRequestPermissionsResult`, so an Activity recreated while the dialog is up
+loses the callback and the future never completes. That is the same Activity-destruction area listed
+as the largest open item in the incoming handover.
+
+### Two corrections this slice needed, both caught rather than noticed
+
+1. **The first test measured the wrong thing.** It recorded call order and passed against real
+   `HEAD`, because `unawaited(request())` still *initiates* the call synchronously — order is
+   identical either way. It was observing initiation, not settling. Rewritten to hold the permission
+   open with a gate and assert the picker has *not* opened; it now fails on `HEAD` with the exact
+   production symptom, `Actual: ['permission', 'picker']`.
+2. **The first fix hung the export on device.** Awaiting an unbounded permission request moved the
+   whole export behind the dialog, DocumentsUI never opened, and both native picker tests timed out
+   at `waitUntilVisible`. That traded an overlapping dialog for an export that cannot start — the
+   worse failure. Hence the bound, and the device tests now answer the prompt where it actually
+   appears instead of discovering it behind the picker.
+
+This area proved subtler than its one-line description in the incoming handover. Treat the remaining
+one-line items there as sketches, not specifications.
+
+### The validation wrapper's own fix earned its keep immediately
+
+The run that failed the device core profile reported `local-pr-check rc=0` and **`FAILED=1`**, unit
+`SubState=failed`. Under the previous wrapper — which returned only `local-pr-check`'s result — that
+same run would have reported green.
+
+### Validation for this tree
+
+Every stage green: `core rc=0`, `host rc=0`, `local-pr-check rc=0`, both diff checks `0`,
+`FAILED=0`.
+
+- Flutter full suite **2709 passed / 4 optional live skips**; `flutter analyze` clean in 7.0s.
+- Device profiles on API 35 `emulator-5554`: `core` 30 passed / 0 skipped — including both native
+  picker tests whose prompt handling moved — and `host` 2 passed / 0 skipped.
+- Native unit tests reused UP-TO-DATE; no `app/` Kotlin changed. Release APK/AAB, both SBOM graphs
+  and strict dependency verification passed. Full-history secret scan: 209 commits, no leaks.
+- Control: **2 of 2** new widget tests fail against real `HEAD`.
+
 ## A cancelled backup showed a success message for a file that was never written
 
 Three defects in the export/import feedback, and one in this session's own tooling.
