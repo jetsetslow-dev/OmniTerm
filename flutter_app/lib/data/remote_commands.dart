@@ -1111,6 +1111,27 @@ String compareForConflicts(String destDir, List<String> sources) {
 /// Ported from `RemoteCommands.TMUX_CHECK` in `data/RemoteParsers.kt:140`.
 const tmuxCheckCommand = 'command -v tmux >/dev/null 2>&1 && echo yes || echo no';
 
+/// `true` tmux is present, `false` it is definitely absent, `null` the probe did not answer.
+///
+/// The third case is the whole point, and mirrors `parseTmuxSessionProbe` in
+/// `term/tmux_bootstrap.dart`: `exec` reports failure by *returning* `'SSH Error: …'` rather than
+/// throwing, so a refused connection, a timeout or a rejected key arrives here as an ordinary
+/// string. Read as a definite "no", that made a network problem look like a missing package and
+/// offered to install one.
+///
+/// The answer is the last non-blank line because a login banner or MOTD can precede it.
+bool? parseTmuxCheck(String raw) {
+  final response = raw.trim();
+  if (response.isEmpty || response.startsWith('SSH Error:')) return null;
+  final answer = response
+      .split('\n')
+      .map((line) => line.trim())
+      .lastWhere((line) => line.isNotEmpty, orElse: () => '');
+  if (answer == 'yes') return true;
+  if (answer == 'no') return false;
+  return null;
+}
+
 /// Bound for a package-index refresh. Long enough for a slow mirror, short enough to report.
 const pmUpdateSeconds = 180;
 

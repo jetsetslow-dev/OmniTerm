@@ -1188,7 +1188,7 @@ void main() {
       expect(ssh.opened, hasLength(1));
     });
 
-    test('a probe that cannot run assumes tmux is there', () async {
+    test('a probe that cannot run connects rather than blocking', () async {
       // Refusing to connect over a failed probe would be worse than the silent degradation this
       // replaces: the bootstrap command guards itself anyway.
       final ssh = FakeShellTransport(); // exec throws
@@ -1199,6 +1199,114 @@ void main() {
 
       expect(vm.tmuxPromptServer, isNull);
       expect(ssh.opened, hasLength(1));
+    });
+
+    test('a returned transport error is not an offer to install tmux', () async {
+      // The defect: `exec` reports failure by RETURNING `'SSH Error: …'`, and the probe only
+      // caught thrown errors. A refused connection therefore looked like a definite "tmux is
+      // missing", and the app offered to install a package over a link that did not exist.
+      final ssh = FakeShellTransport()
+        ..execAnswers['command -v tmux'] = 'SSH Error: Connection refused'
+        ..failure = SshConnectException('Connection refused');
+      await repo.insertServer(persistentHost());
+      final vm = await start(ssh: ssh);
+
+      await vm.connect(vm.connectableServers.single);
+
+      expect(
+        vm.tmuxPromptServer,
+        isNull,
+        reason: 'a host that would not answer has not told us anything about tmux',
+      );
+      expect(vm.error, isNotNull, reason: "the user needs the host's real failure, not a package");
+      expect(vm.error, isNot(contains('tmux')));
+    });
+
+    test('an unverified probe is not remembered as verified', () async {
+      // The probe is cached per host per session to avoid a round trip before every connection.
+      // Caching it from an answer that never arrived means one flaky moment silently disables the
+      // check for the rest of the session, on the exact host that needs it. The old code did
+      // precisely that: a thrown probe returned `true`, which went straight into `_tmuxVerified`.
+      final ssh = FakeShellTransport(); // no staged answer, so the probe throws
+      await repo.insertServer(persistentHost());
+      final vm = await start(ssh: ssh);
+      final host = vm.connectableServers.single;
+
+      await vm.connect(host);
+      ssh.execAnswers['command -v tmux'] = 'no';
+      await vm.connect(host);
+
+      expect(
+        ssh.commands.where((c) => c.contains('command -v tmux')),
+        hasLength(2),
+        reason: 'the second connection must ask again, not trust a probe that never answered',
+      );
+      expect(vm.tmuxPromptServer, isNotNull, reason: 'now the host has actually answered "no"');
+    });
+
+    test('the probe shows a busy state while it is in flight', () async {
+      // It is a round trip to the host. It used to run with `_connecting` still false, so a slow
+      // probe looked exactly like a tap that had done nothing at all.
+      final ssh = FakeShellTransport()
+        ..execAnswers['command -v tmux'] = 'yes'
+        ..execGate = Completer<void>();
+      await repo.insertServer(persistentHost());
+      final vm = await start(ssh: ssh);
+
+      final pending = vm.connect(vm.connectableServers.single);
+      await pumpEventQueue();
+
+      expect(vm.isConnecting, isTrue);
+      expect(vm.connectPhase, 'Checking for tmux…');
+
+      ssh.execGate!.complete();
+      await pending;
+      expect(vm.isConnecting, isFalse);
+    });
+
+    test('a second tap during the probe does not start a second connection', () async {
+      // `if (_connecting) return` could not see the probe, because the probe ran before it was set.
+      final ssh = FakeShellTransport()
+        ..execAnswers['command -v tmux'] = 'yes'
+        ..execGate = Completer<void>();
+      await repo.insertServer(persistentHost());
+      final vm = await start(ssh: ssh);
+      final host = vm.connectableServers.single;
+
+      final first = vm.connect(host);
+      await pumpEventQueue();
+      final second = vm.connect(host);
+      await pumpEventQueue();
+
+      ssh.execGate!.complete();
+      await Future.wait([first, second]);
+
+      expect(
+        ssh.commands.where((c) => c.contains('command -v tmux')),
+        hasLength(1),
+        reason: 'two probes means two connections were in flight',
+      );
+      expect(ssh.opened, hasLength(1));
+    });
+
+    test('cancelling during the probe abandons the attempt', () async {
+      // Nothing owned the probe, so `cancelConnect` had nothing to cancel and its answer still
+      // landed — raising a tmux prompt for a connection the user had already given up on.
+      final ssh = FakeShellTransport()
+        ..execAnswers['command -v tmux'] = 'no'
+        ..execGate = Completer<void>();
+      await repo.insertServer(persistentHost());
+      final vm = await start(ssh: ssh);
+
+      final pending = vm.connect(vm.connectableServers.single);
+      await pumpEventQueue();
+      vm.cancelConnect();
+      ssh.execGate!.complete();
+      await pending;
+
+      expect(vm.tmuxPromptServer, isNull, reason: 'the user cancelled before the host answered');
+      expect(vm.isConnecting, isFalse);
+      expect(ssh.opened, isEmpty);
     });
 
     test('connecting without persistence opens a plain shell', () async {

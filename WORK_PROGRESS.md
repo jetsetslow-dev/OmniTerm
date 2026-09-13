@@ -173,6 +173,73 @@ because `flutter` was missing from that run's environment — a harness error, n
   the app itself.
 - `git diff --check` and `git diff --cached --check` both clean.
 
+## tmux preflight — a dead connection offered to install a package
+
+Two defects in `ShellViewModel.connect`'s tmux availability probe, both found by reading the
+transport contract rather than the tests.
+
+**1. A returned error read as a definite "tmux is missing".** `DartSshTransport.exec` reports
+failure by *returning* `'SSH Error: …'`, not by throwing — the codebase already knows this in
+`telemetry_poller`, `infra_view_model`, `tmux_bootstrap` and `ssh_failure.dart`. But `_hasTmux`
+caught only *thrown* errors and otherwise did `answer.trim().endsWith('yes')`. A refused
+connection, a timeout or a rejected key therefore became a confident "not installed", and the app
+offered to install a package over a link that did not exist. `parseTmuxCheck` now returns `bool?`
+— `yes`/`no` definite, a returned `SSH Error:`, an empty answer or anything unrecognised
+unverified — mirroring `parseTmuxSessionProbe`, which had the shape right all along. Only a
+definite `false` raises the install prompt; `null` lets the connection report the host's real
+failure. It reads the last non-blank line, so a login banner before the answer is fine, and a word
+merely *ending* in "yes" no longer counts.
+
+An unverified probe is also no longer written into `_tmuxVerified`. The old code cached a thrown
+probe as "present", so one flaky moment silently disabled the check for the rest of the session on
+the exact host that needed it.
+
+**2. The probe ran outside the attempt it belonged to.** It awaited a full round trip to the host
+with `_connecting` still false. There was no busy state, so a slow probe was indistinguishable from
+a tap that did nothing; `cancelConnect` had nothing to cancel and a late answer could raise a
+prompt for a connection the user had abandoned; and the `if (_connecting) return` guard at the top
+of `connect` could not see it, so a second tap during the probe started a second full connection.
+It now runs inside the owned attempt/generation boundary with a `Checking for tmux…` phase, and a
+superseded or cancelled probe returns without touching the newer attempt's state.
+
+`installTmuxAndConnect`'s post-install re-probe now requires a definite yes: an unanswered probe is
+not evidence the install worked.
+
+**Tests.** 5 `parseTmuxCheck` cases (definite answers, banner before the answer, returned transport
+errors, empty/unrecognised, and the `endsWith` trap) and 5 new `ShellViewModel` cases. The fake
+transport gained an `execGate`, matching its existing `gate` for `openShell`, so a probe can be
+held in flight while the busy state, double-tap guard and cancellation are observed.
+
+**Negative control.** All 5 new view-model tests fail against the unfixed view model, each with the
+production symptom: the install prompt raised on a refused connection; `isConnecting` false while
+the probe is pending; two probes from two taps; a prompt raised after `cancelConnect`; and a thrown
+probe cached as verified so the second connection never asked again. The 6th case in that group is
+a pre-existing test renamed — its old name asserted "assumes tmux is there", a mechanism that no
+longer exists — and it passes both ways, as it should. An earlier draft of the caching test passed
+on unfixed code for the wrong reason and was rewritten until it genuinely failed.
+
+### Validation for this tree
+
+`./scripts/local-pr-check.sh --full` passed (`rc=0`); both diff checks clean.
+
+- Flutter full suite **2686 passed / 4 optional live skips** (2676 + the 10 new cases), same 3
+  `OMNITERM_SETUP_FIXTURE` relay skips and 1 `OMNITERM_COMPRESSION_*` skip. `flutter analyze`
+  clean in 6.3s. Focused run of the four affected files: 112 passed.
+- Native unit tests were **reused UP-TO-DATE, not freshly executed** — this checkpoint changes no
+  Kotlin. Required x86_64 CI executes them.
+- Flutter release APK + App Bundle, both release SBOM graphs, release test-code exclusion and
+  strict forced-fresh dependency verification passed. Full-history secret scan: 201 commits, no
+  leaks.
+- **Device profiles on API 35 `emulator-5554`, run before the heavy gate:** `core` **30 passed /
+  0 skipped** (25 Dart across 9 entrypoints, every one first attempt with no retries, + 3 native
+  backup-picker + 2 native permissions), `host` **2 passed / 0 skipped** (1 Dart fixture + 1 native
+  "SSH survives Home and explicit background; tmux leaves and resumes the same shell", 151s). No
+  unexpected warnings (16 known on core, 6 on host).
+- The emulator was stopped for the heavy gate, so `local-pr-check`'s own in-script connected matrix
+  reported **deferred, not passed**. The explicit `core`/`host` profiles above are the device
+  evidence for this change. Normal Flutter debug launcher rebuilt, reinstalled and reopened
+  (`COLD 2817ms`).
+
 ## SSH setup checkpoint (`85f5cfe`) — pushed; one exact-head CI failure
 
 Signed and pushed `85f5cfe7392caafa4afdd249f635456a06777916`; all selected checks are terminal.

@@ -28,9 +28,13 @@ class FakeShellTransport implements SshTransport {
   /// Canned `exec` answers keyed by a substring of the command.
   ///
   /// Left empty by default so `exec` keeps throwing, which is what the tmux probe reads as "could
-  /// not ask" — and it deliberately treats that as "assume present", so existing tests connect
-  /// exactly as they did before.
+  /// not ask". An unanswered probe is treated as *unverified* rather than absent, so existing
+  /// tests connect exactly as they did before instead of being asked to install tmux.
   final Map<String, String> execAnswers = {};
+
+  /// Completes each `exec` only when released, so a test can hold a probe in flight and watch the
+  /// view model's busy state, double-tap guard and cancellation while it is still pending.
+  Completer<void>? execGate;
 
   /// Every command passed to `exec` or `execStream`.
   final List<String> commands = [];
@@ -41,6 +45,7 @@ class FakeShellTransport implements SshTransport {
   @override
   Future<String> exec(SshCredentials creds, String command, {String? stdin}) async {
     commands.add(command);
+    if (execGate != null) await execGate!.future;
     for (final entry in execAnswers.entries) {
       if (command.contains(entry.key)) return entry.value;
     }

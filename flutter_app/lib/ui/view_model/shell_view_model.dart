@@ -767,8 +767,9 @@ class ShellViewModel extends ChangeNotifier {
         },
       );
       // Re-probed rather than trusting the installer's exit code, for the same reason the script
-      // re-checks itself: a package manager can report success against a broken mirror.
-      installed = await _hasTmux(server);
+      // re-checks itself: a package manager can report success against a broken mirror. Only a
+      // definite yes counts — an unanswered probe is not proof the install worked.
+      installed = await _hasTmux(server) ?? false;
     } catch (e) {
       _tmuxInstallOutput = '${_tmuxInstallOutput ?? ''}\n\n$e';
     }
@@ -787,22 +788,27 @@ class ShellViewModel extends ChangeNotifier {
     await connect(server);
   }
 
-  Future<bool> _hasTmux(Server server) async {
+  /// `true` present, `false` definitely absent, `null` the probe could not answer.
+  ///
+  /// A probe that could not run is not evidence tmux is missing, and only a definite `false` is
+  /// allowed to offer an install. `null` lets the real connection attempt report the real
+  /// transport error; remembered rows receive the stricter exact-name authenticated probe in
+  /// [connect] before any shell is opened.
+  Future<bool?> _hasTmux(Server server) async {
     final ssh = transport;
-    if (ssh == null) return false;
+    if (ssh == null) return null;
     try {
       final creds = resolveCredentials(
         server,
         keys: await _app.repository.getAllKeys(),
         profiles: await _app.repository.getAllProfiles(),
       );
-      final answer = await ssh.exec(creds, tmuxCheckCommand);
-      return answer.trim().endsWith('yes');
+      // Not `endsWith('yes')` on the raw answer: `exec` returns `'SSH Error: …'` instead of
+      // throwing, so every failure that did not happen to end in "yes" used to read as a
+      // definite "tmux is missing" and offered to install a package over a dead connection.
+      return parseTmuxCheck(await ssh.exec(creds, tmuxCheckCommand));
     } catch (_) {
-      // A probe that could not run is not evidence tmux is missing. Treat it as present so a fresh
-      // connection can report its real transport error; remembered rows receive the stricter
-      // exact-name authenticated probe in connect() before any shell is opened.
-      return true;
+      return null;
     }
   }
 
@@ -831,20 +837,6 @@ class ShellViewModel extends ChangeNotifier {
       return;
     }
 
-    // A host configured for persistent sessions but missing tmux used to connect as an ordinary
-    // shell with no notice: the user believed their work survived a dropped link, and it did not.
-    // Probed once per host per session; the answer is only acted on when it is a definite "no".
-    if (server.persistentSession && !forcePlainShell && !_tmuxVerified.contains(server.id)) {
-      if (await _hasTmux(server)) {
-        _tmuxVerified.add(server.id);
-      } else {
-        _tmuxPromptServer = server;
-        _tmuxInstallOutput = null;
-        _safeNotify();
-        return;
-      }
-    }
-
     _connecting = true;
     final generation = ++_connectGeneration;
     _phase = 'Connecting…';
@@ -853,6 +845,33 @@ class ShellViewModel extends ChangeNotifier {
     _safeNotify();
 
     try {
+      // A host configured for persistent sessions but missing tmux used to connect as an ordinary
+      // shell with no notice: the user believed their work survived a dropped link, and it did not.
+      // Probed once per host per session; the answer is only acted on when it is a definite "no".
+      //
+      // Inside the attempt, not before it. This probe is a round trip to the host and used to run
+      // with `_connecting` still false: no busy state while it was in flight, `cancelConnect` had
+      // nothing to cancel, and the `if (_connecting) return` guard at the top of this method could
+      // not see it — so a second tap during a slow probe started a second full connection.
+      if (server.persistentSession && !forcePlainShell && !_tmuxVerified.contains(server.id)) {
+        _phase = 'Checking for tmux…';
+        _safeNotify();
+        final present = await _hasTmux(server);
+        // Cancelled or superseded while the probe was in flight: `finally` below leaves the newer
+        // attempt's state alone, and this one must not raise a prompt for an abandoned connection.
+        if (generation != _connectGeneration) return;
+        if (present == true) {
+          _tmuxVerified.add(server.id);
+        } else if (present == false) {
+          _tmuxPromptServer = server;
+          _tmuxInstallOutput = null;
+          return;
+        }
+        // `null` is an unverified probe, not an absent tmux. Carry on and let the connection
+        // itself surface whatever is actually wrong with the host.
+        _phase = 'Connecting…';
+        _safeNotify();
+      }
       // The same bound the Settings screen enforces, applied again on read: a hand-edited or
       // corrupt row must not be allowed to allocate a scrollback that exhausts the device.
       final scrollbackLimit = PreferenceLimits.terminalScrollback.parse(

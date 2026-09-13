@@ -13,6 +13,49 @@ import 'package:omniterm/data/remote_commands.dart';
 void main() {
   const sh = '/bin/sh';
 
+  /// The probe's *answer*, which is a different question from the command.
+  ///
+  /// `exec` reports transport failure by returning `'SSH Error: …'` rather than throwing, so the
+  /// old `answer.trim().endsWith('yes')` test read a refused connection, a timeout or a rejected
+  /// key as a definite "tmux is not installed" — and the app then offered to install a package
+  /// over a connection that did not exist.
+  group('parseTmuxCheck', () {
+    test('yes is present and no is absent', () {
+      expect(parseTmuxCheck('yes'), isTrue);
+      expect(parseTmuxCheck('no'), isFalse);
+      expect(parseTmuxCheck('  yes \n'), isTrue);
+      expect(parseTmuxCheck('no\r\n'), isFalse);
+    });
+
+    test('a login banner before the answer does not hide it', () {
+      expect(parseTmuxCheck('Welcome to Ubuntu 24.04 LTS\n\nyes'), isTrue);
+      expect(parseTmuxCheck('Last login: Sat Sep 13\nno\n'), isFalse);
+    });
+
+    test('a returned transport error is unverified, never absent', () {
+      for (final raw in [
+        'SSH Error: Connection refused',
+        'SSH Error: SSHAuthFailError',
+        'SSH Error: command timed out',
+      ]) {
+        expect(parseTmuxCheck(raw), isNull, reason: raw);
+      }
+    });
+
+    test('an empty or unrecognised answer is unverified', () {
+      expect(parseTmuxCheck(''), isNull);
+      expect(parseTmuxCheck('   \n  '), isNull);
+      expect(parseTmuxCheck('bash: command: not found'), isNull);
+    });
+
+    test('a word merely ending in the answer is not the answer', () {
+      // `endsWith('yes')` matched all of these. They are not what `echo yes` prints.
+      expect(parseTmuxCheck('kangaroo'), isNull, reason: 'ends in "roo", not the point');
+      expect(parseTmuxCheck('eyes'), isNull);
+      expect(parseTmuxCheck('SSH Error: bad bytes'), isNull);
+    });
+  });
+
   group('tmuxCheckCommand', () {
     test('answers yes or no against a real shell', () {
       final run = Process.runSync(sh, ['-c', tmuxCheckCommand]);
