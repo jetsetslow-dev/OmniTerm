@@ -173,6 +173,63 @@ because `flutter` was missing from that run's environment — a harness error, n
   the app itself.
 - `git diff --check` and `git diff --cached --check` both clean.
 
+## The backup screen forgot what the user chose, and mis-stated when it saved
+
+**A failed selection read reverted to "everything", permanently.** `loadSelection()` set
+`_selectionLoaded = true` *before* the await, so a read failure marked the selection loaded anyway:
+the screen fell back to the default and every later call returned early instead of retrying. The
+default is *everything*, so a user who had deliberately excluded credentials or crash logs would
+have had them back in the exported file without being told — the wrong direction for that mistake
+to go. The flag is now set only after the read succeeds, with a separate in-flight guard so
+repeated calls from `build` do not stampede, and the user is told the shown selection is not theirs.
+
+**A saved file could look unsaved.** The `backup_last_export_time` write is fire-and-forget. When it
+failed, `_lastExportTime` was still set in memory, so the screen said "last backup: just now" — and
+the next launch read the old value back and said something else. The file existing is true and is
+not walked back; what is now reported is that the record of *when* may not survive.
+
+Control: **3 of 3** new tests fail against real `HEAD`. Two details were worth getting right. The
+first settings double threw *synchronously*, which escaped the `catchError` the production code
+attaches — the real repository methods are `async` and always fail through the returned Future, so
+a synchronous throw tests a situation that cannot happen. And the first "retry" test did not test a
+retry at all; it was replaced with one whose repository fails only the *first* read, which is the
+behavioural change the fix is actually about.
+
+## The emulator E2E job is intermittently failing, in a different place each time
+
+Three failures now, on three different tests, each on a head whose application source was unchanged
+from a run where it passed:
+
+| head | failing test | also present |
+| --- | --- | --- |
+| `be4e882` | `key_generate_test.dart:132`, cleanup left a card | `DELETE_FAILED_INTERNAL_ERROR`; transport failure → emulator reboot + retry |
+| `95b5f0c` | `crash_log_test.dart:103`, clipboard read returned null | `DELETE_FAILED_INTERNAL_ERROR`; no reboot |
+| (`b86ed2c`, `11ec327`, `9947585` passed) | — | `DELETE_FAILED_INTERNAL_ERROR` present on a passing run too |
+
+That pattern points at the hosted emulator environment rather than at any one test, and it is the
+reason the `removeKeyIfPresent` convergence change **remains unproven as a fix** — the condition
+that produced its failure has not recurred.
+
+The clipboard failure is understood and is not an application defect. `crash_log_test` already waits
+for the `about.copied` marker, which only appears after the platform call returns, so the *write*
+completed; the *read* came back null. Android serves clipboard reads only to a focused app, so a
+transient focus change answers null for content that is genuinely present. The read is now a bounded
+retry (40 attempts, ~6s). It weakens nothing: the polled value cannot change, the redaction
+assertions are untouched, and a read that never succeeds still fails — now naming focus as the
+likely cause while stating that the write cannot be confirmed from there either way.
+
+### Validation for this tree
+
+`./scripts/local-pr-check.sh --full` passed (`rc=0`); both diff checks clean.
+
+- The device `core` profile was run **three times in a row**, not once: a single green run says
+  very little about an intermittent failure. All three passed, 9 entrypoints each, 0 failures. This
+  does not prove absence and is not offered as proof.
+- Flutter full suite **2705 passed / 4 optional live skips**; `flutter analyze` clean in 6.4s.
+- Device `host` profile passed earlier in this batch (2 passed / 0 skipped).
+- Native unit tests reused UP-TO-DATE; no Kotlin changed. Release APK/AAB, both SBOM graphs and
+  strict dependency verification passed. Full-history secret scan: 206 commits, no leaks.
+
 ## A backup quietly dropped every pinned host key
 
 `BackupViewModel._pinnedHostKeys()` caught any trust-store failure and returned `{}`. The

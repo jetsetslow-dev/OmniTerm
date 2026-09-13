@@ -21,6 +21,48 @@ import 'package:omniterm/ui/view_model/scripts_view_model.dart';
 
 import 'support/fake_secure_storage.dart';
 
+/// A repository that fails the first read of one key and succeeds afterwards, so a retry can be
+/// told apart from a read that never happened again.
+class _FailsFirstReadOf extends AppRepository {
+  _FailsFirstReadOf(super.db, super.secrets, this.key);
+
+  final String key;
+  bool _failedOnce = false;
+
+  @override
+  Future<String?> getSetting(String k) async {
+    if (k == key && !_failedOnce) {
+      _failedOnce = true;
+      throw StateError('settings unavailable');
+    }
+    return super.getSetting(k);
+  }
+}
+
+/// A repository whose settings IO fails for one key, so a single fire-and-forget write or read can
+/// be broken without disturbing anything else the screen does.
+class _FailsSettingFor extends AppRepository {
+  _FailsSettingFor(super.db, super.secrets, {this.failRead, this.failWrite});
+
+  final String? failRead;
+  final String? failWrite;
+
+  // `async` on purpose: the real repository methods are async, so a failure always arrives as a
+  // failed Future rather than a synchronous throw. A double that threw synchronously would escape
+  // the `catchError` the production code attaches and test a situation that cannot happen.
+  @override
+  Future<String?> getSetting(String key) async {
+    if (key == failRead) throw StateError('settings unavailable');
+    return super.getSetting(key);
+  }
+
+  @override
+  Future<void> insertSetting(String key, String value) async {
+    if (key == failWrite) throw StateError('settings unavailable');
+    return super.insertSetting(key, value);
+  }
+}
+
 /// A trust store whose export fails, standing in for a locked or unavailable device keystore.
 class _UnreadableTrustStore extends SshHostKeyTrust {
   _UnreadableTrustStore(super.store);
@@ -251,6 +293,97 @@ void main() {
       expect(document['servers'], isNotEmpty, reason: 'the rest of the backup is intact');
       expect(document.containsKey('knownHosts'), isFalse);
       unreadable.dispose();
+    });
+  });
+
+  group('the screen remembers what the user chose', () {
+    test('a selection that cannot be read is not treated as loaded', () async {
+      // The defect: `_selectionLoaded` was set BEFORE the await, so a failed read marked the
+      // selection loaded anyway. The screen fell back to the default — everything — and a later
+      // call returned early instead of retrying. A user who had deliberately excluded credentials
+      // or crash logs would have had them back in the file without being told.
+      final failingDb = AppDatabase(NativeDatabase.memory());
+      final failing = _FailsSettingFor(
+        failingDb,
+        SecretStore(storage: FakeSecureStorage(<String, String>{})),
+        failRead: 'backup_export_selection',
+      );
+      final failingApp = AppState(failing);
+      await failingApp.start();
+      final vm = BackupViewModel(failingApp);
+
+      await vm.loadSelection();
+
+      expect(vm.error, contains('could not be read'));
+      expect(
+        vm.error,
+        contains('everything'),
+        reason: 'the user must know which way the default errs before they export',
+      );
+      vm.dispose();
+      failingApp.dispose();
+      await failingDb.close();
+    });
+
+    test('a backup time that cannot be recorded is said, not hidden', () async {
+      // The file is saved either way — that part must not be walked back. What can fail is the
+      // record of *when*, and the screen was claiming "last backup: just now" from memory while
+      // the next launch would read the old value back and say something else.
+      final failingDb = AppDatabase(NativeDatabase.memory());
+      final failing = _FailsSettingFor(
+        failingDb,
+        SecretStore(storage: FakeSecureStorage(<String, String>{})),
+        failWrite: 'backup_last_export_time',
+      );
+      final failingApp = AppState(failing);
+      await failingApp.start();
+      final vm = BackupViewModel(failingApp);
+
+      vm.reportSaved('somewhere', encrypted: true);
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(vm.status, contains('Backup saved'), reason: 'the file really was saved');
+      expect(vm.status, contains('could not be recorded'));
+      expect(vm.status, contains('The file itself is saved'));
+      expect(vm.error, isNull, reason: 'a saved file is not an error');
+      vm.dispose();
+      failingApp.dispose();
+      await failingDb.close();
+    });
+
+    test('a failed read is retried, not remembered as done', () async {
+      // The behavioural half of the fix. Setting `_selectionLoaded` before the await meant the
+      // second call returned early and the user's stored selection was gone for the rest of the
+      // visit; the flag is now set only once a read has actually succeeded.
+      final retryDb = AppDatabase(NativeDatabase.memory());
+      final retrying = _FailsFirstReadOf(
+        retryDb,
+        SecretStore(storage: FakeSecureStorage(<String, String>{})),
+        'backup_export_selection',
+      );
+      await retrying.insertSetting(
+        'backup_export_selection',
+        const BackupSelection({BackupSection.settings}).encode(),
+      );
+      final retryApp = AppState(retrying);
+      await retryApp.start();
+      final vm = BackupViewModel(retryApp);
+
+      await vm.loadSelection();
+      expect(vm.error, isNotNull, reason: 'the first read failed and said so');
+
+      await vm.loadSelection();
+
+      expect(vm.selection.sections, contains(BackupSection.settings));
+      expect(
+        vm.selection.sections,
+        isNot(contains(BackupSection.servers)),
+        reason: 'the retry restored what the user chose instead of leaving the default',
+      );
+      vm.dispose();
+      retryApp.dispose();
+      await retryDb.close();
     });
   });
 

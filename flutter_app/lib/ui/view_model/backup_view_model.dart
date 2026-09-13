@@ -145,16 +145,37 @@ class BackupViewModel extends ChangeNotifier {
   }
 
   /// Reads the stored selection back. Safe to call more than once.
+  ///
+  /// The "loaded" flag is set *after* the read succeeds, not before it. Setting it first meant a
+  /// failed read marked the selection loaded anyway: the screen silently fell back to the default —
+  /// which is *everything* — and a later call returned early rather than retrying. A user who had
+  /// deliberately excluded credentials or crash logs would have had them back in the file without
+  /// being told, which is the wrong direction for that mistake to go.
   Future<void> loadSelection() async {
-    if (_selectionLoaded) return;
-    _selectionLoaded = true;
-    final stored = await _app.repository.getSetting('backup_export_selection');
-    if (_disposed || stored == null || stored.trim().isEmpty) return;
-    _selection = BackupSelection.decode(stored);
-    _safeNotify();
+    if (_selectionLoaded || _selectionLoading) return;
+    _selectionLoading = true;
+    try {
+      final stored = await _app.repository.getSetting('backup_export_selection');
+      if (_disposed) return;
+      _selectionLoaded = true;
+      if (stored == null || stored.trim().isEmpty) return;
+      _selection = BackupSelection.decode(stored);
+      _safeNotify();
+    } catch (_) {
+      // Deliberately leaves `_selectionLoaded` false so the next visit tries again. What the user
+      // is looking at is not their selection, and that is worth saying before they export.
+      if (_disposed) return;
+      _error =
+          'Your saved backup selection could not be read, so this is showing the default — '
+          'everything. Check the sections below before exporting.';
+      _safeNotify();
+    } finally {
+      _selectionLoading = false;
+    }
   }
 
   bool _selectionLoaded = false;
+  bool _selectionLoading = false;
 
   /// True when the current selection would carry credentials or host identities.
   ///
@@ -306,8 +327,21 @@ class BackupViewModel extends ChangeNotifier {
     // records it on write success too (`AppViewModel.kt:11415`).
     final now = DateTime.now();
     _lastExportTime = now;
+    // Fire-and-forget, but not fire-and-ignore. When this write failed the file was still saved and
+    // the screen still said "last backup: just now" — and then the next launch read the old value
+    // back and said something else. The file existing is true and is not walked back; what may not
+    // survive is the record of *when*, and the user is told that rather than left to conclude the
+    // backup never happened.
     unawaited(
-      _app.repository.insertSetting('backup_last_export_time', '${now.millisecondsSinceEpoch}'),
+      _app.repository
+          .insertSetting('backup_last_export_time', '${now.millisecondsSinceEpoch}')
+          .catchError((Object _) {
+            if (_disposed) return;
+            _status =
+                '${_status ?? 'Backup saved.'} The time of this backup could not be recorded, so '
+                'this screen may not show it next time. The file itself is saved.';
+            _safeNotify();
+          }),
     );
     _error = null;
     _status = [

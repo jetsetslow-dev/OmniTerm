@@ -99,8 +99,27 @@ void main() {
       reason: 'Copy must finish its platform call before the clipboard is read',
     );
 
-    final clip = await Clipboard.getData(Clipboard.kTextPlain);
-    expect(clip?.text, isNotNull, reason: 'Copy must put the report on the real clipboard');
+    // Read with a bounded retry. The write is already proven to have completed — `about.copied`
+    // only appears after the platform call returns — but Android serves clipboard *reads* only to
+    // a focused app, so a transient focus change on the emulator makes `getData` answer null for
+    // content that is genuinely there. Retrying a read of a value that cannot change weakens
+    // nothing; the redaction assertions below are untouched, and a read that never succeeds still
+    // fails, naming why.
+    ClipboardData? clip;
+    for (var attempt = 0; attempt < 40 && clip?.text == null; attempt++) {
+      clip = await Clipboard.getData(Clipboard.kTextPlain);
+      if (clip?.text != null) break;
+      await tester.pump(const Duration(milliseconds: 100));
+      await Future<void>.delayed(const Duration(milliseconds: 50));
+    }
+    expect(
+      clip?.text,
+      isNotNull,
+      reason:
+          'Copy reported success, but the clipboard read kept coming back null. Android only '
+          'serves clipboard reads to a focused app, so this is usually focus rather than a failed '
+          'write — but the write cannot be confirmed from here either way.',
+    );
     expect(clip!.text, contains(marker));
     // The redaction happens once, when the crash is recorded, so every export path is safe by
     // construction rather than each remembering to do it — the same place Kotlin does it
