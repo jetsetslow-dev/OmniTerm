@@ -179,6 +179,31 @@ because `flutter` was missing from that run's environment — a harness error, n
   the app itself.
 - `git diff --check` and `git diff --cached --check` both clean.
 
+## One proxy, two pooled connections, over a trailing space
+
+The follow-up flagged when the bastion parity fix landed. `SshSessionPool.poolKey` embedded
+`proxyHost` **raw**, while `DartSshTransport` now dials `proxyHost.trim()` — so `"p"` and `" p "`
+dialled the same proxy and opened two pooled connections, for a difference the user cannot see.
+
+It is narrower than first sketched, and the narrowing is the interesting part:
+
+- The key governs **pooled** connections only, and jump connections are leased `unpooled`, so
+  `proxyUser` never reaches it on the bastion path at all.
+- For `http`/`socks5`, a blank `proxyUser` means *no proxy authentication*, which is genuinely a
+  different connection from an authenticated one. Normalising that would have merged two unlike
+  connections.
+
+So only `proxyHost` is trimmed. The tests split accordingly, and the control shows it: the
+whitespace case **fails against real `HEAD`**, while the blank-proxy-user case **passes both ways**
+— a guard pinning what was deliberately *not* normalised, so a later tidy-up cannot quietly merge
+authenticated and anonymous proxy connections.
+
+### Validation for this tree
+
+Every stage green: `core rc=0`, `host rc=0`, `local-pr-check rc=0`, both diff checks `0`,
+`FAILED=0`. This tree also carries the trigger correction above, which is comment- and
+tracker-only.
+
 ## Where connect time actually goes — measured, and the hypothesis was right
 
 The incoming handover recorded a hypothesis and was explicit it must be measured, never claimed:
@@ -271,11 +296,26 @@ Device profiles `core` 30/0 and `host` 2/0. Full-history secret scan: 212 commit
 ## SSH sessions no longer die when Android recreates the Activity
 
 The defect the incoming handover called "proven unfixed". A default `FlutterActivity` creates its
-engine in `onCreate` and destroys it in `onDestroy`, so **any** Activity recreation — a rotation, a
-theme or font-scale change, a system-initiated restart — tore down the Dart isolate. In this app
+engine in `onCreate` and destroys it in `onDestroy`, so **any** Activity recreation tore down the
+Dart isolate. In this app
 that isolate *owns the SSH sessions*: the foreground service kept the process alive, but nothing
 kept the sessions alive, so every shell died on a configuration change while the notification still
 claimed they were running.
+
+### Correction: which recreations this app actually sees
+
+An earlier version of this entry, and the commit message on `5c99960`, said the triggers were
+"rotation, a theme or font-scale change, a system-initiated restart". **The first two are wrong.**
+The manifest declares
+`configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"`,
+and Android calls `onConfigurationChanged` for a change the app declares it handles rather than
+restarting the Activity. A rotation or theme switch never recreated this app.
+
+What remains, and what the fix is actually for: **system-initiated destruction** — the Activity
+reclaimed while backgrounded under memory pressure, the "Don't keep activities" developer setting,
+and any configuration change outside that list. Backgrounded-and-reclaimed is the case a terminal
+app cares about most, so the fix keeps its value; the trigger is simply narrower than first stated.
+The before-proof below is unaffected: it forces `recreate()` directly.
 
 ### Before-proof, re-established on this tree
 

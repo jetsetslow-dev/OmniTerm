@@ -7,11 +7,18 @@ import io.flutter.embedding.engine.FlutterEngine
  * The one Flutter engine this process uses, kept alive across Activity instances.
  *
  * A default [io.flutter.embedding.android.FlutterActivity] creates its engine in `onCreate` and
- * destroys it in `onDestroy`, so any Activity recreation — a rotation, a theme or font-scale
- * change, a system-initiated restart — tears down the Dart isolate. In this app that isolate *owns
- * the SSH sessions*: the foreground service keeps the process alive, but nothing kept the sessions
- * alive, so every shell died on a configuration change while the notification still claimed they
- * were running.
+ * destroys it in `onDestroy`, so any Activity recreation tears down the Dart isolate. In this app
+ * that isolate *owns the SSH sessions*: the foreground service keeps the process alive, but nothing
+ * kept the sessions alive, so every shell died while the notification still claimed they ran.
+ *
+ * **Which recreations actually happen here.** The manifest declares `configChanges` for
+ * orientation, uiMode, fontScale, density, locale and the rest, so Android calls
+ * `onConfigurationChanged` for those rather than restarting the Activity — a rotation or a theme
+ * switch never recreated this app. What remains is system-initiated destruction: the Activity being
+ * reclaimed while backgrounded under memory pressure, the "Don't keep activities" developer
+ * setting, and any configuration change outside that list. Backgrounded-and-reclaimed is precisely
+ * the case a terminal app cares about most, which is why this is worth fixing — but it is a
+ * narrower trigger than "every rotation", and saying otherwise would overstate it.
  *
  * Retention is done through `provideFlutterEngine` rather than [io.flutter.embedding.engine
  * .FlutterEngineCache]: the cached-engine path throws if the cache is empty and would need the

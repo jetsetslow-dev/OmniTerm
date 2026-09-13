@@ -9,10 +9,11 @@ class MainActivity : FlutterActivity() {
     /**
      * Reuses the process-wide engine instead of creating one per Activity.
      *
-     * The default lifecycle destroys the engine in `onDestroy`, so every Activity recreation —
-     * rotation, theme or font-scale change, a system-initiated restart — killed the Dart isolate
-     * that owns the SSH sessions. The foreground service kept the *process* alive; nothing kept the
-     * sessions alive. Returning an engine here makes the embedding treat it as host-owned, so it is
+     * The default lifecycle destroys the engine in `onDestroy`, so every Activity recreation killed
+     * the Dart isolate that owns the SSH sessions. The foreground service kept the *process* alive;
+     * nothing kept the sessions alive. See [RetainedFlutterEngine] for which recreations this app
+     * actually sees — the manifest's `configChanges` list means rotation and theme changes are not
+     * among them. Returning an engine here makes the embedding treat it as host-owned, so it is
      * not destroyed with this Activity and its entrypoint is not re-run while the isolate is
      * already executing. `configureFlutterEngine` still runs on every attach, which is what
      * re-points the Activity-scoped bridges below at the live Activity.

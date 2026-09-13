@@ -50,7 +50,13 @@ class SshSessionPool<C> {
       '|pw=${_fingerprint(c.password)}'
       '|pk=${_fingerprint(c.privateKeyPem)}'
       '|pp=${_fingerprint(c.passphrase)}'
-      '|proxy=${c.proxyType}:${c.proxyUser}@${c.proxyHost}:${c.proxyPort}'
+      // Trimmed, because that is what gets dialled: `DartSshTransport` connects to
+      // `proxyHost.trim()`, matching Compose's `applyProxy`. Keying on the raw value split one
+      // proxy into two pooled connections over nothing but a trailing space a paste left behind.
+      // `proxyUser` stays raw on purpose — for http/socks5 a blank user means *no* proxy
+      // authentication, which is a genuinely different connection from an authenticated one, and
+      // the jump path where a blank user falls back to the target account is never pooled at all.
+      '|proxy=${c.proxyType}:${c.proxyUser}@${c.proxyHost.trim()}:${c.proxyPort}'
       ':${_fingerprint(c.proxyPassword)}'
       ':${_fingerprint(c.proxyKeyPem)}'
       '|ka=${c.keepAliveSeconds}|z=${c.compression}';

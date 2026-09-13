@@ -166,6 +166,53 @@ void main() {
       );
     });
 
+    test('a proxy host that differs only by whitespace is the same connection', () {
+      // The transport dials `proxyHost.trim()`, so keying on the raw value opened a second pooled
+      // connection to the same proxy over nothing but a trailing space — defeating reuse for a
+      // host the user cannot see is different.
+      const tidy = SshCredentials(
+        host: 'nas',
+        port: 22,
+        username: 'root',
+        proxyType: 'socks5',
+        proxyHost: 'p',
+        proxyPort: 1080,
+      );
+      const padded = SshCredentials(
+        host: 'nas',
+        port: 22,
+        username: 'root',
+        proxyType: 'socks5',
+        proxyHost: ' p ',
+        proxyPort: 1080,
+      );
+      expect(SshSessionPool.poolKey(tidy), SshSessionPool.poolKey(padded));
+    });
+
+    test('a blank proxy user is still a different connection from an authenticated one', () {
+      // Deliberately NOT normalised. For http/socks5 a blank user means no proxy authentication at
+      // all, which is a different connection from one that authenticates — and the jump path, where
+      // a blank user falls back to the target account, is never pooled.
+      const anonymous = SshCredentials(
+        host: 'nas',
+        port: 22,
+        username: 'root',
+        proxyType: 'socks5',
+        proxyHost: 'p',
+        proxyPort: 1080,
+      );
+      const named = SshCredentials(
+        host: 'nas',
+        port: 22,
+        username: 'root',
+        proxyType: 'socks5',
+        proxyHost: 'p',
+        proxyPort: 1080,
+        proxyUser: 'root',
+      );
+      expect(SshSessionPool.poolKey(anonymous), isNot(SshSessionPool.poolKey(named)));
+    });
+
     test('identical credentials produce a stable key', () {
       const a = SshCredentials(host: 'nas', port: 22, username: 'root', password: 'pw');
       const b = SshCredentials(host: 'nas', port: 22, username: 'root', password: 'pw');
