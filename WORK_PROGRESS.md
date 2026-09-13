@@ -179,6 +179,28 @@ because `flutter` was missing from that run's environment — a harness error, n
   the app itself.
 - `git diff --check` and `git diff --cached --check` both clean.
 
+## Two of the three Fleet diagnostics had no coverage at all
+
+The incoming handover said "Flutter already has this guard". True in shape, one third in coverage:
+the streaming test covered **Uptime** only. DF and PS had none, so a wrong command, a button
+dialling the wrong host, or a read-only diagnostic quietly consuming the Broadcast tab's unsent
+command would have been caught for one button and missed for the other two.
+
+All three are now covered, each asserting its own command reaches the transport, that output appears
+as it arrives rather than only at completion, that a running command shows it is running, and that
+Broadcast's tab, unsent command text and target selection are untouched. The original single-button
+test was folded in rather than left duplicating the new Uptime case.
+
+**This is a guard, not a find.** `runHostDiagnostic` is thin and correct and the three buttons are
+generated from one list, so no defect is claimed. The guard was checked for the thing a guard is
+usually wrong about — whether it can fail at all: mutating the wiring so every button sends `uptime`
+fails DF and PS with `Expected: ['df -h'] / Actual: ['uptime']`.
+
+### Validation for this tree
+
+Every stage green: `core rc=0`, `host rc=0`, `local-pr-check rc=0`, both diff checks `0`,
+`FAILED=0`. Test-only change; no production source touched.
+
 ## The notification prompt was landing on top of the file picker
 
 `LongOperationNotifications.start()` fires the notification-permission request `unawaited`, and the

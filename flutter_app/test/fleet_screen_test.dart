@@ -124,39 +124,62 @@ void main() {
     await tester.pumpAndSettle();
   }
 
-  testWidgets('host diagnostics stream in a popup without changing broadcast state', (
-    tester,
-  ) async {
-    await repo.insertServer(server(name: 'diagnostic host', host: '10.0.0.8'));
-    final transport = _StreamingDiagnosticTransport();
-    await pump(tester, transport: transport);
-    vm.commandText = 'my unsent broadcast';
-    final host = vm.servers.single;
-    try {
-      final uptime = find.byKey(ValueKey('fleet.host.${host.id}.uptime'));
-      expect(uptime, findsOneWidget);
-      await tester.ensureVisible(uptime);
-      await tester.tap(uptime);
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 300));
-      expect(find.byKey(const ValueKey('command.stream.dialog')), findsOneWidget);
-      expect(find.textContaining('first diagnostic chunk'), findsOneWidget);
-      expect(find.textContaining('last diagnostic chunk'), findsNothing);
-      expect(find.byType(CircularProgressIndicator), findsWidgets);
-      expect(vm.activeTab, FleetTab.dashboard);
-      expect(vm.commandText, 'my unsent broadcast');
-      expect(vm.targetServerIds, isEmpty);
-      expect(transport.hosts, ['10.0.0.8']);
-      expect(transport.commands, ['uptime']);
-      transport.finish.complete();
-      await tester.pumpAndSettle();
-      expect(find.textContaining('last diagnostic chunk'), findsOneWidget);
-    } finally {
-      if (!transport.finish.isCompleted) transport.finish.complete();
-      vm.dispose();
-      scriptsVm.dispose();
-    }
-  });
+  // All three buttons, not just the first. They are generated from one list, so this is coverage
+  // rather than a suspected defect — but DF and PS had none at all, which means a wrong command,
+  // a button wired to the wrong host, or a diagnostic that quietly disturbed Broadcast would have
+  // been caught for Uptime and missed for the other two.
+  for (final (label, command) in [
+    ('uptime', 'uptime'),
+    ('df', 'df -h'),
+    ('ps', 'ps aux | head -5'),
+  ]) {
+    testWidgets('the $label diagnostic streams without changing broadcast state', (tester) async {
+      await repo.insertServer(server(name: 'diagnostic host', host: '10.0.0.8'));
+      final transport = _StreamingDiagnosticTransport();
+      await pump(tester, transport: transport);
+      vm.commandText = 'my unsent broadcast';
+      final host = vm.servers.single;
+      try {
+        final button = find.byKey(ValueKey('fleet.host.${host.id}.$label'));
+        expect(button, findsOneWidget, reason: 'the $label button must exist to be tested');
+        await tester.ensureVisible(button);
+        await tester.tap(button);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(find.byKey(const ValueKey('command.stream.dialog')), findsOneWidget);
+        expect(find.textContaining('first diagnostic chunk'), findsOneWidget);
+        expect(
+          find.textContaining('last diagnostic chunk'),
+          findsNothing,
+          reason: 'output must appear as it arrives, not only once the command finishes',
+        );
+        expect(
+          find.byType(CircularProgressIndicator),
+          findsWidgets,
+          reason: 'a command still running must show it is still running',
+        );
+        expect(transport.hosts, ['10.0.0.8'], reason: 'the popup must dial the host it names');
+        expect(transport.commands, [
+          command,
+        ], reason: 'each button must send its own command, not the first one');
+
+        // The defect this half guards against: a read-only diagnostic that quietly consumed the
+        // Broadcast tab's unsent command or target selection.
+        expect(vm.activeTab, FleetTab.dashboard);
+        expect(vm.commandText, 'my unsent broadcast');
+        expect(vm.targetServerIds, isEmpty);
+
+        transport.finish.complete();
+        await tester.pumpAndSettle();
+        expect(find.textContaining('last diagnostic chunk'), findsOneWidget);
+      } finally {
+        if (!transport.finish.isCompleted) transport.finish.complete();
+        vm.dispose();
+        scriptsVm.dispose();
+      }
+    });
+  }
 
   testWidgets('the summary shows the online count and average score', (tester) async {
     await repo.insertServer(server(name: 'a', host: '10.0.0.1', healthScore: 80));
