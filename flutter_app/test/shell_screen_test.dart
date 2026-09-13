@@ -15,10 +15,12 @@ import 'package:omniterm/ui/view_model/app_lock_controller.dart';
 import 'package:omniterm/ui/widgets/app_lock_gate.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
+import 'package:omniterm/platform/session_service.dart';
 import 'package:omniterm/ui/view_model/shell_view_model.dart';
 import 'package:provider/provider.dart';
 
 import 'support/fake_secure_storage.dart';
+import 'support/fake_session_service.dart';
 import 'support/fake_shell_transport.dart';
 
 void main() {
@@ -73,6 +75,7 @@ void main() {
   Future<void> pump(
     WidgetTester tester, {
     bool withTransport = true,
+    SessionService? sessionService,
     Size size = const Size(1000, 1400),
     double textScale = 1,
     AppLockController? lock,
@@ -82,7 +85,11 @@ void main() {
     addTearDown(tester.view.reset);
 
     await app.start();
-    vm = ShellViewModel(app, transport: withTransport ? transport : null);
+    vm = ShellViewModel(
+      app,
+      transport: withTransport ? transport : null,
+      sessionService: sessionService,
+    );
     await tester.pumpWidget(
       MultiProvider(
         providers: [
@@ -118,6 +125,51 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('shell.connect')));
     await tester.pumpAndSettle();
   }
+
+  group('background protection', () {
+    testWidgets('a refused keep-alive is visible on the Shell and can be dismissed', (
+      tester,
+    ) async {
+      // The view model knowing is not the same as the user knowing. Without this the refusal
+      // reached a getter nothing rendered, which is the same silence the fix set out to end.
+      final service = FakeSessionService()
+        ..result = const SessionServiceResult.failed('ForegroundServiceStartNotAllowed');
+      addTearDown(service.dispose);
+      await repo.insertServer(server(name: 'nas'));
+      await repo.insertSetting('background_keep_alive', 'true');
+      await pump(tester, sessionService: service);
+
+      await connect(tester);
+      await tester.pumpAndSettle();
+
+      final warning = find.byKey(const ValueKey('shell.backgroundService.warning'));
+      expect(warning, findsOneWidget);
+      expect(
+        tester.widget<Text>(warning).data,
+        contains('ForegroundServiceStartNotAllowed'),
+        reason: "the platform's reason is the actionable part",
+      );
+
+      await tester.tap(find.byKey(const ValueKey('shell.backgroundService.dismiss')));
+      await tester.pumpAndSettle();
+      expect(warning, findsNothing);
+      await finish(tester);
+    });
+
+    testWidgets('a platform without the service shows nothing', (tester) async {
+      final service = FakeSessionService()..result = const SessionServiceResult.unsupported();
+      addTearDown(service.dispose);
+      await repo.insertServer(server(name: 'nas'));
+      await repo.insertSetting('background_keep_alive', 'true');
+      await pump(tester, sessionService: service);
+
+      await connect(tester);
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const ValueKey('shell.backgroundService.warning')), findsNothing);
+      await finish(tester);
+    });
+  });
 
   group('with nothing to connect to', () {
     testWidgets('no hosts at all asks for one', (tester) async {

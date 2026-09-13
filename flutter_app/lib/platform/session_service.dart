@@ -114,23 +114,61 @@ class SessionService {
   /// One call for both, because "start" and "update" differ only in whether the service was already
   /// running — and a caller that has to know which would get it wrong after a process restart.
   /// An empty list stops the service: a foreground notification with nothing behind it is a lie.
-  Future<bool> sync(List<BackgroundSession> sessions) async {
-    try {
-      if (sessions.isEmpty) return await _invoke('stop');
-      return await _invoke('sync', {'sessions': sessions.map((s) => s.toArguments()).toList()});
-    } catch (_) {
-      return false;
-    }
+  Future<SessionServiceResult> sync(List<BackgroundSession> sessions) async {
+    if (sessions.isEmpty) return stop();
+    return _invoke('sync', {'sessions': sessions.map((s) => s.toArguments()).toList()});
   }
 
-  Future<bool> stop() async {
+  Future<SessionServiceResult> stop() => _invoke('stop');
+
+  Future<SessionServiceResult> _invoke(
+    String method, [
+    Map<String, Object?> arguments = const {},
+  ]) async {
     try {
-      return await _invoke('stop');
-    } catch (_) {
-      return false;
+      final applied = await _channel.invokeMethod<bool>(method, arguments);
+      if (applied == true) return const SessionServiceResult.ok();
+      // The platform answered, and said no. That is a refusal, not an absence.
+      return const SessionServiceResult.failed('the device did not start the background service');
+    } on MissingPluginException {
+      // No implementation registered at all: iOS, or a build without the bridge. Nothing is wrong
+      // and there is nothing the user could do, so this must not read as a failure.
+      return const SessionServiceResult.unsupported();
+    } on PlatformException catch (e) {
+      // Android 12+ throws ForegroundServiceStartNotAllowedException when a start is attempted from
+      // the background. That is a real, reportable refusal on a platform that does support this.
+      return SessionServiceResult.failed(e.message ?? e.code);
+    } catch (e) {
+      return SessionServiceResult.failed(e.toString());
     }
   }
+}
 
-  Future<bool> _invoke(String method, [Map<String, Object?> arguments = const {}]) async =>
-      await _channel.invokeMethod<bool>(method, arguments) ?? false;
+/// Whether a [SessionService] call actually took effect.
+///
+/// `bool` could not answer the question that matters. It collapsed "this platform has no
+/// foreground service" together with "Android refused to start it", so a keep-alive that failed on
+/// a device which *does* support it was indistinguishable from iOS behaving exactly as designed —
+/// and the caller, having no way to tell them apart, reported neither. The user kept believing
+/// their shells were protected in the background while they were not.
+enum SessionServiceOutcome { ok, unsupported, failed }
+
+class SessionServiceResult {
+  const SessionServiceResult.ok() : outcome = SessionServiceOutcome.ok, detail = null;
+  const SessionServiceResult.unsupported()
+    : outcome = SessionServiceOutcome.unsupported,
+      detail = null;
+  const SessionServiceResult.failed(this.detail) : outcome = SessionServiceOutcome.failed;
+
+  final SessionServiceOutcome outcome;
+
+  /// Why it failed, as the platform described it. Null unless [outcome] is
+  /// [SessionServiceOutcome.failed].
+  final String? detail;
+
+  bool get ok => outcome == SessionServiceOutcome.ok;
+  bool get failed => outcome == SessionServiceOutcome.failed;
+
+  @override
+  String toString() => 'SessionServiceResult(${outcome.name}${detail == null ? '' : ', $detail'})';
 }

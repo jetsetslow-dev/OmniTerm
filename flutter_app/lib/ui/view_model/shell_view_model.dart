@@ -262,11 +262,68 @@ class ShellViewModel extends ChangeNotifier {
     final operation = shouldKeepAlive ? sessionService?.sync(live) : sessionService?.stop();
     if (operation != null) {
       unawaited(
-        operation.then((ok) {
-          if (!ok && identical(_lastBackgroundSessions, desired)) _lastBackgroundSessions = null;
+        operation.then((result) {
+          // Clearing the cache is what lets the next change retry; it is not, on its own, telling
+          // anyone. A keep-alive that Android refused used to end here in silence, leaving the user
+          // to believe their shells were protected in the background when they were not.
+          if (result.failed && identical(_lastBackgroundSessions, desired)) {
+            _lastBackgroundSessions = null;
+          }
+          _reportBackgroundServiceResult(result, keepAlive: shouldKeepAlive);
         }),
       );
     }
+  }
+
+  /// The last background-service failure the user has not dismissed, or null.
+  ///
+  /// Only a genuine refusal on a platform that supports the service appears here.
+  /// [SessionServiceOutcome.unsupported] is iOS behaving as designed and there is nothing the user
+  /// could do about it, so it must never be dressed up as an error.
+  String? get backgroundServiceWarning => _backgroundServiceWarning;
+  String? _backgroundServiceWarning;
+
+  /// Remembered so dismissing means something. A failure clears the cache above so the next change
+  /// retries, that retry fails the same way, and without this the warning reappeared immediately.
+  String? _dismissedBackgroundServiceWarning;
+
+  void dismissBackgroundServiceWarning() {
+    if (_backgroundServiceWarning == null) return;
+    _dismissedBackgroundServiceWarning = _backgroundServiceWarning;
+    _backgroundServiceWarning = null;
+    _safeNotify();
+  }
+
+  void _reportBackgroundServiceResult(SessionServiceResult result, {required bool keepAlive}) {
+    if (_disposed) return;
+    final message = switch (result.outcome) {
+      SessionServiceOutcome.ok || SessionServiceOutcome.unsupported => null,
+      SessionServiceOutcome.failed when keepAlive =>
+        'Sessions may not survive the app being in the background: '
+            '${result.detail ?? 'the device refused to start the background service'}.',
+      // A failed stop is the opposite problem and just as worth saying: a notification can be left
+      // standing over sessions that are gone.
+      SessionServiceOutcome.failed =>
+        'The background session notification may still be showing: '
+            '${result.detail ?? 'the device refused to stop the background service'}.',
+    };
+    if (message == null) {
+      // It worked, or there is nothing to do here. Forget the warning *and* the dismissal, so a
+      // later failure is heard again rather than being silenced by an old one.
+      _dismissedBackgroundServiceWarning = null;
+      if (_backgroundServiceWarning == null) return;
+      _backgroundServiceWarning = null;
+      _safeNotify();
+      return;
+    }
+    // Every open session notifies on output, so this runs constantly. Re-announcing an unchanged
+    // state would bury the terminal under its own warning — and re-raising one the user has
+    // already dismissed would make the dismiss button a no-op.
+    if (message == _backgroundServiceWarning || message == _dismissedBackgroundServiceWarning) {
+      return;
+    }
+    _backgroundServiceWarning = message;
+    _safeNotify();
   }
 
   bool _disposed = false;

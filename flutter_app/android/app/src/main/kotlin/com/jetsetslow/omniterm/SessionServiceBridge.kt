@@ -43,28 +43,31 @@ object SessionServiceBridge {
                     "sync" -> {
                         @Suppress("UNCHECKED_CAST")
                         val sessions = call.argument<List<Map<String, Any?>>>("sessions").orEmpty()
-                        if (sessions.isEmpty()) {
-                            stop(appContext)
-                        } else {
-                            val intent = Intent(appContext, SessionService::class.java).apply {
-                                action = SessionService.ACTION_SYNC
-                                putStringArrayListExtra(
-                                    SessionService.EXTRA_SESSION_IDS,
-                                    ArrayList(sessions.map { it["id"] as? String ?: "" }),
-                                )
-                                putStringArrayListExtra(
-                                    SessionService.EXTRA_SESSION_NAMES,
-                                    ArrayList(sessions.map { it["serverName"] as? String ?: "" }),
-                                )
+                        // Reported, not thrown. startForegroundService throws
+                        // ForegroundServiceStartNotAllowedException on Android 12+ when the app is
+                        // already in the background, and letting that escape the handler loses the
+                        // reason on the way across the channel — which is the one thing the caller
+                        // needs in order to tell the user their sessions are not protected.
+                        reporting(result) {
+                            if (sessions.isEmpty()) {
+                                stop(appContext)
+                            } else {
+                                val intent = Intent(appContext, SessionService::class.java).apply {
+                                    action = SessionService.ACTION_SYNC
+                                    putStringArrayListExtra(
+                                        SessionService.EXTRA_SESSION_IDS,
+                                        ArrayList(sessions.map { it["id"] as? String ?: "" }),
+                                    )
+                                    putStringArrayListExtra(
+                                        SessionService.EXTRA_SESSION_NAMES,
+                                        ArrayList(sessions.map { it["serverName"] as? String ?: "" }),
+                                    )
+                                }
+                                startService(appContext, intent)
                             }
-                            startService(appContext, intent)
                         }
-                        result.success(true)
                     }
-                    "stop" -> {
-                        stop(appContext)
-                        result.success(true)
-                    }
+                    "stop" -> reporting(result) { stop(appContext) }
                     else -> result.notImplemented()
                 }
             }
@@ -91,6 +94,25 @@ object SessionServiceBridge {
         main.post {
             val sink = events
             if (sink == null) pending.add(message) else sink.success(message)
+        }
+    }
+
+    /**
+     * Runs [block] and answers the channel with what actually happened.
+     *
+     * Success is `true`; a refusal becomes an error carrying the platform's own message, so Dart
+     * can tell "this device said no" apart from "this platform has no such service at all".
+     */
+    private inline fun reporting(result: MethodChannel.Result, block: () -> Unit) {
+        try {
+            block()
+            result.success(true)
+        } catch (e: Exception) {
+            result.error(
+                "session_service_failed",
+                e.message ?: e::class.java.simpleName,
+                null,
+            )
         }
     }
 

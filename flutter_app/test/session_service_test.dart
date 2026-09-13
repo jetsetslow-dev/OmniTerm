@@ -11,43 +11,8 @@ import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/shell_view_model.dart';
 
 import 'support/fake_secure_storage.dart';
+import 'support/fake_session_service.dart';
 import 'support/fake_shell_transport.dart';
-
-/// Records what the platform was asked to show, and lets a test push shade actions back.
-class _FakeSessionService implements SessionService {
-  final List<List<BackgroundSession>> synced = [];
-  int stops = 0;
-  final _actions = StreamController<SessionServiceAction>.broadcast();
-
-  @override
-  Stream<SessionServiceAction> get actions => _actions.stream;
-
-  @override
-  Future<bool> isSupported() async => true;
-
-  @override
-  Future<bool> sync(List<BackgroundSession> sessions) async {
-    if (sessions.isEmpty) {
-      stops++;
-    } else {
-      synced.add(List.of(sessions));
-    }
-    return true;
-  }
-
-  @override
-  Future<bool> stop() async {
-    stops++;
-    return true;
-  }
-
-  void push(SessionServiceAction action) => _actions.add(action);
-
-  Future<void> dispose() => _actions.close();
-
-  @override
-  noSuchMethod(Invocation invocation) => throw UnimplementedError();
-}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -126,15 +91,46 @@ void main() {
       expect(calls.single.method, 'stop');
     });
 
-    test('a platform without the service reports unsupported rather than throwing', () async {
+    test('a platform without the service reports unsupported, not failure', () async {
+      // The distinction this test exists for: iOS has no foreground service and never will, so
+      // reporting that as a failure would put a permanent, unactionable warning on the screen.
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
         channel,
         null,
       );
 
       expect(await service.isSupported(), isFalse);
-      expect(await service.sync(const [BackgroundSession(id: 'a', serverName: 'n')]), isFalse);
-      expect(await service.stop(), isFalse);
+      final synced = await service.sync(const [BackgroundSession(id: 'a', serverName: 'n')]);
+      expect(synced.outcome, SessionServiceOutcome.unsupported);
+      expect(synced.failed, isFalse);
+      expect((await service.stop()).outcome, SessionServiceOutcome.unsupported);
+    });
+
+    test('a platform that refuses reports the refusal, with its reason', () async {
+      // Android 12+ throws ForegroundServiceStartNotAllowedException for a background start. That
+      // is a device that DOES support this saying no, and the user can act on it.
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (call) async => throw PlatformException(
+          code: 'session_service_failed',
+          message: 'ForegroundServiceStartNotAllowedException',
+        ),
+      );
+
+      final result = await service.sync(const [BackgroundSession(id: 'a', serverName: 'n')]);
+      expect(result.outcome, SessionServiceOutcome.failed);
+      expect(result.detail, contains('ForegroundServiceStartNotAllowed'));
+    });
+
+    test('a platform that answers false is a refusal, not an absence', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (call) async => false,
+      );
+
+      final result = await service.sync(const [BackgroundSession(id: 'a', serverName: 'n')]);
+      expect(result.outcome, SessionServiceOutcome.failed);
+      expect(result.detail, isNotNull);
     });
   });
 
@@ -143,7 +139,7 @@ void main() {
     late AppRepository repo;
     late AppState app;
     late FakeShellTransport transport;
-    late _FakeSessionService service;
+    late FakeSessionService service;
     late ShellViewModel vm;
 
     setUp(() {
@@ -151,7 +147,7 @@ void main() {
       repo = AppRepository(db, SecretStore(storage: FakeSecureStorage(<String, String>{})));
       app = AppState(repo);
       transport = FakeShellTransport();
-      service = _FakeSessionService();
+      service = FakeSessionService();
     });
 
     tearDown(() async {
@@ -203,6 +199,85 @@ void main() {
       await vm.connect(vm.server!);
 
       expect(service.synced.last.single.serverName, 'nas');
+    });
+
+    test('a refused keep-alive is said out loud, not swallowed', () async {
+      // The defect: the result was used only to clear a cache so the next change would retry, and
+      // was otherwise discarded. The user went on believing their shells were protected in the
+      // background when Android had refused to protect them.
+      await repo.insertServer(server(name: 'nas'));
+      await repo.insertSetting('background_keep_alive', 'true');
+      await boot();
+      service.result = const SessionServiceResult.failed('ForegroundServiceStartNotAllowed');
+
+      await vm.connect(vm.server!);
+      await pumpEventQueue();
+
+      expect(vm.backgroundServiceWarning, isNotNull);
+      expect(vm.backgroundServiceWarning, contains('may not survive'));
+      expect(
+        vm.backgroundServiceWarning,
+        contains('ForegroundServiceStartNotAllowed'),
+        reason: "the platform's own reason is the only actionable part",
+      );
+    });
+
+    test('a platform without the service says nothing at all', () async {
+      // iOS has no foreground service and never will. A permanent warning the user cannot act on
+      // is worse than silence, which is why `bool` was not good enough here.
+      await repo.insertServer(server(name: 'nas'));
+      await repo.insertSetting('background_keep_alive', 'true');
+      await boot();
+      service.result = const SessionServiceResult.unsupported();
+
+      await vm.connect(vm.server!);
+      await pumpEventQueue();
+
+      expect(vm.backgroundServiceWarning, isNull);
+    });
+
+    test('an unchanged failure is not re-announced on every output frame', () async {
+      // _syncBackgroundSessions runs off session notifications, which arrive constantly while a
+      // shell is producing output. Re-announcing would bury the terminal under its own warning.
+      await repo.insertServer(server(name: 'nas'));
+      await repo.insertSetting('background_keep_alive', 'true');
+      await boot();
+      service.result = const SessionServiceResult.failed('refused');
+
+      await vm.connect(vm.server!);
+      await pumpEventQueue();
+      var notifications = 0;
+      vm.addListener(() => notifications++);
+
+      vm.setTerminalVisible(false);
+      vm.setTerminalVisible(true);
+      await pumpEventQueue();
+
+      expect(vm.backgroundServiceWarning, isNotNull);
+      expect(
+        notifications,
+        lessThan(3),
+        reason: 'the warning text did not change, so it must not notify again',
+      );
+    });
+
+    test('the warning can be dismissed and comes back only on a new failure', () async {
+      await repo.insertServer(server(name: 'nas'));
+      await repo.insertSetting('background_keep_alive', 'true');
+      await boot();
+      service.result = const SessionServiceResult.failed('refused');
+      await vm.connect(vm.server!);
+      await pumpEventQueue();
+      expect(vm.backgroundServiceWarning, isNotNull);
+
+      vm.dismissBackgroundServiceWarning();
+      expect(vm.backgroundServiceWarning, isNull);
+
+      service.result = const SessionServiceResult.failed('refused again, differently');
+      vm.setTerminalVisible(false);
+      await pumpEventQueue();
+
+      expect(vm.backgroundServiceWarning, contains('refused again'));
     });
 
     test('closing the last session takes the notification down', () async {

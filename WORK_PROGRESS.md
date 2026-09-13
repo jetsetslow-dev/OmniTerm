@@ -173,6 +173,61 @@ because `flutter` was missing from that run's environment — a harness error, n
   the app itself.
 - `git diff --check` and `git diff --cached --check` both clean.
 
+## A refused background service told nobody
+
+`SessionService.sync`/`stop` returned `bool`, and `_syncBackgroundSessions` used that only to clear
+a cache so the next change would retry — then dropped it. A keep-alive Android refused was
+completely silent. The user went on believing their shells were protected while backgrounded, which
+is the whole reason the feature exists. AGENTS.md's app-wide rule is explicit that user-triggered
+work owes a clear result or an actionable error; this owed one and gave nothing.
+
+The gap ran through three layers:
+
+- **The Kotlin bridge never reported failure at all.** `SessionServiceBridge` answered
+  `result.success(true)` unconditionally, so a `startForegroundService` that throws — Android 12+
+  raises `ForegroundServiceStartNotAllowedException` for a start attempted from the background —
+  crossed the channel as a raw exception with its reason lost. It now catches and answers
+  `result.error("session_service_failed", <the platform's own message>, null)`.
+- **`bool` could not carry the answer.** "iOS has no foreground service", "no plugin registered"
+  and "this Android device refused" were all `false`. `SessionServiceResult` now distinguishes
+  `ok` / `unsupported` / `failed(detail)`. The distinction is the point: iOS can never support this,
+  so a permanent warning there would be worse than silence.
+- **Nothing rendered it.** The Shell now shows `shell.backgroundService.warning` with the
+  platform's own reason and a dismiss control, for genuine refusals only.
+
+Two defects in the first version of this fix, found while testing it and worth recording:
+
+- Dismissing did nothing. A failure clears the retry cache, the next session notification retries,
+  it fails identically, and the warning reappeared at once. Dismissal now remembers the exact
+  message it silenced; a *different* failure, or a recovery, clears that memory.
+- The original code never cleared the warning when the service started working again. It does now.
+
+**Tests.** 3 channel cases (unsupported vs. refused-with-reason vs. answered-false), 4 view-model
+cases (refusal surfaced with its reason, unsupported stays silent, an unchanged failure does not
+re-announce on every output frame, dismissal sticks until something changes) and 2 widget cases.
+The shared double moved to `test/support/fake_session_service.dart` alongside the others.
+
+**Negative control.** With the result discarded exactly as before, 4 of the 6 new behavioural tests
+fail — including the widget test, which matters because a getter nothing renders is the same
+silence the fix set out to end. The two that pass both ways assert *absence* on unsupported
+platforms, which is correct in both directions.
+
+### Validation for this tree
+
+`./scripts/local-pr-check.sh --full` passed (`rc=0`); both diff checks clean.
+
+- Flutter full suite **2695 passed / 4 optional live skips**; `flutter analyze` clean in 6.3s.
+- Device profiles on API 35 `emulator-5554`: `core` **30 passed / 0 skipped** (25 Dart across 9
+  entrypoints, every one first attempt, + 3 native backup-picker + 2 native permissions), `host`
+  **2 passed / 0 skipped**. No unexpected warnings. These cover the Shell screen, which this
+  checkpoint changes.
+- Native unit tests reused UP-TO-DATE; no `app/` Kotlin changed here. The Kotlin that did change is
+  `flutter_app/android`'s bridge, compiled by both the device debug builds and the release APK/AAB.
+- Release APK/AAB, both SBOM graphs and strict dependency verification passed. Full-history secret
+  scan: 203 commits, no leaks.
+- The emulator was stopped for the heavy gate, so `local-pr-check`'s in-script connected matrix
+  reported **deferred**; the explicit device profiles above are this checkpoint's device evidence.
+
 ## Two tests that could not tell a real defect from a racing environment
 
 ### The key suites' cleanup could not converge, and said nothing useful when it failed
@@ -188,6 +243,13 @@ failure, so the packages *were* gone by `pm path` between entrypoints. Cards are
 id (`authKeys.key.<id>`), and the surviving card was id 1, so "one card whose delete did not take
 effect" is at least as likely as "two cards the cleanup could not clear". Do not write this up as a
 dirty-device flake; it is not established.
+
+**Narrowed on head `b86ed2c`, which passed.** That run hit the *same*
+`DELETE_FAILED_INTERNAL_ERROR` and `key_generate_test` still passed. What it did **not** have was
+the mid-run transport failure that rebooted the emulator and retried an entrypoint. So the failure
+correlates with the reboot, not with the failed uninstall — and a green run here is therefore not
+evidence that the cleanup change fixed anything, because the condition never recurred. Said plainly:
+the cause is still open.
 
 What *is* established is that `removeKeyIfPresent` — shared by `key_generate_test.dart` and
 `key_import_test.dart` — deleted `.first` exactly once and then asserted `findsNothing`. That

@@ -55,6 +55,29 @@ class ShellScreen extends StatelessWidget {
                 style: const TextStyle(color: OmniColors.red),
               ),
             ),
+          // Shown wherever the Shell is, with or without an active session: the sessions this
+          // warns about are precisely the ones the user is about to walk away from.
+          if (vm.backgroundServiceWarning != null)
+            Padding(
+              padding: const EdgeInsets.all(8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      vm.backgroundServiceWarning!,
+                      key: const ValueKey('shell.backgroundService.warning'),
+                      style: const TextStyle(color: OmniColors.amber),
+                    ),
+                  ),
+                  IconButton(
+                    key: const ValueKey('shell.backgroundService.dismiss'),
+                    icon: const Icon(Icons.close),
+                    tooltip: 'Dismiss',
+                    onPressed: vm.dismissBackgroundServiceWarning,
+                  ),
+                ],
+              ),
+            ),
           Expanded(
             child: session == null
                 ? _ConnectPane(vm: vm, licenseController: licenseController)
