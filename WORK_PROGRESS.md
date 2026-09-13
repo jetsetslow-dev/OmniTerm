@@ -179,6 +179,50 @@ because `flutter` was missing from that run's environment — a harness error, n
   the app itself.
 - `git diff --check` and `git diff --cached --check` both clean.
 
+## Where connect time actually goes — measured, and the hypothesis was right
+
+The incoming handover recorded a hypothesis and was explicit it must be measured, never claimed:
+"Flutter does not pool bastion clients, so sequential probes can each reauthenticate". Measured on
+the repository's own fixtures (`test/dartssh_latency_live_test.dart`, opt-in via
+`OMNITERM_SETUP_FIXTURE`):
+
+```
+direct  first exec (connect + auth + channel) : 152ms
+direct  second exec (pooled connection)       :  45ms   3.4x faster
+bastion first exec (jump auth + target auth)  : 265ms
+bastion second exec (NOT pooled, by design)   : 264ms   no saving at all
+bastion first-connect overhead vs direct      : 113ms
+```
+
+**These are loopback Docker containers on one machine.** The *shape* transfers; the milliseconds are
+not a claim about any user's hosts, and must not be quoted as one.
+
+**The hypothesis is confirmed.** The cause is explicit in `DartSshTransport._acquire`: a jump
+connection is leased `unpooled`, so every `exec` through a bastion repeats the whole handshake —
+bastion TCP, bastion authentication, `forwardLocal`, target authentication. The direct path pools
+and shows it.
+
+**It is parity, not a Flutter defect.** Compose does the same thing and says so: "Jump-host sessions
+are not pooled" (`data/ssh/JschSftp.kt:29`). Both implementations share this limitation. Changing it
+would alter the connection model on both platforms — an idle authenticated bastion session held open
+is a security-adjacent decision, not a parity cleanup — so it is measured and recorded here rather
+than changed.
+
+### The first version of this measurement asserted nothing
+
+It ended with `expect(secondJump, lessThan(firstJump))`, which passed on 269ms versus 279ms. That is
+noise: it would have passed whether or not any reuse happened, which is precisely the guard that
+proves nothing. The direct-path assertion is now `secondDirect * 2 < firstDirect`, far outside what a
+loaded machine produces, and the bastion path **reports rather than asserts**, with the reason and
+the `JschSftp.kt:29` citation written into the test. No wall-clock budget is asserted anywhere: it
+would be flaky, and worse, it would read as a promise about user hosts.
+
+### Validation for this tree
+
+Every stage green: `core rc=0`, `host rc=0`, `local-pr-check rc=0`, both diff checks `0`,
+`FAILED=0`. The harness adds a seventh optional live skip in the ordinary gate; its numbers come
+from the explicit fixture run above.
+
 ## A saved server that connects in Compose failed in Flutter
 
 Found by doing what the incoming handover asked *first* — "verify blank bastion user fallback/host
