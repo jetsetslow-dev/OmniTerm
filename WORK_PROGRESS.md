@@ -179,6 +179,42 @@ because `flutter` was missing from that run's environment — a harness error, n
   the app itself.
 - `git diff --check` and `git diff --cached --check` both clean.
 
+## Attempted and measured dead: forcing a real recreation from the device
+
+The incoming handover asked for shell-variable continuity *through* recreation, not just engine
+identity. The Dart lifecycle flow already sets `OT_LIFECYCLE=<token>` and re-probes it after each
+`pressHome()`/`openApp()` cycle — the missing ingredient was a real Activity destruction for those
+probes to cross.
+
+**Every obvious lever is ruled out by the manifest.** `configChanges` covers
+`orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode`,
+so Android calls `onConfigurationChanged` rather than restarting: rotation, dark mode (Patrol's
+`enableDarkMode`) and font scale all do nothing here.
+
+**Android's "Don't keep activities" was tried and does not work in this harness.** Enabling
+`always_finish_activities` from the instrumentation via `UiAutomation.executeShellCommand`, around
+the lifecycle flow only and restored in a `finally`, produced:
+
+```
+MainActivity lifecycle events observed: 120, of which destructions: 0
+```
+
+The counter proves the callback *was* watching — 120 events across the flow — and that **not one
+destruction happened**. A direct `adb` check was inconclusive for a different reason: the
+`ActivityRecord` stays in task history after Home, which describes the record rather than the
+instance. Hypothesis for why, untested: the app holds a foreground service during these flows, and
+that may keep the task out of the state the setting acts on.
+
+**The first attempt passed and proved nothing.** With the setting enabled but no destruction
+counter, the whole suite went green — the probes were crossing an ordinary background/foreground
+transition exactly as before. The counter is the only reason that is known. Recorded because the
+next attempt will be tempted by the same green result.
+
+The attempt is reverted; `MainActivityTest` is back to the committed guard. What remains true:
+engine identity and `FLAG_SECURE` survival are proven across a forced `recreate()`, and live-shell
+continuity through a *device-initiated* recreation is still unproven. A working approach needs a
+controlled recreation trigger that this harness does not currently have.
+
 ## One proxy, two pooled connections, over a trailing space
 
 The follow-up flagged when the bastion parity fix landed. `SshSessionPool.poolKey` embedded
