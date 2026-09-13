@@ -10,6 +10,17 @@ secrets here: moving it later does not erase Git history.
 
 ## Resume here
 
+**Codex-to-Claude handoff cutoff: September 13, 2026 at 10:30 AM IST today (05:00 UTC), not tomorrow.**
+Stop starting new implementation batches at that time, finish a safe in-progress step, and record
+actual completed/pending work, dirty files, validation and running jobs. A local, exact-session
+external cutoff timer has been enabled; operational details are in the private handover
+`secrets/internal-docs/docs/CLAUDE_HANDOFF_2026-09-13.md`. Retire this Codex continuation schedule
+at handoff; stale `continue` messages must not restart implementation or recreate it. This is a
+handoff, not a claim that the whole review is complete. Claude must return an equivalent detailed
+handover and a ready-to-use prompt for Codex to independently review and finalize the codebase.
+The cutoff retires the outgoing Codex session; it does not forbid Claude's subsequently authorized
+continuation from the handover.
+
 1. Read `AGENTS.md`. Inspect `git status`, `git log -5`, and the remote branch before editing.
 2. Check PR #92's **actual head SHA** and all its checks. Signed checkpoints `64d8e23` and
    `925ae3c` were pushed; the latter reconciles `main` (`bf227d2`) into this branch without changing
@@ -19,11 +30,13 @@ secrets here: moving it later does not erase Git history.
    Flutter analysis/tests, Android/iOS builds and emulator testing passed. All selected jobs on
    that exact head reached terminal success; the separate Scorecard result is neutral. Skipped
    jobs are unused docs-only companions, not missing platform gates. Never infer CI success from
-   local results or reuse these results for the next source checkpoint.
+   local results or reuse these results for the next source checkpoint. Later SSH checkpoint
+   `85f5cfe` had one terminal Flutter surface failure. This checkpoint contains the locally
+   validated swipe/runner repair below; its replacement exact-head CI must still be monitored.
 3. Preserve the existing fixes. Finish the remaining investigations below in small batches; run
    the required validation, update this tracker, commit with signing enabled, push, and monitor
    every selected check to completion before publishing the next replacement head.
-4. Keep the session-targeted external continuation schedule active while authorized work remains,
+4. For an incoming agent, keep its own session-targeted continuation active while work remains,
    as required by `AGENTS.md`. Re-establish it on a replacement machine using that client's own
    verified mechanism; local timers do not survive loss of the original host.
 
@@ -42,7 +55,57 @@ incoming hotfixes were already present. Before this tracker-only edit, the resol
 was byte-identical to checkpoint `64d8e23` (tree `44ac3dc54ff8690544e4a36d00abab5a1a33647a`).
 That merge changed no build-affecting source. The newer SSH setup batch below has its own validation.
 
-## Next SSH setup checkpoint — locally validated; push and exact-head CI pending
+## SSH setup checkpoint (`85f5cfe`) — pushed; one exact-head CI failure
+
+Signed and pushed `85f5cfe7392caafa4afdd249f635456a06777916`; all selected checks are terminal.
+Native Build & Test, release SBOMs, API 29 Room/backup (7 tests), CodeQL, dependency review,
+Scorecard analysis, both secret scans, Flutter analysis/tests, release artifacts/SBOMs and iOS
+passed. Flutter emulator failed: the surface sweep expected Builder after a swipe but remained
+on Stacks (`app_surface_stress_test.dart:203`). Exact job `103606496057` logs were inspected;
+the locally validated repair follows below. No unchanged failed workflow rerun. The replacement
+head must pass its own checks before PR #92 can be described as green.
+
+Separately, a new API 35 Activity-recreation guard failed for the expected reason:
+the replacement Activity owns a different Flutter engine. Its Dart Home/background/tmux flow
+passed, but final native JUnit result is **1 failure / 0 skips**, not a pass. Production engine
+retention is not fixed yet. The guard currently proves engine identity, not a live shell during
+recreation; that stronger fixture test is still required. The failing guard is preserved privately
+as a patch, not included in the swipe repair tree before its production ownership fix exists.
+
+### Swipe/runner repair checkpoint — local validation complete; replacement CI pending
+
+The deterministic paused-swipe guard failed on API 35 with unchanged production gesture code:
+the selected offline host stayed on Stacks instead of opening Builder. Flutter required nonzero
+release velocity; Kotlin uses deliberate distance. The repair follows Kotlin's 96 logical-pixel
+threshold and 2.2 horizontal/vertical ratio, once per gesture, while retaining nested-scroll gesture
+ownership. Eight focused widget cases and existing navigation tests passed (**32 / 0 skipped**).
+Expanded navigation/Infra/widget validation passed **71 / 0 skipped**, analyzer clean.
+The first API 35 core run passed all 25 plain Dart cases (including the full surface sweep) and
+3 native backup picker cases. It then stopped before the 2 native permission cases: Patrol's
+optional update lookup hit a network reset. This was **28 passed / 2 unstarted**, not a passing
+core profile, and the host/full gate were not reached. Normal debug launcher restoration passed.
+The device runner now invokes the pinned Patrol CLI in its supported CI mode with analytics off,
+matching hosted execution and avoiding optional update-service dependence. A new isolated runner
+guard failed on the old invocation for that exact missing environment, then passed with the fix;
+it also proves a real Patrol test failure propagates unchanged without retry. Both local preflight
+and required native CI already execute this same runner regression script.
+The replacement API 35 core run passed **30 / 0 skipped** (25 Dart, 3 native backup picker,
+2 native permission cases); fixture-host run passed **2 / 0 skipped** (Dart fixture + native
+Home/background/tmux). No unexpected warnings. `./scripts/local-pr-check.sh --full` **passed**:
+Flutter **2,676 passed / 4 optional live-test skips**, analyzer clean. Native unit/lint tasks reused
+Gradle's up-to-date results for unchanged native source; they were not newly executed in this run.
+The reused native results contain **558 passed / 2 optional tmux replay skips per variant**,
+560 discovered, zero failures/errors. The four Flutter live skips have separate earlier evidence
+for unchanged SSH code, not new execution in this batch. No Linux ARM64 discovery exclusion applies
+on this x86_64 host.
+Fresh strict dependency/compile verification, both native release SBOM graphs, Flutter APK/AAB/SBOM
+and release test-code exclusion passed. No checksum metadata changes. Full-history secret scanning
+passed. The emulator was deliberately stopped for the heavy gate: its in-script device matrix was
+deferred, not counted as passing. Separate API 35 Room afterward: **4 passed / 0 skipped**. Normal
+Flutter debug launcher rebuilt/reinstalled/reopened successfully. Stage/secret-check/sign/push this
+validated tree and monitor every selected replacement exact-head job; do not infer CI success.
+
+### Validation for the prior SSH deadline checkpoint (`85f5cfe`)
 
 - Reproduced two indefinite Flutter setup waits: a loopback peer accepted TCP but never sent an
   SSH banner, both directly and as a bastion. Both new guards failed on the unfixed transport.
@@ -75,8 +138,8 @@ That merge changed no build-affecting source. The newer SSH setup batch below ha
   release test-code checks passed. The owned emulator was intentionally stopped during the heavy
   gate, so its in-script connected matrix was deferred, not counted as passing; separate runtime
   and Room evidence is listed above. The new head still needs its own API 29 migration/platform CI.
-- Update this tracker, repeat staged secret scanning and both diff checks, sign/commit/push, then
-  observe every selected check for the replacement PR head. No merge or release is implied.
+- The above local validation belongs to `85f5cfe`; repair the failed surface gate and validate
+  the replacement final tree before its own signed checkpoint. No merge or release is implied.
 
 The three new live setup tests are opt-in in the ordinary unit suite. Run
 `flutter test test/dartssh_setup_live_test.dart` with `OMNITERM_SETUP_FIXTURE=yes` and privately
@@ -242,6 +305,9 @@ Do not cite plain `connectedAndroidTest` as opt-in E2E coverage.
    Continue measuring cold-connect and tmux startup latency; the new setup deadlines prevent hangs,
    but are not a claim that healthy connections are faster. Verify blank bastion username fallback
    and endpoint trimming against Kotlin with fixture regressions before changing them.
+   Follow up Flutter's tmux preflight before its busy/attempt guard, error-string classification
+   (transport failures must not mean tmux is missing), and channel cleanup if persistence fails
+   after a shell opens. Add held-probe/concurrent-attempt and post-open storage-failure tests.
 2. **Fleet/container proof and consistency:** add a native fixture guard that taps all three Fleet
    diagnostics and proves popup streaming without changing Broadcast; Flutter has this live guard.
    Exercise real Compose Update with delayed output/stderr and local-build fallback. Audit mutation
@@ -251,6 +317,9 @@ Do not cite plain `connectedAndroidTest` as opt-in E2E coverage.
    and overflow indicators consistent. Do not declare full Kotlin/Flutter parity based only on the
    completed fixes above. Flutter backup picker cancellation still has legacy silent-result
    handling; add explicit cancellation feedback consistently in both apps in the backup UX batch.
+   Also audit backup trust-store export omissions, selection/last-export metadata IO failures and
+   first-operation notification permissions overlapping the document picker. Do not silently omit
+   pinned keys or misreport a saved file when only its metadata update failed.
 4. **Publishing discipline:** checkpoint frequently, monitor every pushed head, fix failures from
    exact job logs, and leave required reviews/protections/signing/checks intact. This request does
    not authorize merging to `main`, publishing a release, or merging unrelated automated PRs.
@@ -265,3 +334,32 @@ Do not cite plain `connectedAndroidTest` as opt-in E2E coverage.
   Review required; docs-only placeholder checks are not evidence of app-build validation.
 
 Re-query these heads/statuses before acting. No automated PR has been changed or merged by this review.
+
+## Claude continuation and return-review prompt
+
+Read AGENTS.md, this tracker, the private September 13 Claude handover and the original release
+record. Continue the authorized Kotlin/Flutter reliability and feature/functionality parity review
+on `migration-to-flutter`. First verify actual branch/HEAD, remote, dirty files, PR #92 exact-head
+checks and running local jobs. Preserve existing changes and all completed fixes above. Private
+notes are supplementary; this tracked document must remain enough to recover on another machine.
+
+Address exact-head CI failures from their actual job logs, then the remaining SSH lifecycle and
+latency, Fleet/container streaming/warning and app-wide feedback/parity work above. Use repository
+fixtures only. Add deterministic regression tests and real-runtime before/after proof where required;
+show progress, explicit results, cancellation/skip reasons and actionable errors. Preserve host
+identity semantics, app-lock/privacy, explicit Quit, security checks and platform-specific limits.
+
+Make frequent signed checkpoints only after the full local gate validates each build-affecting
+final tree; run both diff checks and staged secret scanning. Push only the working branch, monitor
+every selected exact-head check through terminal state and keep this tracker current. Never rerun
+unchanged failed workflows, count skips as passes, merge main, merge automated PRs or release without
+new authority. Set up your own verified exact-session continuation schedule per AGENTS.md, not the
+retired Codex timer, and stop it at completion or handback. Stale `continue` is not new work.
+
+Before returning to the user, leave a dated `CLAUDE_TO_CODEX_REVIEW` document under private docs and
+link it here. Include completed/pending work, SHAs, dirty files, tests and commands with counts/skips,
+before/after evidence, exact CI status, risks, platform gaps and any running jobs/stop/recovery steps.
+Include a ready-to-use prompt for Codex to independently review your changes, reproduce critical
+regressions, verify parity and security, finish remaining authorized issues and finalize only when
+all required evidence is complete. Distinguish implementation-complete from validation-complete;
+do not declare full parity merely because a subset passed. Keep the public summary sanitized.

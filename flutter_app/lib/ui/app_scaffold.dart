@@ -49,6 +49,7 @@ import '../domain/permission_copy.dart';
 import 'widgets/host_limit_gate.dart';
 import 'widgets/omni_chrome.dart';
 import 'widgets/omni_components.dart';
+import 'widgets/screen_swipe_area.dart';
 
 /// The 7 top-level bottom-nav destinations, with the labels and accent colours from
 /// `AppCoreScaffold` in `ui/AppUi.kt`.
@@ -118,15 +119,9 @@ class AppCoreScaffold extends StatelessWidget {
     Widget body = _ScreenBody(screen: current);
 
     if (allowGlobalGestures) {
-      body = GestureDetector(
+      body = ScreenSwipeArea(
         key: const ValueKey('app.screenSwipe'),
-        behavior: HitTestBehavior.translucent,
-        onHorizontalDragEnd: (details) {
-          final v = details.primaryVelocity ?? 0;
-          if (v == 0) return;
-          // A leftward fling (negative velocity) advances to the next tab.
-          _swipeNavigate(context, forward: v < 0);
-        },
+        onSwipe: (forward) => _swipeNavigate(context, forward: forward),
         child: RefreshIndicator(
           onRefresh: () => shell.refreshCurrentScreen(() => _refreshScreen(context, current)),
           backgroundColor: Theme.of(context).colorScheme.surface,

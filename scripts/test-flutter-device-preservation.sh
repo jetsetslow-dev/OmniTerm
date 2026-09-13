@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Executed as the fake Patrol binary by this script's isolated runner fixture below. This checks
+# the actual child environment, not just a grep for an assignment in the production script.
+if [[ "${1:-}" == test && "${OMNITERM_TEST_PATROL_STUB:-false}" == true ]]; then
+  if [[ "${CI:-}" != true || "${PATROL_ANALYTICS_ENABLED:-}" != false ]]; then
+    echo 'Patrol must run noninteractively without optional update/analytics network calls' >&2
+    exit 41
+  fi
+  printf '%s\n' "$*" >>"$OMNITERM_TEST_PATROL_LOG"
+  if [[ "${OMNITERM_TEST_PATROL_FAIL:-false}" == true ]]; then
+    echo 'Synthetic Patrol test assertion failed' >&2
+    exit 23
+  fi
+  echo 'Synthetic Patrol tests passed'
+  exit 0
+fi
+
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_DIR="$(mktemp -d)"
 trap 'rm -rf "$TEST_DIR"' EXIT
@@ -167,4 +183,42 @@ if [[ "$(grep -c '^test integration_test/app_surface_stress_test\.dart ' "$OMNIT
   exit 1
 fi
 
-echo 'Flutter physical-device preservation tests passed'
+# A pinned Patrol test runner must not depend on the availability of its optional package-update
+# or analytics endpoints. Deliberately inherit the opposite settings to prove the runner scopes
+# the noninteractive configuration to the actual Patrol child, as hosted CI already does.
+printf 'void main() { patrolTest("fixture", (_) {}); }\n' \
+  >"$OMNITERM_TEST_FLUTTER_APP/integration_test/app_surface_stress_test.dart"
+export OMNITERM_TEST_PATROL_LOG="$TEST_DIR/patrol.log"
+if ! CI=false PATROL_ANALYTICS_ENABLED=true OMNITERM_TEST_PATROL_STUB=true \
+  PATROL_BIN="$ROOT/scripts/test-flutter-device-preservation.sh" \
+  FLUTTER_BIN=flutter OMNITERM_DEVICE_ARTIFACTS="$TEST_DIR/patrol-artifacts" \
+  OMNITERM_FLUTTER_APP_ROOT="$OMNITERM_TEST_FLUTTER_APP" OMNITERM_PLAIN_TEST_TIMEOUT=0 \
+  "$ROOT/scripts/flutter-device-test.sh" \
+    --device daily-device --platform android --profile surface --no-fixtures --preserve-device \
+    >"$TEST_DIR/patrol-runner.log" 2>&1; then
+  cat "$TEST_DIR/patrol-runner.log" >&2
+  exit 1
+fi
+grep -Fq 'test --target integration_test/app_surface_stress_test.dart' "$OMNITERM_TEST_PATROL_LOG"
+
+# Noninteractive does not mean ignoring failures. A real nonzero test exit must propagate and
+# must not be retried just because the plain Flutter runner has a transport-recovery path.
+set +e
+CI=false PATROL_ANALYTICS_ENABLED=true OMNITERM_TEST_PATROL_STUB=true \
+  OMNITERM_TEST_PATROL_FAIL=true PATROL_BIN="$ROOT/scripts/test-flutter-device-preservation.sh" \
+  FLUTTER_BIN=flutter \
+  OMNITERM_DEVICE_ARTIFACTS="$TEST_DIR/patrol-failure-artifacts" \
+  OMNITERM_FLUTTER_APP_ROOT="$OMNITERM_TEST_FLUTTER_APP" OMNITERM_PLAIN_TEST_TIMEOUT=0 \
+  "$ROOT/scripts/flutter-device-test.sh" \
+    --device daily-device --platform android --profile surface --no-fixtures --preserve-device \
+    >"$TEST_DIR/patrol-failure-runner.log" 2>&1
+patrol_rc=$?
+set -e
+if [[ "$patrol_rc" != 23 || "$(wc -l <"$OMNITERM_TEST_PATROL_LOG")" != 2 ]]; then
+  echo 'Patrol test failure was masked or retried' >&2
+  cat "$TEST_DIR/patrol-failure-runner.log" >&2
+  exit 1
+fi
+grep -Fq 'Synthetic Patrol test assertion failed' "$TEST_DIR/patrol-failure-runner.log"
+
+echo 'Flutter device preservation, recovery and noninteractive Patrol tests passed'

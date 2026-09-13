@@ -534,6 +534,10 @@ if [ "$TEST_RC" -eq 0 ] && [ "${#PATROL_TESTS[@]}" -gt 0 ]; then
       fi
       (
         cd "$FLUTTER_APP" &&
+          # Patrol's supported CI mode skips the optional pub.dev update lookup. A network reset
+          # there must not prevent a pinned native suite from starting on a local runner. Scope
+          # this to Patrol (including analytics opt-out); keep its real test exit code unchanged.
+          CI=true PATROL_ANALYTICS_ENABLED=false \
           PATH="$FLUTTER_DIR:$FLUTTER_DIR/cache/dart-sdk/bin:$PATH" \
             "$PATROL_BIN" test --target "$test_file" -d "$DEVICE" \
               --test-server-port "$PATROL_TEST_PORT" --app-server-port "$PATROL_APP_PORT" \

@@ -198,6 +198,31 @@ void main() {
     navigation.navigateTo(Screen.infra);
     infra.activeTab = InfraTab.stacks;
     await tester.pumpAndSettle();
+    // A deliberate drag is still a swipe when the finger pauses before release. The native app
+    // uses distance; requiring non-zero release velocity makes this gesture silently do nothing.
+    final swipeStart = tester.getCenter(find.byKey(const ValueKey('app.screenSwipe')));
+    final pausedSwipe = await tester.startGesture(swipeStart);
+    await pausedSwipe.moveTo(
+      swipeStart + const Offset(-120, 0),
+      timeStamp: const Duration(milliseconds: 100),
+    );
+    await pausedSwipe.moveTo(
+      swipeStart + const Offset(-200, 0),
+      timeStamp: const Duration(milliseconds: 200),
+    );
+    await pausedSwipe.moveTo(
+      swipeStart + const Offset(-200, 0),
+      timeStamp: const Duration(milliseconds: 500),
+    );
+    await pausedSwipe.up(timeStamp: const Duration(milliseconds: 510));
+    await tester.pumpAndSettle();
+    expect(
+      infra.activeTab,
+      InfraTab.builder,
+      reason: 'A deliberate paused swipe must reach the offline Compose builder',
+    );
+    infra.activeTab = InfraTab.stacks;
+    await tester.pumpAndSettle();
     await tester.fling(find.byKey(const ValueKey('app.screenSwipe')), const Offset(-240, 0), 1000);
     await tester.pumpAndSettle();
     expect(infra.activeTab, InfraTab.builder);
