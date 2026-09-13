@@ -21,6 +21,16 @@ import 'package:omniterm/ui/view_model/scripts_view_model.dart';
 
 import 'support/fake_secure_storage.dart';
 
+/// A trust store whose export fails, standing in for a locked or unavailable device keystore.
+class _UnreadableTrustStore extends SshHostKeyTrust {
+  _UnreadableTrustStore(super.store);
+
+  @override
+  Future<Map<String, String>> exportEntries() async {
+    throw StateError('keystore unavailable');
+  }
+}
+
 void main() {
   late AppDatabase db;
   late AppRepository repo;
@@ -139,6 +149,73 @@ void main() {
 
       expect(kept.keys, ['10.0.0.1|ssh-ed25519']);
     });
+
+    test('a trust store that cannot be read is reported, not hidden', () async {
+      // The defect: `_pinnedHostKeys` caught the failure and returned `{}`, so the file went out
+      // looking complete. Compose lets this throw and fails the whole backup
+      // (`ui/AppViewModel.kt:11714`); Flutter wrote a partial file and said nothing, and the user
+      // only discovered it at restore time with every host downgraded to trust-on-first-use.
+      await app.start();
+      await Future<void>.delayed(Duration.zero);
+      final vm = BackupViewModel(
+        app,
+        hostKeyTrust: _UnreadableTrustStore(
+          SecureHostKeyStore(storage: FakeSecureStorage(<String, String>{})),
+        ),
+      );
+      await repo.insertServer(server(name: 'nas'));
+      await settle();
+
+      final contents = await vm.exportBackup('a-long-enough-passphrase');
+      expect(contents, isNotNull, reason: 'every other section is still worth writing');
+      vm.reportSaved('somewhere', encrypted: true);
+
+      expect(vm.status, contains('could NOT be read'));
+      expect(vm.status, contains('Back up again'));
+      expect(
+        vm.status,
+        isNot(contains('ssh-')),
+        reason: 'a warning about keys must never contain one',
+      );
+      vm.dispose();
+    });
+
+    test('a readable but empty trust store is not an omission', () async {
+      // Nothing was lost, so nothing may be claimed. Warning here would train the user to ignore it.
+      final vm = await boot();
+      await repo.insertServer(server(name: 'nas'));
+      await settle();
+
+      await vm.exportBackup('a-long-enough-passphrase');
+      vm.reportSaved('somewhere', encrypted: true);
+
+      expect(vm.status, isNot(contains('could NOT be read')));
+      vm.dispose();
+    });
+
+    test('a trust-store failure is silent when servers were not selected', () async {
+      // `BackupPayload.encode` drops knownHosts unless the closed selection carries servers, so
+      // there is nothing missing from this file to warn about.
+      await app.start();
+      await Future<void>.delayed(Duration.zero);
+      final vm = BackupViewModel(
+        app,
+        hostKeyTrust: _UnreadableTrustStore(
+          SecureHostKeyStore(storage: FakeSecureStorage(<String, String>{})),
+        ),
+      );
+      await repo.insertSetting('theme', 'dark');
+      await settle();
+      vm
+        ..selectNone()
+        ..toggleSection(BackupSection.settings, enabled: true);
+
+      await vm.exportBackup('');
+      vm.reportSaved('somewhere', encrypted: false);
+
+      expect(vm.status, isNot(contains('could NOT be read')));
+      vm.dispose();
+    });
   });
 
   /// Exports and returns the *payload*, decrypting when a passphrase was used.
@@ -154,6 +231,28 @@ void main() {
     final json = passphrase.isEmpty ? contents! : await decryptBackup(contents!, passphrase);
     return jsonDecode(json) as Map<String, dynamic>;
   }
+
+  group('a trust store that could not be read', () {
+    test('the omission is real: the file carries no knownHosts at all', () async {
+      // Asserting the message without asserting the file would let a warning describe a backup
+      // that actually did contain the keys, or miss one that silently did not.
+      await app.start();
+      await Future<void>.delayed(Duration.zero);
+      final unreadable = BackupViewModel(
+        app,
+        hostKeyTrust: _UnreadableTrustStore(
+          SecureHostKeyStore(storage: FakeSecureStorage(<String, String>{})),
+        ),
+      );
+      await repo.insertServer(server(name: 'nas'));
+      await settle();
+
+      final document = await exportedDocument(unreadable);
+      expect(document['servers'], isNotEmpty, reason: 'the rest of the backup is intact');
+      expect(document.containsKey('knownHosts'), isFalse);
+      unreadable.dispose();
+    });
+  });
 
   group('export', () {
     test('carries the selected sections and omits the rest', () async {

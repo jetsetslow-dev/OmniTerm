@@ -173,6 +173,55 @@ because `flutter` was missing from that run's environment — a harness error, n
   the app itself.
 - `git diff --check` and `git diff --cached --check` both clean.
 
+## A backup quietly dropped every pinned host key
+
+`BackupViewModel._pinnedHostKeys()` caught any trust-store failure and returned `{}`. The
+tolerance is right — a locked keystore must not cost the user every other section — but it was
+**silent**, and the file looked complete. The user found out at restore time, when every host had
+dropped from "verified against a pinned key" to trust-on-first-use: the next connection is accepted
+as *new* rather than flagged as *changed*, which is the single thing pinning exists to catch.
+
+It was also a parity divergence. Compose does not catch at all (`ui/AppViewModel.kt:11714`) —
+`exportEntries()` throwing fails the whole backup. Native was loud and total; Flutter was silent and
+partial. Flutter keeps the more forgiving behaviour and gains the missing half: the save message now
+says the pinned host keys could not be read, that they are not in the file, what restoring it will
+do, and to back up again once the keystore is available. It rides on `_status`, which
+`backup_screen.dart` already renders — checked, after the background-service fix showed how easy it
+is to leave a warning in a getter nothing draws.
+
+Separately, the trust store was read **unconditionally**, even though `BackupPayload.encode` drops
+`knownHosts` unless the closed selection carries servers. A failure could therefore have warned
+about keys that were never going to be written. The read is now gated on the same condition as the
+write.
+
+**Tests and control.** Four cases; against real `HEAD`:
+
+| case | on `HEAD` | what it is |
+| --- | --- | --- |
+| a trust store that cannot be read is reported, not hidden | **fails** | the real defect |
+| the file carries no `knownHosts` at all | passes | characterises the file, so the warning is not decorative |
+| a readable but empty store is not an omission | passes | required silence — nothing was lost |
+| a failure is silent when servers were not selected | passes | required silence — nothing would have been written |
+
+Only one is a find. The second matters anyway: without asserting the file contents, the warning
+could describe an omission that did not happen. The warning is also asserted to contain no `ssh-`
+substring — a warning about keys must never contain one.
+
+### Validation for this tree
+
+`./scripts/local-pr-check.sh --full` passed (`rc=0`); both diff checks clean. An earlier attempt
+failed on the `dart format` gate — a hand-edited test file, the same mistake as the key-cleanup
+checkpoint, now recorded so it stops recurring. `flutter analyze` does not catch it.
+
+- Flutter full suite **2702 passed / 4 optional live skips**; `flutter analyze` clean in 5.6s.
+- Device profiles on API 35 `emulator-5554`: `core` **30 passed / 0 skipped** (25 Dart across 9
+  entrypoints, every one first attempt, + 3 native backup-picker + 2 native permissions), `host`
+  **2 passed / 0 skipped**. Run before the format-only delta, which changes no behaviour.
+- **The connected matrix ran** this time: **58 tests = 24 passed / 34 opt-in `E2e` skips / 0
+  failures**. Still not the required route sweep — `E2eAppSurfaceStressTest` is among the skips.
+- Native unit tests reused UP-TO-DATE; no Kotlin changed. Release APK/AAB, both SBOM graphs and
+  strict dependency verification passed. Full-history secret scan: 205 commits, no leaks.
+
 ## Who owns the SSH channel before a session takes it
 
 Two defects between `openShell` returning a channel and a `ShellSession` adopting it.

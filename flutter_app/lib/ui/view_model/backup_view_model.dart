@@ -82,14 +82,24 @@ class BackupViewModel extends ChangeNotifier {
   /// Pinned host keys, which travel with the hosts in a backup.
   final SshHostKeyTrust hostKeyTrust;
 
+  /// Set when the last export could not read the trust store, so the file went out without the
+  /// pinned host keys it should have carried.
+  ///
+  /// Silence here was the defect. Compose lets `exportEntries()` throw and fails the whole backup
+  /// (`ui/AppViewModel.kt:11714`); Flutter swallowed it and wrote a file that looked complete. The
+  /// user only found out at restore time, when every host had quietly dropped from "verified
+  /// against a pinned key" to trust-on-first-use — which is the one thing pinning exists to catch.
+  bool _hostKeysOmitted = false;
+
   /// Pinned host keys for the export, or none if the trust store cannot be read.
   ///
-  /// A locked or unavailable keystore must not cost the user their whole backup — every other
-  /// section is still worth writing. The restore side already tolerates the key being absent.
+  /// Still tolerant, deliberately: a locked or unavailable keystore must not cost the user every
+  /// other section. What changes is that the omission is now reported rather than hidden.
   Future<Map<String, String>> _pinnedHostKeys() async {
     try {
       return await hostKeyTrust.exportEntries();
     } catch (_) {
+      _hostKeysOmitted = true;
       return const {};
     }
   }
@@ -211,6 +221,7 @@ class BackupViewModel extends ChangeNotifier {
     _busy = true;
     _busyMessage = 'Creating backup…';
     _error = null;
+    _hostKeysOmitted = false;
     _safeNotify();
 
     try {
@@ -229,7 +240,11 @@ class BackupViewModel extends ChangeNotifier {
         alertHistory: await repository.getAlertHistory(),
         networkShares: await repository.getAllNetworkShares(),
         crashLogs: crashLog.entries,
-        knownHosts: await _pinnedHostKeys(),
+        // `BackupPayload.encode` drops these unless the closed selection carries servers, so a
+        // trust-store failure is only worth reading — or reporting — when they would be written.
+        knownHosts: _selection.withReferentialClosure().contains(BackupSection.servers)
+            ? await _pinnedHostKeys()
+            : const {},
       );
 
       // An unencrypted export is only reachable for a selection with nothing sensitive in it.
@@ -303,6 +318,11 @@ class BackupViewModel extends ChangeNotifier {
       else
         'It is not encrypted, because nothing sensitive was selected. Anyone who opens the file can '
             'read it.',
+      // A partial backup the user knows about is recoverable; one they do not is not.
+      if (_hostKeysOmitted)
+        'The pinned host keys could NOT be read, so they are not in this file. Restoring it will '
+            'leave those hosts trusting the next key they are offered instead of the one you '
+            'verified. Back up again once the device keystore is available.',
     ].join(' ');
     _safeNotify();
   }
