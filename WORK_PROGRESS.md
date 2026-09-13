@@ -22,6 +22,12 @@ handover and a ready-to-use prompt for Codex to independently review and finaliz
 The cutoff retires the outgoing Codex session; it does not forbid Claude's subsequently authorized
 continuation from the handover.
 
+**Return handover for Codex:** `secrets/internal-docs/docs/CLAUDE_TO_CODEX_REVIEW_2026-09-13.md`
+(private, gitignored). It carries the per-checkpoint evidence, the negative-control counts as finds
+versus guards, the two claims this session did **not** prove, the CI-filter decision left to a
+human, running jobs with stop commands, and a ready-to-use prompt asking Codex to review these
+changes independently. It is kept current as work proceeds rather than written at the end.
+
 **Claude session resumed from that handover on 2026-09-13.** It did not revive the retired Codex
 schedule. Claude Code has no external, session-targeted `queue` command equivalent to the Codex
 adapter in `AGENTS.md`, so its 30-minute `continue` schedule runs on the client's own in-session
