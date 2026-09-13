@@ -52,14 +52,43 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  /// Removes **every** card for [alias] and proves the removal actually converged.
+  ///
+  /// This used to delete `.first` exactly once. That cannot clean up a device holding more than
+  /// one matching card, and the `findsNothing` assertion downstream then reported an anonymous
+  /// finder dump — which is how a CI failure on PR #92 arrived with no way to tell the two
+  /// candidate causes apart. Looping until the count reaches zero separates them: a device that
+  /// was not left clean converges, while a delete that does not take effect stops making progress
+  /// and is named as such.
+  ///
+  /// Progress, not a clock, is the loop's bound, so it cannot spin. The inner wait exists because
+  /// the deletion is a database write observed through a stream: `pumpAndSettle` can return before
+  /// the rebuilt list has lost the row, and calling that a failed delete would be wrong.
   Future<void> removeKeyIfPresent(WidgetTester tester) async {
-    if (keyCard(alias).evaluate().isEmpty) return;
-    await tester.ensureVisible(deleteButtonFor(alias).first);
-    await tester.pumpAndSettle();
-    await tester.tap(deleteButtonFor(alias).first);
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('authKeys.deleteKey.confirm')));
-    await tester.pumpAndSettle();
+    var remaining = keyCard(alias).evaluate().length;
+    while (remaining > 0) {
+      await tester.ensureVisible(deleteButtonFor(alias).first);
+      await tester.pumpAndSettle();
+      await tester.tap(deleteButtonFor(alias).first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('authKeys.deleteKey.confirm')));
+      await tester.pumpAndSettle();
+
+      final deadline = DateTime.now().add(const Duration(seconds: 10));
+      var after = keyCard(alias).evaluate().length;
+      while (after >= remaining && DateTime.now().isBefore(deadline)) {
+        await tester.pump(const Duration(milliseconds: 100));
+        after = keyCard(alias).evaluate().length;
+      }
+      expect(
+        after,
+        lessThan(remaining),
+        reason:
+            'deleting "$alias" left $after card(s) listed after confirming, down from $remaining: '
+            'the delete did not take effect',
+      );
+      remaining = after;
+    }
   }
 
   testWidgets(

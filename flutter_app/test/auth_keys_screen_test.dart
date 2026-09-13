@@ -245,6 +245,66 @@ void main() {
       await finish(tester);
     });
 
+    /// Why `removeKeyIfPresent` in the key integration suites has to loop.
+    ///
+    /// The screen keys each card by the key's database id, so two rows that happen to share an
+    /// alias are two separate cards. A cleanup that taps `.first` once therefore leaves one
+    /// behind, and the `findsNothing` that follows reports an anonymous finder dump rather than
+    /// naming the cause. `importKey` refuses a duplicate alias, but the guard is the view model's
+    /// cached list — the row itself carries no uniqueness, so a restore or a device that was not
+    /// left clean can produce this.
+    testWidgets('two keys sharing an alias are two cards, and one delete leaves one', (
+      tester,
+    ) async {
+      await pump(tester);
+      await repo.insertKey(
+        SshKey(
+          id: 0,
+          alias: 'laptop',
+          keyType: 'ED25519',
+          privateKey: keys.privateKey,
+          publicKey: keys.publicKey,
+          fingerprint: 'SHA256:first',
+        ),
+      );
+      await repo.insertKey(
+        SshKey(
+          id: 0,
+          alias: 'laptop',
+          keyType: 'ED25519',
+          privateKey: keys.privateKey,
+          publicKey: keys.publicKey,
+          fingerprint: 'SHA256:second',
+        ),
+      );
+      await app.start();
+      await tester.pumpAndSettle();
+
+      Finder cardsFor(String alias) => find.ancestor(
+        of: find.text(alias),
+        matching: find.byWidgetPredicate(
+          (w) =>
+              w.key is ValueKey<String> &&
+              (w.key as ValueKey<String>).value.startsWith('authKeys.key.'),
+        ),
+      );
+
+      expect(cardsFor('laptop'), findsNWidgets(2), reason: 'one card per row, not per alias');
+
+      final first = vm.keys.first;
+      await tester.tap(find.byKey(ValueKey('authKeys.key.${first.id}.delete')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('authKeys.deleteKey.confirm')));
+      await tester.pumpAndSettle();
+
+      expect(
+        cardsFor('laptop'),
+        findsOneWidget,
+        reason: 'a single delete cannot clear an alias that has more than one row',
+      );
+      await finish(tester);
+    });
+
     testWidgets('confirming removes it', (tester) async {
       await pump(tester);
       await vm.importKey(alias: 'laptop', privateKey: keys.privateKey);

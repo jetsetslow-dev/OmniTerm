@@ -28,6 +28,27 @@ import org.junit.Test
 class BackupCompatibilityInstrumentedTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
 
+    /**
+     * The row as the user configured it, with the five fields the background host check owns
+     * normalised away.
+     *
+     * `updateConnectionState` and `updateAuthState` (`data/Daos.kt`) write `status`, `healthScore`,
+     * `lastLatency`, `authStatus` and `authError` on the probe loop's own schedule, and the fixture
+     * host here is deliberately unroutable. Comparing whole entities therefore raced that probe:
+     * an otherwise identical row came back as `healthScore=0, status=connecting` simply because the
+     * check had started. The question these assertions ask is whether a REJECTED profile edit
+     * altered a server's identity, credentials or configuration, and that has nothing to do with
+     * what the last probe found — so those five fields are excluded and every other field is still
+     * compared exactly.
+     */
+    private fun com.jetsetslow.omniterm.data.ServerEntity.asConfigured() = copy(
+        status = "offline",
+        healthScore = 100,
+        lastLatency = 0,
+        authStatus = "unknown",
+        authError = null,
+    )
+
     @Test
     fun profileEditCannotSilentlyCreateDuplicateServerLogins() = runBlocking {
         val repository = com.jetsetslow.omniterm.data.AppRepository(AppDatabase.getDatabase(composeRule.activity))
@@ -59,7 +80,10 @@ class BackupCompatibilityInstrumentedTest {
             assertTrue(result.get().second, result.get().second.contains(direct.name))
             assertTrue(result.get().second, result.get().second.contains("Identity edit indirect"))
             assertEquals(profile, repository.getCredentialProfileById(profileId))
-            assertEquals(direct.copy(id = directId), repository.getServerById(directId))
+            assertEquals(
+                direct.copy(id = directId).asConfigured(),
+                repository.getServerById(directId)?.asConfigured(),
+            )
             assertEquals(profileId, repository.getServerById(indirectId)?.authProfileId)
             // The same rejection must be visible inside the actual editor, not behind its dialog.
             composeRule.onNodeWithTag("profile.edit.$profileId").performScrollTo().performClick()

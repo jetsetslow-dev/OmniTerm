@@ -173,6 +173,80 @@ because `flutter` was missing from that run's environment — a harness error, n
   the app itself.
 - `git diff --check` and `git diff --cached --check` both clean.
 
+## Two tests that could not tell a real defect from a racing environment
+
+### The key suites' cleanup could not converge, and said nothing useful when it failed
+
+`End-to-end on an emulator` failed on head `be4e882` at `key_generate_test.dart:132`. Nothing in
+`app/` or `flutter_app/` differs between that head and `b691ddd`, where the same job passed, so the
+code under test was identical; the same suite also passes locally first-attempt on a clean API 35
+device. **The cause is still open and is recorded as open.** Earlier in that job Flutter's own
+inter-entrypoint `adb uninstall com.jetsetslow.omniterm` failed with `DELETE_FAILED_INTERNAL_ERROR`
+and a separate entrypoint needed an emulator reboot after a transport failure, so the device was
+demonstrably not pristine — but the runner's `reset_android_flutter_harness` never reported its own
+failure, so the packages *were* gone by `pm path` between entrypoints. Cards are keyed by database
+id (`authKeys.key.<id>`), and the surviving card was id 1, so "one card whose delete did not take
+effect" is at least as likely as "two cards the cleanup could not clear". Do not write this up as a
+dirty-device flake; it is not established.
+
+What *is* established is that `removeKeyIfPresent` — shared by `key_generate_test.dart` and
+`key_import_test.dart` — deleted `.first` exactly once and then asserted `findsNothing`. That
+cannot clean up more than one matching card, and on failure it produced an anonymous finder dump
+that cannot distinguish the two candidates. It now loops until the count reaches zero, bounded by
+*progress* rather than a clock so it cannot spin, with a 10-second inner wait because the deletion
+is a database write observed through a stream and `pumpAndSettle` can return before the rebuilt
+list has lost the row. A delete that stops making progress now fails as
+`deleting "<alias>" left N card(s) listed after confirming, down from M: the delete did not take
+effect`. The next occurrence will say which cause it was.
+
+Control: a new `auth_keys_screen_test.dart` case seeds two key rows sharing an alias straight
+through the repository and proves the premise deterministically — they render as **two** cards, and
+one delete leaves one behind. `importKey` refuses a duplicate alias, but its guard is the view
+model's cached list; the row itself carries no uniqueness, so a restore or an unclean device can
+produce this state. This is **not** a reproduction of the CI failure, and is not claimed as one.
+
+### A native identity guard compared live telemetry and raced the host check
+
+`BackupCompatibilityInstrumentedTest.profileEditCannotSilentlyCreateDuplicateServerLogins`
+compared whole `ServerEntity` rows. Five of those fields belong to the background host check:
+`updateConnectionState` and `updateAuthState` (`data/Daos.kt`) write `status`, `healthScore`,
+`lastLatency`, `authStatus` and `authError` on their own schedule, and the fixture host is
+deliberately unroutable, so the probe reliably starts. Observed failure: every identity, credential
+and configuration field matched and only `healthScore=100 → 0` and `status=offline → connecting`
+differed. The assertion now normalises exactly those five fields, with the reason written down, and
+still compares every other field exactly — the question it asks is whether a *rejected* profile
+edit altered identity, credentials or configuration, which has nothing to do with what the last
+probe found.
+
+**Coverage gap worth deciding on (not changed here).** This test runs in almost no gate. Required
+CI's Room jobs filter instrumentation to
+`-Pandroid.testInstrumentationRunnerArguments.package=com.jetsetslow.omniterm.data`, and this class
+is in the root package, so CI never executes it. Locally it runs only inside `local-pr-check
+--full`'s connected matrix, which reported **deferred** in every recent gate because the emulator
+was stopped for the heavy run. It surfaced now only because the emulator was left up. Widening the
+required instrumentation filter changes CI cost and shape, so it is left as an explicit decision
+for the next session rather than taken unilaterally.
+
+### Validation for this tree
+
+`./scripts/local-pr-check.sh --full` passed (`rc=0`); both diff checks clean. Two earlier attempts
+failed honestly and are not passes: one on the `dart format` gate (my hand-wrapped predicate in
+`auth_keys_screen_test.dart`; the gate reports rather than rewrites by design), and one on the
+native assertion above before it was fixed.
+
+- Flutter full suite **2687 passed / 4 optional live skips**; `flutter analyze` clean in 6.8s.
+- **The connected device matrix executed this time rather than deferring**: API 35
+  `emulator-5554`, **58 tests = 24 passed / 34 skipped / 0 failures**, with
+  `profileEditCannotSilentlyCreateDuplicateServerLogins` among the 24 that ran and passed. All 34
+  skips are opt-in `E2e*` cases self-skipping through `assumeTrue`, `E2eAppSurfaceStressTest`
+  included — so this is still not the required route sweep.
+- Device profiles on API 35 before the gate: `core` **30 passed / 0 skipped** (25 Dart across 9
+  entrypoints, every one first attempt, + 3 native backup-picker + 2 native permissions, with the
+  convergent cleanup in place), `host` **2 passed / 0 skipped**. No unexpected warnings.
+- Native unit tests reused UP-TO-DATE, not freshly executed; the only Kotlin change here is in
+  `androidTest`. Release APK/AAB, both SBOM graphs and strict dependency verification passed.
+  Full-history secret scan: 202 commits, no leaks.
+
 ## tmux preflight — a dead connection offered to install a package
 
 Two defects in `ShellViewModel.connect`'s tmux availability probe, both found by reading the
