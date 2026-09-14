@@ -239,6 +239,35 @@ Three genuine gaps survived that check, all of them destructive, and all now clo
 Read-only actions were left one tap throughout, per the handover's "keep read-only actions
 lightweight".
 
+## Branch split — the Kotlin fixes now have their own PR to main (2026-09-15)
+
+The checklist above was worked entirely on `migration-to-flutter`, which meant every native Kotlin
+fix and every Dependabot update sat behind PR #92 and could not reach `main` until the whole
+migration merged. `main` ships the Kotlin app today, so that was a real delay, not a bookkeeping
+detail. **PR #105 (`kotlin-bug-fixes` -> main)** now carries them:
+
+- Dependabot's own commits for the android-dependencies group (15 updates) and the github-actions
+  group (5 updates), cherry-picked with authorship preserved. They were based on `bf227d2`, which
+  *is* main, so they applied clean. `main` had still been pinning `deploy-pages@v5.0.0`.
+- `verification-metadata.xml` **regenerated on that branch** with
+  `scripts/refresh-verification-metadata.sh --write`, not copied from the closed companion PR #103,
+  whose checksums were computed against a different dependency set.
+- 43 native Kotlin files, +2807/-423 — the fixes that had accumulated here.
+- The change-detector fix, which `main` still needed: its `codeql.yml` and `android-pr-check.yml`
+  both carried the `echo "$changed" | grep -q` form that silently selects "nothing changed".
+
+**Nothing was reverted here.** `app/`, `gradle/libs.versions.toml` and
+`gradle/verification-metadata.xml` are byte-identical across the two branches, so the split costs no
+rework when PR #92 lands.
+
+Not ported to main, deliberately: the Flutter-only CI (`flutter-pr-check.yml`,
+`flutter-release.yml`, `flutter-device-test.sh`, the Flutter SBOM scripts) and the
+`test-flutter-device-preservation.sh` step this branch adds to `android-pr-check.yml`. Taking that
+file wholesale would break main, so only the detector hunk was spliced across.
+
+Both PRs are green: #92 on `3818004` and #105 on `67150e6`, each with CodeQL genuinely analysing
+(8m56s job, companion no-op skipped) rather than reporting green off the placeholder.
+
 ## Resume here
 
 **Codex-to-Claude handoff cutoff: September 13, 2026 at 10:30 AM IST today (05:00 UTC), not tomorrow.**
