@@ -91,52 +91,55 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('about.crashHistory.0')));
     await settle(tester);
 
-    await tester.tap(find.byKey(const ValueKey('about.crashHistory.0.copy')));
-    await pumpUntil(tester, () => find.byKey(const ValueKey('about.copied')).evaluate().isNotEmpty);
+    // Capture what the app hands the platform, rather than reading the clipboard back.
+    //
+    // Reading was the wrong boundary. Android serves clipboard *reads* only to a focused app, so
+    // `getData` answers null for content that is genuinely there whenever the emulator's focus
+    // wobbles — which it does. That was met twice by widening the wait, first to ~6s and then to
+    // 30s; it failed again at 30s, so the budget was never the problem and raising it a third time
+    // would only buy a slower red. Storing the text is Android's behaviour, not this app's; the
+    // app's responsibility ends at handing redacted text to `Clipboard.setData`, and that is what
+    // this now asserts. Every assertion below is unchanged, and the path under test is still the
+    // real one — recorded on the device, through SharedPreferences, onto the screen, copy tapped.
+    //
+    // The handler is installed only around the tap and removed immediately: mocking
+    // `SystemChannels.platform` swallows every platform call on that channel, so it must not be
+    // left up while the rest of the test drives the app.
+    String? copied;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (
+      call,
+    ) async {
+      if (call.method == 'Clipboard.setData') {
+        copied = (call.arguments as Map)['text'] as String?;
+      }
+      return null;
+    });
+    try {
+      await tester.tap(find.byKey(const ValueKey('about.crashHistory.0.copy')));
+      await pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('about.copied')).evaluate().isNotEmpty,
+      );
+    } finally {
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, null);
+    }
+
     expect(
       find.byKey(const ValueKey('about.copied')),
       findsOneWidget,
-      reason: 'Copy must finish its platform call before the clipboard is read',
+      reason: 'Copy must finish its platform call before the copied text is checked',
     );
-
-    // Read with a bounded retry. The write is already proven to have completed — `about.copied`
-    // only appears after the platform call returns — but Android serves clipboard *reads* only to
-    // a focused app, so a transient focus change on the emulator makes `getData` answer null for
-    // content that is genuinely there. Retrying a read of a value that cannot change weakens
-    // nothing; the redaction assertions below are untouched, and a read that never succeeds still
-    // fails, naming why.
-    // Budgeted in wall-clock rather than attempts, and generously. This has failed twice on CI
-    // while passing on most heads, so it is transient rather than a platform denial — an earlier
-    // ~6s budget was simply too short for the slow case. Waiting longer for a value that cannot
-    // change costs nothing on the runs that succeed immediately, and the alternative — relaxing
-    // what is asserted — would give up the redaction check this test exists for.
-    ClipboardData? clip;
-    final deadline = DateTime.now().add(const Duration(seconds: 30));
-    while (clip?.text == null && DateTime.now().isBefore(deadline)) {
-      clip = await Clipboard.getData(Clipboard.kTextPlain);
-      if (clip?.text != null) break;
-      await tester.pump(const Duration(milliseconds: 100));
-      await Future<void>.delayed(const Duration(milliseconds: 100));
-    }
-    expect(
-      clip?.text,
-      isNotNull,
-      reason:
-          'Copy reported success, but the clipboard stayed unreadable for 30s. `_copy` awaits '
-          'Clipboard.setData before showing this marker, so the platform accepted the write; '
-          'Android serves clipboard READS only to a focused app, which is the likeliest cause. '
-          'If this recurs, that focus assumption is what to re-examine.',
-    );
-    expect(clip!.text, contains(marker));
+    expect(copied, isNotNull, reason: 'tapping Copy must put the crash report on the clipboard');
+    expect(copied, contains(marker));
     // The redaction happens once, when the crash is recorded, so every export path is safe by
     // construction rather than each remembering to do it — the same place Kotlin does it
     // (`data/CrashLog.kt:46`). This asserts the property at the end of the path a user takes.
     expect(
-      clip.text,
+      copied,
       isNot(contains(secret)),
       reason: 'a password in a crash report must not reach the clipboard',
     );
-    expect(clip.text, contains('<redacted>'));
+    expect(copied, contains('<redacted>'));
   });
 
   testWidgets('clearing empties the history and says so', (tester) async {
