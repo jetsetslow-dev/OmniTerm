@@ -20,7 +20,23 @@ object ExternalLaunchBridge {
     private var events: EventChannel.EventSink? = null
     private val pending = mutableListOf<Map<String, Any?>>()
 
+    /**
+     * Which `register` call installed the sink currently held in [events], and how many have run.
+     *
+     * This object outlives the Activity it was registered against now that the Flutter engine is
+     * retained ([RetainedFlutterEngine]), so more than one registration exists over the process's
+     * life. Flutter tears down the previous stream when a new handler is set for the same channel,
+     * and that teardown's `onCancel` arrives *after* the replacement has already attached — so
+     * without an owner check the superseded handler silently dropped the live sink, and every
+     * notification tap and launcher shortcut after the first Activity recreation queued into
+     * [pending] forever instead of reaching Dart.
+     */
+    private var registrations = 0L
+    private var sinkOwner = 0L
+
+
     fun register(engine: FlutterEngine, activity: MainActivity) {
+        val registration = ++registrations
         MethodChannel(engine.dartExecutor.binaryMessenger, METHOD_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -31,13 +47,19 @@ object ExternalLaunchBridge {
         EventChannel(engine.dartExecutor.binaryMessenger, EVENT_CHANNEL).setStreamHandler(
             object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, sink: EventChannel.EventSink) {
+                    // A registration already replaced by a newer Activity must not install a sink.
+                    if (registration != registrations) return
+                    sinkOwner = registration
                     events = sink
                     pending.forEach(sink::success)
                     pending.clear()
                 }
 
                 override fun onCancel(arguments: Any?) {
+                    // Only whoever installed the current sink may clear it; see [sinkOwner].
+                    if (sinkOwner != registration) return
                     events = null
+                    sinkOwner = 0L
                 }
             },
         )

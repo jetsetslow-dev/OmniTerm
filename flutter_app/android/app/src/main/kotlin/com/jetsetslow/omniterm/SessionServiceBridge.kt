@@ -25,6 +25,18 @@ object SessionServiceBridge {
     private var events: EventChannel.EventSink? = null
 
     /**
+     * Which `register` call installed the sink in [events], and how many have run.
+     *
+     * Same reasoning as `ExternalLaunchBridge`: this object now outlives the Activity it was
+     * registered against, Flutter's teardown of the previous stream delivers `onCancel` *after* the
+     * replacement has attached, and an unguarded clear would leave shade actions — Disconnect,
+     * Disconnect all, Resume — queued forever after the first Activity recreation.
+     */
+    private var registrations = 0L
+    private var sinkOwner = 0L
+
+
+    /**
      * Actions that arrive while Dart is not listening.
      *
      * The service can be woken by a notification tap before the engine has attached — dropping
@@ -34,6 +46,7 @@ object SessionServiceBridge {
     private val pending = mutableListOf<Map<String, Any?>>()
 
     fun register(engine: FlutterEngine, context: Context) {
+        val registration = ++registrations
         val appContext = context.applicationContext
 
         MethodChannel(engine.dartExecutor.binaryMessenger, METHOD_CHANNEL)
@@ -75,6 +88,9 @@ object SessionServiceBridge {
         EventChannel(engine.dartExecutor.binaryMessenger, EVENT_CHANNEL).setStreamHandler(
             object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, sink: EventChannel.EventSink) {
+                    // A registration already replaced by a newer Activity must not install a sink.
+                    if (registration != registrations) return
+                    sinkOwner = registration
                     events = sink
                     // Anything that happened before Dart attached is delivered now, in order.
                     pending.forEach(sink::success)
@@ -82,7 +98,10 @@ object SessionServiceBridge {
                 }
 
                 override fun onCancel(arguments: Any?) {
+                    // Only whoever installed the current sink may clear it; see [sinkOwner].
+                    if (sinkOwner != registration) return
                     events = null
+                    sinkOwner = 0L
                 }
             },
         )

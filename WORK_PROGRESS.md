@@ -8,6 +8,95 @@ Before an authorized merge to `main`, consolidate it into the private handover u
 `secrets/internal-docs/docs/` and remove this temporary file from the merge tree. Never put
 secrets here: moving it later does not erase Git history.
 
+## B (§1): audited under retention, no change needed
+
+Both halves hold, and retention makes one of them *safer* rather than riskier.
+
+**External launches consumed once — holds by construction.** `consume()` strips the intent: extras
+removed, the `omniterm://` data URI nulled, the action reset to `ACTION_MAIN`. On the Dart side
+`takeInitialActions()` sits behind a per-`State` `_initialExternalRead` flag, and with a retained
+engine the widget tree survives recreation, so that `State` is never rebuilt and the call cannot
+re-run. The replay risk would have come from a *restarting* isolate re-reading a fresh Activity
+intent — which is exactly what retention prevents.
+
+**App-lock protection — survives for the same reason.** The lock state and `AppLockGate`, with its
+`ExcludeFocus` over the whole tree, live in the Dart isolate that now persists across recreation. A
+locked app stays locked. The PIN throttle is separately persisted, so it survives process death too.
+
+Recorded as **audited, no defect found** — deliberately not as "verified on device". Proving it on a
+device needs the same controlled recreation trigger that A and the continuity item both died on.
+**Three items are now blocked by that one missing capability**, which makes it the highest-value
+thing for a next session to solve: a JVM test source set for `flutter_app/android`, or a
+recreation trigger reachable from a Patrol test.
+
+## A (§1): a superseded `onCancel` could silently kill notification delivery
+
+Engine retention turned a dormant issue into a live one. `ExternalLaunchBridge` and
+`SessionServiceBridge` hold their Dart `EventSink` at object level and cleared it unconditionally in
+`onCancel`. That was harmless while the engine died with the Activity — each bridge had exactly one
+registration for the life of the process.
+
+With the engine retained, the replacement Activity re-registers a handler for the same channel,
+Flutter tears down the previous stream, and **that teardown's `onCancel` arrives after the new
+handler has already attached** — so the superseded registration nulls the *live* sink. The symptom
+is silent and delayed: launcher shortcuts, notification resumes and shade actions (Disconnect,
+Disconnect all, Resume) stop reaching Dart after the first recreation, queueing into `pending`
+forever, with nothing logged at the moment it breaks.
+
+Both bridges now record which registration owns the current sink. A superseded `onListen` will not
+install one; a superseded `onCancel` will not clear one.
+
+### The guard for it was removed, because it could not fail
+
+An assertion was added to the native recreation guard and then taken out again. Measured, from the
+device logcat immediately before `recreate()`:
+
+```
+OmniTermSinkGuard: before recreation: externalLaunchSink=false sessionServiceSink=false
+```
+
+Both sinks are already null at that point, because the native guard runs *after* `runDartTest`
+returns and Dart has torn its subscriptions down — the same structural limitation the incoming
+handover noted about this guard ("recreates the Activity AFTER Dart fixture cleanup"). An
+unconditional assertion reported that ordinary teardown as a lost sink; a conditional one skipped
+every time. Either way it proved nothing, so it is gone rather than left looking like coverage. The
+`hasLiveSink()` accessor added for it was removed too, rather than left as dead production surface.
+
+**What would actually test this:** a JVM test source set for `flutter_app/android` (the ownership
+logic extracts cleanly into a Flutter-free class), or a Dart-visible recreation trigger — which is
+itself the measured dead end recorded further down. The fix is small and its reasoning is written at
+the call site; it is recorded here as *fixed but unproven in this harness*, not as covered.
+
+## Outstanding handover items — tracked goal
+
+An earlier revision of this tracker claimed the incoming handover's four sections were complete.
+**That was wrong** and is corrected here. §0 and §4 are genuinely done; §1 and §3 have named
+sub-bullets outstanding; **§2 was misread** — it asks for a *native* (Compose) fixture proof, and
+what was delivered was Flutter widget coverage. `FleetScreen.kt:190` carries all three popups and
+no Kotlin `androidTest` covers them.
+
+Worked in this order, most load-bearing first. Each item is done only with a negative control where
+one is possible, the full gate, and device profiles for anything a screen can reach.
+
+| # | Item | Source | State |
+| --- | --- | --- | --- |
+| A | Late-callback identity guards for the bridge event sinks | §1 | **fixed; untestable in this harness — see below** |
+| B | App-lock protection across recreation; external launches consumed once | §1 | **audited, no defect; device-proof blocked** |
+| C | `LongOperationNotifications.start` returned failures are ignored at all call sites | §3 | **open** |
+| D | Passphrase / restore-selection / confirmation cancellation are silent (`backup_screen.dart:228,290,308,332`) | §3 | **open** |
+| E | Disconnect-all needs observable completion/errors and cleanup ownership | §1 | **open** |
+| F | Native (Compose) fixture proof for all three Uptime/DF/PS popups | §2 | **open** |
+| G | Compose Update delayed stdout/stderr and local-build fallback; mutation-warning audit across Fleet/containers/stacks | §2 | **open** |
+| H | Completion while the Backup screen is unmounted; untested routes/error/cancel sweep; cross-app identity and overflow | §3 | **open** |
+
+A is first because engine retention (`5c99960`) is what made those bridge lifetimes matter: they now
+outlive the Activities they were registered against.
+
+Already closed and not to be reopened: §0 (change detectors), §4 (Dependabot #102/#103/#104), the
+engine retention/FLAG_SECURE/Quit trio, the four preflight bugs, bastion parity, the pool key, and
+the latency measurement. Device-initiated recreation continuity is a **measured dead end**, recorded
+below — 120 MainActivity lifecycle events, 0 destructions.
+
 ## Resume here
 
 **Codex-to-Claude handoff cutoff: September 13, 2026 at 10:30 AM IST today (05:00 UTC), not tomorrow.**
