@@ -179,6 +179,41 @@ because `flutter` was missing from that run's environment — a harness error, n
   the app itself.
 - `git diff --check` and `git diff --cached --check` both clean.
 
+## The clipboard readback needed a longer wait, not a weaker assertion
+
+`crash_log_test`'s clipboard read failed on CI a second time, on the dependency head. Diagnosed
+rather than assumed:
+
+- **The earlier retry did run** — the failure carries its own message, and ~17s elapsed against a
+  ~6s budget, so the budget was exhausted rather than skipped.
+- **`about.copied` does mean what it claimed.** `_copy` awaits `Clipboard.setData` and only then
+  sets the marker, so the platform accepted the write.
+- **It is transient, not a platform denial.** This test passed on CI for nine of the eleven heads
+  pushed in this session and failed on two.
+
+So the budget is now 30 seconds of wall-clock rather than ~6. Waiting longer for a value that
+cannot change costs nothing on the runs that succeed immediately.
+
+The alternative was considered and rejected: dropping the clipboard readback and asserting
+redaction on the stored crash report instead. That would be a weaker test of the thing this case
+exists for — a password reaching the clipboard is the hazard, and reading it back through the real
+clipboard is what makes the assertion about the path a user actually takes. The failure message now
+also names the focus assumption as the thing to re-examine if it recurs, rather than stating it as
+fact.
+
+### Validation for this tree
+
+Every stage green: `core rc=0` (which contains `crash_log_test`), `host rc=0`,
+`local-pr-check rc=0`, both diff checks `0`, `FAILED=0`.
+
+### CI result for the dependency integration
+
+`0ce8d02` reached terminal state with **everything green except this one flaky test**: `Build &
+Test`, `Analyze Java/Kotlin`/CodeQL, `Validate Room migrations`, `Validate release SBOM generation`,
+`Build iOS`, `Build release artifacts`, dependency review, both secret scans and supply-chain
+analysis all passed **on AGP 9.4.0 with strict checksum verification against the regenerated
+metadata**. That is the evidence local runs cannot substitute for, and it holds.
+
 ## Dependabot's open groups integrated into this branch
 
 The automated PRs the incoming handover listed (#99/#100/#101) are all **closed** — Dependabot

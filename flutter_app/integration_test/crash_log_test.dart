@@ -105,20 +105,27 @@ void main() {
     // content that is genuinely there. Retrying a read of a value that cannot change weakens
     // nothing; the redaction assertions below are untouched, and a read that never succeeds still
     // fails, naming why.
+    // Budgeted in wall-clock rather than attempts, and generously. This has failed twice on CI
+    // while passing on most heads, so it is transient rather than a platform denial — an earlier
+    // ~6s budget was simply too short for the slow case. Waiting longer for a value that cannot
+    // change costs nothing on the runs that succeed immediately, and the alternative — relaxing
+    // what is asserted — would give up the redaction check this test exists for.
     ClipboardData? clip;
-    for (var attempt = 0; attempt < 40 && clip?.text == null; attempt++) {
+    final deadline = DateTime.now().add(const Duration(seconds: 30));
+    while (clip?.text == null && DateTime.now().isBefore(deadline)) {
       clip = await Clipboard.getData(Clipboard.kTextPlain);
       if (clip?.text != null) break;
       await tester.pump(const Duration(milliseconds: 100));
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      await Future<void>.delayed(const Duration(milliseconds: 100));
     }
     expect(
       clip?.text,
       isNotNull,
       reason:
-          'Copy reported success, but the clipboard read kept coming back null. Android only '
-          'serves clipboard reads to a focused app, so this is usually focus rather than a failed '
-          'write — but the write cannot be confirmed from here either way.',
+          'Copy reported success, but the clipboard stayed unreadable for 30s. `_copy` awaits '
+          'Clipboard.setData before showing this marker, so the platform accepted the write; '
+          'Android serves clipboard READS only to a focused app, which is the likeliest cause. '
+          'If this recurs, that focus assumption is what to re-examine.',
     );
     expect(clip!.text, contains(marker));
     // The redaction happens once, when the crash is recorded, so every export path is safe by
