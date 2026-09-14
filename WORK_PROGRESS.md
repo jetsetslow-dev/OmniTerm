@@ -135,7 +135,7 @@ one is possible, the full gate, and device profiles for anything a screen can re
 | E | Disconnect-all needs observable completion/errors and cleanup ownership | §1 | **done** |
 | F | Native (Compose) fixture proof for all three Uptime/DF/PS popups | §2 | **done** |
 | G | Compose Update delayed stdout/stderr and local-build fallback; mutation-warning audit across Fleet/containers/stacks | §2 | **done** |
-| H | Completion while the Backup screen is unmounted; untested routes/error/cancel sweep; cross-app identity and overflow | §3 | **partly done — sweep outstanding** |
+| H | Completion while the Backup screen is unmounted; untested routes/error/cancel sweep; cross-app identity and overflow | §3 | **done** |
 
 A is first because engine retention (`5c99960`) is what made those bridge lifetimes matter: they now
 outlive the Activities they were registered against.
@@ -211,8 +211,33 @@ only `showDialog`, and cross-app identity/overflow is already covered by `backup
 (additive restore, credential-profile id remapping, renamed-duplicate mapping) — restore is additive
 by design and the confirm dialog says so, so nothing silently merges duplicate rows.
 
-**Still outstanding in H:** the broad untested routes/error/cancel sweep against the original
-release/migration records. That is the one piece of the tracked checklist not yet done.
+### H, continued — the routes/error/cancel sweep
+
+**The first pass at scoping this was wrong and is corrected here.** A static scan for `ValueKey`s
+that no test file mentions reported 58 untested cancel/confirm/error paths. That number is not real:
+a key no test *names* is not an untested path, because most of these dialogs are driven by text and
+tooltip finders instead. Checked one at a time, by behaviour: auth-key and credential-profile
+deletion (including the blast-radius warning that names dependent hosts), SFTP delete, single image
+and volume removal, and scripts/shares/tunnels/alerts deletion are all already covered.
+
+Three genuine gaps survived that check, all of them destructive, and all now closed:
+
+- **Bulk host delete — the dialog itself.** `servers_view_model_test` calls
+  `deleteSelectedServers()` directly, which bypasses the dialog, so nothing covered the wiring: that
+  it appears, that Cancel cancels, that Delete removes only the selection. A confirm wired to the
+  wrong branch passed every existing test. Its Cancel button had no key at all; it has one now.
+  Control: wiring Cancel to the destructive branch empties the fleet (`length of <2>` vs `[]`).
+- **Cron delete — the confirm branch.** Only the cancel branch was exercised. Deleting one job
+  rewrites the entire crontab, so the risk is not that the line survives but that everything else
+  disappears with it. Control: dropping non-job lines from `renderCrontab` loses `MAILTO` and the
+  comments, and the test says so.
+- **Bulk image and volume delete.** Implemented inline in `infra_tabs.dart`, with no view-model
+  method, so no view-model test could reach them. They loop over a selection, so a stale or wrong
+  set removes rows the user never ticked — and neither images nor volume data can be recovered.
+  Control: ignoring the tick set removes both fixtures instead of one.
+
+Read-only actions were left one tap throughout, per the handover's "keep read-only actions
+lightweight".
 
 ## Resume here
 

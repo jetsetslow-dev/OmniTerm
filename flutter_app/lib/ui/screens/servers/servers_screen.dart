@@ -479,13 +479,21 @@ class _BulkActions extends StatelessWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        key: const ValueKey('servers.bulk.delete.dialog'),
         title: Text('Delete $count hosts?'),
         content: const Text(
           'Remove these host connections and their saved credentials from OmniTerm? '
           'This does not affect the remote machines and cannot be undone here.',
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+          TextButton(
+            // Keyed like its Delete sibling so the back-out branch can be driven by a test. It
+            // is the branch that must leave the fleet untouched, which is the whole point of
+            // asking first.
+            key: const ValueKey('servers.bulk.deleteCancel'),
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
           FilledButton(
             key: const ValueKey('servers.bulk.deleteConfirm'),
             onPressed: () => Navigator.pop(context, true),

@@ -356,6 +356,108 @@ void main() {
     vm.dispose();
   });
 
+  testWidgets('bulk image delete removes only the ticked images', (tester) async {
+    // Multi-select delete is implemented inline in the tab, not on the view model, so nothing in
+    // `infra_view_model_test` reaches it. The risk it carries is specific: it loops over a
+    // selection, so an off-by-one or a stale set removes images the user never ticked, and images
+    // cannot be recovered.
+    await repo.insertServer(server(name: 'nas'));
+    final transport = RecordingTransport(
+      replies: {
+        'images --no-trunc':
+            'docker\tsha256:keepme\tnginx\tlatest\t50MB\t2 days ago\n'
+            'docker\tsha256:dropme\tredis\t7\t30MB\t3 days ago',
+      },
+    );
+    await pump(tester, transport: transport);
+    await tester.tap(find.byKey(const ValueKey('infra.tab.images')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Multi-select'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('infra.image.dropme.select')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('infra.images.deleteSelected')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('infra.images.deleteSelected.dialog')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('infra.images.deleteSelected.confirm')));
+    await tester.pumpAndSettle();
+
+    final removes = transport.commands.where((c) => c.contains('rmi')).toList();
+    expect(removes, hasLength(1), reason: 'exactly the one ticked image is removed');
+    expect(removes.single, contains('dropme'));
+    expect(removes.single, isNot(contains('keepme')), reason: 'an unticked image must survive');
+    vm.dispose();
+  });
+
+  testWidgets('cancelling a bulk image delete removes nothing', (tester) async {
+    await repo.insertServer(server(name: 'nas'));
+    final transport = RecordingTransport(
+      replies: {
+        'images --no-trunc':
+            'docker\tsha256:keepme\tnginx\tlatest\t50MB\t2 days ago\n'
+            'docker\tsha256:dropme\tredis\t7\t30MB\t3 days ago',
+      },
+    );
+    await pump(tester, transport: transport);
+    await tester.tap(find.byKey(const ValueKey('infra.tab.images')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Multi-select'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('infra.image.dropme.select')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('infra.images.deleteSelected')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('infra.images.deleteSelected.cancel')));
+    await tester.pumpAndSettle();
+
+    expect(
+      transport.commands.where((c) => c.contains('rmi')),
+      isEmpty,
+      reason: 'backing out of the confirmation must not remove anything',
+    );
+    vm.dispose();
+  });
+
+  testWidgets('bulk volume delete removes only the ticked volumes', (tester) async {
+    // The twin of the image case, and the more costly one: a volume holds the data, and the screen
+    // says so ("cannot be undone"). Same inline selection loop, same risk of removing an untouched
+    // row.
+    await repo.insertServer(server(name: 'nas'));
+    final transport = RecordingTransport(
+      replies: {
+        'ot_vols':
+            'docker\tkeepdata\tlocal\t/var/lib/docker/volumes/keepdata\t1.2GB\t0\n'
+            'docker\tdropdata\tlocal\t/var/lib/docker/volumes/dropdata\t8MB\t0',
+      },
+    );
+    await pump(tester, transport: transport);
+    await tester.tap(find.byKey(const ValueKey('infra.tab.volumes')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Multi-select'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('infra.volume.dropdata.select')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('infra.volumes.deleteSelected')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('infra.volumes.deleteSelected.confirm')));
+    await tester.pumpAndSettle();
+
+    final removes = transport.commands.where((c) => c.contains('volume rm')).toList();
+    expect(removes, hasLength(1), reason: 'exactly the one ticked volume is removed');
+    expect(removes.single, contains('dropdata'));
+    expect(
+      removes.single,
+      isNot(contains('keepdata')),
+      reason: 'an unticked volume holds data that must survive',
+    );
+    vm.dispose();
+  });
+
   testWidgets('built-in networks cannot be deleted', (tester) async {
     // Removing them breaks container networking and they cannot be recreated identically.
     await repo.insertServer(server(name: 'nas'));

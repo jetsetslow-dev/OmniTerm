@@ -83,6 +83,54 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  // Bulk delete removes host connections *and their saved credentials*, and the screen says it
+  // "cannot be undone here". `servers_view_model_test` covers `deleteSelectedServers()` directly,
+  // which bypasses the dialog entirely — so nothing covered the wiring: that the dialog appears at
+  // all, that Cancel really cancels, and that Delete removes only the selection. A confirm wired to
+  // the wrong branch would have passed every existing test. The Cancel button had no key either.
+  testWidgets('cancelling a bulk delete keeps every host', (tester) async {
+    final nas = await repo.insertServer(server(name: 'nas'));
+    final web = await repo.insertServer(server(name: 'web-prod'));
+    await pump(tester);
+    vm.isMultiSelectMode = true;
+    vm.toggleBulkSelection(nas);
+    vm.toggleBulkSelection(web);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('servers.bulk.delete')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('servers.bulk.deleteConfirm')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('servers.bulk.deleteCancel')));
+    await tester.pumpAndSettle();
+
+    // The effect, not the dialog: backing out of a destructive confirmation must leave the data
+    // alone, which is the only thing the user actually cares about here.
+    expect(app.servers, hasLength(2), reason: 'cancelling must not delete anything');
+    expect(find.text('nas'), findsOneWidget);
+    expect(find.text('web-prod'), findsOneWidget);
+  });
+
+  testWidgets('confirming a bulk delete removes exactly the selected hosts', (tester) async {
+    final nas = await repo.insertServer(server(name: 'nas'));
+    await repo.insertServer(server(name: 'web-prod'));
+    await pump(tester);
+    vm.isMultiSelectMode = true;
+    vm.toggleBulkSelection(nas);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('servers.bulk.delete')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('servers.bulk.deleteConfirm')));
+    await tester.pumpAndSettle();
+
+    // "Exactly" is the assertion that matters: a bulk action that deletes the selection plus
+    // something else, or the whole list, is the expensive failure this dialog exists to prevent.
+    expect(app.servers, hasLength(1));
+    expect(find.text('nas'), findsNothing);
+    expect(find.text('web-prod'), findsOneWidget, reason: 'an unselected host must survive');
+  });
+
   testWidgets('an empty fleet shows the "no servers yet" state', (tester) async {
     await pump(tester);
     expect(find.byKey(const ValueKey('servers.empty')), findsOneWidget);

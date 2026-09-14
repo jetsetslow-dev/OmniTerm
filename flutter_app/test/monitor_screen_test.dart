@@ -694,6 +694,32 @@ void main() {
       vm.dispose();
     });
 
+    testWidgets('confirming a delete rewrites the crontab without that line', (tester) async {
+      // The cancel branch above was covered; the branch that actually rewrites the user's crontab
+      // was not. Deleting one job rewrites the whole file, so the risk is not "the line survives"
+      // but "everything else disappears with it".
+      await repo.insertServer(server(name: 'nas'));
+      final transport = RecordingTransport(replies: {'crontab -l': reply(crontab)});
+      await pump(tester, transport: transport);
+      await openCron(tester);
+
+      await tester.tap(find.byKey(const ValueKey('cron.line.2.delete')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('cron.delete.confirm')));
+      await tester.pumpAndSettle();
+
+      final write = transport.commands.firstWhere((c) => c.contains('| crontab -'));
+      final encoded = RegExp(r"printf %s '([A-Za-z0-9+/=]+)'").firstMatch(write)!.group(1)!;
+      final sent = utf8.decode(base64Decode(encoded));
+
+      expect(sent, isNot(contains('/usr/bin/backup')), reason: 'the chosen job must be gone');
+      expect(sent, contains('MAILTO=ops@example.com'), reason: 'the rest of the file is kept');
+      expect(sent, contains('# nightly jobs'));
+      expect(sent, contains('*/5 * * * * /usr/local/bin/ping-check'));
+      expect(sent, endsWith('\n'));
+      vm.dispose();
+    });
+
     testWidgets('deleting says what it will actually do, and asks first', (tester) async {
       await repo.insertServer(server(name: 'nas'));
       final transport = RecordingTransport(replies: {'crontab -l': reply(crontab)});
