@@ -179,6 +179,47 @@ because `flutter` was missing from that run's environment — a harness error, n
   the app itself.
 - `git diff --check` and `git diff --cached --check` both clean.
 
+## Dependabot's open groups integrated into this branch
+
+The automated PRs the incoming handover listed (#99/#100/#101) are all **closed** — Dependabot
+superseded them while this review ran. The live set was #102 (android-dependencies, 15 updates),
+#103 (its verification-metadata regeneration) and #104 (github-actions, 5 updates). All three are
+now merged into this branch and closed as superseded by it.
+
+**Compatibility review before taking anything.** #102 is entirely build and test tooling minors:
+AGP 9.3.2→9.4.0, Compose BOM 2026.09.00, KSP 2.3.12, Navigation 2.10.1, Room 2.8.4→2.8.5,
+robolectric 4.17, roborazzi 1.74.0, benchmark 1.5.0, develocity 4.5.1. No SSH, ads or consent
+majors, so no compatibility hold applies. `smbj` — the one network library in the group — was
+**already at 0.15.0 on this branch**, so the merge introduces no new network-library change. #104
+keeps full SHA pins with version comments on all five actions.
+
+**The `codeql.yml` collision was the one to watch.** #104 bumps action SHAs in the same file this
+branch's change-detector fix rewrote. It auto-merged, and was verified rather than assumed
+afterwards: the file-based matcher and its fail-safe grep-status handling are intact, no
+`echo`-into-`grep` shape returned anywhere, and `scripts/test-change-detectors.sh` still passes
+**39/39** against the merged workflows.
+
+**#103's metadata file was not used.** It was generated against `main`, and this branch is ahead of
+`main` on several of the same libraries, so its checksums describe a dependency graph this branch
+does not resolve. `gradle/verification-metadata.xml` was regenerated with
+`./scripts/refresh-verification-metadata.sh --write` per the repository rule, and the diff audited:
+**no removed entries, no new trust rules, `verify-metadata` still `true`**, and all 600+ added
+artifacts carry both SHA-256 and SHA-512.
+
+### One process failure worth recording
+
+The first regeneration exited **143 — SIGTERM from a `timeout 900` in the wrapper**, not from the
+script. The partial file it left behind differed materially from the complete one: **2035
+insertions with 3 deletions, versus 2052 insertions and none**. It had dropped entries it never
+re-added. Committing it would have failed CI's strict verification in a way that reads like a
+Dependabot problem rather than a local one. An interrupted generation is not a generation.
+
+### Validation for this tree
+
+Every stage green: `metadata-verify rc=0` (forced fresh resolution across buildscript, app, test,
+lint, instrumentation, benchmark and both release SBOM graphs), `core rc=0`, `host rc=0`,
+`local-pr-check rc=0`, both diff checks `0`.
+
 ## Attempted and measured dead: forcing a real recreation from the device
 
 The incoming handover asked for shell-variable continuity *through* recreation, not just engine
