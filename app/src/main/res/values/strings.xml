@@ -245,7 +245,7 @@
     <string name="jump_host_key_optional">"Jump host key (optional):"</string>
     <string name="next">"Next"</string>
     <string name="duplicate_ip_address">"Duplicate IP address"</string>
-    <string name="duplicate_host_body">"Host %1$s already uses %2$s. You can still save this server if it intentionally uses a different credential profile."</string>
+    <string name="duplicate_host_body">"Host %1$s already uses %2$s. A different SSH user, authentication method or port is a separate connection. A different display name alone is not."</string>
     <string name="save_anyway">"Save anyway"</string>
     <string name="review">"Review"</string>
     <string name="omniterm_2">"OMNITERM"</string>

@@ -135,7 +135,7 @@ fun SharedScriptEditorDialog(
                             }
                         },
                     )
-                    DropdownMenu(expanded = categoryMenuExpanded, onDismissRequest = { categoryMenuExpanded = false }) {
+                    OverflowDropdownMenu(expanded = categoryMenuExpanded, onDismissRequest = { categoryMenuExpanded = false }) {
                         knownCategories.forEach { cat ->
                             DropdownMenuItem(text = { Text(cat) }, onClick = { categoryInput = cat; categoryMenuExpanded = false })
                         }
@@ -165,7 +165,7 @@ fun SharedScriptEditorDialog(
                                 }
                             },
                         )
-                        DropdownMenu(expanded = osMenuExpanded, onDismissRequest = { osMenuExpanded = false }) {
+                        OverflowDropdownMenu(expanded = osMenuExpanded, onDismissRequest = { osMenuExpanded = false }) {
                             quickScriptOsOptions.forEach { os ->
                                 DropdownMenuItem(text = { Text(os) }, onClick = { targetOs = os; osMenuExpanded = false })
                             }
@@ -184,7 +184,7 @@ fun SharedScriptEditorDialog(
                                 }
                             },
                         )
-                        DropdownMenu(expanded = systemMenuExpanded, onDismissRequest = { systemMenuExpanded = false }) {
+                        OverflowDropdownMenu(expanded = systemMenuExpanded, onDismissRequest = { systemMenuExpanded = false }) {
                             quickScriptSystemOptions.forEach { system ->
                                 DropdownMenuItem(text = { Text(system) }, onClick = { targetSystem = system; systemMenuExpanded = false })
                             }

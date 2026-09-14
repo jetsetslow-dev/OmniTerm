@@ -4,12 +4,29 @@ import android.os.ParcelFileDescriptor
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.longClick
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.espresso.Espresso.onView
+import androidx.test.espresso.assertion.ViewAssertions.matches
+import androidx.test.espresso.matcher.ViewMatchers.withTagValue
+import androidx.test.espresso.matcher.ViewMatchers.withText
+import androidx.test.espresso.matcher.RootMatchers.isDialog
+import org.hamcrest.Matchers.containsString
+import org.hamcrest.Matchers.equalTo
 import com.jetsetslow.omniterm.data.AppDatabase
+import com.jetsetslow.omniterm.data.AppRepository
+import com.jetsetslow.omniterm.data.ServerEntity
 import com.jetsetslow.omniterm.data.ssh.TerminalSession
 import com.jetsetslow.omniterm.data.term.TerminalEmulator
 import com.jetsetslow.omniterm.ui.AppViewModel
@@ -17,6 +34,10 @@ import com.jetsetslow.omniterm.ui.Screen
 import com.jetsetslow.omniterm.ui.ShellSession
 import com.jetsetslow.omniterm.ui.TerminalSessionManager
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
@@ -33,6 +54,149 @@ import org.junit.Test
 class E2eTerminalNavigationMatrixTest {
     @get:Rule val composeRule = createAndroidComposeRule<MainActivity>()
     private lateinit var vm: AppViewModel
+
+    @Test
+    fun switchingSameSizeSessionsRefreshesViewportAndVisibleCopy() = runBlocking {
+        assumeTrue(InstrumentationRegistry.getArguments().getString(ARGUMENT) == "yes")
+        vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
+        val wasReadOnly = vm.terminalReadOnly
+        val repository = AppRepository(AppDatabase.getDatabase(composeRule.activity))
+        val createdHosts = mutableListOf<ServerEntity>()
+        try {
+            repeat(2) { index ->
+                val host = ServerEntity(name = "E2E Copy $index", host = "copy-$index.invalid", username = "fixture")
+                createdHosts += host.copy(id = repository.insertServer(host).toInt())
+            }
+            await("fixture hosts loaded", 5_000) { createdHosts.all { host -> vm.servers.value.any { it.id == host.id } } }
+            // Keep IME geometry stable: a keyboard resize must not accidentally repair the switch.
+            composeRule.runOnUiThread { vm.updateTerminalReadOnly(true) }
+            val sessions = seed(vm, persistent = listOf(false, false), split = false, serverIds = createdHosts.map { it.id })
+            // Establish the same host-selection chrome for BOTH synthetic hosts. Leaving a real
+            // saved host selected initially can change the layout at the second attach and mask
+            // the bug with an unrelated resize.
+            composeRule.runOnUiThread { vm.attachSession(sessions[0].id) }
+            composeRule.waitForIdle()
+            composeRule.mainClock.advanceTimeBy(200) // Drive the pane's 120ms Compose resize debounce.
+            composeRule.waitForIdle()
+            composeRule.onNode(hasContentDescription("Terminal output:", substring = true), useUnmergedTree = true).assertIsDisplayed()
+            composeRule.runOnUiThread {
+                sessions.forEachIndexed { index, session ->
+                    synchronized(session.emulator) {
+                        session.emulator.feed((1..80).joinToString("") { "HOST_${index}_ROW_$it\r\n" }.toByteArray())
+                    }
+                    TerminalSessionManager.publishTerminalSnapshot(session)
+                }
+            }
+            await("first viewport measured", 5_000) { sessions[0].viewportRowCount > 1 }
+            composeRule.runOnUiThread { vm.attachSession(sessions[1].id) }
+            composeRule.waitForIdle()
+            composeRule.mainClock.advanceTimeBy(200)
+            composeRule.waitForIdle()
+            val selected = sessions[1]
+            try {
+                await("switched viewport matches its rendered grid", 5_000) {
+                    selected.viewportRowCount > 1 && selected.viewportRowCount == selected.termRows
+                }
+            } catch (error: AssertionError) {
+                throw AssertionError("Selected viewport=${selected.viewportRowCount}, grid=${selected.termCols}x${selected.termRows}; " +
+                    "previous viewport=${sessions[0].viewportRowCount}, grid=${sessions[0].termCols}x${sessions[0].termRows}", error)
+            }
+            val visible = vm.terminalBufferTextFor(selected, false, selected.viewportFirstRow, selected.viewportRowCount)
+            assertTrue("visible copy must contain the selected host", visible.contains("HOST_1_ROW_80"))
+            assertFalse("visible copy must not contain another host", visible.contains("HOST_0_"))
+            assertTrue("full copy remains available", vm.terminalBufferTextFor(selected, true).contains("HOST_1_ROW_1"))
+            // Long press must expose the full-range action without hunting through another menu.
+            composeRule.onNode(hasContentDescription("Terminal output:", substring = true), useUnmergedTree = true)
+                .performTouchInput { longClick() }
+            composeRule.onNodeWithText("Show full buffer").assertIsDisplayed()
+            onView(withTagValue(equalTo("terminal_copy_text"))).inRoot(isDialog())
+                .check(matches(withText(containsString("HOST_1_ROW_80"))))
+            composeRule.onNodeWithText("Show full buffer").assertIsDisplayed().performClick()
+            composeRule.onNodeWithText("Full buffer").assertIsDisplayed()
+            composeRule.onNodeWithText("Show visible screen").assertIsDisplayed().performClick()
+            composeRule.onNodeWithText("Visible screen").assertIsDisplayed()
+            clickText("Close")
+            clickText("⋮ OPT")
+            composeRule.onNode(SemanticsMatcher("content below is indicated") {
+                it.config.contains(SemanticsProperties.StateDescription) &&
+                    it.config[SemanticsProperties.StateDescription].contains("More below")
+            }, useUnmergedTree = true).assertExists()
+            composeRule.onNodeWithText("Full buffer").performScrollTo().assertIsDisplayed()
+            composeRule.onNode(SemanticsMatcher("content above is indicated") {
+                it.config.contains(SemanticsProperties.StateDescription) &&
+                    it.config[SemanticsProperties.StateDescription].contains("More above")
+            }, useUnmergedTree = true).assertExists()
+            clickText("Full buffer")
+            composeRule.onNodeWithText("Show visible screen").assertIsDisplayed()
+            clickText("Close")
+        } finally {
+            composeRule.runOnUiThread {
+                vm.updateTerminalReadOnly(wasReadOnly)
+                TerminalSessionManager.clearAll()
+            }
+            createdHosts.forEach { repository.deleteServerAndDependents(it.id) }
+        }
+    }
+
+    @Test
+    fun recoverySaveProgressFailureAndRetryAreVisibleWithoutClosingPanes() = runBlocking {
+        assumeTrue(InstrumentationRegistry.getArguments().getString(ARGUMENT) == "yes")
+        vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
+        val priorKeepAlive = vm.isBackgroundKeepAlive
+        val created = linkedSetOf<String>()
+        val db = AppDatabase.getDatabase(composeRule.activity)
+        val repository = AppRepository(db)
+        val release = CompletableDeferred<Unit>()
+        var blocker: kotlinx.coroutines.Job? = null
+        try {
+            composeRule.runOnUiThread { vm.saveBackgroundKeepAliveToggle(false) }
+            val sessions = seed(vm, persistent = listOf(true, true), split = true, createdTmuxNames = created)
+            withContext(Dispatchers.IO) {
+                // Test-owned names contain only letters, digits and hyphens.
+                db.openHelper.writableDatabase.execSQL(
+                    "CREATE TRIGGER e2e_reject_leave BEFORE INSERT ON persistent_sessions " +
+                        "WHEN NEW.tmuxName = '${sessions[1].tmuxName}' " +
+                        "BEGIN SELECT RAISE(ABORT, 'fixture storage unavailable'); END",
+                )
+            }
+            val entered = CompletableDeferred<Unit>()
+            blocker = launch(Dispatchers.IO) {
+                repository.inTransaction { entered.complete(Unit); release.await() }
+            }
+            withTimeout(5_000) { entered.await() }
+            clickText("Monitor")
+            awaitPrompt("2 active SSH sessions")
+            clickText("Leave resumable")
+            assertUiText("Saving resumable sessions… Please wait.")
+            composeRule.onNodeWithText("Stay").assertIsNotEnabled()
+            composeRule.onNodeWithText("Leave resumable").assertIsNotEnabled()
+            assertEquals(Screen.Shell, vm.currentScreen)
+            assertSplitAttached(vm, sessions)
+            assertFalse(sessions.any { it.userClosed })
+            release.complete(Unit)
+            blocker.join()
+            await("visible recovery error", 5_000) { !vm.isLeavingTerminalSessions && vm.terminalLeaveError != null }
+            composeRule.onNodeWithText("Could not save session recovery.", substring = true, useUnmergedTree = true).assertExists()
+            assertSplitAttached(vm, sessions)
+            assertTrue(repository.getPersistentSessions().none { it.tmuxName in created })
+            withContext(Dispatchers.IO) { db.openHelper.writableDatabase.execSQL("DROP TRIGGER e2e_reject_leave") }
+            clickText("Leave resumable")
+            await("retry saves before navigating", 10_000) {
+                !vm.isLeavingTerminalSessions && vm.currentScreen == Screen.Monitor && vm.activeSessions.isEmpty()
+            }
+            assertTrue(repository.getPersistentSessions().map { it.tmuxName }.containsAll(created))
+        } finally {
+            release.complete(Unit)
+            blocker?.join()
+            withContext(Dispatchers.IO) { db.openHelper.writableDatabase.execSQL("DROP TRIGGER IF EXISTS e2e_reject_leave") }
+            composeRule.runOnUiThread {
+                vm.cancelTerminalNavigation()
+                TerminalSessionManager.clearAll()
+                vm.saveBackgroundKeepAliveToggle(priorKeepAlive)
+            }
+            created.forEach { repository.deletePersistentSession(it) }
+        }
+    }
 
     @Test
     fun directTabsAccidentalClicksAndEveryPaneLifecycleCombinationRemainOneShot() = runBlocking {
@@ -192,6 +356,7 @@ class E2eTerminalNavigationMatrixTest {
         persistent: List<Boolean>,
         split: Boolean,
         createdTmuxNames: MutableSet<String> = linkedSetOf(),
+        serverIds: List<Int>? = null,
     ): List<ShellSession> {
         lateinit var result: List<ShellSession>
         composeRule.runOnUiThread {
@@ -201,7 +366,7 @@ class E2eTerminalNavigationMatrixTest {
             result = persistent.mapIndexed { index, isPersistent ->
                 val id = "e2e-nav-${if (isPersistent) "tmux" else "direct"}-$index-${System.nanoTime()}"
                 ShellSession(
-                    serverId = id.hashCode(),
+                    serverId = serverIds?.get(index) ?: id.hashCode(),
                     serverName = "E2E Navigation ${index + 1}",
                     session = FakeTerminalSession(),
                     emulator = TerminalEmulator(80, 24),

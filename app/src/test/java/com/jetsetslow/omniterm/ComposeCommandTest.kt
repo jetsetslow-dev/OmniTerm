@@ -10,6 +10,15 @@ import java.io.File
  * bug can't ship as a runtime "command failed" surprise) and is podman-aware.
  */
 class ComposeCommandTest {
+    @Test fun updatePreservesPullOutputAndNamesEveryStage() {
+        val command = RemoteCommands.dockerComposeAction("fixture", "/srv/fixture", "compose.yml", "update")
+        assertTrue("pull output must not be discarded", !command.contains("pull --ignore-buildable 2>/dev/null"))
+        for (stage in listOf("[1/4] Pulling images", "[2/4] Building images", "[3/4] Recreating services", "[4/4] Checking services")) {
+            assertTrue("missing stage $stage", command.contains(stage))
+        }
+        assertTrue("non-fatal pull failure must be visible", command.contains("Warning:"))
+        assertValidShell(command)
+    }
 
     private fun assertValidShell(script: String) {
         // Skip silently if there's no bash on the build machine.

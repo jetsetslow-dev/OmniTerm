@@ -12,6 +12,7 @@ import com.jetsetslow.omniterm.ui.INFRA_TAB_STACKS
 import com.jetsetslow.omniterm.ui.Screen
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Rule
@@ -55,8 +56,12 @@ class ComposeBuilderBackNavigationTest {
                 vm.selectedServerId = serverId
                 vm.navigateTo(Screen.Servers)
                 vm.navigateTo(Screen.Infra)
-                vm.activeInfraTab = INFRA_TAB_BUILDER
+                vm.activeInfraTab = INFRA_TAB_STACKS
+                // Offline Compose editing still has visible tabs; its swipe must enter Builder.
+                vm.swipeNavigate(forward = true)
             }
+            assertEquals(Screen.Infra, vm.currentScreen)
+            assertEquals(INFRA_TAB_BUILDER, vm.activeInfraTab)
             composeRule.waitUntil(15_000) { vm.activeComposeDraft != null }
             assertNotNull("builder should hold a draft once composed", vm.activeComposeDraft)
 

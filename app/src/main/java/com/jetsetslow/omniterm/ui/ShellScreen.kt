@@ -131,7 +131,7 @@ private fun SessionPicker(viewModel: AppViewModel) {
                 Text(stringResource(R.string.no_active_sessions), color = chrome.disabledText)
             }
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.weight(1f)) {
+            OverflowLazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.weight(1f)) {
                 items(sessions) { s ->
                     OmniCard(
                         modifier = Modifier.fillMaxWidth().clickable {
@@ -827,7 +827,7 @@ private fun TerminalOpenPicker(
                 .padding(horizontal = 7.dp, vertical = 6.dp)
                 .semantics { contentDescription = "Open or switch terminal session" },
         )
-        DropdownMenu(
+        OverflowDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
             modifier = Modifier.widthIn(min = 260.dp, max = 340.dp).heightIn(max = 440.dp),
@@ -1084,7 +1084,7 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
                 if (servers.isEmpty()) {
                     Text("No saved hosts to use as a jump host.")
                 } else {
-                    LazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
+                    OverflowLazyColumn(modifier = Modifier.heightIn(max = 300.dp)) {
                         items(servers) { candidate ->
                             Column(
                                 modifier = Modifier
@@ -1125,7 +1125,7 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(max = 520.dp)
-                    .verticalScroll(rememberScrollState()),
+                    .verticalScrollWithIndicators(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 Text(
@@ -1193,7 +1193,7 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
                     "key" -> if (savedKeys.isEmpty()) {
                         Text("No saved SSH keys. Add one under Tools › Auth Keys.", fontSize = 11.sp, color = OmniColors.red)
                     } else {
-                        LazyColumn(modifier = Modifier.heightIn(max = 120.dp)) {
+                        OverflowLazyColumn(modifier = Modifier.heightIn(max = 120.dp)) {
                             items(savedKeys) { key ->
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -1212,7 +1212,7 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
                     else -> if (savedProfiles.isEmpty()) {
                         Text("No credential profiles saved.", fontSize = 11.sp, color = OmniColors.red)
                     } else {
-                        LazyColumn(modifier = Modifier.heightIn(max = 120.dp)) {
+                        OverflowLazyColumn(modifier = Modifier.heightIn(max = 120.dp)) {
                             items(savedProfiles) { profile ->
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -1293,7 +1293,7 @@ private fun QuickConnectSheet(viewModel: AppViewModel) {
                     )
                     if (proxyType == "ssh" && savedKeys.isNotEmpty()) {
                         Text("Jump host key (optional)", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        LazyColumn(modifier = Modifier.heightIn(max = 100.dp)) {
+                        OverflowLazyColumn(modifier = Modifier.heightIn(max = 100.dp)) {
                             items(savedKeys) { key ->
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
@@ -1665,7 +1665,7 @@ private fun MultiSshPanePicker(
             }
         }
 
-        DropdownMenu(
+        OverflowDropdownMenu(
             expanded = expanded,
             onDismissRequest = { expanded = false },
             modifier = Modifier.widthIn(min = 240.dp, max = 340.dp).heightIn(max = 420.dp),
@@ -1844,6 +1844,20 @@ private fun PaneTerminal(
     isFocused: Boolean,
     onRequestFocus: () -> Unit,
 ) {
+    // Session-owned dialogs and gesture state must not retain another host's captured text.
+    key(session.id) {
+        PaneTerminalContent(viewModel, session, confirm, isFocused, onRequestFocus)
+    }
+}
+
+@Composable
+private fun PaneTerminalContent(
+    viewModel: AppViewModel,
+    session: ShellSession,
+    confirm: ConfirmController,
+    isFocused: Boolean,
+    onRequestFocus: () -> Unit,
+) {
     val currentSession = session
     val sessionId = currentSession.id
     val snapshot = currentSession.terminalScreen
@@ -1863,6 +1877,7 @@ private fun PaneTerminal(
     LaunchedEffect(currentSession.terminalOptionsRequestGeneration) {
         if (currentSession.terminalOptionsRequestGeneration > 0L) {
             showCopyOptions = true
+            currentSession.terminalOptionsRequestGeneration = 0L
         }
     }
 
@@ -2424,7 +2439,7 @@ private fun PaneTerminal(
                         tonalElevation = 6.dp,
                     ) {
                         Column(
-                            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(16.dp),
+                            Modifier.fillMaxWidth().verticalScrollWithIndicators(rememberScrollState()).padding(16.dp),
                             verticalArrangement = Arrangement.spacedBy(10.dp),
                         ) {
                             Text("Terminal input", fontWeight = FontWeight.Bold, fontSize = 18.sp)
@@ -2585,6 +2600,20 @@ private fun PaneTerminal(
                         }
                         Spacer(Modifier.height(8.dp))
                         val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
+                        OutlinedButton(
+                            onClick = {
+                                val full = copyDialogTitle != "Full buffer"
+                                copyDialogTitle = if (full) "Full buffer" else "Visible screen"
+                                copyDialogText = viewModel.terminalBufferTextFor(
+                                    currentSession, full = full,
+                                    firstRow = viewport.firstVisibleRow,
+                                    rowCount = visibleRowCount,
+                                )
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (title == "Full buffer") "Show visible screen" else "Show full buffer")
+                        }
                         // Must be a theme surface, not a fixed dark token: with the light or
                         // high-contrast-light app theme, onSurface is near-black and a fixed
                         // OmniColors.bg2 pane rendered the copy text black-on-black.
@@ -2596,6 +2625,8 @@ private fun PaneTerminal(
                             factory = { ctx ->
                                 android.widget.ScrollView(ctx).apply {
                                     isVerticalScrollBarEnabled = true
+                                    isScrollbarFadingEnabled = false
+                                    setScrollIndicators(android.view.View.SCROLL_INDICATOR_TOP or android.view.View.SCROLL_INDICATOR_BOTTOM)
                                     isFillViewport = true
                                     val textView = android.widget.TextView(ctx).apply {
                                         tag = "terminal_copy_text"
@@ -2624,7 +2655,10 @@ private fun PaneTerminal(
                                 tv.setTextColor(textColor)
                                 tv.setBackgroundColor(backgroundColor)
                                 val nextText = copyDialogText.ifBlank { "No terminal text in this range." }
-                                if (tv.text.toString() != nextText) tv.text = nextText
+                                if (tv.text.toString() != nextText) {
+                                    tv.text = nextText
+                                    scroll.scrollTo(0, 0)
+                                }
                             },
                             modifier = Modifier
                                 .fillMaxWidth()

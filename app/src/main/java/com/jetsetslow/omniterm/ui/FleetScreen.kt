@@ -117,7 +117,7 @@ fun FleetSummaryBar(viewModel: AppViewModel, srvList: List<ServerEntity>) {
 @Composable
 fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
     var scoreDialogServer by remember { mutableStateOf<ServerEntity?>(null) }
-    LazyColumn(
+    OverflowLazyColumn(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier.fillMaxSize()
     ) {
@@ -180,7 +180,7 @@ fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                             unit = "%",
                         )
 
-                        // Short macro run triggers that execute and navigate directly to Broadcast Tab output
+                        // Single-host diagnostics have their own visible output; never overwrite Broadcast.
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -192,12 +192,7 @@ fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                                 OmniButton(
                                     label = lbl,
                                     onClick = {
-                                        viewModel.broadcastTargetMode = FleetTargetMode.Servers
-                                        viewModel.broadcastTargetGroups.clear()
-                                        viewModel.broadcastTargetServerIds.clear()
-                                        viewModel.broadcastTargetServerIds.add(s.id)
-                                        viewModel.broadcastCommandText = cmd
-                                        viewModel.runFleetBroadcast(cmd, resolvedIds = listOf(s.id))
+                                        viewModel.runStreamingAction("$lbl · ${s.name}", cmd, server = s)
                                     },
                                     color = accentColor,
                                     small = true
@@ -356,6 +351,20 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            OutlinedTextField(
+                value = viewModel.broadcastCommandText,
+                onValueChange = { viewModel.broadcastCommandText = it },
+                label = { Text("Command") },
+                placeholder = { Text(stringResource(R.string.enter_bash_command_script_here)) },
+                prefix = { Text("$ ", fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold) },
+                textStyle = LocalTextStyle.current.copy(fontFamily = OmniFonts.mono, fontSize = 14.sp),
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(8.dp),
+                colors = omniTextFieldColors()
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text("Command presets", fontWeight = FontWeight.Bold)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -379,24 +388,11 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                 ) {
                     Icon(Icons.Filled.Save, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(4.dp))
-                    Text(stringResource(R.string.save))
+                    Text("Save command")
                 }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
-
-            // Monospace code CLI line prefix text entry block
-            OutlinedTextField(
-                value = viewModel.broadcastCommandText,
-                onValueChange = { viewModel.broadcastCommandText = it },
-                placeholder = { Text(stringResource(R.string.enter_bash_command_script_here)) },
-                prefix = { Text("$ ", fontFamily = OmniFonts.mono, fontWeight = FontWeight.Bold) },
-                textStyle = LocalTextStyle.current.copy(fontFamily = OmniFonts.mono, fontSize = 14.sp),
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                shape = RoundedCornerShape(8.dp),
-                colors = omniTextFieldColors()
-            )
 
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -431,7 +427,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
             }
         }
 
-        LazyColumn(
+        OverflowLazyColumn(
             modifier = Modifier
                 .fillMaxWidth()
                 .weight(1f)
@@ -487,7 +483,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                                         .fillMaxWidth()
                                         .heightIn(min = 72.dp, max = 260.dp)
                                         .background(Color.Black)
-                                        .verticalScroll(outScroll)
+                                        .verticalScrollWithIndicators(outScroll)
                                         .padding(8.dp)
                                 ) {
                                     Text(
@@ -532,7 +528,7 @@ fun FleetBroadcastView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     } else {
-                        LazyColumn(
+                        OverflowLazyColumn(
                             modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
@@ -823,7 +819,7 @@ fun FleetLogsView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                 Text(stringResource(R.string.no_logs_select_hosts_and_tap), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
-            LazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            OverflowLazyColumn(modifier = Modifier.fillMaxSize(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 items(logs) { entry ->
                     val levelColor = when (entry.level) {
                         "ERROR" -> OmniColors.red
