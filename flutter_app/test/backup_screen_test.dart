@@ -212,6 +212,48 @@ void main() {
     await finish(tester);
   });
 
+  testWidgets('a save that finishes after the screen closes is still recorded', (tester) async {
+    // Saving hands off to the system file picker, another app's window. The Backup screen is
+    // routinely unmounted behind it, and since the Flutter engine is retained the view model
+    // outlives the screen. Gating the outcome on `context.mounted` threw away a backup that had
+    // really been written: no confirmation and no last-export time, so coming back to the screen
+    // showed no trace of it.
+    final gate = Completer<void>();
+    files.saveGate = gate;
+    await pump(tester);
+    await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
+    await tester.pumpAndSettle();
+    // A section with no credentials in it, so the export needs no passphrase dialog.
+    await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('backup.export')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(
+      gate.isCompleted,
+      isFalse,
+      reason: 'the picker must still be open for this to be a test',
+    );
+
+    // The user leaves the screen while the picker is up.
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump();
+
+    // ...and only then chooses a location.
+    gate.complete();
+    await tester.pumpAndSettle();
+
+    expect(files.saved, hasLength(1), reason: 'the file really was written');
+    expect(
+      vm.statusIsSuccess,
+      isTrue,
+      reason: 'a backup that was written must read as written, even if nobody was watching',
+    );
+    expect(vm.lastExportTime, isNotNull, reason: 'and must stamp the last-export time');
+    await finish(tester);
+  });
+
   testWidgets('export is disabled with nothing selected', (tester) async {
     await pump(tester);
     await tester.tap(find.byKey(const ValueKey('backup.selectNone')));

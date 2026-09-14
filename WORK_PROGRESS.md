@@ -133,9 +133,9 @@ one is possible, the full gate, and device profiles for anything a screen can re
 | C | `LongOperationNotifications.start` returned failures are ignored at all call sites | §3 | **done** |
 | D | Passphrase / restore-selection / confirmation cancellation are silent | §3 | **done** |
 | E | Disconnect-all needs observable completion/errors and cleanup ownership | §1 | **done** |
-| F | Native (Compose) fixture proof for all three Uptime/DF/PS popups | §2 | **open** |
-| G | Compose Update delayed stdout/stderr and local-build fallback; mutation-warning audit across Fleet/containers/stacks | §2 | **open** |
-| H | Completion while the Backup screen is unmounted; untested routes/error/cancel sweep; cross-app identity and overflow | §3 | **open** |
+| F | Native (Compose) fixture proof for all three Uptime/DF/PS popups | §2 | **done** |
+| G | Compose Update delayed stdout/stderr and local-build fallback; mutation-warning audit across Fleet/containers/stacks | §2 | **done** |
+| H | Completion while the Backup screen is unmounted; untested routes/error/cancel sweep; cross-app identity and overflow | §3 | **partly done — sweep outstanding** |
 
 A is first because engine retention (`5c99960`) is what made those bridge lifetimes matter: they now
 outlive the Activities they were registered against.
@@ -144,6 +144,75 @@ Already closed and not to be reopened: §0 (change detectors), §4 (Dependabot #
 engine retention/FLAG_SECURE/Quit trio, the four preflight bugs, bastion parity, the pool key, and
 the latency measurement. Device-initiated recreation continuity is a **measured dead end**, recorded
 below — 120 MainActivity lifecycle events, 0 destructions.
+
+### F — the three Fleet diagnostics, proved natively (`4b42c7c`)
+
+`FleetDiagnosticStreamingRobolectricTest` drives the real `AppViewModel` over an injected transport
+that streams one chunk, holds, then streams a second. It asserts each of Uptime/DF/PS sends *its
+own* command (the screen pairs label to command by hand), that output appears while the command is
+still running rather than only at completion, that the popup names the host it dialled, and that
+`broadcastCommandText`/`broadcastTargetMode` are untouched.
+
+Robolectric, not instrumentation, on purpose: root-package instrumentation tests are filtered out of
+the required CI checks, so an `androidTest` here would have run in no gate at all.
+
+### G — Update's runtime behaviour, and the warning rule made checkable
+
+**Streaming.** `ComposeCommandTest` already pinned what the update *script* contains. What it could
+not show is how the app behaves while that script runs, and update is the slowest action in the app
+— a registry pull then a local image build, minutes apart.
+`ComposeStackUpdateStreamingRobolectricTest` holds the stream open on a channel so the test decides
+exactly when each stage lands. It proves stages appear progressively (not batched at exit), that a
+non-fatal pull failure stays readable to the end — the only evidence the image was built locally
+rather than pulled — that the button sends the audited script *once* and never replays it, and that
+a stack with no compose working directory dispatches nothing and says why.
+
+Negative control: disabling the progressive append in `runStreamingAction` failed both streaming
+tests; the command-wiring tests correctly kept passing, since they test something else.
+
+**Mutation warnings.** Fleet is consistent (read-only diagnostics one tap; broadcast confirms,
+lists every target host and escalates to `destructive` via `fleetCommandDangerWarning`). Containers
+and services are consistent. **Stacks had drifted**: `up` (UP -D) and `pull` sat in the mutating row
+with every sibling confirming around them and went straight to the daemon unwarned — while the
+*identical* UP -D offered on a downed stack did confirm, and the live-stack path is the more
+disruptive of the two because running containers get recreated.
+
+The drift was invisible because the decision lived in a `when` inside a composable, where nothing
+could check it. It is now `StackActions.kt`: the two button lists and the warning copy as values,
+with the screen rendering from the same lists. `StackActionConfirmTest` holds the rule — every
+mutating action warns and names its stack, read-only ones return null, and `down` is pinned as the
+*only* exemption (its dialog also carries the remove-orphans choice), so a new destructive button
+cannot quietly join it. Writing that test immediately caught a second, smaller drift: `removeOrphans`
+was the one warning whose title did not name the stack, which matters most here because the page
+repeats these buttons down a list of many stacks.
+
+Negative control: removing the `up`/`pull` entries reproduced the original defect as three failures,
+including `expected:<[down]> but was:<[pull, up, down]>`.
+
+### H — a finished backup that nobody was watching (partly done)
+
+`backup_screen.dart` recorded the save outcome only `if (context.mounted)`. Saving hands off to the
+system file picker — a separate Activity — so the screen is routinely unmounted behind it, and since
+engine retention (`5c99960`) the view model reliably outlives it. The result: a backup that was
+really written recorded nothing — no confirmation, **no last-export timestamp** — and a failed save
+was dropped the same way. Returning to the screen showed no trace that the export had happened.
+
+The guard was on the wrong side of the line. `BackupViewModel` is app-scoped
+(`main.dart:406`), so `vm.report*` is always safe; only UI work needs `mounted`, and
+`_revealFeedback()` already makes its own check. The outcome is now recorded unconditionally. The
+matching silent drop just above it — screen closed after the backup was built but before the picker
+opened — now reports rather than returning quietly.
+
+Negative control: with the original guard restored, the new test fails on `vm.statusIsSuccess` while
+`files.saved` still has length 1 — the file written, the app unaware. Exactly the defect.
+
+Audited and left alone: `_import` already records completion ungated, its `mounted` checks guard
+only `showDialog`, and cross-app identity/overflow is already covered by `backup_payload_test.dart`
+(additive restore, credential-profile id remapping, renamed-duplicate mapping) — restore is additive
+by design and the confirm dialog says so, so nothing silently merges duplicate rows.
+
+**Still outstanding in H:** the broad untested routes/error/cancel sweep against the original
+release/migration records. That is the one piece of the tracked checklist not yet done.
 
 ## Resume here
 

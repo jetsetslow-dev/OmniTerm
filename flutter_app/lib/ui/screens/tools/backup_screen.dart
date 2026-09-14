@@ -241,11 +241,27 @@ class _BackupScreenState extends State<BackupScreen> {
 
     final contents = await vm.exportBackup(passphrase);
     _revealFeedback();
-    if (contents == null || !context.mounted) return;
+    if (contents == null) return;
+    if (!context.mounted) {
+      // The backup was built — and encrypted, for a sensitive selection — but the user left before
+      // the picker could open, and throwing a system file dialog at a screen they have navigated
+      // away from is worse than not saving. Say so rather than dropping it in silence, which is the
+      // same mistake the save-outcome switch below used to make.
+      vm.reportCancelled(
+        'Backup was created but not saved — the screen closed before the file dialog opened. '
+        'Nothing was written.',
+      );
+      return;
+    }
 
     final result = await widget.fileStore.save(vm.suggestedFileName(), contents);
-    if (!context.mounted) return;
-
+    // Deliberately NOT gated on `context.mounted`. Saving hands off to the system file picker — a
+    // separate Activity — so this screen is routinely unmounted by the time the file is actually
+    // written, and since the engine is retained the view model reliably outlives it. Returning here
+    // discarded the outcome of a save that had really happened: no confirmation, no export
+    // timestamp stamped, and a failed save equally silent, leaving the user with no evidence the
+    // backup existed. `vm` is app-scoped (see main.dart) and always safe to record on; only UI work
+    // needs the mounted check, and `_revealFeedback` makes its own.
     switch (result.outcome) {
       case BackupSaveOutcome.saved:
         // Naming where it went, rather than a bare "saved" the user has to take on trust — and

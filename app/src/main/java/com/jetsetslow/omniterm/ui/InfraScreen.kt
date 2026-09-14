@@ -324,41 +324,28 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                         if (canCompose) {
                         StackActionRow(
                             stack = stack,
-                            actions = listOf("ps" to "PS", "logs" to "Logs", "followLogs" to "FOLLOW", "config" to "CONFIG"),
+                            actions = STACK_READ_ONLY_ACTIONS,
                             onAction = { action -> viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, action, runtime = stack.runtime) },
                         )
                         StackActionRow(
                             stack = stack,
-                            actions = listOf("update" to "Update", "build" to "Build", "pull" to "Pull", "up" to "UP -D", "forceRecreate" to "Force Recreate", "restart" to "Restart", "down" to "DOWN", "removeOrphans" to "Remove Orphans"),
+                            actions = STACK_MUTATING_ACTIONS,
                             onAction = { action ->
-                                when (action) {
-                                    "down" -> { pendingDownRemoveOrphans = false; pendingDown = stack }
-                                    "build" -> confirm.ask(
-                                        "Build ${stack.name}?",
-                                        "Build this stack's Dockerfile-based images (refreshing their base images). Containers are not recreated — run Update or UP -D afterwards to apply.",
-                                        confirmLabel = "Build",
-                                    ) { viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, "build", runtime = stack.runtime) }
-                                    "removeOrphans" -> confirm.ask(
-                                        "Remove Orphans?",
-                                        "Remove containers for services no longer defined in the compose file for ${stack.name}.",
-                                        confirmLabel = "Remove Orphans",
-                                    ) { viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, "removeOrphans", runtime = stack.runtime) }
-                                    "update" -> confirm.ask(
-                                        "Update ${stack.name}?",
-                                        "Pull updated registry images, (re)build any Dockerfile-based images, then recreate this stack's containers?",
-                                        confirmLabel = "Update",
-                                    ) { viewModel.dockerStackUpdate(stack.name, stack.workingDir, stack.configFiles, stack.runtime) }
-                                    "forceRecreate" -> confirm.ask(
-                                        "Force Recreate ${stack.name}?",
-                                        "Recreate all containers even if nothing changed? Running containers will briefly restart.",
-                                        confirmLabel = "Recreate",
-                                    ) { viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, "forceRecreate", runtime = stack.runtime) }
-                                    "restart" -> confirm.ask(
-                                        "Restart ${stack.name}?",
-                                        "Restart all services in this stack? They will briefly go down.",
-                                        confirmLabel = "Restart",
-                                    ) { viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, action, runtime = stack.runtime) }
-                                    else -> viewModel.dockerStackAction(stack.name, stack.workingDir, stack.configFiles, action, runtime = stack.runtime)
+                                // One rule for the whole row, held in StackActions.kt: anything that
+                                // changes the host warns first. DOWN is the single exemption because
+                                // its dialog also carries the remove-orphans choice.
+                                if (action == STACK_ACTION_WITH_ITS_OWN_DIALOG) {
+                                    pendingDownRemoveOrphans = false
+                                    pendingDown = stack
+                                } else {
+                                    val run = {
+                                        viewModel.dockerStackAction(
+                                            stack.name, stack.workingDir, stack.configFiles, action, runtime = stack.runtime,
+                                        )
+                                    }
+                                    val warning = stackActionConfirm(action, stack.name, stack.workingDir)
+                                    if (warning == null) run()
+                                    else confirm.ask(warning.title, warning.message, confirmLabel = warning.confirmLabel) { run() }
                                 }
                             },
                         )
