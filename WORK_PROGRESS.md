@@ -8,6 +8,54 @@ Before an authorized merge to `main`, consolidate it into the private handover u
 `secrets/internal-docs/docs/` and remove this temporary file from the merge tree. Never put
 secrets here: moving it later does not erase Git history.
 
+## C, D, E: three more places that finished work and said nothing
+
+**C — every long operation's foreground-service start was discarded.** `start()` returned `bool`
+and all seven call sites across six view models did `unawaited(...)`. The same tri-state collapse as
+`SessionService`: "iOS has no foreground service", "no plugin registered" and "Android refused" all
+arrived as `false`. A user starting a backup, deploy, fleet broadcast, transfer or share scan
+expects it to survive switching away, and silently it would not. `start()` now returns
+`ok`/`unsupported`/`failed(detail)`, and each screen reports a genuine refusal through its existing
+error surface — phrased as *"This may not keep running if you leave the app"*, because
+`ForegroundServiceStartNotAllowedException` means nothing to the person holding the phone.
+`unsupported` stays silent by design. Fleet was the exception: it has only per-host row notes, and a
+service refusal is not per-host, so it got a small dedicated warning above the results.
+
+**D — four cancel paths in the backup flow said nothing.** Export passphrase, import passphrase,
+restore selection, restore confirmation. The last two matter most: by then the file has been read
+*and decrypted*, so a blank screen leaves the user unable to answer the only question a restore
+raises — did anything change? All four now say so explicitly, and none is styled as an error,
+because the user chose it.
+
+**E — disconnect-all lost failures and showed no progress.** `terminate` wrote straight to `_error`
+inside a loop, so the second failure overwrote the first; a user disconnecting three hosts saw one
+message and had no idea the other two were still running on their servers. It now *returns* the
+failure and `disconnectAll` aggregates them with host names. It also had no busy state despite
+costing two SSH round trips per host, and its own button stayed enabled — now `isDisconnectingAll`,
+a "Disconnecting…" label, and a refused second run. The caller navigated away regardless; it now
+stays put when anything could not be confirmed stopped, rather than hiding the message naming it.
+
+### Controls
+
+D and E each needed a second attempt to produce a real control. E's first control failed to
+*compile* against `HEAD` because `isDisconnectingAll` is new, which proves nothing behavioural;
+isolating the aggregation test (which uses no new API) produced the genuine before-symptom — a
+single unnamed failure where two hosts had failed. D's pre-existing test asserted `vm.status == null`
+under the reason *"cancelling must not produce a file"*; `status` was only ever a proxy, so it now
+asserts `files.saved` is empty and `statusIsSuccess` is false, which is what it always meant.
+
+### A process failure, twice
+
+Item C's gate was launched and then the tree was edited for D; the same happened again for E. A
+validation whose tree changed underneath it describes a tree that never existed, so both runs were
+discarded and C+D+E were validated together on a settled tree. The rule for a multi-item checklist:
+batch the edits, validate once, commit, *then* start the next item.
+
+### Validation
+
+Every stage green: `core rc=0`, `host rc=0`, `local-pr-check rc=0`, both diff checks `0`,
+`FAILED=0`.
+
 ## B (§1): audited under retention, no change needed
 
 Both halves hold, and retention makes one of them *safer* rather than riskier.
@@ -82,9 +130,9 @@ one is possible, the full gate, and device profiles for anything a screen can re
 | --- | --- | --- | --- |
 | A | Late-callback identity guards for the bridge event sinks | §1 | **fixed; untestable in this harness — see below** |
 | B | App-lock protection across recreation; external launches consumed once | §1 | **audited, no defect; device-proof blocked** |
-| C | `LongOperationNotifications.start` returned failures are ignored at all call sites | §3 | **open** |
-| D | Passphrase / restore-selection / confirmation cancellation are silent (`backup_screen.dart:228,290,308,332`) | §3 | **open** |
-| E | Disconnect-all needs observable completion/errors and cleanup ownership | §1 | **open** |
+| C | `LongOperationNotifications.start` returned failures are ignored at all call sites | §3 | **done** |
+| D | Passphrase / restore-selection / confirmation cancellation are silent | §3 | **done** |
+| E | Disconnect-all needs observable completion/errors and cleanup ownership | §1 | **done** |
 | F | Native (Compose) fixture proof for all three Uptime/DF/PS popups | §2 | **open** |
 | G | Compose Update delayed stdout/stderr and local-build fallback; mutation-warning audit across Fleet/containers/stacks | §2 | **open** |
 | H | Completion while the Backup screen is unmounted; untested routes/error/cancel sweep; cross-app identity and overflow | §3 | **open** |

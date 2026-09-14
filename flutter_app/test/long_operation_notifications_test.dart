@@ -76,12 +76,49 @@ void main() {
     expect((calls.last.arguments as Map)['success'], isFalse);
   });
 
-  test('missing native plugin degrades to unsupported', () async {
+  test('missing native plugin degrades to unsupported, not failure', () async {
+    // The distinction this exists for: iOS and desktop have no foreground service and never will,
+    // so reporting that as a refusal would put a permanent, unactionable warning on screen.
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
       channel,
       null,
     );
 
-    expect(await notifications.start(id: 'a', label: 'Upload: a', totalBytes: 1), isFalse);
+    final result = await notifications.start(id: 'a', label: 'Upload: a', totalBytes: 1);
+    expect(result.outcome, LongOperationStartOutcome.unsupported);
+    expect(result.failed, isFalse);
+    expect(result.warning, isNull, reason: 'nothing the user could act on');
+  });
+
+  test('a device that refuses reports the refusal, with its reason', () async {
+    // Android 12+ throws ForegroundServiceStartNotAllowedException for a background start. That is
+    // a device which DOES support this saying no, and it used to be discarded entirely.
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      channel,
+      (call) async => throw PlatformException(
+        code: 'error',
+        message: 'ForegroundServiceStartNotAllowedException',
+      ),
+    );
+
+    final result = await notifications.start(id: 'a', label: 'Upload: a');
+    expect(result.outcome, LongOperationStartOutcome.failed);
+    expect(result.detail, contains('ForegroundServiceStartNotAllowed'));
+    expect(
+      result.warning,
+      contains('may not keep running if you leave the app'),
+      reason: 'phrased around what the user loses, not the mechanism',
+    );
+  });
+
+  test('a device that answers false is a refusal, not an absence', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger.setMockMethodCallHandler(
+      channel,
+      (call) async => false,
+    );
+
+    final result = await notifications.start(id: 'a', label: 'Upload: a');
+    expect(result.outcome, LongOperationStartOutcome.failed);
+    expect(result.warning, isNotNull);
   });
 }

@@ -317,6 +317,15 @@ class _FleetBroadcastTabState extends State<FleetBroadcastTab> {
                 ),
               ],
             ),
+            if (vm.startWarning != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  vm.startWarning!,
+                  key: const ValueKey('fleet.broadcast.startWarning'),
+                  style: const TextStyle(color: OmniColors.amber, fontSize: 12),
+                ),
+              ),
             const SizedBox(height: 8),
             // Not `Expanded`. The form above is taller than a landscape phone at 200% text, so
             // `Expanded` was handed nothing and the column overflowed by 25px. Sized to what is left,

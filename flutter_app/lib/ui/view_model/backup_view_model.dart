@@ -65,7 +65,9 @@ class BackupViewModel extends ChangeNotifier {
     final id = 'backup-${DateTime.now().microsecondsSinceEpoch}-${_operationSequence++}';
     final notifications = operationNotifications;
     if (notifications != null) {
-      unawaited(notifications.start(id: id, label: label, destination: 'backup'));
+      unawaited(
+        notifications.start(id: id, label: label, destination: 'backup').then(_noteStartResult),
+      );
     }
     return id;
   }
@@ -105,6 +107,21 @@ class BackupViewModel extends ChangeNotifier {
   }
 
   bool _disposed = false;
+
+  /// Surfaces a refused foreground-service start, and only a refused one.
+  ///
+  /// The result used to be discarded entirely. A refusal means the work the user just started will
+  /// not survive them switching away, which is the whole point of the service — so it is worth
+  /// saying, once, in this screen's existing error surface. `unsupported` stays silent: iOS and
+  /// desktop have no foreground service and never will, and a permanent unactionable warning is
+  /// worse than none at all.
+  void _noteStartResult(LongOperationStart result) {
+    final warning = result.warning;
+    if (warning == null || _disposed) return;
+    if (_error == warning) return;
+    _error = warning;
+    _safeNotify();
+  }
 
   void _safeNotify() {
     if (!_disposed) notifyListeners();
@@ -381,10 +398,19 @@ class BackupViewModel extends ChangeNotifier {
   /// Not an error, and not silence either. By this point the backup has been built and possibly
   /// encrypted, and the screen has been showing "Creating backup…" while that happened. Ending
   /// that with nothing at all leaves the user unsure whether a file exists somewhere.
-  void reportSaveCancelled() {
+  void reportSaveCancelled() =>
+      reportCancelled('Backup not saved — the file dialog was cancelled. Nothing was written.');
+
+  /// Report that the user backed out, whichever step they backed out of.
+  ///
+  /// Not an error, and not silence. Every one of these points sits *after* the user asked for
+  /// something — and the later ones sit after real work: by the time the restore selection appears,
+  /// the file has been read and decrypted. Ending that with a blank screen leaves them unsure
+  /// whether anything changed, which for a restore is the one question that matters.
+  void reportCancelled(String message) {
     _error = null;
     _statusIsSuccess = false;
-    _status = 'Backup not saved — the file dialog was cancelled. Nothing was written.';
+    _status = message;
     _safeNotify();
   }
 

@@ -127,6 +127,22 @@ class FleetViewModel extends ChangeNotifier {
 
   bool _disposed = false;
 
+  /// A refused foreground-service start, or null.
+  ///
+  /// Fleet has no general error surface — results are per host — but a refusal is not per host: it
+  /// means the whole broadcast may not survive the user switching away. Kept separate from the row
+  /// notes for that reason. `unsupported` stays silent, because iOS and desktop have no foreground
+  /// service and a permanent unactionable warning is worse than none.
+  String? get startWarning => _startWarning;
+  String? _startWarning;
+
+  void _noteStartResult(LongOperationStart result) {
+    final warning = result.warning;
+    if (warning == null || _disposed || _startWarning == warning) return;
+    _startWarning = warning;
+    _safeNotify();
+  }
+
   void _safeNotify() {
     if (!_disposed) notifyListeners();
   }
@@ -297,11 +313,13 @@ class FleetViewModel extends ChangeNotifier {
     final notifications = operationNotifications;
     if (notifications != null) {
       unawaited(
-        notifications.start(
-          id: operationId,
-          label: 'Running command on ${targets.length} hosts',
-          destination: 'fleet',
-        ),
+        notifications
+            .start(
+              id: operationId,
+              label: 'Running command on ${targets.length} hosts',
+              destination: 'fleet',
+            )
+            .then(_noteStartResult),
       );
     }
 

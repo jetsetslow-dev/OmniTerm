@@ -1161,10 +1161,23 @@ class ShellViewModel extends ChangeNotifier {
 
   /// Terminates a persistent tmux session on the host, then closes its local SSH channel.
   Future<void> terminate(ShellSession session) async {
+    final failure = await _terminate(session);
+    if (failure == null) return;
+    _error = failure;
+    _safeNotify();
+  }
+
+  /// Terminates one session and *returns* its failure instead of publishing it.
+  ///
+  /// Returning rather than assigning is what lets [disconnectAll] report every host that failed:
+  /// writing straight to `_error` in a loop meant the second failure overwrote the first, so a user
+  /// disconnecting three hosts saw one message and had no idea the other two were still running on
+  /// their servers.
+  Future<String?> _terminate(ShellSession session) async {
     final tmuxName = session.tmuxName;
     if (tmuxName == null) {
       close(session);
-      return;
+      return null;
     }
     final server = _app.servers.where((server) => server.id == session.serverId).firstOrNull;
     var confirmedStopped = false;
@@ -1186,22 +1199,52 @@ class ShellViewModel extends ChangeNotifier {
       await _app.repository.deletePersistentSession(tmuxName);
       await _reloadSaved();
       confirmedStopped = true;
+      return null;
     } catch (e) {
-      _error =
-          'Disconnected locally, but the remote tmux session could not be confirmed stopped. '
+      return 'Disconnected locally, but the remote tmux session could not be confirmed stopped. '
           'It remains available for recovery: $e';
+    } finally {
+      _close(session, saveRecovery: !confirmedStopped);
     }
-    _close(session, saveRecovery: !confirmedStopped);
   }
 
+  /// True while [disconnectAll] is working, so the action that started it can show it and refuse
+  /// to start a second one.
+  ///
+  /// Each persistent session costs two SSH round trips — kill, then confirm — so disconnecting a
+  /// handful of hosts is seconds of work that previously showed nothing at all and left its own
+  /// button enabled throughout.
+  bool get isDisconnectingAll => _disconnectingAll;
+  bool _disconnectingAll = false;
+
   Future<void> disconnectAll({bool terminatePersistent = true}) async {
-    cancelConnect();
-    for (final session in _sessions.toList()) {
-      if (terminatePersistent && session.tmuxName != null) {
-        await terminate(session);
-      } else {
-        close(session);
+    if (_disconnectingAll) return;
+    _disconnectingAll = true;
+    _error = null;
+    _safeNotify();
+    final failures = <String>[];
+    try {
+      cancelConnect();
+      for (final session in _sessions.toList()) {
+        if (terminatePersistent && session.tmuxName != null) {
+          // Collected, not published one at a time: every host that could not be confirmed stopped
+          // has to survive into the final message, because each is a session still running on a
+          // server the user believes they have just shut down.
+          final failure = await _terminate(session);
+          if (failure != null) failures.add('${session.serverName}: $failure');
+        } else {
+          close(session);
+        }
       }
+    } finally {
+      _disconnectingAll = false;
+      if (failures.isNotEmpty) {
+        _error = failures.length == 1
+            ? failures.single
+            : '${failures.length} sessions could not be confirmed stopped.\n'
+                  '${failures.join('\n')}';
+      }
+      _safeNotify();
     }
   }
 

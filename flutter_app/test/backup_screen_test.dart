@@ -239,7 +239,11 @@ void main() {
 
     await tester.tap(find.byKey(const ValueKey('backup.passphrase.cancel')));
     await tester.pumpAndSettle();
-    expect(vm.status, isNull, reason: 'cancelling must not produce a file');
+    // This asserted `vm.status == null`, which was only ever a proxy for the stated reason —
+    // cancelling must not produce a file. The proxy stopped holding once a cancelled export says
+    // so, and a message is not a file. Asserting the thing itself is stronger than the proxy was.
+    expect(files.saved, isEmpty, reason: 'cancelling must not produce a file');
+    expect(vm.statusIsSuccess, isFalse, reason: 'and must not read as a completed backup');
     await finish(tester);
   });
 
@@ -539,6 +543,25 @@ void main() {
         reason: 'the old success message must not survive a later cancelled export',
       );
       expect(vm.status, contains('cancelled'));
+      await finish(tester);
+    });
+
+    testWidgets('cancelling the passphrase says so instead of nothing', (tester) async {
+      // Tapping Export is user-triggered work. Ending it with a blank screen leaves the user
+      // unable to tell a cancelled export from one that silently failed.
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('backup.passphrase.field')), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('backup.passphrase.cancel')));
+      await tester.pumpAndSettle();
+
+      expect(vm.error, isNull, reason: 'the user chose this; it is not a failure');
+      expect(vm.status, contains('cancelled'));
+      expect(vm.status, contains('Nothing was written'));
+      expect(files.saved, isEmpty);
       await finish(tester);
     });
 

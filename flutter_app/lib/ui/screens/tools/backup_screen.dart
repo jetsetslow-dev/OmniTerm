@@ -225,7 +225,11 @@ class _BackupScreenState extends State<BackupScreen> {
         // Stated at the point of decision, where it can still change what the user does.
         note: 'Without this passphrase the backup cannot be opened. Nobody can reset it.',
       );
-      if (entered == null) return;
+      if (entered == null) {
+        vm.reportCancelled('Backup cancelled — no passphrase was entered. Nothing was written.');
+        _revealFeedback();
+        return;
+      }
       passphrase = entered;
     }
 
@@ -287,7 +291,11 @@ class _BackupScreenState extends State<BackupScreen> {
         confirmLabel: 'Restore',
         note: 'The passphrase this backup was created with.',
       );
-      if (entered == null) return;
+      if (entered == null) {
+        vm.reportCancelled('Restore cancelled — no passphrase was entered. Nothing was changed.');
+        _revealFeedback();
+        return;
+      }
       passphrase = entered;
     }
 
@@ -305,7 +313,14 @@ class _BackupScreenState extends State<BackupScreen> {
         hasHostLimit: hasHostLimit,
       ),
     );
-    if (choice == null || !context.mounted) return;
+    if (choice == null) {
+      // The file has already been read and decrypted by this point, so "nothing was changed" is
+      // the reassurance worth giving.
+      vm.reportCancelled('Restore cancelled — nothing was selected. Nothing was changed.');
+      _revealFeedback();
+      return;
+    }
+    if (!context.mounted) return;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
@@ -329,7 +344,11 @@ class _BackupScreenState extends State<BackupScreen> {
         ],
       ),
     );
-    if (confirmed != true) return;
+    if (confirmed != true) {
+      vm.reportCancelled('Restore cancelled. Nothing was changed.');
+      _revealFeedback();
+      return;
+    }
     await vm.importBackup(
       inspection.plainJson,
       '',

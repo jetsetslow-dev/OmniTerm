@@ -133,7 +133,9 @@ class SftpViewModel extends ChangeNotifier {
     final id = 'sftp-${DateTime.now().microsecondsSinceEpoch}-${_backgroundOperationSequence++}';
     final notifications = operationNotifications;
     if (notifications != null) {
-      unawaited(notifications.start(id: id, label: label, destination: destination));
+      unawaited(
+        notifications.start(id: id, label: label, destination: destination).then(_noteStartResult),
+      );
     }
     return id;
   }
@@ -310,6 +312,21 @@ class SftpViewModel extends ChangeNotifier {
   }
 
   bool _disposed = false;
+
+  /// Surfaces a refused foreground-service start, and only a refused one.
+  ///
+  /// The result used to be discarded entirely. A refusal means the work the user just started will
+  /// not survive them switching away, which is the whole point of the service — so it is worth
+  /// saying, once, in this screen's existing error surface. `unsupported` stays silent: iOS and
+  /// desktop have no foreground service and never will, and a permanent unactionable warning is
+  /// worse than none at all.
+  void _noteStartResult(LongOperationStart result) {
+    final warning = result.warning;
+    if (warning == null || _disposed) return;
+    if (_error == warning) return;
+    _error = warning;
+    _safeNotify();
+  }
 
   void _safeNotify() {
     if (!_disposed) notifyListeners();

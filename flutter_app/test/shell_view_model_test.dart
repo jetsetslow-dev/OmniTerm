@@ -1154,6 +1154,76 @@ void main() {
   /// host configured for persistent sessions but missing tmux quietly opened an ordinary shell. The
   /// user believed their work survived a dropped link, and it did not.
   /// Who owns the SSH channel between `openShell` returning it and a `ShellSession` taking it.
+  /// Disconnect all, which is seconds of SSH work over however many hosts are open.
+  group('disconnect all', () {
+    Server persistent({required String name}) =>
+        server(name: name, persistent: true).copyWith(persistentSession: true);
+
+    test('every host that could not be stopped survives into the message', () async {
+      // The defect: `terminate` wrote straight to `_error`, so in a loop the second failure
+      // overwrote the first. A user disconnecting three hosts saw one message and had no idea the
+      // others were still running on their servers.
+      final ssh = FakeShellTransport()..execAnswers['command -v tmux'] = 'yes';
+      await repo.insertServer(persistent(name: 'alpha'));
+      await repo.insertServer(persistent(name: 'beta'));
+      final vm = await start(ssh: ssh);
+      for (final host in vm.connectableServers) {
+        await vm.connect(host);
+      }
+      expect(vm.sessions, hasLength(2));
+      // Both kills fail: `exec` returns the error rather than throwing, as the real transport does.
+      ssh.execAnswers['kill-session'] = 'SSH Error: host unreachable';
+
+      await vm.disconnectAll();
+
+      expect(vm.error, contains('alpha'), reason: 'the first failure must not be overwritten');
+      expect(vm.error, contains('beta'));
+      expect(vm.error, contains('2 sessions'));
+    });
+
+    test('it reports being busy, and refuses to start twice', () async {
+      final ssh = FakeShellTransport()
+        ..execAnswers['command -v tmux'] = 'yes'
+        ..execAnswers['kill-session'] = 'ok'
+        ..execAnswers['has-session'] = tmuxSessionAbsentMarker;
+      await repo.insertServer(persistent(name: 'alpha'));
+      final vm = await start(ssh: ssh);
+      await vm.connect(vm.connectableServers.single);
+      expect(vm.isDisconnectingAll, isFalse);
+
+      ssh.execGate = Completer<void>();
+      final first = vm.disconnectAll();
+      await pumpEventQueue();
+      expect(vm.isDisconnectingAll, isTrue, reason: 'seconds of work must show that it is working');
+
+      final second = vm.disconnectAll();
+      ssh.execGate!.complete();
+      await Future.wait([first, second]);
+
+      expect(vm.isDisconnectingAll, isFalse);
+      expect(
+        ssh.commands.where((c) => c.contains('kill-session')),
+        hasLength(1),
+        reason: 'a second run while the first is in flight would kill twice',
+      );
+    });
+
+    test('a clean disconnect leaves no error behind', () async {
+      final ssh = FakeShellTransport()
+        ..execAnswers['command -v tmux'] = 'yes'
+        ..execAnswers['kill-session'] = 'ok'
+        ..execAnswers['has-session'] = tmuxSessionAbsentMarker;
+      await repo.insertServer(persistent(name: 'alpha'));
+      final vm = await start(ssh: ssh);
+      await vm.connect(vm.connectableServers.single);
+
+      await vm.disconnectAll();
+
+      expect(vm.error, isNull);
+      expect(vm.sessions, isEmpty);
+    });
+  });
+
   group('channel ownership during connect', () {
     Server persistentHost() => server(name: 'nas', persistent: true);
 

@@ -18,7 +18,7 @@ class LongOperationNotifications {
 
   Future<bool> isSupported() => _invoke('isSupported');
 
-  Future<bool> start({
+  Future<LongOperationStart> start({
     required String id,
     required String label,
     int bytesDone = 0,
@@ -33,13 +33,33 @@ class LongOperationNotifications {
     // user is deciding; if finish overtook a delayed start, Android would be left displaying an
     // ongoing notification for work that no longer exists.
     unawaited(ensureNotificationPermission());
-    return _invoke('start', {
+    return _start({
       'id': id,
       'label': label,
       'bytesDone': bytesDone,
       'totalBytes': totalBytes,
       'destination': destination,
     });
+  }
+
+  /// Like [_invoke], but keeping the three outcomes apart.
+  ///
+  /// `bool` could not express them: "this platform has no foreground service", "no plugin is
+  /// registered" and "Android refused to start one" all arrived as `false`, and every caller
+  /// discarded it. A refused start means the long operation the user just began will not survive
+  /// them switching away — which is the entire reason the service exists.
+  Future<LongOperationStart> _start(Map<String, Object?> arguments) async {
+    try {
+      final started = await _channel.invokeMethod<bool>('start', arguments);
+      if (started == true) return const LongOperationStart.ok();
+      return const LongOperationStart.failed('the device did not start the background service');
+    } on MissingPluginException {
+      return const LongOperationStart.unsupported();
+    } on PlatformException catch (e) {
+      return LongOperationStart.failed(e.message ?? e.code);
+    } catch (e) {
+      return LongOperationStart.failed(e.toString());
+    }
   }
 
   /// Asks for the notification permission once, and lets a caller wait for the answer.
@@ -99,4 +119,39 @@ class LongOperationNotifications {
       return false;
     }
   }
+}
+
+/// Whether a [LongOperationNotifications.start] call actually took effect.
+///
+/// Mirrors `SessionServiceResult`, and exists for the same reason: iOS and desktop genuinely have
+/// no foreground service, so reporting that as a failure would put a permanent, unactionable
+/// warning in front of the user — while an Android device that *does* support one and refused is
+/// something they can act on, and previously said nothing at all.
+enum LongOperationStartOutcome { ok, unsupported, failed }
+
+class LongOperationStart {
+  const LongOperationStart.ok() : outcome = LongOperationStartOutcome.ok, detail = null;
+  const LongOperationStart.unsupported()
+    : outcome = LongOperationStartOutcome.unsupported,
+      detail = null;
+  const LongOperationStart.failed(this.detail) : outcome = LongOperationStartOutcome.failed;
+
+  final LongOperationStartOutcome outcome;
+
+  /// Why it failed, as the platform described it. Null unless [failed].
+  final String? detail;
+
+  bool get failed => outcome == LongOperationStartOutcome.failed;
+
+  /// The sentence a screen shows when a start was refused, or null when there is nothing to say.
+  ///
+  /// Phrased around what the user loses rather than the mechanism: the operation still runs, it
+  /// just may not survive them leaving the app.
+  String? get warning => failed
+      ? 'This may not keep running if you leave the app: '
+            '${detail ?? 'the device refused to start the background service'}.'
+      : null;
+
+  @override
+  String toString() => 'LongOperationStart(${outcome.name}${detail == null ? '' : ', $detail'})';
 }

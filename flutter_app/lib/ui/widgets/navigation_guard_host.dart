@@ -174,14 +174,25 @@ class _NavigationGuardHostState extends State<NavigationGuardHost> {
             actions: [
               TextButton(
                 key: const ValueKey('navigation.shell.disconnect'),
-                onPressed: vm.isLeavingSessions
+                // Disabled while it runs, too. Each persistent host costs two SSH round trips, so
+                // this is seconds of work during which the button used to stay tappable.
+                onPressed: vm.isLeavingSessions || vm.isDisconnectingAll
                     ? null
                     : () async {
                         await vm.disconnectAll(terminatePersistent: true);
-                        if (mounted) _commit();
+                        if (!mounted) return;
+                        // Staying put when something could not be confirmed stopped: navigating
+                        // away would hide the message naming which hosts are still running on
+                        // their servers, which is the one thing the user needs to see.
+                        if (vm.error != null) return;
+                        _commit();
                       },
                 child: Text(
-                  vm.isConnecting && sessions.isEmpty ? 'Cancel connection' : 'Disconnect all',
+                  vm.isDisconnectingAll
+                      ? 'Disconnecting…'
+                      : vm.isConnecting && sessions.isEmpty
+                      ? 'Cancel connection'
+                      : 'Disconnect all',
                   style: const TextStyle(color: OmniColors.red),
                 ),
               ),
