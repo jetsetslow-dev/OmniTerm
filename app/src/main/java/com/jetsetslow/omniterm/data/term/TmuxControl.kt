@@ -40,6 +40,7 @@ sealed interface TmuxControlEvent {
 class TmuxControlParser {
     private var pending = ByteArray(0)
     private var inReply = false
+    private var replyLines = 0
     private val replyBody = StringBuilder()
 
     /** Feed raw bytes from the control-mode channel; returns the events completed by this chunk. */
@@ -81,7 +82,7 @@ class TmuxControlParser {
                     require(replyBody.length + text.length + 1 <= MAX_BUFFERED_BYTES) {
                         "tmux control reply exceeds $MAX_BUFFERED_BYTES characters"
                     }
-                    if (replyBody.isNotEmpty()) replyBody.append('\n')
+                    if (replyLines++ > 0) replyBody.append('\n')
                     replyBody.append(text)
                 }
             }
@@ -118,6 +119,7 @@ class TmuxControlParser {
         when {
             text.startsWith("%begin ") -> {
                 inReply = true
+                replyLines = 0
                 replyBody.setLength(0)
             }
             text.startsWith("%session-changed ") -> {

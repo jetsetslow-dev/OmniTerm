@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut android:shortcutId="static_new_host" android:enabled="true"
+        android:icon="@mipmap/ic_launcher" android:shortcutShortLabel="@string/shortcut_new_host_short"
+        android:shortcutLongLabel="@string/shortcut_new_host_long">
+        <intent android:action="com.jetsetslow.omniterm.action.NEW_HOST"
+            android:targetPackage="com.jetsetslow.omniterm.app.flutter"
+            android:targetClass="com.jetsetslow.omniterm.MainActivity" />
+    </shortcut>
+    <shortcut android:shortcutId="static_sftp" android:enabled="true"
+        android:icon="@mipmap/ic_launcher" android:shortcutShortLabel="@string/shortcut_sftp_short"
+        android:shortcutLongLabel="@string/shortcut_sftp_long">
+        <intent android:action="com.jetsetslow.omniterm.action.SFTP"
+            android:targetPackage="com.jetsetslow.omniterm.app.flutter"
+            android:targetClass="com.jetsetslow.omniterm.MainActivity" />
+    </shortcut>
+    <shortcut android:shortcutId="static_network_tools" android:enabled="true"
+        android:icon="@mipmap/ic_launcher" android:shortcutShortLabel="@string/shortcut_network_short"
+        android:shortcutLongLabel="@string/shortcut_network_long">
+        <intent android:action="com.jetsetslow.omniterm.action.NETWORK_TOOLS"
+            android:targetPackage="com.jetsetslow.omniterm.app.flutter"
+            android:targetClass="com.jetsetslow.omniterm.MainActivity" />
+    </shortcut>
+</shortcuts>

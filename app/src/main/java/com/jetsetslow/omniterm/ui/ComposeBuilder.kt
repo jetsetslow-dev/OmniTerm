@@ -1289,7 +1289,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                         color = if (ok) OmniColors.green else OmniColors.red,
                     )
                     if (msg.isNotBlank()) {
-                        Box(Modifier.heightIn(max = 140.dp).verticalScroll(rememberScrollState())) {
+                        Box(Modifier.heightIn(max = 140.dp).verticalScrollWithIndicators(rememberScrollState())) {
                             androidx.compose.foundation.text.selection.SelectionContainer {
                                 Text(msg, fontFamily = OmniFonts.mono, fontSize = 11.sp, color = OmniColors.textPrimary)
                             }
@@ -1306,7 +1306,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
         }
 
         Column(
-            modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()).padding(12.dp).imePadding(),
+            modifier = Modifier.fillMaxWidth().weight(1f).verticalScrollWithIndicators(rememberScrollState()).padding(12.dp).imePadding(),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -1466,7 +1466,7 @@ fun ComposeBuilder(viewModel: AppViewModel) {
                             .background(OmniColors.bg1)
                             .border(1.dp, OmniColors.bg2, RoundedCornerShape(8.dp))
                             .padding(10.dp)
-                            .horizontalScroll(rememberScrollState()),
+                            .horizontalScrollWithIndicators(rememberScrollState()),
                     ) {
                         Text(yamlToDeploy(), fontFamily = OmniFonts.mono, fontSize = 12.sp, color = OmniColors.textPrimary)
                     }
@@ -1680,7 +1680,7 @@ fun VisualEditor(draft: ComposeStackDraft, onChange: (ComposeStackDraft) -> Unit
                 fontSize = 11.sp,
                 color = OmniColors.textMuted,
             )
-            LazyColumn(
+            OverflowLazyColumn(
                 modifier = Modifier.fillMaxWidth().height(560.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {

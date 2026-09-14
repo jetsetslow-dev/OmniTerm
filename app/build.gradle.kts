@@ -172,6 +172,8 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
       "**/PinHashRobolectricTest.class",
       "**/ColdStartRobolectricTest.class",
       "**/TerminalNavigationRobolectricTest.class",
+      "**/TmuxResumeLatencyRobolectricTest.class",
+      "**/TerminalLeavePersistenceRobolectricTest.class",
     )
   }
 }

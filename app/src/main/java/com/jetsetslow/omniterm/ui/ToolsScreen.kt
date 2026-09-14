@@ -367,7 +367,7 @@ fun AlertPopupIncidentList(
     onRefresh: (Int) -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    LazyColumn(
+    OverflowLazyColumn(
         modifier = modifier.testTag("alerts-popup-list"),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -568,7 +568,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         Text(stringResource(R.string.no_active_alert_incidents), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
+                    OverflowLazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
                         if (visibleAlerts.isNotEmpty()) {
                             item {
                                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
@@ -646,7 +646,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                     }
                 }
             } else if (activeTab == 1) {
-                LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
+                OverflowLazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
                     item {
                         OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.purple) {
                             Row(
@@ -733,7 +733,7 @@ fun AlertsToolView(viewModel: AppViewModel) {
                         Text(stringResource(R.string.no_alert_history_yet), color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
+                    OverflowLazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
                         item {
                             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                                 TextButton(onClick = {
@@ -1246,7 +1246,7 @@ private fun QuickScriptEditorDialog(
                                 }
                             }
                         )
-                        DropdownMenu(expanded = osMenuExpanded, onDismissRequest = { osMenuExpanded = false }) {
+                        OverflowDropdownMenu(expanded = osMenuExpanded, onDismissRequest = { osMenuExpanded = false }) {
                             quickScriptOsOptions.forEach { os ->
                                 DropdownMenuItem(text = { Text(os) }, onClick = { targetOs = os; osMenuExpanded = false })
                             }
@@ -1265,7 +1265,7 @@ private fun QuickScriptEditorDialog(
                                 }
                             }
                         )
-                        DropdownMenu(expanded = systemMenuExpanded, onDismissRequest = { systemMenuExpanded = false }) {
+                        OverflowDropdownMenu(expanded = systemMenuExpanded, onDismissRequest = { systemMenuExpanded = false }) {
                             quickScriptSystemOptions.forEach { system ->
                                 DropdownMenuItem(text = { Text(system) }, onClick = { targetSystem = system; systemMenuExpanded = false })
                             }
@@ -1285,7 +1285,7 @@ private fun QuickScriptEditorDialog(
                             }
                         }
                     )
-                    DropdownMenu(expanded = categoryMenuExpanded, onDismissRequest = { categoryMenuExpanded = false }) {
+                    OverflowDropdownMenu(expanded = categoryMenuExpanded, onDismissRequest = { categoryMenuExpanded = false }) {
                         knownCategories.forEach { cat ->
                             DropdownMenuItem(text = { Text(cat) }, onClick = { categoryInput = cat; categoryMenuExpanded = false })
                         }
@@ -1390,7 +1390,7 @@ private fun HostScanTab(viewModel: AppViewModel) {
         if (!scanning && hosts.isEmpty()) {
             Text(stringResource(R.string.no_hosts_yet_run_a_scan), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
+        OverflowLazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
             items(hosts) { host ->
                 ScannedHostCard(
                     host = host,
@@ -1492,7 +1492,7 @@ private fun ScannedHostActionsSheet(
             }
         },
         text = {
-            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
+            Column(modifier = Modifier.verticalScrollWithIndicators(rememberScrollState())) {
                 if (savedMatch != null) {
                     Text(
                         "Already saved as \"${savedMatch.name}\".",
@@ -1639,7 +1639,7 @@ private fun LanHostPickerDialog(
                 if (!isScanning && hosts.isEmpty()) {
                     Text(stringResource(R.string.no_hosts_yet_run_a_scan), fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                LazyColumn(
+                OverflowLazyColumn(
                     modifier = Modifier.fillMaxWidth().heightIn(max = 360.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
@@ -1717,7 +1717,7 @@ private fun PingTab(viewModel: AppViewModel) {
                     if (viewModel.pingLines.isNotEmpty()) pingListState.animateScrollToItem(viewModel.pingLines.size - 1)
                 }
                 SelectionContainer {
-                    LazyColumn(
+                    OverflowLazyColumn(
                         state = pingListState,
                         modifier = Modifier.fillMaxSize().padding(10.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -1778,7 +1778,7 @@ private fun TracerouteTab(viewModel: AppViewModel) {
                     if (viewModel.tracerouteLines.isNotEmpty()) listState.animateScrollToItem(viewModel.tracerouteLines.size - 1)
                 }
                 SelectionContainer {
-                    LazyColumn(
+                    OverflowLazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize().padding(10.dp),
                         verticalArrangement = Arrangement.spacedBy(2.dp),
@@ -1834,7 +1834,7 @@ private fun PortScanTab(viewModel: AppViewModel) {
         }
 
         SelectionContainer(modifier = Modifier.weight(1f)) {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OverflowLazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(viewModel.portScannerResults) { (port, status) ->
                     OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = if (status.contains("Open")) OmniColors.green else MaterialTheme.colorScheme.onSurfaceVariant) {
                         Row(
@@ -1896,7 +1896,7 @@ private fun WolTab(viewModel: AppViewModel) {
                 Text(stringResource(R.string.add_target), fontSize = 12.sp)
             }
         }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp).padding(bottom = 12.dp)) {
+        OverflowLazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp).padding(bottom = 12.dp)) {
             items(targetComputers) { target ->
                 OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.green) {
                     Row(
@@ -2154,7 +2154,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
         addEnabled = !credentialLimitReached
     ) {
         Box(modifier = Modifier.fillMaxSize()) {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize().padding(12.dp)) {
+            OverflowLazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxSize().padding(12.dp)) {
 
                 if (credentialLimitReached) {
                     item {
@@ -2190,7 +2190,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
                                 Text("User: ${profile.username} · Auth: ${profile.authType}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Row {
-                                IconButton(onClick = { editProfile = profile }) {
+                                IconButton(modifier = Modifier.testTag("profile.edit.${profile.id}"), onClick = { editProfile = profile }) {
                                     Icon(Icons.Filled.Edit, "Edit profile", tint = OmniColors.cyan)
                                 }
                                 IconButton(onClick = {
@@ -2294,28 +2294,41 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
         var pName by remember { mutableStateOf("") }
         var pUser by remember { mutableStateOf("") }
         var pPass by remember { mutableStateOf("") }
+        var saving by remember { mutableStateOf(false) }
+        var saveError by remember { mutableStateOf<String?>(null) }
         AlertDialog(
-            onDismissRequest = { showCreateProfile = false },
+            onDismissRequest = { if (!saving) showCreateProfile = false },
             title = { Text(stringResource(R.string.create_credential_profile)) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(value = pName, onValueChange = { pName = it }, label = { Text(stringResource(R.string.profile_name)) }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = pUser, onValueChange = { pUser = it }, label = { Text(stringResource(R.string.username)) }, modifier = Modifier.fillMaxWidth())
-                    OmniPasswordField(value = pPass, onValueChange = { pPass = it }, label = "Password", modifier = Modifier.fillMaxWidth())
+                Column(modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(value = pName, onValueChange = { pName = it }, enabled = !saving, label = { Text(stringResource(R.string.profile_name)) }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = pUser, onValueChange = { pUser = it }, enabled = !saving, label = { Text(stringResource(R.string.username)) }, modifier = Modifier.fillMaxWidth())
+                    OmniPasswordField(value = pPass, onValueChange = { if (!saving) pPass = it }, label = "Password", modifier = Modifier.fillMaxWidth())
+                    saveError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 }
             },
             confirmButton = {
                 Button(
-                    enabled = pName.isNotBlank() && pUser.isNotBlank() && pPass.isNotBlank(),
+                    enabled = !saving && pName.isNotBlank() && pUser.isNotBlank() && pPass.isNotBlank(),
                     onClick = {
+                    saving = true
+                    saveError = null
                     viewModel.addCredentialProfile(pName, pUser, "password", pPass, null) { ok, msg ->
+                        saving = false
+                        saveError = if (ok) null else msg
                         authFeedbackOk = ok
                         authFeedback = msg
                         if (ok) showCreateProfile = false
                     }
-                }) { Text(stringResource(R.string.save_profile)) }
+                }) {
+                    if (saving) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(stringResource(if (saving) R.string.saving else R.string.save_profile))
+                }
             },
-            dismissButton = { TextButton(onClick = { showCreateProfile = false }) { Text(stringResource(R.string.cancel)) } }
+            dismissButton = { TextButton(enabled = !saving, onClick = { showCreateProfile = false }) { Text(stringResource(R.string.cancel)) } }
         )
     }
 
@@ -2398,7 +2411,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
             text = {
                 Column(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()),
                 ) {
                     Text(
                         "Only the private key is required — the type (RSA, OpenSSH, ed25519, ECDSA…) " +
@@ -2469,37 +2482,50 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
         var pName by remember(profile.id) { mutableStateOf(profile.profileName) }
         var pUser by remember(profile.id) { mutableStateOf(profile.username) }
         var pPass by remember(profile.id) { mutableStateOf("") }
+        var saving by remember(profile.id) { mutableStateOf(false) }
+        var saveError by remember(profile.id) { mutableStateOf<String?>(null) }
         AlertDialog(
-            onDismissRequest = { editProfile = null },
+            onDismissRequest = { if (!saving) editProfile = null },
             title = { Text(stringResource(R.string.edit_credential_profile)) },
             text = {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    OutlinedTextField(value = pName, onValueChange = { pName = it }, label = { Text(stringResource(R.string.profile_name)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(value = pUser, onValueChange = { pUser = it }, label = { Text(stringResource(R.string.username)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                Column(modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OutlinedTextField(value = pName, onValueChange = { pName = it }, enabled = !saving, label = { Text(stringResource(R.string.profile_name)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = pUser, onValueChange = { pUser = it }, enabled = !saving, label = { Text(stringResource(R.string.username)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     if (profile.authType == "password") {
                         OmniPasswordField(
                             value = pPass,
-                            onValueChange = { pPass = it },
+                            onValueChange = { if (!saving) pPass = it },
                             label = "Password (leave blank to keep current)",
                             modifier = Modifier.fillMaxWidth(),
                         )
                     } else {
                         Text("Key profile — bound to key '${profile.keyAlias ?: "?"}'.", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    saveError?.let { Text(it, color = MaterialTheme.colorScheme.error, modifier = Modifier.testTag("profile.save.error")) }
                 }
             },
             confirmButton = {
                 Button(
-                    enabled = pName.isNotBlank() && pUser.isNotBlank(),
+                    enabled = !saving && pName.isNotBlank() && pUser.isNotBlank(),
                     onClick = {
+                    saving = true
+                    saveError = null
                     viewModel.updateCredentialProfile(profile, pName, pUser, pPass) { ok, msg ->
+                        saving = false
+                        saveError = if (ok) null else msg
                         authFeedbackOk = ok
                         authFeedback = msg
                         if (ok) editProfile = null
                     }
-                }) { Text(stringResource(R.string.save_changes)) }
+                }) {
+                    if (saving) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(stringResource(if (saving) R.string.saving else R.string.save_changes))
+                }
             },
-            dismissButton = { TextButton(onClick = { editProfile = null }) { Text(stringResource(R.string.cancel)) } }
+            dismissButton = { TextButton(enabled = !saving, onClick = { editProfile = null }) { Text(stringResource(R.string.cancel)) } }
         )
     }
 
@@ -2531,7 +2557,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
             text = {
                 Column(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()),
                 ) {
                     OutlinedTextField(value = alias, onValueChange = { alias = it }, label = { Text(stringResource(R.string.key_alias_name)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
                     Text(
@@ -2588,7 +2614,7 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
             onDismissRequest = { generatedKeyResult = null },
             title = { Text("Generated Key: $alias") },
             text = {
-                Column(modifier = Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.warning_private_key_is_shown_only), color = Color.Red, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     Text(stringResource(R.string.private_key), fontWeight = FontWeight.Bold)
                     OutlinedTextField(value = priv, onValueChange = {}, readOnly = true, modifier = Modifier.fillMaxWidth().height(150.dp), textStyle = androidx.compose.ui.text.TextStyle(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace, fontSize = 10.sp))
@@ -2632,6 +2658,9 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
 // 7.7 BACKUPS SCHEDULERS PANEL
 @Composable
 fun BackupToolView(viewModel: AppViewModel) {
+    val importScope = rememberCoroutineScope()
+    var importReading by remember { mutableStateOf(false) }
+    var importInspecting by remember { mutableStateOf(false) }
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
     var exportFeedback by remember { mutableStateOf("") }
@@ -2657,7 +2686,7 @@ fun BackupToolView(viewModel: AppViewModel) {
 
     ToolScaffold(viewModel, "App backup") {
         Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+            modifier = Modifier.fillMaxSize().verticalScrollWithIndicators(rememberScrollState()).padding(horizontal = 12.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.cyan) {
@@ -2680,18 +2709,28 @@ fun BackupToolView(viewModel: AppViewModel) {
                     val importBackupLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
                         androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
                     ) { uri ->
-                        if (uri != null) {
-                            try {
-                                context.contentResolver.openInputStream(uri)?.use {
-                                    pendingImportContent = readBackupTextLimited(it)
-                                    if (viewModel.backupNeedsPassword(pendingImportContent)) {
+                        if (uri != null && !importReading && !importInspecting) {
+                            importReading = true
+                            exportFeedback = ""
+                            importScope.launch {
+                                try {
+                                    val (content, needsPassword) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                        val text = requireNotNull(context.contentResolver.openInputStream(uri)) {
+                                            "The selected backup file could not be opened."
+                                        }.use { readBackupTextLimited(it) }
+                                        text to viewModel.backupNeedsPassword(text)
+                                    }
+                                    pendingImportContent = content
+                                    if (needsPassword) {
                                         showImportPasswordDialog = true
                                     } else {
-                                        viewModel.inspectBackupContents(pendingImportContent, "") { ok, contents, msg ->
+                                        importInspecting = true
+                                        viewModel.inspectBackupContents(content, "") { ok, contents, msg ->
                                             if (ok && contents != null) {
                                                 restoreContents = contents
                                                 restoreSelection = backupSelectionFromContents(contents)
-                                                viewModel.inspectBackupHosts(pendingImportContent, "") { hostsOk, hosts, hostsMsg ->
+                                                viewModel.inspectBackupHosts(content, "") { hostsOk, hosts, hostsMsg ->
+                                                    importInspecting = false
                                                     if (hostsOk) {
                                                         restoreHosts = hosts
                                                         selectedRestoreHostIds = hosts.map { it.oldId }.toSet()
@@ -2702,15 +2741,20 @@ fun BackupToolView(viewModel: AppViewModel) {
                                                     }
                                                 }
                                             } else {
+                                                importInspecting = false
                                                 exportFeedbackOk = false
                                                 exportFeedback = msg
                                             }
                                         }
                                     }
+                                } catch(e: Exception) {
+                                    if (e is kotlinx.coroutines.CancellationException) throw e
+                                    pendingImportContent = ""
+                                    exportFeedbackOk = false
+                                    exportFeedback = e.message ?: "Error reading backup file."
+                                } finally {
+                                    importReading = false
                                 }
-                            } catch(e: Exception) {
-                                exportFeedbackOk = false
-                                exportFeedback = e.message ?: "Error reading backup file."
                             }
                         }
                     }
@@ -2751,6 +2795,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                             onClick = {
                                 importBackupLauncher.launch(arrayOf("application/json", "*/*"))
                             },
+                            enabled = !importReading && !importInspecting && !viewModel.backupRestoreRunning,
                             modifier = Modifier.weight(1f),
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.secondary)
                         ) {
@@ -2788,7 +2833,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                             title = { Text(stringResource(R.string.backup_sections)) },
                             text = {
                                 Column(
-                                    modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                                    modifier = Modifier.heightIn(max = 420.dp).verticalScrollWithIndicators(rememberScrollState()),
                                     verticalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
                                     BackupSelectionList(
@@ -2860,6 +2905,11 @@ fun BackupToolView(viewModel: AppViewModel) {
                 }
             }
 
+            if (importReading || importInspecting) {
+                BackupReadProgressDialog(
+                    decrypting = importInspecting && pendingRestorePassword.isNotEmpty(),
+                )
+            }
             if (showImportPasswordDialog) {
                 AlertDialog(
                     onDismissRequest = { showImportPasswordDialog = false; pendingImportContent = ""; importPassword = ""; pendingRestorePassword = "" },
@@ -2880,14 +2930,17 @@ fun BackupToolView(viewModel: AppViewModel) {
                             enabled = importPassword.isNotEmpty(),
                             onClick = {
                                 val pwd = importPassword
+                                val content = pendingImportContent
                                 showImportPasswordDialog = false
                                 importPassword = ""
                                 pendingRestorePassword = pwd
-                                viewModel.inspectBackupContents(pendingImportContent, pwd) { ok, contents, msg ->
+                                importInspecting = true
+                                viewModel.inspectBackupContents(content, pwd) { ok, contents, msg ->
                                     if (ok && contents != null) {
                                         restoreContents = contents
                                         restoreSelection = backupSelectionFromContents(contents)
-                                        viewModel.inspectBackupHosts(pendingImportContent, pwd) { hostsOk, hosts, hostsMsg ->
+                                        viewModel.inspectBackupHosts(content, pwd) { hostsOk, hosts, hostsMsg ->
+                                            importInspecting = false
                                             if (hostsOk) {
                                                 restoreHosts = hosts
                                                 selectedRestoreHostIds = hosts.map { it.oldId }.toSet()
@@ -2900,6 +2953,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                                             }
                                         }
                                     } else {
+                                        importInspecting = false
                                         pendingImportContent = ""
                                         pendingRestorePassword = ""
                                         exportFeedbackOk = false
@@ -2932,7 +2986,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                     title = { Text(stringResource(R.string.restore_backup)) },
                     text = {
                         Column(
-                            modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
+                            modifier = Modifier.heightIn(max = 420.dp).verticalScrollWithIndicators(rememberScrollState()),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
                             Text(stringResource(R.string.choose_what_to_restore_from_this), fontSize = 12.sp)
@@ -2997,6 +3051,24 @@ fun BackupToolView(viewModel: AppViewModel) {
             }
         }
     }
+}
+
+@Composable
+internal fun BackupReadProgressDialog(decrypting: Boolean) {
+    AlertDialog(
+        modifier = Modifier.testTag("backup.readProgress"),
+        onDismissRequest = {},
+        properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false),
+        title = { Text(if (decrypting) "Decrypting backup…" else "Reading backup…") },
+        text = {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.fillMaxWidth()) {
+                CircularProgressIndicator()
+                Spacer(Modifier.height(16.dp))
+                Text("This may take a little while. Please wait.")
+            }
+        },
+        confirmButton = {},
+    )
 }
 
 private fun backupSelectionFromContents(contents: BackupContents): BackupSelection {
@@ -3304,7 +3376,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
     ToolScaffold(viewModel, "App settings") {
         Column(modifier = Modifier.fillMaxSize().padding(horizontal = 12.dp)) {
             Column(
-                modifier = Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState()),
+                modifier = Modifier.fillMaxWidth().weight(1f).verticalScrollWithIndicators(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 // Security lock card applies immediately (it is the auth setup itself, not a draft).
@@ -3426,7 +3498,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                                         TextButton(onClick = { unitMenuExpanded = true }) {
                                             Text(draftCustomLockUnit)
                                         }
-                                        DropdownMenu(
+                                        OverflowDropdownMenu(
                                             expanded = unitMenuExpanded,
                                             onDismissRequest = { unitMenuExpanded = false },
                                         ) {
@@ -3581,7 +3653,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                             var intervalExpanded by remember { mutableStateOf(false) }
                             Box {
                                 TextButton(onClick = { intervalExpanded = true }) { Text("${draftIntervalSec}s") }
-                                DropdownMenu(expanded = intervalExpanded, onDismissRequest = { intervalExpanded = false }) {
+                                OverflowDropdownMenu(expanded = intervalExpanded, onDismissRequest = { intervalExpanded = false }) {
                                     listOf(5, 10, 15, 30, 60, 120).forEach { secs ->
                                         DropdownMenuItem(
                                             text = { Text("${secs}s") },
@@ -3609,7 +3681,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
                                 TextButton(onClick = { expanded = true }) {
                                     Text(when (draftDark) { true -> "Dark"; false -> "Light"; null -> "System" })
                                 }
-                                DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                                OverflowDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                                     DropdownMenuItem(text = { Text(stringResource(R.string.system_default)) }, onClick = { draftDark = null; expanded = false })
                                     DropdownMenuItem(text = { Text(stringResource(R.string.dark_theme)) }, onClick = { draftDark = true; expanded = false })
                                     DropdownMenuItem(text = { Text(stringResource(R.string.light_theme)) }, onClick = { draftDark = false; expanded = false })
@@ -3962,7 +4034,7 @@ fun SettingsToolView(viewModel: AppViewModel) {
 
 
 
-private fun readBackupTextLimited(input: InputStream, maxChars: Int = 10 * 1024 * 1024): String {
+private fun readBackupTextLimited(input: InputStream, maxChars: Int = BACKUP_MAX_INPUT_CHARS): String {
     input.reader(Charsets.UTF_8).use { reader ->
         val out = StringBuilder()
         val buffer = CharArray(8192)
@@ -4046,7 +4118,7 @@ fun AboutToolView(viewModel: AppViewModel) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .verticalScrollWithIndicators(rememberScrollState())
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -4420,7 +4492,7 @@ private class TierErrors(f: TierFields, isPercent: Boolean) {
 fun HealthScoringToolView(viewModel: AppViewModel) {
     ToolScaffold(viewModel, "Health scoring") {
         Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 12.dp),
+            modifier = Modifier.fillMaxSize().verticalScrollWithIndicators(rememberScrollState()).padding(horizontal = 12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             HealthScoringCard(viewModel)
@@ -4538,7 +4610,7 @@ private fun DnsLookupTab(viewModel: AppViewModel) {
                     }
                 }
             )
-            DropdownMenu(expanded = dropdownExpanded, onDismissRequest = { dropdownExpanded = false }) {
+            OverflowDropdownMenu(expanded = dropdownExpanded, onDismissRequest = { dropdownExpanded = false }) {
                 dnsTypes.forEach { type ->
                     DropdownMenuItem(
                         text = { Text(type) },
@@ -4576,7 +4648,7 @@ private fun DnsLookupTab(viewModel: AppViewModel) {
         }
 
         SelectionContainer(modifier = Modifier.weight(1f)) {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            OverflowLazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(viewModel.dnsLookupResults) { record ->
                     OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.cyan) {
                         Column(modifier = Modifier.fillMaxWidth().padding(12.dp)) {
@@ -4638,7 +4710,7 @@ private fun WhoisTab(viewModel: AppViewModel) {
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(10.dp)
-                        .verticalScroll(scrollState)
+                        .verticalScrollWithIndicators(scrollState)
                 ) {
                     SelectionContainer {
                         Text(
@@ -4676,7 +4748,7 @@ private fun SpeedTestTab(viewModel: AppViewModel) {
                     }
                 },
             )
-            DropdownMenu(expanded = serverMenuOpen, onDismissRequest = { serverMenuOpen = false }) {
+            OverflowDropdownMenu(expanded = serverMenuOpen, onDismissRequest = { serverMenuOpen = false }) {
                 viewModel.speedTestServers.forEach { (label, url) ->
                     DropdownMenuItem(
                         text = { Text(label) },
@@ -4786,7 +4858,7 @@ private fun TunnelsTab(viewModel: AppViewModel) {
                 Text(stringResource(R.string.no_tunnels_yet_tap_add_to), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         } else {
-            LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
+            OverflowLazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.weight(1f)) {
                 items(tunnels, key = { it.id }) { pf ->
                     val active = viewModel.isTunnelActive(pf.id)
                     val busy = viewModel.isTunnelBusy(pf.id)
@@ -4876,7 +4948,7 @@ private fun TunnelEditorDialog(
         title = { Text(if (existing == null) "New tunnel" else "Edit tunnel") },
         text = {
             Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
+                modifier = Modifier.verticalScrollWithIndicators(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text(stringResource(R.string.name)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -4889,7 +4961,7 @@ private fun TunnelEditorDialog(
                         trailingIcon = { IconButton(onClick = { kindMenu = true }) { Icon(Icons.Filled.ArrowDropDown, null) } },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    DropdownMenu(expanded = kindMenu, onDismissRequest = { kindMenu = false }) {
+                    OverflowDropdownMenu(expanded = kindMenu, onDismissRequest = { kindMenu = false }) {
                         listOf("local" to "Local (-L)", "remote" to "Remote (-R)", "dynamic" to "Dynamic SOCKS (-D)").forEach { (k, label) ->
                             DropdownMenuItem(text = { Text(label) }, onClick = { kind = k; kindMenu = false })
                         }
@@ -4904,7 +4976,7 @@ private fun TunnelEditorDialog(
                         trailingIcon = { IconButton(onClick = { serverMenu = true }) { Icon(Icons.Filled.ArrowDropDown, null) } },
                         modifier = Modifier.fillMaxWidth(),
                     )
-                    DropdownMenu(expanded = serverMenu, onDismissRequest = { serverMenu = false }) {
+                    OverflowDropdownMenu(expanded = serverMenu, onDismissRequest = { serverMenu = false }) {
                         servers.forEach { s ->
                             DropdownMenuItem(text = { Text(s.name) }, onClick = { serverId = s.id; serverMenu = false })
                         }

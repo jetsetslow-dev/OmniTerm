@@ -171,7 +171,7 @@ fun QuickScriptsMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
         .sortedWith(compareBy<QuickScriptEntity> { it.category }.thenBy { it.sortOrder }.thenBy { it.name.lowercase() })
     val grouped = visibleScripts.groupBy { it.category.ifBlank { "General" } }
 
-    LazyColumn(
+    OverflowLazyColumn(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier.fillMaxSize()
     ) {
@@ -308,7 +308,7 @@ fun CronMonitorTab(viewModel: AppViewModel, srv: ServerEntity) {
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
 
-    LazyColumn(
+    OverflowLazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
@@ -506,7 +506,7 @@ private fun CronScheduleDialog(
         title = { Text(title) },
         text = {
             Column(
-                modifier = Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()),
+                modifier = Modifier.heightIn(max = 520.dp).verticalScrollWithIndicators(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
                 Text(stringResource(R.string.schedule), fontSize = 12.sp, fontWeight = FontWeight.Bold)
@@ -689,7 +689,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
     val sparkTimes = viewModel.fetchCachedSparklineTimestamps(srv.id)
     val measurementSystem = viewModel.measurementSystem
 
-    LazyColumn(
+    OverflowLazyColumn(
         verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier.fillMaxSize()
     ) {
@@ -956,7 +956,7 @@ fun ProcessesTab(viewModel: AppViewModel, srv: ServerEntity) {
             Text("${simProcesses.size} Procs", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
 
-        LazyColumn(
+        OverflowLazyColumn(
             modifier = Modifier.fillMaxWidth().weight(1f),
             verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
@@ -1077,7 +1077,7 @@ fun ServicesTab(viewModel: AppViewModel, srv: ServerEntity) {
             }
         }
 
-        LazyColumn(
+        OverflowLazyColumn(
             modifier = Modifier.fillMaxWidth().weight(1f),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
@@ -1230,7 +1230,7 @@ fun LogsTab(viewModel: AppViewModel) {
             }
         } else
         SelectionContainer(modifier = Modifier.fillMaxWidth().weight(1f)) {
-            LazyColumn(
+            OverflowLazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
                     .background(Color.Black)

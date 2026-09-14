@@ -21,11 +21,127 @@ import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertSame
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 
 /** Activity/task lifecycle stress for a mixed normal+tmux split terminal. */
 class E2eTerminalLifecycleStressTest {
+    @Test
+    fun quietRegularTmuxResumeShowsItsExistingScreenBeforeAnyInput() = checkQuietResume(controlMode = false)
+
+    @Test
+    fun quietControlTmuxResumeShowsItsExistingScreenBeforeAnyInput() = checkQuietResume(controlMode = true)
+
+    private fun checkQuietResume(controlMode: Boolean) = runBlocking {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("omniterm_e2e_terminal_lifecycle") == "yes")
+        TerminalSessionManager.clearAll()
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        val vm = scenario.viewModel()
+        try {
+            await("fixture host", 15_000) { vm.servers.value.any { it.name == PERSISTENT } }
+            scenario.onActivity {
+                vm.isAppLocked = false
+                vm.saveTmuxControlMode(controlMode)
+                vm.selectedServerId = vm.servers.value.first { it.name == PERSISTENT }.id
+                vm.navigateTo(Screen.Shell)
+                vm.connectTerminal()
+            }
+            await("initial shell", 30_000) {
+                scenario.onActivity {
+                    if (vm.pendingHostKeyApproval != null) vm.approveHostKey(true)
+                    if (vm.offlineConnectPromptServer != null) vm.connectTerminalConfirmedOffline()
+                }
+                !vm.isTerminalConnecting && vm.currentSession?.isConnected == true
+            }
+            val original = requireNotNull(vm.currentSession)
+            if (controlMode) await("initial control ready", 15_000) { original.controlReady }
+            val nonce = System.nanoTime()
+            val token = "quiet-$nonce"
+            scenario.onActivity { vm.pasteText("printf 'quiet-%s\\n' '$nonce'\n") }
+            await("quiet screen content", 10_000) { vm.terminalBufferTextFor(original, full = true).contains(token) }
+            scenario.onActivity { vm.leaveSessionResumable(original.id) }
+            await("detached with recovery pointer", 10_000) {
+                vm.activeSessions.none { it.id == original.id } &&
+                    vm.restorablePersistentSessions.any { it.tmuxName == original.tmuxName }
+            }
+            val started = android.os.SystemClock.elapsedRealtime()
+            scenario.onActivity { vm.resumePersistentSession(original.tmuxName) }
+            await("resumed shell", 15_000) { !vm.isTerminalConnecting && vm.currentSession?.isConnected == true }
+            val resumed = requireNotNull(vm.currentSession)
+            assertEquals(original.tmuxName, resumed.tmuxName)
+            assertEquals(controlMode, resumed.controlMode)
+            if (controlMode) await("resumed control ready", 15_000) { resumed.controlReady }
+            // No typing or explicit resize after resume: tmux's attach redraw must suffice.
+            await("quiet redraw without input", 10_000) {
+                synchronized(resumed.emulator) {
+                    vm.terminalBufferTextFor(
+                        resumed, full = false,
+                        firstRow = resumed.emulator.scrollbackRowCount(), rowCount = resumed.emulator.rows,
+                    ).contains(token)
+                }
+            }
+            android.util.Log.i("OmniTermResumeTest", "Quiet tmux resume (control=$controlMode) ready in ${android.os.SystemClock.elapsedRealtime() - started}ms")
+            scenario.onActivity { vm.disconnectSession(resumed.id) }
+            await("session removed", 10_000) { vm.activeSessions.none { it.id == resumed.id } }
+        } finally {
+            TerminalSessionManager.clearAll()
+            scenario.close()
+        }
+    }
+
+    @Test
+    fun windowSwitchesKeepTheSameSshChannels() = runBlocking {
+        assumeTrue(InstrumentationRegistry.getArguments().getString("omniterm_e2e_terminal_lifecycle") == "yes")
+        TerminalSessionManager.clearAll()
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        val vm = scenario.viewModel()
+        try {
+            await("fixture hosts", 15_000) {
+                vm.servers.value.any { it.name == DIRECT } && vm.servers.value.any { it.name == PERSISTENT }
+            }
+            for ((persistent, control) in listOf(false to false, true to false, true to true)) {
+                val host = vm.servers.value.first { it.name == if (persistent) PERSISTENT else DIRECT }
+                scenario.onActivity {
+                    vm.isAppLocked = false
+                    vm.saveTmuxControlMode(control)
+                    vm.selectedServerId = host.id
+                    vm.navigateTo(Screen.Shell)
+                    vm.connectTerminal()
+                }
+                await("shell connected", 30_000) {
+                    scenario.onActivity {
+                        if (vm.pendingHostKeyApproval != null) vm.approveHostKey(true)
+                        if (vm.offlineConnectPromptServer != null) vm.connectTerminalConfirmedOffline()
+                    }
+                    !vm.isTerminalConnecting && vm.currentSession?.persistent == persistent &&
+                        vm.currentSession?.controlMode == control && vm.currentSession?.isConnected == true
+                }
+                val session = requireNotNull(vm.currentSession)
+                val channel = session.session
+                if (control) await("control client ready", 20_000) { session.controlReady }
+                repeat(3) { cycle ->
+                    scenario.onActivity { vm.pasteText("printf 'switch-%s-ok\\n' '$cycle'\n") }
+                    await("shell output", 10_000) {
+                        vm.terminalBufferTextFor(session, full = true).contains("switch-$cycle-ok")
+                    }
+                    scenario.moveToState(Lifecycle.State.CREATED)
+                    delay(1_000)
+                    scenario.moveToState(Lifecycle.State.RESUMED)
+                    scenario.recreate()
+                    assertSame("App switching reopened SSH (tmux=$persistent control=$control)", channel, session.session)
+                    assertTrue("App switching disconnected SSH", session.isConnected)
+                    assertFalse("App switching started reconnect", session.reconnecting)
+                }
+                scenario.onActivity { vm.disconnectSession(session.id) }
+                await("shell removed", 10_000) { vm.activeSessions.none { it.id == session.id } }
+            }
+        } finally {
+            TerminalSessionManager.clearAll()
+            scenario.close()
+        }
+    }
+
     @Test
     fun mixedSplitSurvivesHomeScreenOffRecreationAndLiteralRecentsSwipe() = runBlocking {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -46,6 +162,7 @@ class E2eTerminalLifecycleStressTest {
         delay(1_000)
         TerminalSessionManager.clearAll()
         var scenario = ActivityScenario.launch(MainActivity::class.java)
+        var scenarioClosed = false
         var resumedAfterSwipe: MainActivity? = null
         var vm = scenario.viewModel()
 
@@ -142,6 +259,12 @@ class E2eTerminalLifecycleStressTest {
             await("OmniTerm card dismissed from Recents", 10_000) { !recentsContainsOmniTermCard() }
             await("sessions after Recents swipe", 10_000) { TerminalSessionManager.activeSessions.size == 2 }
 
+            // Retire the old scenario's lifecycle monitor BEFORE the notification creates a new
+            // Activity of the same class. Otherwise it observes that unrelated Activity's STARTED
+            // event with no owned instance, and close() fails with a null-current-state NPE.
+            scenario.close()
+            scenarioClosed = true
+
             val notifications = instrumentation.targetContext.getSystemService(NotificationManager::class.java)
             val persistentNotification = requireNotNull(
                 notifications.activeNotifications.find { it.id == persistent.id.hashCode() },
@@ -173,7 +296,7 @@ class E2eTerminalLifecycleStressTest {
         } finally {
             TerminalSessionManager.activeSessions.toList().forEach { vm.disconnectSession(it.id) }
             await("terminal cleanup", 20_000) { TerminalSessionManager.activeSessions.isEmpty() }
-            scenario.close()
+            if (!scenarioClosed) scenario.close()
             resumedAfterSwipe?.let { activity ->
                 instrumentation.runOnMainSync { activity.finishAndRemoveTask() }
             }

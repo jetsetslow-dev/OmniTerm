@@ -110,6 +110,9 @@ class JschSshTransport : SshTransport {
         val tracked = InFlightExec(session).also { inFlight?.set(it) }
         var channel: ChannelExec? = null
         return try {
+            // Session.connect is blocking. Cancellation can arrive during pool acquisition;
+            // observe it before opening/sending a command after that call finally returns.
+            currentCoroutineContext().ensureActive()
             channel = (session.openChannel("exec") as ChannelExec).apply {
                 tracked.channel = this
                 setCommand(command)
@@ -118,10 +121,11 @@ class JschSshTransport : SshTransport {
             }
             val input = channel.inputStream
             val err = channel.errStream
+            currentCoroutineContext().ensureActive()
             channel.connect(CONNECT_TIMEOUT_MS)
             readExecResult(input, err, channel)
         } catch (e: Throwable) {
-            pool.evict(creds, session)
+            if (shouldRetireAfterCommandFailure(e, session)) pool.evict(creds, session)
             throw e
         } finally {
             channel?.disconnect()
@@ -135,13 +139,16 @@ class JschSshTransport : SshTransport {
         val session = jumped.target
         var channel: ChannelExec? = null
         return try {
+            currentCoroutineContext().ensureActive()
             session.connect(CONNECT_TIMEOUT_MS)
+            currentCoroutineContext().ensureActive()
             channel = (session.openChannel("exec") as ChannelExec).apply {
                 setCommand(command)
                 setInputStream(stdin?.byteInputStream(Charsets.UTF_8))
             }
             val input = channel.inputStream
             val err = channel.errStream
+            currentCoroutineContext().ensureActive()
             channel.connect(CONNECT_TIMEOUT_MS)
             readExecResult(input, err, channel)
         } finally {
@@ -189,19 +196,26 @@ class JschSshTransport : SshTransport {
         // down (target + jump) in the finally block; pooled sessions are only channel-closed.
         val jumped = if (isJump(creds)) buildJumpedJschSession(creds, CONNECT_TIMEOUT_MS) else null
         val lease = if (jumped == null) pool.acquire(creds) else null
-        val session = jumped?.target?.also { it.connect(CONNECT_TIMEOUT_MS) } ?: checkNotNull(lease).session
+        val session = jumped?.target ?: checkNotNull(lease).session
         var channel: ChannelExec? = null
         try {
+            // Own both jump sessions before authenticating the target: even a failed target
+            // handshake must reach the finally block and release its bastion forwarding socket.
+            currentCoroutineContext().ensureActive()
+            if (jumped != null) session.connect(CONNECT_TIMEOUT_MS)
+            currentCoroutineContext().ensureActive()
             channel = (session.openChannel("exec") as ChannelExec).apply {
                 setCommand(command)
                 setInputStream(stdin?.byteInputStream(Charsets.UTF_8))
             }
             val stdoutStream = channel.inputStream
             val stderrStream = channel.errStream
+            currentCoroutineContext().ensureActive()
             channel.connect(CONNECT_TIMEOUT_MS)
 
             val buf = ByteArray(4096)
             while (true) {
+                currentCoroutineContext().ensureActive()
                 val stdoutAvail = stdoutStream.available()
                 val stderrAvail = stderrStream.available()
                 var readAny = false
@@ -254,7 +268,7 @@ class JschSshTransport : SshTransport {
                 "SSH Error: command failed (${channel.exitStatus}): $detail"
             }
         } catch (e: Throwable) {
-            if (lease != null) pool.evict(creds, session)
+            if (lease != null && shouldRetireAfterCommandFailure(e, session)) pool.evict(creds, session)
             throw e
         } finally {
             // Close only the channel — the pooled session stays for reuse. A jumped session is
@@ -264,6 +278,10 @@ class JschSshTransport : SshTransport {
             lease?.close()
         }
     }
+
+    /** A user Stop closes its channel, not a healthy connection shared with other work. */
+    private fun shouldRetireAfterCommandFailure(error: Throwable, session: Session): Boolean =
+        error !is CancellationException || error is TimeoutCancellationException || !session.isConnected
 
     private suspend fun readExecResult(stdout: InputStream, stderr: InputStream, channel: ChannelExec): String {
         val out = CappedTextBuffer(EXEC_OUTPUT_MAX_CHARS)

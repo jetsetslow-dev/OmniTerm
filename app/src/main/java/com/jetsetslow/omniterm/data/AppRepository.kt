@@ -13,6 +13,22 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun getAllServers(): List<ServerEntity> = db.serverDao().getAllServers().map(::decryptServer)
     suspend fun getServerById(id: Int): ServerEntity? = db.serverDao().getServerById(id)?.let(::decryptServer)
     suspend fun getServerByName(name: String): ServerEntity? = db.serverDao().getServerByName(name)?.let(::decryptServer)
+    suspend fun findMatchingServer(candidate: ServerEntity): ServerEntity? {
+        val profiles = getAllProfiles()
+        val identity = serverIdentity(candidate, profiles) ?: return null
+        return getAllServers().firstOrNull { it.id != candidate.id && serverIdentity(it, profiles) == identity }
+    }
+
+    suspend fun saveUniqueServer(server: ServerEntity, update: Boolean = false): Long = db.withTransaction {
+        val existing = findMatchingServer(server)
+        require(existing == null) {
+            "The same host, port, SSH user and authentication method already exist as \"${existing?.name}\". Existing server unchanged."
+        }
+        if (update) {
+            updateServer(server)
+            server.id.toLong()
+        } else insertServer(server)
+    }
     suspend fun insertServer(server: ServerEntity): Long = db.serverDao().insertServer(encryptServer(server))
     suspend fun updateServer(server: ServerEntity) = db.serverDao().updateServer(encryptServer(server))
     suspend fun updateConnectionState(id: Int, status: String, health: Int, latency: Int) =
@@ -68,7 +84,16 @@ class AppRepository(private val db: AppDatabase) {
     val profilesFlow: Flow<List<CredentialProfileEntity>> =
         db.credentialProfileDao().getAllProfilesFlow().map { list -> list.map(::decryptProfile) }
     suspend fun getAllProfiles(): List<CredentialProfileEntity> = db.credentialProfileDao().getAllProfiles().map(::decryptProfile)
-    suspend fun insertProfile(profile: CredentialProfileEntity) = db.credentialProfileDao().insertProfile(encryptProfile(profile))
+    suspend fun insertProfile(profile: CredentialProfileEntity): Long = db.withTransaction {
+        if (profile.id > 0) {
+            // Identity fields are plaintext; do not decrypt unrelated secrets for this check.
+            val conflicts = profileServerConflicts(
+                db.serverDao().getAllServers(), db.credentialProfileDao().getAllProfiles(), profile,
+            )
+            if (conflicts.isNotEmpty()) throw ProfileServerConflictException(conflicts)
+        }
+        db.credentialProfileDao().insertProfile(encryptProfile(profile))
+    }
     suspend fun deleteProfile(profile: CredentialProfileEntity) = db.credentialProfileDao().deleteProfile(profile)
     suspend fun getCredentialProfileById(id: Int): CredentialProfileEntity? = db.credentialProfileDao().getProfileById(id)?.let(::decryptProfile)
 
