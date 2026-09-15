@@ -458,7 +458,7 @@ fun FullScreenCodeEditor(
                             .background(MaterialTheme.colorScheme.surfaceContainer)
                             // The Scaffold consumes safeDrawing insets for the bottomBar, so no manual
                             // nav/ime padding here — that would double-pad and push buttons off-screen.
-                            .horizontalScroll(rememberScrollState())
+                            .horizontalScrollWithIndicators(rememberScrollState())
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                         horizontalArrangement = Arrangement.End,
                         verticalAlignment = Alignment.CenterVertically,
@@ -703,7 +703,7 @@ private fun EditorBody(
         }
     }
 
-    Row(modifier = modifier.fillMaxSize().verticalScroll(verticalScroll)) {
+    Row(modifier = modifier.fillMaxSize().verticalScrollWithIndicators(verticalScroll)) {
         // Line-number gutter, scrolling in lockstep with the text (shared verticalScroll on the Row).
         // When NOT wrapping, every logical line is exactly one visual line, so a plain stacked Column
         // of numbers lines up with the text. When wrapping, a logical line can span several visual
@@ -769,7 +769,7 @@ private fun EditorBody(
                 .testTag("code-editor-input")
                 // Wrap mode: soft-wrap and no horizontal scroll. Otherwise: scroll horizontally so
                 // long lines extend off-screen instead of wrapping.
-                .then(if (wrap) Modifier else Modifier.horizontalScroll(horizontalScroll))
+                .then(if (wrap) Modifier else Modifier.horizontalScrollWithIndicators(horizontalScroll))
                 .padding(start = 8.dp, top = 12.dp, end = 12.dp, bottom = 12.dp),
         )
     }

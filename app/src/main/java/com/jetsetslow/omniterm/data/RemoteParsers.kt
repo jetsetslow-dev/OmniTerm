@@ -665,9 +665,14 @@ object RemoteCommands {
         // non-zero; the whole tail runs only after `cd` succeeds.
         if (action == "update") {
             val c = "\$OT_COMPOSE $flags"
-            val tail = "{ $c pull --ignore-buildable 2>/dev/null || $c pull 2>/dev/null || true; } && " +
-                "$c build --pull && $c up -d$orphansFlag && $c ps"
-            return "$resolver && cd ${shellQuote(workingDir)} && $tail 2>&1"
+            val tail = "printf '[1/4] Pulling images\\n'; " +
+                "if ! $c pull --ignore-buildable; then " +
+                "printf 'Warning: selective pull failed; retrying a full pull.\\n'; " +
+                "$c pull || printf 'Warning: image pull failed; continuing with build/local images. Review the errors above.\\n'; fi; " +
+                "printf '[2/4] Building images\\n' && BUILDKIT_PROGRESS=plain $c build --pull && " +
+                "printf '[3/4] Recreating services\\n' && $c up -d$orphansFlag && " +
+                "printf '[4/4] Checking services\\n' && $c ps"
+            return "$resolver && cd ${shellQuote(workingDir)} && { $tail; } 2>&1"
         }
 
         val verb = when (action) {

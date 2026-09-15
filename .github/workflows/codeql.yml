@@ -57,10 +57,32 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           echo "Changed files:"; echo "$changed"
-          if echo "$changed" | grep -qE '^(app/|gradle/|scripts/|\.github/actions/|\.github/workflows/codeql\.yml$|gradle\.properties|build\.gradle\.kts|settings\.gradle\.kts|gradlew$|gradlew\.bat$)'; then
+          # Match against a file; never `echo "$changed" | grep -q`. grep -q exits at its first
+          # match and closes the pipe, so on a long changed-path list the producing echo dies of
+          # SIGPIPE and `pipefail` turns a real match into a non-zero pipeline, silently selecting
+          # the no-change branch. PR #92 head b691ddd skipped CodeQL that way: 580 changed paths
+          # (28,959 bytes) including app/**, reported as "no build-affecting files changed".
+          # scripts/test-change-detectors.sh pins this behaviour. Any grep status above 1 is a real
+          # error, not "no match", and fails safe like the git diff failure above.
+          if ! changed_list="$(mktemp)"; then
+            echo "mktemp failed; running full analysis to be safe."
+            echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          if ! printf '%s\n' "$changed" > "$changed_list"; then
+            echo "writing the changed-path list failed; running full analysis to be safe."
+            rm -f "$changed_list"
+            echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          match=0
+          grep -qE '^(app/|gradle/|scripts/|\.github/actions/|\.github/workflows/codeql\.yml$|gradle\.properties|build\.gradle\.kts|settings\.gradle\.kts|gradlew$|gradlew\.bat$)' "$changed_list" || match=$?
+          rm -f "$changed_list"
+          if [ "$match" -eq 0 ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
-          else
+          elif [ "$match" -eq 1 ]; then
             echo "code=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "grep failed with status $match; running full analysis to be safe."
+            echo "code=true" >> "$GITHUB_OUTPUT"
           fi
 
   analyze:
@@ -93,7 +115,7 @@ jobs:
             -alias androiddebugkey -dname CN=Android-Debug -keyalg RSA -keysize 2048 -validity 1
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/init@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
           languages: java-kotlin
           build-mode: manual
@@ -105,6 +127,7 @@ jobs:
       - name: Validate release and CI tooling
         run: |
           ./scripts/test-release-version.sh
+          ./scripts/test-change-detectors.sh
           ./scripts/test-ci-gradle-gate.sh
 
       # This workflow is the automatic prerelease gate, so secret-history validation must be part
@@ -154,7 +177,7 @@ jobs:
             -Pandroid.testInstrumentationRunnerArguments.package=com.jetsetslow.omniterm.data
 
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4.37.9
+        uses: github/codeql-action/analyze@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4.38.0
         with:
           category: "/language:java-kotlin"
 

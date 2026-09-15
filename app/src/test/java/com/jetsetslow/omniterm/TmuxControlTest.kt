@@ -77,6 +77,14 @@ class TmuxControlTest {
     }
 
     @Test
+    fun captureReplyPreservesLeadingBlankRows() {
+        val reply = TmuxControlParser().feed(
+            "%begin 1 5 1\n\n\nquiet pane\n%end 1 5 1\n".encodeToByteArray()
+        ).filterIsInstance<TmuxControlEvent.Reply>().single()
+        assertEquals("\n\nquiet pane", reply.body)
+    }
+
+    @Test
     fun errorBlockReportsIsError() {
         val events = TmuxControlParser().feed(
             "%begin 1 5 1\nbad command: nope\n%error 1 5 1\n".encodeToByteArray()

@@ -1,0 +1,7 @@
+{
+  "v": 2,
+  "servers": [{"id": 11, "name": "Backup fixture", "host": "192.0.2.11", "port": 22, "username": "fixture", "authType": "password", "persistentSession": true}],
+  "scripts": [{"name": "Fixture script", "emoji": ">", "command": "printf fixture", "color": "cyan"}],
+  "settings": [{"key": "dark_mode", "value": "false"}, {"key": "sftp_bookmarks_11", "value": "/config"}, {"key": "app_pin", "value": "must-not-restore"}],
+  "wolTargets": [{"name": "Fixture wake", "macAddress": "02:00:00:00:00:11", "notes": "Wake fixture", "lastWokenTime": 1786406400000}]
+}
