@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:patrol/patrol.dart';
 import 'package:provider/provider.dart';
@@ -9,8 +10,13 @@ import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/ssh/ssh_host_key_trust.dart';
 import 'package:omniterm/data/ssh/ssh_transport.dart';
 import 'package:omniterm/data/term/tmux_bootstrap.dart';
+import 'package:omniterm/domain/app_pin.dart';
+import 'package:omniterm/domain/external_action_guard.dart';
 import 'package:omniterm/main.dart' as app;
+import 'package:omniterm/platform/external_launch.dart';
+import 'package:omniterm/platform/screen_security.dart';
 import 'package:omniterm/ui/navigation.dart';
+import 'package:omniterm/ui/view_model/app_lock_controller.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/host_status_probe.dart';
 import 'package:omniterm/ui/view_model/shell_session.dart';
@@ -21,6 +27,7 @@ const _enabled = bool.fromEnvironment('OMNITERM_E2E_HOSTS');
 const _host = String.fromEnvironment('OMNITERM_E2E_HOST', defaultValue: '10.0.2.2');
 const _user = String.fromEnvironment('OMNITERM_TEST_USER');
 const _password = String.fromEnvironment('OMNITERM_TEST_PASSWORD');
+const _lifecycle = MethodChannel('omniterm/test/activity_lifecycle');
 
 /// Real Android Home/launcher transitions, not synthetic Flutter lifecycle notifications or the
 /// navigation-only terminal-visible flag. Remote shell variables prove the same shell survived.
@@ -41,6 +48,11 @@ void main() {
       final trust = context.read<SshHostKeyTrust>();
       final status = context.read<HostStatusProbe>()..stop();
       final telemetry = context.read<TelemetryPoller>()..stop();
+      await $.tester.runAsync(() => state.saveSetting('flag_secure', 'true'));
+      expect(
+        await $.tester.runAsync(() => context.read<ScreenSecurity>().setSecure(secure: true)),
+        isTrue,
+      );
       final owner = Object();
       trust.registerApprovalHandler(owner, (request) {
         expect(request.host, _host, reason: 'Only repository fixture SSH keys may be approved');
@@ -93,6 +105,17 @@ void main() {
             final token = 'kept_${DateTime.now().microsecondsSinceEpoch}';
             expect(shell.typeText('OT_LIFECYCLE=$token\r'), isTrue);
             await _probe($, shell, original, token, 'before');
+            // This handler exists only in androidTest and is installed before runDartTest.
+            // Unlike rotation (handled by configChanges), it destroys the Activity while this
+            // test and its server-side variable are live. A replacement must actually resume.
+            await _recreate($);
+            expect(shell.current, same(original));
+            expect(reconnected, isFalse, reason: '$label recreation must not reopen SSH');
+            await _probe($, shell, original, token, 'recreated');
+            await _recreate($, finishAndRelaunch: true);
+            expect(shell.current, same(original));
+            expect(reconnected, isFalse, reason: '$label finish/relaunch must not reopen SSH');
+            await _probe($, shell, original, token, 'relaunched');
             for (var cycle = 0; cycle < 3; cycle++) {
               await $.platform.android.pressHome();
               // Deliberate wall-clock background dwell, while no app frames can be pumped.
@@ -126,8 +149,23 @@ void main() {
             await $.platform.android.pressHome();
             await Future<void>.delayed(const Duration(seconds: 2));
             await $.platform.android.openApp(appId: 'com.jetsetslow.omniterm.app.flutter');
-            navigation.navigateTo(Screen.shell);
-            await $.tester.pump();
+            if (persistent) {
+              navigation.navigateTo(Screen.shell);
+              await $.tester.pump();
+            } else {
+              // Exercise the real notification-action bridge after it was attached to a new
+              // Activity. A working shell alone cannot prove shade actions still reach Dart.
+              expect(
+                await $.tester.runAsync(
+                  () => _lifecycle.invokeMethod<bool>('resumeSession', {
+                    'title': original.serverName,
+                  }),
+                ),
+                isTrue,
+                reason: 'The service must have posted a real notification to activate',
+              );
+              await _until($, () => navigation.currentScreen == Screen.shell);
+            }
             if (!persistent) {
               expect(shell.current, same(original));
               expect(
@@ -158,6 +196,18 @@ void main() {
               );
               await _probe($, shell, resumed, token, 'resumed');
             }
+            if (keepAlive && !persistent) {
+              expect(
+                await $.tester.runAsync(
+                  () => _lifecycle.invokeMethod<bool>('disconnectSession', {
+                    'title': original.serverName,
+                  }),
+                ),
+                isTrue,
+              );
+              await _until($, () => !shell.sessions.contains(original));
+              expect(original.isOpen, isFalse);
+            }
             debugPrint('LIFECYCLE-E2E passed $label');
           } finally {
             original.removeListener(observe);
@@ -176,9 +226,90 @@ void main() {
           }
         }
       }
+      await _checkLockedIntentRecreation($, $.tester.element(find.byType(MaterialApp)));
     },
     skip: !_enabled || !Platform.isAndroid,
   );
+}
+
+Future<void> _checkLockedIntentRecreation(PatrolIntegrationTester $, BuildContext context) async {
+  final state = context.read<AppState>();
+  final lock = context.read<AppLockController>();
+  final navigation = context.read<NavigationController>();
+  final external = context.read<ExternalLaunch>();
+  final guard = context.read<ExternalActionGuard>();
+  const pin = '246810';
+  var received = 0;
+  final subscription = external.actions.listen((_) => received++);
+  try {
+    await $.tester.runAsync(() async {
+      await state.saveSetting('app_pin', await hashPinForStorage(pin));
+      await state.saveSetting('app_lock_enabled', 'true');
+      await lock.refresh();
+    });
+    navigation.navigateTo(Screen.servers);
+    lock.lockNow();
+    await $.tester.pump();
+    expect(find.byKey(const ValueKey('lock.screen')), findsOneWidget);
+    await $.tester.runAsync(() => _lifecycle.invokeMethod<void>('externalIntent'));
+    await _until($, () => guard.pendingAction?.type == 'open_network');
+    expect(received, 1);
+    expect(navigation.currentScreen, Screen.servers, reason: 'Intents must wait behind the lock');
+    await _recreate($);
+    expect(lock.isLocked, isTrue);
+    expect(find.byKey(const ValueKey('lock.screen')), findsOneWidget);
+    expect(navigation.currentScreen, Screen.servers);
+    expect(await $.tester.runAsync(external.takeInitialActions), isEmpty);
+    expect(received, 1, reason: 'Recreation must not replay the consumed intent');
+    await $.tester.enterText(find.byKey(const ValueKey('lock.pin')), pin);
+    await $.tester.tap(find.byKey(const ValueKey('lock.submit')));
+    await _until($, () => !lock.isLocked && navigation.currentScreen == Screen.network);
+    expect(guard.pendingAction, isNull);
+    navigation.navigateTo(Screen.servers);
+    await $.tester.pump();
+    await _recreate($);
+    expect(
+      navigation.currentScreen,
+      Screen.servers,
+      reason: 'The unlocked intent was consumed once',
+    );
+    expect(received, 1);
+    await $.tester.runAsync(() => _lifecycle.invokeMethod<void>('externalIntent'));
+    await _until($, () => received == 2 && navigation.currentScreen == Screen.network);
+    debugPrint('LIFECYCLE-E2E passed lock and consume-once intents across recreation');
+  } finally {
+    await subscription.cancel();
+    await $.tester.runAsync(() async {
+      await state.saveSetting('app_lock_enabled', 'false');
+      await state.saveSetting('app_pin', '');
+      await lock.refresh();
+    });
+  }
+}
+
+Future<void> _recreate(PatrolIntegrationTester $, {bool finishAndRelaunch = false}) async {
+  final evidence = await $.tester.runAsync(
+    () => _lifecycle
+        .invokeMapMethod<String, Object?>(finishAndRelaunch ? 'finishAndRelaunch' : 'recreate')
+        .timeout(const Duration(seconds: 15)),
+  );
+  expect(evidence?['destroyed'], isTrue, reason: 'The original Activity must really be destroyed');
+  expect(evidence?['sameEngine'], isTrue, reason: 'The SSH-owning Dart engine must survive');
+  expect(evidence?['secureBefore'], isTrue, reason: 'The fixture must exercise FLAG_SECURE');
+  expect(evidence?['secureAfter'], isTrue, reason: 'The replacement window must remain protected');
+  // Flutter's EventChannel protocol must still own the subscription it created before attach.
+  // Replacing its native handler creates an empty activeSink even though Dart is still listening:
+  // the next cancellation then reports "No active stream to cancel" and never clears our sink.
+  // Exercise the real protocol and restore the listeners, without replacing Dart's event handler.
+  for (final name in ['omniterm/external_launch/events', 'omniterm/session_service/actions']) {
+    await $.tester.runAsync(() async {
+      final stream = MethodChannel(name);
+      await stream.invokeMethod<void>('cancel');
+      await stream.invokeMethod<void>('listen');
+    });
+    expect($.tester.takeException(), isNull, reason: '$name must retain its live subscription');
+  }
+  await $.tester.pump();
 }
 
 Future<void> _until(PatrolIntegrationTester $, bool Function() ready) async {

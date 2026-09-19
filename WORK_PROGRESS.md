@@ -1,12 +1,88 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
-Updated: 2026-09-13 at 10:34 AM IST, after the cutoff. Working branch: `migration-to-flutter`; PR: #92.
-Outgoing Codex session retired for handoff; **not** a parity-complete or release-ready declaration.
+Updated: 2026-09-19. Working branch: `migration-to-flutter`; PR: #92.
+Independent return review implemented and locally validated; **not** a parity-complete or release-ready declaration.
 
 This sanitized tracker is intentionally committed so work can resume on another machine.
 Before an authorized merge to `main`, consolidate it into the private handover under
 `secrets/internal-docs/docs/` and remove this temporary file from the merge tree. Never put
 secrets here: moving it later does not erase Git history.
+
+## September 17 return review — lifecycle and notification fixes
+
+The handover's detector claims were independently reproduced: current workflows pass all 39
+checks; the actual pre-fix workflows fail exactly 12 and pass 27 with GNU grep. The real CodeQL
+analysis on the incoming `c7933d6` head ran for 8m51s and completed its analysis step; its companion
+no-op was skipped. The seven named checkpoints were reviewed from their source changes, including
+the attempt-local SSH channel ownership boundary and backup omission/selection/time reporting.
+
+**The missing live-device recreation control now exists in the instrumentation APK only.** It
+calls Android's `recreate()` or finishes and relaunches the Activity, requires the old instance's
+destruction and a different resumed instance, and checks engine identity plus `FLAG_SECURE`.
+The still-running Dart fixture then probes a server-side shell variable and rejects reconnects.
+All six combinations of plain SSH, tmux and control mode with keep-alive off/on completed both
+transitions, including the lock and intent checks. The first complete Dart run exposed a native
+teardown issue: finishing and relaunching leaves old tasks in Recents without a live Activity.
+Cleanup now removes those app-owned task records and still requires zero remaining tasks.
+The complete host profile subsequently passed: 2 tests executed, 0 skipped, including native
+teardown. It recorded 14 successful Activity destruction/replacement transitions: two per shell
+combination plus two lock/intent transitions. Final local validation is recorded below; hosted validation will run on the signed checkpoint.
+
+**The event-channel explanation in the earlier A entry was wrong.** Flutter replaces a channel's
+handler without cancelling its existing subscription. The new handler has no active sink, so the
+next cancel reports `No active stream to cancel` and does not release the bridge's sink. Both
+channels reproduced this on the device. Each now retains its event handler for the engine's
+lifetime, refreshes Activity-scoped method handlers on every attachment, and still guards callbacks
+from superseded engines. The device guard exercises the real cancel/listen protocol across both
+transitions, plus the real notification Resume and Disconnect actions.
+
+**A posted SSH notification could not resume its terminal.** The service puts the session ID in
+`omniterm://notification/session/<id>`, while the receiver read only an extra. Flutter also treated
+that URI as an automatic named route, producing an undefined-route exception. A negative control
+using the real posted notification's `PendingIntent` reproduced both symptoms against the original
+receiver. The receiver now reads the session URI, and automatic Flutter deep linking is disabled
+so the existing app-lock-aware intent handler is the sole dispatcher. The lock guard checks that
+an intent waits behind the lock across recreation, is consumed once after PIN unlock, and later
+intents still arrive. No process-death survival is claimed.
+
+**Reconciliation with main.** The already-shipped Kotlin/dependency changes are incorporated into
+the migration branch. The only conflict was the detector script's explicit absent-workflow handling;
+main's compatibility guard is retained, without counting an absent workflow as a passed check.
+
+**Limits retained from the review.** The historical key-generation cleanup failure has not been
+reproduced deterministically. Its original job log shows one surviving card and an earlier harness
+transport reboot; it does not establish either duplicate keys or a general environmental cause.
+The newer clipboard guard tests the payload sent to Android; it is not clipboard readback proof.
+The current working agreements explicitly keep hosted instrumentation data-layer-only and require
+the complete local package plus an opted-in surface sweep, so the hosted filter remains unchanged.
+
+Validation on the final source tree:
+
+- `./scripts/local-pr-check.sh --full` passed on Linux x86_64 on September 17. Native unit/lint
+  tasks were `UP-TO-DATE`, not freshly executed. Flutter analysis and formatting passed; Flutter
+  tests executed 2,730 successfully with seven optional skips (six `OMNITERM_SETUP_FIXTURE` cases
+  and one `OMNITERM_COMPRESSION_*` case). No Linux ARM64 runtime exclusions applied on this host.
+  Release APK/AAB, both Flutter SBOMs, development-code exclusion, the pinned all-ref secret scan,
+  and forced-refresh strict verification of all native graphs and both release SBOM graphs passed.
+- `./scripts/flutter-device-test.sh --device emulator-5554 --profile core` passed: 30 executed,
+  zero skipped, including every Flutter route/subtab/theme/orientation and native picker/permission
+  flows. The `--profile host` run passed: two executed, zero skipped. Its initial Podman failure
+  was reproduced directly as a stale boot-ID error; recreating only that disposable fixture fixed
+  readiness before the successful rerun. No app assertion or timeout was weakened.
+- `./gradlew connectedOpenSourceDebugAndroidTest` ran the whole native package on API 35:
+  58 discovered, 24 executed successfully (including four Room tests), 34 opt-in E2E assumptions,
+  zero actual failures. This ran after the full gate, whose device phase explicitly said deferred.
+- After reinstalling the application and instrumentation APKs once, direct instrumentation ran
+  `E2eLabHostProvisioner#provisionLabHost` and `#trustLabHostKey` against the repository SSH fixture.
+  `E2eAppSurfaceStressTest` then passed on September 19 with `-e omniterm_e2e_surfaces yes`
+  and `-e omniterm_e2e_sftp_home /config`: one executed, zero skipped. Gradle had removed the test
+  APK after its connected run; the first provisioning attempt therefore never ran a test.
+- Both diff checks and the pinned staged secret scan passed. No production/test source changed
+  after the full gate; subsequent changes are this evidence record.
+
+The signed checkpoint and its exact-head hosted checks are the remaining publication steps.
+Do not reuse incoming-head CI results for this source. Earlier evidence below belongs to the
+historical heads named there.
 
 ## C, D, E: three more places that finished work and said nothing
 
@@ -58,6 +134,9 @@ Every stage green: `core rc=0`, `host rc=0`, `local-pr-check rc=0`, both diff ch
 
 ## B (§1): audited under retention, no change needed
 
+**Historical status.** The September 17 live test above now exercises the lock and consume-once
+behavior through actual Activity destruction; the earlier missing-trigger limitation is superseded.
+
 Both halves hold, and retention makes one of them *safer* rather than riskier.
 
 **External launches consumed once — holds by construction.** `consume()` strips the intent: extras
@@ -78,6 +157,10 @@ thing for a next session to solve: a JVM test source set for `flutter_app/androi
 recreation trigger reachable from a Patrol test.
 
 ## A (§1): a superseded `onCancel` could silently kill notification delivery
+
+**Historical explanation, corrected by the September 17 review above.** Handler replacement does
+not trigger the claimed cancellation. The new live guard and engine-owned registration supersede
+this account and its harness limitation.
 
 Engine retention turned a dormant issue into a live one. `ExternalLaunchBridge` and
 `SessionServiceBridge` hold their Dart `EventSink` at object level and cleared it unconditionally in
@@ -128,8 +211,8 @@ one is possible, the full gate, and device profiles for anything a screen can re
 
 | # | Item | Source | State |
 | --- | --- | --- | --- |
-| A | Late-callback identity guards for the bridge event sinks | §1 | **fixed; untestable in this harness — see below** |
-| B | App-lock protection across recreation; external launches consumed once | §1 | **audited, no defect; device-proof blocked** |
+| A | Engine-owned event subscriptions across Activity attachments | §1 | **implemented and device-verified; final CI pending — see September 17** |
+| B | App-lock protection across recreation; external launches consumed once | §1 | **device-verified; final CI pending — see September 17** |
 | C | `LongOperationNotifications.start` returned failures are ignored at all call sites | §3 | **done** |
 | D | Passphrase / restore-selection / confirmation cancellation are silent | §3 | **done** |
 | E | Disconnect-all needs observable completion/errors and cleanup ownership | §1 | **done** |
@@ -268,7 +351,10 @@ file wholesale would break main, so only the detector hunk was spliced across.
 Both PRs are green: #92 on `3818004` and #105 on `67150e6`, each with CodeQL genuinely analysing
 (8m56s job, companion no-op skipped) rather than reporting green off the placeholder.
 
-## Resume here
+## Historical September 13 handoff
+
+For current work, start at the September 17 return review at the top of this file. The cutoff,
+retired schedules, and checkpoint statuses below apply to the earlier session only.
 
 **Codex-to-Claude handoff cutoff: September 13, 2026 at 10:30 AM IST today (05:00 UTC), not tomorrow.**
 Implementation stopped before cutoff. The external cutoff fired at 10:30:00 IST and queued

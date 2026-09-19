@@ -4,6 +4,7 @@ import android.content.Intent
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicLong
 
 /**
@@ -21,22 +22,19 @@ object ExternalLaunchBridge {
     private val pending = mutableListOf<Map<String, Any?>>()
 
     /**
-     * Which `register` call installed the sink currently held in [events], and how many have run.
+     * Event subscriptions belong to the engine, not the Activity that most recently attached.
      *
-     * This object outlives the Activity it was registered against now that the Flutter engine is
-     * retained ([RetainedFlutterEngine]), so more than one registration exists over the process's
-     * life. Flutter tears down the previous stream when a new handler is set for the same channel,
-     * and that teardown's `onCancel` arrives *after* the replacement has already attached — so
-     * without an owner check the superseded handler silently dropped the live sink, and every
-     * notification tap and launcher shortcut after the first Activity recreation queued into
-     * [pending] forever instead of reaching Dart.
+     * Flutter does not cancel an existing stream when setStreamHandler replaces its handler.
+     * The replacement starts with no active sink, so Dart's next cancel fails and never clears
+     * [events]. Keep the handler for the retained engine's lifetime. A new engine gets a fresh
+     * registration; ownership checks prevent a late callback from its predecessor taking over.
      */
+    private var eventEngine = WeakReference<FlutterEngine>(null)
     private var registrations = 0L
     private var sinkOwner = 0L
 
 
     fun register(engine: FlutterEngine, activity: MainActivity) {
-        val registration = ++registrations
         MethodChannel(engine.dartExecutor.binaryMessenger, METHOD_CHANNEL)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
@@ -44,10 +42,15 @@ object ExternalLaunchBridge {
                     else -> result.notImplemented()
                 }
             }
+        if (eventEngine.get() === engine) return
+        eventEngine = WeakReference(engine)
+        val registration = ++registrations
+        events = null
+        sinkOwner = 0L
         EventChannel(engine.dartExecutor.binaryMessenger, EVENT_CHANNEL).setStreamHandler(
             object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, sink: EventChannel.EventSink) {
-                    // A registration already replaced by a newer Activity must not install a sink.
+                    // A registration from a superseded engine must not install a sink.
                     if (registration != registrations) return
                     sinkOwner = registration
                     events = sink
@@ -74,8 +77,18 @@ object ExternalLaunchBridge {
 
     private fun consume(intent: Intent?): List<Map<String, Any?>> {
         intent ?: return emptyList()
+        val notificationPath = intent.data
+            ?.takeIf { it.scheme == "omniterm" && it.host == "notification" }
+            ?.pathSegments
+        // SessionService uses a URI to give each PendingIntent a distinct identity. It does not
+        // put the resume target in an extra; reading only extras made those real taps do nothing.
+        val sessionId = intent.getStringExtra(SessionService.EXTRA_SESSION_ID)
+            ?: notificationPath
+                ?.takeIf { it.size == 2 && it[0] == "session" }
+                ?.get(1)
+                ?.takeIf { it.isNotBlank() }
         val result = buildList {
-            intent.getStringExtra(SessionService.EXTRA_SESSION_ID)?.let {
+            sessionId?.let {
                 add(message("resume_session", target = it))
             }
             when (intent.action) {
@@ -83,8 +96,8 @@ object ExternalLaunchBridge {
                 "com.jetsetslow.omniterm.action.SFTP" -> add(message("open_sftp"))
                 "com.jetsetslow.omniterm.action.NETWORK_TOOLS" -> add(message("open_network"))
             }
-            if (intent.data?.scheme == "omniterm" && intent.data?.host == "notification") {
-                when (intent.data?.lastPathSegment) {
+            if (notificationPath?.size == 1) {
+                when (notificationPath[0]) {
                     "transfers" -> add(message("open_transfers"))
                     "network" -> add(message("open_network"))
                     "fleet" -> add(message("open_fleet"))

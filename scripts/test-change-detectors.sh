@@ -164,6 +164,15 @@ for entry in "${DETECTORS[@]}"; do
   echo
   echo "== $name ($step_id) =="
 
+  # Branches carry different workflow sets: main has no Flutter workflow, the migration branch has
+  # both. Announced rather than passed over in silence, and deliberately NOT counted as a pass —
+  # a detector that is absent has not been checked. Keeping one file that works on both branches is
+  # what stops this script needing a rewrite when the migration merges.
+  if [ ! -f "$REPO_ROOT/$workflow" ]; then
+    echo "   not present on this branch; nothing to check"
+    continue
+  fi
+
   # A detector that still pipes into grep -q can silently skip a required analysis. Keep the
   # shape itself out of the tree, not just its symptom.
   # ^[^#]* keeps this from matching the explanatory comment inside the workflow itself.

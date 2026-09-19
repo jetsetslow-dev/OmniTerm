@@ -68,10 +68,23 @@ public class MainActivityTest {
     /** Whether the fixture window was excluded from capture before the Activity was recreated. */
     private boolean secureBeforeRecreation;
 
+    private ActivityRecreationBridge recreationBridge;
+
     @Test
     public void runDartTest() throws Exception {
         PatrolJUnitRunner instrumentation =
                 (PatrolJUnitRunner) InstrumentationRegistry.getInstrumentation();
+        if (dartTestName.contains("SSH survives Home and explicit background")) {
+            AtomicReference<Exception> setupError = new AtomicReference<>();
+            instrumentation.runOnMainSync(() -> {
+                try {
+                    recreationBridge = new ActivityRecreationBridge();
+                } catch (Exception error) {
+                    setupError.set(error);
+                }
+            });
+            if (setupError.get() != null) throw setupError.get();
+        }
         instrumentation.runDartTest(dartTestName);
         // This Dart flow is already opt-in through OMNITERM_E2E_HOSTS. Keep the extra native
         // lifecycle check on that same fixture case, not on unrelated picker/permission cases.
@@ -190,6 +203,7 @@ public class MainActivityTest {
         InstrumentationRegistry.getInstrumentation()
                 .runOnMainSync(
                         () -> {
+                            if (recreationBridge != null) recreationBridge.close();
                             Collection<Activity> live = new ArrayList<>();
                             for (Stage stage : Stage.values()) {
                                 if (stage == Stage.DESTROYED) {
@@ -206,6 +220,12 @@ public class MainActivityTest {
 
         Context context = InstrumentationRegistry.getInstrumentation().getTargetContext();
         ActivityManager activityManager = context.getSystemService(ActivityManager.class);
+        // The live lifecycle fixture also finishes and relaunches its root Activity. Android
+        // can retain that finished task in Recents even though the lifecycle monitor correctly
+        // has no live Activity for it. Remove those owned task records as well as live windows.
+        for (ActivityManager.AppTask task : activityManager.getAppTasks()) {
+            task.finishAndRemoveTask();
+        }
         long deadline = System.currentTimeMillis() + TASK_REMOVAL_TIMEOUT_MS;
         List<ActivityManager.AppTask> remaining = activityManager.getAppTasks();
         while (!remaining.isEmpty() && System.currentTimeMillis() < deadline) {

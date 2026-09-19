@@ -8,6 +8,7 @@ import android.os.Looper
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
+import java.lang.ref.WeakReference
 
 /**
  * Dart's control over [SessionService], and the shade's way back to Dart.
@@ -25,13 +26,13 @@ object SessionServiceBridge {
     private var events: EventChannel.EventSink? = null
 
     /**
-     * Which `register` call installed the sink in [events], and how many have run.
+     * Keep the subscription handler with the engine that owns it, across Activity attachments.
      *
-     * Same reasoning as `ExternalLaunchBridge`: this object now outlives the Activity it was
-     * registered against, Flutter's teardown of the previous stream delivers `onCancel` *after* the
-     * replacement has attached, and an unguarded clear would leave shade actions — Disconnect,
-     * Disconnect all, Resume — queued forever after the first Activity recreation.
+     * Replacing a Flutter EventChannel handler does not cancel its old stream. The new handler
+     * has no active sink, so a later cancel cannot release [events]. See ExternalLaunchBridge.
+     * A new engine still needs a fresh registration and protection from its predecessor's callbacks.
      */
+    private var eventEngine = WeakReference<FlutterEngine>(null)
     private var registrations = 0L
     private var sinkOwner = 0L
 
@@ -46,7 +47,6 @@ object SessionServiceBridge {
     private val pending = mutableListOf<Map<String, Any?>>()
 
     fun register(engine: FlutterEngine, context: Context) {
-        val registration = ++registrations
         val appContext = context.applicationContext
 
         MethodChannel(engine.dartExecutor.binaryMessenger, METHOD_CHANNEL)
@@ -85,10 +85,15 @@ object SessionServiceBridge {
                 }
             }
 
+        if (eventEngine.get() === engine) return
+        eventEngine = WeakReference(engine)
+        val registration = ++registrations
+        events = null
+        sinkOwner = 0L
         EventChannel(engine.dartExecutor.binaryMessenger, EVENT_CHANNEL).setStreamHandler(
             object : EventChannel.StreamHandler {
                 override fun onListen(arguments: Any?, sink: EventChannel.EventSink) {
-                    // A registration already replaced by a newer Activity must not install a sink.
+                    // A registration from a superseded engine must not install a sink.
                     if (registration != registrations) return
                     sinkOwner = registration
                     events = sink
