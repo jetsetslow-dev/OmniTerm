@@ -2,10 +2,17 @@ package com.jetsetslow.omniterm
 
 import android.content.Context
 import android.content.Intent
-import io.flutter.embedding.android.FlutterActivity
+import io.flutter.embedding.android.FlutterFragmentActivity
+import io.flutter.embedding.android.FlutterFragment
 import io.flutter.embedding.engine.FlutterEngine
 
-class MainActivity : FlutterActivity() {
+class MainActivity : FlutterFragmentActivity() {
+    override fun createFlutterFragment(): FlutterFragment = RetainedFlutterFragment().apply {
+        // Preserve the embedding's launch/debug arguments, rendering and Back configuration;
+        // only the ownership policy differs from its standard fragment.
+        arguments = super.createFlutterFragment().arguments
+    }
+
     /**
      * Reuses the process-wide engine instead of creating one per Activity.
      *
@@ -13,8 +20,8 @@ class MainActivity : FlutterActivity() {
      * the Dart isolate that owns the SSH sessions. The foreground service kept the *process* alive;
      * nothing kept the sessions alive. See [RetainedFlutterEngine] for which recreations this app
      * actually sees — the manifest's `configChanges` list means rotation and theme changes are not
-     * among them. Returning an engine here makes the embedding treat it as host-owned, so it is
-     * not destroyed with this Activity and its entrypoint is not re-run while the isolate is
+     * among them. Returning an engine here marks it host-owned; RetainedFlutterFragment prevents
+     * its destruction with this Activity, and its entrypoint is not re-run while the isolate is
      * already executing. `configureFlutterEngine` still runs on every attach, which is what
      * re-points the Activity-scoped bridges below at the live Activity.
      */
@@ -23,6 +30,7 @@ class MainActivity : FlutterActivity() {
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+        BiometricBridge.register(flutterEngine, this)
         // Lets the Dart SecretStore read credentials the Kotlin app wrote during in-place upgrade.
         LegacySecretBridge.register(flutterEngine)
         // Lets Dart apply FLAG_SECURE; a window flag has no Flutter-side equivalent.
@@ -53,6 +61,11 @@ class MainActivity : FlutterActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         ExternalLaunchBridge.onNewIntent(intent)
+    }
+
+    override fun onDestroy() {
+        if (isFinishing) BiometricBridge.onHostFinished(this)
+        super.onDestroy()
     }
 
     override fun onRequestPermissionsResult(

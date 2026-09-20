@@ -1,5 +1,7 @@
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:omniterm/domain/biometric_failure.dart';
 import 'package:omniterm/platform/biometric_auth.dart';
 
 /// Records what the wrapper asks the platform for, and answers with whatever the test set up.
@@ -10,6 +12,7 @@ class _FakeLocalAuth extends LocalAuthentication {
     this.enrolled = const [BiometricType.fingerprint],
     this.result = true,
     this.throwOnAuthenticate = false,
+    this.error,
   });
 
   final bool deviceSupported;
@@ -17,6 +20,7 @@ class _FakeLocalAuth extends LocalAuthentication {
   final List<BiometricType> enrolled;
   final bool result;
   final bool throwOnAuthenticate;
+  final LocalAuthException? error;
 
   bool? lastBiometricOnly;
   bool? lastPersistAcrossBackgrounding;
@@ -46,11 +50,46 @@ class _FakeLocalAuth extends LocalAuthentication {
     lastBiometricOnly = biometricOnly;
     lastPersistAcrossBackgrounding = persistAcrossBackgrounding;
     if (throwOnAuthenticate) throw StateError('platform said no');
+    if (error != null) throw error!;
     return result;
   }
 }
 
 void main() {
+  TestWidgetsFlutterBinding.ensureInitialized();
+  group('Android Kotlin-compatible gate', () {
+    const channel = MethodChannel('omniterm/biometrics');
+    final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+
+    tearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    test('uses the native strong biometric gate for availability and authentication', () async {
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return true;
+      });
+      final auth = BiometricAuth(useAndroid: true);
+      expect(await auth.isAvailable(), isTrue);
+      expect(await auth.prompt('Unlock OmniTerm'), isTrue);
+      expect(calls.map((call) => call.method), ['isAvailable', 'authenticate']);
+      expect(calls.last.arguments, {'reason': 'Unlock OmniTerm'});
+    });
+
+    test('preserves a native error for PIN fallback and treats cancel as false', () async {
+      messenger.setMockMethodCallHandler(channel, (_) async {
+        throw PlatformException(
+          code: 'unavailable',
+          message: 'Sensor unavailable. Enter your OmniTerm PIN.',
+        );
+      });
+      final auth = BiometricAuth(useAndroid: true);
+      await expectLater(auth.prompt('Unlock OmniTerm'), throwsA(isA<BiometricFailure>()));
+      messenger.setMockMethodCallHandler(channel, (_) async => false);
+      expect(await auth.prompt('Unlock OmniTerm'), isFalse);
+    });
+  });
+
   group('the prompt', () {
     test('asks for a biometric, not the device credential', () async {
       // Kotlin allows one authenticator and one only: `setAllowedAuthenticators(BIOMETRIC_STRONG)`
@@ -81,11 +120,41 @@ void main() {
       expect(await BiometricAuth(auth: auth).prompt('Unlock OmniTerm'), isFalse);
     });
 
-    test('a refusal is false, never an exception', () async {
-      // A lock screen that crashes on a cancelled prompt is worse than one that asks for the PIN.
+    test('an integration failure explains the PIN fallback', () async {
       final auth = _FakeLocalAuth(throwOnAuthenticate: true);
-      expect(await BiometricAuth(auth: auth).prompt('Unlock OmniTerm'), isFalse);
+      await expectLater(
+        BiometricAuth(auth: auth).prompt('Unlock OmniTerm'),
+        throwsA(
+          isA<BiometricFailure>().having((e) => e.message, 'message', contains('OmniTerm PIN')),
+        ),
+      );
     });
+
+    for (final code in [
+      LocalAuthExceptionCode.userCanceled,
+      LocalAuthExceptionCode.systemCanceled,
+      LocalAuthExceptionCode.userRequestedFallback,
+    ]) {
+      test('$code is cancellation, not an error', () async {
+        final auth = _FakeLocalAuth(error: LocalAuthException(code: code));
+        expect(await BiometricAuth(auth: auth).prompt('Unlock OmniTerm'), isFalse);
+      });
+    }
+
+    for (final (code, message) in [
+      (LocalAuthExceptionCode.uiUnavailable, 'Could not open'),
+      (LocalAuthExceptionCode.noBiometricsEnrolled, 'phone settings'),
+      (LocalAuthExceptionCode.temporaryLockout, 'locked'),
+      (LocalAuthExceptionCode.noBiometricHardware, 'sensor is unavailable'),
+    ]) {
+      test('$code gives an actionable failure', () async {
+        final auth = _FakeLocalAuth(error: LocalAuthException(code: code));
+        await expectLater(
+          BiometricAuth(auth: auth).prompt('Unlock OmniTerm'),
+          throwsA(isA<BiometricFailure>().having((e) => e.message, 'message', contains(message))),
+        );
+      });
+    }
   });
 
   group('availability', () {

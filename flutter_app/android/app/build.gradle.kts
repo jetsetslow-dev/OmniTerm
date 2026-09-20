@@ -117,6 +117,8 @@ flutter {
 }
 
 dependencies {
+    // Same prompt implementation as the Kotlin app; the bridge requires strong, per-use auth.
+    implementation("androidx.biometric:biometric:1.4.0-alpha05")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
 
     androidTestUtil("androidx.test:orchestrator:1.5.1")

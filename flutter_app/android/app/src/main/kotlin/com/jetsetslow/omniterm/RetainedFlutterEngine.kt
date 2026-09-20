@@ -20,11 +20,12 @@ import io.flutter.embedding.engine.FlutterEngine
  * the case a terminal app cares about most, which is why this is worth fixing — but it is a
  * narrower trigger than "every rotation", and saying otherwise would overstate it.
  *
- * Retention is done through `provideFlutterEngine` rather than [io.flutter.embedding.engine
+ * Retention uses `provideFlutterEngine` plus [RetainedFlutterFragment]'s explicit ownership policy,
+ * rather than [io.flutter.embedding.engine
  * .FlutterEngineCache]: the cached-engine path throws if the cache is empty and would need the
  * engine pre-populated from an Application subclass, while `provideFlutterEngine` lets the first
- * Activity create it lazily. The embedding then sets `isFlutterEngineFromHost`, which makes
- * `shouldDestroyEngineWithHost()` false, and skips re-running the Dart entrypoint because the
+ * Activity create it lazily. Our Fragment makes `shouldDestroyEngineWithHost()` false, and the
+ * embedding skips re-running the Dart entrypoint because the
  * isolate is already executing (`FlutterActivityAndFragmentDelegate.doInitialFlutterViewRun`).
  *
  * The engine outliving its Activity is the entire point, so the exit path has to be explicit:

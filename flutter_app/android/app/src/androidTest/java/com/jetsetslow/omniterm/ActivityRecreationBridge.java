@@ -12,12 +12,14 @@ import androidx.test.platform.app.InstrumentationRegistry;
 import androidx.test.runner.lifecycle.ActivityLifecycleCallback;
 import androidx.test.runner.lifecycle.ActivityLifecycleMonitorRegistry;
 import androidx.test.runner.lifecycle.Stage;
-import io.flutter.embedding.android.FlutterActivity;
+import io.flutter.embedding.android.FlutterFragmentActivity;
 import io.flutter.embedding.engine.FlutterEngine;
 import io.flutter.plugin.common.MethodChannel;
 import java.lang.reflect.Method;
 import java.util.HashMap;
 import java.util.Map;
+import java.nio.charset.StandardCharsets;
+import java.util.regex.Pattern;
 
 /** Instrumentation-only control: recreate while Dart still owns a live fixture shell. */
 final class ActivityRecreationBridge implements AutoCloseable {
@@ -35,6 +37,28 @@ final class ActivityRecreationBridge implements AutoCloseable {
         channel.setMethodCallHandler((call, result) -> {
             try {
                 switch (call.method) {
+                    case "biometricRequestId":
+                        // The system prompt is capture-protected. Observe the currently active
+                        // hardware operation, not stale history or the application's pending flag.
+                        try (android.os.ParcelFileDescriptor.AutoCloseInputStream input =
+                                new android.os.ParcelFileDescriptor.AutoCloseInputStream(
+                                        InstrumentationRegistry.getInstrumentation().getUiAutomation()
+                                                .executeShellCommand("dumpsys fingerprint"))) {
+                            String state = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+                            java.util.regex.Matcher match = Pattern.compile(
+                                    "Current operation:.*FingerprintAuthenticationClient.*owner=" +
+                                    Pattern.quote(resumed().getPackageName()) + ",.*requestId=(\\d+)")
+                                    .matcher(state);
+                            result.success(match.find() ? Integer.parseInt(match.group(1)) : null);
+                        }
+                        break;
+                    case "biometricBranding":
+                        android.content.pm.PackageManager packages = resumed().getPackageManager();
+                        result.success(resumed().getApplicationInfo().icon == R.mipmap.ic_system_brand &&
+                                packages.getActivityInfo(resumed().getComponentName(), 0).icon == R.mipmap.ic_launcher &&
+                                packages.getApplicationIcon(resumed().getApplicationInfo())
+                                        instanceof android.graphics.drawable.BitmapDrawable);
+                        break;
                     case "recreate":
                         recreate(result, false);
                         break;
@@ -146,7 +170,7 @@ final class ActivityRecreationBridge implements AutoCloseable {
 
     private static FlutterEngine flutterEngine(MainActivity activity)
             throws ReflectiveOperationException {
-        Method getter = FlutterActivity.class.getDeclaredMethod("getFlutterEngine");
+        Method getter = FlutterFragmentActivity.class.getDeclaredMethod("getFlutterEngine");
         getter.setAccessible(true);
         return (FlutterEngine) getter.invoke(activity);
     }

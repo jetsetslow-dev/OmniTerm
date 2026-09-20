@@ -67,15 +67,16 @@ class _SudoAuthDialogState extends State<_SudoAuthDialog> {
   Future<void> _tryBiometrics() async {
     if (_busy || !mounted) return;
     setState(() => _busy = true);
-    final ok = await widget.controller.authenticateForSensitiveAction();
+    final ok = await widget.controller.authenticateForSensitiveAction(reason: widget.title);
     if (!mounted) return;
     if (ok) {
       Navigator.of(context).pop(true);
       return;
     }
-    // Not an error: a cancelled or unreadable biometric is ordinary, and calling it a failure trains
-    // the user to ignore the message that does matter.
-    setState(() => _busy = false);
+    setState(() {
+      _busy = false;
+      _error = widget.controller.biometricError;
+    });
   }
 
   Future<void> _submitPin() async {
@@ -103,14 +104,18 @@ class _SudoAuthDialogState extends State<_SudoAuthDialog> {
       // small phone in landscape at 200% text it does not fit, and an AlertDialog clips rather
       // than scrolls unless it is asked to. Same shape as parity defects 112 and 113.
       scrollable: true,
-      title: Text(widget.title),
+      title: Text(
+        widget.title == 'Authenticate to save settings' ? 'Authenticate to save' : widget.title,
+      ),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Confirm to run this privileged action with the stored sudo password.',
-            style: TextStyle(fontSize: 14),
+          Text(
+            widget.title == 'Authenticate to save settings'
+                ? 'Enter your app PIN to apply these changes.'
+                : 'Confirm to run this privileged action with the stored sudo password.',
+            style: const TextStyle(fontSize: 14),
           ),
           const SizedBox(height: 8),
           if (hasPin)
@@ -122,7 +127,8 @@ class _SudoAuthDialogState extends State<_SudoAuthDialog> {
               obscureText: true,
               keyboardType: TextInputType.number,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: const InputDecoration(labelText: 'PIN'),
+              decoration: const InputDecoration(labelText: 'PIN', border: OutlineInputBorder()),
+              onChanged: (_) => setState(() => _error = null),
               onSubmitted: (_) => _submitPin(),
             )
           else

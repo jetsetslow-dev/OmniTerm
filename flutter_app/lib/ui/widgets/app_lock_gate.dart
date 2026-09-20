@@ -55,6 +55,13 @@ class _AppLockGateState extends State<AppLockGate> with WidgetsBindingObserver {
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: widget.controller,
     builder: (context, child) {
+      if (!widget.controller.isLoaded) {
+        return const Material(
+          key: ValueKey('lock.loading'),
+          color: Colors.black,
+          child: Center(child: CircularProgressIndicator()),
+        );
+      }
       if (!widget.controller.isLocked) return child!;
       // The app stays built underneath rather than being torn down, so unlocking returns the
       // user to exactly where they were — including a live terminal session.
@@ -150,9 +157,8 @@ class _AppLockScreenState extends State<AppLockScreen> with WidgetsBindingObserv
     if (!mounted) return;
     setState(() {
       _busy = false;
-      // Deliberately not an error: a failed or cancelled biometric read is ordinary, and calling it
-      // a failure trains the user to ignore the message that matters.
-      if (!ok) _message = null;
+      // Cancellation stays quiet; an unavailable prompt/sensor must explain how to proceed.
+      _message = ok ? null : widget.controller.biometricError;
     });
   }
 
@@ -200,99 +206,124 @@ class _AppLockScreenState extends State<AppLockScreen> with WidgetsBindingObserv
     final throttled = controller.isThrottled;
     final seconds = (controller.throttleRemainingMs / 1000).ceil();
 
+    final message = throttled
+        ? 'Too many attempts — try again in ${seconds}s'
+        : (_message ?? 'Enter PIN to unlock');
     return Material(
       key: const ValueKey('lock.screen'),
-      color: OmniColors.bg0,
+      color: Colors.black,
       child: SafeArea(
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(28),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Icon(Icons.lock_outline, size: 44, color: OmniColors.cyan),
-                const SizedBox(height: 14),
-                const Text(
-                  'OmniTerm is locked',
-                  style: TextStyle(
-                    fontFamily: OmniFonts.display,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: OmniColors.textPrimary,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                SizedBox(
-                  width: 220,
-                  child: TextField(
-                    key: const ValueKey('lock.pin'),
-                    controller: _pin,
-                    focusNode: _pinFocus,
-                    autofocus: !controller.canUseBiometrics,
-                    // `obscureText` alone still exposes the PIN to autofill and keyboard learning;
-                    // a numeric keyboard with suggestions off is the rest of it.
-                    obscureText: true,
-                    enableSuggestions: false,
-                    autocorrect: false,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    maxLength: 12,
-                    enabled: !throttled && !_busy,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontFamily: OmniFonts.mono, letterSpacing: 6),
-                    decoration: InputDecoration(
-                      counterText: '',
-                      hintText: controller.pinLength != null
-                          ? '${controller.pinLength} digits'
-                          : 'PIN',
-                      border: const OutlineInputBorder(),
+        child: LayoutBuilder(
+          builder: (context, constraints) => Center(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: SizedBox(
+                width: constraints.maxWidth - 48,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        'OmniTerm',
+                        style: TextStyle(
+                          fontFamily: OmniFonts.mono,
+                          fontSize: 42,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
                     ),
-                    onSubmitted: (_) => _submit(),
-                  ),
-                ),
-                const SizedBox(height: 14),
-                FilledButton(
-                  key: const ValueKey('lock.submit'),
-                  onPressed: throttled || _busy ? null : _submit,
-                  child: const Text('Unlock'),
-                ),
-                if (controller.canUseBiometrics) ...[
-                  const SizedBox(height: 8),
-                  TextButton.icon(
-                    key: const ValueKey('lock.biometrics'),
-                    onPressed: _busy ? null : _tryBiometrics,
-                    icon: const Icon(Icons.fingerprint, size: 18),
-                    label: const Text('Use biometrics'),
-                  ),
-                ],
-                if (throttled)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 12),
-                    child: Text(
-                      'Too many attempts — try again in ${seconds}s',
-                      key: const ValueKey('lock.throttled'),
-                      style: const TextStyle(fontSize: 12, color: OmniColors.amber),
+                    const SizedBox(height: 8),
+                    Text(
+                      message,
+                      key: ValueKey(throttled ? 'lock.throttled' : 'lock.error'),
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: throttled || _message != null ? Colors.red : Colors.grey,
+                      ),
                     ),
-                  )
-                else if (_message != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 12),
-                    child: Text(
-                      _message!,
-                      key: const ValueKey('lock.error'),
-                      style: const TextStyle(fontSize: 12, color: OmniColors.red),
+                    const SizedBox(height: 28),
+                    FractionallySizedBox(
+                      widthFactor: 0.75,
+                      child: TextField(
+                        key: const ValueKey('lock.pin'),
+                        controller: _pin,
+                        focusNode: _pinFocus,
+                        obscureText: true,
+                        enableSuggestions: false,
+                        autocorrect: false,
+                        keyboardType: TextInputType.number,
+                        textInputAction: TextInputAction.done,
+                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        // New Kotlin PINs are at most eight digits; preserve access to a longer
+                        // PIN created by an earlier Flutter build until the user changes it.
+                        maxLength: (controller.pinLength ?? 8).clamp(8, 12),
+                        enabled: !throttled && !_busy,
+                        decoration: InputDecoration(
+                          counterText: '',
+                          labelText: 'PIN',
+                          filled: true,
+                          fillColor: Theme.of(context).colorScheme.surfaceContainer,
+                          border: const OutlineInputBorder(),
+                          enabledBorder: OutlineInputBorder(
+                            borderSide: BorderSide(color: Theme.of(context).colorScheme.outline),
+                          ),
+                          focusedBorder: const OutlineInputBorder(
+                            borderSide: BorderSide(color: OmniColors.cyan, width: 2),
+                          ),
+                          floatingLabelStyle: const TextStyle(color: OmniColors.cyan),
+                        ),
+                        cursorColor: OmniColors.cyan,
+                        onChanged: (_) => setState(() => _message = null),
+                        onSubmitted: (_) => _submit(),
+                      ),
                     ),
-                  ),
-                const SizedBox(height: 18),
-                Text(
-                  // No "forgot your PIN?" escape: there is nothing this screen could offer that an
-                  // attacker holding the phone could not also use. Recovery is a reinstall, and
-                  // saying so is more honest than a dead-end link.
-                  'There is no PIN recovery. Reinstalling clears the app and its saved hosts.',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(fontSize: 11, color: OmniColors.textSecondary),
+                    const SizedBox(height: 20),
+                    FractionallySizedBox(
+                      widthFactor: 0.75,
+                      child: FilledButton(
+                        key: const ValueKey('lock.submit'),
+                        onPressed: throttled || _busy || _pin.text.isEmpty ? null : _submit,
+                        child: _busy
+                            ? const SizedBox.square(
+                                dimension: 18,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              )
+                            : const Text('Unlock'),
+                      ),
+                    ),
+                    if (controller.canUseBiometrics) ...[
+                      const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        key: const ValueKey('lock.biometrics'),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size(0, 48),
+                          side: const BorderSide(color: OmniColors.cyan),
+                          foregroundColor: Colors.white,
+                          iconAlignment: IconAlignment.start,
+                          padding: const EdgeInsets.symmetric(horizontal: 24),
+                        ),
+                        onPressed: _busy ? null : _tryBiometrics,
+                        icon: const Icon(
+                          Icons.fingerprint,
+                          size: 28,
+                          color: OmniColors.cyan,
+                          semanticLabel: 'Use fingerprint to unlock',
+                        ),
+                        label: const Padding(
+                          padding: EdgeInsets.only(left: 2),
+                          child: Text(
+                            'Use biometrics',
+                            style: TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
-              ],
+              ),
             ),
           ),
         ),

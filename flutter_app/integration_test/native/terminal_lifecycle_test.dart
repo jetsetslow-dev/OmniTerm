@@ -262,6 +262,13 @@ Future<void> _checkLockedIntentRecreation(PatrolIntegrationTester $, BuildContex
     expect(await $.tester.runAsync(external.takeInitialActions), isEmpty);
     expect(received, 1, reason: 'Recreation must not replay the consumed intent');
     await $.tester.enterText(find.byKey(const ValueKey('lock.pin')), pin);
+    // Kotlin's Unlock control is disabled while the field is empty. Render the entered PIN
+    // before tapping, just as a real user sees the newly enabled control on the next frame.
+    await $.tester.pump();
+    expect(
+      $.tester.widget<FilledButton>(find.byKey(const ValueKey('lock.submit'))).onPressed,
+      isNotNull,
+    );
     await $.tester.tap(find.byKey(const ValueKey('lock.submit')));
     await _until($, () => !lock.isLocked && navigation.currentScreen == Screen.network);
     expect(guard.pendingAction, isNull);

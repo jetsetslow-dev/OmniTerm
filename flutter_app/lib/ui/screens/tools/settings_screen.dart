@@ -27,6 +27,9 @@ class SettingsScreen extends StatefulWidget {
 }
 
 class _SettingsScreenState extends State<SettingsScreen> {
+  bool _biometricBusy = false;
+  String? _biometricMessage;
+
   /// The in-progress edit of the lock timeout, or null to derive it from the saved value.
   ///
   /// Held here rather than computed from the preference because a half-typed custom duration has no
@@ -273,13 +276,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
               title: 'Unlock with biometrics',
               // Says which of the two reasons it is off, because "enable the lock first" and "this
               // device has nothing enrolled" need different actions from the user.
-              subtitle: biometricsAvailable
+              subtitle: _biometricBusy
+                  ? 'Waiting for biometric verification…'
+                  : biometricsAvailable
                   ? null
-                  : 'No fingerprint or device credential is enrolled on this device',
+                  : 'Set up a strong biometric in your phone settings first',
               value: draft.useBiometrics && biometricsAvailable,
-              enabled: draft.appLockEnabled && biometricsAvailable,
-              onChanged: (v) => vm.update((p) => p.copyWith(useBiometrics: v)),
+              enabled: draft.appLockEnabled && biometricsAvailable && !_biometricBusy,
+              onChanged: (v) => _setBiometrics(context, vm, v),
             ),
+            if (_biometricBusy) const LinearProgressIndicator(),
+            if (_biometricMessage != null)
+              Text(_biometricMessage!, key: const ValueKey('settings.biometricMessage')),
             _lockTimeoutSection(context, vm, draft),
             _Switch(
               settingKey: 'blockScreenshots',
@@ -362,6 +370,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ],
     );
+  }
+
+  Future<void> _setBiometrics(BuildContext context, SettingsViewModel vm, bool enabled) async {
+    final lock = context.read<AppLockController?>();
+    if (!enabled || lock == null) {
+      vm.update((p) => p.copyWith(useBiometrics: enabled));
+      return;
+    }
+    if (_biometricBusy) return;
+    setState(() {
+      _biometricBusy = true;
+      _biometricMessage = null;
+    });
+    final verified = await lock.verifyBiometricsForSetup();
+    if (!mounted) return;
+    setState(() {
+      _biometricBusy = false;
+      _biometricMessage = verified ? null : (lock.biometricError ?? 'Biometric setup cancelled.');
+    });
+    if (verified) vm.update((p) => p.copyWith(useBiometrics: true));
   }
 
   /// How long OmniTerm may be off screen before it asks for the PIN again, plus changing that PIN.

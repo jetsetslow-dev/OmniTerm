@@ -71,6 +71,7 @@ import 'ui/view_model/shares_view_model.dart';
 import 'ui/view_model/sftp_view_model.dart';
 import 'ui/view_model/servers_view_model.dart';
 import 'ui/theme/theme.dart';
+import 'ui/theme/text_scaling.dart';
 import 'ui/widgets/startup_recovery_app.dart';
 
 Future<void> main() async {
@@ -463,9 +464,12 @@ class OmniTermApp extends StatelessWidget {
             debugShowCheckedModeBanner: false,
             theme: omniTheme(mode, brightness),
             builder: (context, child) => MediaQuery(
-              data: MediaQuery.of(
-                context,
-              ).copyWith(textScaler: TextScaler.linear(prefs.textScalePercent / 100.0)),
+              data: MediaQuery.of(context).copyWith(
+                textScaler: OmniTextScaler(
+                  MediaQuery.textScalerOf(context),
+                  prefs.textScalePercent / 100.0,
+                ),
+              ),
               child: child!,
             ),
             // The lock is the outermost wrapper: a gate with a route, tab or dialog reachable

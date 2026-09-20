@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -542,12 +544,54 @@ void main() {
         lock.dispose();
       });
 
+      test('overlapping biometric requests share one platform prompt', () async {
+        await configure(biometrics: true);
+        final result = Completer<bool>();
+        var prompts = 0;
+        final lock = build(
+          biometrics: (_) {
+            prompts++;
+            return result.future;
+          },
+        );
+        await lock.load();
+        final first = lock.unlockWithBiometrics();
+        final second = lock.unlockWithBiometrics();
+        expect(prompts, 1);
+        result.complete(false);
+        expect(await first, isFalse);
+        expect(await second, isFalse);
+        expect(lock.isLocked, isTrue);
+        lock.dispose();
+      });
+
       test('a throwing biometric prompt is a refusal, not a crash', () async {
         await configure(biometrics: true);
         final lock = build(biometrics: (_) async => throw StateError('no sensor'));
         await lock.load();
 
         expect(await lock.unlockWithBiometrics(), isFalse);
+        lock.dispose();
+      });
+
+      test('a biometric failure stays locked and a cancellation clears its error', () async {
+        await configure(biometrics: true);
+        var fail = true;
+        final lock = build(
+          biometrics: (_) async {
+            if (fail) throw StateError('sensor unavailable');
+            return false;
+          },
+        );
+        await lock.load();
+        expect(await lock.unlockWithBiometrics(), isFalse);
+        expect(lock.biometricError, contains('OmniTerm PIN'));
+        expect(lock.isLocked, isTrue);
+        expect(lock.failedAttempts, 0);
+        fail = false;
+        expect(await lock.unlockWithBiometrics(), isFalse);
+        expect(lock.biometricError, isNull);
+        expect(await lock.unlockWithPin('1234'), UnlockOutcome.unlocked);
         lock.dispose();
       });
 
@@ -655,6 +699,23 @@ void main() {
       await settle(tester);
       return lock;
     }
+
+    testWidgets('private content stays hidden until security settings finish loading', (
+      tester,
+    ) async {
+      final lock = AppLockController(repo);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AppLockGate(controller: lock, child: const Text('private hosts')),
+        ),
+      );
+      expect(find.byKey(const ValueKey('lock.loading')), findsOneWidget);
+      expect(find.text('private hosts'), findsNothing);
+      await lock.load();
+      await tester.pump();
+      expect(find.text('private hosts'), findsOneWidget);
+      lock.dispose();
+    });
 
     /// Returning to a locked app must offer biometrics again.
     ///
@@ -828,6 +889,17 @@ void main() {
       withIt.dispose();
     });
 
+    testWidgets('a broken biometric prompt shows an error and leaves PIN entry available', (
+      tester,
+    ) async {
+      final lock = await locked(tester, biometrics: (_) async => throw StateError('bad activity'));
+      await settle(tester);
+      expect(find.textContaining('Could not open biometric authentication'), findsOneWidget);
+      expect(tester.widget<TextField>(find.byKey(const ValueKey('lock.pin'))).enabled, isTrue);
+      expect(lock.isLocked, isTrue);
+      lock.dispose();
+    });
+
     testWidgets('biometrics are offered without being asked for', (tester) async {
       // Not having to type is the whole reason the option exists.
       var asked = 0;
@@ -850,6 +922,8 @@ void main() {
 
       for (var i = 0; i < pinMaxAttempts; i++) {
         await tester.enterText(find.byKey(const ValueKey('lock.pin')), '9999');
+        // Like Kotlin, Unlock is disabled for an empty field. Render the typed value before tapping.
+        await tester.pump();
         await tester.tap(find.byKey(const ValueKey('lock.submit')));
         // Plain pumps rather than `pumpAndSettle`: once throttled the screen runs a one-second
         // ticker to move the countdown, and settling waits for a timer that is meant to repeat.
@@ -862,11 +936,10 @@ void main() {
       lock.dispose();
     });
 
-    testWidgets('it says plainly that there is no recovery', (tester) async {
-      // Nothing this screen could offer would help a user that an attacker holding the phone could
-      // not also use, so a dead-end "forgot your PIN?" would be worse than the truth.
+    testWidgets('the lock uses Kotlin wordmark and PIN instruction', (tester) async {
       final lock = await locked(tester);
-      expect(find.textContaining('no PIN recovery'), findsOneWidget);
+      expect(find.text('OmniTerm'), findsOneWidget);
+      expect(find.text('Enter PIN to unlock'), findsOneWidget);
       lock.dispose();
     });
   });

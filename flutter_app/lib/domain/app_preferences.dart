@@ -75,7 +75,7 @@ class PreferenceLimits {
   static const sftpWarnGigabytes = PreferenceRange(1, 1000, 2);
 
   /// Text scale, as a percentage of the system size.
-  static const textScalePercent = PreferenceRange(80, 200, 100);
+  static const textScalePercent = PreferenceRange(80, 200, 92);
 }
 
 /// A snapshot of every preference.
@@ -83,7 +83,7 @@ class AppPreferences {
   const AppPreferences({
     this.darkMode,
     this.amoled = false,
-    this.textScalePercent = 100,
+    this.textScalePercent = 92,
     this.accessibility = false,
     this.measurementSystem = MeasurementSystem.metric,
     this.telemetryIntervalSeconds = 15,
@@ -209,7 +209,12 @@ class AppPreferences {
     return AppPreferences(
       darkMode: nullableFlag('darkMode'),
       amoled: flag('amoled', fallback: defaults.amoled),
-      textScalePercent: PreferenceLimits.textScalePercent.parse(settings[keys['textScale']]),
+      textScalePercent: switch (settings[keys['textScale']]) {
+        'small' => 80,
+        'normal' => 92,
+        'large' => 110,
+        final legacyPercent => PreferenceLimits.textScalePercent.parse(legacyPercent),
+      },
       accessibility: flag('accessibility', fallback: defaults.accessibility),
       measurementSystem: MeasurementSystem.fromSetting(settings[keys['measurementSystem']]),
       telemetryIntervalSeconds: PreferenceLimits.telemetryInterval.parse(
@@ -259,7 +264,12 @@ class AppPreferences {
   Map<String, String> encode() => {
     if (darkMode != null) keys['darkMode']!: '$darkMode',
     keys['amoled']!: '$amoled',
-    keys['textScale']!: '$textScalePercent',
+    keys['textScale']!: switch (textScalePercent) {
+      80 => 'small',
+      92 => 'normal',
+      110 => 'large',
+      _ => '$textScalePercent',
+    },
     keys['accessibility']!: '$accessibility',
     keys['measurementSystem']!: measurementSystem.settingValue,
     keys['telemetryInterval']!: '$telemetryIntervalSeconds',

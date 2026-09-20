@@ -1,12 +1,115 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
-Updated: 2026-09-19. Working branch: `migration-to-flutter`; PR: #92.
+Updated: 2026-09-20. Working branch: `migration-to-flutter`; PR: #92.
 Independent return review implemented and locally validated; **not** a parity-complete or release-ready declaration.
 
 This sanitized tracker is intentionally committed so work can resume on another machine.
 Before an authorized merge to `main`, consolidate it into the private handover under
 `secrets/internal-docs/docs/` and remove this temporary file from the merge tree. Never put
 secrets here: moving it later does not erase Git history.
+
+## September 20 — exact Kotlin UI parity (active)
+
+The user has explicitly requested the existing Kotlin UI throughout Flutter: every screen,
+submenu, popup and option, including the SSH terminal, Settings, sizing and navigation. Kotlin is
+the reference, not an invitation to redesign. The previous return-review checkpoint is complete;
+its passing checks do not establish visual parity. The latest supplied debug APK is that older
+checkpoint and does not yet contain fixes for this request.
+
+Clarifications: this includes every login/lock/biometric element and all functionality, including
+long press, swipe, selection, keyboard shortcuts, Back, drag/reorder and contextual actions. Visual
+similarity alone is not acceptance. The reported phone is a Samsung S23 Ultra on Android 16:
+biometric unlock never opens its prompt, briefly refreshes when tapped and falls back to PIN.
+
+Initial confirmed source discrepancies: the biometric plugin requires a FragmentActivity but the
+app hosts it in FlutterActivity; authentication errors are silently collapsed into cancellation.
+Flutter replaces the platform text scale whereas Kotlin composes it with the app preference.
+Settings uses different sections, control types, order and labels. The first fixes and focused device validation are recorded below; broader parity work remains open.
+
+First checkpoint implemented; local validation complete, hosted validation pending:
+
+- Reproduced the missing biometric prompt on API 35 against the original Activity/adapter. Android
+  rejected the Activity; with an enrolled fingerprint the new regression also sees authentication
+  finish immediately instead of waiting for the system prompt. The fixed gate has completed a real
+  fingerprint-authorized Keystore challenge and cancellation (two opted-in device cases passed).
+- Android now uses the same strong-biometric-only, per-use AES/GCM challenge and prompt
+  title/subtitle/Cancel text as Kotlin. Other platforms retain their biometric-only plugin.
+  Integration errors are visible beside PIN fallback; concurrent requests share one prompt.
+- Restored Kotlin's launcher artwork and separate system prompt bitmap, including the round-icon
+  path. The native branding guard caught Android's round-icon substitution during development.
+- A new native lifecycle fixture caught an engine-destruction regression from FlutterFragmentActivity:
+  its fragment builder explicitly requests destruction despite an injected engine. An explicit
+  retained Fragment now preserves the engine. The enrolled-device fixture passed real Activity
+  recreation with the same system fingerprint request, repeated calls, Back/cancel, visible button
+  retry, wrong PIN refusal and correct PIN unlock (one executed, zero skipped).
+- Lock layout now follows Kotlin's wordmark, instruction, PIN field, full-width Unlock and outlined
+  fingerprint button. Startup hides private content until security settings load. Biometric setup
+  verifies the user before enabling it; Settings authentication uses its own reason and wording.
+- Decode and save Kotlin's actual text presets (Small 80%, Default 92%, Large 110%), preserving
+  existing numeric Flutter values; combine app and platform text scaling. Exact screenshots at
+  accessibility scales are still pending; no whole-app visual parity is claimed.
+- Full Flutter core device profile passed on API 35: 32 executed, zero skipped, including the
+  enrolled biometric recreation branch, route/subtab/theme/orientation sweep and native pickers.
+  The live-host profile passed two tests with zero skips, including six SSH modes and 14 real
+  Activity destruction/replacement transitions preserving engine identity and window security.
+  Its initial run exposed a test synchronization issue: after entering a PIN, the lock/intent
+  fixture tapped before the newly enabled Unlock button rendered. It now pumps that frame and
+  explicitly checks that the button is enabled before tapping.
+- Native API 35 validation discovered 58 tests: 24 executed successfully (including four Room
+  migration cases), 34 opt-in E2E assumptions, zero actual failures. After installing both APKs
+  once, repository-host provisioning and trust passed, then `E2eAppSurfaceStressTest` passed with
+  `-e omniterm_e2e_surfaces yes -e omniterm_e2e_sftp_home /config` (one executed, zero skipped).
+- `./scripts/local-pr-check.sh --full` passed on Linux x86_64 on September 20: formatting and
+  analysis passed; 2,746 Flutter tests executed successfully, with seven optional skips (six
+  `OMNITERM_SETUP_FIXTURE` cases and one `OMNITERM_COMPRESSION_*` case). Native unit tasks and
+  lint analysis were up-to-date, not freshly re-executed; no Linux ARM64 exclusion applied.
+  Flutter release APK/AAB, both Flutter SBOMs, development-code exclusion and pinned all-ref
+  secret scanning passed. The gate's device phase was deferred after stopping the emulator for
+  memory; the explicit local API 35 results above cover it.
+- The required dependency metadata `--write` pass produced no changes (the explicit biometric
+  version matches Kotlin), and forced-refresh `--verify` passed for native project, compile and
+  both release SBOM graphs. This is not a claim of strict verification metadata for the separate
+  Flutter Gradle project. Both diff checks and the pinned staged secret scan passed.
+
+A signed branch checkpoint and every exact-head hosted check are still required before this
+checkpoint is considered published and validated. The next Settings/terminal work remains open.
+
+Reproduce biometric hardware validation on an enrolled disposable Android emulator with
+`flutter test integration_test/biometric_host_test.dart -d <device> --dart-define=OMNITERM_E2E_BIOMETRICS=true`;
+provide the enrolled emulator fingerprint only after its native authentication operation starts.
+Without this define the file runs the availability/cancellation guard. The native Patrol fixture
+`integration_test/native/biometric_unlock_test.dart` also exercises recreation when a strong
+biometric is enrolled; on a clean CI device it reports that branch unavailable and checks PIN
+fallback. Both Android-specific files explicitly skip on other platforms. Protected system prompt
+screenshots from `adb screencap` are black and are not visual evidence.
+
+Parity acceptance inventory (all pending until compared on Android):
+
+- Shared surfaces: light/dark/AMOLED/high contrast; app and system text scaling; typography,
+  cards, buttons, fields, switches, chips, scroll indicators, dialogs and menus; portrait and
+  landscape top/bottom navigation; host selector, alerts popup, refresh and exit/unsaved guards.
+- Servers: summary/search/groups, host cards, add/edit/clone, authentication and jump-host options,
+  multiselect/import, actions, host-key trust/replacement and connection/progress/error states.
+- Fleet: all three tabs, filters, bulk actions, broadcast/deploy/pipeline editors and results.
+- Monitor: all six tabs, metric details/history, process/service/log actions and confirmations.
+- Terminal: connect/session picker, tabs, plain/tmux/control sessions, keyboard/key bar, input and
+  selection, zoom/fullscreen, search/transcript ranges, links, session/options menus, leave/resume,
+  disconnect and background notification actions.
+- Files: all four tabs, navigation, sorting/filtering/selection, item/context menus, editor,
+  upload/download/pickers, transfer queue/progress/errors, archive/share options and warnings.
+- Containers: all five tabs, runtime/host selection, detail/actions/logs/exec, compose editor,
+  deploy/pull/delete confirmations and progress.
+- Tools: tool grid and headers; Alerts (three tabs/rules/incidents), Scripts (two tabs/edit/run),
+  Network (nine tabs and their forms/results), Auth & keys (profiles/keys/trust/import/generation),
+  Backup (selection/password/restore/conflicts/results), Health scoring (edit/reset), Settings
+  (all six Kotlin cards, choices, security/PIN/biometric setup and save), About/diagnostics/crashes.
+- Lock and privileged authentication: platform biometric prompt, cancel/fallback/error/retry,
+  cold start/background return, PIN setup/change/throttle and secure-window behavior.
+
+Required publication gates remain the full local PR check, opted-in API 35 surface sweep and
+affected native/Flutter device flows, signed sanitized checkpoints, and all exact-head PR checks.
+Capture comparable Kotlin/Flutter screenshots and record outstanding differences explicitly;
+generic functional test success is not visual acceptance. No merge or release is authorized.
 
 ## September 17 return review — lifecycle and notification fixes
 

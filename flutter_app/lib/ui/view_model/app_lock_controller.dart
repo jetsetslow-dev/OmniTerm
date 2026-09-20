@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import '../../data/app_repository.dart';
 import '../../domain/app_lock_timeout_policy.dart';
 import '../../domain/app_pin.dart';
+import '../../domain/biometric_failure.dart';
 
 /// Result of an unlock attempt, so the screen can say which of three different things happened.
 enum UnlockOutcome { unlocked, wrongPin, throttled }
@@ -82,6 +83,34 @@ class AppLockController extends ChangeNotifier {
 
   /// True when biometrics are both enabled and available to try.
   bool get canUseBiometrics => _useBiometrics && biometricPrompt != null;
+
+  String? _biometricError;
+  String? get biometricError => _biometricError;
+
+  Future<bool>? _pendingBiometrics;
+
+  Future<bool> _requestBiometrics(String reason) => _pendingBiometrics ??= _performBiometrics(
+    reason,
+  ).whenComplete(() => _pendingBiometrics = null);
+
+  Future<bool> _performBiometrics(String reason) async {
+    _biometricError = null;
+    try {
+      return await biometricPrompt?.call(reason) ?? false;
+    } on BiometricFailure catch (error) {
+      _biometricError = error.message;
+      return false;
+    } catch (_) {
+      _biometricError =
+          'Could not open biometric authentication. Retry or enter your OmniTerm PIN.';
+      return false;
+    } finally {
+      _safeNotify();
+    }
+  }
+
+  /// Verify before enabling biometric unlock, matching Kotlin's Settings switch.
+  Future<bool> verifyBiometricsForSetup() => _requestBiometrics('Verify Biometrics');
 
   int? get pinLength => storedPinLength(_storedPin);
 
@@ -243,12 +272,7 @@ class AppLockController extends ChangeNotifier {
   Future<bool> unlockWithBiometrics() async {
     final prompt = biometricPrompt;
     if (prompt == null || !_useBiometrics || !isConfigured) return false;
-    bool ok;
-    try {
-      ok = await prompt('Unlock OmniTerm');
-    } catch (_) {
-      return false;
-    }
+    final ok = await _requestBiometrics('Unlock OmniTerm');
     if (!ok) return false;
     await _clearThrottle();
     _locked = false;
@@ -309,14 +333,10 @@ class AppLockController extends ChangeNotifier {
   ///
   /// A refusal is not a lockout, for the same reason it is not on the lock screen: the PIN is the
   /// authority, and a reader that cannot read a wet finger must not consume the user's attempts.
-  Future<bool> authenticateForSensitiveAction() async {
+  Future<bool> authenticateForSensitiveAction({String reason = 'Authenticate for sudo'}) async {
     final prompt = biometricPrompt;
     if (prompt == null || !_useBiometrics) return false;
-    try {
-      return await prompt('Authenticate for sudo');
-    } catch (_) {
-      return false;
-    }
+    return _requestBiometrics(reason);
   }
 
   Future<void> _clearThrottle() async {

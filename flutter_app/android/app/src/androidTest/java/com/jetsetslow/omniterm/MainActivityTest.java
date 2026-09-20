@@ -17,7 +17,7 @@ import java.util.Collection;
 import java.util.List;
 import java.lang.reflect.Method;
 import java.util.concurrent.atomic.AtomicReference;
-import io.flutter.embedding.android.FlutterActivity;
+import io.flutter.embedding.android.FlutterFragmentActivity;
 import io.flutter.embedding.engine.FlutterEngine;
 import org.junit.After;
 import org.junit.Test;
@@ -74,7 +74,8 @@ public class MainActivityTest {
     public void runDartTest() throws Exception {
         PatrolJUnitRunner instrumentation =
                 (PatrolJUnitRunner) InstrumentationRegistry.getInstrumentation();
-        if (dartTestName.contains("SSH survives Home and explicit background")) {
+        if (dartTestName.contains("SSH survives Home and explicit background") ||
+                dartTestName.contains("biometric prompt survives real Activity recreation")) {
             AtomicReference<Exception> setupError = new AtomicReference<>();
             instrumentation.runOnMainSync(() -> {
                 try {
@@ -100,7 +101,7 @@ public class MainActivityTest {
         AtomicReference<ReflectiveOperationException> reflectionError = new AtomicReference<>();
         // The embedding getter is protected. Reflection stays inside androidTest, avoiding a
         // production test bridge or exposing an engine handle through the application's API.
-        Method getEngine = FlutterActivity.class.getDeclaredMethod("getFlutterEngine");
+        Method getEngine = FlutterFragmentActivity.class.getDeclaredMethod("getFlutterEngine");
         getEngine.setAccessible(true);
         InstrumentationRegistry.getInstrumentation().runOnMainSync(() -> {
             for (Activity activity : ActivityLifecycleMonitorRegistry.getInstance()

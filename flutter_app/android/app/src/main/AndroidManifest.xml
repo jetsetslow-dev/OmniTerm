@@ -3,6 +3,7 @@
          app is open has not alerted anyone. Android 13+ requires this to be requested at runtime,
          which the app does when the user turns alerts on, not silently at launch. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
     <!-- Reaching hosts on the local network, and knowing whether there is a network at all. -->
     <!-- The foreground service is what stops Android descheduling the process and killing every
          open SSH session the moment the user switches app. Like Kotlin, interactive remote-host
@@ -24,7 +25,8 @@
         android:fullBackupContent="@xml/backup_rules"
         android:label="${appLabel}"
         android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:icon="@mipmap/ic_system_brand"
+        android:roundIcon="@mipmap/ic_system_brand">
         <!-- Some physical Android GPUs render a permanent black frame with Impeller even though
              the same release APK draws normally on the emulator. OmniTerm's terminal is already
              exercised against Skia's mature CustomPaint path, so prefer compatibility until the
@@ -37,6 +39,7 @@
             android:value="${admobAppId}" />
         <activity
             android:name=".MainActivity"
+            android:icon="@mipmap/ic_launcher"
             android:exported="true"
             android:launchMode="singleTop"
             android:taskAffinity=""
