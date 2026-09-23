@@ -22,6 +22,8 @@ import 'package:omniterm/ui/view_model/host_status_probe.dart';
 import 'package:omniterm/ui/view_model/shell_session.dart';
 import 'package:omniterm/ui/view_model/shell_view_model.dart';
 import 'package:omniterm/ui/view_model/telemetry_poller.dart';
+import 'package:omniterm/ui/view_model/settings_view_model.dart';
+import 'package:omniterm/ui/theme/theme.dart';
 
 const _enabled = bool.fromEnvironment('OMNITERM_E2E_HOSTS');
 const _host = String.fromEnvironment('OMNITERM_E2E_HOST', defaultValue: '10.0.2.2');
@@ -102,6 +104,10 @@ void main() {
                   original.isOpen &&
                   (!control || !original.paneChangePending && original.controlPaneId != null),
             );
+            if (!keepAlive && !persistent) {
+              await _checkHeldKey($, shell, original);
+              await _checkKeyBarLayouts($, state, original);
+            }
             final token = 'kept_${DateTime.now().microsecondsSinceEpoch}';
             expect(shell.typeText('OT_LIFECYCLE=$token\r'), isTrue);
             await _probe($, shell, original, token, 'before');
@@ -326,6 +332,198 @@ Future<void> _until(PatrolIntegrationTester $, bool Function() ready) async {
     await $.tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
   }
   expect(ready(), isTrue, reason: 'The SSH lifecycle condition did not become ready');
+}
+
+Future<void> _checkHeldKey(
+  PatrolIntegrationTester $,
+  ShellViewModel shell,
+  ShellSession session,
+) async {
+  final token = '${DateTime.now().microsecondsSinceEpoch}';
+  // Capture actual bytes at the repository SSH fixture, with echo disabled so the command
+  // cannot masquerade as its own result. The terminal mode is restored after the bounded read.
+  final command =
+      r'ot_keybar_state=$(stty -g); stty raw -echo min 0 time 20; '
+      r'printf "\r\nKEYBAR_READY_%s\r\n" '
+      "'$token'; "
+      r'ot_keybar_bytes=$(dd bs=1 count=60 2>/dev/null | od -v -An -tu1); '
+      r'stty "$ot_keybar_state"; printf "\r\nKEYBAR_%s:%s:END_%s\r\n" '
+      "'$token' "
+      r'"$ot_keybar_bytes" '
+      "'$token'\r";
+  expect(shell.typeText(command), isTrue);
+  // Markers and byte values can wrap across painted cells; joining physical rows must not
+  // insert new bytes into the server's result.
+  String output() => session.snapshot.rows.map((row) => row.text).join();
+  await _until($, () => output().contains('KEYBAR_READY_$token'));
+  final up = find.byKey(const ValueKey('shell.key.↑'));
+  final down = find.byKey(const ValueKey('shell.key.↓'));
+  final pointer = await $.tester.startGesture($.tester.getCenter(up));
+  try {
+    final until = DateTime.now().add(const Duration(milliseconds: 680));
+    while (DateTime.now().isBefore(until)) {
+      await $.tester.pump(const Duration(milliseconds: 20));
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    }
+  } finally {
+    await pointer.up();
+  }
+  await _until($, () => output().contains(':END_$token'));
+  final received = RegExp('KEYBAR_$token:([\\d\\s]+):END_$token').firstMatch(output());
+  expect(received, isNotNull, reason: 'The fixture must report its actual received bytes');
+  final bytes = received!.group(1)!.trim().split(RegExp(r'\s+')).map(int.parse).toList();
+  expect(bytes.length, greaterThanOrEqualTo(6), reason: 'Holding ↑ must send repeated keys');
+  expect(bytes.length % 3, 0);
+  for (var index = 0; index < bytes.length; index += 3) {
+    expect(bytes.sublist(index, index + 3), [27, 91, 65]);
+  }
+  expect($.tester.getCenter(up).dx, $.tester.getCenter(down).dx);
+  expect($.tester.getCenter(down).dy, greaterThan($.tester.getCenter(up).dy));
+  debugPrint('KEYBAR-E2E fixture received ${bytes.length ~/ 3} Up sequences from one hold');
+}
+
+// Exercise the actual scaffold and Android IME. A ShellScreen-only widget test cannot catch
+// an inset being consumed by Scaffold or the compact flag failing to reach the screen.
+Future<void> _checkKeyBarLayouts(
+  PatrolIntegrationTester $,
+  AppState state,
+  ShellSession session,
+) async {
+  const capture = bool.fromEnvironment('OMNITERM_E2E_VISUALS');
+  final original = state.preferences;
+  final settings = $.tester.element(find.byType(MaterialApp)).read<SettingsViewModel>();
+  final security = $.tester.element(find.byType(MaterialApp)).read<ScreenSecurity>();
+  final up = find.byKey(const ValueKey('shell.key.↑'));
+  final down = find.byKey(const ValueKey('shell.key.↓'));
+  final bar = find.byKey(const ValueKey('shell.keyBar'));
+  Future<void> snapshot(String name) async {
+    expect($.tester.takeException(), isNull, reason: name);
+    if (!capture) return;
+    await $.tester.pump(const Duration(milliseconds: 200));
+    expect(await _lifecycle.invokeMethod<bool>('captureKeyBar', {'name': name}), isTrue);
+  }
+
+  Future<void> rotate(DeviceOrientation orientation) async {
+    await SystemChrome.setPreferredOrientations([orientation]);
+    await _until($, () {
+      final size = $.tester.view.physicalSize;
+      return orientation == DeviceOrientation.portraitUp
+          ? size.height > size.width
+          : size.width > size.height;
+    });
+    await $.tester.pump(const Duration(milliseconds: 300));
+  }
+
+  try {
+    settings.update(
+      (_) => original.copyWith(
+        darkMode: true,
+        accessibility: false,
+        amoled: false,
+        textScalePercent: 92,
+        blockScreenshots: capture ? false : original.blockScreenshots,
+      ),
+    );
+    await $.tester.runAsync(settings.save);
+    if (capture) expect(await security.setSecure(secure: false), isTrue);
+    await rotate(DeviceOrientation.landscapeLeft);
+    await SystemChannels.textInput.invokeMethod<void>('TextInput.show');
+    await _until($, () => $.tester.view.viewInsets.bottom > 0);
+    await $.tester.pump(const Duration(milliseconds: 300));
+    expect(
+      $.tester.getCenter(up).dy,
+      $.tester.getCenter(down).dy,
+      reason: 'Landscape with the Android IME must use one compact key row',
+    );
+    expect($.tester.getSize(bar).height, 42);
+    expect(find.byKey(const ValueKey('shell.sessionBar')), findsNothing);
+    final safeLeft = $.tester.view.viewPadding.left / $.tester.view.devicePixelRatio;
+    expect(
+      $.tester.getTopLeft(bar).dx,
+      greaterThanOrEqualTo(safeLeft),
+      reason: 'The compact keyboard must stay inside the Android display cutout inset',
+    );
+    final sym = $.tester.getCenter(find.byKey(const ValueKey('shell.key.SYM')));
+    final fn = $.tester.getCenter(find.byKey(const ValueKey('shell.key.FN')));
+    await snapshot('landscape-nav');
+    await $(const ValueKey('shell.key.FN')).tap();
+    expect($.tester.getCenter(find.byKey(const ValueKey('shell.key.NAV'))), fn);
+    expect($.tester.getCenter(find.byKey(const ValueKey('shell.key.SYM'))), sym);
+    await snapshot('landscape-function');
+    await $(const ValueKey('shell.key.SYM')).tap();
+    expect($.tester.getCenter(find.byKey(const ValueKey('shell.key.FN'))), fn);
+    expect($.tester.getCenter(find.byKey(const ValueKey('shell.key.SYM'))), sym);
+    await snapshot('landscape-symbol');
+    await $(const ValueKey('shell.key.SYM')).tap();
+    await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+    await _until(
+      $,
+      () => $.tester.view.viewInsets.bottom == 0 && $.tester.getSize(bar).height == 80,
+    );
+    expect($.tester.getSize(bar).height, 80, reason: 'Closing the IME restores both rows');
+    await snapshot('landscape-no-ime');
+    await rotate(DeviceOrientation.portraitUp);
+    for (final (name, dark, contrast, scale) in [
+      ('dark', true, false, 'normal'),
+      ('light', false, false, 'normal'),
+      ('contrast', true, true, 'normal'),
+      ('large', true, false, 'large'),
+    ]) {
+      settings.update(
+        (_) => original.copyWith(
+          darkMode: dark,
+          accessibility: contrast,
+          amoled: false,
+          textScalePercent: scale == 'large' ? 110 : 92,
+          blockScreenshots: capture ? false : original.blockScreenshots,
+        ),
+      );
+      await $.tester.runAsync(settings.save);
+      final mode = themeModeFor(isDark: dark, highContrast: contrast, amoled: false);
+      final expected = omniTheme(mode, Brightness.light).colorScheme;
+      await _until($, () {
+        final context = $.tester.element(bar);
+        final actual = Theme.of(context).colorScheme;
+        return actual.surface == expected.surface &&
+            actual.outline == expected.outline &&
+            MediaQuery.textScalerOf(context).scale(12) == 12 * (scale == 'large' ? 1.1 : .92);
+      });
+      await $.tester.pump(const Duration(milliseconds: 350));
+      expect($.tester.getSize(bar).height, 80);
+      expect($.tester.getCenter(up).dx, $.tester.getCenter(down).dx);
+      expect($.tester.getCenter(up).dy, lessThan($.tester.getCenter(down).dy));
+      await snapshot('portrait-$name-nav');
+      await $(const ValueKey('shell.key.FN')).tap();
+      expect(find.byKey(const ValueKey('shell.key.F12')), findsOneWidget);
+      await snapshot('portrait-$name-function');
+      await $(const ValueKey('shell.key.SYM')).tap();
+      expect(find.byKey(const ValueKey('shell.key.!')), findsOneWidget);
+      await snapshot('portrait-$name-symbol');
+      await $(const ValueKey('shell.key.SYM')).tap();
+      session.setReadOnly(true);
+      await $.tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const ValueKey('shell.keyBar.readOnly')), findsOneWidget);
+      expect(up, findsNothing);
+      expect(find.byKey(const ValueKey('shell.key.PGUP')), findsOneWidget);
+      expect(find.byKey(const ValueKey('shell.key.PGDN')), findsOneWidget);
+      await snapshot('portrait-$name-readonly');
+      session.setReadOnly(false);
+      await $.tester.pump();
+    }
+  } finally {
+    session.setReadOnly(false);
+    settings.update((_) => original);
+    await $.tester.runAsync(settings.save);
+    // Until the Settings parity checkpoint fixes nullable-theme persistence, explicitly restore
+    // a System value that encode() omits so this fixture does not leak its last selected theme.
+    if (original.darkMode == null) await state.saveSetting('dark_mode', '');
+    if (capture) expect(await security.setSecure(secure: true), isTrue);
+    await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+    await _until($, () => $.tester.view.viewInsets.bottom == 0);
+    await rotate(DeviceOrientation.portraitUp);
+    await SystemChrome.setPreferredOrientations([]);
+  }
+  debugPrint('KEYBAR-E2E real Android IME, layers, themes and read-only layouts passed');
 }
 
 Future<void> _probe(

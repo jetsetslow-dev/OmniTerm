@@ -37,6 +37,28 @@ final class ActivityRecreationBridge implements AutoCloseable {
         channel.setMethodCallHandler((call, result) -> {
             try {
                 switch (call.method) {
+                    case "captureKeyBar":
+                        // Only the opted-in disposable fixture disables its secure window. Keep
+                        // captures in app-private cache; no production screenshot channel exists.
+                        String name = call.argument("name");
+                        if (name == null || !name.matches("[a-z-]+") || secure(resumed())) {
+                            throw new IllegalArgumentException("Invalid or protected fixture capture");
+                        }
+                        java.io.File directory = new java.io.File(resumed().getCacheDir(), "parity");
+                        if (!directory.isDirectory() && !directory.mkdirs()) {
+                            throw new java.io.IOException("Cannot create fixture capture directory");
+                        }
+                        android.graphics.Bitmap screenshot = InstrumentationRegistry
+                                .getInstrumentation().getUiAutomation().takeScreenshot();
+                        if (screenshot == null) throw new java.io.IOException("No screenshot");
+                        try (java.io.FileOutputStream output = new java.io.FileOutputStream(
+                                new java.io.File(directory, name + ".png"))) {
+                            result.success(screenshot.compress(
+                                    android.graphics.Bitmap.CompressFormat.PNG, 100, output));
+                        } finally {
+                            screenshot.recycle();
+                        }
+                        break;
                     case "biometricRequestId":
                         // The system prompt is capture-protected. Observe the currently active
                         // hardware operation, not stale history or the application's pending flag.

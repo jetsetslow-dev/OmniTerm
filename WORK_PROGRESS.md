@@ -1,6 +1,6 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
-Updated: 2026-09-20. Working branch: `migration-to-flutter`; PR: #92.
+Updated: 2026-09-23. Working branch: `migration-to-flutter`; PR: #92.
 Independent return review implemented and locally validated; **not** a parity-complete or release-ready declaration.
 
 This sanitized tracker is intentionally committed so work can resume on another machine.
@@ -13,8 +13,8 @@ secrets here: moving it later does not erase Git history.
 The user has explicitly requested the existing Kotlin UI throughout Flutter: every screen,
 submenu, popup and option, including the SSH terminal, Settings, sizing and navigation. Kotlin is
 the reference, not an invitation to redesign. The previous return-review checkpoint is complete;
-its passing checks do not establish visual parity. The latest supplied debug APK is that older
-checkpoint and does not yet contain fixes for this request.
+its passing checks do not establish visual parity. The latest supplied debug APK includes the authentication checkpoint below; the subsequent
+terminal and Settings parity work is still in progress.
 
 Clarifications: this includes every login/lock/biometric element and all functionality, including
 long press, swipe, selection, keyboard shortcuts, Back, drag/reorder and contextual actions. Visual
@@ -26,7 +26,7 @@ app hosts it in FlutterActivity; authentication errors are silently collapsed in
 Flutter replaces the platform text scale whereas Kotlin composes it with the app preference.
 Settings uses different sections, control types, order and labels. The first fixes and focused device validation are recorded below; broader parity work remains open.
 
-First checkpoint implemented; local validation complete, hosted validation pending:
+First checkpoint published as `c6817b3`; local and exact-head hosted validation complete:
 
 - Reproduced the missing biometric prompt on API 35 against the original Activity/adapter. Android
   rejected the Activity; with an enrolled fingerprint the new regression also sees authentication
@@ -71,8 +71,11 @@ First checkpoint implemented; local validation complete, hosted validation pendi
   both release SBOM graphs. This is not a claim of strict verification metadata for the separate
   Flutter Gradle project. Both diff checks and the pinned staged secret scan passed.
 
-A signed branch checkpoint and every exact-head hosted check are still required before this
-checkpoint is considered published and validated. The next Settings/terminal work remains open.
+The signed checkpoint passed all selected hosted jobs: native Build & Test, API 29 Room
+migrations, native release SBOM generation, Flutter analysis/tests, Android release and iOS builds,
+Flutter emulator E2E, CodeQL analysis, dependency review, secret scans and Scorecard analysis.
+The companion no-op CodeQL job and separate Scorecard annotation are not counted as executed
+security analyses. The next Settings/terminal work remains open.
 
 Reproduce biometric hardware validation on an enrolled disposable Android emulator with
 `flutter test integration_test/biometric_host_test.dart -d <device> --dart-define=OMNITERM_E2E_BIOMETRICS=true`;
@@ -82,6 +85,70 @@ Without this define the file runs the availability/cancellation guard. The nativ
 biometric is enrolled; on a clean CI device it reports that branch unavailable and checks PIN
 fallback. Both Android-specific files explicitly skip on other platforms. Protected system prompt
 screenshots from `adb screencap` are black and are not visual evidence.
+
+Terminal keyboard checkpoint — locally validated; hosted checks pending publication:
+
+- Restores Kotlin's regular two-row, eleven-column layout and centered arrow cluster, with the
+  separate compact twenty-column layout only for landscape while the software keyboard is open.
+  The compact state is passed from above Scaffold, which consumes keyboard insets in its body.
+- Uses Kotlin's key color tokens, borders, dimensions and fixed function/symbol toggle positions.
+  Navigation/editing keys send on press, repeat after 400 ms and then every 60 ms, and stop on
+  release, cancellation, leaving the touch target, widget removal or app backgrounding.
+- Five focused hold/layout regressions were added. Against the original keyboard, four fail and
+  its existing compact layout passes; the candidate passes all five and the twenty existing live
+  terminal widget cases. The complete Shell screen widget file passes 63 tests; navigation passes
+  24 tests, and analysis is clean. These are not a substitute for device/visual validation.
+- A live SSH regression failed against the original keyboard for the expected reason (one Up
+  sequence) and passed with the candidate (seven sequences from one held key). The host profile
+  passed two tests with zero skips, covering all six SSH modes and 14 Activity transitions.
+- Full-app Android IME validation reproduced the missing compact-layout handoff from the scaffold
+  to ShellScreen. The fix passes the inset before Scaffold consumes it and hides ordinary session
+  headers in compact mode, while retaining connection errors/progress. A small scrollable fallback
+  keeps controls reachable during transient rotation frames with the old keyboard height.
+- Matching Kotlin/Flutter captures on the same API 35 runtime exposed a second inset defect:
+  Flutter's compact bar started at x=0 under a 48.76-dp display cutout. Its device regression failed
+  before the fix; compact content now respects the system safe area. The software keyboard also
+  requested Done instead of Enter; a failing widget regression covers the corrected Enter request,
+  terminal carriage return and retained input focus.
+- The full-app layout fixture exercises the actual Android IME, all keyboard layers, read-only mode,
+  dark/light/high contrast and large text. It verifies the theme and text scaler in the rendered
+  tree. Its first version updated the underlying preferences without updating the root theme;
+  those initial theme screenshots are excluded. The corrected run passed one native test with
+  zero skips, including all six SSH modes and 14 Activity transitions. The final inset/Enter tree
+  passed the complete host profile on September 23: two executed, zero skipped. The held key sent
+  six Up sequences in that run, and the actual Android IME/layout assertions passed.
+- Added opt-in `E2eParityReferenceCaptureTest` for repeatable Kotlin reference frames against the
+  provisioned repository SSH fixture. With `-e omniterm_e2e_parity_captures yes`, one test executed
+  successfully with zero skips and captured twenty frames; screenshot security and preferences are
+  restored afterward. Flutter's optional `OMNITERM_E2E_VISUALS=true` instrumentation captures stay
+  in private test storage and are absent from the production app. An initial unseeded reference run
+  timed out; explicit repository provisioning and host-key trust preceded the successful run.
+- The comparison is not whole-terminal visual acceptance: the main header, canvas font/grid,
+  software-keyboard details and fallback Enter glyph still differ and remain in the next terminal
+  work. This is a terminal-keyboard checkpoint, not acceptance of the whole terminal UI.
+- The final keyboard tree passed `./scripts/local-pr-check.sh --full` on Linux x86_64 on September 23:
+  2,753 Flutter tests passed, with seven optional skips (six setup-fixture cases and one compression
+  fixture). Formatting, analysis, release APK/AAB, both Flutter SBOMs, development-code exclusion,
+  pinned all-ref secret scanning and forced-refresh strict dependency verification passed. Native
+  unit/lint tasks reused up-to-date results; no Linux ARM64 exclusion applied. The gate explicitly
+  deferred device checks while the emulator was stopped for memory.
+- Separate final-tree API 35 evidence covers that deferral: Flutter core 32 executed/zero skipped;
+  host profile two executed/zero skipped; native package 59 discovered, 24 passed including four
+  Room migration cases, and 35 opt-in assumptions (zero actual failures). Native repository-host
+  provisioning/trust and the required surface sweep passed with `-e omniterm_e2e_surfaces yes
+  -e omniterm_e2e_sftp_home /config` (one executed, zero skipped). The final Kotlin keyboard capture
+  fixture also passed again (one executed, zero skipped, twenty reference frames).
+- After a machine reboot, the first repeated host run could not launch while the emulator user was
+  credential-locked; the run resumed after explicitly verifying the unlocked state. A later run exposed a stale
+  boot ID in the disposable Podman fixture. Recreating that fixture restored its runtime; the
+  succeeding host profile above exercised it. Neither failure required application changes.
+- The final Flutter visual fixture passed on September 23 (one executed, zero skipped) and retained
+  twenty frames matching the Kotlin capture matrix. Insets and keyboard geometry agree. The
+  captured Flutter app surface is dimmer despite matching rendered color tokens; whether this is
+  a capture/runtime effect or an application rendering difference remains to be isolated. Do not
+  treat color-token assertions as pixel-level acceptance.
+- This checkpoint's signed publication and exact-head hosted checks are pending. Settings parity
+  is being prepared separately and is not part of this keyboard checkpoint.
 
 Parity acceptance inventory (all pending until compared on Android):
 

@@ -27,7 +27,10 @@ import '../../widgets/omni_components.dart';
 /// screen never shows an empty black rectangle that looks like a working shell — every state says
 /// what it is.
 class ShellScreen extends StatelessWidget {
-  const ShellScreen({super.key, this.licenseController});
+  const ShellScreen({super.key, this.licenseController, this.compactIme = false});
+
+  /// Computed above Scaffold, which removes the IME inset from its resized body.
+  final bool compactIme;
 
   final LicenseController? licenseController;
 
@@ -39,54 +42,66 @@ class ShellScreen extends StatelessWidget {
 
     return Container(
       color: palette.background,
-      child: Column(
-        children: [
-          if (vm.sessions.isNotEmpty || session != null) _SessionBar(vm: vm),
-          if (vm.isLeavingSessions) ...[
-            const LinearProgressIndicator(),
-            const Text('Saving resumable sessions…'),
-          ],
-          if (session != null && vm.error != null)
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Text(
-                vm.error!,
-                key: const ValueKey('shell.active.error'),
-                style: const TextStyle(color: OmniColors.red),
-              ),
-            ),
-          // Shown wherever the Shell is, with or without an active session: the sessions this
-          // warns about are precisely the ones the user is about to walk away from.
-          if (vm.backgroundServiceWarning != null)
-            Padding(
-              padding: const EdgeInsets.all(8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      vm.backgroundServiceWarning!,
-                      key: const ValueKey('shell.backgroundService.warning'),
-                      style: const TextStyle(color: OmniColors.amber),
-                    ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final contents = Column(
+            children: [
+              if (!compactIme && (vm.sessions.isNotEmpty || session != null)) _SessionBar(vm: vm),
+              if (vm.isLeavingSessions) ...[
+                const LinearProgressIndicator(),
+                const Text('Saving resumable sessions…'),
+              ],
+              if (session != null && vm.error != null)
+                Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Text(
+                    vm.error!,
+                    key: const ValueKey('shell.active.error'),
+                    style: const TextStyle(color: OmniColors.red),
                   ),
-                  IconButton(
-                    key: const ValueKey('shell.backgroundService.dismiss'),
-                    icon: const Icon(Icons.close),
-                    tooltip: 'Dismiss',
-                    onPressed: vm.dismissBackgroundServiceWarning,
+                ),
+              // Shown wherever the Shell is, with or without an active session: the sessions this
+              // warns about are precisely the ones the user is about to walk away from.
+              if (vm.backgroundServiceWarning != null)
+                Padding(
+                  padding: const EdgeInsets.all(8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          vm.backgroundServiceWarning!,
+                          key: const ValueKey('shell.backgroundService.warning'),
+                          style: const TextStyle(color: OmniColors.amber),
+                        ),
+                      ),
+                      IconButton(
+                        key: const ValueKey('shell.backgroundService.dismiss'),
+                        icon: const Icon(Icons.close),
+                        tooltip: 'Dismiss',
+                        onPressed: vm.dismissBackgroundServiceWarning,
+                      ),
+                    ],
                   ),
-                ],
+                ),
+              Expanded(
+                child: session == null
+                    ? _ConnectPane(vm: vm, licenseController: licenseController)
+                    : vm.isSplit
+                    ? _SplitTerminals(vm: vm, first: session, second: vm.splitSession!)
+                    : _ActiveTerminal(vm: vm, session: session, showStatus: !compactIme),
               ),
-            ),
-          Expanded(
-            child: session == null
-                ? _ConnectPane(vm: vm, licenseController: licenseController)
-                : vm.isSplit
-                ? _SplitTerminals(vm: vm, first: session, second: vm.splitSession!)
-                : _ActiveTerminal(vm: vm, session: session),
-          ),
-          if (session != null) TerminalKeyBar(viewModel: vm),
-        ],
+              if (session != null) TerminalKeyBar(viewModel: vm, compact: compactIme),
+            ],
+          );
+          // Android can briefly deliver the new orientation with the old IME height. Preserve
+          // usable controls in that tiny viewport until the keyboard finishes resizing.
+          final minimumHeight = session == null ? 0.0 : (compactIme ? 42.0 : 120.0);
+          return constraints.maxHeight < minimumHeight
+              ? SingleChildScrollView(
+                  child: SizedBox(height: minimumHeight, child: contents),
+                )
+              : contents;
+        },
       ),
     );
   }
@@ -821,10 +836,11 @@ class _SessionChip extends StatelessWidget {
 // ── the live terminal ─────────────────────────────────────────────────────────
 
 class _ActiveTerminal extends StatefulWidget {
-  const _ActiveTerminal({required this.vm, required this.session});
+  const _ActiveTerminal({required this.vm, required this.session, this.showStatus = true});
 
   final ShellViewModel vm;
   final ShellSession session;
+  final bool showStatus;
 
   @override
   State<_ActiveTerminal> createState() => _ActiveTerminalState();
@@ -1015,7 +1031,11 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
         }
         return Column(
           children: [
-            _TerminalStatusRow(vm: widget.vm, session: session),
+            if (widget.showStatus ||
+                !session.isOpen ||
+                session.controlRefreshing ||
+                session.paneChangePending)
+              _TerminalStatusRow(vm: widget.vm, session: session),
             if (session.controlRefreshError != null)
               Padding(
                 padding: const EdgeInsets.all(8),
@@ -1089,6 +1109,9 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
                           autocorrect: false,
                           enableSuggestions: preferences.smartSwipeInput,
                           textCapitalization: TextCapitalization.none,
+                          // Kotlin uses ImeAction.None: Enter inserts a newline into this hidden
+                          // multiline field, which the input interpreter sends as terminal CR.
+                          textInputAction: TextInputAction.newline,
                           keyboardType: preferences.smartSwipeInput
                               ? TextInputType.text
                               : TextInputType.visiblePassword,

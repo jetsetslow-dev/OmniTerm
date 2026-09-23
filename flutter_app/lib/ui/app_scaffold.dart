@@ -116,7 +116,7 @@ class AppCoreScaffold extends StatelessWidget {
     // tab swipe are both disabled on Shell.
     final allowGlobalGestures = current != Screen.shell;
 
-    Widget body = _ScreenBody(screen: current);
+    Widget body = _ScreenBody(screen: current, compactTerminalIme: compactTerminalIme);
 
     if (allowGlobalGestures) {
       body = ScreenSwipeArea(
@@ -274,7 +274,7 @@ class AppCoreScaffold extends StatelessWidget {
                 ),
               ],
             ),
-      body: overlayBody,
+      body: compactTerminalIme ? SafeArea(bottom: false, child: overlayBody) : overlayBody,
     );
   }
 
@@ -897,7 +897,9 @@ class _BatterySaverDialog extends StatelessWidget {
 /// Routes the active [Screen] to its widget. Ported from the `when (viewModel.currentScreen)`
 /// block in `AppCoreScaffold`.
 class _ScreenBody extends StatelessWidget {
-  const _ScreenBody({required this.screen});
+  const _ScreenBody({required this.screen, this.compactTerminalIme = false});
+
+  final bool compactTerminalIme;
 
   final Screen screen;
 
@@ -918,7 +920,10 @@ class _ScreenBody extends StatelessWidget {
         ),
         Screen.fleet => const FleetScreen(),
         Screen.monitor => const MonitorScreen(),
-        Screen.shell => ShellScreen(licenseController: context.read<LicenseController>()),
+        Screen.shell => ShellScreen(
+          licenseController: context.read<LicenseController>(),
+          compactIme: compactTerminalIme,
+        ),
         Screen.sftp => const SftpScreen(),
         Screen.infra => const InfraScreen(),
         Screen.tools => const ToolsHubScreen(),

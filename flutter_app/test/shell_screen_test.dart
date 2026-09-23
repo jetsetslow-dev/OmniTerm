@@ -79,6 +79,7 @@ void main() {
     Size size = const Size(1000, 1400),
     double textScale = 1,
     AppLockController? lock,
+    EdgeInsets viewInsets = EdgeInsets.zero,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -99,14 +100,26 @@ void main() {
         child: MaterialApp(
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
           home: MediaQuery(
-            data: MediaQueryData(size: size, textScaler: TextScaler.linear(textScale)),
+            data: MediaQueryData(
+              size: size,
+              textScaler: TextScaler.linear(textScale),
+              viewInsets: viewInsets,
+            ),
             // The real gate, not a stand-in: it is the thing that puts an `ExcludeFocus` over the
             // whole app while locked, which is exactly what the terminal's focus has to survive.
             child: lock == null
-                ? const Scaffold(body: ShellScreen())
+                ? Scaffold(
+                    body: ShellScreen(
+                      compactIme: viewInsets.bottom > 0 && size.width > size.height,
+                    ),
+                  )
                 : AppLockGate(
                     controller: lock,
-                    child: const Scaffold(body: ShellScreen()),
+                    child: Scaffold(
+                      body: ShellScreen(
+                        compactIme: viewInsets.bottom > 0 && size.width > size.height,
+                      ),
+                    ),
                   ),
           ),
         ),
@@ -321,6 +334,114 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(transport.opened.single.writes.single, '[A'.codeUnits);
+      await finish(tester);
+    });
+
+    testWidgets('held navigation repeats and stops on release', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+      final pointer = await tester.startGesture(
+        tester.getCenter(find.byKey(const ValueKey('shell.key.↑'))),
+      );
+      await tester.pump();
+      final writes = transport.opened.single.writes;
+      expect(writes.length, 1, reason: 'The first key is sent on press');
+      await tester.pump(const Duration(milliseconds: 399));
+      expect(writes.length, 1);
+      await tester.pump(const Duration(milliseconds: 1));
+      expect(writes.length, 2);
+      await tester.pump(const Duration(milliseconds: 120));
+      expect(writes.length, 4);
+      await pointer.up();
+      await tester.pump(const Duration(seconds: 1));
+      expect(writes.length, 4, reason: 'No remote input after release');
+      expect(writes, everyElement('\x1b[A'.codeUnits));
+      await finish(tester);
+    });
+
+    testWidgets('moving outside a held key cancels repeat', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+      final pointer = await tester.startGesture(
+        tester.getCenter(find.byKey(const ValueKey('shell.key.⌫'))),
+      );
+      await tester.pump();
+      expect(transport.opened.single.writes.length, 1);
+      await pointer.moveBy(const Offset(0, -120));
+      await tester.pump(const Duration(seconds: 1));
+      expect(transport.opened.single.writes.length, 1);
+      await pointer.up();
+      await finish(tester);
+    });
+
+    testWidgets('backgrounding cancels a held key', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+      final pointer = await tester.startGesture(
+        tester.getCenter(find.byKey(const ValueKey('shell.key.↑'))),
+      );
+      await tester.pump();
+      expect(transport.opened.single.writes.length, 1);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      await tester.pump(const Duration(seconds: 1));
+      expect(transport.opened.single.writes.length, 1);
+      await pointer.up();
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await finish(tester);
+    });
+
+    testWidgets('normal key bar keeps the inverted T centered across two rows', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, size: const Size(440, 900));
+      await connect(tester);
+      Offset center(String key) => tester.getCenter(find.byKey(ValueKey('shell.key.$key')));
+      expect(center('↑').dx, center('↓').dx);
+      expect(center('↑').dx, 220);
+      expect(center('↓').dy - center('↑').dy, 38);
+      expect(center('←').dy, center('↓').dy);
+      expect(center('→').dy, center('↓').dy);
+      expect(center('FN').dx, center('SYM').dx);
+      expect(center('SYM').dy - center('FN').dy, 38);
+      await finish(tester);
+    });
+
+    testWidgets('landscape IME compacts the bar and keeps layer toggles fixed', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(
+        tester,
+        size: const Size(1000, 400),
+        viewInsets: const EdgeInsets.only(bottom: 100),
+      );
+      await connect(tester);
+      Offset center(String key) => tester.getCenter(find.byKey(ValueKey('shell.key.$key')));
+      final sym = center('SYM');
+      final fn = center('FN');
+      expect(center('↑').dy, center('↓').dy);
+      expect(center('←').dy, center('→').dy);
+      await tester.tap(find.byKey(const ValueKey('shell.key.FN')));
+      await tester.pump();
+      expect(center('SYM'), sym);
+      expect(center('NAV'), fn);
+      await tester.tap(find.byKey(const ValueKey('shell.key.SYM')));
+      await tester.pump();
+      expect(center('SYM'), sym);
+      expect(center('FN'), fn);
+      await finish(tester);
+    });
+
+    testWidgets('rotation with stale IME insets keeps terminal controls reachable', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      // Android briefly reports this height during rotation before the IME sends new insets.
+      await pump(tester, size: const Size(440, 74));
+      await vm.connect(app.servers.single);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      await tester.ensureVisible(find.byKey(const ValueKey('shell.key.SYM')));
+      await tester.pump();
+      expect(find.byKey(const ValueKey('shell.key.SYM')).hitTestable(), findsOneWidget);
       await finish(tester);
     });
 
@@ -542,6 +663,22 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(keyboardIsUp(tester), isFalse);
+      await finish(tester);
+    });
+
+    testWidgets('the software keyboard offers Enter and keeps accepting shell input', (
+      tester,
+    ) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+      expect(tester.testTextInput.setClientArgs?['inputAction'], 'TextInputAction.newline');
+      tester.testTextInput.updateEditingValue(const TextEditingValue(text: '\n'));
+      await tester.pump();
+      await tester.testTextInput.receiveAction(TextInputAction.newline);
+      await tester.pump();
+      expect(transport.opened.single.writes.last, [13]);
+      expect(keyboardIsUp(tester), isTrue);
       await finish(tester);
     });
 
