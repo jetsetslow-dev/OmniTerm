@@ -340,6 +340,20 @@ jobs:
             --no-fixtures
             --artifacts "$GITHUB_WORKSPACE/artifacts/device-tests"
 
+      # Keep the same evidence the local runner writes, including when a native assertion fails.
+      # The disposable core emulator has no personal hosts or distribution credentials.
+      - name: Retain device test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: flutter-device-tests-${{ github.sha }}
+          path: |
+            artifacts/device-tests/
+            flutter_app/build/app/reports/androidTests/
+            flutter_app/build/app/outputs/androidTest-results/
+          retention-days: 7
+          if-no-files-found: warn
+
   e2e-skip:
     name: End-to-end on an emulator
     needs: changes

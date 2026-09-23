@@ -93,14 +93,11 @@ void main() {
         );
       }
 
-      await $.tester.enterText(find.byKey(const ValueKey('lock.pin')), '999999');
-      await $.tester.pump();
-      await $.tester.tap(find.byKey(const ValueKey('lock.submit')));
+      await _submitPin($, '999999');
       await _until($, () => find.text('Incorrect PIN — try again').evaluate().isNotEmpty);
       expect(lock.isLocked, isTrue);
-      await $.tester.enterText(find.byKey(const ValueKey('lock.pin')), '246810');
-      await $.tester.pump();
-      await $.tester.tap(find.byKey(const ValueKey('lock.submit')));
+      expect(lock.failedAttempts, 1);
+      await _submitPin($, '246810');
       await _until($, () => !lock.isLocked);
       expect(find.text('Unlocked fixture'), findsOneWidget);
     },
@@ -112,6 +109,23 @@ void main() {
   binding.platformDispatcher.onSemanticsEnabledChanged = () {};
   final semantics = binding.ensureSemantics();
   tearDownAll(semantics.dispose);
+}
+
+Future<void> _submitPin(PatrolIntegrationTester $, String pin) async {
+  // On a clean device the controller reports unavailable biometrics before the screen has
+  // rendered its enabled PIN field. Entering text at that earlier boundary is discarded.
+  // Wait for the actual input control, just as the enrolled-device cancellation branch does.
+  await _waitForIdle($);
+  final field = find.byKey(const ValueKey('lock.pin'));
+  final submit = find.byKey(const ValueKey('lock.submit'));
+  await $.tester.enterText(field, pin);
+  await _until($, () => $.tester.widget<FilledButton>(submit).onPressed != null);
+  expect(
+    $.tester.widget<TextField>(field).controller!.text == pin,
+    isTrue,
+    reason: 'The enabled PIN field must accept input before submitting',
+  );
+  await $.tester.tap(submit);
 }
 
 Future<void> _until(PatrolIntegrationTester $, bool Function() done) async {

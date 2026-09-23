@@ -1,6 +1,6 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
-Updated: 2026-09-23. Working branch: `migration-to-flutter`; PR: #92.
+Updated: 2026-09-24. Working branch: `migration-to-flutter`; PR: #92.
 Independent return review implemented and locally validated; **not** a parity-complete or release-ready declaration.
 
 This sanitized tracker is intentionally committed so work can resume on another machine.
@@ -86,7 +86,7 @@ biometric is enrolled; on a clean CI device it reports that branch unavailable a
 fallback. Both Android-specific files explicitly skip on other platforms. Protected system prompt
 screenshots from `adb screencap` are black and are not visual evidence.
 
-Terminal keyboard checkpoint — locally validated; hosted checks pending publication:
+Terminal keyboard checkpoint published as `fea3297`; hosted emulator correction in progress:
 
 - Restores Kotlin's regular two-row, eleven-column layout and centered arrow cluster, with the
   separate compact twenty-column layout only for landscape while the software keyboard is open.
@@ -147,8 +147,28 @@ Terminal keyboard checkpoint — locally validated; hosted checks pending public
   captured Flutter app surface is dimmer despite matching rendered color tokens; whether this is
   a capture/runtime effect or an application rendering difference remains to be isolated. Do not
   treat color-token assertions as pixel-level acceptance.
-- This checkpoint's signed publication and exact-head hosted checks are pending. Settings parity
-  is being prepared separately and is not part of this keyboard checkpoint.
+- The signed keyboard checkpoint passed every selected hosted job except the Flutter emulator
+  suite. Its failed job was inspected before editing: `biometric_unlock_test.dart` timed out
+  waiting for the wrong-PIN result after the no-enrolled-biometric fallback. Native build/tests,
+  API 29 migrations, native SBOM, Flutter analysis/release/iOS, CodeQL, dependency review, both
+  history scans and Scorecard analysis passed. Conditional no-op jobs were skipped.
+- Reproduced that exact failure on a clean API 35 emulator with no enrolled fingerprint. The
+  controller's availability error arrived before the screen rendered its enabled PIN field, so
+  the test's text entry was discarded. The corrected fixture waits for the rendered input and
+  enabled submit control, checks that input was accepted, and verifies a wrong PIN consumes one
+  attempt. Both the clean-device fallback and enrolled-fingerprint recreation/cancellation cases
+  now pass separately (one executed, zero skipped each). The replacement full local gate passed:
+  2,753 Flutter tests, seven optional fixture skips, clean formatting/analysis, release APK/AAB,
+  both Flutter SBOMs, development-code exclusion, pinned history secret scan and forced-refresh
+  strict native dependency verification. Native unit/lint tasks reused up-to-date results; no
+  Linux ARM64 exclusion applied. The device phase was explicitly deferred with the emulator off;
+  the separate API 35 results above cover it. No authentication production code changed.
+- The Flutter CI workflow now retains the device runner's logs and Android test reports even on
+  failure. It uses the same evidence already produced locally, with a pinned upload action and
+  seven-day retention. The previous failed runner did not upload these diagnostic files.
+- A normal debug APK of `fea3297` was signature/package/version/kernel-verified, installed and
+  cold-launched on API 35. It includes authentication and the keyboard changes. Settings parity
+  remains separate and is not included; replacement hosted checks are still required.
 
 Parity acceptance inventory (all pending until compared on Android):
 
