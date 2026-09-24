@@ -13,8 +13,8 @@ secrets here: moving it later does not erase Git history.
 The user has explicitly requested the existing Kotlin UI throughout Flutter: every screen,
 submenu, popup and option, including the SSH terminal, Settings, sizing and navigation. Kotlin is
 the reference, not an invitation to redesign. The previous return-review checkpoint is complete;
-its passing checks do not establish visual parity. The latest supplied debug APK includes the authentication checkpoint below; the subsequent
-terminal and Settings parity work is still in progress.
+its passing checks do not establish visual parity. The latest supplied debug APK includes the authentication and terminal keyboard checkpoints below;
+Settings and broader terminal parity remain in progress.
 
 Clarifications: this includes every login/lock/biometric element and all functionality, including
 long press, swipe, selection, keyboard shortcuts, Back, drag/reorder and contextual actions. Visual
@@ -169,6 +169,38 @@ Terminal keyboard checkpoint published as `fea3297`; hosted emulator correction 
 - A normal debug APK of `fea3297` was signature/package/version/kernel-verified, installed and
   cold-launched on API 35. It includes authentication and the keyboard changes. Settings parity
   remains separate and is not included; replacement hosted checks are still required.
+
+The next exact-head run (`b158d8c`) completed every selected hosted job. All passed except
+Flutter emulator E2E, which failed **before** the surface test started: Flutter exposed its VM
+service but the host's five-second connection handshake timed out. The retained device logs show
+no app crash; the earlier plain actions and app-lock tests passed, and the native biometric test
+was not reached. This is a different failure from the corrected PIN-input synchronization case.
+
+The device runner now recognizes that specific pre-test attachment failure and uses its existing
+single recovery attempt after resetting the disposable emulator. It requires the tool's loading
+failure, zero executed tests and the integration-device stack frame. A replay of the hosted output
+failed on the original runner and passes with the correction; negative cases verify that actual
+test execution, a repeated failure and a preserved personal device cannot trigger extra retries.
+The local and both hosted gates already invoke this same shell regression suite. The corrected
+runner passed the full core device profile on a clean API 35 emulator: 32 tests, zero skips.
+Its enrolled-biometric branch was unavailable on this clean device; the previous separate enrolled
+recreation/challenge result remains the evidence for that branch.
+
+The final `./scripts/local-pr-check.sh --full` passed: 2,753 Flutter tests, seven optional fixture
+skips, formatting/analysis, release APK/AAB, both Flutter SBOMs, development-code exclusion, pinned
+all-ref secret scan and forced-refresh strict native project/compile/release-SBOM verification.
+Native unit/lint tasks reused up-to-date results, with no ARM64 exclusion. The emulator was stopped
+for this gate, so its device phase was deferred; the explicit API 35 core run above covers the
+changed runner. Replacement exact-head hosted checks remain required.
+
+New authorized work: implement Kotlin Dependabot #107 (AGP 9.4.1 / Bouncy Castle 1.86) and its
+metadata companion #108. Validation is isolated from the Flutter Settings candidate. The existing
+root resolution rule must also change or it silently overrides the Bouncy Castle catalog bump.
+Signed dependency checkpoint `74f40bf` is pushed to #107 after native full preflight, strict
+fresh-resolution verification and API 35 runtime validation. It includes all #108 hashes unchanged
+plus the six Bouncy Castle artifacts required by the corrected resolution rule. Hosted checks are
+in progress. The dependency changes are not yet applied to this Flutter branch, and neither PR has
+been merged.
 
 Parity acceptance inventory (all pending until compared on Android):
 

@@ -84,6 +84,18 @@ flutter() {
       printf 'normal-main-apk\n' >build/app/outputs/flutter-apk/app-debug.apk
       ;;
     test)
+      if [[ -n "${OMNITERM_TEST_VM_ATTACH_FAILURE:-}" ]] &&
+        { [[ "$OMNITERM_TEST_VM_ATTACH_FAILURE" != once ]] ||
+          [[ ! -s "$OMNITERM_TEST_FLUTTER_COUNTER" ]]; }; then
+        printf '1\n' >"$OMNITERM_TEST_FLUTTER_COUNTER"
+        if [[ "$OMNITERM_TEST_VM_ATTACH_FAILURE" == after_test ]]; then
+          printf '00:01 +1: a real test already executed\n'
+        fi
+        printf '00:00 +0 -1: loading /workspace/integration_test/app_surface_stress_test.dart [E]\n'
+        printf '  Failed to load "app_surface_stress_test.dart": Connecting to the VM Service timed out.\n'
+        printf '  package:flutter_tools/src/test/integration_test_device.dart 103:28 IntegrationTestTestDevice.start.<fn>\n'
+        return 1
+      fi
       if [[ "${OMNITERM_TEST_DDS_FAIL_ONCE:-false}" == true ]] &&
         [[ ! -s "$OMNITERM_TEST_FLUTTER_COUNTER" ]]; then
         printf '1\n' >"$OMNITERM_TEST_FLUTTER_COUNTER"
@@ -182,6 +194,36 @@ if [[ "$(grep -c '^test integration_test/app_surface_stress_test\.dart ' "$OMNIT
   cat "$OMNITERM_TEST_FLUTTER_LOG" >&2
   exit 1
 fi
+
+# Replay the exact pre-test VM attachment failure from hosted CI. The runner may recover once
+# on a disposable emulator; an executed test, repeated failure or preserved phone must fail.
+check_vm_attach_recovery() {
+  local mode="$1" device="$2" expected_rc="$3" expected_runs="$4" expected_reboots="$5"
+  local -a preserve=()
+  if [[ "$device" == daily-device ]]; then preserve=(--preserve-device); fi
+  : >"$OMNITERM_TEST_ADB_LOG"
+  : >"$OMNITERM_TEST_FLUTTER_LOG"
+  : >"$OMNITERM_TEST_FLUTTER_COUNTER"
+  local rc=0
+  OMNITERM_TEST_VM_ATTACH_FAILURE="$mode" FLUTTER_BIN=flutter \
+    OMNITERM_DEVICE_ARTIFACTS="$TEST_DIR/vm-$mode-$device-artifacts" \
+    OMNITERM_FLUTTER_APP_ROOT="$OMNITERM_TEST_FLUTTER_APP" OMNITERM_PLAIN_TEST_TIMEOUT=0 \
+    "$ROOT/scripts/flutter-device-test.sh" \
+      --device "$device" --platform android --profile surface --no-fixtures "${preserve[@]}" \
+      >"$TEST_DIR/vm-$mode-$device.log" 2>&1 || rc=$?
+  local runs reboots
+  runs="$(grep -c '^test integration_test/app_surface_stress_test\.dart ' "$OMNITERM_TEST_FLUTTER_LOG" || true)"
+  reboots="$(grep -c -- ' reboot' "$OMNITERM_TEST_ADB_LOG" || true)"
+  if [[ "$rc" != "$expected_rc" || "$runs" != "$expected_runs" || "$reboots" != "$expected_reboots" ]]; then
+    echo "VM attachment recovery $mode/$device: exit=$rc runs=$runs reboots=$reboots; expected $expected_rc/$expected_runs/$expected_reboots" >&2
+    cat "$TEST_DIR/vm-$mode-$device.log" >&2
+    exit 1
+  fi
+}
+check_vm_attach_recovery once emulator-5554 0 2 1
+check_vm_attach_recovery always emulator-5554 1 2 1
+check_vm_attach_recovery after_test emulator-5554 1 1 0
+check_vm_attach_recovery once daily-device 1 1 0
 
 # A pinned Patrol test runner must not depend on the availability of its optional package-update
 # or analytics endpoints. Deliberately inherit the opposite settings to prove the runner scopes
