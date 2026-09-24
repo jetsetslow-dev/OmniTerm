@@ -1,0 +1,266 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Executed as the fake Patrol binary by this script's isolated runner fixture below. This checks
+# the actual child environment, not just a grep for an assignment in the production script.
+if [[ "${1:-}" == test && "${OMNITERM_TEST_PATROL_STUB:-false}" == true ]]; then
+  if [[ "${CI:-}" != true || "${PATROL_ANALYTICS_ENABLED:-}" != false ]]; then
+    echo 'Patrol must run noninteractively without optional update/analytics network calls' >&2
+    exit 41
+  fi
+  printf '%s\n' "$*" >>"$OMNITERM_TEST_PATROL_LOG"
+  if [[ "${OMNITERM_TEST_PATROL_FAIL:-false}" == true ]]; then
+    echo 'Synthetic Patrol test assertion failed' >&2
+    exit 23
+  fi
+  echo 'Synthetic Patrol tests passed'
+  exit 0
+fi
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+TEST_DIR="$(mktemp -d)"
+trap 'rm -rf "$TEST_DIR"' EXIT
+
+export OMNITERM_TEST_FORWARD_STATE="$TEST_DIR/forwards"
+export OMNITERM_TEST_REVERSE_STATE="$TEST_DIR/reverses"
+export OMNITERM_TEST_ADB_LOG="$TEST_DIR/adb.log"
+export OMNITERM_TEST_FLUTTER_LOG="$TEST_DIR/flutter.log"
+export OMNITERM_TEST_FLUTTER_COUNTER="$TEST_DIR/flutter-test-count"
+export OMNITERM_TEST_FLUTTER_APP="$TEST_DIR/flutter_app"
+
+mkdir -p "$OMNITERM_TEST_FLUTTER_APP/integration_test"
+printf 'void main() {}\n' >"$OMNITERM_TEST_FLUTTER_APP/integration_test/app_surface_stress_test.dart"
+
+printf '%s\n' \
+  'daily-device tcp:1111 tcp:2222' \
+  'other-device tcp:7777 tcp:8888' >"$OMNITERM_TEST_FORWARD_STATE"
+printf '%s\n' 'UsbFfs tcp:3333 tcp:4444' >"$OMNITERM_TEST_REVERSE_STATE"
+: >"$OMNITERM_TEST_ADB_LOG"
+: >"$OMNITERM_TEST_FLUTTER_LOG"
+: >"$OMNITERM_TEST_FLUTTER_COUNTER"
+
+adb() {
+  printf '%q ' "$@" >>"$OMNITERM_TEST_ADB_LOG"
+  printf '\n' >>"$OMNITERM_TEST_ADB_LOG"
+
+  if [[ "${1:-}" == -s ]]; then shift 2; fi
+  case "${1:-} ${2:-}" in
+    'forward --list') cat "$OMNITERM_TEST_FORWARD_STATE" ;;
+    'forward --remove')
+      awk -v socket="${3:-}" '$2 != socket' "$OMNITERM_TEST_FORWARD_STATE" \
+        >"$OMNITERM_TEST_FORWARD_STATE.next"
+      mv "$OMNITERM_TEST_FORWARD_STATE.next" "$OMNITERM_TEST_FORWARD_STATE"
+      ;;
+    'reverse --list') cat "$OMNITERM_TEST_REVERSE_STATE" ;;
+    'reverse --remove')
+      awk -v socket="${3:-}" '$2 != socket' "$OMNITERM_TEST_REVERSE_STATE" \
+        >"$OMNITERM_TEST_REVERSE_STATE.next"
+      mv "$OMNITERM_TEST_REVERSE_STATE.next" "$OMNITERM_TEST_REVERSE_STATE"
+      ;;
+    'shell pm')
+      if [[ "${4:-}" == com.jetsetslow.omniterm.app.flutter ]]; then
+        printf 'package:/data/app/omniterm-flutter/base.apk\n'
+      else
+        return 1
+      fi
+      ;;
+    'shell settings') printf '600000\n' ;;
+    'shell wm') printf 'Physical size: 1080x2400\n' ;;
+    'shell id') printf 'uid=2000(shell)\n' ;;
+    'shell getprop')
+      if [[ "${3:-}" == sys.boot_completed ]]; then printf '1\n'; fi
+      ;;
+    'shell am'|'shell dumpsys'|'wait-for-device '|'logcat -d') ;;
+    *) ;;
+  esac
+}
+
+flutter() {
+  printf '%q ' "$@" >>"$OMNITERM_TEST_FLUTTER_LOG"
+  printf '\n' >>"$OMNITERM_TEST_FLUTTER_LOG"
+  case "${1:-}" in
+    build)
+      mkdir -p build/app/outputs/flutter-apk
+      printf 'normal-main-apk\n' >build/app/outputs/flutter-apk/app-debug.apk
+      ;;
+    test)
+      if [[ -n "${OMNITERM_TEST_VM_ATTACH_FAILURE:-}" ]] &&
+        { [[ "$OMNITERM_TEST_VM_ATTACH_FAILURE" != once ]] ||
+          [[ ! -s "$OMNITERM_TEST_FLUTTER_COUNTER" ]]; }; then
+        printf '1\n' >"$OMNITERM_TEST_FLUTTER_COUNTER"
+        if [[ "$OMNITERM_TEST_VM_ATTACH_FAILURE" == after_test ]]; then
+          printf '00:01 +1: a real test already executed\n'
+        fi
+        printf '00:00 +0 -1: loading /workspace/integration_test/app_surface_stress_test.dart [E]\n'
+        printf '  Failed to load "app_surface_stress_test.dart": Connecting to the VM Service timed out.\n'
+        printf '  package:flutter_tools/src/test/integration_test_device.dart 103:28 IntegrationTestTestDevice.start.<fn>\n'
+        return 1
+      fi
+      if [[ "${OMNITERM_TEST_DDS_FAIL_ONCE:-false}" == true ]] &&
+        [[ ! -s "$OMNITERM_TEST_FLUTTER_COUNTER" ]]; then
+        printf '1\n' >"$OMNITERM_TEST_FLUTTER_COUNTER"
+        printf 'Failed to start Dart Development Service\n' >&2
+        return 1
+      fi
+      if [[ "${OMNITERM_TEST_PRETEST_TIMEOUT_ONCE:-false}" == true ]] &&
+        [[ ! -s "$OMNITERM_TEST_FLUTTER_COUNTER" ]]; then
+        printf '1\n' >"$OMNITERM_TEST_FLUTTER_COUNTER"
+        printf 'No tests ran.\n' >&2
+        return 124
+      fi
+      printf '%s\n' 'daily-device tcp:5555 tcp:6666' >>"$OMNITERM_TEST_FORWARD_STATE"
+      printf '%s\n' 'UsbFfs tcp:8181 tcp:8181' >>"$OMNITERM_TEST_REVERSE_STATE"
+      printf 'All tests passed!\n'
+      ;;
+    devices) printf '[{"id":"daily-device","targetPlatform":"android-arm64"}]\n' ;;
+    *) printf 'fake Flutter\n' ;;
+  esac
+}
+
+unzip() {
+  printf 'file:///workspace/flutter_app/lib/main.dart\n'
+}
+
+export -f adb flutter unzip
+
+FLUTTER_BIN=flutter OMNITERM_DEVICE_ARTIFACTS="$TEST_DIR/artifacts" \
+  OMNITERM_FLUTTER_APP_ROOT="$OMNITERM_TEST_FLUTTER_APP" \
+  OMNITERM_PLAIN_TEST_TIMEOUT=0 \
+  "$ROOT/scripts/flutter-device-test.sh" \
+    --device daily-device --platform android --profile surface --no-fixtures --preserve-device \
+    >"$TEST_DIR/runner.log" 2>&1
+
+expected_forward="$TEST_DIR/expected-forward"
+expected_reverse="$TEST_DIR/expected-reverse"
+printf '%s\n' \
+  'daily-device tcp:1111 tcp:2222' \
+  'other-device tcp:7777 tcp:8888' >"$expected_forward"
+printf '%s\n' 'UsbFfs tcp:3333 tcp:4444' >"$expected_reverse"
+
+cmp "$expected_forward" "$OMNITERM_TEST_FORWARD_STATE"
+cmp "$expected_reverse" "$OMNITERM_TEST_REVERSE_STATE"
+grep -Fq -- 'forward --remove tcp:5555' "$OMNITERM_TEST_ADB_LOG"
+grep -Fq -- 'reverse --remove tcp:8181' "$OMNITERM_TEST_ADB_LOG"
+grep -Eq -- '-s daily-device install -r .*/app-debug\.apk' "$OMNITERM_TEST_ADB_LOG"
+grep -Fq -- '-s daily-device shell am force-stop com.jetsetslow.omniterm.app.flutter' \
+  "$OMNITERM_TEST_ADB_LOG"
+if grep -Eq 'logcat -c|settings put|KEYCODE_WAKEUP|dismiss-keyguard|--remove-all| reboot' \
+  "$OMNITERM_TEST_ADB_LOG"; then
+  echo 'preserve mode changed global device state' >&2
+  cat "$OMNITERM_TEST_ADB_LOG" >&2
+  exit 1
+fi
+
+# A DDS startup failure may be retried only after rebooting a disposable emulator. This reproduces
+# the hosted boundary failure without allowing the recovery path to touch a daily-use phone.
+: >"$OMNITERM_TEST_ADB_LOG"
+: >"$OMNITERM_TEST_FLUTTER_LOG"
+: >"$OMNITERM_TEST_FLUTTER_COUNTER"
+OMNITERM_TEST_DDS_FAIL_ONCE=true FLUTTER_BIN=flutter \
+  OMNITERM_DEVICE_ARTIFACTS="$TEST_DIR/recovery-artifacts" \
+  OMNITERM_FLUTTER_APP_ROOT="$OMNITERM_TEST_FLUTTER_APP" \
+  OMNITERM_PLAIN_TEST_TIMEOUT=0 \
+  "$ROOT/scripts/flutter-device-test.sh" \
+    --device emulator-5554 --platform android --profile surface --no-fixtures \
+    >"$TEST_DIR/recovery-runner.log" 2>&1
+
+grep -Fq -- '-s emulator-5554 reboot' "$OMNITERM_TEST_ADB_LOG"
+grep -Fq -- 'Retrying integration_test/app_surface_stress_test.dart after rebooting the disposable emulator' \
+  "$TEST_DIR/recovery-runner.log"
+if [[ "$(grep -c '^test integration_test/app_surface_stress_test\.dart ' "$OMNITERM_TEST_FLUTTER_LOG")" != 2 ]]; then
+  echo 'DDS recovery did not make exactly one fresh retry' >&2
+  cat "$OMNITERM_TEST_FLUTTER_LOG" >&2
+  exit 1
+fi
+
+# The hosted failure can time out after APK installation without Flutter emitting the DDS message.
+# Exit 124 is recoverable only when Flutter also reports that no test started.
+: >"$OMNITERM_TEST_ADB_LOG"
+: >"$OMNITERM_TEST_FLUTTER_LOG"
+: >"$OMNITERM_TEST_FLUTTER_COUNTER"
+OMNITERM_TEST_PRETEST_TIMEOUT_ONCE=true FLUTTER_BIN=flutter \
+  OMNITERM_DEVICE_ARTIFACTS="$TEST_DIR/timeout-recovery-artifacts" \
+  OMNITERM_FLUTTER_APP_ROOT="$OMNITERM_TEST_FLUTTER_APP" \
+  OMNITERM_PLAIN_TEST_TIMEOUT=0 \
+  "$ROOT/scripts/flutter-device-test.sh" \
+    --device emulator-5554 --platform android --profile surface --no-fixtures \
+    >"$TEST_DIR/timeout-recovery-runner.log" 2>&1
+
+grep -Fq -- '-s emulator-5554 reboot' "$OMNITERM_TEST_ADB_LOG"
+grep -Fq -- 'Retrying integration_test/app_surface_stress_test.dart after rebooting the disposable emulator' \
+  "$TEST_DIR/timeout-recovery-runner.log"
+if [[ "$(grep -c '^test integration_test/app_surface_stress_test\.dart ' "$OMNITERM_TEST_FLUTTER_LOG")" != 2 ]]; then
+  echo 'pre-test timeout recovery did not make exactly one fresh retry' >&2
+  cat "$OMNITERM_TEST_FLUTTER_LOG" >&2
+  exit 1
+fi
+
+# Replay the exact pre-test VM attachment failure from hosted CI. The runner may recover once
+# on a disposable emulator; an executed test, repeated failure or preserved phone must fail.
+check_vm_attach_recovery() {
+  local mode="$1" device="$2" expected_rc="$3" expected_runs="$4" expected_reboots="$5"
+  local -a preserve=()
+  if [[ "$device" == daily-device ]]; then preserve=(--preserve-device); fi
+  : >"$OMNITERM_TEST_ADB_LOG"
+  : >"$OMNITERM_TEST_FLUTTER_LOG"
+  : >"$OMNITERM_TEST_FLUTTER_COUNTER"
+  local rc=0
+  OMNITERM_TEST_VM_ATTACH_FAILURE="$mode" FLUTTER_BIN=flutter \
+    OMNITERM_DEVICE_ARTIFACTS="$TEST_DIR/vm-$mode-$device-artifacts" \
+    OMNITERM_FLUTTER_APP_ROOT="$OMNITERM_TEST_FLUTTER_APP" OMNITERM_PLAIN_TEST_TIMEOUT=0 \
+    "$ROOT/scripts/flutter-device-test.sh" \
+      --device "$device" --platform android --profile surface --no-fixtures "${preserve[@]}" \
+      >"$TEST_DIR/vm-$mode-$device.log" 2>&1 || rc=$?
+  local runs reboots
+  runs="$(grep -c '^test integration_test/app_surface_stress_test\.dart ' "$OMNITERM_TEST_FLUTTER_LOG" || true)"
+  reboots="$(grep -c -- ' reboot' "$OMNITERM_TEST_ADB_LOG" || true)"
+  if [[ "$rc" != "$expected_rc" || "$runs" != "$expected_runs" || "$reboots" != "$expected_reboots" ]]; then
+    echo "VM attachment recovery $mode/$device: exit=$rc runs=$runs reboots=$reboots; expected $expected_rc/$expected_runs/$expected_reboots" >&2
+    cat "$TEST_DIR/vm-$mode-$device.log" >&2
+    exit 1
+  fi
+}
+check_vm_attach_recovery once emulator-5554 0 2 1
+check_vm_attach_recovery always emulator-5554 1 2 1
+check_vm_attach_recovery after_test emulator-5554 1 1 0
+check_vm_attach_recovery once daily-device 1 1 0
+
+# A pinned Patrol test runner must not depend on the availability of its optional package-update
+# or analytics endpoints. Deliberately inherit the opposite settings to prove the runner scopes
+# the noninteractive configuration to the actual Patrol child, as hosted CI already does.
+printf 'void main() { patrolTest("fixture", (_) {}); }\n' \
+  >"$OMNITERM_TEST_FLUTTER_APP/integration_test/app_surface_stress_test.dart"
+export OMNITERM_TEST_PATROL_LOG="$TEST_DIR/patrol.log"
+if ! CI=false PATROL_ANALYTICS_ENABLED=true OMNITERM_TEST_PATROL_STUB=true \
+  PATROL_BIN="$ROOT/scripts/test-flutter-device-preservation.sh" \
+  FLUTTER_BIN=flutter OMNITERM_DEVICE_ARTIFACTS="$TEST_DIR/patrol-artifacts" \
+  OMNITERM_FLUTTER_APP_ROOT="$OMNITERM_TEST_FLUTTER_APP" OMNITERM_PLAIN_TEST_TIMEOUT=0 \
+  "$ROOT/scripts/flutter-device-test.sh" \
+    --device daily-device --platform android --profile surface --no-fixtures --preserve-device \
+    >"$TEST_DIR/patrol-runner.log" 2>&1; then
+  cat "$TEST_DIR/patrol-runner.log" >&2
+  exit 1
+fi
+grep -Fq 'test --target integration_test/app_surface_stress_test.dart' "$OMNITERM_TEST_PATROL_LOG"
+
+# Noninteractive does not mean ignoring failures. A real nonzero test exit must propagate and
+# must not be retried just because the plain Flutter runner has a transport-recovery path.
+set +e
+CI=false PATROL_ANALYTICS_ENABLED=true OMNITERM_TEST_PATROL_STUB=true \
+  OMNITERM_TEST_PATROL_FAIL=true PATROL_BIN="$ROOT/scripts/test-flutter-device-preservation.sh" \
+  FLUTTER_BIN=flutter \
+  OMNITERM_DEVICE_ARTIFACTS="$TEST_DIR/patrol-failure-artifacts" \
+  OMNITERM_FLUTTER_APP_ROOT="$OMNITERM_TEST_FLUTTER_APP" OMNITERM_PLAIN_TEST_TIMEOUT=0 \
+  "$ROOT/scripts/flutter-device-test.sh" \
+    --device daily-device --platform android --profile surface --no-fixtures --preserve-device \
+    >"$TEST_DIR/patrol-failure-runner.log" 2>&1
+patrol_rc=$?
+set -e
+if [[ "$patrol_rc" != 23 || "$(wc -l <"$OMNITERM_TEST_PATROL_LOG")" != 2 ]]; then
+  echo 'Patrol test failure was masked or retried' >&2
+  cat "$TEST_DIR/patrol-failure-runner.log" >&2
+  exit 1
+fi
+grep -Fq 'Synthetic Patrol test assertion failed' "$TEST_DIR/patrol-failure-runner.log"
+
+echo 'Flutter device preservation, recovery and noninteractive Patrol tests passed'
