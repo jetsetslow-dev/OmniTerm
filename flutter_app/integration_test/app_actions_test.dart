@@ -193,6 +193,9 @@ void main() {
       // Put it back, so the suite is re-runnable on a device that keeps its data.
       await tapKey(tester, 'settings.blockScreenshots');
       await tapKey(tester, 'settings.save');
+      expect(find.byKey(const ValueKey('settings.save.progress')), findsNothing);
+      expect(find.byKey(const ValueKey('settings.save.error')), findsNothing);
+      expect(find.text('Settings saved.'), findsOneWidget);
     });
   });
 

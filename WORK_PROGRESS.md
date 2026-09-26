@@ -1,6 +1,6 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
-Updated: 2026-09-24. Working branch: `migration-to-flutter`; PR: #92.
+Updated: 2026-09-27. Working branch: `migration-to-flutter`; PR: #92.
 Independent return review implemented and locally validated; **not** a parity-complete or release-ready declaration.
 
 This sanitized tracker is intentionally committed so work can resume on another machine.
@@ -193,14 +193,41 @@ Native unit/lint tasks reused up-to-date results, with no ARM64 exclusion. The e
 for this gate, so its device phase was deferred; the explicit API 35 core run above covers the
 changed runner. Replacement exact-head hosted checks remain required.
 
+The next runner checkpoint (`25091c4`) completed all selected checks; every job passed except
+Flutter emulator E2E. Its initial DDS failure recovered through the existing bounded reset. The
+actual failure then occurred after the Settings action test finished: its final save was still
+refreshing app-lock state when teardown closed the database (`ConnectionClosedException`). This
+is an application/test completion boundary, not a pre-test transport failure, and is not retried.
+
+The Settings screen now keeps Save disabled and displays pending state until persistence and
+lock refresh both finish. The success message stays hidden until then. Refresh failures are
+shown with a Retry save action. The action test explicitly checks the final visible result before
+teardown. Two controlled refresh regressions fail on the original screen for the missing pending
+state; the corrected screen passes both and all 24 existing Settings screen cases.
+
+The final full preflight passed on September 26 on Linux x86_64: 2,755 Flutter tests passed, with
+seven optional fixture skips (six setup cases and one compression case). Formatting, analysis,
+release APK/AAB, both Flutter SBOMs, development-code exclusion, pinned all-ref secret scanning
+and forced-refresh strict native project/compile/release-SBOM verification passed. Native JVM
+and lint analysis tasks reused up-to-date results; no Linux ARM64 exclusion applied.
+The emulator remained available: native API 35 discovered 59 cases, with 24 executed successfully
+(including four Room migrations) and 35 opt-in E2E assumptions, zero actual failures. Separate
+repository-host provisioning and trust each passed, then the required native surface sweep passed
+with `-e omniterm_e2e_surfaces yes` and the provisioned fixture's SFTP home (one executed, zero
+skipped). Flutter core passed all 32 tests with zero skips, including Settings actions, route/theme/
+orientation sweep and native pickers. This clean emulator had no enrolled fingerprint; the earlier
+separate enrolled-device challenge/recreation results cover that branch. Replacement exact-head
+hosted checks remain required. The broader Settings parity prototype is not in this checkpoint.
+
 New authorized work: implement Kotlin Dependabot #107 (AGP 9.4.1 / Bouncy Castle 1.86) and its
 metadata companion #108. Validation is isolated from the Flutter Settings candidate. The existing
 root resolution rule must also change or it silently overrides the Bouncy Castle catalog bump.
 Signed dependency checkpoint `74f40bf` is pushed to #107 after native full preflight, strict
 fresh-resolution verification and API 35 runtime validation. It includes all #108 hashes unchanged
-plus the six Bouncy Castle artifacts required by the corrected resolution rule. Hosted checks are
-in progress. The dependency changes are not yet applied to this Flutter branch, and neither PR has
-been merged.
+plus the six Bouncy Castle artifacts required by the corrected resolution rule. Every selected hosted check passed for that exact head, including API 29 migrations,
+release SBOM, CodeQL and repository security checks. Redundant companion #108 is closed and its
+branch removed. #107 awaits independent review; its dependency changes are not yet applied to this
+Flutter branch, and no dependency update has been merged to main.
 
 Parity acceptance inventory (all pending until compared on Android):
 

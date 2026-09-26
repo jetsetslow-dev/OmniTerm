@@ -28,6 +28,9 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   bool _biometricBusy = false;
+  bool _saving = false;
+  bool _persisting = false;
+  String? _saveError;
   String? _biometricMessage;
 
   /// The in-progress edit of the lock timeout, or null to derive it from the saved value.
@@ -86,7 +89,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
           key: const ValueKey('settings.list'),
           padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
           children: [
-            if (vm.status != null) _StatusCard(vm: vm),
+            if (vm.status != null && !_saving && _saveError == null) _StatusCard(vm: vm),
+            if (_saveError != null)
+              Text(
+                _saveError!,
+                key: const ValueKey('settings.save.error'),
+                style: const TextStyle(color: OmniColors.red),
+              ),
+            if (_persisting) const LinearProgressIndicator(key: ValueKey('settings.save.progress')),
             for (final warning in vm.warnings)
               Padding(
                 padding: const EdgeInsets.only(bottom: 6),
@@ -347,7 +357,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 Expanded(
                   child: OutlinedButton(
                     key: const ValueKey('settings.revert'),
-                    onPressed: vm.revert,
+                    onPressed: _saving ? null : vm.revert,
                     child: const Text('Discard'),
                   ),
                 ),
@@ -359,10 +369,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   // A half-typed custom duration is the one thing here that can be *invalid*
                   // rather than merely unusual, and saving it would silently keep the previous
                   // interval while the screen showed the new one.
-                  onPressed: vm.isDirty && _lockTimeoutValid(draft)
+                  onPressed:
+                      !_saving && (vm.isDirty || _saveError != null) && _lockTimeoutValid(draft)
                       ? () => _save(context, vm)
                       : null,
-                  child: const Text('Save'),
+                  child: Text(
+                    _saving
+                        ? 'Saving…'
+                        : _saveError != null
+                        ? 'Retry save'
+                        : 'Save',
+                  ),
                 ),
               ),
             ],
@@ -503,6 +520,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// that reports protection it is not providing, which is worse than no switch. Turning it off
   /// forgets the PIN rather than leaving a stale hash behind for the next time it is enabled.
   Future<void> _save(BuildContext context, SettingsViewModel vm) async {
+    if (_saving) return;
+    setState(() {
+      _saving = true;
+      _saveError = null;
+    });
+    try {
+      await _saveConfirmed(context, vm);
+    } catch (error) {
+      if (mounted) setState(() => _saveError = 'Could not save settings: $error');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _persisting = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _saveConfirmed(BuildContext context, SettingsViewModel vm) async {
     final lock = context.read<AppLockController?>();
     final wantsLock = vm.draft.appLockEnabled;
     final hadLock = vm.saved.appLockEnabled;
@@ -564,6 +601,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       await lock.setPin(pin);
     }
 
+    if (mounted) setState(() => _persisting = true);
     await vm.save();
     if (lock == null) return;
     if (!wantsLock && hadLock) {
