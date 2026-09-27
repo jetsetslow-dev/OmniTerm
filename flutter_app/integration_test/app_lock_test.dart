@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:omniterm/main.dart' as app;
+import 'package:omniterm/ui/view_model/app_lock_controller.dart';
+import 'package:omniterm/ui/view_model/settings_view_model.dart';
+import 'package:provider/provider.dart';
 
 /// The app lock, driven end to end on a device: configure it, leave, come back, get refused, get in.
 ///
@@ -79,6 +82,7 @@ void main() {
     for (var i = 0; i < maxFrames && !done(); i++) {
       await tester.pump(const Duration(milliseconds: 100));
     }
+    expect(done(), isTrue, reason: 'The requested app-lock transition did not finish');
   }
 
   bool isLocked() => find.byKey(const ValueKey('lock.screen')).evaluate().isNotEmpty;
@@ -136,9 +140,20 @@ void main() {
   /// rendered — which is exactly how this flow first failed.
   Future<void> setSwitch(WidgetTester tester, String key, {required bool on}) async {
     final finder = find.byKey(ValueKey(key));
-    if (tester.widget<SwitchListTile>(finder).value == on) return;
+    if (tester.widget<Switch>(finder).value == on) return;
     await tester.tap(finder);
     await settle(tester);
+  }
+
+  Future<void> waitForSave(WidgetTester tester) async {
+    final save = find.byKey(const ValueKey('settings.save'));
+    await pumpUntil(
+      tester,
+      () => find.descendant(of: save, matching: find.text('Save changes')).evaluate().isNotEmpty,
+    );
+    expect(tester.element(save).read<SettingsViewModel>().isDirty, isFalse);
+    expect(tester.widget<FilledButton>(save).onPressed, isNull);
+    expect(find.byKey(const ValueKey('settings.save.error')), findsNothing);
   }
 
   /// Turns the lock on with a PIN and an interval of zero, and saves.
@@ -146,47 +161,38 @@ void main() {
     await openSettings(tester);
     await setSwitch(tester, 'settings.appLockEnabled', on: true);
 
-    // "Immediately", so the flow does not have to spend 30 real seconds off screen. That this chip
-    // exists at all is §15.12 — the interval was unreachable before it.
+    // PIN configuration is immediate, matching Kotlin; the timeout remains a draft.
+    if (find.byKey(const ValueKey('settings.pin.dialog')).evaluate().isNotEmpty) {
+      await tester.enterText(find.byKey(const ValueKey('settings.pin.first')), pin);
+      await tester.tap(find.byKey(const ValueKey('settings.pin.confirm')));
+      await pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('settings.pin.dialog')).evaluate().isEmpty,
+      );
+    }
     await tester.tap(find.byKey(const ValueKey('settings.lockTimeout.0')));
     await settle(tester);
-
-    await tester.tap(find.byKey(const ValueKey('settings.save')));
-    await pumpUntil(
-      tester,
-      () => find.byKey(const ValueKey('settings.pin.dialog')).evaluate().isNotEmpty,
-      maxFrames: 60,
-    );
-
-    // Turning the lock on has to collect a PIN — a lock with nothing to unlock it would report
-    // protection it is not providing — but only when one is not already set. A run that left a PIN
-    // behind is asked for nothing here, and the flow must not demand a dialog that is correctly
-    // absent.
-    if (find.byKey(const ValueKey('settings.pin.dialog')).evaluate().isEmpty) return;
-
-    await tester.enterText(find.byKey(const ValueKey('settings.pin.first')), pin);
-    await tester.enterText(find.byKey(const ValueKey('settings.pin.second')), pin);
-    await settle(tester);
-    // Hashing is 210k PBKDF2 rounds; wait for the dialog to actually close rather than guessing.
-    await tester.tap(find.byKey(const ValueKey('settings.pin.confirm')));
-    await pumpUntil(
-      tester,
-      () => find.byKey(const ValueKey('settings.pin.dialog')).evaluate().isEmpty,
-    );
-
-    // The dialog closes as soon as it hands the PIN back, which is a long way from done: the save
-    // it triggers still has to hash the PIN, write the settings — the interval among them — and
-    // re-read them into the controller. Two signals, because either alone is too early. "Change
-    // PIN" appears when the PIN is stored; the saved-confirmation card appears when the settings,
-    // including the interval, have been written.
-    await pumpUntil(
-      tester,
-      () =>
-          find.byKey(const ValueKey('settings.changePin')).evaluate().isNotEmpty &&
-          find.byKey(const ValueKey('settings.status')).evaluate().isNotEmpty,
-    );
-    // …and a moment more for the controller's own re-read, which follows the write.
-    await settle(tester, frames: 10);
+    final save = find.byKey(const ValueKey('settings.save'));
+    final settings = tester.element(save).read<SettingsViewModel>();
+    // A preceding flow can leave the saved timeout at zero. Immediate PIN setup already
+    // enables the lock; if no draft changed, Kotlin correctly leaves Save disabled.
+    if (settings.isDirty) {
+      expect(tester.widget<FilledButton>(save).onPressed, isNotNull);
+      await tester.tap(save);
+      await pumpUntil(
+        tester,
+        () => find.byKey(const ValueKey('sudoAuth.dialog')).evaluate().isNotEmpty,
+      );
+      await tester.enterText(find.byKey(const ValueKey('sudoAuth.pin')), pin);
+      await settle(tester);
+      await tester.tap(find.byKey(const ValueKey('sudoAuth.confirm')));
+      await waitForSave(tester);
+    } else {
+      expect(tester.widget<FilledButton>(save).onPressed, isNull);
+    }
+    expect(settings.saved.appLockEnabled, isTrue);
+    expect(settings.saved.appLockTimeoutMs, 0);
+    expect(tester.element(save).read<AppLockController>().hasStoredPin, isTrue);
   }
 
   /// Turns the lock off and saves, which also forgets the PIN.
@@ -221,13 +227,10 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('sudoAuth.confirm')));
     // Verification is another 210k PBKDF2 rounds, so wait for the dialog to go rather than guess.
     await pumpUntil(tester, () => find.byKey(const ValueKey('sudoAuth.dialog')).evaluate().isEmpty);
-    // The save that follows clears the stored PIN; "Set PIN" replacing "Change PIN" is the signal
-    // that it has actually happened rather than merely been asked for.
-    await pumpUntil(
-      tester,
-      () => find.byKey(const ValueKey('settings.changePin')).evaluate().isEmpty,
-    );
-    await settle(tester, frames: 10);
+    await waitForSave(tester);
+    final context = tester.element(find.byKey(const ValueKey('settings.save')));
+    expect(context.read<AppLockController>().hasStoredPin, isFalse);
+    expect(context.read<SettingsViewModel>().saved.appLockEnabled, isFalse);
   }
 
   testWidgets('an absence locks the app, and only the right PIN opens it', (tester) async {

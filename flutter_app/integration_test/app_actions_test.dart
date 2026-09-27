@@ -53,7 +53,7 @@ void main() {
       await tester.scrollUntilVisible(finder, 200, scrollable: find.byType(Scrollable).first);
       await tester.pumpAndSettle();
     }
-    return tester.widget<SwitchListTile>(finder).value;
+    return tester.widget<Switch>(finder).value;
   }
 
   /// Taps [key], scrolling to it first.
@@ -116,21 +116,13 @@ void main() {
   });
 
   group('settings', () {
-    testWidgets('enabling App Lock will not save without a PIN behind it', (tester) async {
-      // Defect 70's precondition, on a device. The widget-level test never saw this step: its
-      // harness had no `AppLockController`, so the lock appeared to enable with nothing behind it
-      // and the on-to-off transition it asserted was never really an on-to-off transition.
-      //
-      // The off-transition itself is **not** driven here. Once a PIN is set the lock gate can
-      // engage over the screen, and a flow that fights it is testing the harness rather than the
-      // app. That path is covered at the widget level (`settings_screen_test.dart`) and is listed
-      // in the handover as wanting a device test that handles the gate.
+    testWidgets('enabling App Lock opens PIN setup and Cancel leaves it disabled', (tester) async {
+      // Kotlin configures the PIN immediately, before any unrelated Settings drafts are saved.
       await launch(tester);
       await goTo(tester, Screen.tools);
       await tapKey(tester, 'tools.settings');
 
       await tapKey(tester, 'settings.appLockEnabled');
-      await tapKey(tester, 'settings.save');
       await tester.pumpAndSettle();
 
       expect(
@@ -144,29 +136,14 @@ void main() {
       await tapKey(tester, 'settings.pin.cancel');
       await tester.pumpAndSettle();
       expect(
-        tester.widget<SwitchListTile>(find.byKey(const ValueKey('settings.appLockEnabled'))).value,
+        tester.widget<Switch>(find.byKey(const ValueKey('settings.appLockEnabled'))).value,
         isFalse,
         reason: 'cancelling the PIN left the lock switched on with nothing behind it',
       );
     });
 
-    // NOT COVERED HERE: turning App Lock *off*, which should show the "Turn off App Lock?"
-    // confirmation (defect 70) and then re-authenticate (defect 62).
-    //
-    // Attempted and withdrawn rather than left failing. Instrumenting each step showed the flow
-    // reaching the off-save with **no dialog of any kind** and the switch already back to false:
-    //
-    //     AFTER-ON       switch=true  pinDialog=0 lockScreen=0
-    //     AFTER-OFF-SAVE off=0 sudo=0 pin=0 lock=0 switch=false
-    //
-    // So the confirmation is keyed off `vm.saved.appLockEnabled`, and by the second save that was
-    // still false — the first save set the PIN and left the *draft* on without the saved value
-    // following it. Whether that is the test driving the screen too fast or the screen genuinely
-    // not committing the preference is **not yet established**, and asserting either would be a
-    // guess. Both paths stay covered at the widget level (`settings_screen_test.dart`, `app_lock_test.dart`).
-    //
-    // Next attempt: assert `saved` directly after the first save rather than inferring it from the
-    // switch, which reflects the draft.
+    // The native phone-sized Settings actions fixture also exercises PIN configuration,
+    // authenticated saving and the confirmation/authentication order for removing the PIN.
 
     testWidgets('a changed setting is written and read back', (tester) async {
       // Settings that appear to save and do not are the quietest failure in the app: the screen

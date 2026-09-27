@@ -381,11 +381,8 @@ class _BuilderTabState extends State<BuilderTab> {
               child: CodeEditor(
                 controller: _raw,
                 language: CodeLanguage.yaml,
-                maxHighlightChars:
-                    (context.watch<AppState>().preferences.editorHighlightLimitKb * 1024).clamp(
-                      0,
-                      highlightMaxCharsCap,
-                    ),
+                maxHighlightChars: (context.watch<AppState>().preferences.editorHighlightLimitChars)
+                    .clamp(0, highlightMaxCharsCap),
                 textKey: const ValueKey('infra.builder.raw'),
                 onChanged: (_) => setState(() {}),
               ),

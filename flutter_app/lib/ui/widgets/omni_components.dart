@@ -35,9 +35,10 @@ class OmniCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final radius = BorderRadius.circular(leftAccent != null ? 4 : 10);
 
+    // Compose draws the outline over the accent without adding it to content padding.
     Widget card = Container(
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainer,
+      decoration: BoxDecoration(color: scheme.surfaceContainer, borderRadius: radius),
+      foregroundDecoration: BoxDecoration(
         borderRadius: radius,
         border: Border.all(color: scheme.outline),
       ),

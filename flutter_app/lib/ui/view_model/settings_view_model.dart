@@ -29,7 +29,30 @@ class SettingsViewModel extends ChangeNotifier {
   /// The editor's working copy.
   AppPreferences get draft => _draft;
 
-  bool get isDirty => _draft != _saved;
+  final Set<String> _invalidFields = {};
+  bool get isDirty => _draft != _saved || _invalidFields.isNotEmpty;
+  bool get isValid => _invalidFields.isEmpty;
+  bool _isSaving = false;
+  bool get isSaving => _isSaving;
+  Future<void>? _pendingSave;
+  int draftRevision = 0;
+
+  void setFieldValidity(String field, bool valid) {
+    if (valid) {
+      _invalidFields.remove(field);
+    } else {
+      _invalidFields.add(field);
+    }
+    _safeNotify();
+  }
+
+  // PIN setup persists immediately, while all unrelated edits remain staged.
+  void pinConfigured() {
+    _saved = _saved.copyWith(appLockEnabled: true);
+    _draft = _draft.copyWith(appLockEnabled: true, useBiometrics: false);
+    _app.applyPreferences(_saved);
+    _safeNotify();
+  }
 
   /// Combinations that are legal but probably not intended.
   List<String> get warnings => _draft.warnings;
@@ -61,27 +84,39 @@ class SettingsViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> save() async {
-    // Only the keys this screen owns are written, so an unrelated setting — a bookmark list, a
-    // preset toggle — is never clobbered by saving preferences.
-    for (final entry in _draft.encode().entries) {
-      await _app.repository.insertSetting(entry.key, entry.value);
-    }
-    _saved = _draft;
-    _applyImmediate(_saved);
-    _app.applyPreferences(_saved);
-    // A retention cap the user has just *lowered* has to bite now. Waiting for the next incident to
-    // archive would leave the excess in place indefinitely on a quiet fleet — and "keep the newest
-    // 20" that still shows 300 reads as the setting being broken. Kotlin prunes on save too
-    // (`AppViewModel.kt:10536`).
-    await _app.repository.pruneAlertHistoryPerServer(_saved.alertHistoryLimit);
-    _status = 'Settings saved.';
+  Future<void> save() => _pendingSave ??= _save().whenComplete(() => _pendingSave = null);
+
+  Future<void> _save() async {
+    if (!isValid) throw StateError('Correct the highlighted settings before saving.');
+    final snapshot = _draft;
+    _isSaving = true;
+    _status = null;
     _safeNotify();
+    try {
+      await _app.repository.inTransaction(() async {
+        for (final entry in snapshot.encode().entries) {
+          await _app.repository.insertSetting(entry.key, entry.value);
+        }
+        await _app.repository.pruneAlertHistoryPerServer(snapshot.alertHistoryLimit);
+      });
+      _saved = snapshot;
+      // Normalize displayed numeric drafts only after persistence, without discarding edits
+      // made while that snapshot was being saved.
+      if (_draft == snapshot) draftRevision++;
+      _applyImmediate(snapshot);
+      _app.applyPreferences(snapshot);
+      _status = 'Settings saved.';
+    } finally {
+      _isSaving = false;
+      _safeNotify();
+    }
   }
 
   /// Throws the draft away.
   void revert() {
     _draft = _saved;
+    _invalidFields.clear();
+    draftRevision++;
     _status = null;
     notifyListeners();
   }

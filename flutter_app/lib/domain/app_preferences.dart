@@ -51,28 +51,32 @@ class PreferenceLimits {
   static const telemetryInterval = PreferenceRange(5, 300, 15);
 
   /// Days of metric history kept. Zero would discard the charts entirely.
-  static const metricsRetention = PreferenceRange(1, 365, 7);
+  static const metricsRetention = PreferenceRange(1, 30, 7);
 
   /// Resolved alerts kept per host.
-  static const alertHistoryLimit = PreferenceRange(10, 1000, 100);
+  static const alertHistoryLimit = PreferenceRange(10, 100, 100);
 
-  static const terminalFontSize = PreferenceRange(8, 32, 13);
+  static const terminalFontSize = PreferenceRange(8, 28, 10);
 
   /// Terminal scrollback lines. The ceiling is a memory bound, not a preference.
-  static const terminalScrollback = PreferenceRange(500, 100000, 5000);
+  static const terminalScrollback = PreferenceRange(1000, 50000, 10000);
 
-  /// Largest file the editor will syntax-highlight, in kilobytes. Highlighting a huge file blocks
+  /// Largest file the editor will syntax-highlight, in characters (the Kotlin wire unit). Highlighting a huge file blocks
   /// the frame long enough to look like a hang.
-  static const editorHighlightLimit = PreferenceRange(16, 4096, 256);
+  // The shared database/backup key has always meant characters to Kotlin. Older experimental
+  // Flutter builds wrote KB into that same unversioned key. Do not infer a unit from magnitude:
+  // small character limits are valid too. Preserve the raw Kotlin value; preset selection writes
+  // canonical characters, including zero to disable highlighting.
+  static const editorHighlightLimit = PreferenceRange(0, 200000, 100000);
 
   /// Battery percentage below which polling backs off.
-  static const batterySaverThreshold = PreferenceRange(5, 95, 20);
+  static const batterySaverThreshold = PreferenceRange(5, 50, 20);
 
   /// How many files in one SFTP transfer before the app warns.
   static const sftpWarnFileCount = PreferenceRange(1, 10000, 50);
 
   /// How many gigabytes in one SFTP transfer before the app warns.
-  static const sftpWarnGigabytes = PreferenceRange(1, 1000, 2);
+  static const sftpWarnGigabytes = PreferenceRange(1, 9999, 1);
 
   /// Text scale, as a percentage of the system size.
   static const textScalePercent = PreferenceRange(80, 200, 92);
@@ -91,23 +95,23 @@ class AppPreferences {
     this.alertHistoryLimit = 100,
     this.keepScreenOn = false,
     this.backgroundKeepAlive = false,
-    this.batterySaverEnabled = true,
+    this.batterySaverEnabled = false,
     this.batterySaverThresholdPercent = 20,
-    this.terminalFontSize = 13,
+    this.terminalFontSize = 10,
     this.terminalTheme = 'system',
-    this.terminalScrollbackLimit = 5000,
+    this.terminalScrollbackLimit = 10000,
     this.smartSwipeInput = false,
     this.terminalLinkDetection = true,
     this.linkOpenInApp = true,
     this.tmuxControlMode = false,
-    this.editorHighlightLimitKb = 256,
+    this.editorHighlightLimitChars = 100000,
     this.appLockEnabled = false,
     this.appLockTimeoutMs = defaultAppLockBackgroundTimeoutMs,
     this.useBiometrics = false,
-    this.blockScreenshots = false,
+    this.blockScreenshots = true,
     this.hideSensitiveInfo = false,
     this.sftpWarnFileCount = 50,
-    this.sftpWarnGigabytes = 2,
+    this.sftpWarnGigabytes = 1,
   });
 
   final bool? darkMode;
@@ -131,7 +135,7 @@ class AppPreferences {
   final bool terminalLinkDetection;
   final bool linkOpenInApp;
   final bool tmuxControlMode;
-  final int editorHighlightLimitKb;
+  final int editorHighlightLimitChars;
 
   final bool appLockEnabled;
 
@@ -243,7 +247,7 @@ class AppPreferences {
       terminalLinkDetection: flag('linkDetection', fallback: defaults.terminalLinkDetection),
       linkOpenInApp: flag('linkOpenInApp', fallback: defaults.linkOpenInApp),
       tmuxControlMode: flag('tmuxControlMode', fallback: defaults.tmuxControlMode),
-      editorHighlightLimitKb: PreferenceLimits.editorHighlightLimit.parse(
+      editorHighlightLimitChars: PreferenceLimits.editorHighlightLimit.parse(
         settings[keys['editorHighlightLimit']],
       ),
       appLockEnabled: flag('appLockEnabled', fallback: defaults.appLockEnabled),
@@ -262,7 +266,7 @@ class AppPreferences {
 
   /// The rows to write. Only what this screen owns — nothing else in `app_settings` is touched.
   Map<String, String> encode() => {
-    if (darkMode != null) keys['darkMode']!: '$darkMode',
+    keys['darkMode']!: darkMode?.toString() ?? '',
     keys['amoled']!: '$amoled',
     keys['textScale']!: switch (textScalePercent) {
       80 => 'small',
@@ -286,7 +290,7 @@ class AppPreferences {
     keys['linkDetection']!: '$terminalLinkDetection',
     keys['linkOpenInApp']!: '$linkOpenInApp',
     keys['tmuxControlMode']!: '$tmuxControlMode',
-    keys['editorHighlightLimit']!: '$editorHighlightLimitKb',
+    keys['editorHighlightLimit']!: '$editorHighlightLimitChars',
     keys['appLockEnabled']!: '$appLockEnabled',
     keys['appLockTimeout']!: '$appLockTimeoutMs',
     keys['biometrics']!: '$useBiometrics',
@@ -317,7 +321,7 @@ class AppPreferences {
     bool? terminalLinkDetection,
     bool? linkOpenInApp,
     bool? tmuxControlMode,
-    int? editorHighlightLimitKb,
+    int? editorHighlightLimitChars,
     bool? appLockEnabled,
     int? appLockTimeoutMs,
     bool? useBiometrics,
@@ -345,7 +349,7 @@ class AppPreferences {
     terminalLinkDetection: terminalLinkDetection ?? this.terminalLinkDetection,
     linkOpenInApp: linkOpenInApp ?? this.linkOpenInApp,
     tmuxControlMode: tmuxControlMode ?? this.tmuxControlMode,
-    editorHighlightLimitKb: editorHighlightLimitKb ?? this.editorHighlightLimitKb,
+    editorHighlightLimitChars: editorHighlightLimitChars ?? this.editorHighlightLimitChars,
     appLockEnabled: appLockEnabled ?? this.appLockEnabled,
     appLockTimeoutMs: appLockTimeoutMs ?? this.appLockTimeoutMs,
     useBiometrics: useBiometrics ?? this.useBiometrics,

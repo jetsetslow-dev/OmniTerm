@@ -26,7 +26,7 @@ import '../../widgets/omni_components.dart';
 /// Three states: nothing to connect to, a host waiting for a connection, and a live terminal. The
 /// screen never shows an empty black rectangle that looks like a working shell — every state says
 /// what it is.
-class ShellScreen extends StatelessWidget {
+class ShellScreen extends StatefulWidget {
   const ShellScreen({super.key, this.licenseController, this.compactIme = false});
 
   /// Computed above Scaffold, which removes the IME inset from its resized body.
@@ -35,7 +35,18 @@ class ShellScreen extends StatelessWidget {
   final LicenseController? licenseController;
 
   @override
+  State<ShellScreen> createState() => _ShellScreenState();
+}
+
+class _ShellScreenState extends State<ShellScreen> {
+  // Android can briefly report a tiny viewport during rotation. Moving the content into
+  // the overflow wrapper must preserve the same terminal input and viewport.
+  final _contentsKey = GlobalKey();
+
+  @override
   Widget build(BuildContext context) {
+    final compactIme = widget.compactIme;
+    final licenseController = widget.licenseController;
     final vm = context.watch<ShellViewModel>();
     final session = vm.current;
     final palette = terminalPaletteFor(context, vm.preferences.terminalTheme);
@@ -45,6 +56,7 @@ class ShellScreen extends StatelessWidget {
       child: LayoutBuilder(
         builder: (context, constraints) {
           final contents = Column(
+            key: _contentsKey,
             children: [
               if (!compactIme && (vm.sessions.isNotEmpty || session != null)) _SessionBar(vm: vm),
               if (vm.isLeavingSessions) ...[

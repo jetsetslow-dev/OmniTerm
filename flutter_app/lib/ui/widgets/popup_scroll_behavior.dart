@@ -3,11 +3,13 @@ import 'package:flutter/material.dart';
 /// Give every dialog and modal sheet scroll viewport a persistent overflow cue.
 /// Uses that viewport's own controller, never a shared primary controller.
 class PopupScrollBehavior extends MaterialScrollBehavior {
-  const PopupScrollBehavior();
+  const PopupScrollBehavior({this.popupsOnly = true});
+
+  final bool popupsOnly;
 
   @override
   Widget buildScrollbar(BuildContext context, Widget child, ScrollableDetails details) {
-    if (ModalRoute.of(context) is! PopupRoute) {
+    if (popupsOnly && ModalRoute.of(context) is! PopupRoute) {
       return super.buildScrollbar(context, child, details);
     }
     return _PopupOverflow(
@@ -77,17 +79,17 @@ class _PopupOverflowState extends State<_PopupOverflow> {
     return Positioned(
       top: direction == AxisDirection.up ? 0 : null,
       bottom: direction == AxisDirection.up ? null : 0,
-      left: direction == AxisDirection.left ? 4 : null,
-      right: direction == AxisDirection.left ? null : 4,
+      left: direction == AxisDirection.left ? 0 : null,
+      right: direction == AxisDirection.left ? null : 0,
       child: IgnorePointer(
         child: Material(
           color: Theme.of(context).colorScheme.secondaryContainer,
-          borderRadius: BorderRadius.circular(8),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            padding: const EdgeInsets.all(4),
             child: Text(
               label,
               style: TextStyle(
+                inherit: false,
                 fontSize: 12,
                 color: Theme.of(context).colorScheme.onSecondaryContainer,
               ),

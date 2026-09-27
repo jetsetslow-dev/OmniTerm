@@ -25,9 +25,9 @@ Future<bool> requestSudoAuth(
 }) async {
   final result = await showDialog<bool>(
     context: context,
-    // Not dismissible by tapping outside: this is a security prompt, and an accidental dismissal
-    // that silently cancelled a reboot would read as the app ignoring the button.
-    barrierDismissible: false,
+    // Settings follows Kotlin's dismissible confirmation. Keep system operations modal so an
+    // accidental outside tap does not silently cancel a reboot or other requested action.
+    barrierDismissible: title == 'Authenticate to save settings',
     builder: (_) => _SudoAuthDialog(controller: controller, title: title),
   );
   return result ?? false;
@@ -123,7 +123,9 @@ class _SudoAuthDialogState extends State<_SudoAuthDialog> {
               key: const ValueKey('sudoAuth.pin'),
               controller: _pin,
               enabled: !_busy,
-              autofocus: !widget.controller.canUseBiometrics,
+              autofocus:
+                  widget.title != 'Authenticate to save settings' &&
+                  !widget.controller.canUseBiometrics,
               obscureText: true,
               keyboardType: TextInputType.number,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
@@ -136,6 +138,7 @@ class _SudoAuthDialogState extends State<_SudoAuthDialog> {
               'Use your biometric prompt to continue.',
               style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
+          if (_busy) const LinearProgressIndicator(),
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(top: 4),

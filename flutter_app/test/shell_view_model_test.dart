@@ -403,7 +403,7 @@ void main() {
 
       await vm.connect(vm.server!);
       final session = vm.current!;
-      for (var i = 0; i < 700; i++) {
+      for (var i = 0; i < PreferenceLimits.terminalScrollback.min + 200; i++) {
         transport.opened.last.emit('line \$i\r\n');
       }
       await Future<void>.delayed(const Duration(milliseconds: 40));

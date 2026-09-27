@@ -7,12 +7,16 @@ import 'package:provider/provider.dart';
 
 import '../../../domain/app_lock_timeout_policy.dart';
 import '../../../domain/app_preferences.dart';
+import '../../navigation.dart';
+import '../../theme/typography.dart';
+import '../../theme/text_scaling.dart';
 import '../../../domain/platform_settings.dart';
 import '../../widgets/sudo_auth_dialog.dart';
 import '../../theme/colors.dart';
 import '../../view_model/app_lock_controller.dart';
 import '../../view_model/settings_view_model.dart';
 import '../../widgets/omni_components.dart';
+import '../../widgets/popup_scroll_behavior.dart';
 
 /// The Settings tool, ported from `SettingsToolView` in `ui/ToolsScreen.kt`.
 ///
@@ -30,6 +34,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _biometricBusy = false;
   bool _saving = false;
   bool _persisting = false;
+  // A successful preferences write can precede a failed PIN cleanup. Keep that remaining
+  // operation across Retry save, even though the saved lock-enabled preference is already false.
+  bool _pendingPinRemoval = false;
   String? _saveError;
   String? _biometricMessage;
 
@@ -40,6 +47,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   /// preset — recomputing from the value alone would snap to that preset and take the text field
   /// away mid-edit, which is the Kotlin bug fixed in its PR #62.
   AppLockTimeoutDraft? _lockTimeout;
+  int _seenDraftRevision = 0;
 
   /// Owned by the State, not rebuilt per frame: a controller created inside `build` throws away the
   /// selection on every keystroke, so the caret jumps to the start as you type.
@@ -58,6 +66,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   void _applyLockTimeout(SettingsViewModel vm, AppLockTimeoutDraft updated) {
     setState(() => _lockTimeout = updated);
+    vm.setFieldValidity('appLockTimeout', !vm.draft.appLockEnabled || updated.isValid);
     vm.update((p) => p.copyWith(appLockTimeoutMs: updated.timeoutMs));
   }
 
@@ -79,313 +88,517 @@ class _SettingsScreenState extends State<SettingsScreen> {
   Widget build(BuildContext context) {
     final vm = context.watch<SettingsViewModel>();
     final draft = vm.draft;
+    if (_seenDraftRevision != vm.draftRevision) {
+      _seenDraftRevision = vm.draftRevision;
+      _lockTimeout = null;
+    }
     // True where the lock controller is absent (tests, and any build without one): the option then
     // behaves exactly as it did before this check existed.
     final biometricsAvailable = context.watch<AppLockController?>()?.biometricsAvailable ?? true;
 
-    return Stack(
-      children: [
-        ListView(
-          key: const ValueKey('settings.list'),
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 96),
-          children: [
-            if (vm.status != null && !_saving && _saveError == null) _StatusCard(vm: vm),
-            if (_saveError != null)
-              Text(
-                _saveError!,
-                key: const ValueKey('settings.save.error'),
-                style: const TextStyle(color: OmniColors.red),
-              ),
-            if (_persisting) const LinearProgressIndicator(key: ValueKey('settings.save.progress')),
-            for (final warning in vm.warnings)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Row(
-                  key: ValueKey('settings.warning.${vm.warnings.indexOf(warning)}'),
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Icon(Icons.info_outline, size: 14, color: OmniColors.amber),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        warning,
-                        style: const TextStyle(fontSize: 11, color: OmniColors.amber),
+    return DefaultTextStyle.merge(
+      style: const TextStyle(fontSize: 16, height: 1.5, letterSpacing: .5),
+      child: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(4),
+            child: Row(
+              children: [
+                IconButton(
+                  key: const ValueKey('settings.back'),
+                  tooltip: 'Back',
+                  onPressed: () => context.read<NavigationController>().navigateTo(Screen.tools),
+                  icon: const Icon(Icons.arrow_back),
+                ),
+                const SizedBox(width: 4),
+                const Expanded(
+                  child: Text(
+                    'App settings',
+                    style: TextStyle(
+                      fontFamily: OmniFonts.display,
+                      fontSize: 18,
+                      height: 24 / 18,
+                      fontWeight: FontWeight.normal,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Column(
+                children: [
+                  Expanded(
+                    child: ScrollConfiguration(
+                      behavior: const PopupScrollBehavior(popupsOnly: false),
+                      child: ListView(
+                        key: const ValueKey('settings.list'),
+                        padding: EdgeInsets.zero,
+                        children: [
+                          if (vm.status != null && !_saving && _saveError == null)
+                            _StatusCard(vm: vm),
+                          if (_saveError != null)
+                            Text(
+                              _saveError!,
+                              key: const ValueKey('settings.save.error'),
+                              style: const TextStyle(color: OmniColors.red),
+                            ),
+                          if (_persisting)
+                            const LinearProgressIndicator(key: ValueKey('settings.save.progress')),
+                          _SettingsCard(
+                            title: 'Security gate app lock',
+                            subtitle: 'Require a PIN or biometrics at startup and after time away.',
+                            accent: OmniColors.cyan,
+                            children: [
+                              _Switch(
+                                settingKey: 'appLockEnabled',
+                                title: 'Require PIN to unlock',
+                                value: draft.appLockEnabled,
+                                onChanged: (v) => _setAppLock(context, vm, v),
+                              ),
+                              if (draft.appLockEnabled) ...[
+                                _Switch(
+                                  settingKey: 'biometrics',
+                                  title: 'Unlock with biometrics',
+                                  subtitle: _biometricBusy
+                                      ? 'Waiting for biometric verification…'
+                                      : biometricsAvailable
+                                      ? null
+                                      : 'Set up a strong biometric in your phone settings first',
+                                  value: draft.useBiometrics && biometricsAvailable,
+                                  enabled: biometricsAvailable && !_biometricBusy,
+                                  onChanged: (v) => _setBiometrics(context, vm, v),
+                                ),
+                                if (_biometricBusy) const LinearProgressIndicator(),
+                                if (_biometricMessage != null)
+                                  Text(
+                                    _biometricMessage!,
+                                    key: const ValueKey('settings.biometricMessage'),
+                                  ),
+                                TextButton(
+                                  key: const ValueKey('settings.changePin'),
+                                  onPressed: () {
+                                    final lock = context.read<AppLockController?>();
+                                    if (lock != null) _changePin(context, lock);
+                                  },
+                                  child: const Text('Change PIN'),
+                                ),
+                                _lockTimeoutSection(context, vm, draft),
+                              ],
+                              _Switch(
+                                settingKey: 'blockScreenshots',
+                                title: 'Block screenshots',
+                                subtitle:
+                                    'Hides terminals and credentials from screenshots and the app switcher.',
+                                value: draft.blockScreenshots,
+                                onChanged: (v) => vm.update((p) => p.copyWith(blockScreenshots: v)),
+                              ),
+                              const SizedBox(height: 12),
+                              _Switch(
+                                settingKey: 'hideSensitiveInfo',
+                                title: 'Hide sensitive info',
+                                subtitle:
+                                    'Replaces IPs/hostnames with host names across the app — safe for screenshots and screen shares.',
+                                value: draft.hideSensitiveInfo,
+                                onChanged: (v) =>
+                                    vm.update((p) => p.copyWith(hideSensitiveInfo: v)),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          _SettingsCard(
+                            title: 'Display Behavior',
+                            subtitle: 'App appearance, refresh cadence, and screen power.',
+                            accent: OmniColors.green,
+                            gap: 10,
+                            headerGap: 0,
+                            children: [
+                              _SettingRow(
+                                title: 'Measurement system',
+                                subtitle:
+                                    'Applies to temperatures and other physical measurements throughout the app.',
+                                control: _SettingChips<MeasurementSystem>(
+                                  settingKey: 'measurementSystem',
+                                  value: draft.measurementSystem,
+                                  spacing: 6,
+                                  options: {
+                                    MeasurementSystem.metric: 'Metric',
+                                    MeasurementSystem.imperial: 'Imperial',
+                                  },
+                                  onChanged: (v) =>
+                                      vm.update((p) => p.copyWith(measurementSystem: v)),
+                                ),
+                              ),
+                              _Switch(
+                                settingKey: 'keepScreenOn',
+                                title: 'Keep device screen always on',
+                                value: draft.keepScreenOn,
+                                onChanged: (v) => vm.update((p) => p.copyWith(keepScreenOn: v)),
+                              ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  _Switch(
+                                    settingKey: 'batterySaverEnabled',
+                                    title: 'Low-battery saver',
+                                    subtitle:
+                                        'Below the threshold (unplugged): turn off keep-screen-on, pause '
+                                        'auto-refresh, and park tmux terminals resumably. Resumes on '
+                                        'charge, recovery, or pull-to-refresh.',
+                                    subtitleSize: 10,
+                                    value: draft.batterySaverEnabled,
+                                    onChanged: (v) =>
+                                        vm.update((p) => p.copyWith(batterySaverEnabled: v)),
+                                  ),
+                                  if (draft.batterySaverEnabled) ...[
+                                    const SizedBox(height: 6),
+                                    Text(
+                                      'Engage below: ${draft.batterySaverThresholdPercent}%',
+                                      style: const TextStyle(fontSize: 12, height: 24 / 12),
+                                    ),
+                                    _SettingChips<int>(
+                                      settingKey: 'batterySaverThreshold',
+                                      value: draft.batterySaverThresholdPercent,
+                                      fontSize: 12,
+                                      options: const {10: '10%', 15: '15%', 20: '20%', 30: '30%'},
+                                      onChanged: (v) => vm.update(
+                                        (p) => p.copyWith(batterySaverThresholdPercent: v),
+                                      ),
+                                    ),
+                                  ],
+                                ],
+                              ),
+                              _SettingRow(
+                                title: 'Auto-refresh interval',
+                                subtitle: 'How often host metrics refresh',
+                                control: _SettingMenu<int>(
+                                  settingKey: 'telemetryInterval',
+                                  label: '${draft.telemetryIntervalSeconds}s',
+                                  options: const {
+                                    5: '5s',
+                                    10: '10s',
+                                    15: '15s',
+                                    30: '30s',
+                                    60: '60s',
+                                    120: '120s',
+                                  },
+                                  onChanged: (v) =>
+                                      vm.update((p) => p.copyWith(telemetryIntervalSeconds: v)),
+                                ),
+                              ),
+                              _SettingRow(
+                                title: 'Theme App Appearance',
+                                subtitle: 'Use system or override',
+                                control: _SettingMenu<bool?>(
+                                  settingKey: 'darkMode',
+                                  label: switch (draft.darkMode) {
+                                    true => 'Dark',
+                                    false => 'Light',
+                                    null => 'System',
+                                  },
+                                  options: const {
+                                    null: 'System Default',
+                                    true: 'Dark Theme',
+                                    false: 'Light Theme',
+                                  },
+                                  onChanged: (v) => vm.update(
+                                    (p) => p.copyWith(darkMode: v, clearDarkMode: v == null),
+                                  ),
+                                ),
+                              ),
+                              _Switch(
+                                settingKey: 'amoled',
+                                title: 'AMOLED black',
+                                subtitle:
+                                    'Pure-black surfaces in dark mode to save power on OLED screens. No effect in Light or High-contrast mode.',
+                                subtitleSize: 10,
+                                value: draft.amoled,
+                                enabled: draft.darkMode != false,
+                                onChanged: (v) => vm.update((p) => p.copyWith(amoled: v)),
+                              ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Editor syntax highlighting',
+                                    style: TextStyle(fontWeight: FontWeight.bold),
+                                  ),
+                                  _settingDetail(
+                                    context,
+                                    'Max file size to colourise in the code editor (SFTP files, Compose YAML). '
+                                    'Lower it if editing large files feels slow; "Off" disables highlighting.',
+                                  ),
+                                  const SizedBox(height: 6),
+                                  _SettingChips<int>(
+                                    settingKey: 'editorHighlightLimit',
+                                    value: draft.editorHighlightLimitChars,
+                                    options: const {
+                                      0: 'Off',
+                                      50000: '50 KB',
+                                      100000: '100 KB',
+                                      200000: 'Max',
+                                    },
+                                    onChanged: (v) =>
+                                        vm.update((p) => p.copyWith(editorHighlightLimitChars: v)),
+                                  ),
+                                ],
+                              ),
+                              _Switch(
+                                settingKey: 'accessibility',
+                                title: 'High-contrast mode',
+                                subtitle:
+                                    'Stronger colors and borders for better readability. Applies on top of your Dark/Light theme.',
+                                subtitleSize: 10,
+                                value: draft.accessibility,
+                                onChanged: (v) => vm.update((p) => p.copyWith(accessibility: v)),
+                              ),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'Text size',
+                                    style: TextStyle(fontWeight: FontWeight.bold),
+                                  ),
+                                  _settingDetail(context, 'Scales text across all screens.'),
+                                  const SizedBox(height: 6),
+                                  _SettingChips<int>(
+                                    settingKey: 'textScale',
+                                    value: draft.textScalePercent,
+                                    options: const {80: 'Small', 92: 'Default', 110: 'Large'},
+                                    onChanged: (v) =>
+                                        vm.update((p) => p.copyWith(textScalePercent: v)),
+                                  ),
+                                ],
+                              ),
+                              _Switch(
+                                settingKey: 'backgroundKeepAlive',
+                                title: 'Keep sessions alive in background',
+                                subtitle: 'Maintain active SSH/SFTP sessions when app is minimized',
+                                subtitleSize: 10,
+                                value: draft.backgroundKeepAlive,
+                                onChanged: (v) =>
+                                    vm.update((p) => p.copyWith(backgroundKeepAlive: v)),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          _SettingsCard(
+                            title: 'Metrics Data Pruning',
+                            subtitle: 'Pruning metric history logs prevents database overflow.',
+                            accent: OmniColors.amber,
+                            children: [
+                              Text('Retention Window: ${draft.metricsRetentionDays} days'),
+                              _SettingSlider(
+                                settingKey: 'metricsRetention',
+                                value: draft.metricsRetentionDays,
+                                min: 1,
+                                max: 30,
+                                divisions: 29,
+                                onChanged: (v) =>
+                                    vm.update((p) => p.copyWith(metricsRetentionDays: v)),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          _SettingsCard(
+                            title: 'Terminal',
+                            subtitle: 'Persistent terminal display preferences.',
+                            accent: OmniColors.purple,
+                            gap: 10,
+                            children: [
+                              Text(
+                                'Font size: ${draft.terminalFontSize}sp',
+                                style: const TextStyle(fontSize: 12, height: 24 / 12),
+                              ),
+                              _SettingSlider(
+                                settingKey: 'terminalFontSize',
+                                value: draft.terminalFontSize,
+                                min: 8,
+                                max: 28,
+                                divisions: 20,
+                                onChanged: (v) => vm.update((p) => p.copyWith(terminalFontSize: v)),
+                              ),
+                              const Text(
+                                'Theme',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  height: 24 / 12,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              _SettingChips<String>(
+                                settingKey: 'terminalTheme',
+                                value: draft.terminalTheme,
+                                options: terminalThemes,
+                                fontSize: 11,
+                                onChanged: (v) => vm.update((p) => p.copyWith(terminalTheme: v)),
+                              ),
+                              Text(
+                                'Scrollback: ${draft.terminalScrollbackLimit ~/ 1000}k lines',
+                                style: const TextStyle(fontSize: 12, height: 24 / 12),
+                              ),
+                              _SettingSlider(
+                                settingKey: 'terminalScrollback',
+                                value: draft.terminalScrollbackLimit,
+                                min: 1000,
+                                max: 50000,
+                                divisions: 49,
+                                onChanged: (v) =>
+                                    vm.update((p) => p.copyWith(terminalScrollbackLimit: v)),
+                              ),
+                              _settingDetail(
+                                context,
+                                'Applies to new terminal sessions. Existing sessions keep their current buffer.',
+                                size: 10,
+                              ),
+                              const SizedBox(height: 8),
+                              _Switch(
+                                settingKey: 'smartSwipe',
+                                title: 'Smart swipe input',
+                                trailingGap: 12,
+                                subtitle:
+                                    "Lets gesture keyboards correct each swiped word before it's sent. "
+                                    'Turn off to disable swipe-typing and accept strict, literal '
+                                    'keystrokes like a password field (no autocorrect or suggestions).',
+                                value: draft.smartSwipeInput,
+                                onChanged: (v) => vm.update((p) => p.copyWith(smartSwipeInput: v)),
+                              ),
+                              _Switch(
+                                settingKey: 'tmuxControlMode',
+                                title: 'tmux control mode (experimental)',
+                                trailingGap: 12,
+                                subtitle:
+                                    "Persistent sessions attach with tmux's control protocol "
+                                    '(what iTerm2 uses): every output byte is streamed, so '
+                                    'scroll history is always complete — nothing is skipped '
+                                    "while you're not watching. Split panes made inside tmux "
+                                    "aren't rendered. Applies to newly opened sessions.",
+                                value: draft.tmuxControlMode,
+                                onChanged: (v) => vm.update((p) => p.copyWith(tmuxControlMode: v)),
+                              ),
+                              _Switch(
+                                settingKey: 'linkDetection',
+                                title: 'Tap-to-open links',
+                                trailingGap: 12,
+                                subtitle:
+                                    'Detect URLs in terminal output (including lines wrapped across '
+                                    'rows) and open them on tap. Best-effort pattern matching — '
+                                    'turn off if taps misfire on unusual output.',
+                                value: draft.terminalLinkDetection,
+                                onChanged: (v) =>
+                                    vm.update((p) => p.copyWith(terminalLinkDetection: v)),
+                              ),
+                              _Switch(
+                                settingKey: 'linkOpenInApp',
+                                title: 'Open links in-app',
+                                trailingGap: 12,
+                                subtitle:
+                                    'Tapped links open in an in-app browser tab (back returns '
+                                    'straight to the terminal). Turn off to hand links to your '
+                                    'external browser app instead.',
+                                value: draft.linkOpenInApp,
+                                enabled: draft.terminalLinkDetection,
+                                onChanged: (v) => vm.update((p) => p.copyWith(linkOpenInApp: v)),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          _SettingsCard(
+                            title: 'Alert History',
+                            subtitle:
+                                'Keep the newest acknowledged, muted, and resolved incidents per host.',
+                            accent: OmniColors.red,
+                            children: [
+                              Text('History entries per host: ${draft.alertHistoryLimit}'),
+                              _SettingSlider(
+                                settingKey: 'alertHistoryLimit',
+                                value: draft.alertHistoryLimit,
+                                min: 10,
+                                max: 100,
+                                divisions: 9,
+                                onChanged: (v) =>
+                                    vm.update((p) => p.copyWith(alertHistoryLimit: v)),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 16),
+                          _SettingsCard(
+                            title: 'SFTP Transfer Warnings',
+                            subtitle: 'Warn before large multi-file uploads or downloads.',
+                            accent: OmniColors.cyan,
+                            gap: 10,
+                            children: [
+                              _SettingNumber(
+                                key: ValueKey('sftpWarnFileCount.${vm.draftRevision}'),
+                                settingKey: 'sftpWarnFileCount',
+                                onValid: (valid) => vm.setFieldValidity('sftpWarnFileCount', valid),
+                                label: 'Warn at file count',
+                                value: draft.sftpWarnFileCount,
+                                digits: 5,
+                                onChanged: (v) =>
+                                    vm.update((p) => p.copyWith(sftpWarnFileCount: v)),
+                              ),
+                              _SettingNumber(
+                                key: ValueKey('sftpWarnGigabytes.${vm.draftRevision}'),
+                                settingKey: 'sftpWarnGigabytes',
+                                onValid: (valid) => vm.setFieldValidity('sftpWarnGigabytes', valid),
+                                label: 'Warn at total download size (GB)',
+                                value: draft.sftpWarnGigabytes,
+                                digits: 4,
+                                onChanged: (v) =>
+                                    vm.update((p) => p.copyWith(sftpWarnGigabytes: v)),
+                              ),
+                            ],
+                          ),
+                        ],
                       ),
                     ),
-                  ],
-                ),
-              ),
-
-            const SectionHeader(title: 'Appearance'),
-            _Choice<bool?>(
-              settingKey: 'darkMode',
-              title: 'Theme',
-              value: draft.darkMode,
-              options: const {null: 'System Default', true: 'Dark Theme', false: 'Light Theme'},
-              onChanged: (v) => vm.update((p) => p.copyWith(darkMode: v, clearDarkMode: v == null)),
-            ),
-            _Switch(
-              settingKey: 'amoled',
-              title: 'AMOLED black',
-              subtitle: 'True black backgrounds, which save power on OLED screens',
-              value: draft.amoled,
-              // Kotlin: `enabled = draftDark != false`. The toggle is available whenever the
-              // theme is Dark or System Default — the user should be able to pre-enable AMOLED
-              // for when night mode turns on, even if the device is currently in light mode.
-              enabled: draft.darkMode != false,
-              onChanged: (v) => vm.update((p) => p.copyWith(amoled: v)),
-            ),
-            _Switch(
-              settingKey: 'accessibility',
-              title: 'High contrast mode',
-              subtitle: 'Stronger colors and borders for better visibility',
-              value: draft.accessibility,
-              onChanged: (v) => vm.update((p) => p.copyWith(accessibility: v)),
-            ),
-            _Stepper(
-              settingKey: 'textScale',
-              title: 'Text size',
-              suffix: '%',
-              value: draft.textScalePercent,
-              limits: PreferenceLimits.textScalePercent,
-              step: 10,
-              onChanged: (v) => vm.update((p) => p.copyWith(textScalePercent: v)),
-            ),
-            _Choice<MeasurementSystem>(
-              settingKey: 'measurementSystem',
-              title: 'Units',
-              value: draft.measurementSystem,
-              options: {for (final system in MeasurementSystem.values) system: system.label},
-              onChanged: (v) => vm.update((p) => p.copyWith(measurementSystem: v)),
-            ),
-
-            const SectionHeader(title: 'Monitoring'),
-            _Stepper(
-              settingKey: 'telemetryInterval',
-              title: 'Poll every',
-              suffix: 's',
-              value: draft.telemetryIntervalSeconds,
-              limits: PreferenceLimits.telemetryInterval,
-              step: 5,
-              onChanged: (v) => vm.update((p) => p.copyWith(telemetryIntervalSeconds: v)),
-            ),
-            _Stepper(
-              settingKey: 'metricsRetention',
-              title: 'Keep metrics for',
-              suffix: ' days',
-              value: draft.metricsRetentionDays,
-              limits: PreferenceLimits.metricsRetention,
-              step: 1,
-              onChanged: (v) => vm.update((p) => p.copyWith(metricsRetentionDays: v)),
-            ),
-            _Stepper(
-              settingKey: 'alertHistoryLimit',
-              title: 'Alert history per host',
-              value: draft.alertHistoryLimit,
-              limits: PreferenceLimits.alertHistoryLimit,
-              step: 10,
-              onChanged: (v) => vm.update((p) => p.copyWith(alertHistoryLimit: v)),
-            ),
-            _Switch(
-              settingKey: 'backgroundKeepAlive',
-              title: 'Keep polling in the background',
-              subtitle: 'Uses more battery, and the system may still stop it',
-              value: draft.backgroundKeepAlive,
-              onChanged: (v) => vm.update((p) => p.copyWith(backgroundKeepAlive: v)),
-            ),
-            _Switch(
-              settingKey: 'batterySaverEnabled',
-              title: 'Back off on low battery',
-              value: draft.batterySaverEnabled,
-              onChanged: (v) => vm.update((p) => p.copyWith(batterySaverEnabled: v)),
-            ),
-            if (draft.batterySaverEnabled)
-              _Stepper(
-                settingKey: 'batterySaverThreshold',
-                title: 'Back off below',
-                suffix: '%',
-                value: draft.batterySaverThresholdPercent,
-                limits: PreferenceLimits.batterySaverThreshold,
-                step: 5,
-                onChanged: (v) => vm.update((p) => p.copyWith(batterySaverThresholdPercent: v)),
-              ),
-
-            const SectionHeader(title: 'Terminal'),
-            _Stepper(
-              settingKey: 'terminalFontSize',
-              title: 'Font size',
-              value: draft.terminalFontSize,
-              limits: PreferenceLimits.terminalFontSize,
-              step: 1,
-              onChanged: (v) => vm.update((p) => p.copyWith(terminalFontSize: v)),
-            ),
-            _Choice<String>(
-              settingKey: 'terminalTheme',
-              title: 'Colour scheme',
-              value: draft.terminalTheme,
-              options: terminalThemes,
-              onChanged: (v) => vm.update((p) => p.copyWith(terminalTheme: v)),
-            ),
-            _Stepper(
-              settingKey: 'terminalScrollbackLimit',
-              title: 'Scrollback lines',
-              subtitle: 'Higher uses more memory; the cap is a device limit, not a preference',
-              value: draft.terminalScrollbackLimit,
-              limits: PreferenceLimits.terminalScrollback,
-              step: 500,
-              onChanged: (v) => vm.update((p) => p.copyWith(terminalScrollbackLimit: v)),
-            ),
-            _Switch(
-              settingKey: 'smartSwipe',
-              title: 'Swipe gestures for keys',
-              value: draft.smartSwipeInput,
-              onChanged: (v) => vm.update((p) => p.copyWith(smartSwipeInput: v)),
-            ),
-            _Switch(
-              settingKey: 'linkDetection',
-              title: 'Detect links in output',
-              value: draft.terminalLinkDetection,
-              onChanged: (v) => vm.update((p) => p.copyWith(terminalLinkDetection: v)),
-            ),
-            _Switch(
-              settingKey: 'linkOpenInApp',
-              title: 'Open links in the app',
-              value: draft.linkOpenInApp,
-              enabled: draft.terminalLinkDetection,
-              onChanged: (v) => vm.update((p) => p.copyWith(linkOpenInApp: v)),
-            ),
-            _Switch(
-              settingKey: 'tmuxControlMode',
-              title: 'tmux control mode',
-              subtitle: 'Renders tmux windows natively where the host supports it',
-              value: draft.tmuxControlMode,
-              onChanged: (v) => vm.update((p) => p.copyWith(tmuxControlMode: v)),
-            ),
-            _Stepper(
-              settingKey: 'editorHighlightLimit',
-              title: 'Highlight files up to',
-              suffix: ' KB',
-              subtitle:
-                  'Highlighting a large file blocks the frame long enough to look like a hang',
-              value: draft.editorHighlightLimitKb,
-              limits: PreferenceLimits.editorHighlightLimit,
-              step: 64,
-              onChanged: (v) => vm.update((p) => p.copyWith(editorHighlightLimitKb: v)),
-            ),
-
-            const SectionHeader(title: 'Privacy and security'),
-            _Switch(
-              settingKey: 'appLockEnabled',
-              title: 'Lock the app',
-              subtitle: 'Requires a PIN when the app is reopened',
-              value: draft.appLockEnabled,
-              onChanged: (v) => vm.update((p) => p.copyWith(appLockEnabled: v)),
-            ),
-            _Switch(
-              settingKey: 'biometrics',
-              title: 'Unlock with biometrics',
-              // Says which of the two reasons it is off, because "enable the lock first" and "this
-              // device has nothing enrolled" need different actions from the user.
-              subtitle: _biometricBusy
-                  ? 'Waiting for biometric verification…'
-                  : biometricsAvailable
-                  ? null
-                  : 'Set up a strong biometric in your phone settings first',
-              value: draft.useBiometrics && biometricsAvailable,
-              enabled: draft.appLockEnabled && biometricsAvailable && !_biometricBusy,
-              onChanged: (v) => _setBiometrics(context, vm, v),
-            ),
-            if (_biometricBusy) const LinearProgressIndicator(),
-            if (_biometricMessage != null)
-              Text(_biometricMessage!, key: const ValueKey('settings.biometricMessage')),
-            _lockTimeoutSection(context, vm, draft),
-            _Switch(
-              settingKey: 'blockScreenshots',
-              title: 'Block screenshots',
-              // Accurate on both platforms rather than flattering on one: Android blocks
-              // screenshots outright, iOS cannot and only covers the app-switcher preview.
-              subtitle:
-                  'Hides the app in the recent-apps preview. Screenshots are blocked on '
-                  'Android; iOS does not allow that.',
-              value: draft.blockScreenshots,
-              onChanged: (v) => vm.update((p) => p.copyWith(blockScreenshots: v)),
-            ),
-            _Switch(
-              settingKey: 'hideSensitiveInfo',
-              title: 'Hide addresses',
-              // Naming the situation this is for, since the setting reads as vague otherwise.
-              subtitle: 'Masks host addresses on screen — useful when sharing a screen or a photo',
-              value: draft.hideSensitiveInfo,
-              onChanged: (v) => vm.update((p) => p.copyWith(hideSensitiveInfo: v)),
-            ),
-
-            const SectionHeader(title: 'File transfers'),
-            _Stepper(
-              settingKey: 'sftpWarnFileCount',
-              title: 'Warn above',
-              suffix: ' files',
-              value: draft.sftpWarnFileCount,
-              limits: PreferenceLimits.sftpWarnFileCount,
-              step: 10,
-              onChanged: (v) => vm.update((p) => p.copyWith(sftpWarnFileCount: v)),
-            ),
-            _Stepper(
-              settingKey: 'sftpWarnGigabytes',
-              title: 'Warn above',
-              suffix: ' GB',
-              value: draft.sftpWarnGigabytes,
-              limits: PreferenceLimits.sftpWarnGigabytes,
-              step: 1,
-              onChanged: (v) => vm.update((p) => p.copyWith(sftpWarnGigabytes: v)),
-            ),
-
-            const SizedBox(height: 16),
-            TextButton(
-              key: const ValueKey('settings.reset'),
-              onPressed: () => _confirmReset(context, vm),
-              child: const Text('Reset all settings', style: TextStyle(fontSize: 12)),
-            ),
-          ],
-        ),
-        Positioned(
-          left: 12,
-          right: 12,
-          bottom: 12,
-          child: Row(
-            children: [
-              if (vm.isDirty) ...[
-                Expanded(
-                  child: OutlinedButton(
-                    key: const ValueKey('settings.revert'),
-                    onPressed: _saving ? null : vm.revert,
-                    child: const Text('Discard'),
                   ),
-                ),
-                const SizedBox(width: 8),
-              ],
-              Expanded(
-                child: FilledButton(
-                  key: const ValueKey('settings.save'),
-                  // A half-typed custom duration is the one thing here that can be *invalid*
-                  // rather than merely unusual, and saving it would silently keep the previous
-                  // interval while the screen showed the new one.
-                  onPressed:
-                      !_saving && (vm.isDirty || _saveError != null) && _lockTimeoutValid(draft)
-                      ? () => _save(context, vm)
-                      : null,
-                  child: Text(
-                    _saving
-                        ? 'Saving…'
-                        : _saveError != null
-                        ? 'Retry save'
-                        : 'Save',
+                  const Divider(height: 1),
+                  Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton(
+                            key: const ValueKey('settings.revert'),
+                            style: _outlinedSettingsButton(context),
+                            onPressed: vm.isDirty && !_saving ? vm.revert : null,
+                            child: const Text('Cancel'),
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: FilledButton(
+                            key: const ValueKey('settings.save'),
+                            style: _filledSettingsButton(context),
+                            onPressed:
+                                (vm.isDirty || _saveError != null) &&
+                                    vm.isValid &&
+                                    !_saving &&
+                                    _lockTimeoutValid(draft)
+                                ? () => _save(context, vm)
+                                : null,
+                            child: Text(
+                              _saving
+                                  ? 'Saving…'
+                                  : _saveError != null
+                                  ? 'Retry save'
+                                  : 'Save changes',
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
-        ),
-      ],
+        ],
+      ),
     );
   }
 
@@ -419,7 +632,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     final scheme = Theme.of(context).colorScheme;
     final timeout = _lockTimeoutFor(draft.appLockTimeoutMs);
-    final lock = context.watch<AppLockController?>();
 
     // The field shows what the draft holds, which is not always what was typed: `editCustomValue`
     // strips anything that is not a digit, and that filtering has to be visible in the field or the
@@ -433,40 +645,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     return Padding(
       key: const ValueKey('settings.lockTimeout'),
-      padding: const EdgeInsets.only(top: 4, bottom: 8),
+      padding: const EdgeInsets.only(top: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Lock when returning after', style: TextStyle(fontSize: 13)),
+          const Text('Lock when returning after', style: TextStyle(fontSize: 13, height: 24 / 13)),
           Text(
             // Saying exactly when the countdown starts, because "after" alone invites the guess
             // that it means idle time inside the app.
-            'The countdown starts once OmniTerm is no longer visible. Rotating the screen does not '
-            'start it; a full restart always locks.',
-            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+            "The countdown starts once OmniTerm is no longer visible. Rotation doesn't start it; "
+            "a full process restart always locks.",
+            style: TextStyle(fontSize: 11, height: 24 / 11, color: scheme.onSurfaceVariant),
           ),
           const SizedBox(height: 6),
           Wrap(
             spacing: 8,
-            runSpacing: 4,
+            runSpacing: 0,
             children: [
               for (final (label, ms) in appLockTimeoutPresets)
-                ChoiceChip(
+                FilterChip(
+                  showCheckmark: false,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  labelPadding: const EdgeInsets.symmetric(horizontal: 8),
+                  backgroundColor: Colors.transparent,
                   key: ValueKey('settings.lockTimeout.$ms'),
-                  label: Text(label, style: const TextStyle(fontSize: 12)),
+                  label: Text(label, style: const TextStyle(fontSize: 12, height: 20 / 12)),
                   selected: !timeout.customSelected && timeout.timeoutMs == ms,
                   onSelected: (_) => _applyLockTimeout(vm, timeout.selectPreset(ms)),
                 ),
-              ChoiceChip(
+              FilterChip(
+                showCheckmark: false,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                labelPadding: const EdgeInsets.symmetric(horizontal: 8),
+                backgroundColor: Colors.transparent,
                 key: const ValueKey('settings.lockTimeout.custom'),
-                label: const Text('Custom', style: TextStyle(fontSize: 12)),
+                label: const Text('Custom', style: TextStyle(fontSize: 12, height: 20 / 12)),
                 selected: timeout.customSelected,
                 onSelected: (_) => _applyLockTimeout(vm, timeout.selectCustom()),
               ),
             ],
           ),
           if (timeout.customSelected) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             Row(
               children: [
                 Expanded(
@@ -483,35 +703,47 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                DropdownButton<String>(
-                  key: const ValueKey('settings.lockTimeout.unit'),
-                  value: timeout.customUnit,
-                  items: [
-                    for (final unit in appLockTimeoutUnits)
-                      DropdownMenuItem(value: unit, child: Text(unit)),
-                  ],
-                  onChanged: (unit) =>
-                      unit == null ? null : _applyLockTimeout(vm, timeout.selectCustomUnit(unit)),
+                _SettingMenu<String>(
+                  settingKey: 'lockTimeout.unit',
+                  label: timeout.customUnit,
+                  options: {for (final unit in appLockTimeoutUnits) unit: unit},
+                  onChanged: (unit) => _applyLockTimeout(vm, timeout.selectCustomUnit(unit)),
                 ),
               ],
             ),
           ],
-          if (lock != null && lock.isConfigured)
-            TextButton(
-              key: const ValueKey('settings.changePin'),
-              onPressed: () => _changePin(context, lock),
-              child: const Text('Change PIN', style: TextStyle(fontSize: 12)),
-            ),
         ],
       ),
     );
   }
 
+  Future<void> _setAppLock(BuildContext context, SettingsViewModel vm, bool enabled) async {
+    final lock = context.read<AppLockController?>();
+    vm.setFieldValidity(
+      'appLockTimeout',
+      !enabled || _lockTimeoutFor(vm.draft.appLockTimeoutMs).isValid,
+    );
+    if (enabled && lock != null && !lock.hasStoredPin) {
+      await _changePin(context, lock);
+    } else {
+      vm.update(
+        (p) =>
+            p.copyWith(appLockEnabled: enabled, useBiometrics: enabled ? p.useBiometrics : false),
+      );
+    }
+  }
+
   Future<void> _changePin(BuildContext context, AppLockController lock) async {
-    final pin = await _askForPin(context);
-    // Cancelling leaves the existing PIN in place: a change that is abandoned half way must not be
-    // a way to end up with no PIN behind a lock that still says it is on.
-    if (pin != null) await lock.setPin(pin);
+    final vm = context.read<SettingsViewModel>();
+    await showDialog<void>(
+      context: context,
+      builder: (_) => _PinDialog(
+        onSave: (pin) async {
+          await lock.setPin(pin);
+          vm.pinConfigured();
+        },
+      ),
+    );
   }
 
   /// Saves, and makes the app-lock switch mean something.
@@ -528,7 +760,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       await _saveConfirmed(context, vm);
     } catch (error) {
-      if (mounted) setState(() => _saveError = 'Could not save settings: $error');
+      if (mounted) {
+        setState(() => _saveError = 'Could not save settings: $error');
+      }
     } finally {
       if (mounted) {
         setState(() {
@@ -543,12 +777,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final lock = context.read<AppLockController?>();
     final wantsLock = vm.draft.appLockEnabled;
     final hadLock = vm.saved.appLockEnabled;
+    final removingPin = !wantsLock && (hadLock || _pendingPinRemoval);
 
     // Turning App Lock off destroys the stored PIN and the biometric enrolment with it. Say so
     // before asking for the PIN, not after: authenticating first would collect the credential and
     // *then* reveal that passing the prompt is what deletes it. Kotlin orders it the same way
     // (`ui/ToolsScreen.kt:3903`).
-    if (hadLock && !wantsLock) {
+    if (removingPin) {
       final turnOff = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
@@ -591,58 +826,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
       if (!context.mounted) return;
     }
 
-    if (lock != null && wantsLock && !lock.isConfigured) {
-      final pin = await _askForPin(context);
-      if (pin == null) {
-        // Cancelling must not leave the switch on and unbacked; put it back where it was.
-        vm.update((p) => p.copyWith(appLockEnabled: false, useBiometrics: false));
-        return;
-      }
-      await lock.setPin(pin);
-    }
-
+    _pendingPinRemoval = removingPin;
     if (mounted) setState(() => _persisting = true);
     await vm.save();
     if (lock == null) return;
-    if (!wantsLock && hadLock) {
+    if (removingPin) {
       await lock.clearPin();
+      _pendingPinRemoval = false;
     } else {
       await lock.refresh();
     }
-  }
-
-  Future<String?> _askForPin(BuildContext context) => showDialog<String>(
-    context: context,
-    barrierDismissible: false,
-    builder: (context) => const _PinDialog(),
-  );
-
-  Future<void> _confirmReset(BuildContext context, SettingsViewModel vm) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const ValueKey('settings.reset.dialog'),
-        title: const Text('Reset all settings?'),
-        content: const Text(
-          // Being specific about the blast radius: this screen's settings only, not the data.
-          'Every setting on this screen goes back to its default. Your hosts, keys, scripts and '
-          'alert rules are not affected.',
-        ),
-        actions: [
-          TextButton(
-            key: const ValueKey('settings.reset.cancel'),
-            onPressed: () => Navigator.of(dialogContext).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            key: const ValueKey('settings.reset.confirm'),
-            onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Reset', style: TextStyle(color: OmniColors.red)),
-          ),
-        ],
-      ),
-    );
-    if (confirmed ?? false) await vm.resetToDefaults();
   }
 }
 
@@ -660,7 +853,9 @@ class _StatusCard extends StatelessWidget {
         leftAccent: OmniColors.green,
         child: Row(
           children: [
-            Expanded(child: Text(vm.status!, style: const TextStyle(fontSize: 12))),
+            Expanded(
+              child: Text(vm.status!, style: const TextStyle(fontSize: 12, height: 24 / 12)),
+            ),
             IconButton(
               tooltip: 'Dismiss',
               key: const ValueKey('settings.status.dismiss'),
@@ -682,6 +877,8 @@ class _Switch extends StatelessWidget {
     required this.onChanged,
     this.subtitle,
     this.enabled = true,
+    this.subtitleSize = 11,
+    this.trailingGap = 0,
   });
 
   final String settingKey;
@@ -689,6 +886,8 @@ class _Switch extends StatelessWidget {
   final String? subtitle;
   final bool value;
   final bool enabled;
+  final double subtitleSize;
+  final double trailingGap;
   final ValueChanged<bool> onChanged;
 
   @override
@@ -698,225 +897,540 @@ class _Switch extends StatelessWidget {
     // carried in backups taken on a platform where it does work.
     final unavailable = settingUnavailableReason(settingKey, isIOS: !kIsWeb && Platform.isIOS);
     final detail = unavailable ?? subtitle;
-    return SwitchListTile(
-      key: ValueKey('settings.$settingKey'),
-      dense: true,
-      contentPadding: EdgeInsets.zero,
-      title: Text(title, style: const TextStyle(fontSize: 13)),
-      subtitle: detail == null
-          ? null
-          : Text(
-              detail,
-              style: TextStyle(
-                fontSize: 11,
-                color: unavailable == null
-                    ? Theme.of(context).colorScheme.onSurfaceVariant
-                    : OmniColors.amber,
-              ),
-            ),
-      value: value,
-      // A dependent switch is disabled rather than hidden, so its existence and its precondition
-      // stay visible instead of the row vanishing when the parent is turned off.
-      onChanged: enabled && unavailable == null ? onChanged : null,
-    );
-  }
-}
-
-class _Stepper extends StatelessWidget {
-  const _Stepper({
-    required this.settingKey,
-    required this.title,
-    required this.value,
-    required this.limits,
-    required this.step,
-    required this.onChanged,
-    this.suffix = '',
-    this.subtitle,
-  });
-
-  final String settingKey;
-  final String title;
-  final String? subtitle;
-  final int value;
-  final PreferenceRange limits;
-  final int step;
-  final String suffix;
-  final ValueChanged<int> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(title, style: const TextStyle(fontSize: 13)),
-                if (subtitle != null)
-                  Text(subtitle!, style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant)),
-              ],
-            ),
-          ),
-          IconButton(
-            tooltip: 'Decrease',
-            key: ValueKey('settings.$settingKey.down'),
-            icon: const Icon(Icons.remove, size: 18),
-            // Disabled at the bound rather than silently doing nothing, so the limit is visible.
-            onPressed: value <= limits.min
-                ? null
-                : () => onChanged((value - step).clamp(limits.min, limits.max)),
-          ),
-          SizedBox(
-            width: 72,
-            child: Text(
-              '$value$suffix',
-              key: ValueKey('settings.$settingKey.value'),
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-            ),
-          ),
-          IconButton(
-            tooltip: 'Increase',
-            key: ValueKey('settings.$settingKey.up'),
-            icon: const Icon(Icons.add, size: 18),
-            onPressed: value >= limits.max
-                ? null
-                : () => onChanged((value + step).clamp(limits.min, limits.max)),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _Choice<T> extends StatelessWidget {
-  const _Choice({
-    required this.settingKey,
-    required this.title,
-    required this.value,
-    required this.options,
-    required this.onChanged,
-  });
-
-  final String settingKey;
-  final String title;
-  final T value;
-  final Map<T, String> options;
-  final ValueChanged<T> onChanged;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: DropdownButtonFormField<T>(
+    return _SettingRow(
+      title: title,
+      subtitle: detail,
+      subtitleSize: subtitleSize,
+      trailingGap: trailingGap,
+      control: Switch(
+        padding: EdgeInsets.zero,
         key: ValueKey('settings.$settingKey'),
-        initialValue: value,
-        decoration: omniInputDecoration(context, labelText: title),
-        items: [
-          for (final entry in options.entries)
-            DropdownMenuItem(value: entry.key, child: Text(entry.value)),
-        ],
-        onChanged: (v) {
-          if (v != null) onChanged(v);
-        },
+        value: value,
+        onChanged: enabled && unavailable == null ? onChanged : null,
       ),
     );
   }
 }
 
-/// Collects and confirms a new app-lock PIN.
+/// Kotlin's single-field PIN setup; completion waits for persistence.
 class _PinDialog extends StatefulWidget {
-  const _PinDialog();
-
-  /// Four is the shortest length that is not trivially shoulder-surfed in one glance, and matches
-  /// what the Kotlin app accepted so an upgrading user is not forced to change theirs.
-  static const minLength = 4;
-
+  const _PinDialog({required this.onSave});
+  final Future<void> Function(String pin) onSave;
   @override
   State<_PinDialog> createState() => _PinDialogState();
 }
 
 class _PinDialogState extends State<_PinDialog> {
-  final TextEditingController _first = TextEditingController();
-  final TextEditingController _second = TextEditingController();
+  final _pin = TextEditingController();
+  bool _busy = false;
   String? _error;
-
   @override
   void dispose() {
-    _first.dispose();
-    _second.dispose();
+    _pin.dispose();
     super.dispose();
   }
 
-  void _submit() {
-    final pin = _first.text;
+  Future<void> _submit() async {
+    if (_busy) return;
+    if (!RegExp(r'^\d{4,8}$').hasMatch(_pin.text)) {
+      setState(() => _error = 'Enter a PIN with 4–8 digits.');
+      return;
+    }
     setState(() {
-      // Confirmed rather than taken on the first entry: there is no PIN recovery, so a typo here
-      // locks the user out of their own hosts permanently.
-      _error = pin.length < _PinDialog.minLength
-          ? 'Use at least ${_PinDialog.minLength} digits'
-          : (pin != _second.text ? 'The two entries do not match' : null);
+      _busy = true;
+      _error = null;
     });
-    if (_error == null) Navigator.of(context).pop(pin);
+    try {
+      await widget.onSave(_pin.text);
+      if (mounted) Navigator.of(context).pop();
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _error = 'Could not save PIN: $error';
+        });
+      }
+    }
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    key: const ValueKey('settings.pin.dialog'),
-    // An AlertDialog's content does not scroll unless it asks to. This one holds a three-line
-    // warning, two fields and — when the entries disagree — an error line, which overflows a small
-    // phone in landscape at 200% text by 39px, hiding the very message explaining what went wrong.
-    scrollable: true,
-    title: const Text('Set an app PIN'),
-    content: Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        const Text(
-          'There is no PIN recovery. If you forget it, the only way back in is to reinstall, '
-          'which clears your saved hosts.',
-          style: TextStyle(fontSize: 12),
+  Widget build(BuildContext context) => MediaQuery(
+    data: MediaQuery.of(context).copyWith(textScaler: _popupTextScaler(context)),
+    child: PopScope(
+      canPop: !_busy,
+      child: AlertDialog(
+        constraints: const BoxConstraints(minWidth: 320, maxWidth: 560),
+        key: const ValueKey('settings.pin.dialog'),
+        contentPadding: const EdgeInsets.fromLTRB(24, 24, 24, 24),
+        scrollable: true,
+        title: const Text('Configure Security PIN'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              key: const ValueKey('settings.pin.first'),
+              controller: _pin,
+              enabled: !_busy,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'PIN (4-8 digits)',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            if (_busy) const LinearProgressIndicator(),
+            if (_error != null)
+              Text(
+                _error!,
+                key: const ValueKey('settings.pin.error'),
+                style: const TextStyle(color: OmniColors.red),
+              ),
+          ],
         ),
-        const SizedBox(height: 12),
-        _pinField(_first, 'PIN', const ValueKey('settings.pin.first')),
-        const SizedBox(height: 8),
-        _pinField(_second, 'Confirm PIN', const ValueKey('settings.pin.second')),
-        if (_error != null)
-          Padding(
-            padding: const EdgeInsets.only(top: 10),
-            child: Text(
-              _error!,
-              key: const ValueKey('settings.pin.error'),
-              style: const TextStyle(fontSize: 12, color: OmniColors.red),
+        actions: [
+          TextButton(
+            key: const ValueKey('settings.pin.cancel'),
+            onPressed: _busy ? null : () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            key: const ValueKey('settings.pin.confirm'),
+            style: _filledSettingsButton(context),
+            onPressed: _busy ? null : _submit,
+            child: Text(_busy ? 'Saving…' : 'Save PIN'),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
+// Material 3 1.4's disabled tokens differ from Flutter's defaults. These come from the
+// Kotlin dependency's FilledButtonTokens and OutlinedButtonTokens, including the 10% outline.
+ButtonStyle _filledSettingsButton(BuildContext context) {
+  final scheme = Theme.of(context).colorScheme;
+  return FilledButton.styleFrom(
+    disabledBackgroundColor: scheme.onSurface.withValues(alpha: .1),
+    disabledForegroundColor: scheme.onSurfaceVariant.withValues(alpha: .38),
+  );
+}
+
+ButtonStyle _outlinedSettingsButton(BuildContext context) {
+  final scheme = Theme.of(context).colorScheme;
+  return OutlinedButton.styleFrom(
+    foregroundColor: scheme.onSurfaceVariant,
+    disabledForegroundColor: scheme.onSurfaceVariant.withValues(alpha: .38),
+  ).copyWith(
+    side: WidgetStateProperty.resolveWith(
+      (states) => BorderSide(
+        color: states.contains(WidgetState.disabled)
+            ? scheme.outlineVariant.withValues(alpha: .1)
+            : scheme.outlineVariant,
+      ),
+    ),
+  );
+}
+
+// Native Dialog/Popup windows retain the phone's scaling, independently of the app preset.
+TextScaler _popupTextScaler(BuildContext context) {
+  final scaler = MediaQuery.textScalerOf(context);
+  return scaler is OmniTextScaler ? scaler.platform : scaler;
+}
+
+Widget _settingDetail(BuildContext context, String text, {double size = 11}) => Text(
+  text,
+  style: TextStyle(
+    fontSize: size,
+    height: 24 / size,
+    color: Theme.of(context).colorScheme.onSurfaceVariant,
+  ),
+);
+
+class _SettingsCard extends StatelessWidget {
+  const _SettingsCard({
+    required this.title,
+    required this.subtitle,
+    required this.accent,
+    required this.children,
+    this.gap = 0,
+    this.headerGap,
+  });
+  final String title;
+  final String subtitle;
+  final Color accent;
+  final List<Widget> children;
+  final double gap;
+  final double? headerGap;
+
+  @override
+  Widget build(BuildContext context) => OmniCard(
+    key: ValueKey('settings.card.$title'),
+    leftAccent: accent,
+    child: Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title.toUpperCase(),
+            style: TextStyle(
+              color: accent,
+              fontWeight: FontWeight.bold,
+              fontSize: 12,
+              height: 24 / 12,
+              letterSpacing: 1.5,
             ),
           ),
-      ],
+          _settingDetail(context, subtitle),
+          const SizedBox(height: 8),
+          Divider(height: 1, thickness: 1, color: accent.withValues(alpha: .35)),
+          SizedBox(height: 10 + (headerGap ?? gap)),
+          for (var i = 0; i < children.length; i++) ...[
+            if (i > 0 && gap > 0) SizedBox(height: gap),
+            children[i],
+          ],
+        ],
+      ),
     ),
-    actions: [
-      TextButton(
-        key: const ValueKey('settings.pin.cancel'),
-        onPressed: () => Navigator.of(context).pop(),
-        child: const Text('Cancel'),
+  );
+}
+
+class _SettingRow extends StatelessWidget {
+  const _SettingRow({
+    required this.title,
+    this.subtitle,
+    required this.control,
+    this.subtitleSize = 11,
+    this.trailingGap = 0,
+  });
+  final String title;
+  final String? subtitle;
+  final Widget control;
+  final double subtitleSize;
+  final double trailingGap;
+  @override
+  Widget build(BuildContext context) => Row(
+    children: [
+      Expanded(
+        child: Padding(
+          padding: EdgeInsets.only(right: trailingGap),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title),
+              if (subtitle != null) _settingDetail(context, subtitle!, size: subtitleSize),
+            ],
+          ),
+        ),
       ),
-      FilledButton(
-        key: const ValueKey('settings.pin.confirm'),
-        onPressed: _submit,
-        child: const Text('Set PIN'),
-      ),
+      control,
     ],
   );
+}
 
-  Widget _pinField(TextEditingController controller, String label, Key key) => TextField(
-    key: key,
-    controller: controller,
-    obscureText: true,
-    enableSuggestions: false,
-    autocorrect: false,
+class _SettingChips<T> extends StatelessWidget {
+  const _SettingChips({
+    required this.settingKey,
+    required this.value,
+    required this.options,
+    required this.onChanged,
+    this.spacing = 8,
+    this.fontSize = 14,
+  });
+  final String settingKey;
+  final T value;
+  final Map<T, String> options;
+  final ValueChanged<T> onChanged;
+  final double spacing;
+  final double fontSize;
+  @override
+  Widget build(BuildContext context) => Wrap(
+    spacing: spacing,
+    children: [
+      for (final entry in options.entries)
+        FilterChip(
+          showCheckmark: false,
+          padding: const EdgeInsets.symmetric(horizontal: 8),
+          labelPadding: const EdgeInsets.symmetric(horizontal: 8),
+          backgroundColor: Colors.transparent,
+          key: ValueKey('settings.$settingKey.${entry.key}'),
+          label: Text(
+            entry.value,
+            style: TextStyle(fontSize: fontSize, height: 20 / fontSize),
+          ),
+          selected: value == entry.key,
+          onSelected: (_) => onChanged(entry.key),
+        ),
+    ],
+  );
+}
+
+// The menu transports an index, since null is a real theme choice and PopupMenuButton uses null
+// for cancellation. Selecting System must clear a stored forced theme.
+class _SettingMenu<T> extends StatefulWidget {
+  const _SettingMenu({
+    required this.settingKey,
+    required this.label,
+    required this.options,
+    required this.onChanged,
+  });
+  final String settingKey;
+  final String label;
+  final Map<T, String> options;
+  final ValueChanged<T> onChanged;
+  @override
+  State<_SettingMenu<T>> createState() => _SettingMenuState<T>();
+}
+
+class _SettingMenuState<T> extends State<_SettingMenu<T>> {
+  final _anchor = GlobalKey();
+  bool _expanded = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final options = widget.options;
+    // Compose opens the popup in a platform window, outside the app's density override.
+    // Keep Android accessibility scaling while removing only OmniTerm's text preset.
+    final scaler = MediaQuery.textScalerOf(context);
+    final popupScaler = scaler is OmniTextScaler ? scaler.platform : scaler;
+    final style = TextStyle(
+      color: Theme.of(context).colorScheme.onSurface,
+      fontSize: 14,
+      height: 20 / 14,
+      fontWeight: FontWeight.w500,
+      letterSpacing: .1 * popupScaler.scale(14) / 14,
+    );
+    var width = 112.0;
+    for (final option in options.values) {
+      final painter = TextPainter(
+        text: TextSpan(text: option, style: style),
+        textDirection: Directionality.of(context),
+        textScaler: popupScaler,
+      )..layout();
+      width = (painter.width + 24).clamp(width, 280);
+      painter.dispose();
+    }
+    var contentHeight = 16.0;
+    for (final option in options.values) {
+      final painter = TextPainter(
+        text: TextSpan(text: option, style: style),
+        textDirection: Directionality.of(context),
+        textScaler: popupScaler,
+      )..layout(maxWidth: width - 24);
+      contentHeight += painter.height.clamp(48, double.infinity);
+      painter.dispose();
+    }
+    return Semantics(
+      key: _anchor,
+      expanded: _expanded,
+      child: Tooltip(
+        message: widget.label,
+        child: InkWell(
+          key: ValueKey('settings.${widget.settingKey}'),
+          onTap: _expanded
+              ? null
+              : () async {
+                  final overlay =
+                      Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
+                  final anchor = _anchor.currentContext!.findRenderObject()! as RenderBox;
+                  final direction = Directionality.of(context);
+                  final padding = MediaQueryData.fromView(View.of(context)).padding;
+                  final maxHeight = (overlay.size.height - padding.vertical - 96).clamp(
+                    0.0,
+                    double.infinity,
+                  );
+                  final height = contentHeight.clamp(0.0, maxHeight);
+                  var lastPosition = RelativeRect.fill;
+                  setState(() => _expanded = true);
+                  try {
+                    final selected = await showMenu<int>(
+                      context: context,
+                      // Compose uses intrinsic width and a 48dp window margin. When below does not
+                      // fit, prefer above the anchor rather than covering the lower navigation bar.
+                      constraints: BoxConstraints(
+                        minWidth: width,
+                        maxWidth: width,
+                        maxHeight: maxHeight,
+                      ),
+                      menuPadding: const EdgeInsets.symmetric(vertical: 8),
+                      positionBuilder: (_, constraints) {
+                        if (!anchor.attached) return lastPosition;
+                        final rect =
+                            anchor.localToGlobal(Offset.zero, ancestor: overlay) & anchor.size;
+                        final size = constraints.biggest;
+                        final xCandidates = [
+                          if (direction == TextDirection.ltr) rect.left else rect.right - width,
+                          if (direction == TextDirection.ltr) rect.right - width else rect.left,
+                          if (rect.center.dx < size.width / 2) 0.0 else size.width - width,
+                        ];
+                        final top = padding.top + 48;
+                        final bottom = size.height - padding.bottom - 48;
+                        final yCandidates = [
+                          rect.bottom,
+                          rect.top - height,
+                          rect.top - height / 2,
+                          if (rect.center.dy < size.height / 2) top else bottom - height,
+                        ];
+                        final x = xCandidates.firstWhere(
+                          (x) => x >= 0 && x + width <= size.width,
+                          orElse: () => xCandidates.last,
+                        );
+                        final y = yCandidates.firstWhere(
+                          (y) => y >= top && y + height <= bottom,
+                          orElse: () => yCandidates.last,
+                        );
+                        return lastPosition = RelativeRect.fromRect(
+                          Rect.fromLTWH(x, y, width, height),
+                          Offset.zero & size,
+                        );
+                      },
+                      items: [
+                        for (var i = 0; i < options.length; i++)
+                          PopupMenuItem(
+                            value: i,
+                            padding: const EdgeInsets.symmetric(horizontal: 12),
+                            child: MediaQuery(
+                              data: MediaQuery.of(context).copyWith(textScaler: popupScaler),
+                              child: Text(options.values.elementAt(i), style: style),
+                            ),
+                          ),
+                      ],
+                    );
+                    if (mounted && selected != null) {
+                      widget.onChanged(options.keys.elementAt(selected));
+                    }
+                  } finally {
+                    if (mounted) setState(() => _expanded = false);
+                  }
+                },
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+            child: Text(
+              widget.label,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.primary,
+                fontSize: 14,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _SettingSlider extends StatelessWidget {
+  const _SettingSlider({
+    required this.settingKey,
+    required this.value,
+    required this.min,
+    required this.max,
+    required this.divisions,
+    required this.onChanged,
+  });
+  final String settingKey;
+  final int value;
+  final int min;
+  final int max;
+  final int divisions;
+  final ValueChanged<int> onChanged;
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return SliderTheme(
+      // Kotlin Material 3 uses the handle-and-gap slider, not Flutter's older round thumb.
+      data: SliderTheme.of(context).copyWith(
+        trackHeight: 16,
+        trackShape: const GappedSliderTrackShape(),
+        trackGap: 6,
+        thumbShape: const HandleThumbShape(),
+        thumbSize: WidgetStateProperty.resolveWith(
+          (states) => Size(states.contains(WidgetState.pressed) ? 2 : 4, 44),
+        ),
+        activeTrackColor: scheme.primary,
+        inactiveTrackColor: scheme.secondaryContainer,
+        activeTickMarkColor: scheme.onPrimary,
+        inactiveTickMarkColor: scheme.primary,
+        tickMarkShape: const RoundSliderTickMarkShape(tickMarkRadius: 2),
+      ),
+      child: Slider(
+        key: ValueKey('settings.$settingKey'),
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        value: value.clamp(min, max).toDouble(),
+        min: min.toDouble(),
+        max: max.toDouble(),
+        divisions: divisions,
+        onChanged: (v) => onChanged(v.round()),
+      ),
+    );
+  }
+}
+
+class _SettingNumber extends StatefulWidget {
+  const _SettingNumber({
+    super.key,
+    required this.settingKey,
+    required this.label,
+    required this.value,
+    required this.digits,
+    required this.onChanged,
+    required this.onValid,
+  });
+  final String settingKey;
+  final String label;
+  final int value;
+  final int digits;
+  final ValueChanged<int> onChanged;
+  final ValueChanged<bool> onValid;
+  @override
+  State<_SettingNumber> createState() => _SettingNumberState();
+}
+
+class _SettingNumberState extends State<_SettingNumber> {
+  late final _controller = TextEditingController(text: '${widget.value}');
+  bool _valid = true;
+  bool _editing = false;
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant _SettingNumber oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_editing && widget.value != oldWidget.value) {
+      _controller.text = '${widget.value}';
+      _valid = true;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => TextField(
+    key: ValueKey('settings.${widget.settingKey}'),
+    controller: _controller,
     keyboardType: TextInputType.number,
-    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-    maxLength: 12,
-    decoration: InputDecoration(labelText: label, counterText: ''),
+    inputFormatters: [
+      FilteringTextInputFormatter.digitsOnly,
+      LengthLimitingTextInputFormatter(widget.digits),
+    ],
+    decoration: InputDecoration(
+      labelText: widget.label,
+      border: const OutlineInputBorder(),
+      errorText: _valid ? null : 'Enter a positive number',
+    ),
+    onChanged: (text) {
+      final parsed = int.tryParse(text);
+      final valid = parsed != null;
+      setState(() {
+        _editing = true;
+        _valid = valid;
+      });
+      widget.onValid(valid);
+      if (valid) {
+        // Kotlin retains the typed digits until Save, and clamps the persisted threshold.
+        widget.onChanged(parsed.clamp(1, widget.settingKey == 'sftpWarnFileCount' ? 10000 : 9999));
+      }
+    },
   );
 }

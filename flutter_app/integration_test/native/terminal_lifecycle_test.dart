@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:patrol/patrol.dart';
 import 'package:provider/provider.dart';
+import 'package:omniterm/ui/widgets/terminal_surface.dart';
 
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/ssh/ssh_host_key_trust.dart';
@@ -396,6 +397,7 @@ Future<void> _checkKeyBarLayouts(
   final up = find.byKey(const ValueKey('shell.key.↑'));
   final down = find.byKey(const ValueKey('shell.key.↓'));
   final bar = find.byKey(const ValueKey('shell.keyBar'));
+  final terminalState = $.tester.state(find.byType(TerminalSurface));
   Future<void> snapshot(String name) async {
     expect($.tester.takeException(), isNull, reason: name);
     if (!capture) return;
@@ -403,7 +405,7 @@ Future<void> _checkKeyBarLayouts(
     expect(await _lifecycle.invokeMethod<bool>('captureKeyBar', {'name': name}), isTrue);
   }
 
-  Future<void> rotate(DeviceOrientation orientation) async {
+  Future<void> rotate(DeviceOrientation orientation, {bool checkTerminalState = true}) async {
     await SystemChrome.setPreferredOrientations([orientation]);
     await _until($, () {
       final size = $.tester.view.physicalSize;
@@ -412,6 +414,13 @@ Future<void> _checkKeyBarLayouts(
           : size.width > size.height;
     });
     await $.tester.pump(const Duration(milliseconds: 300));
+    if (checkTerminalState) {
+      expect(
+        $.tester.state(find.byType(TerminalSurface)),
+        same(terminalState),
+        reason: 'Changing terminal chrome must preserve the mounted input and viewport',
+      );
+    }
   }
 
   try {
@@ -461,6 +470,7 @@ Future<void> _checkKeyBarLayouts(
       () => $.tester.view.viewInsets.bottom == 0 && $.tester.getSize(bar).height == 80,
     );
     expect($.tester.getSize(bar).height, 80, reason: 'Closing the IME restores both rows');
+    expect($.tester.state(find.byType(TerminalSurface)), same(terminalState));
     await snapshot('landscape-no-ime');
     await rotate(DeviceOrientation.portraitUp);
     for (final (name, dark, contrast, scale) in [
@@ -514,13 +524,10 @@ Future<void> _checkKeyBarLayouts(
     session.setReadOnly(false);
     settings.update((_) => original);
     await $.tester.runAsync(settings.save);
-    // Until the Settings parity checkpoint fixes nullable-theme persistence, explicitly restore
-    // a System value that encode() omits so this fixture does not leak its last selected theme.
-    if (original.darkMode == null) await state.saveSetting('dark_mode', '');
     if (capture) expect(await security.setSecure(secure: true), isTrue);
     await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
     await _until($, () => $.tester.view.viewInsets.bottom == 0);
-    await rotate(DeviceOrientation.portraitUp);
+    await rotate(DeviceOrientation.portraitUp, checkTerminalState: false);
     await SystemChrome.setPreferredOrientations([]);
   }
   debugPrint('KEYBAR-E2E real Android IME, layers, themes and read-only layouts passed');

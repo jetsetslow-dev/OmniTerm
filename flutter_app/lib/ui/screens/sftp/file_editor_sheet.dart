@@ -210,7 +210,7 @@ class _FileEditorSheetState extends State<_FileEditorSheet> {
                     readOnly: !_editing,
                     enabled: !_saving,
                     maxHighlightChars:
-                        (context.watch<AppState>().preferences.editorHighlightLimitKb * 1024).clamp(
+                        (context.watch<AppState>().preferences.editorHighlightLimitChars).clamp(
                           0,
                           highlightMaxCharsCap,
                         ),

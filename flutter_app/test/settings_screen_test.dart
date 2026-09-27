@@ -4,7 +4,6 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/ui/view_model/app_lock_controller.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
-import 'package:omniterm/domain/app_preferences.dart';
 import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/tools/settings_screen.dart';
@@ -35,7 +34,7 @@ void main() {
 
   Future<void> pump(WidgetTester tester) async {
     // Thirty-odd rows across five sections; the default surface would leave most of them unlaid-out.
-    tester.view.physicalSize = const Size(1200, 4000);
+    tester.view.physicalSize = const Size(1200, 6000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
 
@@ -63,7 +62,7 @@ void main() {
   /// settling waits on a timer that is meant to keep repeating. That is the same obstacle recorded
   /// against defect 62, and it is why the enable-with-PIN path had never been driven here.
   Future<AppLockController> pumpWithLock(WidgetTester tester) async {
-    tester.view.physicalSize = const Size(1200, 4000);
+    tester.view.physicalSize = const Size(1200, 6000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
 
@@ -170,19 +169,10 @@ void main() {
     await step(tester);
     await tester.tap(find.byKey(const ValueKey('settings.appLockEnabled')));
     await step(tester);
-    await tester.scrollUntilVisible(
-      find.byKey(const ValueKey('settings.save')),
-      200,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await step(tester);
-    await tester.tap(find.byKey(const ValueKey('settings.save')));
-    await step(tester);
     expect(find.byKey(const ValueKey('settings.pin.dialog')), findsOneWidget);
 
-    // Mismatched entries, so the error line is present — the tallest the dialog ever gets.
-    await tester.enterText(find.byKey(const ValueKey('settings.pin.first')), '4913');
-    await tester.enterText(find.byKey(const ValueKey('settings.pin.second')), '1234');
+    // Invalid PIN, so the error line is present — the tallest the dialog ever gets.
+    await tester.enterText(find.byKey(const ValueKey('settings.pin.first')), '123');
     await step(tester);
     await tester.tap(find.byKey(const ValueKey('settings.pin.confirm')));
     await step(tester);
@@ -203,8 +193,6 @@ void main() {
 
       await tester.tap(find.byKey(const ValueKey('settings.appLockEnabled')));
       await step(tester);
-      await tester.tap(find.byKey(const ValueKey('settings.save')));
-      await step(tester);
 
       expect(
         find.byKey(const ValueKey('settings.pin.dialog')),
@@ -212,7 +200,6 @@ void main() {
         reason: 'enabling the lock must collect a PIN',
       );
       await tester.enterText(find.byKey(const ValueKey('settings.pin.first')), '4913');
-      await tester.enterText(find.byKey(const ValueKey('settings.pin.second')), '4913');
       await step(tester);
       await tester.tap(find.byKey(const ValueKey('settings.pin.confirm')));
       await step(tester);
@@ -260,12 +247,17 @@ void main() {
   testWidgets('the sections and their controls render', (tester) async {
     await pump(tester);
 
-    for (final section in ['Appearance', 'Monitoring', 'Terminal', 'File transfers']) {
+    for (final section in [
+      'SECURITY GATE APP LOCK',
+      'DISPLAY BEHAVIOR',
+      'TERMINAL',
+      'SFTP TRANSFER WARNINGS',
+    ]) {
       expect(find.text(section), findsOneWidget, reason: section);
     }
     expect(find.byKey(const ValueKey('settings.darkMode')), findsOneWidget);
-    expect(find.byKey(const ValueKey('settings.telemetryInterval.value')), findsOneWidget);
-    expect(find.byKey(const ValueKey('settings.terminalTheme')), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings.telemetryInterval')), findsOneWidget);
+    expect(find.byKey(const ValueKey('settings.terminalTheme.system')), findsOneWidget);
     await finish(tester);
   });
 
@@ -283,7 +275,9 @@ void main() {
     // Applying per keystroke would restart the telemetry poller on the way from "1" to "15".
     await pump(tester);
 
-    await tester.tap(find.byKey(const ValueKey('settings.telemetryInterval.up')));
+    await tester.tap(find.byKey(const ValueKey('settings.telemetryInterval')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('30s').last);
     await tester.pumpAndSettle();
 
     expect(vm.isDirty, isTrue);
@@ -292,7 +286,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('settings.save')));
     await tester.pumpAndSettle();
 
-    expect(await repo.getSetting('telemetry_interval'), '20');
+    expect(await repo.getSetting('telemetry_interval'), '30');
     expect(find.textContaining('saved'), findsOneWidget);
     await finish(tester);
   });
@@ -309,11 +303,16 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('discard appears only when dirty and puts values back', (tester) async {
+  testWidgets('Cancel is always visible and enables when dirty', (tester) async {
     await pump(tester);
-    expect(find.byKey(const ValueKey('settings.revert')), findsNothing);
+    expect(
+      tester.widget<OutlinedButton>(find.byKey(const ValueKey('settings.revert'))).onPressed,
+      isNull,
+    );
 
-    await tester.tap(find.byKey(const ValueKey('settings.telemetryInterval.up')));
+    await tester.tap(find.byKey(const ValueKey('settings.telemetryInterval')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('30s').last);
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('settings.revert')), findsOneWidget);
 
@@ -326,92 +325,74 @@ void main() {
   });
 
   group('bounds are visible, not silent', () {
-    testWidgets('a stepper disables at its floor and ceiling', (tester) async {
-      // A button that does nothing when tapped is worse than one that is plainly unavailable.
-      await repo.insertSetting('telemetry_interval', '${PreferenceLimits.telemetryInterval.min}');
+    testWidgets('reference sliders expose Kotlin bounds', (tester) async {
       await pump(tester);
-
-      final down = tester.widget<IconButton>(
-        find.byKey(const ValueKey('settings.telemetryInterval.down')),
-      );
-      expect(down.onPressed, isNull);
-
-      vm.update(
-        (p) => p.copyWith(telemetryIntervalSeconds: PreferenceLimits.telemetryInterval.max),
-      );
-      await tester.pumpAndSettle();
-      final up = tester.widget<IconButton>(
-        find.byKey(const ValueKey('settings.telemetryInterval.up')),
-      );
-      expect(up.onPressed, isNull);
+      for (final (key, min, max) in [
+        ('terminalFontSize', 8, 28),
+        ('terminalScrollback', 1000, 50000),
+        ('metricsRetention', 1, 30),
+        ('alertHistoryLimit', 10, 100),
+      ]) {
+        final slider = tester.widget<Slider>(find.byKey(ValueKey('settings.$key')));
+        expect(slider.min, min);
+        expect(slider.max, max);
+      }
       await finish(tester);
     });
 
-    testWidgets('stepping never leaves the range', (tester) async {
+    testWidgets('an old small buffer loads at the Kotlin minimum', (tester) async {
       await repo.insertSetting('terminal_scrollback_limit', '600');
       await pump(tester);
-
-      await tester.tap(find.byKey(const ValueKey('settings.terminalScrollbackLimit.down')));
-      await tester.pumpAndSettle();
-
-      expect(
-        vm.draft.terminalScrollbackLimit,
-        greaterThanOrEqualTo(PreferenceLimits.terminalScrollback.min),
+      final slider = tester.widget<Slider>(
+        find.byKey(const ValueKey('settings.terminalScrollback')),
       );
+      expect(slider.value, 1000);
+      expect(vm.draft.terminalScrollbackLimit, 1000);
       await finish(tester);
     });
   });
 
   group('dependent settings', () {
-    testWidgets('a dependent switch is disabled, not hidden', (tester) async {
-      // Hiding it would erase both the option and its precondition from view.
+    testWidgets('link destination stays visible but disabled when detection is off', (
+      tester,
+    ) async {
       await pump(tester);
-
-      final biometrics = tester.widget<SwitchListTile>(
-        find.byKey(const ValueKey('settings.biometrics')),
-      );
-      expect(biometrics.onChanged, isNull, reason: 'the app lock is off');
-
-      vm.update((p) => p.copyWith(appLockEnabled: true));
+      await tester.tap(find.byKey(const ValueKey('settings.linkDetection')));
       await tester.pumpAndSettle();
-
-      final enabled = tester.widget<SwitchListTile>(
-        find.byKey(const ValueKey('settings.biometrics')),
-      );
-      expect(enabled.onChanged, isNotNull);
+      final control = tester.widget<Switch>(find.byKey(const ValueKey('settings.linkOpenInApp')));
+      expect(control.onChanged, isNull);
+      expect(find.text('Open links in-app'), findsOneWidget);
       await finish(tester);
     });
 
     testWidgets('the battery threshold appears only when the saver is on', (tester) async {
       await pump(tester);
-      expect(find.byKey(const ValueKey('settings.batterySaverThreshold.value')), findsOneWidget);
-
+      expect(find.text('Engage below: 20%'), findsNothing);
       await tester.tap(find.byKey(const ValueKey('settings.batterySaverEnabled')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('settings.batterySaverThreshold.value')), findsNothing);
+      expect(find.text('Engage below: 20%'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('settings.batterySaverThreshold.30')));
+      await tester.pumpAndSettle();
+      expect(vm.draft.batterySaverThresholdPercent, 30);
       await finish(tester);
     });
   });
 
-  testWidgets('a contradictory combination is warned about, not blocked', (tester) async {
-    // Refusing a legal combination outright would be the app overruling the user.
+  testWidgets('disabling the lock also clears the biometric draft', (tester) async {
     await pump(tester);
-    expect(find.byKey(const ValueKey('settings.warning.0')), findsNothing);
-
-    vm.update((p) => p.copyWith(useBiometrics: true));
+    vm.update((p) => p.copyWith(appLockEnabled: true, useBiometrics: true));
     await tester.pumpAndSettle();
-
-    expect(find.byKey(const ValueKey('settings.warning.0')), findsOneWidget);
-    expect(find.textContaining('does nothing while the app lock is off'), findsOneWidget);
-
-    final save = tester.widget<FilledButton>(find.byKey(const ValueKey('settings.save')));
-    expect(save.onPressed, isNotNull, reason: 'a warning is advice, not a veto');
+    expect(find.byKey(const ValueKey('settings.biometrics')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('settings.appLockEnabled')));
+    await tester.pumpAndSettle();
+    expect(vm.draft.useBiometrics, isFalse);
+    expect(find.byKey(const ValueKey('settings.biometrics')), findsNothing);
     await finish(tester);
   });
 
   testWidgets('hide-addresses explains when it is for, and takes effect on save', (tester) async {
     await pump(tester);
-    expect(find.textContaining('sharing a screen'), findsOneWidget);
+    expect(find.textContaining('screen shares'), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('settings.hideSensitiveInfo')));
     await tester.pumpAndSettle();
@@ -423,24 +404,16 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('resetting asks first and says what it does not touch', (tester) async {
+  testWidgets('Cancel preserves saved settings and resets only the draft', (tester) async {
     await repo.insertSetting('telemetry_interval', '120');
     await pump(tester);
-
-    await tester.tap(find.byKey(const ValueKey('settings.reset')));
+    vm.update((p) => p.copyWith(telemetryIntervalSeconds: 5));
     await tester.pumpAndSettle();
-    expect(find.textContaining('are not affected'), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('settings.reset.cancel')));
+    await tester.tap(find.byKey(const ValueKey('settings.revert')));
     await tester.pumpAndSettle();
-    expect(vm.saved.telemetryIntervalSeconds, 120);
-
-    await tester.tap(find.byKey(const ValueKey('settings.reset')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('settings.reset.confirm')));
-    await tester.pumpAndSettle();
-
-    expect(vm.saved, AppPreferences.defaults);
+    expect(vm.draft.telemetryIntervalSeconds, 120);
+    expect(await repo.getSetting('telemetry_interval'), '120');
+    expect(find.byKey(const ValueKey('settings.reset')), findsNothing);
     await finish(tester);
   });
 
@@ -494,7 +467,7 @@ void main() {
       await repo.insertSetting('app_lock_grace_ms', '60000');
       await pump(tester);
 
-      final chip = tester.widget<ChoiceChip>(
+      final chip = tester.widget<FilterChip>(
         find.byKey(const ValueKey('settings.lockTimeout.60000')),
       );
       expect(chip.selected, isTrue, reason: 'the saved interval must be the selected chip');

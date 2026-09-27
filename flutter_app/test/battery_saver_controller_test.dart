@@ -105,6 +105,7 @@ void main() {
   });
 
   test('threshold only prompts until the user explicitly confirms', () async {
+    await repository.insertSetting('battery_saver_enabled', 'true');
     await app.start();
     shell.setKeepScreenOnDirect(true);
     monitor.percent = 10;
@@ -125,6 +126,7 @@ void main() {
   });
 
   test('not now suppresses repeats until charging or hysteresis recovery', () async {
+    await repository.insertSetting('battery_saver_enabled', 'true');
     await app.start();
     monitor.percent = 10;
     controller = build()..start();

@@ -86,8 +86,17 @@ final _navItems = <OmniNavItem<Screen>>[
 ///
 /// The structure is reproduced 1:1 — top bar (+ free-plan banner), bottom bar (ad banner + nav),
 /// the compact-terminal-IME rule, global gestures, and the always-mounted overlay set.
-class AppCoreScaffold extends StatelessWidget {
+class AppCoreScaffold extends StatefulWidget {
   const AppCoreScaffold({super.key});
+
+  @override
+  State<AppCoreScaffold> createState() => _AppCoreScaffoldState();
+}
+
+class _AppCoreScaffoldState extends State<AppCoreScaffold> {
+  // IME/orientation changes move the body between scaffold layouts. Keep the screen's
+  // input, draft and viewport state instead of mounting another autofocused terminal.
+  final _screenBodyKey = GlobalKey();
 
   @override
   Widget build(BuildContext context) {
@@ -116,7 +125,11 @@ class AppCoreScaffold extends StatelessWidget {
     // tab swipe are both disabled on Shell.
     final allowGlobalGestures = current != Screen.shell;
 
-    Widget body = _ScreenBody(screen: current, compactTerminalIme: compactTerminalIme);
+    Widget body = _ScreenBody(
+      key: _screenBodyKey,
+      screen: current,
+      compactTerminalIme: compactTerminalIme,
+    );
 
     if (allowGlobalGestures) {
       body = ScreenSwipeArea(
@@ -897,7 +910,7 @@ class _BatterySaverDialog extends StatelessWidget {
 /// Routes the active [Screen] to its widget. Ported from the `when (viewModel.currentScreen)`
 /// block in `AppCoreScaffold`.
 class _ScreenBody extends StatelessWidget {
-  const _ScreenBody({required this.screen, this.compactTerminalIme = false});
+  const _ScreenBody({super.key, required this.screen, this.compactTerminalIme = false});
 
   final bool compactTerminalIme;
 

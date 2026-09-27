@@ -75,7 +75,8 @@ public class MainActivityTest {
         PatrolJUnitRunner instrumentation =
                 (PatrolJUnitRunner) InstrumentationRegistry.getInstrumentation();
         if (dartTestName.contains("SSH survives Home and explicit background") ||
-                dartTestName.contains("biometric prompt survives real Activity recreation")) {
+                dartTestName.contains("biometric prompt survives real Activity recreation") ||
+                dartTestName.contains("Kotlin Settings cards and popups")) {
             AtomicReference<Exception> setupError = new AtomicReference<>();
             instrumentation.runOnMainSync(() -> {
                 try {

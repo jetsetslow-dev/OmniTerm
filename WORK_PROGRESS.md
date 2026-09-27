@@ -216,8 +216,63 @@ repository-host provisioning and trust each passed, then the required native sur
 with `-e omniterm_e2e_surfaces yes` and the provisioned fixture's SFTP home (one executed, zero
 skipped). Flutter core passed all 32 tests with zero skips, including Settings actions, route/theme/
 orientation sweep and native pickers. This clean emulator had no enrolled fingerprint; the earlier
-separate enrolled-device challenge/recreation results cover that branch. Replacement exact-head
-hosted checks remain required. The broader Settings parity prototype is not in this checkpoint.
+separate enrolled-device challenge/recreation results cover that branch. Signed checkpoint
+`2a9fcd9` passed every selected exact-head hosted job, including native Build & Test, API 29 Room,
+release SBOM, Flutter emulator/release/iOS, CodeQL and repository security analysis. Skipped
+companion workflow jobs and the neutral Scorecard annotation are not counted as executed tests.
+The broader Settings parity changes below were not in that checkpoint.
+
+Settings parity integration is locally validated on the working branch; new exact-head hosted
+checks remain pending:
+
+- The six cards, inline Back/title, fixed Cancel/Save actions, switches, chips, sliders, labels,
+  ordering, PIN setup and anchored menus follow Kotlin's Settings screen. Menus retain Android's
+  text scale independently of the app preset, use intrinsic widths, and prefer above the anchor
+  when insufficient space remains below. Settings and popup overflow indicators stay visible.
+- PIN setup persists immediately without applying unrelated drafts. Settings saves retain their
+  confirmation/authentication order and wait for persistence plus lock refresh. Failed PIN removal
+  retains the remaining cleanup for Retry save, even after preferences were successfully written.
+  PIN removal now commits credential deletion and throttle reset together before changing live
+  controller state. A fault-injection regression fails on the original partial-write path and
+  passes after the transaction fix, alongside the 66 existing lock/cleanup cases.
+- Numeric drafts keep incomplete input visible and block invalid saves. Successful saves normalize
+  bounded values; concurrent calls share the operation and edits made during it remain unsaved.
+  System theme clears a forced theme. Defaults/ranges and editor highlighting character units now
+  follow Kotlin, including Off; old unversioned values are not heuristically reinterpreted as KB.
+- Added host regressions for Settings persistence, draft handling, popup scaling/placement and PIN
+  cleanup retry; existing Settings/App Lock flows now exercise Kotlin's immediate single-PIN setup.
+  The phone-sized functional fixture failed on the original screen's missing reference layout,
+  then passed on the candidate (one executed, zero skipped). It checks persisted values only after
+  the sticky Save button reports completion; an offscreen progress bar cannot prove completion.
+- Candidate API 35 screenshot traversal passed one test with zero skips across dark, light, high
+  contrast and Large text, capturing all six cards, PIN setup and the theme menu. Kotlin reference
+  capture passed separately. Stable capture fixtures are included; private font diagnostics are
+  excluded. These captures do not establish whole-app pixel parity: Android/Flutter glyph metrics,
+  shared header/navigation and wider accessibility-scale comparison remain open. A separate
+  scaling correction is being prepared: Kotlin applies its Android curve after combining the
+  phone and app scales, whereas the current Flutter app multiplies after platform conversion.
+- The first combined core run passed all 34 Android cases with zero skips. Live SSH validation
+  then exposed an existing keyboard-layout boundary: changing scaffold layouts remounted the
+  terminal, so hiding the landscape IME immediately reopened it. A device identity assertion fails
+  on the original screen with the previous terminal state already disposed. The scaffold and
+  terminal now retain their mounted content across layout and temporary overflow-wrapper changes.
+  The corrected live-host profile passed both the plain SSH/Docker/Podman flow and native terminal
+  lifecycle case (two executed, zero skipped). Core passed 34 Android cases, zero skipped.
+- Final Linux x86_64 full preflight passed: 2,767 Flutter cases with seven optional fixture skips
+  (six setup, one compression), release APK/AAB, both Flutter SBOMs, development-code exclusion,
+  pinned all-ref secret scan (237 commits), and forced-refresh strict native verification passed.
+  Native JVM/lint tasks reused successful results; each JVM variant has 570 passing cases and two
+  pre-existing disabled tmux cases, with no ARM64 exclusion on this host. API 35 discovered 60
+  native cases: 24 passed (including four Room migrations), 36 opt-in assumptions, zero actual
+  failures. Separate provision/trust, `omniterm_e2e_surfaces=yes` with the repository fixture home,
+  and `omniterm_e2e_settings_captures=yes` each passed one test with zero skips.
+- The final PIN-removal transaction was added before the full preflight and later native Flutter
+  Settings cases, after the core run's first Settings/unlock cases. Those first seven cases are
+  reran successfully on the final source (seven executed, zero skipped). The initial focused
+  wrapper stopped before any test because it attempted to clear an already-uninstalled package;
+  the corrected wrapper checks package presence first. This was fixture setup, not an app failure.
+  Exact-head hosted checks remain pending. The latest supplied normal APK remains `2a9fcd9` and
+  does not yet contain this integration.
 
 New authorized work: implement Kotlin Dependabot #107 (AGP 9.4.1 / Bouncy Castle 1.86) and its
 metadata companion #108. Validation is isolated from the Flutter Settings candidate. The existing

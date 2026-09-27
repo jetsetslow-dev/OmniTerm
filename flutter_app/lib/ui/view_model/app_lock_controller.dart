@@ -360,24 +360,36 @@ class AppLockController extends ChangeNotifier {
   /// Set (or change) the PIN and turn the lock on.
   Future<void> setPin(String pin) async {
     final stored = await hashPinForStorage(pin);
+    await _repository.inTransaction(() async {
+      await _repository.insertSetting('app_pin', stored);
+      await _repository.insertSetting('app_lock_enabled', 'true');
+      await _repository.insertSetting('pin_failed_attempts', '0');
+      await _repository.insertSetting('pin_locked_until', '0');
+    });
     _storedPin = stored;
     _enabled = true;
-    await _repository.insertSetting('app_pin', stored);
-    await _repository.insertSetting('app_lock_enabled', 'true');
-    await _clearThrottle();
+    _failedAttempts = 0;
+    _lockedUntilMs = 0;
     _safeNotify();
   }
 
   /// Turn the lock off and forget the PIN.
   Future<void> clearPin() async {
+    // A failed write must leave both persisted credentials and the live gate unchanged so
+    // Settings can authenticate and retry the remaining removal.
+    await _repository.inTransaction(() async {
+      await _repository.deleteSetting('app_pin');
+      await _repository.insertSetting('app_lock_enabled', 'false');
+      await _repository.insertSetting('biometrics_enabled', 'false');
+      await _repository.insertSetting('pin_failed_attempts', '0');
+      await _repository.insertSetting('pin_locked_until', '0');
+    });
     _storedPin = null;
     _enabled = false;
     _useBiometrics = false;
     _locked = false;
-    await _repository.deleteSetting('app_pin');
-    await _repository.insertSetting('app_lock_enabled', 'false');
-    await _repository.insertSetting('biometrics_enabled', 'false');
-    await _clearThrottle();
+    _failedAttempts = 0;
+    _lockedUntilMs = 0;
     _safeNotify();
   }
 
