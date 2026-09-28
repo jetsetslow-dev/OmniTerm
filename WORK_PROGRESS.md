@@ -1,6 +1,6 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
-Updated: 2026-09-27. Working branch: `migration-to-flutter`; PR: #92.
+Updated: 2026-09-28. Working branch: `migration-to-flutter`; PR: #92.
 Independent return review implemented and locally validated; **not** a parity-complete or release-ready declaration.
 
 This sanitized tracker is intentionally committed so work can resume on another machine.
@@ -13,8 +13,8 @@ secrets here: moving it later does not erase Git history.
 The user has explicitly requested the existing Kotlin UI throughout Flutter: every screen,
 submenu, popup and option, including the SSH terminal, Settings, sizing and navigation. Kotlin is
 the reference, not an invitation to redesign. The previous return-review checkpoint is complete;
-its passing checks do not establish visual parity. The latest supplied debug APK includes the authentication and terminal keyboard checkpoints below;
-Settings and broader terminal parity remain in progress.
+its passing checks do not establish visual parity. The latest supplied debug APK is `d840e92` and includes authentication, terminal keyboard and the
+Settings checkpoint below. Broader terminal and app-wide visual/behavior parity remain in progress.
 
 Clarifications: this includes every login/lock/biometric element and all functionality, including
 long press, swipe, selection, keyboard shortcuts, Back, drag/reorder and contextual actions. Visual
@@ -25,6 +25,47 @@ Initial confirmed source discrepancies: the biometric plugin requires a Fragment
 app hosts it in FlutterActivity; authentication errors are silently collapsed into cancellation.
 Flutter replaces the platform text scale whereas Kotlin composes it with the app preference.
 Settings uses different sections, control types, order and labels. The first fixes and focused device validation are recorded below; broader parity work remains open.
+
+Current checkpoint status (September 28):
+
+- Signed Settings checkpoint `d840e92` is pushed. Its normal debug APK was installed and opened
+  on API 35; package, version, stable signing certificate, debuggable state, ordinary app entrypoint
+  and SHA-256 were checked. Secure-window screenshots are black; the UI hierarchy confirms that
+  the app opened. This build is not a complete Kotlin-parity or release-ready declaration.
+- All checks for that exact head have finished. Native Build & Test failed in
+  `TerminalLeavePersistenceRobolectricTest.navigationAndLiveChannelWaitForDurableRecovery`; Room
+  migrations and native release SBOM were consequently skipped, not passed. The console reported
+  only the coroutine entry line and no unit report artifact was retained, so the exact inner
+  assertion cannot be established from the hosted evidence. An unchanged local class rerun passed.
+- Inspection found that the asynchronous startup recovery read could publish an old snapshot after
+  a newer leave/save transaction. Startup now uses the same mutex as recovery mutations, with the
+  mutex initialized before the constructor launches work. The regression reports explicit state
+  and durable-storage assertions. Hosted failures now retain unit XML/HTML; local reports remain
+  in the same Gradle output directories.
+- Flutter emulator CI failed before any app-actions test loaded: `VmServiceDisappearedException`
+  during the tool's VM attachment. The device log shows the VM opening and subsequent tool teardown,
+  with no preceding app crash or low-memory kill. The existing bounded emulator recovery now
+  recognizes this exact loading failure. Its console replay failed before the runner change and
+  passes afterward, including repeated failure, a test already executed, and preserved-phone cases.
+- Replacement `./scripts/local-pr-check.sh --full` passed on Linux x86_64: both native variants
+  freshly ran 572 tests each (570 passed, two existing disabled tmux cases); Flutter ran 2,767 tests
+  successfully with seven optional fixture skips (six setup and one compression). Formatting,
+  analysis, native lint, Flutter release APK/AAB, both Flutter SBOMs, development-code exclusion,
+  all-ref secret scan and strict fresh dependency verification passed. No ARM64 exclusion applied.
+- API 35 instrumentation discovered 60 cases: 24 passed, including four Room migrations, and 36
+  were opt-in assumptions. Separate opted-in fixture provisioning, host trust, complete native
+  surface sweep, Settings reference capture and recovery progress/failure/retry each passed one
+  case with zero skips. The recovery case used `omniterm_e2e_terminal_nav_matrix=yes`; the surface
+  sweep used `omniterm_e2e_surfaces=yes` and the repository fixture SFTP home. Flutter's core device
+  profile passed all 34 cases with zero skips. Hosted validation is pending for the replacement
+  checkpoint and must reach terminal results before this repair is considered complete.
+- A private candidate corrects Android's combined app/system nonlinear text scale and landscape
+  navigation bars. Targeted before/after Android fixtures and independent Compose converter values
+  pass, and 2,771 private candidate host tests pass with seven optional skips. After correcting the
+  obsolete linear expectation, its device sweep exposed landscape clipping in Servers, Fleet,
+  Shares, Alerts and Network, plus a Fleet Broadcast invalid height constraint. Those failures,
+  font spacing and wrapping remain unresolved. These candidate changes are not in `d840e92` or
+  this checkpoint.
 
 First checkpoint published as `c6817b3`; local and exact-head hosted validation complete:
 
@@ -271,8 +312,8 @@ checks remain pending:
   reran successfully on the final source (seven executed, zero skipped). The initial focused
   wrapper stopped before any test because it attempted to clear an already-uninstalled package;
   the corrected wrapper checks package presence first. This was fixture setup, not an app failure.
-  Exact-head hosted checks remain pending. The latest supplied normal APK remains `2a9fcd9` and
-  does not yet contain this integration.
+  Published as `d840e92`; its normal APK contains this integration. Exact-head hosted outcomes and
+  the required follow-up are recorded at the top of this section.
 
 New authorized work: implement Kotlin Dependabot #107 (AGP 9.4.1 / Bouncy Castle 1.86) and its
 metadata companion #108. Validation is isolated from the Flutter Settings candidate. The existing

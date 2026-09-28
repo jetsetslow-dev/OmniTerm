@@ -92,7 +92,12 @@ flutter() {
           printf '00:01 +1: a real test already executed\n'
         fi
         printf '00:00 +0 -1: loading /workspace/integration_test/app_surface_stress_test.dart [E]\n'
-        printf '  Failed to load "app_surface_stress_test.dart": Connecting to the VM Service timed out.\n'
+        if [[ "${OMNITERM_TEST_VM_ATTACH_KIND:-timeout}" == disappeared ]]; then
+          printf "  Failed to load \"app_surface_stress_test.dart\": Instance of 'VmServiceDisappearedException'\n"
+          printf '  package:flutter_tools/src/vmservice.dart 882:7 FlutterVmService._getIsolateRefs\n'
+        else
+          printf '  Failed to load "app_surface_stress_test.dart": Connecting to the VM Service timed out.\n'
+        fi
         printf '  package:flutter_tools/src/test/integration_test_device.dart 103:28 IntegrationTestTestDevice.start.<fn>\n'
         return 1
       fi
@@ -220,10 +225,14 @@ check_vm_attach_recovery() {
     exit 1
   fi
 }
-check_vm_attach_recovery once emulator-5554 0 2 1
-check_vm_attach_recovery always emulator-5554 1 2 1
-check_vm_attach_recovery after_test emulator-5554 1 1 0
-check_vm_attach_recovery once daily-device 1 1 0
+for OMNITERM_TEST_VM_ATTACH_KIND in timeout disappeared; do
+  export OMNITERM_TEST_VM_ATTACH_KIND
+  check_vm_attach_recovery once emulator-5554 0 2 1
+  check_vm_attach_recovery always emulator-5554 1 2 1
+  check_vm_attach_recovery after_test emulator-5554 1 1 0
+  check_vm_attach_recovery once daily-device 1 1 0
+done
+unset OMNITERM_TEST_VM_ATTACH_KIND
 
 # A pinned Patrol test runner must not depend on the availability of its optional package-update
 # or analytics endpoints. Deliberately inherit the opposite settings to prove the runner scopes

@@ -81,6 +81,8 @@ else
   GRADLE_ARGS+=(--max-workers=4 "-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8")
 fi
 
+# Unit failure XML/HTML remains in app/build/{test-results,reports/tests}; hosted CI uploads
+# those same files on failure so coroutine assertions retain their full diagnostic stack.
 ./gradlew \
   testOpenSourceDebugUnitTest testPlayStoreDebugUnitTest \
   lintOpenSourceDebug lintPlayStoreDebug \

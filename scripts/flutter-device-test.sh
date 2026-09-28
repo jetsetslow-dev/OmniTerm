@@ -199,13 +199,14 @@ is_android_flutter_transport_failure() {
     return 0
   fi
 
-  # Flutter 3.44 can expose the VM and then fail its five-second attachment handshake before
-  # loading the test isolate. Recognize that exact tool failure, with zero tests executed, so
+  # Flutter 3.44 can expose the VM and then time out or lose the service during its attachment
+  # handshake before loading the test isolate. Recognize those tool failures, with zero tests
+  # executed, so
   # the existing disposable-emulator reset can recover the transport once. A test that already
   # ran (even if followed by this text) must never be retried as an infrastructure failure.
   if [ "$rc" -eq 1 ] &&
     grep -Eq '^[0-9]+:[0-9]+ \+0 -1: loading .* \[E\]$' "$attempt_log" &&
-    grep -Eq 'Failed to load .*: Connecting to the VM Service timed out\.' "$attempt_log" &&
+    grep -Eq "Failed to load .*: (Connecting to the VM Service timed out\\.|Instance of 'VmServiceDisappearedException')" "$attempt_log" &&
     grep -Fq 'package:flutter_tools/src/test/integration_test_device.dart' "$attempt_log" &&
     ! grep -Eq '^[0-9]+:[0-9]+ \+[1-9][0-9]*([ :]|$)' "$attempt_log"; then
     return 0
