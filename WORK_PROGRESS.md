@@ -13,8 +13,10 @@ secrets here: moving it later does not erase Git history.
 The user has explicitly requested the existing Kotlin UI throughout Flutter: every screen,
 submenu, popup and option, including the SSH terminal, Settings, sizing and navigation. Kotlin is
 the reference, not an invitation to redesign. The previous return-review checkpoint is complete;
-its passing checks do not establish visual parity. The latest supplied debug APK is `d840e92` and includes authentication, terminal keyboard and the
-Settings checkpoint below. Broader terminal and app-wide visual/behavior parity remain in progress.
+its passing checks do not establish visual parity. The latest archived normal Flutter debug APK is
+`artifacts/flutter-builds/20260930-7fcc3cf/OmniTerm-Flutter-debug.apk` (SHA-256
+`8938554cf010c33fe1bc3ce95b9d4dd6ef960ef1cbb4f2dcc80f66160eaf29c8`). It was installed and
+opened on API 35. Broader terminal and app-wide visual/behavior parity remain in progress.
 
 Clarifications: this includes every login/lock/biometric element and all functionality, including
 long press, swipe, selection, keyboard shortcuts, Back, drag/reorder and contextual actions. Visual
@@ -28,6 +30,31 @@ Settings uses different sections, control types, order and labels. The first fix
 
 Current checkpoint status (September 30):
 
+- Signed/pushed Flutter head `7fcc3cf` passed the full local gate and complete API 35 core profile
+  (34 passed, zero skipped). Its exact-head hosted checks finished with one failure: emulator job
+  `109752301087` in run `36673135893` found no rule row to delete in
+  `integration_test/app_actions_test.dart`; all other selected checks, including native Build &
+  Test, Room, release SBOM and CodeQL, passed. The test used a settled widget tree as evidence that
+  asynchronous SQLite save and its rule stream had completed; the list existed behind the sheet.
+  The current uncommitted repair waits for the sheet to close and the saved row to appear. The rule
+  editor also shows indeterminate saving progress, disables concurrent edits/saves and preserves an
+  actionable failure. The exact affected test passed on API 35 after the change (one passed, zero
+  skipped). The final-tree `./scripts/local-pr-check.sh --full` passed with the installed Flutter
+  SDK on PATH: 2,767 Flutter host tests, seven optional live-fixture skips, analyzer/format,
+  release APK/AAB and both SBOMs, strict fresh verification, native unit/lint and all-ref secret
+  scanning. Plain native API 35 instrumentation discovered 60 cases: 24 passed, 36 opt-in
+  assumption exits and zero actual failures. The first gate attempt lacked Flutter on PATH and
+  stopped before its Flutter phase; it is not counted as a pass. The complete Flutter API 35 core
+  device profile passed: 26 plain integration cases plus eight Patrol cases, zero skips and no
+  unexpected warnings. It included the route/subtab/theme/rotation sweep, document picker,
+  enrolled biometric prompt, permissions and phone-sized Settings. Signed push and replacement
+  exact-head CI are still pending; do not call this head green.
+- Kotlin Dependabot #109 remains in an isolated uncommitted worktree. The first strict metadata
+  `--write` pass failed at debug signing because that worktree lacked its local ignored keystore;
+  the stable local keystore is now present. Re-run `--write`, then explicit forced-fresh `--verify`,
+  inspect all dual checksums, run the full local gate and native API 35 UI validation before a
+  signed checkpoint. #110's unsigned commit must not enter protected history. #111 remains open
+  for required review; no automated PR has been merged to `main`.
 - Signed recovery checkpoint `352b72c` reached terminal hosted results. Native Build & Test,
   Room migrations, release SBOM, CodeQL, dependency review and security checks passed. Flutter's
   emulator job failed in the existing host-action device test: after tapping `SSH ANYWAY`, the

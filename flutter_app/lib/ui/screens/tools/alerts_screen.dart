@@ -750,6 +750,7 @@ class _RuleSheetState extends State<_RuleSheet> {
   );
   late final _mount = TextEditingController(text: widget.existing?.mountPoint ?? '/');
   String? _failure;
+  bool _saving = false;
 
   @override
   void initState() {
@@ -774,27 +775,42 @@ class _RuleSheetState extends State<_RuleSheet> {
   }
 
   Future<void> _save() async {
-    final failure = await widget.vm.saveRule(
-      existing: widget.existing,
-      metricName: _metric,
-      thresholdValue: double.tryParse(_threshold.text.trim()) ?? double.nan,
-      severity: _severity,
-      triggerWindow: _window,
-      serverId: _serverId,
-      mountPoint: _mount.text.trim().isEmpty ? '/' : _mount.text.trim(),
-      enabled: widget.existing?.enabled ?? true,
-      notes: widget.existing?.notes ?? '',
-    );
+    if (_saving) return;
+    setState(() {
+      _saving = true;
+      _failure = null;
+    });
+    String? failure;
+    try {
+      failure = await widget.vm.saveRule(
+        existing: widget.existing,
+        metricName: _metric,
+        thresholdValue: double.tryParse(_threshold.text.trim()) ?? double.nan,
+        severity: _severity,
+        triggerWindow: _window,
+        serverId: _serverId,
+        mountPoint: _mount.text.trim().isEmpty ? '/' : _mount.text.trim(),
+        enabled: widget.existing?.enabled ?? true,
+        notes: widget.existing?.notes ?? '',
+      );
+    } catch (_) {
+      failure = 'Could not save the rule. Check storage and try again.';
+    }
     if (!mounted) return;
     if (failure == null) {
       Navigator.of(context).pop();
     } else {
-      setState(() => _failure = failure);
+      setState(() {
+        _saving = false;
+        _failure = failure;
+      });
     }
   }
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => PopScope(canPop: !_saving, child: _buildSheet(context));
+
+  Widget _buildSheet(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final hosts = widget.vm.hosts;
 
@@ -820,12 +836,13 @@ class _RuleSheetState extends State<_RuleSheet> {
                   for (final metric in alertMetrics)
                     DropdownMenuItem(value: metric, child: Text(metric)),
                 ],
-                onChanged: (v) => setState(() => _metric = v ?? _metric),
+                onChanged: _saving ? null : (v) => setState(() => _metric = v ?? _metric),
               ),
               const SizedBox(height: 10),
               TextField(
                 key: const ValueKey('alerts.editor.threshold'),
                 controller: _threshold,
+                readOnly: _saving,
                 keyboardType: TextInputType.number,
                 decoration: omniInputDecoration(
                   context,
@@ -837,6 +854,7 @@ class _RuleSheetState extends State<_RuleSheet> {
                 TextField(
                   key: const ValueKey('alerts.editor.mount'),
                   controller: _mount,
+                  readOnly: _saving,
                   decoration: omniInputDecoration(
                     context,
                     labelText: 'Mount point',
@@ -854,7 +872,7 @@ class _RuleSheetState extends State<_RuleSheet> {
                   for (final severity in alertSeverities)
                     DropdownMenuItem(value: severity, child: Text(severity)),
                 ],
-                onChanged: (v) => setState(() => _severity = v ?? _severity),
+                onChanged: _saving ? null : (v) => setState(() => _severity = v ?? _severity),
               ),
               const SizedBox(height: 10),
               DropdownButtonFormField<String>(
@@ -870,7 +888,7 @@ class _RuleSheetState extends State<_RuleSheet> {
                   for (final window in alertWindows)
                     DropdownMenuItem(value: window, child: Text(window)),
                 ],
-                onChanged: (v) => setState(() => _window = v ?? _window),
+                onChanged: _saving ? null : (v) => setState(() => _window = v ?? _window),
               ),
               const SizedBox(height: 10),
               DropdownButtonFormField<int>(
@@ -882,7 +900,7 @@ class _RuleSheetState extends State<_RuleSheet> {
                   for (final host in hosts)
                     DropdownMenuItem(value: host.id, child: Text(host.name)),
                 ],
-                onChanged: (v) => setState(() => _serverId = v ?? 0),
+                onChanged: _saving ? null : (v) => setState(() => _serverId = v ?? 0),
               ),
               if (_failure != null)
                 Padding(
@@ -914,8 +932,22 @@ class _RuleSheetState extends State<_RuleSheet> {
               const SizedBox(height: 10),
               FilledButton(
                 key: const ValueKey('alerts.editor.save'),
-                onPressed: _save,
-                child: const Text('Save'),
+                onPressed: _saving ? null : _save,
+                child: _saving
+                    ? const Row(
+                        key: ValueKey('alerts.editor.save.progress'),
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(width: 8),
+                          Text('Saving…'),
+                        ],
+                      )
+                    : const Text('Save'),
               ),
             ],
           ),

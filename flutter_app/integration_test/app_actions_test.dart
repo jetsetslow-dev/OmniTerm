@@ -189,11 +189,29 @@ void main() {
       await tapKey(tester, 'tools.alerts');
       await tapKey(tester, 'alerts.tab.rules');
 
-      final before = find.byKey(const ValueKey('alerts.rules.list')).evaluate().isEmpty;
+      final before = find.byKey(const ValueKey('alerts.rules.empty')).evaluate().isNotEmpty;
       await tapKey(tester, 'alerts.addRule');
       await tester.enterText(find.byKey(const ValueKey('alerts.editor.threshold')), '93');
       await tester.pumpAndSettle();
-      await tapKey(tester, 'alerts.editor.save');
+
+      final save = find.byKey(const ValueKey('alerts.editor.save'));
+      final row = find.byWidgetPredicate(
+        (w) =>
+            w.key is ValueKey<String> &&
+            (w.key! as ValueKey<String>).value.startsWith('alerts.rule.') &&
+            (w.key! as ValueKey<String>).value.endsWith('.delete'),
+      );
+      await tester.ensureVisible(save);
+      await tester.tap(save);
+      // A pump can settle before SQLite and its rule stream publish the save. The list exists
+      // behind the sheet and the unsaved threshold is still visible in its text field, so neither
+      // is proof that the write finished. Wait for both the sheet to close and its row to render.
+      for (var attempt = 0; attempt < 100; attempt++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        if (save.evaluate().isEmpty && row.evaluate().isNotEmpty) break;
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      }
+      expect(save, findsNothing, reason: 'the editor did not finish saving the rule');
 
       expect(
         find.byKey(const ValueKey('alerts.rules.list')),
@@ -208,12 +226,6 @@ void main() {
 
       // Delete it again, so the suite leaves the device as it found it and the delete path is
       // exercised rather than assumed.
-      final row = find.byWidgetPredicate(
-        (w) =>
-            w.key is ValueKey<String> &&
-            (w.key! as ValueKey<String>).value.startsWith('alerts.rule.') &&
-            (w.key! as ValueKey<String>).value.endsWith('.delete'),
-      );
       expect(row, findsWidgets, reason: 'no rule row to delete');
       await tester.tap(row.last);
       await tester.pumpAndSettle();
