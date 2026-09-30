@@ -1233,6 +1233,32 @@ void main() {
       await finish(tester);
     });
 
+    testWidgets('long pressing an inactive split pane focuses it before opening its transcript', (
+      tester,
+    ) async {
+      await connectTwo(tester);
+      final other = vm.splitCandidates.single;
+      final firstId = vm.current!.id;
+      await tester.tap(find.byKey(const ValueKey('shell.split')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(ValueKey('shell.split.pick.${other.id}')));
+      await tester.pumpAndSettle();
+      expect(vm.current!.id, firstId);
+
+      final inactiveSurface = find.descendant(
+        of: find.byKey(ValueKey('shell.pane.${other.id}')),
+        matching: find.byKey(const ValueKey('shell.surface')),
+      );
+      await tester.longPress(inactiveSurface);
+      await tester.pumpAndSettle();
+
+      expect(vm.current!.id, other.id, reason: 'long press must focus the pane it acted on');
+      expect(find.byKey(const ValueKey('transcript.title')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('transcript.close')));
+      await tester.pumpAndSettle();
+      await finish(tester);
+    });
+
     testWidgets('a screen reader can identify and focus either terminal pane', (tester) async {
       // Kotlin's TerminalPaneFrame gives each pane a label, selected state and an OnClick
       // semantics action. A cyan border is no substitute: without the action a TalkBack user can

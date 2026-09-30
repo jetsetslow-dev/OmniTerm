@@ -195,6 +195,7 @@ class TerminalSurface extends StatefulWidget {
     this.onGridChanged,
     this.onTapCell,
     this.onScrolledBack,
+    this.onLongPressFocus,
   });
 
   final ShellSession session;
@@ -212,6 +213,9 @@ class TerminalSurface extends StatefulWidget {
   /// keep up with into a repaint — and fetching them costs a round trip, so it is paid for on the
   /// gesture that wants them rather than on every burst of output.
   final void Function()? onScrolledBack;
+
+  /// Focus the touched split pane before showing its transcript and copy actions.
+  final VoidCallback? onLongPressFocus;
 
   @override
   State<TerminalSurface> createState() => _TerminalSurfaceState();
@@ -251,7 +255,10 @@ class _TerminalSurfaceState extends State<TerminalSurface> {
             ),
             // A painted grid has nothing to select, which left copying output impossible. Long
             // press opens the scrollback as selectable text instead — the Kotlin's answer too.
-            onLongPress: () => openTerminalTranscript(context, widget.session),
+            onLongPress: () {
+              widget.onLongPressFocus?.call();
+              openTerminalTranscript(context, widget.session);
+            },
             // The grid is painted, so it puts nothing in the semantics tree by itself — the app's
             // primary content was unreadable to a screen reader. The label is built from the
             // *viewport* snapshot, which is bounded by the visible rows, so this costs a short

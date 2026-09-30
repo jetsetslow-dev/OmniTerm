@@ -1071,6 +1071,7 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
                       palette: palette,
                       focused: _imeFocus.hasFocus,
                       onGridChanged: widget.vm.rememberGrid,
+                      onLongPressFocus: () => widget.vm.focusPane(session.id),
                       // Scrolling into history is what pays for the tmux capture (ledger 99): the
                       // rows the user is reaching for may never have reached this client.
                       onScrolledBack: () => unawaited(widget.vm.resyncTmuxScrollback(session)),

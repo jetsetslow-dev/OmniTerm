@@ -283,6 +283,12 @@ Future<void> _exerciseTerminals(
         await tester.longPress(find.byType(TerminalSurface).first);
         await _waitForPopup(tester, find.byKey(const ValueKey('transcript.toggleRange')));
         await tester.tap(find.byKey(const ValueKey('transcript.toggleRange')));
+        await _waitFor(
+          tester,
+          () =>
+              tester.widget<Text>(find.byKey(const ValueKey('transcript.title'))).data ==
+              'Full buffer',
+        );
         await _waitFor(tester, () => find.text('↓ More below').evaluate().isNotEmpty);
         final copiedText = tester
             .widget<SelectableText>(find.byKey(const ValueKey('transcript.text')))
