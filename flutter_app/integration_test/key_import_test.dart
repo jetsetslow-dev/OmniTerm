@@ -66,7 +66,7 @@ void main() {
   );
 
   Future<void> launch(WidgetTester tester) async {
-    app.main();
+    await app.main();
     await tester.pumpAndSettle(const Duration(seconds: 2));
   }
 

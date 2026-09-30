@@ -36,7 +36,7 @@ void main() {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.reset);
 
-    app.main();
+    await app.main();
     // The database opens, settings load and the host stream emits, all asynchronously. A flow that
     // starts before those land is driving a screen the user never sees.
     await tester.pumpAndSettle(const Duration(seconds: 2));

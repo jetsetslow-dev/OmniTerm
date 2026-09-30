@@ -21,7 +21,7 @@ void main() {
 
   /// Boots the real app and waits for the first frame to settle.
   Future<void> launch(WidgetTester tester) async {
-    app.main();
+    await app.main();
     // `pumpAndSettle` alone is not enough at launch: the database opens, settings load and the host
     // stream emits, all asynchronously, and a flow that starts before those land is testing a
     // screen the user never sees.

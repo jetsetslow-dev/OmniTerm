@@ -31,7 +31,7 @@ void main() {
 
   testWidgets('every route and subtab opens in every app theme and orientation', (tester) async {
     installErrorLocationProbe();
-    app.main();
+    await app.main();
     await tester.pumpAndSettle(const Duration(seconds: 2));
 
     final initialContext = tester.element(find.byKey(const ValueKey('screen.servers')));

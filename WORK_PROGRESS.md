@@ -42,7 +42,8 @@ Current checkpoint status (September 30):
   Its exact-head PR checks finished terminal green: native Build & Test, Room, release SBOM, CodeQL,
   Flutter host/emulator, iOS, release artifacts and security checks all succeeded. Selected-out
   alternatives were skipped; Scorecard was neutral. This does not establish full UI parity.
-- The next terminal checkpoint is uncommitted. Kotlin focuses an inactive split pane before a
+- Signed/pushed Flutter head `6f5d954` adds the next terminal checkpoint. Kotlin focuses an
+  inactive split pane before a
   long-press copy action; Flutter opened that pane's transcript but kept the other pane focused.
   A focused `shell_screen_test` failed on the unfixed code for that exact mismatch and passes after
   the source change. The first API 35 host fixture run exposed a test synchronization error: after
@@ -55,9 +56,23 @@ Current checkpoint status (September 30):
   Flutter host cases with seven optional fixture skips, analyzer/format, release APK/AAB and both
   SBOMs, strict fresh project/release/compile verification, native unit/lint and secret scanning.
   Android was explicitly excluded from that memory-heavy gate; the separate API 35 host profile
-  above covered the affected shell/transcript surfaces. Signed push and exact-head checks remain
-  pending. TUI gesture routing, fling, terminal grid/font metrics and broad visual parity remain
-  open.
+  above covered the affected shell/transcript surfaces. On this exact head, native Build & Test,
+  Room, release SBOM, CodeQL, Flutter host, iOS, release artifacts and security checks passed, but
+  the hosted emulator job `109962117822` failed before executing its Settings action: the test
+  called asynchronous `app.main()` without awaiting it, then looked up `screen.servers` before
+  `runApp` could build that screen. The same launch race exists in 14 integration-test files. The
+  current uncommitted test repair awaits `app.main()` at all 15 call sites; analyzer passed. The
+  exact failed Settings Patrol case passed on API 35 (one, zero skips), followed by the full Flutter
+  core profile: 26 plain plus eight Patrol cases passed, zero skipped, including the route sweep,
+  enrolled biometrics, picker and Settings. The separate API 35 SSH host profile also passed one
+  fixture integration case and one native terminal lifecycle case with zero skips, covering the
+  plain/tmux/control shell, Docker/Podman and SFTP/SMB/FTP/WebDAV fixtures. The final `--full`
+  local preflight passed with 2,768 Flutter host cases and seven optional fixture skips, release
+  APK/AAB and SBOM generation, native unit/lint, strict fresh dependency verification and secret
+  scanning. Its Android device matrix was explicitly deferred because the emulator was stopped;
+  the separate API 35 runs above covered this change. Signed push and replacement exact-head checks
+  are pending. TUI gesture routing, fling, terminal
+  grid/font metrics and broad visual parity remain open.
 - Kotlin Dependabot #109 now has signed/pushed head `298467c` with strict metadata for the Gradle,
   Android Gradle Plugin, Navigation, Roborazzi, Bouncy Castle and Develocity updates. A standalone
   `--write` and separate `--verify` passed; 111 added records and three completed SHA-512 records

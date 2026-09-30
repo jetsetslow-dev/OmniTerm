@@ -35,7 +35,7 @@ void main() {
     expect(_user, isNotEmpty, reason: 'scripts/test-hosts/.env was not passed to Flutter');
     expect(_password, isNotEmpty, reason: 'scripts/test-hosts/.env was not passed to Flutter');
 
-    app.main();
+    await app.main();
     await tester.pumpAndSettle(const Duration(seconds: 2));
 
     // Read below MultiProvider; the OmniTermApp element itself is its parent and therefore cannot

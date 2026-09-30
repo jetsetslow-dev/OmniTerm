@@ -118,7 +118,7 @@ void main() {
   }
 
   Future<void> launch(WidgetTester tester) async {
-    app.main();
+    await app.main();
     // Bounded, like every other wait here. If a previous run left the app locked, the first frame
     // is the lock screen — whose PIN field autofocuses, so its caret schedules a frame forever and
     // `pumpAndSettle` runs to its ten-minute ceiling instead of returning.

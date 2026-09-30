@@ -21,7 +21,7 @@ void main() {
     // app. Hide that asynchronous platform request; the suite-owned handle below makes semantics
     // availability deterministic before testWidgets records each test's baseline.
     $.tester.binding.platformDispatcher.semanticsEnabledTestValue = false;
-    app.main();
+    await app.main();
     await $.pumpAndSettle();
     await $(const ValueKey('nav.tools')).tap();
     await $(const ValueKey('tools.backup')).tap();

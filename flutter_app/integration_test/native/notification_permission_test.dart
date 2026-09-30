@@ -24,7 +24,7 @@ void main() {
     // the test dispatcher's platform request avoids a framework-owned SemanticsHandle leaking past
     // teardown. The suite-owned handle below establishes a stable baseline before tests execute.
     $.tester.binding.platformDispatcher.semanticsEnabledTestValue = false;
-    app.main();
+    await app.main();
     await $.pumpAndSettle();
   }
 

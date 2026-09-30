@@ -41,7 +41,7 @@ void main() {
       expect(_user, isNotEmpty);
       expect(_password, isNotEmpty);
       $.tester.binding.platformDispatcher.semanticsEnabledTestValue = false;
-      app.main();
+      await app.main();
       await $.pumpAndSettle();
       final context = $.tester.element(find.byKey(const ValueKey('screen.servers')));
       final state = context.read<AppState>();

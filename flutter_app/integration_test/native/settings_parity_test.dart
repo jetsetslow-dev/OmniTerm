@@ -23,7 +23,7 @@ void main() {
     'Kotlin Settings cards and popups remain reachable at phone size',
     ($) async {
       $.tester.binding.platformDispatcher.semanticsEnabledTestValue = false;
-      app.main();
+      await app.main();
       await $.pumpAndSettle();
       final context = $.tester.element(find.byKey(const ValueKey('screen.servers')));
       final state = context.read<AppState>();

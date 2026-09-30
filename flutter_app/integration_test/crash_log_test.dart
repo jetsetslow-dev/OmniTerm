@@ -79,7 +79,7 @@ void main() {
     );
 
     layOutWholeScreen(tester);
-    app.main();
+    await app.main();
     await settle(tester, frames: 30);
     await openCrashHistory(tester);
 
@@ -149,7 +149,7 @@ void main() {
     );
 
     layOutWholeScreen(tester);
-    app.main();
+    await app.main();
     await settle(tester, frames: 30);
     await openCrashHistory(tester);
     expect(find.byKey(const ValueKey('about.crashHistory.0')), findsOneWidget);
