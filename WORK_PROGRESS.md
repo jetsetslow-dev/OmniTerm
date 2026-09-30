@@ -1,6 +1,6 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
-Updated: 2026-09-28. Working branch: `migration-to-flutter`; PR: #92.
+Updated: 2026-09-30. Working branch: `migration-to-flutter`; PR: #92.
 Independent return review implemented and locally validated; **not** a parity-complete or release-ready declaration.
 
 This sanitized tracker is intentionally committed so work can resume on another machine.
@@ -26,7 +26,32 @@ app hosts it in FlutterActivity; authentication errors are silently collapsed in
 Flutter replaces the platform text scale whereas Kotlin composes it with the app preference.
 Settings uses different sections, control types, order and labels. The first fixes and focused device validation are recorded below; broader parity work remains open.
 
-Current checkpoint status (September 28):
+Current checkpoint status (September 30):
+
+- Signed recovery checkpoint `352b72c` reached terminal hosted results. Native Build & Test,
+  Room migrations, release SBOM, CodeQL, dependency review and security checks passed. Flutter's
+  emulator job failed in the existing host-action device test: after tapping `SSH ANYWAY`, the
+  expected offline confirmation was absent. The test had already observed the completed host
+  probe and visible action. The host card awaited two launcher-shortcut platform calls before
+  asking `ShellViewModel` to connect; those calls delayed the prompt on the hosted emulator.
+  The current tree starts the SSH decision before shortcut bookkeeping. A controlled API 35 device
+  regression held the shortcut channel open: it failed on the unfixed host card with the expected
+  missing dialog, then passed on this tree. `./scripts/local-pr-check.sh --full` passed, including
+  2,767 Flutter host tests with seven optional fixture skips, release APK/AAB and both Flutter
+  SBOMs, native unit/lint, strict fresh dependency verification and secret scanning. Plain native
+  API 35 instrumentation discovered 60 cases: 24 passed and 36 opt-in assumptions, with no actual
+  failures. Flutter's complete API 35 core device profile passed all 34 cases with zero skips and
+  no unexpected warnings: 26 plain integration cases and eight Patrol cases, including the route
+  sweep, native document picker, enrolled biometric prompt, notification permission and phone-size
+  Settings flows. A signed replacement checkpoint and hosted checks remain pending.
+- New Kotlin Dependabot PRs #109 and #110 are open: #109 raises Gradle, Android Gradle Plugin,
+  Navigation, Roborazzi, Bouncy Castle and Develocity; #110 supplies strict verification metadata.
+  #109's native Build & Test and CodeQL failed on the uncombined head. Review and validation in
+  an isolated Kotlin worktree remain pending. Its metadata fixup commit is unsigned, so its file
+  changes are staged for a signed review commit without introducing that commit into protected
+  history. The 106 new artifact records each include SHA-256 and SHA-512; Gradle's published
+  distribution and wrapper JAR checksums match. GitHub Actions PR #111 is also open with terminal
+  checks and no failures, pending required review.
 
 - Signed Settings checkpoint `d840e92` is pushed. Its normal debug APK was installed and opened
   on API 35; package, version, stable signing certificate, debuggable state, ordinary app entrypoint

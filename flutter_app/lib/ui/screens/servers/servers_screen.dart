@@ -806,9 +806,12 @@ class _ServerCard extends StatelessWidget {
     // `connectTerminal` for the same reason (`ui/AppViewModel.kt:4496`).
     vm.selectedServerId = server.id;
     navigation?.navigateTo(Screen.shell);
+    // The offline confirmation and connection progress must appear immediately after the tap.
+    // Android's launcher shortcut channel can complete later (especially on a fresh emulator),
+    // so it must not hold the SSH action behind shortcut bookkeeping.
+    await shell?.connect(server, controlMode: shell!.useControlMode);
     await shortcuts?.pushServer(server);
     await shortcuts?.reportServerUsed(server.id);
-    await shell?.connect(server, controlMode: shell!.useControlMode);
   }
 
   Future<void> _showActions(BuildContext context) async {

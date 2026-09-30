@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:omniterm/main.dart' as app;
@@ -276,9 +279,28 @@ void main() {
         reason: 'a failed automatic check must never remove the user\'s direct SSH path',
       );
 
+      // A launcher may be slow to acknowledge dynamic shortcut updates. The SSH decision must
+      // reach the user while that independent platform call is still outstanding.
+      const shortcutChannel = MethodChannel('omniterm/shortcuts');
+      final shortcutReleased = Completer<bool>();
+      final shortcutInvoked = Completer<void>();
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(shortcutChannel, (call) async {
+        if (call.method == 'pushServer') {
+          shortcutInvoked.complete();
+          return shortcutReleased.future;
+        }
+        return true;
+      });
+      addTearDown(() {
+        if (!shortcutReleased.isCompleted) shortcutReleased.complete(true);
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(shortcutChannel, null);
+      });
+
       await tester.tap(find.text('SSH ANYWAY'));
       await tester.pumpAndSettle();
+      expect(shortcutInvoked.isCompleted, isTrue);
       expect(find.byKey(const ValueKey('offline.connect.dialog')), findsOneWidget);
+      shortcutReleased.complete(true);
       await tapKey(tester, 'offline.connect.confirm');
       for (
         var attempt = 0;
