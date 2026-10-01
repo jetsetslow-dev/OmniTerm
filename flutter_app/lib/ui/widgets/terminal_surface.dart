@@ -38,8 +38,8 @@ class TerminalMetrics {
   /// How many whole cells fit in [size], floored — a partially visible column is not a column the
   /// remote may draw into.
   (int, int) gridFor(Size size) => (
-    math.max(1, (size.width / cellWidth).floor()),
-    math.max(1, (size.height / cellHeight).floor()),
+    (size.width / cellWidth).floor().clamp(1, 500),
+    (size.height / cellHeight).floor().clamp(1, 300),
   );
 
   static final Map<(double, String, double?, double, bool), TerminalMetrics> _cache = {};
@@ -311,6 +311,9 @@ class _TerminalSurfaceState extends State<TerminalSurface> with SingleTickerProv
   late final AnimationController _fling;
   double _flingPosition = 0;
   double _flingCellHeight = 1;
+  Timer? _resizeTimer;
+  (int, int)? _pendingGrid;
+  int _layoutRows = 1;
 
   @override
   void initState() {
@@ -322,6 +325,7 @@ class _TerminalSurfaceState extends State<TerminalSurface> with SingleTickerProv
   void didUpdateWidget(TerminalSurface oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.session != widget.session) {
+      _cancelResize();
       _fling.stop();
       _resetRoute();
     }
@@ -329,6 +333,7 @@ class _TerminalSurfaceState extends State<TerminalSurface> with SingleTickerProv
 
   @override
   void dispose() {
+    _cancelResize();
     _resetRoute();
     _fling.dispose();
     super.dispose();
@@ -336,6 +341,7 @@ class _TerminalSurfaceState extends State<TerminalSurface> with SingleTickerProv
 
   @override
   Widget build(BuildContext context) {
+    final session = widget.session;
     // Kotlin's terminal size is an sp value: Android's system text curve applies, while the
     // separate in-app text preset does not. The app's MediaQuery wraps both scales.
     final scaler = MediaQuery.textScalerOf(context);
@@ -360,12 +366,18 @@ class _TerminalSurfaceState extends State<TerminalSurface> with SingleTickerProv
             final (cols, rows) = metrics.gridFor(
               Size(constraints.maxWidth * .96, constraints.maxHeight),
             );
+            _layoutRows = rows;
             // Resizing during layout would mutate state mid-build; the remote is told once the frame
             // this size belongs to has actually been shown.
             SchedulerBinding.instance.addPostFrameCallback((_) {
-              if (!mounted) return;
+              if (!mounted || widget.session != session) return;
+              // Visible ranges track the shown pane immediately; only PTY reflow waits to settle.
+              if (session.viewportRows != rows) {
+                session.setViewportRows(rows);
+                session.publishNow();
+              }
               widget.onGridChanged?.call(cols, rows);
-              widget.session.resize(cols, rows);
+              _requestResize(session, cols, rows);
             });
 
             return ListenableBuilder(
@@ -398,13 +410,15 @@ class _TerminalSurfaceState extends State<TerminalSurface> with SingleTickerProv
                 child: Semantics(
                   label: terminalSemanticsLabel(widget.session.snapshot.rows),
                   readOnly: true,
-                  child: CustomPaint(
-                    size: Size(constraints.maxWidth, constraints.maxHeight),
-                    painter: TerminalPainter(
-                      snapshot: widget.session.snapshot,
-                      metrics: metrics,
-                      palette: widget.palette,
-                      showCursor: widget.focused && widget.session.followTail,
+                  child: ClipRect(
+                    child: CustomPaint(
+                      size: Size(constraints.maxWidth, constraints.maxHeight),
+                      painter: TerminalPainter(
+                        snapshot: widget.session.snapshot,
+                        metrics: metrics,
+                        palette: widget.palette,
+                        showCursor: widget.focused && widget.session.followTail,
+                      ),
                     ),
                   ),
                 ),
@@ -414,6 +428,28 @@ class _TerminalSurfaceState extends State<TerminalSurface> with SingleTickerProv
         ),
       ),
     );
+  }
+
+  void _cancelResize() {
+    _resizeTimer?.cancel();
+    _resizeTimer = null;
+    _pendingGrid = null;
+  }
+
+  void _requestResize(ShellSession session, int cols, int rows) {
+    final grid = (cols, rows);
+    if (_pendingGrid == grid) return;
+    _cancelResize();
+    if (session.cols == cols && session.rows == rows) return;
+    _pendingGrid = grid;
+    // Match Kotlin's settled layout resize: split-handle dragging and IME/rotation frames should
+    // not each reflow scrollback and send another remote window-change request.
+    _resizeTimer = Timer(const Duration(milliseconds: 120), () {
+      _resizeTimer = null;
+      _pendingGrid = null;
+      if (!mounted || widget.session != session) return;
+      session.resize(cols, rows);
+    });
   }
 
   void _onDrag(double dy, double cellHeight) {
@@ -434,7 +470,7 @@ class _TerminalSurfaceState extends State<TerminalSurface> with SingleTickerProv
       return;
     }
 
-    final pageSize = math.max(1.0, session.viewportRows * cellHeight * 0.8);
+    final pageSize = math.max(1.0, _layoutRows * cellHeight * 0.8);
     final started = _router.isIdle;
     final action = _router.onDelta(dy, pageSize);
     if (started) _resolveRoute(pageSize, cellHeight, _routeGeneration);

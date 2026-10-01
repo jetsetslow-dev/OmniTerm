@@ -14,8 +14,8 @@ The user has explicitly requested the existing Kotlin UI throughout Flutter: eve
 submenu, popup and option, including the SSH terminal, Settings, sizing and navigation. Kotlin is
 the reference, not an invitation to redesign. The previous return-review checkpoint is complete;
 its passing checks do not establish visual parity. The latest archived normal Flutter debug APK is
-`artifacts/flutter-builds/20261002-terminal-renderer/OmniTerm-Flutter-debug.apk` (SHA-256
-`bdbb92c11f708c2eda48b4b7815f2f9911c53893b557f499e9cec3870ba27bae`). It is package
+`artifacts/flutter-builds/20261002-terminal-resize/OmniTerm-Flutter-debug.apk` (SHA-256
+`57d33ebff2322ea19c92935a4e2411cf4f0213bf1e9e0d03d24608411c407fe0`). It is package
 `com.jetsetslow.omniterm.app.flutter`, version `1.0.0-flutter` (code 1), signed by the expected
 debug certificate; it installed and opened on API 35 without a recorded fatal error. Broader
 terminal and app-wide visual/behavior parity remain in progress.
@@ -138,7 +138,7 @@ Current checkpoint status (October 2):
   26 plain plus eight Patrol cases, zero skips and no unexpected warnings. One walkthrough launch
   ran no tests before the runner recovered its transport by rebooting the disposable emulator;
   the successful attempt executed the case. Pixel-level terminal acceptance is still open.
-- This terminal renderer checkpoint aligns glyph placement, cursor painting and native font bounds. Kotlin pins each glyph to its cell
+- Signed/pushed renderer checkpoint `0675931` aligns glyph placement, cursor painting and native font bounds. Kotlin pins each glyph to its cell
   center and paints an opaque cursor block with a readable regular glyph on top. Flutter had
   allowed ordinary runs to follow font advances, left-aligned wide glyphs and overlaid a translucent
   cursor. Five raster regressions failed on those old behaviors and pass with centered glyphs and
@@ -169,15 +169,40 @@ Current checkpoint status (October 2):
   sweep also passed on API 35 (one case, zero skips), reopening every route/subtab/theme/rotation
   after the font bounds correction. The normal `lib/main.dart` debug APK was built, verified for
   package/version/debuggable state, the expected debug signature and absence of the Patrol
-  entrypoint, archived above and installed/opened on API 35 with no recorded fatal error.
+  entrypoint, archived in the terminal-renderer checkpoint folder and installed/opened on API 35
+  with no recorded fatal error.
   The final-tree `./scripts/local-pr-check.sh --full` passed: formatting/analyzer, 2,798 Flutter
   host cases with seven optional fixture skips, release APK/AAB and both Flutter SBOMs,
   development-code exclusion, all-ref secret scanning and strict fresh project/release/compile
   verification. Native unit/lint tasks reused their up-to-date results. Its Android device matrix
   was deferred because the emulator was stopped; the separate API 35 runs above cover the affected
-  screens. Signed publication and checks for the new PR head are pending. Whole-terminal pixel and app-wide visual parity remain open, including the
-  shared/session header, keyboard details, large-canvas 500-column/300-row limits and Kotlin
-  resizing after a 120ms pause.
+  screens. All 25 exact-head PR contexts are now terminal: 16 successes, eight unused companion
+  skips and one neutral Scorecard annotation, with no failure/cancellation. Native Build & Test,
+  API 29 Room, release SBOM, Flutter host/release/iOS, real CodeQL and repository security passed.
+  The hosted emulator passed 26 plain plus eight Patrol cases, zero skips and no unexpected
+  warnings. Its first app-actions launch lost the VM service before any case executed; the bounded
+  runner recovery rebooted the disposable emulator and the successful attempt ran all five cases.
+  Whole-terminal pixel and app-wide visual parity remain open, including the shared/session header
+  and keyboard details.
+- This terminal resize checkpoint caps the remote grid at Kotlin's 500 columns/300 rows and
+  waits 120ms for the layout to settle before reflowing or notifying the SSH channel. New layouts
+  replace the pending request; removing the pane or switching sessions cancels it. Visible rows
+  and TUI page distance still follow the shown layout immediately. Painting is clipped to the pane
+  so stale columns cannot spill into a neighbor during the wait. Four grid/timing/lifecycle guards
+  failed before the change, then separate raster-clipping and immediate-visible-range guards
+  failed before their corresponding repairs. The final focused suite passes 84 cases. Final-source
+  API 35 host coverage passed one live SSH/runtime/share case and one native terminal lifecycle
+  case, zero skips and no unexpected warnings. The final API 35 route/subtab/theme/rotation
+  sweep also passed one case, zero skips and no unexpected warnings. The ordinary `lib/main.dart`
+  debug APK was checked for package/version/debuggable state, expected debug signature and absence
+  of the Patrol entrypoint, archived above, then installed/opened on API 35 with no recorded fatal
+  error. The final-tree `./scripts/local-pr-check.sh --full` passed: formatting/analyzer,
+  2,804 Flutter host cases with seven optional skips (six setup fixture cases and one compression
+  fixture), release APK/AAB, both Flutter SBOMs, development-code exclusion, all-ref secret scanning
+  and strict fresh project/release/compile verification. Native unit/lint reused their up-to-date
+  results. The in-script Android matrix was deferred because the emulator was stopped; the three
+  separate API 35 cases above cover the affected surfaces, and exact-head PR CI covers API 29 Room.
+  Signed publication and checks for the new head remain pending. Broad parity is still open.
 - Kotlin Dependabot #109 now has signed/pushed head `298467c` with strict metadata for the Gradle,
   Android Gradle Plugin, Navigation, Roborazzi, Bouncy Castle and Develocity updates. A standalone
   `--write` and separate `--verify` passed; 111 added records and three completed SHA-512 records
