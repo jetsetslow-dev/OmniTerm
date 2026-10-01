@@ -15,6 +15,7 @@ void main() {
   patrolTest(
     'Settings preserves Kotlin editing, PIN and Back behavior at phone size',
     ($) async {
+      $.tester.binding.platformDispatcher.semanticsEnabledTestValue = false;
       await app.main();
       await $.pumpAndSettle();
       final context = $.tester.element(find.byKey(const ValueKey('screen.servers')));
@@ -171,6 +172,14 @@ void main() {
         await $.tester.runAsync(lock.refresh);
       }
     },
+    semanticsEnabled: false,
     skip: !Platform.isAndroid,
   );
+  // Native Back/permission automation can enable Android accessibility after testWidgets records
+  // its handle baseline. Own a stable suite handle, as the other native fixtures do, and dispose
+  // it after the suite so the framework's asynchronous platform request cannot leak at teardown.
+  final binding = WidgetsBinding.instance;
+  binding.platformDispatcher.onSemanticsEnabledChanged = () {};
+  final semantics = binding.ensureSemantics();
+  tearDownAll(semantics.dispose);
 }

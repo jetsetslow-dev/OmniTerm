@@ -68,4 +68,50 @@ void main() {
       reason: 'Kotlin sizes terminal cells from sp, not app text preset',
     );
   });
+
+  testWidgets('Android cells use physical pixel widths and unrounded font bounds', (tester) async {
+    final channel = FakeTerminalSession();
+    final session = ShellSession(
+      id: 's1',
+      serverId: 7,
+      serverName: 'fixture',
+      channel: channel,
+      emulator: TerminalEmulator(cols: 80, rows: 24, scrollbackLimit: 2000),
+    );
+    addTearDown(() async {
+      session.dispose();
+      await channel.dispose();
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        home: MediaQuery(
+          data: const MediaQueryData(devicePixelRatio: 2.625),
+          child: SizedBox(
+            width: 400,
+            height: 300,
+            child: TerminalSurface(
+              session: session,
+              fontSize: 10.3,
+              palette: const TerminalPalette(
+                background: Colors.black,
+                foreground: Colors.white,
+                cursor: Colors.white,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final paint = tester.widget<CustomPaint>(
+      find.descendant(
+        of: find.byKey(const ValueKey('shell.surface')),
+        matching: find.byType(CustomPaint),
+      ),
+    );
+    final metrics = (paint.painter! as TerminalPainter).metrics;
+    // Ahem has a one-em M advance and one-em ascent. Android Paint rounds the advance
+    // in physical pixels, but retains fractional font bounds for the row height.
+    expect(metrics.cellWidth * 2.625, closeTo(27, .00001));
+    expect(metrics.cellHeight, closeTo(10.3, .00001));
+  });
 }

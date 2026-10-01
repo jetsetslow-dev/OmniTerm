@@ -25,6 +25,7 @@ class TerminalMetrics {
     required this.fontSize,
     this.fontFamily = OmniFonts.mono,
     this.lineHeight,
+    this.baselineOffset,
   });
 
   final double cellWidth;
@@ -32,6 +33,7 @@ class TerminalMetrics {
   final double fontSize;
   final String fontFamily;
   final double? lineHeight;
+  final double? baselineOffset;
 
   /// How many whole cells fit in [size], floored — a partially visible column is not a column the
   /// remote may draw into.
@@ -40,30 +42,42 @@ class TerminalMetrics {
     math.max(1, (size.height / cellHeight).floor()),
   );
 
-  static final Map<(double, String, double?), TerminalMetrics> _cache = {};
+  static final Map<(double, String, double?, double, bool), TerminalMetrics> _cache = {};
 
   /// Measure the same monospace face used to paint the cell, once per scaled size.
   static TerminalMetrics measure(
     double fontSize, {
     String fontFamily = OmniFonts.mono,
     double? lineHeight,
-  }) => _cache.putIfAbsent((fontSize, fontFamily, lineHeight), () {
-    final painter = TextPainter(
-      text: TextSpan(
-        // Kotlin measures this same glyph with Android Paint before sizing the remote grid.
-        text: 'M',
-        style: TextStyle(fontFamily: fontFamily, fontSize: fontSize, height: lineHeight),
-      ),
-      textDirection: TextDirection.ltr,
-    )..layout();
-    return TerminalMetrics(
-      cellWidth: painter.width,
-      cellHeight: painter.height,
-      fontSize: fontSize,
-      fontFamily: fontFamily,
-      lineHeight: lineHeight,
-    );
-  });
+    double devicePixelRatio = 1,
+    bool androidMetrics = false,
+  }) =>
+      _cache.putIfAbsent((fontSize, fontFamily, lineHeight, devicePixelRatio, androidMetrics), () {
+        final painter = TextPainter(
+          text: TextSpan(
+            // Kotlin measures this same glyph with Android Paint before sizing the remote grid.
+            text: 'M',
+            style: TextStyle(fontFamily: fontFamily, fontSize: fontSize, height: lineHeight),
+          ),
+          textDirection: TextDirection.ltr,
+        )..layout();
+        final line = painter.computeLineMetrics().single;
+        // Android Paint hints the advance to a physical pixel, but its font bounds stay fractional.
+        // Paragraph height rounds the line box and shifts the baseline; use the actual font bounds
+        // to match Kotlin's fm.descent - fm.ascent and its -fm.ascent baseline instead.
+        final result = TerminalMetrics(
+          cellWidth: androidMetrics
+              ? (painter.width * devicePixelRatio).roundToDouble() / devicePixelRatio
+              : painter.width,
+          cellHeight: androidMetrics ? line.ascent + line.descent : painter.height,
+          fontSize: fontSize,
+          fontFamily: fontFamily,
+          lineHeight: lineHeight,
+          baselineOffset: androidMetrics ? line.ascent : null,
+        );
+        painter.dispose();
+        return result;
+      });
 }
 
 /// Paints a [TerminalSnapshot] onto a cell grid.
@@ -78,6 +92,7 @@ class TerminalPainter extends CustomPainter {
   final TerminalSnapshot snapshot;
   final TerminalMetrics metrics;
   final TerminalPalette palette;
+  final Map<(String, TextStyle), TextPainter> _textPainters = {};
 
   /// The block cursor is drawn only for the focused, live pane — an unfocused split pane showing a
   /// cursor invites typing into the wrong host.
@@ -85,6 +100,17 @@ class TerminalPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
+    try {
+      _paint(canvas, size);
+    } finally {
+      for (final painter in _textPainters.values) {
+        painter.dispose();
+      }
+      _textPainters.clear();
+    }
+  }
+
+  void _paint(Canvas canvas, Size size) {
     canvas.drawRect(Offset.zero & size, Paint()..color = palette.background);
 
     final cw = metrics.cellWidth;
@@ -102,11 +128,49 @@ class TerminalPainter extends CustomPainter {
     if (showCursor && snapshot.cursorVisible) {
       final row = snapshot.cursorRow - snapshot.firstRow;
       if (row >= 0 && row < snapshot.rows.length) {
-        canvas.drawRect(
-          Rect.fromLTWH(snapshot.cursorCol * cw, row * ch, cw, ch),
-          Paint()..color = palette.cursor.withValues(alpha: 0.65),
-        );
+        final cursorRect = Rect.fromLTWH(snapshot.cursorCol * cw, row * ch, cw, ch);
+        canvas.drawRect(cursorRect, Paint()..color = palette.cursor);
+        var col = 0;
+        for (final span in snapshot.rows[row].spans) {
+          for (final (glyph, width) in _glyphs(span)) {
+            if (snapshot.cursorCol >= col && snapshot.cursorCol < col + width) {
+              // A continuation cell retains its two-cell origin, then clips to the cursor cell.
+              canvas.save();
+              canvas.clipRect(cursorRect);
+              _paintText(
+                canvas,
+                glyph,
+                TextStyle(
+                  fontFamily: metrics.fontFamily,
+                  fontSize: metrics.fontSize,
+                  height: metrics.lineHeight,
+                  color: Color(
+                    ensureTerminalTextLegible(
+                      palette.background.toARGB32(),
+                      palette.cursor.toARGB32(),
+                    ),
+                  ),
+                ),
+                (col + width / 2) * cw,
+                row * ch,
+              );
+              canvas.restore();
+              return;
+            }
+            col += width;
+          }
+        }
       }
+    }
+  }
+
+  Iterable<(String, int)> _glyphs(TermSpan span) sync* {
+    final glyphs = span.glyphs.isNotEmpty
+        ? span.glyphs
+        : span.text.runes.map(String.fromCharCode).toList();
+    final hasWidths = span.glyphWidths.length == glyphs.length;
+    for (var i = 0; i < glyphs.length; i++) {
+      yield (glyphs[i], hasWidths ? span.glyphWidths[i].clamp(1, 2) : 1);
     }
   }
 
@@ -135,16 +199,8 @@ class TerminalPainter extends CustomPainter {
     final fg = Color(resolvedFg);
     final bg = Color(effectiveBg);
 
-    final widths = span.glyphWidths;
-    final glyphs = span.glyphs;
-    // Every glyph one cell wide is the overwhelmingly common case, and it lets the whole run be laid
-    // out and painted once. A run containing a wide glyph (CJK, emoji) falls back to placing each
-    // glyph at its own column, because a fallback font's advance for those is not reliably 2 cells
-    // and letting it flow would shift the rest of the line.
-    final uniform = glyphs.isEmpty || widths.length != glyphs.length || widths.every((w) => w == 1);
-    final cells = uniform
-        ? (glyphs.isEmpty ? span.text.runes.length : glyphs.length)
-        : widths.fold<int>(0, (sum, w) => sum + w.clamp(1, 2));
+    final glyphs = _glyphs(span).toList();
+    final cells = glyphs.fold<int>(0, (sum, glyph) => sum + glyph.$2);
 
     if (rawBg != kDefaultBg || span.inverse) {
       canvas.drawRect(Rect.fromLTWH(col * cw, y, cells * cw, ch), Paint()..color = bg);
@@ -161,27 +217,32 @@ class TerminalPainter extends CustomPainter {
       decorationColor: fg,
     );
 
-    if (uniform) {
-      _paintText(canvas, span.text, style, col * cw, y);
-      return col + cells;
-    }
-
     var cursor = col;
-    for (var i = 0; i < glyphs.length; i++) {
-      _paintText(canvas, glyphs[i], style, cursor * cw, y);
-      cursor += widths[i].clamp(1, 2);
+    for (final (glyph, width) in glyphs) {
+      // Pin every glyph to its cell center so intrinsic font advances never accumulate across
+      // a run and drift away from the remote's grid, including bold and fallback-font text.
+      _paintText(canvas, glyph, style, (cursor + width / 2) * cw, y);
+      cursor += width;
     }
     return cursor;
   }
 
-  void _paintText(Canvas canvas, String text, TextStyle style, double x, double y) {
+  void _paintText(Canvas canvas, String text, TextStyle style, double centerX, double y) {
     if (text.trim().isEmpty) return;
-    TextPainter(
+    // Repeated glyphs of the same style share one layout for this frame; centering every cell
+    // should not require thousands of paragraph layouts while a remote TUI redraws.
+    final painter = _textPainters.putIfAbsent(
+      (text, style),
+      () => TextPainter(
         text: TextSpan(text: text, style: style),
         textDirection: TextDirection.ltr,
-      )
-      ..layout()
-      ..paint(canvas, Offset(x, y));
+      )..layout(),
+    );
+    final baseline = metrics.baselineOffset;
+    final top = baseline == null
+        ? y
+        : y + baseline - painter.computeDistanceToActualBaseline(TextBaseline.alphabetic);
+    painter.paint(canvas, Offset(centerX - painter.width / 2, top));
   }
 
   @override
@@ -284,6 +345,8 @@ class _TerminalSurfaceState extends State<TerminalSurface> with SingleTickerProv
       platformScaler.scale(widget.fontSize),
       fontFamily: android ? 'monospace' : OmniFonts.mono,
       lineHeight: android ? null : 1.2,
+      devicePixelRatio: MediaQuery.devicePixelRatioOf(context),
+      androidMetrics: android,
     );
 
     return ColoredBox(

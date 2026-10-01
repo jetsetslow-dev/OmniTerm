@@ -26,6 +26,8 @@ import 'package:omniterm/ui/view_model/telemetry_poller.dart';
 import 'package:omniterm/ui/view_model/settings_view_model.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 
+import '../support/terminal_byte_report.dart';
+
 const _enabled = bool.fromEnvironment('OMNITERM_E2E_HOSTS');
 const _host = String.fromEnvironment('OMNITERM_E2E_HOST', defaultValue: '10.0.2.2');
 const _user = String.fromEnvironment('OMNITERM_TEST_USER');
@@ -235,8 +237,15 @@ void main() {
       }
       await _checkLockedIntentRecreation($, $.tester.element(find.byType(MaterialApp)));
     },
+    semanticsEnabled: false,
     skip: !_enabled || !Platform.isAndroid,
   );
+  // Home, notification and Back automation may enable Android accessibility mid-test. Retain a
+  // suite-owned semantics baseline, matching the other native fixtures, until teardown finishes.
+  final binding = WidgetsBinding.instance;
+  binding.platformDispatcher.onSemanticsEnabledChanged = () {};
+  final semantics = binding.ensureSemantics();
+  tearDownAll(semantics.dispose);
 }
 
 Future<void> _checkLockedIntentRecreation(PatrolIntegrationTester $, BuildContext context) async {
@@ -347,7 +356,7 @@ Future<void> _checkHeldKey(
       r'ot_keybar_state=$(stty -g); stty raw -echo min 0 time 20; '
       r'printf "\r\nKEYBAR_READY_%s\r\n" '
       "'$token'; "
-      r'ot_keybar_bytes=$(dd bs=1 count=60 2>/dev/null | od -v -An -tu1); '
+      r"ot_keybar_bytes=$(dd bs=1 count=60 2>/dev/null | od -v -An -tu1 | tr -s '[:space:]' ','); "
       r'stty "$ot_keybar_state"; printf "\r\nKEYBAR_%s:%s:END_%s\r\n" '
       "'$token' "
       r'"$ot_keybar_bytes" '
@@ -370,9 +379,9 @@ Future<void> _checkHeldKey(
     await pointer.up();
   }
   await _until($, () => output().contains(':END_$token'));
-  final received = RegExp('KEYBAR_$token:([\\d\\s]+):END_$token').firstMatch(output());
-  expect(received, isNotNull, reason: 'The fixture must report its actual received bytes');
-  final bytes = received!.group(1)!.trim().split(RegExp(r'\s+')).map(int.parse).toList();
+  final bytes = readTerminalFixtureBytes(output(), token);
+  expect(bytes, isNotNull, reason: 'The fixture must report its actual received bytes');
+  if (bytes == null) return;
   expect(bytes.length, greaterThanOrEqualTo(6), reason: 'Holding ↑ must send repeated keys');
   expect(bytes.length % 3, 0);
   for (var index = 0; index < bytes.length; index += 3) {

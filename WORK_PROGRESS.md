@@ -1,6 +1,6 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
-Updated: 2026-10-01. Working branch: `migration-to-flutter`; PR: #92.
+Updated: 2026-10-02. Working branch: `migration-to-flutter`; PR: #92.
 Independent return review implemented and locally validated; **not** a parity-complete or release-ready declaration.
 
 This sanitized tracker is intentionally committed so work can resume on another machine.
@@ -14,8 +14,8 @@ The user has explicitly requested the existing Kotlin UI throughout Flutter: eve
 submenu, popup and option, including the SSH terminal, Settings, sizing and navigation. Kotlin is
 the reference, not an invitation to redesign. The previous return-review checkpoint is complete;
 its passing checks do not establish visual parity. The latest archived normal Flutter debug APK is
-`artifacts/flutter-builds/20261001-terminal-metrics/OmniTerm-Flutter-debug.apk` (SHA-256
-`fa90b37067415094002722880114c5b57048e6d0987875efbeb7aeb023b618ba`). It is package
+`artifacts/flutter-builds/20261002-terminal-renderer/OmniTerm-Flutter-debug.apk` (SHA-256
+`bdbb92c11f708c2eda48b4b7815f2f9911c53893b557f499e9cec3870ba27bae`). It is package
 `com.jetsetslow.omniterm.app.flutter`, version `1.0.0-flutter` (code 1), signed by the expected
 debug certificate; it installed and opened on API 35 without a recorded fatal error. Broader
 terminal and app-wide visual/behavior parity remain in progress.
@@ -30,7 +30,7 @@ app hosts it in FlutterActivity; authentication errors are silently collapsed in
 Flutter replaces the platform text scale whereas Kotlin composes it with the app preference.
 Settings uses different sections, control types, order and labels. The first fixes and focused device validation are recorded below; broader parity work remains open.
 
-Current checkpoint status (October 1):
+Current checkpoint status (October 2):
 
 - Signed/pushed Flutter head `c8ec131` fixed the alert-rule save race seen on hosted emulator job
   `109752301087` at the previous `7fcc3cf` head. The editor shows indeterminate saving progress,
@@ -109,9 +109,8 @@ Current checkpoint status (October 1):
   jobs were skipped and the separate Scorecard annotation was neutral; neither is counted as a
   passing test. The user's S23 Ultra on Android 16 is not locally connected, so its prompt
   behavior remains to be confirmed.
-- This terminal metrics checkpoint aligns font scaling and grid spacing. Kotlin sizes and paints
-  cells using
-  Android's system monospace at the terminal font's system-scaled sp size, with 6dp horizontal and
+- Signed/pushed terminal metrics checkpoint `bbfed74` aligns font scaling and grid spacing.
+  Kotlin sizes and paints cells using Android's system monospace at the terminal font's system-scaled sp size, with 6dp horizontal and
   4dp vertical insets and a four-percent right-column reserve. Flutter had used JetBrains Mono,
   fixed 1.2 line height, no system scaling or insets, and the whole width for remote columns.
   Flutter now applies those Android font, scale and spacing choices while preserving iOS's
@@ -130,9 +129,55 @@ Current checkpoint status (October 1):
   all-ref secret scanning. Native unit/lint tasks reused their up-to-date results. The device
   matrix was deferred because the emulator was stopped; the separate API 35 runs above cover
   the affected screens. A normal `lib/main.dart` debug APK was built, verified for package,
-  version, debug signature, debuggable state and absence of the Patrol entrypoint, archived above,
-  and installed/opened on API 35 without a recorded fatal error. Checks for the new PR head are
-  pending publication. Pixel-level terminal acceptance is still open.
+  version, debug signature, debuggable state and absence of the Patrol entrypoint, archived in
+  the terminal-metrics checkpoint folder,
+  and installed/opened on API 35 without a recorded fatal error. All 25 PR check contexts for
+  `bbfed74` are terminal: 16 succeeded, eight unused companions were skipped and the Scorecard
+  annotation was neutral. Native Build & Test, API 29 Room, release SBOMs, Flutter host/release/iOS,
+  real CodeQL, dependency review and security checks succeeded. Hosted emulator coverage passed
+  26 plain plus eight Patrol cases, zero skips and no unexpected warnings. One walkthrough launch
+  ran no tests before the runner recovered its transport by rebooting the disposable emulator;
+  the successful attempt executed the case. Pixel-level terminal acceptance is still open.
+- This terminal renderer checkpoint aligns glyph placement, cursor painting and native font bounds. Kotlin pins each glyph to its cell
+  center and paints an opaque cursor block with a readable regular glyph on top. Flutter had
+  allowed ordinary runs to follow font advances, left-aligned wide glyphs and overlaid a translucent
+  cursor. Five raster regressions failed on those old behaviors and pass with centered glyphs and
+  clipped cursor repaint at the original wide-glyph origin. Layouts for repeated glyphs/styles are
+  shared within a frame and disposed afterward. The focused terminal/shell suite passed
+  75 cases before the final font geometry refinement; final validation is recorded below. The early
+  API 35 host validation passed one live SSH/runtime/share case and one native terminal lifecycle
+  case, zero failures/skips, with only known upstream warnings.
+  The API 35 core run passed 26 plain and six Patrol cases, including the required
+  route/theme/rotation sweep, then failed at Settings actions teardown because Android accessibility
+  enabled a framework semantics handle after the test baseline was recorded. Behavior assertions
+  had passed. The fixture now owns/disposes a stable suite semantics handle, following the other
+  native fixtures; the repaired case passed on device (one, zero skips). The final Settings parity
+  case, not reached by the interrupted core profile, also passed separately (one, zero skips).
+  Actual Android Paint and Flutter measurements then confirmed that Flutter rounded line height
+  and used fractional glyph advances, while Kotlin retained font bounds and hinted widths to
+  physical pixels. Flutter now uses those native width/height/baseline choices. On the same API 35
+  runtime, width, height and baseline match native monospace measurements at 8, 10, 13, 18 and 28sp.
+  A geometry widget guard failed before the correction and passes after. The final focused suite
+  passes 78 cases, including six painter guards and a fixture-byte round-trip across 8–80 columns.
+  The refined live SSH/runtime/share case passed (one, zero skips), but its lifecycle guard exposed
+  whitespace-separated byte reports fusing adjacent values at trimmed wrap boundaries. Replaying
+  the repository fixture report reproduces that at 62 columns. The fixture now encodes commas,
+  preserving every byte delimiter. That run completed its behavior assertions but hit the same
+  late accessibility semantics-handle teardown race, so the lifecycle fixture now also owns and
+  disposes its suite handle. The repaired lifecycle case passed (one, zero skips). Both Settings
+  follow-ups and the final lifecycle log have no unexpected warnings. The final geometry screen
+  sweep also passed on API 35 (one case, zero skips), reopening every route/subtab/theme/rotation
+  after the font bounds correction. The normal `lib/main.dart` debug APK was built, verified for
+  package/version/debuggable state, the expected debug signature and absence of the Patrol
+  entrypoint, archived above and installed/opened on API 35 with no recorded fatal error.
+  The final-tree `./scripts/local-pr-check.sh --full` passed: formatting/analyzer, 2,798 Flutter
+  host cases with seven optional fixture skips, release APK/AAB and both Flutter SBOMs,
+  development-code exclusion, all-ref secret scanning and strict fresh project/release/compile
+  verification. Native unit/lint tasks reused their up-to-date results. Its Android device matrix
+  was deferred because the emulator was stopped; the separate API 35 runs above cover the affected
+  screens. Signed publication and checks for the new PR head are pending. Whole-terminal pixel and app-wide visual parity remain open, including the
+  shared/session header, keyboard details, large-canvas 500-column/300-row limits and Kotlin
+  resizing after a 120ms pause.
 - Kotlin Dependabot #109 now has signed/pushed head `298467c` with strict metadata for the Gradle,
   Android Gradle Plugin, Navigation, Roborazzi, Bouncy Castle and Develocity updates. A standalone
   `--write` and separate `--verify` passed; 111 added records and three completed SHA-512 records
@@ -2080,12 +2125,10 @@ Do not cite plain `connectedAndroidTest` as opt-in E2E coverage.
 
 ## Remaining authorized work — do not replace this with unrelated tasks
 
-0. **Actual required CI coverage:** `b691ddd` finished terminal with every selected check green,
-   and that is precisely the problem — its `Analyze Java/Kotlin` was the placeholder. The detector
-   repair and its regression test are above. What remains: push the replacement head, watch every
-   selected job to a terminal state, and confirm from the job list that the **real** CodeQL
-   analysis ran for 30+ minutes rather than a 3-second no-op. Do not treat a green envelope,
-   a skipped companion, or a passing local gate as security analysis.
+0. **Required CI coverage is now established:** the repaired detector ran real CodeQL analysis on
+   the recent signed heads, including `bbfed74`. Its successful analysis step and job were inspected;
+   the skipped companion is not counted. Continue checking actual selected jobs after every push.
+   Analysis duration alone is not evidence of coverage, and a green placeholder is not analysis.
 1. **SSH background retention and remaining latency:** audit Flutter Activity/engine destruction,
    live-session ownership, foreground-service error visibility and disconnect-all feedback.
    Continue measuring cold-connect and tmux startup latency; the new setup deadlines prevent hangs,
@@ -2129,8 +2172,8 @@ on `migration-to-flutter`. First verify actual branch/HEAD, remote, dirty files,
 checks and running local jobs. Preserve existing changes and all completed fixes above. Private
 notes are supplementary; this tracked document must remain enough to recover on another machine.
 
-Start with exact-head CI and the false-skipped CodeQL analysis above; inspect actual job logs,
-fix the detector with a regression test and require real security analysis. Then address SSH lifecycle and
+Start with the current PR head and actual selected job logs; the CodeQL detector repair and real
+analysis are established on recent heads. Continue the exact Kotlin/Flutter UI parity work, SSH lifecycle and
 latency, Fleet/container streaming/warning and app-wide feedback/parity work above. Use repository
 fixtures only. Add deterministic regression tests and real-runtime before/after proof where required;
 show progress, explicit results, cancellation/skip reasons and actionable errors. Preserve host
