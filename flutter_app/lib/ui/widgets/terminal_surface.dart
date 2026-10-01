@@ -7,6 +7,7 @@ import 'package:flutter/scheduler.dart';
 import '../../data/term/terminal_snapshot.dart';
 import '../../domain/tui_scroll_router.dart';
 import '../theme/terminal_theme.dart';
+import '../theme/text_scaling.dart';
 import '../theme/typography.dart';
 import '../view_model/shell_session.dart';
 import 'terminal_transcript_sheet.dart';
@@ -22,11 +23,15 @@ class TerminalMetrics {
     required this.cellWidth,
     required this.cellHeight,
     required this.fontSize,
+    this.fontFamily = OmniFonts.mono,
+    this.lineHeight,
   });
 
   final double cellWidth;
   final double cellHeight;
   final double fontSize;
+  final String fontFamily;
+  final double? lineHeight;
 
   /// How many whole cells fit in [size], floored — a partially visible column is not a column the
   /// remote may draw into.
@@ -35,26 +40,30 @@ class TerminalMetrics {
     math.max(1, (size.height / cellHeight).floor()),
   );
 
-  static final Map<double, TerminalMetrics> _cache = {};
+  static final Map<(double, String, double?), TerminalMetrics> _cache = {};
 
-  /// Measure (once per font size) and cache.
-  static TerminalMetrics measure(double fontSize, {double lineHeight = 1.2}) =>
-      _cache.putIfAbsent(fontSize, () {
-        final painter = TextPainter(
-          text: TextSpan(
-            // A wide-ish ASCII glyph: in a monospace font every advance is identical, so one is
-            // enough, and 'M' is the conventional choice.
-            text: 'M',
-            style: TextStyle(fontFamily: OmniFonts.mono, fontSize: fontSize, height: lineHeight),
-          ),
-          textDirection: TextDirection.ltr,
-        )..layout();
-        return TerminalMetrics(
-          cellWidth: painter.width,
-          cellHeight: painter.height,
-          fontSize: fontSize,
-        );
-      });
+  /// Measure the same monospace face used to paint the cell, once per scaled size.
+  static TerminalMetrics measure(
+    double fontSize, {
+    String fontFamily = OmniFonts.mono,
+    double? lineHeight,
+  }) => _cache.putIfAbsent((fontSize, fontFamily, lineHeight), () {
+    final painter = TextPainter(
+      text: TextSpan(
+        // Kotlin measures this same glyph with Android Paint before sizing the remote grid.
+        text: 'M',
+        style: TextStyle(fontFamily: fontFamily, fontSize: fontSize, height: lineHeight),
+      ),
+      textDirection: TextDirection.ltr,
+    )..layout();
+    return TerminalMetrics(
+      cellWidth: painter.width,
+      cellHeight: painter.height,
+      fontSize: fontSize,
+      fontFamily: fontFamily,
+      lineHeight: lineHeight,
+    );
+  });
 }
 
 /// Paints a [TerminalSnapshot] onto a cell grid.
@@ -142,9 +151,9 @@ class TerminalPainter extends CustomPainter {
     }
 
     final style = TextStyle(
-      fontFamily: OmniFonts.mono,
+      fontFamily: metrics.fontFamily,
       fontSize: metrics.fontSize,
-      height: metrics.cellHeight / metrics.fontSize,
+      height: metrics.lineHeight,
       color: fg,
       fontWeight: span.bold ? FontWeight.bold : FontWeight.normal,
       fontStyle: span.italic ? FontStyle.italic : FontStyle.normal,
@@ -266,62 +275,81 @@ class _TerminalSurfaceState extends State<TerminalSurface> with SingleTickerProv
 
   @override
   Widget build(BuildContext context) {
-    final metrics = TerminalMetrics.measure(widget.fontSize);
+    // Kotlin's terminal size is an sp value: Android's system text curve applies, while the
+    // separate in-app text preset does not. The app's MediaQuery wraps both scales.
+    final scaler = MediaQuery.textScalerOf(context);
+    final platformScaler = scaler is OmniTextScaler ? scaler.platform : scaler;
+    final android = Theme.of(context).platform == TargetPlatform.android;
+    final metrics = TerminalMetrics.measure(
+      platformScaler.scale(widget.fontSize),
+      fontFamily: android ? 'monospace' : OmniFonts.mono,
+      lineHeight: android ? null : 1.2,
+    );
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final (cols, rows) = metrics.gridFor(Size(constraints.maxWidth, constraints.maxHeight));
-        // Resizing during layout would mutate state mid-build; the remote is told once the frame
-        // this size belongs to has actually been shown.
-        SchedulerBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          widget.onGridChanged?.call(cols, rows);
-          widget.session.resize(cols, rows);
-        });
+    return ColoredBox(
+      color: widget.palette.background,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            // Kotlin leaves breathing room inside the terminal and reserves the rightmost four
+            // percent before telling a remote full-screen application its usable column count.
+            final (cols, rows) = metrics.gridFor(
+              Size(constraints.maxWidth * .96, constraints.maxHeight),
+            );
+            // Resizing during layout would mutate state mid-build; the remote is told once the frame
+            // this size belongs to has actually been shown.
+            SchedulerBinding.instance.addPostFrameCallback((_) {
+              if (!mounted) return;
+              widget.onGridChanged?.call(cols, rows);
+              widget.session.resize(cols, rows);
+            });
 
-        return ListenableBuilder(
-          listenable: widget.session,
-          builder: (context, _) => GestureDetector(
-            key: const ValueKey('shell.surface'),
-            behavior: HitTestBehavior.opaque,
-            onVerticalDragStart: (_) {
-              _fling.stop();
-              _dragRemainder = 0;
-            },
-            onVerticalDragUpdate: (details) => _onDrag(details.delta.dy, metrics.cellHeight),
-            onVerticalDragEnd: (details) =>
-                _startFling(details.primaryVelocity ?? 0, metrics.cellHeight),
-            onTapUp: (details) => widget.onTapCell?.call(
-              widget.session.snapshot,
-              (details.localPosition.dy / metrics.cellHeight).floor(),
-              (details.localPosition.dx / metrics.cellWidth).floor(),
-            ),
-            // A painted grid has nothing to select, which left copying output impossible. Long
-            // press opens the scrollback as selectable text instead — the Kotlin's answer too.
-            onLongPress: () {
-              widget.onLongPressFocus?.call();
-              openTerminalTranscript(context, widget.session);
-            },
-            // The grid is painted, so it puts nothing in the semantics tree by itself — the app's
-            // primary content was unreadable to a screen reader. The label is built from the
-            // *viewport* snapshot, which is bounded by the visible rows, so this costs a short
-            // string per publish rather than a walk of the scrollback.
-            child: Semantics(
-              label: terminalSemanticsLabel(widget.session.snapshot.rows),
-              readOnly: true,
-              child: CustomPaint(
-                size: Size(constraints.maxWidth, constraints.maxHeight),
-                painter: TerminalPainter(
-                  snapshot: widget.session.snapshot,
-                  metrics: metrics,
-                  palette: widget.palette,
-                  showCursor: widget.focused && widget.session.followTail,
+            return ListenableBuilder(
+              listenable: widget.session,
+              builder: (context, _) => GestureDetector(
+                key: const ValueKey('shell.surface'),
+                behavior: HitTestBehavior.opaque,
+                onVerticalDragStart: (_) {
+                  _fling.stop();
+                  _dragRemainder = 0;
+                },
+                onVerticalDragUpdate: (details) => _onDrag(details.delta.dy, metrics.cellHeight),
+                onVerticalDragEnd: (details) =>
+                    _startFling(details.primaryVelocity ?? 0, metrics.cellHeight),
+                onTapUp: (details) => widget.onTapCell?.call(
+                  widget.session.snapshot,
+                  (details.localPosition.dy / metrics.cellHeight).floor(),
+                  (details.localPosition.dx / metrics.cellWidth).floor(),
+                ),
+                // A painted grid has nothing to select, which left copying output impossible. Long
+                // press opens the scrollback as selectable text instead — the Kotlin's answer too.
+                onLongPress: () {
+                  widget.onLongPressFocus?.call();
+                  openTerminalTranscript(context, widget.session);
+                },
+                // The grid is painted, so it puts nothing in the semantics tree by itself — the app's
+                // primary content was unreadable to a screen reader. The label is built from the
+                // *viewport* snapshot, which is bounded by the visible rows, so this costs a short
+                // string per publish rather than a walk of the scrollback.
+                child: Semantics(
+                  label: terminalSemanticsLabel(widget.session.snapshot.rows),
+                  readOnly: true,
+                  child: CustomPaint(
+                    size: Size(constraints.maxWidth, constraints.maxHeight),
+                    painter: TerminalPainter(
+                      snapshot: widget.session.snapshot,
+                      metrics: metrics,
+                      palette: widget.palette,
+                      showCursor: widget.focused && widget.session.followTail,
+                    ),
+                  ),
                 ),
               ),
-            ),
-          ),
-        );
-      },
+            );
+          },
+        ),
+      ),
     );
   }
 

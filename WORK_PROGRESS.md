@@ -14,8 +14,8 @@ The user has explicitly requested the existing Kotlin UI throughout Flutter: eve
 submenu, popup and option, including the SSH terminal, Settings, sizing and navigation. Kotlin is
 the reference, not an invitation to redesign. The previous return-review checkpoint is complete;
 its passing checks do not establish visual parity. The latest archived normal Flutter debug APK is
-`artifacts/flutter-builds/20261001-tui-biometric-scroll/OmniTerm-Flutter-debug.apk` (SHA-256
-`f6d8bac4f2b00191ab2de96f85f05972e5b914fab4cfbca47dee6db1c3e0a723`). It is package
+`artifacts/flutter-builds/20261001-terminal-metrics/OmniTerm-Flutter-debug.apk` (SHA-256
+`fa90b37067415094002722880114c5b57048e6d0987875efbeb7aeb023b618ba`). It is package
 `com.jetsetslow.omniterm.app.flutter`, version `1.0.0-flutter` (code 1), signed by the expected
 debug certificate; it installed and opened on API 35 without a recorded fatal error. Broader
 terminal and app-wide visual/behavior parity remain in progress.
@@ -79,7 +79,7 @@ Current checkpoint status (October 1):
   case passed locally, so this is a reach/timing-sensitive test step; the next checkpoint targets
   the Settings list explicitly with short drags that can reach the full list. TUI gestures, terminal
   grid/font metrics and broad visual parity remained open at that head.
-- The next local checkpoint is uncommitted. Flutter now routes a live terminal drag to PageUp or
+- Signed/pushed checkpoint `cbec344` routes a live terminal drag to PageUp or
   PageDown when its touched pane owns an alternate-screen TUI, while a plain shell still scrolls
   local history. Regular tmux attach asks the pane through a short cached side query; raw and
   control-mode sessions use their own emulator state. A swipe continues with native-style fling
@@ -95,15 +95,44 @@ Current checkpoint status (October 1):
   core sweep passed 26 plain plus eight Patrol cases, zero skips, including Settings and biometric
   Activity recreation; this device pass preceded the final late-cancellation source edit. The
   repaired Settings Patrol case and final biometric Activity-recreation case then each passed on API
-  35, one case and zero skips. Combined analyzer passed. The normal debug APK above was built from
+  35, one case and zero skips. Combined analyzer passed. The archived TUI/biometric debug APK was built from
   the final code, signature/package/version/debuggable state were verified, and it opened on API 35.
   The combined final-tree `./scripts/local-pr-check.sh --full` passed: native unit/lint, all-ref
   secret scan, Flutter formatting/analyzer and 2,789 host cases with seven optional fixture skips,
   release APK/AAB and both Flutter SBOMs, and strict fresh verification of project, release and
   compile graphs. Its Android device matrix was explicitly deferred because no emulator was
   connected; the separate API 35 runs above cover the affected shell, Settings and lock screens.
-  Signed push and exact-head checks remain pending. The user's S23 Ultra on Android 16 is not
-  locally connected, so its prompt behavior remains to be confirmed.
+  Its exact-head PR #92 checks finished terminal: native Build & Test, API 29 Room migrations,
+  release SBOM, Flutter host/release/iOS, dependency review, secret scans, Scorecard analysis and
+  real CodeQL all succeeded. The hosted emulator passed 26 plain plus eight Patrol cases, zero
+  skips, including the repaired Settings action and biometric lifecycle. Eight unused companion
+  jobs were skipped and the separate Scorecard annotation was neutral; neither is counted as a
+  passing test. The user's S23 Ultra on Android 16 is not locally connected, so its prompt
+  behavior remains to be confirmed.
+- This terminal metrics checkpoint aligns font scaling and grid spacing. Kotlin sizes and paints
+  cells using
+  Android's system monospace at the terminal font's system-scaled sp size, with 6dp horizontal and
+  4dp vertical insets and a four-percent right-column reserve. Flutter had used JetBrains Mono,
+  fixed 1.2 line height, no system scaling or insets, and the whole width for remote columns.
+  Flutter now applies those Android font, scale and spacing choices while preserving iOS's
+  existing JetBrains line height.
+  A widget regression failed on the old code because Android text scale 1.5 left columns 40 versus
+  40, then passed after the change; 70 focused terminal/shell tests and analyzer passed. A fresh
+  API 35 host profile passed one live SSH/runtime/share case and one native terminal lifecycle
+  case, zero skips. The Flutter core profile passed 26 plain plus eight Patrol cases, zero skips,
+  including the route/subtab/theme/rotation sweep and Settings actions. A separate live SSH fixture
+  passed at Android system font scale 1.5 (one case, zero skips), and the system setting was
+  restored. The first device attempt failed before test load when a broken disposable emulator
+  refused to launch both this APK and a previously validated APK despite successful installs;
+  wiping only that AVD restored normal launch before the successful runs. The final-tree full local
+  gate passed: 2,790 Flutter host cases with seven optional fixture skips, formatting/analyzer,
+  release APK/AAB and both Flutter SBOMs, strict fresh project/release/compile verification and
+  all-ref secret scanning. Native unit/lint tasks reused their up-to-date results. The device
+  matrix was deferred because the emulator was stopped; the separate API 35 runs above cover
+  the affected screens. A normal `lib/main.dart` debug APK was built, verified for package,
+  version, debug signature, debuggable state and absence of the Patrol entrypoint, archived above,
+  and installed/opened on API 35 without a recorded fatal error. Checks for the new PR head are
+  pending publication. Pixel-level terminal acceptance is still open.
 - Kotlin Dependabot #109 now has signed/pushed head `298467c` with strict metadata for the Gradle,
   Android Gradle Plugin, Navigation, Roborazzi, Bouncy Castle and Develocity updates. A standalone
   `--write` and separate `--verify` passed; 111 added records and three completed SHA-512 records
