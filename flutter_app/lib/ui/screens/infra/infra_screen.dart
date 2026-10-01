@@ -1,4 +1,5 @@
 import '../../widgets/omni_components.dart';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -24,6 +25,8 @@ class InfraScreen extends StatefulWidget {
 }
 
 class _InfraScreenState extends State<InfraScreen> {
+  final _contentsKey = GlobalKey();
+
   @override
   void initState() {
     super.initState();
@@ -40,46 +43,65 @@ class _InfraScreenState extends State<InfraScreen> {
 
     if (server == null) return const _NoOnlineHosts();
 
-    return Column(
-      children: [
-        _HeaderBar(vm: vm, server: server),
-        _TabBar(vm: vm),
-        // Only over results already on screen; a first load gets the centred spinner below.
-        if (vm.loading && vm.hasAnyRuntimeData) const LinearProgressIndicator(minHeight: 2),
-        if (vm.actionOutput != null) _ActionOutput(vm: vm),
-        Expanded(
-          child: Padding(
-            padding: const EdgeInsets.all(12),
-            child: switch (vm.activeTab) {
-              // The builder is the one tab that does not depend on a successful probe, so it is
-              // reachable even when the runtime could not be queried.
-              InfraTab.builder => const BuilderTab(),
-              // Ahead of the error branch, as Kotlin orders it: a refresh in flight must not keep
-              // showing the previous attempt's failure as though it were the current state.
-              _ when vm.loading && !vm.hasAnyRuntimeData => const Center(
-                key: ValueKey('infra.firstLoad'),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final scaler = MediaQuery.textScalerOf(context);
+        // Preserve the native picker size while making room for up to three wrapped resource
+        // actions. A transient IME/rotation viewport can be smaller than the fixed chrome itself.
+        final headerHeight = math.max(24.0, scaler.scale(24)) + 40;
+        final actionHeight = math.max(48.0, scaler.scale(20) * 2 + 16);
+        final minimumHeight = headerHeight + scaledBarHeight(context, 40) + actionHeight * 3 + 32;
+        final contents = Column(
+          key: _contentsKey,
+          children: [
+            _HeaderBar(vm: vm, server: server),
+            _TabBar(vm: vm),
+            // Only over results already on screen; a first load gets the centred spinner below.
+            if (vm.loading && vm.hasAnyRuntimeData) const LinearProgressIndicator(minHeight: 2),
+            if (vm.actionOutput != null) _ActionOutput(vm: vm),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: switch (vm.activeTab) {
+                  // The builder is the one tab that does not depend on a successful probe, so it is
+                  // reachable even when the runtime could not be queried.
+                  InfraTab.builder => const BuilderTab(),
+                  // Ahead of the error branch, as Kotlin orders it: a refresh in flight must not keep
+                  // showing the previous attempt's failure as though it were the current state.
+                  _ when vm.loading && !vm.hasAnyRuntimeData => const Center(
+                    key: ValueKey('infra.firstLoad'),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        ),
+                        SizedBox(height: 10),
+                        Text(
+                          'Asking this host about its containers…',
+                          style: TextStyle(fontSize: 12),
+                        ),
+                      ],
                     ),
-                    SizedBox(height: 10),
-                    Text('Asking this host about its containers…', style: TextStyle(fontSize: 12)),
-                  ],
-                ),
+                  ),
+                  _ when vm.error != null => _RuntimeError(message: vm.error!),
+                  InfraTab.stacks => StacksTab(vm: vm),
+                  InfraTab.images => ImagesTab(vm: vm),
+                  InfraTab.volumes => VolumesTab(vm: vm),
+                  InfraTab.networks => NetworksTab(vm: vm),
+                },
               ),
-              _ when vm.error != null => _RuntimeError(message: vm.error!),
-              InfraTab.stacks => StacksTab(vm: vm),
-              InfraTab.images => ImagesTab(vm: vm),
-              InfraTab.volumes => VolumesTab(vm: vm),
-              InfraTab.networks => NetworksTab(vm: vm),
-            },
-          ),
-        ),
-      ],
+            ),
+          ],
+        );
+        return constraints.maxHeight < minimumHeight
+            ? SingleChildScrollView(
+                child: SizedBox(height: minimumHeight, child: contents),
+              )
+            : contents;
+      },
     );
   }
 }

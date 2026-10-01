@@ -24,6 +24,7 @@ import 'package:omniterm/ui/view_model/settings_view_model.dart';
 import 'package:omniterm/ui/view_model/sftp_view_model.dart';
 import 'package:omniterm/ui/view_model/telemetry_poller.dart';
 import 'package:omniterm/ui/theme/theme.dart';
+import 'package:omniterm/ui/widgets/host_selector_bar.dart';
 import 'package:provider/provider.dart';
 
 void main() {
@@ -362,6 +363,7 @@ void main() {
                 );
               }
             case Screen.monitor:
+              await _openAndCloseHostPicker(tester, 'monitor.hostPicker');
               for (final tab in MonitorTab.values) {
                 monitor.activeTab = tab;
                 await _expectSubtab(
@@ -380,6 +382,7 @@ void main() {
                 );
               }
             case Screen.infra:
+              await _openAndCloseHostPicker(tester, 'infra.hostPicker');
               for (final tab in InfraTab.values) {
                 infra.activeTab = tab;
                 await _expectSubtab(
@@ -499,6 +502,23 @@ Future<void> _exerciseProfileCollision(
   expect(appState.servers, hasLength(1));
   navigation.navigateTo(Screen.servers);
   await tester.pumpAndSettle();
+}
+
+/// Open the affected live-screen menu on Android, including large text and rotation variants.
+Future<void> _openAndCloseHostPicker(WidgetTester tester, String prefix) async {
+  final anchor = find.byKey(ValueKey(prefix));
+  expect(anchor, findsOneWidget);
+  final picker = tester.widget<HostSelectorBar>(
+    find.ancestor(of: anchor, matching: find.byType(HostSelectorBar)),
+  );
+  await tester.tap(anchor);
+  await tester.pumpAndSettle();
+  final current = find.byKey(ValueKey('$prefix.item.${picker.selected.id}'));
+  expect(current, findsOneWidget);
+  await tester.tap(current);
+  await tester.pumpAndSettle();
+  expect(current, findsNothing, reason: 'Selecting the current host still dismisses the menu');
+  expect(tester.takeException(), isNull, reason: '$prefix menu');
 }
 
 /// Waits until the live text scaler is the one the preference asked for.

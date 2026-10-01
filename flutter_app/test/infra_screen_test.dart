@@ -190,6 +190,20 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('infra.builder.rawToggle')));
     await tester.pumpAndSettle();
+    expect(
+      tester.widget<Switch>(find.byKey(const ValueKey('infra.builder.rawToggle'))).value,
+      isTrue,
+    );
+    await tester.scrollUntilVisible(
+      find.byKey(const ValueKey('infra.builder.raw')),
+      100,
+      scrollable: find
+          .descendant(
+            of: find.byKey(const ValueKey('infra.builder')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
 
     expect(tester.takeException(), isNull);
     expect(find.byKey(const ValueKey('infra.builder.raw')), findsOneWidget);

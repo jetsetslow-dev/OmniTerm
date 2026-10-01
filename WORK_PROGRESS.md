@@ -14,8 +14,8 @@ The user has explicitly requested the existing Kotlin UI throughout Flutter: eve
 submenu, popup and option, including the SSH terminal, Settings, sizing and navigation. Kotlin is
 the reference, not an invitation to redesign. The previous return-review checkpoint is complete;
 its passing checks do not establish visual parity. The latest archived normal Flutter debug APK is
-`artifacts/flutter-builds/20261002-terminal-resize/OmniTerm-Flutter-debug.apk` (SHA-256
-`57d33ebff2322ea19c92935a4e2411cf4f0213bf1e9e0d03d24608411c407fe0`). It is package
+`artifacts/flutter-builds/20261002-host-selector/OmniTerm-Flutter-debug.apk` (SHA-256
+`3fa830e7a2618c737fa8720203d913151e7b56f73dbace6a37804af7fa8cff38`). It is package
 `com.jetsetslow.omniterm.app.flutter`, version `1.0.0-flutter` (code 1), signed by the expected
 debug certificate; it installed and opened on API 35 without a recorded fatal error. Broader
 terminal and app-wide visual/behavior parity remain in progress.
@@ -184,7 +184,7 @@ Current checkpoint status (October 2):
   runner recovery rebooted the disposable emulator and the successful attempt ran all five cases.
   Whole-terminal pixel and app-wide visual parity remain open, including the shared/session header
   and keyboard details.
-- This terminal resize checkpoint caps the remote grid at Kotlin's 500 columns/300 rows and
+- Signed/pushed resize checkpoint `358eec9` caps the remote grid at Kotlin's 500 columns/300 rows and
   waits 120ms for the layout to settle before reflowing or notifying the SSH channel. New layouts
   replace the pending request; removing the pane or switching sessions cancels it. Visible rows
   and TUI page distance still follow the shown layout immediately. Painting is clipped to the pane
@@ -195,14 +195,55 @@ Current checkpoint status (October 2):
   case, zero skips and no unexpected warnings. The final API 35 route/subtab/theme/rotation
   sweep also passed one case, zero skips and no unexpected warnings. The ordinary `lib/main.dart`
   debug APK was checked for package/version/debuggable state, expected debug signature and absence
-  of the Patrol entrypoint, archived above, then installed/opened on API 35 with no recorded fatal
+  of the Patrol entrypoint, archived in the terminal-resize checkpoint folder, then installed/opened
+  on API 35 with no recorded fatal
   error. The final-tree `./scripts/local-pr-check.sh --full` passed: formatting/analyzer,
   2,804 Flutter host cases with seven optional skips (six setup fixture cases and one compression
   fixture), release APK/AAB, both Flutter SBOMs, development-code exclusion, all-ref secret scanning
   and strict fresh project/release/compile verification. Native unit/lint reused their up-to-date
   results. The in-script Android matrix was deferred because the emulator was stopped; the three
   separate API 35 cases above cover the affected surfaces, and exact-head PR CI covers API 29 Room.
-  Signed publication and checks for the new head remain pending. Broad parity is still open.
+  Exact-head PR checks are complete: 16 succeeded, eight unused companion jobs were skipped and
+  Scorecard was neutral, with no failure/cancellation. Native Build & Test, API 29 Room, release
+  SBOM, Flutter host/release/iOS, CodeQL and repository security passed. The hosted emulator passed
+  26 plain plus eight Patrol cases, zero skips and no unexpected warnings or recovery reboot.
+  Broad parity is still open.
+- The next shared host-picker checkpoint replaces the bare dropdown on Monitor and Containers
+  with Kotlin's outlined control, padding, 16sp host name, 12sp detail and HOST label. The popup
+  spans its anchor, and selecting the current host closes it without restarting work. That
+  behavior guard failed on the old source and passes after. Nine focused cases pass, including
+  address privacy, changed-host selection and visible overflow cues before scrolling/at the
+  bottom of a long menu. Native bodyLarge line height and letter spacing are scaled separately,
+  because Flutter scales only font size. The Android route sweep now opens/closes both menus
+  across its themes, text sizes and rotations. The picker-only API 35 sweep passed one case,
+  zero skips and no unexpected warnings. The resolved Material3 1.4.0 library confirms popup labels
+  use labelLarge (14sp/20sp line height) and a 24dp icon slot; the picker matches those as well.
+  The first full local gate exposed two Infra regressions: the raw-editor test had to reach its
+  lazily built field, and the larger picker plus tab row overflowed a 150dp viewport at 200% text.
+  Closed picker labels now explicitly stay on one line, matching Kotlin. Infra makes its contents
+  scroll when the viewport cannot accommodate its header, tabs and resource actions. The raw-editor
+  test verifies the toggle and scrolls to the field before asserting it. All 51 focused picker/Infra
+  cases pass, and formatting plus both Git whitespace checks pass. An intervening full-gate
+  attempt stopped before native tests while temporary environment restrictions blocked caches
+  and GitHub. Access was restored. The final-source API 35 sweep passed one case, zero skips and
+  no unexpected warnings, including both host menus, every route/subtab/theme/text size and
+  rotation. The rebuilt ordinary `lib/main.dart` debug APK was verified for package/version,
+  debuggable state, expected debug signature and absence of the Patrol entrypoint, archived above
+  and installed/opened on API 35 without a recorded fatal error. The final-tree full local gate
+  passed: formatting/analyzer, 2,806 Flutter host cases with seven optional skips (six setup fixture
+  cases and one compression fixture), release APK/AAB, both Flutter SBOMs, development-code
+  exclusion, all-ref secret scanning and strict fresh project/release/compile verification. Native
+  unit/lint reused their up-to-date results. The in-script Android matrix was deferred because the
+  emulator was stopped; the separate final API 35 sweep above covers the changed surfaces, and PR
+  CI supplies the API 29 Room gate. Signed publication and exact-head CI remain pending.
+  Surrounding Monitor/Containers headers
+  and the terminal's host/action header still differ; this is not whole-screen pixel acceptance.
+- October 2 priority: fix stale open/saved tmux selection after a server reboot, missing pending/
+  error feedback, and Hosts falsely showing online/100 without reliable metrics. Implement Kotlin
+  on `kotlin-bug-fixes` and Flutter on `migration-to-flutter`. The initial Kotlin regressions fail
+  on unfixed code: both empty metrics and a failed refresh after a valid sample leave health at
+  100. Investigation is active; these fixes are not yet implemented or device-validated. Broader
+  parity and the split-pane focus investigation remain open.
 - Kotlin Dependabot #109 now has signed/pushed head `298467c` with strict metadata for the Gradle,
   Android Gradle Plugin, Navigation, Roborazzi, Bouncy Castle and Develocity updates. A standalone
   `--write` and separate `--verify` passed; 111 added records and three completed SHA-512 records

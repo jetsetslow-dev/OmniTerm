@@ -4,6 +4,7 @@ import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/widgets/host_selector_bar.dart';
+import 'package:omniterm/ui/widgets/popup_scroll_behavior.dart';
 
 /// The shared host picker, ported from `ServerSelectorBar` (`ui/AppUi.kt:83`).
 ///
@@ -54,6 +55,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
+        scrollBehavior: const PopupScrollBehavior(),
         home: Scaffold(
           body: HostSelectorBar(
             keyPrefix: 'test.picker',
@@ -131,6 +133,22 @@ void main() {
     expect(chosen, 2);
   });
 
+  testWidgets('choosing the current host closes the picker without restarting its work', (
+    tester,
+  ) async {
+    final only = host(id: 1, name: 'web-1');
+    final chosen = <int?>[];
+    await pump(tester, hosts: [only], selected: only, onChanged: chosen.add);
+
+    await tester.tap(find.byKey(const ValueKey('test.picker')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('web-1 — root@10.0.0.1').last);
+    await tester.pumpAndSettle();
+
+    expect(chosen, isEmpty, reason: 'Kotlin ignores an unchanged host selection');
+    expect(find.text('web-1 — root@10.0.0.1'), findsNothing);
+  });
+
   testWidgets('the address obeys Hide addresses', (tester) async {
     // The picker is exactly the sort of chrome that ends up in a screenshot.
     HostDisplay.instance.hideSensitiveInfo = true;
@@ -142,5 +160,25 @@ void main() {
       tester.widget<Text>(find.byKey(const ValueKey('test.picker.detail.1'))).data,
       isNot(contains('10.0.0.7')),
     );
+  });
+
+  testWidgets('a long host menu shows each hidden direction before and after scrolling', (
+    tester,
+  ) async {
+    final hosts = [for (var id = 1; id <= 40; id++) host(id: id, name: 'web-$id')];
+    await pump(tester, hosts: hosts, selected: hosts.first);
+    await tester.tap(find.byKey(const ValueKey('test.picker')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('↓ More below'), findsOneWidget);
+    expect(find.text('↑ More above'), findsNothing);
+    await tester.drag(find.byType(SingleChildScrollView), const Offset(0, -2400));
+    await tester.pumpAndSettle();
+    expect(find.text('↑ More above'), findsOneWidget);
+    expect(find.text('↓ More below'), findsNothing);
+
+    await tester.tap(find.text('web-40 — root@10.0.0.1'));
+    await tester.pumpAndSettle();
+    expect(find.text('↑ More above'), findsNothing);
   });
 }
