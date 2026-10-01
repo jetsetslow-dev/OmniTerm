@@ -676,6 +676,11 @@ void main() {
     }
 
     Future<AppLockController> locked(WidgetTester tester, {BiometricPrompt? biometrics}) async {
+      // Widget tests have no host Activity, so give ordinary lock tests the resumed lifecycle an
+      // on-screen Android host has. A test that explicitly sets inactive keeps that state.
+      if (tester.binding.lifecycleState == null) {
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      }
       // A legacy plaintext PIN on purpose: these tests are about the screen, and a real PBKDF2
       // verification costs most of a second each, which a five-attempt throttle test multiplies
       // into a timeout. The hashed path has its own tests above.
@@ -724,6 +729,49 @@ void main() {
     /// the app is locked — so an `initState`-only trigger left the user staring at a bare PIN field.
     /// Kotlin re-prompts on every `ON_RESUME` for exactly this reason (`ui/AppUi.kt:724`).
     group('biometrics on resume', () {
+      testWidgets('an initial biometric request waits for a resumed host', (tester) async {
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        addTearDown(() => tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed));
+        var prompts = 0;
+        final lock = await locked(
+          tester,
+          biometrics: (_) async {
+            prompts++;
+            return false;
+          },
+        );
+        addTearDown(lock.dispose);
+
+        expect(prompts, 0, reason: 'Android cannot show a prompt while its host is inactive');
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        await settle(tester);
+        expect(prompts, 1, reason: 'the deferred offer must run on the first resume');
+      });
+
+      testWidgets('a quick biometric tap while inactive does not start a second prompt', (
+        tester,
+      ) async {
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+        addTearDown(() => tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed));
+        var prompts = 0;
+        final lock = await locked(
+          tester,
+          biometrics: (_) async {
+            prompts++;
+            return false;
+          },
+        );
+        addTearDown(lock.dispose);
+
+        await tester.tap(find.byKey(const ValueKey('lock.biometrics')));
+        await settle(tester);
+        expect(prompts, 0);
+
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        await settle(tester);
+        expect(prompts, 1, reason: 'auto-offer and early tap share the resumed request');
+      });
+
       /// The real platform sequence. Flutter asserts on shortcuts, so every intermediate state has
       /// to be delivered: out is `inactive -> hidden -> paused`, back is
       /// `hidden -> inactive -> resumed`.
@@ -765,6 +813,54 @@ void main() {
 
         expect(prompts, 2, reason: 'the cancelled prompt must be re-offered on return');
         lock.dispose();
+      });
+
+      testWidgets('a late prompt cancellation still re-offers after resume', (tester) async {
+        final first = Completer<bool>();
+        var prompts = 0;
+        final lock = await locked(
+          tester,
+          biometrics: (_) {
+            prompts++;
+            return prompts == 1 ? first.future : Future<bool>.value(false);
+          },
+        );
+        addTearDown(lock.dispose);
+        expect(prompts, 1);
+
+        await background(tester);
+        await foreground(tester);
+        expect(prompts, 1, reason: 'the first system callback has not finished yet');
+
+        first.complete(false);
+        await settle(tester);
+        await tester.pump(const Duration(milliseconds: 300));
+        await settle(tester);
+        expect(prompts, 2, reason: 'resume must survive a later cancellation callback');
+      });
+
+      testWidgets('a late biometric success unlocks without opening another prompt', (
+        tester,
+      ) async {
+        final first = Completer<bool>();
+        var prompts = 0;
+        final lock = await locked(
+          tester,
+          biometrics: (_) {
+            prompts++;
+            return first.future;
+          },
+        );
+        addTearDown(lock.dispose);
+        await background(tester);
+        await foreground(tester);
+
+        first.complete(true);
+        await settle(tester);
+        await tester.pump(const Duration(milliseconds: 300));
+
+        expect(prompts, 1);
+        expect(find.byKey(const ValueKey('lock.screen')), findsNothing);
       });
 
       testWidgets('an inactive flicker does not re-prompt', (tester) async {

@@ -695,6 +695,38 @@ void main() {
     });
   });
 
+  group('TUI drag forwarding', () {
+    test('a raw alternate screen uses emulator state and sends page keys', () async {
+      await repo.insertServer(server(name: 'nas'));
+      await start();
+      await vm.connect(vm.server!);
+      final session = vm.current!;
+
+      transport.opened.single.emit('\u001b[?1049h');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(await vm.isPaneTuiActiveFor(session), isTrue);
+      expect(transport.commands.where((command) => command.contains('alternate_on')), isEmpty);
+      expect(vm.sendPageKeysFor(session, up: true, count: 2), isTrue);
+      expect(sent(transport), '\u001b[5~\u001b[5~');
+    });
+
+    test('regular tmux queries the pane once per cache window', () async {
+      transport.execAnswers['command -v tmux'] = 'yes';
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await start();
+      await vm.connect(vm.server!);
+      final session = vm.current!;
+      transport.execAnswers['alternate_on'] = '1\n';
+
+      expect(await vm.isPaneTuiActiveFor(session), isTrue);
+      expect(await vm.isPaneTuiActiveFor(session), isTrue);
+      expect(transport.commands.where((command) => command.contains('alternate_on')), hasLength(1));
+      expect(vm.sendPageKeysFor(session, up: false, count: 1), isTrue);
+      expect(sent(transport), contains('\u001b[6~'));
+    });
+  });
+
   group('session list', () {
     test('closing one selects another rather than leaving nothing focused', () async {
       await repo.insertServer(server(name: 'nas'));

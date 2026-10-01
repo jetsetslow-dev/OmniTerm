@@ -100,6 +100,7 @@ class _AppLockScreenState extends State<AppLockScreen> with WidgetsBindingObserv
   String? _message;
   bool _busy = false;
   Timer? _throttleTick;
+  Timer? _resumePromptTimer;
 
   /// True once the app has genuinely been backgrounded while this screen was up.
   ///
@@ -107,6 +108,8 @@ class _AppLockScreenState extends State<AppLockScreen> with WidgetsBindingObserv
   /// cause. Without the distinction, re-prompting on every resume risks a loop where a cancelled
   /// prompt immediately raises another.
   bool _wasBackgrounded = false;
+  bool _promptWhenResumed = false;
+  bool _retryAfterCurrentPrompt = false;
 
   @override
   void initState() {
@@ -132,9 +135,17 @@ class _AppLockScreenState extends State<AppLockScreen> with WidgetsBindingObserv
         // mounted for as long as the app is locked — so an `initState`-only trigger left the user
         // staring at a bare PIN field with no way to reach biometrics but the button. Kotlin
         // re-prompts on every `ON_RESUME` for exactly this reason (`ui/AppUi.kt:724`).
-        if (_wasBackgrounded) {
-          _wasBackgrounded = false;
-          if (widget.controller.canUseBiometrics) unawaited(_tryBiometrics());
+        final shouldPrompt = _wasBackgrounded || _promptWhenResumed;
+        _wasBackgrounded = false;
+        _promptWhenResumed = false;
+        if (shouldPrompt && widget.controller.canUseBiometrics) {
+          if (_busy) {
+            // The system may deliver its cancellation callback *after* Flutter's RESUMED event.
+            // Keep the offer until that in-flight request actually finishes.
+            _retryAfterCurrentPrompt = true;
+          } else {
+            unawaited(_tryBiometrics());
+          }
         }
       case AppLifecycleState.inactive:
         break;
@@ -145,6 +156,7 @@ class _AppLockScreenState extends State<AppLockScreen> with WidgetsBindingObserv
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _throttleTick?.cancel();
+    _resumePromptTimer?.cancel();
     _pin.dispose();
     _pinFocus.dispose();
     super.dispose();
@@ -152,14 +164,38 @@ class _AppLockScreenState extends State<AppLockScreen> with WidgetsBindingObserv
 
   Future<void> _tryBiometrics() async {
     if (_busy || !mounted) return;
+    // The first Flutter frame can precede the host Activity's RESUMED state. Calling AndroidX
+    // BiometricPrompt in that window may immediately cancel without ever showing a sheet, leaving
+    // only the PIN field. Remember the offer and make it when the host is foregrounded.
+    if (WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
+      _promptWhenResumed = true;
+      return;
+    }
+    _resumePromptTimer?.cancel();
+    _resumePromptTimer = null;
+    _promptWhenResumed = false;
     setState(() => _busy = true);
     final ok = await widget.controller.unlockWithBiometrics();
     if (!mounted) return;
+    final retry = _retryAfterCurrentPrompt && !ok && widget.controller.isLocked;
+    _retryAfterCurrentPrompt = false;
     setState(() {
       _busy = false;
       // Cancellation stays quiet; an unavailable prompt/sensor must explain how to proceed.
       _message = ok ? null : widget.controller.biometricError;
     });
+    if (retry) {
+      if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+        // Let Android finish removing the cancelled system sheet before opening its replacement.
+        _resumePromptTimer = Timer(const Duration(milliseconds: 250), () {
+          if (mounted && widget.controller.isLocked && widget.controller.canUseBiometrics) {
+            unawaited(_tryBiometrics());
+          }
+        });
+      } else {
+        _promptWhenResumed = true;
+      }
+    }
   }
 
   Future<void> _submit() async {

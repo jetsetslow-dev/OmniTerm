@@ -1194,6 +1194,11 @@ String tmuxSafeSessionName(String name) {
 String tmuxActivePaneQuery(String name) =>
     "tmux display-message -p -t ${tmuxSafeSessionName(name)} '#{pane_id}' 2>/dev/null || true";
 
+/// Whether the pane itself owns an alternate screen, rather than the tmux client around it.
+/// Regular tmux attach keeps the client's alternate screen active even at a plain shell prompt.
+String tmuxAlternateOnQuery(String name) =>
+    "tmux display-message -p -t ${tmuxSafeSessionName(name)} '#{alternate_on}' 2>/dev/null || true";
+
 /// Ported from `RemoteCommands.tmuxCaptureHistoryCommand` (`data/RemoteParsers.kt:280`).
 ///
 /// tmux does not stream every line to an attached client: output faster than the client consumes is

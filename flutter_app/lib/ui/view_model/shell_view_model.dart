@@ -79,6 +79,7 @@ class ShellViewModel extends ChangeNotifier {
   final SshTransport? transport;
 
   final _sessionCredentials = <ShellSession, SshCredentials>{};
+  final _paneAltCache = <ShellSession, ({bool active, int checkedAtMs})>{};
   final _reconnectRuns = <ShellSession, _ReconnectRun>{};
 
   void _onSessionChanged() {
@@ -1134,6 +1135,7 @@ class ShellViewModel extends ChangeNotifier {
   void _close(ShellSession session, {bool saveRecovery = true}) {
     _reconnectRuns.remove(session)?.timer?.cancel();
     _sessionCredentials.remove(session);
+    _paneAltCache.remove(session);
     session.reconnecting = false;
     final tmuxName = session.tmuxName;
     if (tmuxName != null && saveRecovery) {
@@ -1398,6 +1400,52 @@ class ShellViewModel extends ChangeNotifier {
     return sent;
   }
 
+  /// A raw or control-mode channel knows its own alternate screen. Regular tmux attach does not:
+  /// its outer client uses one even when the pane is a plain shell, so ask the pane over SSH.
+  /// The short cache keeps a drag from opening an exec channel for every pointer delta.
+  Future<bool> isPaneTuiActiveFor(ShellSession session) async {
+    if (!_sessions.contains(session) || !session.isOpen) return false;
+    final name = session.tmuxName;
+    if (name == null || session.controlMode) return session.emulator.isAlternateScreenActive;
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final cached = _paneAltCache[session];
+    final age = cached == null ? -1 : now - cached.checkedAtMs;
+    if (cached != null && age >= 0 && age < 2500) return cached.active;
+
+    final ssh = transport;
+    final credentials = _sessionCredentials[session];
+    if (ssh == null || credentials == null) return false;
+    try {
+      final answer = await ssh
+          .exec(credentials, tmuxAlternateOnQuery(name))
+          .timeout(const Duration(milliseconds: 600));
+      if (!_sessions.contains(session) || !session.isOpen) return false;
+      final active = answer.trim() == '1';
+      _paneAltCache[session] = (active: active, checkedAtMs: DateTime.now().millisecondsSinceEpoch);
+      return active;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Deliver one gesture's capped page keys to the pane it touched, even in split view.
+  bool sendPageKeysFor(ShellSession session, {required bool up, required int count}) {
+    if (!_sessions.contains(session) || !session.isOpen || session.readOnly || count <= 0) {
+      return false;
+    }
+    final key = TerminalKeyEncoder.encode(
+      up ? TermKey.pageUp : TermKey.pageDown,
+      applicationCursorKeys: session.emulator.applicationCursorKeys,
+    );
+    final capped = count.clamp(1, 3);
+    final bytes = Uint8List(key.length * capped);
+    for (var i = 0; i < capped; i++) {
+      bytes.setRange(i * key.length, (i + 1) * key.length, key);
+    }
+    return session.write(bytes);
+  }
+
   /// Send typed text under the current modifiers.
   bool typeText(String text) {
     final session = current;
@@ -1594,6 +1642,7 @@ class ShellViewModel extends ChangeNotifier {
     }
     _reconnectRuns.clear();
     _sessionCredentials.clear();
+    _paneAltCache.clear();
     _app.removeListener(_onAppChanged);
     unawaited(_actionsSub?.cancel());
     for (final session in _sessions) {

@@ -28,11 +28,30 @@ void main() {
       final original = settings.saved;
       var createdPin = false;
       Finder key(String value) => find.byKey(ValueKey(value));
+      final settingsList = find.descendant(
+        of: key('settings.list'),
+        matching: find.byType(Scrollable),
+      );
+      Future<void> scrollSettingsTo(
+        Finder target, {
+        AxisDirection direction = AxisDirection.down,
+      }) => $(target).scrollTo(
+        view: settingsList,
+        scrollDirection: direction,
+        // The SFTP card is several screens below the first card. Keep small drags so a
+        // short control cannot be skipped, but traverse the full list when necessary.
+        step: 64,
+        maxScrolls: 100,
+      );
       Future<void> tap(String value, {AxisDirection direction = AxisDirection.down}) async {
         final target = key(value);
         // Modal buttons already visible must not try to scroll the obscured Settings list.
         if (target.hitTestable().evaluate().isEmpty) {
-          await $(target).scrollTo(scrollDirection: direction);
+          if (settingsList.evaluate().isNotEmpty && value.startsWith('settings.')) {
+            await scrollSettingsTo(target, direction: direction);
+          } else {
+            await $(target).scrollTo(scrollDirection: direction);
+          }
         }
         await $(target).tap();
       }
@@ -82,7 +101,7 @@ void main() {
         await tap('settings.revert');
         expect(settings.isDirty, isFalse);
 
-        await $(key('settings.sftpWarnFileCount')).scrollTo();
+        await scrollSettingsTo(key('settings.sftpWarnFileCount'));
         await $.tester.enterText(key('settings.sftpWarnFileCount'), '');
         await $.pumpAndSettle();
         expect(save().onPressed, isNull);

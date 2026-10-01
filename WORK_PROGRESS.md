@@ -1,6 +1,6 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
-Updated: 2026-09-30. Working branch: `migration-to-flutter`; PR: #92.
+Updated: 2026-10-01. Working branch: `migration-to-flutter`; PR: #92.
 Independent return review implemented and locally validated; **not** a parity-complete or release-ready declaration.
 
 This sanitized tracker is intentionally committed so work can resume on another machine.
@@ -14,9 +14,11 @@ The user has explicitly requested the existing Kotlin UI throughout Flutter: eve
 submenu, popup and option, including the SSH terminal, Settings, sizing and navigation. Kotlin is
 the reference, not an invitation to redesign. The previous return-review checkpoint is complete;
 its passing checks do not establish visual parity. The latest archived normal Flutter debug APK is
-`artifacts/flutter-builds/20260930-terminal-longpress/OmniTerm-Flutter-debug.apk` (SHA-256
-`cb0f0a405bb23392a3a0ff68fa1a19dfb2ab358d28203fd5761777ffd3d095da`). It was installed and
-opened on API 35. Broader terminal and app-wide visual/behavior parity remain in progress.
+`artifacts/flutter-builds/20261001-tui-biometric-scroll/OmniTerm-Flutter-debug.apk` (SHA-256
+`f6d8bac4f2b00191ab2de96f85f05972e5b914fab4cfbca47dee6db1c3e0a723`). It is package
+`com.jetsetslow.omniterm.app.flutter`, version `1.0.0-flutter` (code 1), signed by the expected
+debug certificate; it installed and opened on API 35 without a recorded fatal error. Broader
+terminal and app-wide visual/behavior parity remain in progress.
 
 Clarifications: this includes every login/lock/biometric element and all functionality, including
 long press, swipe, selection, keyboard shortcuts, Back, drag/reorder and contextual actions. Visual
@@ -28,7 +30,7 @@ app hosts it in FlutterActivity; authentication errors are silently collapsed in
 Flutter replaces the platform text scale whereas Kotlin composes it with the app preference.
 Settings uses different sections, control types, order and labels. The first fixes and focused device validation are recorded below; broader parity work remains open.
 
-Current checkpoint status (September 30):
+Current checkpoint status (October 1):
 
 - Signed/pushed Flutter head `c8ec131` fixed the alert-rule save race seen on hosted emulator job
   `109752301087` at the previous `7fcc3cf` head. The editor shows indeterminate saving progress,
@@ -61,7 +63,7 @@ Current checkpoint status (September 30):
   the hosted emulator job `109962117822` failed before executing its Settings action: the test
   called asynchronous `app.main()` without awaiting it, then looked up `screen.servers` before
   `runApp` could build that screen. The same launch race exists in 14 integration-test files. The
-  current uncommitted test repair awaits `app.main()` at all 15 call sites; analyzer passed. The
+  signed/pushed test repair `9bc76c1` awaits `app.main()` at all 15 call sites; analyzer passed. The
   exact failed Settings Patrol case passed on API 35 (one, zero skips), followed by the full Flutter
   core profile: 26 plain plus eight Patrol cases passed, zero skipped, including the route sweep,
   enrolled biometrics, picker and Settings. The separate API 35 SSH host profile also passed one
@@ -70,9 +72,38 @@ Current checkpoint status (September 30):
   local preflight passed with 2,768 Flutter host cases and seven optional fixture skips, release
   APK/AAB and SBOM generation, native unit/lint, strict fresh dependency verification and secret
   scanning. Its Android device matrix was explicitly deferred because the emulator was stopped;
-  the separate API 35 runs above covered this change. Signed push and replacement exact-head checks
-  are pending. TUI gesture routing, fling, terminal
-  grid/font metrics and broad visual parity remain open.
+  the separate API 35 runs above covered this change. The replacement exact-head checks finished:
+  Build & Test, Room, release SBOM, CodeQL, Flutter host, iOS, release artifacts and security passed,
+  but hosted emulator job `110089554224` failed in the Settings action test. Its `scrollTo` stopped
+  with the SFTP field built but not hit-testable after the default fifteen 64-pixel drags. The same
+  case passed locally, so this is a reach/timing-sensitive test step; the next checkpoint targets
+  the Settings list explicitly with short drags that can reach the full list. TUI gestures, terminal
+  grid/font metrics and broad visual parity remained open at that head.
+- The next local checkpoint is uncommitted. Flutter now routes a live terminal drag to PageUp or
+  PageDown when its touched pane owns an alternate-screen TUI, while a plain shell still scrolls
+  local history. Regular tmux attach asks the pane through a short cached side query; raw and
+  control-mode sessions use their own emulator state. A swipe continues with native-style fling
+  momentum, and the route stays with the touched split pane. Ten pure router tests, five widget
+  gesture tests and two view-model transport tests pass. In an isolated source tree, the full Flutter
+  host suite passed 2,785 cases with seven optional fixture skips; its API 35 host profile passed
+  one SSH/runtime/share fixture case and one native lifecycle case, zero skips. The Flutter lock
+  screen also defers its automatic or early tapped biometric request until the Android host resumes.
+  If a system cancellation arrives only after resume, it preserves the offer until that request
+  finishes. The initial inactive-host regression failed before the guard and passed after; a late
+  cancellation regression likewise failed before its repair and passed after. The isolated lock
+  suite passed 69 cases. On the combined tree, 161 focused Flutter host cases passed and the API 35
+  core sweep passed 26 plain plus eight Patrol cases, zero skips, including Settings and biometric
+  Activity recreation; this device pass preceded the final late-cancellation source edit. The
+  repaired Settings Patrol case and final biometric Activity-recreation case then each passed on API
+  35, one case and zero skips. Combined analyzer passed. The normal debug APK above was built from
+  the final code, signature/package/version/debuggable state were verified, and it opened on API 35.
+  The combined final-tree `./scripts/local-pr-check.sh --full` passed: native unit/lint, all-ref
+  secret scan, Flutter formatting/analyzer and 2,789 host cases with seven optional fixture skips,
+  release APK/AAB and both Flutter SBOMs, and strict fresh verification of project, release and
+  compile graphs. Its Android device matrix was explicitly deferred because no emulator was
+  connected; the separate API 35 runs above cover the affected shell, Settings and lock screens.
+  Signed push and exact-head checks remain pending. The user's S23 Ultra on Android 16 is not
+  locally connected, so its prompt behavior remains to be confirmed.
 - Kotlin Dependabot #109 now has signed/pushed head `298467c` with strict metadata for the Gradle,
   Android Gradle Plugin, Navigation, Roborazzi, Bouncy Castle and Develocity updates. A standalone
   `--write` and separate `--verify` passed; 111 added records and three completed SHA-512 records

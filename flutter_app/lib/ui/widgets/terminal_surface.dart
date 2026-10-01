@@ -1,9 +1,11 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
 import '../../data/term/terminal_snapshot.dart';
+import '../../domain/tui_scroll_router.dart';
 import '../theme/terminal_theme.dart';
 import '../theme/typography.dart';
 import '../view_model/shell_session.dart';
@@ -196,6 +198,8 @@ class TerminalSurface extends StatefulWidget {
     this.onTapCell,
     this.onScrolledBack,
     this.onLongPressFocus,
+    this.queryTuiActive,
+    this.sendTuiPages,
   });
 
   final ShellSession session;
@@ -217,14 +221,48 @@ class TerminalSurface extends StatefulWidget {
   /// Focus the touched split pane before showing its transcript and copy actions.
   final VoidCallback? onLongPressFocus;
 
+  /// Asks whether the touched pane owns the alternate screen; regular tmux may need a side query.
+  final Future<bool> Function()? queryTuiActive;
+
+  /// Sends capped PageUp/PageDown presses to this pane when its TUI owns scrolling.
+  final bool Function(bool up, int count)? sendTuiPages;
+
   @override
   State<TerminalSurface> createState() => _TerminalSurfaceState();
 }
 
-class _TerminalSurfaceState extends State<TerminalSurface> {
+class _TerminalSurfaceState extends State<TerminalSurface> with SingleTickerProviderStateMixin {
   /// Fractional rows carried between drag events, so a slow drag still scrolls instead of rounding
   /// every delta down to nothing.
   double _dragRemainder = 0;
+  final TuiScrollRouter _router = TuiScrollRouter();
+  Timer? _routeIdle;
+  int _routeGeneration = 0;
+  late final AnimationController _fling;
+  double _flingPosition = 0;
+  double _flingCellHeight = 1;
+
+  @override
+  void initState() {
+    super.initState();
+    _fling = AnimationController.unbounded(vsync: this)..addListener(_onFlingTick);
+  }
+
+  @override
+  void didUpdateWidget(TerminalSurface oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.session != widget.session) {
+      _fling.stop();
+      _resetRoute();
+    }
+  }
+
+  @override
+  void dispose() {
+    _resetRoute();
+    _fling.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -246,8 +284,13 @@ class _TerminalSurfaceState extends State<TerminalSurface> {
           builder: (context, _) => GestureDetector(
             key: const ValueKey('shell.surface'),
             behavior: HitTestBehavior.opaque,
-            onVerticalDragStart: (_) => _dragRemainder = 0,
+            onVerticalDragStart: (_) {
+              _fling.stop();
+              _dragRemainder = 0;
+            },
             onVerticalDragUpdate: (details) => _onDrag(details.delta.dy, metrics.cellHeight),
+            onVerticalDragEnd: (details) =>
+                _startFling(details.primaryVelocity ?? 0, metrics.cellHeight),
             onTapUp: (details) => widget.onTapCell?.call(
               widget.session.snapshot,
               (details.localPosition.dy / metrics.cellHeight).floor(),
@@ -283,6 +326,82 @@ class _TerminalSurfaceState extends State<TerminalSurface> {
   }
 
   void _onDrag(double dy, double cellHeight) {
+    final session = widget.session;
+    if (session.readOnly || !session.isOpen) {
+      _resetRoute();
+      _localDrag(dy, cellHeight);
+      return;
+    }
+    if (widget.queryTuiActive == null || widget.sendTuiPages == null) {
+      _localDrag(dy, cellHeight);
+      return;
+    }
+    final routed =
+        _router.routedToTui || _router.awaitingResolution || (_router.isIdle && session.followTail);
+    if (!routed) {
+      _localDrag(dy, cellHeight);
+      return;
+    }
+
+    final pageSize = math.max(1.0, session.viewportRows * cellHeight * 0.8);
+    final started = _router.isIdle;
+    final action = _router.onDelta(dy, pageSize);
+    if (started) _resolveRoute(pageSize, cellHeight, _routeGeneration);
+    _applyRoute(action, cellHeight);
+    _routeIdle?.cancel();
+    _routeIdle = Timer(const Duration(milliseconds: 900), _resetRoute);
+  }
+
+  void _startFling(double velocity, double cellHeight) {
+    if (velocity.abs() < 50) return;
+    _fling.stop();
+    _flingPosition = 0;
+    _flingCellHeight = cellHeight;
+    // The same ballistic continuation as a scrollable viewport: the resulting deltas still pass
+    // through the TUI/local router, so a fling cannot silently switch the gesture's destination.
+    _fling.animateWith(
+      ClampingScrollSimulation(position: 0, velocity: velocity.clamp(-5000.0, 5000.0)),
+    );
+  }
+
+  void _onFlingTick() {
+    final delta = _fling.value - _flingPosition;
+    _flingPosition = _fling.value;
+    if (delta != 0 && mounted) _onDrag(delta, _flingCellHeight);
+  }
+
+  void _resolveRoute(double pageSize, double cellHeight, int generation) {
+    unawaited(() async {
+      bool tui = false;
+      try {
+        tui = await widget.queryTuiActive!().timeout(const Duration(milliseconds: 600));
+      } catch (_) {
+        // A failed side query returns the whole buffered gesture to local history.
+      }
+      if (!mounted || generation != _routeGeneration) return;
+      _applyRoute(_router.resolve(tuiActive: tui, pageSize: pageSize), cellHeight);
+    }());
+  }
+
+  void _applyRoute(TuiScrollAction action, double cellHeight) {
+    switch (action) {
+      case BufferedTuiScroll():
+        break;
+      case LocalTuiScroll(:final delta):
+        _localDrag(delta, cellHeight);
+      case PageTuiScroll(:final up, :final count):
+        if (count > 0) widget.sendTuiPages?.call(up, count);
+    }
+  }
+
+  void _resetRoute() {
+    _routeGeneration++;
+    _routeIdle?.cancel();
+    _routeIdle = null;
+    _router.reset();
+  }
+
+  void _localDrag(double dy, double cellHeight) {
     // Dragging down reveals earlier output, the same direction as every other scroll view. The
     // Kotlin settled on tracking the local buffer rather than forwarding wheel events to tmux,
     // because the forwarded version had inconsistent direction and never quite reached the bottom.
