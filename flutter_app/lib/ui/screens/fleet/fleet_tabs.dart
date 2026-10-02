@@ -65,7 +65,7 @@ class _HostCard extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final display = HostDisplay.instance;
     final online = server.status == 'online';
-    final scoreColor = !online
+    final scoreColor = !online || vm.poller?.metricsForServer(server.id) == null
         ? OmniColors.textMuted
         : server.healthScore >= 70
         ? OmniColors.green
@@ -116,12 +116,16 @@ class _HostCard extends StatelessWidget {
                     breakdown: vm.healthBreakdownFor(server),
                   ),
                   child: Semantics(
-                    label: 'Health score: ${server.healthScore} out of 100',
+                    label: vm.poller?.metricsForServer(server.id) == null
+                        ? 'Health unavailable'
+                        : 'Health score: ${server.healthScore} out of 100',
                     excludeSemantics: true,
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
                       child: Text(
-                        '${server.healthScore}',
+                        vm.poller?.metricsForServer(server.id) == null
+                            ? '—'
+                            : '${server.healthScore}',
                         key: ValueKey('fleet.host.${server.id}.score'),
                         style: TextStyle(
                           fontSize: 18,

@@ -351,6 +351,7 @@ void main() {
       await boot();
       await vm.connect(vm.server!);
       final session = vm.current!;
+      transport.execAnswers['has-session'] = 'OMNITERM_TMUX_PRESENT';
       final locked = Completer<void>();
       final release = Completer<void>();
       final holding = db.transaction(() async {

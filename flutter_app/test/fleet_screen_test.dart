@@ -188,7 +188,7 @@ void main() {
 
     expect(find.byKey(const ValueKey('fleet.summary')), findsOneWidget);
     expect(find.text('1 / 2 Online'), findsOneWidget);
-    expect(find.text('Avg Score: 90'), findsOneWidget);
+    expect(find.text('Avg Score: —'), findsOneWidget);
     vm.dispose();
     scriptsVm.dispose();
     await tester.pump(const Duration(milliseconds: 10));
@@ -502,7 +502,8 @@ void main() {
 
   group('the dashboard reads the fleet poller', () {
     /// 40% memory, in the shape `free -b` prints.
-    const reply = '@OS\nLinux\n@MEM\nMem: 100 40 0 0 0 60\n@DISK\n/dev/sda1 100 1 1 1% /\n';
+    const reply =
+        '@OS\nLinux\n@CPU\n%Cpu(s): 100.0 id\n@MEM\nMem: 100 40 0 0 0 60\n@DISK\n/dev/sda1 100 1 1 1% /\n';
 
     testWidgets('every online host gets its own CPU chart', (tester) async {
       // The dashboard's job is comparing hosts, and a column of bare numbers cannot show which
@@ -553,7 +554,7 @@ void main() {
       await tester.pump(const Duration(milliseconds: 10));
     });
 
-    testWidgets('a host nothing has sampled yet does not open an invented breakdown', (
+    testWidgets('a host nothing has sampled yet explains that health is unavailable', (
       tester,
     ) async {
       // A breakdown assembled from empty metrics reads as a host at 0% on everything, which is a
@@ -565,7 +566,7 @@ void main() {
       await tester.tap(find.byKey(ValueKey('fleet.host.$id.score.open')));
       await tester.pumpAndSettle();
 
-      expect(find.byKey(const ValueKey('health.dialog')), findsNothing);
+      expect(find.byKey(const ValueKey('health.unavailable')), findsOneWidget);
       vm.dispose();
       scriptsVm.dispose();
       poller.dispose();

@@ -44,14 +44,15 @@ class ServersViewModel extends ChangeNotifier {
   int? get selectedServerId => _app.selectedServerId;
   set selectedServerId(int? value) => _app.selectedServerId = value;
 
-  HealthBreakdown healthBreakdown(Server server, HostMetrics? metrics) =>
-      _app.healthScoring.breakdown(
-        metrics?.cpuPercent ?? 0,
-        metrics?.memPercent ?? 0,
-        metrics?.diskPercent ?? 0,
-        server.lastLatency,
-        online: server.status == 'online',
-      );
+  HealthBreakdown healthBreakdown(Server server, HostMetrics? metrics) => metrics == null
+      ? HealthBreakdown.unavailable
+      : _app.healthScoring.breakdown(
+          metrics.cpuPercent,
+          metrics.memPercent,
+          metrics.diskPercent,
+          server.lastLatency,
+          online: server.status == 'online',
+        );
 
   String get serverSearchText => _serverSearchText;
 

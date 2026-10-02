@@ -165,12 +165,26 @@ class FleetViewModel extends ChangeNotifier {
   int get onlineCount => onlineServers.length;
 
   /// Online hosts scoring below 50 — the ones worth looking at first.
-  int get criticalCount => servers.where((s) => s.status == 'online' && s.healthScore < 50).length;
+  int get criticalCount => servers
+      .where(
+        (s) =>
+            s.status == 'online' &&
+            s.healthScore >= 0 &&
+            s.healthScore < 50 &&
+            poller?.metricsForServer(s.id) != null,
+      )
+      .length;
 
   int get averageScore {
-    if (servers.isEmpty) return 100;
-    final total = servers.fold<int>(0, (sum, s) => sum + s.healthScore);
-    return (total / servers.length).round();
+    final measured = servers
+        .where(
+          (s) =>
+              s.status == 'online' && s.healthScore >= 0 && poller?.metricsForServer(s.id) != null,
+        )
+        .toList();
+    if (measured.isEmpty) return -1;
+    final total = measured.fold<int>(0, (sum, s) => sum + s.healthScore);
+    return (total / measured.length).round();
   }
 
   // ── tabs ────────────────────────────────────────────────────────────────────

@@ -53,7 +53,7 @@ void main() {
       final server = (await db.serverDao.getServerById(id))!;
       // A status persisted from the previous run is a lie until re-probed.
       expect(server.status, 'offline');
-      expect(server.healthScore, 0);
+      expect(server.healthScore, -1);
       expect(server.lastLatency, 0);
       expect(server.authStatus, 'unknown');
       expect(server.authError, isNull);

@@ -60,12 +60,85 @@ void main() {
   /// is computed from what the parser makes of them.
   String metricsReply({required int memUsedPct, int diskUsedPct = 1}) =>
       '@OS\nLinux\n'
+      '@CPU\n%Cpu(s): 100.0 id\n'
       '@MEM\nMem: 100 $memUsedPct 0 0 0 ${100 - memUsedPct}\n'
       '@DISK\n/dev/sda1 100 $diskUsedPct 1 $diskUsedPct% /\n'
       '@STAT\ncpu 0 0 100 900 0\n'
       '@NETDEV\neth0: 1000 0 0 0 0 0 0 0 500\n';
 
   Future<void> settle() => Future<void>.delayed(Duration.zero);
+
+  test('empty metrics cannot advertise perfect health or enter history', () async {
+    final id = await repo.insertServer(server(name: 'empty'));
+    await app.start();
+    await settle();
+    final poller = TelemetryPoller(app, transport: RecordingTransport());
+    await poller.cycle();
+
+    expect((await repo.getServerById(id))!.healthScore, lessThan(0));
+    expect(poller.metricsForServer(id), isNull);
+    expect(await repo.getMetricsForServer(id), isEmpty);
+    poller.dispose();
+  });
+
+  test('failed metrics invalidate the current score while retaining history', () async {
+    final id = await repo.insertServer(server(name: 'reboot'));
+    await app.start();
+    await settle();
+    final replies = <String, String>{'': metricsReply(memUsedPct: 20)};
+    final poller = TelemetryPoller(app, transport: RecordingTransport(replies: replies));
+    await poller.cycle();
+    expect(poller.metricsForServer(id), isNotNull);
+    expect((await repo.getServerById(id))!.healthScore, greaterThanOrEqualTo(0));
+
+    replies[''] = 'SSH Error: command timed out';
+    await poller.cycle();
+    expect((await repo.getServerById(id))!.healthScore, lessThan(0));
+    expect(poller.metricsForServer(id), isNull);
+    expect(await repo.getMetricsForServer(id), hasLength(1));
+    poller.dispose();
+  });
+
+  test('only validated metrics provide fresh reachability evidence', () async {
+    final id = await repo.insertServer(server(name: 'evidence'));
+    await app.start();
+    await settle();
+    final replies = <String, String>{'': ''};
+    final reached = <int>[];
+    final poller = TelemetryPoller(
+      app,
+      transport: RecordingTransport(replies: replies),
+      onReachable: (server) async => reached.add(server.id),
+    );
+    addTearDown(poller.dispose);
+    await poller.cycle();
+    expect(reached, isEmpty);
+    replies[''] = metricsReply(memUsedPct: 20);
+    await poller.cycle();
+    expect(reached, [id]);
+    replies[''] = 'SSH Error: connection refused';
+    await poller.cycle();
+    expect(reached, [id]);
+  });
+
+  test('stale metrics stop being current while their history remains', () async {
+    final id = await repo.insertServer(server(name: 'stale'));
+    await app.start();
+    await settle();
+    var now = DateTime(2026, 10, 2);
+    final poller = TelemetryPoller(
+      app,
+      clock: () => now,
+      transport: RecordingTransport(fallback: metricsReply(memUsedPct: 20)),
+      interval: const Duration(seconds: 15),
+    );
+    addTearDown(poller.dispose);
+    await poller.cycle();
+    expect(poller.metricsForServer(id), isNotNull);
+    now = now.add(const Duration(seconds: 46));
+    expect(poller.metricsForServer(id), isNull);
+    expect(poller.historyForServer(id), hasLength(1));
+  });
 
   group('what the poller visits', () {
     test('nothing at all without a transport', () async {

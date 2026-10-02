@@ -38,6 +38,7 @@ class ShellViewModel extends ChangeNotifier {
     this.hasProbed,
     this.markReachable,
     this.syncLiveSessionServers,
+    this.recheckHost,
     this.shortcuts,
   }) {
     _useControlMode = _app.preferences.tmuxControlMode;
@@ -70,6 +71,7 @@ class ShellViewModel extends ChangeNotifier {
   /// Publishes the hosts with open interactive channels so an advisory background probe cannot
   /// contradict a terminal that is demonstrably connected.
   final void Function(Set<int> serverIds)? syncLiveSessionServers;
+  final Future<void> Function(Server server)? recheckHost;
 
   AppPreferences get preferences => _app.preferences;
 
@@ -425,9 +427,11 @@ class ShellViewModel extends ChangeNotifier {
       (_sessions.isNotEmpty ? _sessions.last : null);
 
   void select(String id) {
-    if (_currentId == id) return;
+    final session = _sessions.where((s) => s.id == id).firstOrNull;
+    if (session == null) return;
     _currentId = id;
     _safeNotify();
+    if (session.tmuxName != null) unawaited(_validateExistingTmux(session));
   }
 
   int _terminalResumeRevision = 0;
@@ -438,9 +442,68 @@ class ShellViewModel extends ChangeNotifier {
   bool resumeExisting(String id) {
     if (!_sessions.any((session) => session.id == id)) return false;
     _terminalResumeRevision++;
-    _currentId = id;
-    _safeNotify();
+    select(id);
     return true;
+  }
+
+  Future<void> _validateExistingTmux(ShellSession session) async {
+    if (_connecting || _disposed) return;
+    _connecting = true;
+    _phase = 'Checking tmux session…';
+    _error = null;
+    _failedConnectTarget = null;
+    final generation = ++_connectGeneration;
+    _safeNotify();
+    final server = _app.servers.where((s) => s.id == session.serverId).firstOrNull;
+    final connectionRevision = session.connectionRevision;
+    try {
+      final ssh = transport;
+      final creds = _sessionCredentials[session];
+      if (ssh == null || creds == null || server == null) {
+        throw SshConnectException('The saved host or SSH transport is unavailable.');
+      }
+      final raw = await ssh.exec(creds, tmuxSessionProbeCommand(session.tmuxName!));
+      if (_disposed || generation != _connectGeneration) return;
+      if (connectionRevision != session.connectionRevision) return;
+      final present = parseTmuxSessionProbe(raw);
+      if (present == null) throw SshConnectException(raw);
+      if (!present) {
+        await _app.repository.deletePersistentSession(session.tmuxName!);
+        await _app.repository.updateHealthScore(server.id, -1);
+        await markReachable?.call(server);
+        await _reloadSaved();
+        if (_disposed || generation != _connectGeneration) return;
+        _reconnectRuns.remove(session)?.timer?.cancel();
+        session.reconnecting = false;
+        session.closeByUser();
+        _error =
+            'Tmux confirmed that this session no longer exists. Its recovery entry was removed; '
+            'no empty replacement was created.';
+      } else {
+        await markReachable?.call(server);
+        if (_disposed || generation != _connectGeneration) return;
+        if (!session.isOpen) retrySession(session);
+      }
+    } catch (error) {
+      if (!_disposed &&
+          generation == _connectGeneration &&
+          connectionRevision == session.connectionRevision) {
+        _error =
+            '${describeSshFailure('$error')} The tmux recovery entry was kept; '
+            'retry when the host is available.';
+        if (server != null) {
+          if (sshFailureProvesEndpointUnreachable('$error')) session.markTransportUnavailable();
+          await _app.repository.updateHealthScore(server.id, -1);
+          unawaited(recheckHost?.call(server) ?? Future<void>.value());
+        }
+      }
+    } finally {
+      if (!_disposed && generation == _connectGeneration) {
+        _connecting = false;
+        _phase = null;
+        _safeNotify();
+      }
+    }
   }
 
   // ── split view ──────────────────────────────────────────────────────────────
@@ -578,6 +641,24 @@ class ShellViewModel extends ChangeNotifier {
   String? _error;
   String? get error => _error;
   Server? _failedConnectTarget;
+  String? _failedResumeName;
+  bool _failedControlMode = false;
+
+  bool get canRetryConnection => _failedConnectTarget != null || current?.tmuxName != null;
+
+  Future<void> retryConnection() async {
+    final target = _failedConnectTarget;
+    if (target != null) {
+      await connect(
+        target,
+        resumeName: _failedResumeName,
+        controlMode: _failedControlMode,
+        confirmedOffline: true,
+      );
+    } else if (current?.tmuxName != null) {
+      await _validateExistingTmux(current!);
+    }
+  }
 
   void clearError() {
     if (_error == null) return;
@@ -588,7 +669,9 @@ class ShellViewModel extends ChangeNotifier {
 
   void _recordConnectFailure(Server server, String message) {
     _failedConnectTarget = server;
-    _error = describeSshFailure(message);
+    _error = message.contains('recovery entry') ? message : describeSshFailure(message);
+    unawaited(_app.repository.updateHealthScore(server.id, -1));
+    unawaited(recheckHost?.call(server) ?? Future<void>.value());
   }
 
   /// Decides which tmux session a connection to [server] should join, creating a row if needed.
@@ -659,6 +742,14 @@ class ShellViewModel extends ChangeNotifier {
 
   /// Opens a saved session again, attaching to that exact tmux name.
   Future<void> resume(PersistentSession row) async {
+    final existing = _sessions
+        .where((s) => s.tmuxName == row.tmuxName && s.serverId == row.serverId)
+        .firstOrNull;
+    if (existing != null) {
+      _currentId = existing.id;
+      await _validateExistingTmux(existing);
+      return;
+    }
     final server = _app.servers.where((s) => s.id == row.serverId).firstOrNull;
     if (server == null) {
       _error = 'The host this session ran on is no longer saved.';
@@ -900,6 +991,8 @@ class ShellViewModel extends ChangeNotifier {
     _phase = 'Connecting…';
     _error = null;
     _failedConnectTarget = null;
+    _failedResumeName = resumeName;
+    _failedControlMode = controlMode;
     _safeNotify();
 
     (String, String)? persistent;
@@ -968,6 +1061,7 @@ class ShellViewModel extends ChangeNotifier {
           }
           if (!presence) {
             await _app.repository.deletePersistentSession(remembered);
+            await _app.repository.updateHealthScore(server.id, -1);
             await _reloadSaved();
             unawaited(markReachable?.call(server) ?? Future<void>.value());
             _failedConnectTarget = server;

@@ -139,6 +139,53 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('saved tmux resume shows progress with another terminal already open', (
+    tester,
+  ) async {
+    final id = await repo.insertServer(server(name: 'nas'));
+    await pump(tester);
+    await connect(tester);
+    await repo.upsertPersistentSession(
+      PersistentSessionsCompanion.insert(
+        tmuxName: 'saved-work',
+        serverId: id,
+        serverName: 'nas',
+        createdAt: 1,
+        backgroundedAt: 0,
+      ),
+    );
+    late Completer<void> gate;
+    transport.execAnswers['command -v'] = 'yes';
+    transport.execAnswers['has-session'] = 'SSH Error: connection refused';
+    final row = (await repo.getPersistentSessions()).single;
+    late Future<void> pending;
+    await tester.runAsync(() async {
+      gate = Completer<void>();
+      transport.execGate = gate;
+      pending = vm.resume(row);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+    });
+    await tester.pump();
+    expect(vm.isConnecting, isTrue);
+    addTearDown(() async {
+      await tester.runAsync(() async {
+        if (!gate.isCompleted) gate.complete();
+        await pending;
+        vm.dispose();
+      });
+    });
+    expect(find.byKey(const ValueKey('shell.phase')), findsOneWidget);
+    await tester.runAsync(() async {
+      gate.complete();
+      await pending;
+    });
+    await tester.pump();
+    expect(find.byKey(const ValueKey('shell.active.error')), findsOneWidget);
+    expect(find.byKey(const ValueKey('shell.active.retry')), findsOneWidget);
+    expect(await repo.getPersistentSessions(), hasLength(1));
+    expect(transport.opened, hasLength(1));
+  });
+
   group('background protection', () {
     testWidgets('a refused keep-alive is visible on the Shell and can be dismissed', (
       tester,

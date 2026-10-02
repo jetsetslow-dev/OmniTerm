@@ -144,10 +144,7 @@ class HostStatusProbe extends ChangeNotifier {
     if (_disposed) return;
     final next = serverIds.where((id) => id > 0).toSet();
     final ended = _liveSessionServers.difference(next);
-    final changed = <int>{
-      ..._liveSessionServers,
-      ...next,
-    }.where((id) => _liveSessionServers.contains(id) != next.contains(id));
+    final changed = next.difference(_liveSessionServers);
     for (final id in changed) {
       _evidenceGeneration[id] = (_evidenceGeneration[id] ?? 0) + 1;
     }
@@ -155,6 +152,7 @@ class HostStatusProbe extends ChangeNotifier {
       ..clear()
       ..addAll(next);
     for (final id in ended) {
+      unawaited(_repository.updateHealthScore(id, -1));
       // The channel that proved reachability has gone away. Recheck immediately instead of showing
       // its old online result until the next 45-second sweep.
       unawaited(_recheckAfterSessionEnded(id));
@@ -173,12 +171,7 @@ class HostStatusProbe extends ChangeNotifier {
     _evidenceGeneration[server.id] = (_evidenceGeneration[server.id] ?? 0) + 1;
     _probed.add(server.id);
     await Future.wait([
-      _repository.updateConnectionState(
-        server.id,
-        'online',
-        server.healthScore,
-        server.lastLatency,
-      ),
+      _repository.updateReachability(server.id, 'online', server.lastLatency),
       _repository.updateAuthState(server.id, 'ok', null),
     ]);
   }
@@ -207,18 +200,13 @@ class HostStatusProbe extends ChangeNotifier {
 
   Future<void> _probeOneInner(Server server, int generation) async {
     if (!_workIsCurrent(generation)) return;
-    if (_liveSessionServers.contains(server.id)) {
-      _probed.add(server.id);
-      await _preserveInteractiveSuccess(server);
-      return;
-    }
     final evidenceGeneration = _evidenceGeneration[server.id] ?? 0;
     final stopwatch = Stopwatch()..start();
     try {
       // Shown as "connecting" while a previously offline host is retried, so a slow probe reads as
       // work in progress rather than a host that is simply still down.
       if (server.status == 'offline') {
-        await _repository.updateConnectionState(server.id, 'connecting', server.healthScore, 0);
+        await _repository.updateReachability(server.id, 'connecting', 0);
         if (!_workIsCurrent(generation)) return;
       }
       // A direct socket to the final host bypasses every configured proxy. Do not let that result
@@ -231,12 +219,7 @@ class HostStatusProbe extends ChangeNotifier {
         _probed.add(server.id);
         // The health score is left alone: it is Monitor's business, computed from real telemetry,
         // and overwriting it from a ping would make a reachable-but-struggling host look perfect.
-        await _repository.updateConnectionState(
-          server.id,
-          'online',
-          server.healthScore,
-          rtt.inMilliseconds,
-        );
+        await _repository.updateReachability(server.id, 'online', rtt.inMilliseconds);
         return;
       }
 
@@ -259,12 +242,7 @@ class HostStatusProbe extends ChangeNotifier {
       _probed.add(server.id);
       if (failure == null) {
         await Future.wait([
-          _repository.updateConnectionState(
-            server.id,
-            'online',
-            server.healthScore,
-            stopwatch.elapsedMilliseconds,
-          ),
+          _repository.updateReachability(server.id, 'online', stopwatch.elapsedMilliseconds),
           _repository.updateAuthState(server.id, 'ok', null),
         ]);
       } else if (!_mayMarkOffline(server.id, evidenceGeneration, generation)) {
@@ -277,12 +255,8 @@ class HostStatusProbe extends ChangeNotifier {
         // Auth/host-key failures prove that an SSH server answered. Ambiguous transport errors do
         // not justify hiding the host from online-only screens or preventing a manual attempt.
         await Future.wait([
-          _repository.updateConnectionState(
-            server.id,
-            'online',
-            server.healthScore,
-            stopwatch.elapsedMilliseconds,
-          ),
+          _repository.updateHealthScore(server.id, -1),
+          _repository.updateReachability(server.id, 'online', stopwatch.elapsedMilliseconds),
           _repository.updateAuthState(server.id, 'failed', failure),
         ]);
       }
@@ -295,7 +269,7 @@ class HostStatusProbe extends ChangeNotifier {
       // Failure to run the advisory checker says nothing about the host. Restore the previous state
       // rather than leaving a retried card stuck at "connecting" or inventing an offline verdict.
       await _repository
-          .updateConnectionState(server.id, server.status, server.healthScore, server.lastLatency)
+          .updateReachability(server.id, server.status, server.lastLatency)
           .catchError((Object _) {});
     } finally {
       // Battery saver can invalidate a probe after its temporary "connecting" write. Restore the
@@ -308,18 +282,12 @@ class HostStatusProbe extends ChangeNotifier {
       // skipped when the snapshot was itself "connecting", because then there is no earlier state
       // to go back to and inventing one would be a guess.
       if (!_workIsCurrent(generation) && !_disposed && server.status != 'connecting') {
-        if (_liveSessionServers.contains(server.id) ||
-            (_evidenceGeneration[server.id] ?? 0) != evidenceGeneration) {
+        if ((_evidenceGeneration[server.id] ?? 0) != evidenceGeneration) {
           await _preserveInteractiveSuccess(server);
         } else {
           final current = await _repository.getServerById(server.id);
           if (current?.status == 'connecting') {
-            await _repository.updateConnectionState(
-              server.id,
-              server.status,
-              server.healthScore,
-              server.lastLatency,
-            );
+            await _repository.updateReachability(server.id, server.status, server.lastLatency);
           }
         }
       }
@@ -327,9 +295,7 @@ class HostStatusProbe extends ChangeNotifier {
   }
 
   bool _mayMarkOffline(int serverId, int evidenceGeneration, int generation) =>
-      _workIsCurrent(generation) &&
-      !_liveSessionServers.contains(serverId) &&
-      (_evidenceGeneration[serverId] ?? 0) == evidenceGeneration;
+      _workIsCurrent(generation) && (_evidenceGeneration[serverId] ?? 0) == evidenceGeneration;
 
   Future<void> _markOfflineUnlessSshSucceeded(
     Server server,
@@ -341,7 +307,7 @@ class HostStatusProbe extends ChangeNotifier {
       await _preserveInteractiveSuccess(server);
       return;
     }
-    await _repository.updateConnectionState(server.id, 'offline', 0, 0);
+    await _repository.updateConnectionState(server.id, 'offline', -1, 0);
     // Database writes yield. Reconcile once more in case a shell opened while the offline write was
     // being committed; the successful SSH result must be the final visible state.
     if (!_workIsCurrent(generation)) return;
@@ -350,12 +316,8 @@ class HostStatusProbe extends ChangeNotifier {
     }
   }
 
-  Future<void> _preserveInteractiveSuccess(Server server) => _repository.updateConnectionState(
-    server.id,
-    'online',
-    server.healthScore,
-    server.lastLatency,
-  );
+  Future<void> _preserveInteractiveSuccess(Server server) =>
+      _repository.updateReachability(server.id, 'online', server.lastLatency);
 
   void _safeNotify() {
     if (!_disposed) notifyListeners();

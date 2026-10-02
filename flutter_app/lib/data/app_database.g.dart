@@ -255,7 +255,7 @@ class $ServersTable extends Servers with TableInfo<$ServersTable, Server> {
     false,
     type: DriftSqlType.int,
     requiredDuringInsert: false,
-    clientDefault: () => 100,
+    clientDefault: () => -1,
   );
   static const VerificationMeta _lastLatencyMeta = const VerificationMeta('lastLatency');
   @override

@@ -552,7 +552,7 @@ class RepositoryRestoreTarget implements AppRepositoryLike {
     agentForwarding: row['agentForwarding'] as bool? ?? false,
     // A restored host has not been probed yet; carrying its old score would show a health
     // figure for a connection that has never been made on this device.
-    healthScore: 100,
+    healthScore: -1,
     lastLatency: 0,
     status: 'offline',
     authStatus: 'unknown',

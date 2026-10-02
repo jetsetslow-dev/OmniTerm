@@ -61,7 +61,7 @@ class Servers extends Table {
 
   /// Forward the SSH auth agent to this host (ssh -A) so onward hops can use our key.
   BoolColumn get agentForwarding => boolean().clientDefault(() => false)();
-  IntColumn get healthScore => integer().clientDefault(() => 100)();
+  IntColumn get healthScore => integer().clientDefault(() => -1)();
   IntColumn get lastLatency => integer().clientDefault(() => 0)();
 
   /// "online", "offline", or "connecting".

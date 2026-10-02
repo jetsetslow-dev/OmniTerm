@@ -40,7 +40,7 @@ class ServerDao extends DatabaseAccessor<AppDatabase> with _$ServerDaoMixin {
   Future<void> resetAllConnectionStates() => (update(servers)).write(
     const ServersCompanion(
       status: Value('offline'),
-      healthScore: Value(0),
+      healthScore: Value(-1),
       lastLatency: Value(0),
       authStatus: Value('unknown'),
       authError: Value(null),
@@ -55,6 +55,15 @@ class ServerDao extends DatabaseAccessor<AppDatabase> with _$ServerDaoMixin {
           lastLatency: Value(latency),
         ),
       );
+
+  Future<void> updateReachability(int id, String status, int latency) =>
+      (update(servers)..where((s) => s.id.equals(id))).write(
+        ServersCompanion(status: Value(status), lastLatency: Value(latency)),
+      );
+
+  Future<void> updateHealthScore(int id, int health) => (update(
+    servers,
+  )..where((s) => s.id.equals(id))).write(ServersCompanion(healthScore: Value(health)));
 
   /// Auth state is tracked separately from TCP reachability: a host can be reachable yet reject the
   /// credentials, and metrics are only shown when authStatus is "ok".

@@ -205,7 +205,7 @@ void main() {
       final row = ServerFormState(mode: ServerFormMode.duplicate, source: saved()).toServer();
       expect(row.status, 'offline');
       expect(row.authStatus, 'unknown');
-      expect(row.healthScore, 100);
+      expect(row.healthScore, -1);
     });
   });
 

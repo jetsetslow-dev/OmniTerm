@@ -66,10 +66,45 @@ class _ShellScreenState extends State<ShellScreen> {
               if (session != null && vm.error != null)
                 Padding(
                   padding: const EdgeInsets.all(8),
-                  child: Text(
-                    vm.error!,
-                    key: const ValueKey('shell.active.error'),
-                    style: const TextStyle(color: OmniColors.red),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      InkWell(
+                        onTap: () => showDialog<void>(
+                          context: context,
+                          builder: (context) => AlertDialog(
+                            title: const Text('Connection error'),
+                            content: SingleChildScrollView(
+                              child: Text(vm.error ?? 'The error was cleared.'),
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(context),
+                                child: const Text('Close'),
+                              ),
+                            ],
+                          ),
+                        ),
+                        child: Text(
+                          vm.error!,
+                          key: const ValueKey('shell.active.error'),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: OmniColors.red),
+                        ),
+                      ),
+                      Wrap(
+                        children: [
+                          if (vm.canRetryConnection)
+                            TextButton(
+                              key: const ValueKey('shell.active.retry'),
+                              onPressed: vm.isConnecting ? null : vm.retryConnection,
+                              child: const Text('Retry'),
+                            ),
+                          TextButton(onPressed: vm.clearError, child: const Text('Dismiss')),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
               // Shown wherever the Shell is, with or without an active session: the sessions this
@@ -96,7 +131,9 @@ class _ShellScreenState extends State<ShellScreen> {
                   ),
                 ),
               Expanded(
-                child: session == null
+                child: vm.isConnecting
+                    ? _ConnectingView(phase: vm.connectPhase)
+                    : session == null
                     ? _ConnectPane(vm: vm, licenseController: licenseController)
                     : vm.isSplit
                     ? _SplitTerminals(vm: vm, first: session, second: vm.splitSession!)
@@ -107,7 +144,10 @@ class _ShellScreenState extends State<ShellScreen> {
           );
           // Android can briefly deliver the new orientation with the old IME height. Preserve
           // usable controls in that tiny viewport until the keyboard finishes resizing.
-          final minimumHeight = session == null ? 0.0 : (compactIme ? 42.0 : 120.0);
+          final minimumHeight = session == null
+              ? 0.0
+              : (compactIme ? 42.0 : 120.0) +
+                    (vm.error == null ? 0 : 96 + MediaQuery.textScalerOf(context).scale(60));
           return constraints.maxHeight < minimumHeight
               ? SingleChildScrollView(
                   child: SizedBox(height: minimumHeight, child: contents),

@@ -12,6 +12,15 @@ import 'package:omniterm/data/remote_parsers.dart';
 /// Fixtures are inline strings, never output from the dev machine, so the suite stays
 /// host-independent.
 void main() {
+  test('health requires valid source readings before parser clamping', () {
+    const valid =
+        '@OS\nLinux\n@CPU\n100.0 id\n@MEM\nMem: 100 20 0 0 0 80\n'
+        '@DISK\n/dev/root 100 10 90 10% /\n';
+    expect(hasReliableHealthMetrics(valid), isTrue);
+    expect(hasReliableHealthMetrics(valid.replaceFirst('100.0 id', '-100.0 id')), isFalse);
+    expect(hasReliableHealthMetrics(valid.replaceFirst('0 80', '0 180')), isFalse);
+  });
+
   group('normaliseOs', () {
     test('maps the OS families', () {
       expect(normaliseOs('Linux\n'), 'Linux');

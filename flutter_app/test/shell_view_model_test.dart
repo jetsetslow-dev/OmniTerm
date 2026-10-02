@@ -167,6 +167,69 @@ void main() {
       expect(transport.opened.every((s) => !s.closeCalled), isTrue);
     });
 
+    test('selecting the same open tmux checks the host and reports failure', () async {
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await start();
+      await vm.connect(vm.server!);
+      final session = vm.current!;
+      final gate = Completer<void>();
+      transport.execGate = gate;
+      transport.execAnswers['has-session'] = 'SSH Error: connection refused';
+      vm.select(session.id);
+      expect(vm.isConnecting, isTrue);
+      gate.complete();
+      await until(() => !vm.isConnecting);
+      expect(vm.error, contains('recovery entry was kept'));
+      expect(
+        session.isOpen,
+        isFalse,
+        reason: 'the old open flag cannot survive a fresh endpoint failure',
+      );
+      expect(await repo.getPersistentSessions(), hasLength(1));
+      expect(transport.opened, hasLength(1));
+      expect(vm.current, same(session));
+    });
+
+    test('an older tmux failure cannot close a newly reconnected channel', () async {
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await start();
+      await vm.connect(vm.server!);
+      final session = vm.current!;
+      final gate = Completer<void>();
+      transport.execGate = gate;
+      transport.execAnswers['has-session'] = 'SSH Error: connection refused';
+      vm.select(session.id);
+      expect(vm.isConnecting, isTrue);
+      await transport.opened.single.dropConnection();
+      final replacement = await transport.openShell(
+        const SshCredentials(host: 'fixture', port: 22, username: 'root', password: 'pw'),
+        session.cols,
+        session.rows,
+      );
+      expect(session.reconnectWith(replacement), isTrue);
+      gate.complete();
+      await until(() => !vm.isConnecting);
+      expect(session.isOpen, isTrue);
+      expect(replacement.closed.value, isFalse);
+      expect(vm.error, isNull);
+      expect(await repo.getPersistentSessions(), hasLength(1));
+    });
+
+    test('confirmed missing open tmux removes recovery without opening a replacement', () async {
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await start();
+      await vm.connect(vm.server!);
+      final session = vm.current!;
+      transport.execAnswers['has-session'] = tmuxSessionAbsentMarker;
+      vm.select(session.id);
+      await until(() => !vm.isConnecting);
+      expect(vm.error, contains('no empty replacement'));
+      expect(await repo.getPersistentSessions(), isEmpty);
+      expect(transport.opened, hasLength(1));
+      expect(vm.current, same(session));
+      expect(session.isOpen, isFalse);
+    });
+
     test('tmux reconnect attaches the exact saved session without creating another', () async {
       await repo.insertServer(server(name: 'nas', persistent: true));
       await start();

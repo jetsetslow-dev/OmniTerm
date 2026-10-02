@@ -223,7 +223,7 @@ void main() {
     probe.dispose();
   });
 
-  test('a live terminal always keeps its host online', () async {
+  test('an open-session record does not skip fresh reachability checks', () async {
     await repo.insertServer(server(name: 'nas', status: 'offline'));
     final ssh = _FakeSshTransport(failure: 'Connection timed out');
     final probe = HostStatusProbe(repo, probe: _FakeProbe(), transport: ssh);
@@ -232,8 +232,12 @@ void main() {
 
     await probe.sweep();
 
-    expect((await only()).status, 'online');
-    expect(ssh.tested, isEmpty, reason: 'an open terminal already proves reachability');
+    expect(
+      ssh.tested,
+      hasLength(1),
+      reason: 'the server may have rebooted since the channel opened',
+    );
+    expect((await only()).status, 'offline');
     probe.dispose();
   });
 

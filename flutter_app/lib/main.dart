@@ -317,6 +317,7 @@ class OmniTermApp extends StatelessWidget {
               // Alert rules, the evaluation and the notifier were all ported and tested, and
               // nothing ever called them — every configured rule sat inert. This is the call the
               // evaluation's own doc comment says exists.
+              onReachable: context.read<HostStatusProbe>().markReachable,
               onSample: (server, metrics) => alerts.evaluate(
                 server,
                 AlertSample(
@@ -424,6 +425,7 @@ class OmniTermApp extends StatelessWidget {
             hasProbed: context.read<HostStatusProbe>().hasProbed,
             markReachable: context.read<HostStatusProbe>().markReachable,
             syncLiveSessionServers: context.read<HostStatusProbe>().setLiveSessionServers,
+            recheckHost: context.read<HostStatusProbe>().probeOne,
             shortcuts: context.read<ShortcutHelper>(),
           ),
           update: (_, app, previous) => previous!,

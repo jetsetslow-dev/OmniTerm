@@ -163,6 +163,11 @@ class AppRepository {
   Future<void> updateConnectionState(int id, String status, int health, int latency) =>
       _db.serverDao.updateConnectionState(id, status, health, latency);
 
+  Future<void> updateReachability(int id, String status, int latency) =>
+      _db.serverDao.updateReachability(id, status, latency);
+
+  Future<void> updateHealthScore(int id, int health) => _db.serverDao.updateHealthScore(id, health);
+
   Future<void> resetAllConnectionStates() => _db.serverDao.resetAllConnectionStates();
 
   Future<void> updateAuthState(int id, String authStatus, String? authError) =>

@@ -683,7 +683,7 @@ void main() {
       expect(restored.status, 'offline');
       expect(
         restored.healthScore,
-        100,
+        -1,
         reason: 'a health figure for a connection never made here would be a lie',
       );
 

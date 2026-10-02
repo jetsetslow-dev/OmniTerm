@@ -74,7 +74,7 @@ class _SummaryBar extends StatelessWidget {
               ),
             ),
             Text(
-              'Avg Score: ${vm.averageScore}',
+              'Avg Score: ${vm.averageScore < 0 ? '—' : vm.averageScore}',
               style: const TextStyle(
                 fontSize: 12,
                 color: OmniColors.cyan,

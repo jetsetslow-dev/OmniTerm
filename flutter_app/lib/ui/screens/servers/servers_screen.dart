@@ -109,6 +109,7 @@ class ServersScreen extends StatelessWidget {
                       vm: vm,
                       navigation: navigation,
                       metrics: telemetry?.metricsForServer(filtered[index].id),
+                      telemetry: telemetry,
                       hostProbe: hostProbe,
                       shell: shell,
                       sftp: sftp,
@@ -513,6 +514,7 @@ class _ServerCard extends StatelessWidget {
     required this.vm,
     this.navigation,
     this.metrics,
+    this.telemetry,
     this.hostProbe,
     this.shell,
     this.sftp,
@@ -523,6 +525,7 @@ class _ServerCard extends StatelessWidget {
   final ServersViewModel vm;
   final NavigationController? navigation;
   final HostMetrics? metrics;
+  final TelemetryPoller? telemetry;
   final HostStatusProbe? hostProbe;
   final ShellViewModel? shell;
   final SftpViewModel? sftp;
@@ -577,7 +580,7 @@ class _ServerCard extends StatelessWidget {
                     value: ticked,
                     onChanged: (_) => vm.toggleBulkSelection(server.id),
                   ),
-                _StatusDot(server: server),
+                _StatusDot(server: server, measured: metrics != null),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -608,7 +611,9 @@ class _ServerCard extends StatelessWidget {
                     name: server.name,
                     breakdown: vm.healthBreakdown(server, metrics),
                   ),
-                  child: _HealthRing(score: server.status == 'online' ? server.healthScore : 0),
+                  child: _HealthRing(
+                    score: server.status == 'online' && metrics != null ? server.healthScore : -1,
+                  ),
                 ),
                 IconButton(
                   key: ValueKey('servers.card.${server.id}.actions'),
@@ -659,18 +664,25 @@ class _ServerCard extends StatelessWidget {
             if (server.status == 'online' && server.authStatus == 'failed')
               _AuthFailure(server: server, onRetry: () => hostProbe?.probeOne(server))
             else if (server.status == 'online') ...[
+              if (metrics == null) ...[
+                const Text(
+                  'Metrics unavailable · Refresh to retry',
+                  style: TextStyle(color: OmniColors.textMuted),
+                ),
+                _MetricRetryButton(server: server, telemetry: telemetry, probe: hostProbe),
+              ],
               Row(
                 children: [
                   Expanded(
-                    child: _MiniMetric(label: 'CPU', value: metrics?.cpuPercent ?? 0),
+                    child: _MiniMetric(label: 'CPU', value: metrics?.cpuPercent),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: _MiniMetric(label: 'RAM', value: metrics?.memPercent ?? 0),
+                    child: _MiniMetric(label: 'RAM', value: metrics?.memPercent),
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: _MiniMetric(label: 'DISK', value: metrics?.diskPercent ?? 0),
+                    child: _MiniMetric(label: 'DISK', value: metrics?.diskPercent),
                   ),
                   if (metrics?.cpuTempC case final temp?) ...[
                     const SizedBox(width: 8),
@@ -696,7 +708,11 @@ class _ServerCard extends StatelessWidget {
                   Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      const Icon(Icons.circle, size: 6, color: OmniColors.green),
+                      Icon(
+                        Icons.circle,
+                        size: 6,
+                        color: metrics == null ? OmniColors.textMuted : OmniColors.green,
+                      ),
                       const SizedBox(width: 5),
                       // Flexible so the row can give way. It sits in a `Wrap` with
                       // `mainAxisSize: min`, which asks for the text's full width — at 200% text
@@ -709,7 +725,11 @@ class _ServerCard extends StatelessWidget {
                               : 'online · ssh not verified yet',
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            color: server.authStatus == 'ok' ? OmniColors.green : OmniColors.amber,
+                            color: metrics == null
+                                ? OmniColors.textMuted
+                                : server.authStatus == 'ok'
+                                ? OmniColors.green
+                                : OmniColors.amber,
                             fontFamily: OmniFonts.mono,
                             fontSize: 10,
                           ),
@@ -945,11 +965,53 @@ class _CardAction extends StatelessWidget {
   );
 }
 
+class _MetricRetryButton extends StatefulWidget {
+  const _MetricRetryButton({required this.server, this.telemetry, this.probe});
+  final Server server;
+  final TelemetryPoller? telemetry;
+  final HostStatusProbe? probe;
+  @override
+  State<_MetricRetryButton> createState() => _MetricRetryButtonState();
+}
+
+class _MetricRetryButtonState extends State<_MetricRetryButton> {
+  bool _busy = false;
+  Future<void> _refresh() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    String? failure;
+    try {
+      await widget.probe?.probeOne(widget.server);
+      failure =
+          await widget.telemetry?.pollOne(widget.server) ??
+          (widget.telemetry == null ? 'Metrics are unavailable in this build.' : null);
+    } catch (error) {
+      failure = '$error';
+    } finally {
+      if (mounted) {
+        setState(() => _busy = false);
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(failure ?? 'Metrics refreshed.')));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => TextButton.icon(
+    onPressed: _busy ? null : _refresh,
+    icon: _busy
+        ? const SizedBox.square(dimension: 16, child: CircularProgressIndicator(strokeWidth: 2))
+        : const Icon(Icons.refresh, size: 16),
+    label: Text(_busy ? 'Refreshing metrics…' : 'Refresh metrics'),
+  );
+}
+
 class _MiniMetric extends StatelessWidget {
   const _MiniMetric({required this.label, required this.value, this.display});
 
   final String label;
-  final double value;
+  final double? value;
   final String? display;
 
   @override
@@ -960,11 +1022,18 @@ class _MiniMetric extends StatelessWidget {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Text(label, style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold)),
-          Text(display ?? '${value.round()}%', style: const TextStyle(fontSize: 9)),
+          Text(
+            display ?? (value == null ? '—' : '${value!.round()}%'),
+            style: const TextStyle(fontSize: 9),
+          ),
         ],
       ),
       const SizedBox(height: 3),
-      GaugeBar(value: value, color: OmniColors.cyan, height: 4),
+      GaugeBar(
+        value: value ?? 0,
+        color: value == null ? OmniColors.textMuted : OmniColors.cyan,
+        height: 4,
+      ),
     ],
   );
 }
@@ -1014,13 +1083,16 @@ class _HealthRing extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = switch (score) {
+      < 0 => OmniColors.textMuted,
       >= 90 => OmniColors.green,
       >= 70 => OmniColors.cyan,
       >= 50 => OmniColors.amber,
       _ => OmniColors.red,
     };
     return Semantics(
-      label: 'Health score: $score out of 100',
+      label: score < 0
+          ? 'Health unavailable. Waiting for verified metrics.'
+          : 'Health score: $score out of 100',
       child: SizedBox.square(
         dimension: 38,
         child: Stack(
@@ -1033,7 +1105,7 @@ class _HealthRing extends StatelessWidget {
               backgroundColor: Theme.of(context).colorScheme.outline,
             ),
             Text(
-              '$score',
+              score < 0 ? '—' : '$score',
               style: TextStyle(
                 color: color,
                 fontFamily: OmniFonts.display,
@@ -1049,7 +1121,8 @@ class _HealthRing extends StatelessWidget {
 }
 
 class _StatusDot extends StatelessWidget {
-  const _StatusDot({required this.server});
+  final bool measured;
+  const _StatusDot({required this.server, required this.measured});
 
   final Server server;
 
@@ -1057,7 +1130,8 @@ class _StatusDot extends StatelessWidget {
   Widget build(BuildContext context) {
     final color = switch (server) {
       _ when server.authStatus == 'failed' => OmniColors.amber,
-      _ when server.status == 'online' => OmniColors.green,
+      _ when server.status == 'online' && measured => OmniColors.green,
+      _ when server.status == 'online' => OmniColors.textMuted,
       _ when server.status == 'connecting' => OmniColors.cyan,
       _ => OmniColors.textMuted,
     };

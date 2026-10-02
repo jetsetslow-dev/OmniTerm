@@ -85,6 +85,8 @@ class ShellSession extends ChangeNotifier {
   String? controlExitReason;
 
   TerminalSession _channel;
+  int _connectionRevision = 0;
+  int get connectionRevision => _connectionRevision;
 
   bool reconnecting = false;
   String? reconnectError;
@@ -95,6 +97,7 @@ class ShellSession extends ChangeNotifier {
       return false;
     }
     _channel = channel;
+    _connectionRevision++;
     _control = controlMode ? TmuxControlParser() : null;
     _commandsSent = 0;
     _repliesSeen = 0;
@@ -610,6 +613,9 @@ class ShellSession extends ChangeNotifier {
 
   /// Close from the app side.
   void closeByUser() => _finish(ShellSessionEnd.closedByUser);
+
+  /// A fresh endpoint failure invalidates a stale open flag while preserving its terminal buffer.
+  void markTransportUnavailable() => _finish(ShellSessionEnd.disconnected);
 
   void _finish(ShellSessionEnd reason) {
     if (_disposed || _endReason != ShellSessionEnd.open) return;

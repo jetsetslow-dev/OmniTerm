@@ -131,7 +131,7 @@ class _SelectorBar extends StatelessWidget {
                   breakdown: vm.healthBreakdown,
                 ),
                 customBorder: const CircleBorder(),
-                child: _ScoreRing(score: server.healthScore, color: accent),
+                child: _ScoreRing(score: vm.healthBreakdown?.score ?? -1, color: accent),
               ),
             if (!compact) const SizedBox(width: 10),
             Expanded(
@@ -203,7 +203,9 @@ class _ScoreRing extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Semantics(
-      label: 'Health score: $score out of 100',
+      label: score < 0
+          ? 'Health unavailable. Waiting for verified metrics.'
+          : 'Health score: $score out of 100',
       excludeSemantics: true,
       child: SizedBox(
         width: 32,
@@ -216,7 +218,9 @@ class _ScoreRing extends StatelessWidget {
               strokeWidth: 3,
               backgroundColor: Theme.of(context).colorScheme.surfaceContainerHighest,
               valueColor: AlwaysStoppedAnimation(
-                score >= 70
+                score < 0
+                    ? OmniColors.textMuted
+                    : score >= 70
                     ? OmniColors.green
                     : score >= 40
                     ? OmniColors.amber
@@ -224,7 +228,7 @@ class _ScoreRing extends StatelessWidget {
               ),
             ),
             Text(
-              '$score',
+              score < 0 ? '—' : '$score',
               key: const ValueKey('monitor.healthScore'),
               style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
             ),

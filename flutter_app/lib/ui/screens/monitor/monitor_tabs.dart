@@ -119,125 +119,132 @@ class _OverviewTabState extends State<OverviewTab> {
       children: [
         if (vm.metricsLoading) const LinearProgressIndicator(minHeight: 2),
         _RefreshCountdown(vm: vm),
-        OmniCard(
-          key: const ValueKey('monitor.overview.cpu'),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      _CardLabel(text: 'CPU UTILISATION'),
-                      Text(
-                        'Load: ${m.load1} · ${m.load5} · ${m.load15}',
-                        style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                      ),
-                      if (m.cpuTempC != null)
-                        Text(
-                          // Obeys the Measurement system setting, as Kotlin does — a user who chose
-                          // imperial was previously still shown Celsius here.
-                          'Temp: ${formatTemperature(m.cpuTempC!, vm.measurementSystem)}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            // A hot CPU is the one number here worth colouring — it predicts
-                            // throttling and hardware failure, not just load.
-                            color: m.cpuTempC! >= 80 ? OmniColors.red : scheme.onSurfaceVariant,
-                          ),
-                        ),
-                    ],
-                  ),
-                  Text(
-                    '${m.cpuPercent.round()}%',
-                    key: const ValueKey('monitor.overview.cpuPercent'),
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      fontFamily: OmniFonts.mono,
-                      color: accent,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              GaugeBar(value: m.cpuPercent, color: accent, height: 6),
-              const SizedBox(height: 12),
-              MetricLineChart(
-                key: const ValueKey('monitor.overview.cpuChart'),
-                points: vm.cpuHistory,
-                timestamps: vm.historyTimestamps,
-                color: accent,
-                label: 'CPU utilisation',
-              ),
-              if (m.perCoreCpu.isNotEmpty) ...[
-                const SizedBox(height: 10),
-                _CardLabel(text: 'PER-CORE (${m.perCoreCpu.length})'),
-                const SizedBox(height: 4),
-                for (final (i, v) in m.perCoreCpu.indexed)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 1),
-                    child: Row(
+        if (!vm.hasCurrentMetrics)
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Text(vm.error ?? 'Waiting for verified CPU, memory and disk metrics.'),
+          ),
+        if (vm.hasCurrentMetrics) ...[
+          OmniCard(
+            key: const ValueKey('monitor.overview.cpu'),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        SizedBox(
-                          width: 26,
-                          child: Text(
-                            'c$i',
+                        _CardLabel(text: 'CPU UTILISATION'),
+                        Text(
+                          'Load: ${m.load1} · ${m.load5} · ${m.load15}',
+                          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                        ),
+                        if (m.cpuTempC != null)
+                          Text(
+                            // Obeys the Measurement system setting, as Kotlin does — a user who chose
+                            // imperial was previously still shown Celsius here.
+                            'Temp: ${formatTemperature(m.cpuTempC!, vm.measurementSystem)}',
                             style: TextStyle(
-                              fontSize: 10,
-                              fontFamily: OmniFonts.mono,
-                              color: scheme.onSurfaceVariant,
+                              fontSize: 12,
+                              // A hot CPU is the one number here worth colouring — it predicts
+                              // throttling and hardware failure, not just load.
+                              color: m.cpuTempC! >= 80 ? OmniColors.red : scheme.onSurfaceVariant,
                             ),
                           ),
-                        ),
-                        Expanded(
-                          child: GaugeBar(value: v, color: accent, height: 5),
-                        ),
-                        SizedBox(
-                          width: 36,
-                          child: Text(
-                            '${v.round()}%',
-                            textAlign: TextAlign.end,
-                            style: const TextStyle(fontSize: 10, fontFamily: OmniFonts.mono),
-                          ),
-                        ),
                       ],
                     ),
-                  ),
+                    Text(
+                      '${m.cpuPercent.round()}%',
+                      key: const ValueKey('monitor.overview.cpuPercent'),
+                      style: TextStyle(
+                        fontSize: 28,
+                        fontWeight: FontWeight.bold,
+                        fontFamily: OmniFonts.mono,
+                        color: accent,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                GaugeBar(value: m.cpuPercent, color: accent, height: 6),
+                const SizedBox(height: 12),
+                MetricLineChart(
+                  key: const ValueKey('monitor.overview.cpuChart'),
+                  points: vm.cpuHistory,
+                  timestamps: vm.historyTimestamps,
+                  color: accent,
+                  label: 'CPU utilisation',
+                ),
+                if (m.perCoreCpu.isNotEmpty) ...[
+                  const SizedBox(height: 10),
+                  _CardLabel(text: 'PER-CORE (${m.perCoreCpu.length})'),
+                  const SizedBox(height: 4),
+                  for (final (i, v) in m.perCoreCpu.indexed)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 1),
+                      child: Row(
+                        children: [
+                          SizedBox(
+                            width: 26,
+                            child: Text(
+                              'c$i',
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontFamily: OmniFonts.mono,
+                                color: scheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ),
+                          Expanded(
+                            child: GaugeBar(value: v, color: accent, height: 5),
+                          ),
+                          SizedBox(
+                            width: 36,
+                            child: Text(
+                              '${v.round()}%',
+                              textAlign: TextAlign.end,
+                              style: const TextStyle(fontSize: 10, fontFamily: OmniFonts.mono),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
               ],
-            ],
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
-        OmniCard(
-          key: const ValueKey('monitor.overview.memory'),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _CardLabel(text: 'MEMORY OCCUPANCY'),
-              const SizedBox(height: 6),
-              Text(
-                '${formatBytes(m.memUsedBytes)} of ${formatBytes(m.memTotalBytes)} '
-                'occupied (${m.memPercent.round()}%)',
-                style: const TextStyle(fontSize: 14),
-              ),
-              const SizedBox(height: 10),
-              GaugeBar(value: m.memPercent, color: OmniColors.amber, height: 7),
-              const SizedBox(height: 12),
-              MetricLineChart(
-                key: const ValueKey('monitor.overview.ramChart'),
-                points: vm.ramHistory,
-                timestamps: vm.historyTimestamps,
-                color: OmniColors.amber,
-                label: 'RAM utilisation',
-              ),
-            ],
+          const SizedBox(height: 12),
+          OmniCard(
+            key: const ValueKey('monitor.overview.memory'),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _CardLabel(text: 'MEMORY OCCUPANCY'),
+                const SizedBox(height: 6),
+                Text(
+                  '${formatBytes(m.memUsedBytes)} of ${formatBytes(m.memTotalBytes)} '
+                  'occupied (${m.memPercent.round()}%)',
+                  style: const TextStyle(fontSize: 14),
+                ),
+                const SizedBox(height: 10),
+                GaugeBar(value: m.memPercent, color: OmniColors.amber, height: 7),
+                const SizedBox(height: 12),
+                MetricLineChart(
+                  key: const ValueKey('monitor.overview.ramChart'),
+                  points: vm.ramHistory,
+                  timestamps: vm.historyTimestamps,
+                  color: OmniColors.amber,
+                  label: 'RAM utilisation',
+                ),
+              ],
+            ),
           ),
-        ),
-        const SizedBox(height: 12),
-        _DiskCard(metrics: m),
-        const SizedBox(height: 12),
+          const SizedBox(height: 12),
+          _DiskCard(metrics: m),
+          const SizedBox(height: 12),
+        ],
         _RetainedHistoryCard(vm: vm, accent: accent),
         OmniCard(
           key: const ValueKey('monitor.overview.stats'),

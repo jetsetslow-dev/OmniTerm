@@ -1,6 +1,20 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
-Updated: 2026-10-02. Working branch: `migration-to-flutter`; PR: #92.
+## October 3: server reboot, tmux selection and trustworthy health
+
+- Kotlin fixes are signed and pushed as `83c616f` on `kotlin-bug-fixes`, draft PR #112. All 15 exact-head check contexts are terminal: ten successful, four unselected companion jobs skipped and one neutral Scorecard annotation. Build & Test, API 29 Room migrations, release SBOMs, CodeQL and selected security gates succeeded.
+- Flutter fixes use `migration-to-flutter`, draft PR #92. Prior checkpoint `829c907` completed all 25 check contexts: 16 successful, eight unselected companion jobs skipped and one neutral annotation. Replacement Flutter checks remain pending publication. No merge or release is authorized.
+- Health requires complete CPU, memory and root-disk metrics. Failed/incomplete readings invalidate current health without deleting history; old samples expire after three poll intervals (minimum 30 seconds). Reachability alone cannot assign perfect health. Current Servers, Fleet and Monitor indicators show unknown until fresh metrics are available.
+- Open-session records no longer bypass current reachability probes. Selecting open/saved tmux sessions shows progress and verifies the exact remote name. Unreachable hosts keep recovery records and offer actionable Retry/Dismiss errors. Confirmed missing sessions remove only their pointer and never create an empty replacement. Fresh metrics supersede older failed reachability checks; old tmux checks cannot close a replacement channel.
+- Ordinary regression guards reproduced the previous perfect-health defaults, skipped reachability check and hidden resume progress before the fixes. Kotlin's final `./scripts/local-pr-check.sh --full` passed unit/lint, release SBOM and strict fresh verification: each variant executed 575 JVM cases, with two optional external terminal-capture diagnostics skipped. API 35 plain instrumentation executed 24 cases and skipped 34 opt-in assumptions, with no real failures. A separate provision/trust/surface/tmux-retention invocation passed four cases, zero skips, using repository SSH fixtures and `omniterm_e2e_provision_host`, `omniterm_e2e_trust_host`, `omniterm_e2e_surfaces` and `omniterm_e2e_tmux_retention` set to `yes` (fixture SFTP home `/config`). Required x86_64 CI covers native-runtime tests; API 29 CI covers the Room matrix.
+- Flutter's final `FLUTTER_BIN=<flutter> ./scripts/local-pr-check.sh --full` passed analyzer/formatting, 2,816 host cases, native companion unit/lint, release APK/AAB/SBOM generation and strict fresh project/release/compile verification. Seven optional Flutter cases were skipped: six setup/latency fixture checks and one compression fixture check. The initial companion Android installation failed because the disposable Kotlin fixture package used a different certificate; that platform step is not counted as passing. After removing only the conflicting disposable fixture installs, separate API 35 instrumentation executed 24 cases and skipped 36 opt-in assumptions, with no real failures and runner exit code zero.
+- Flutter API 35 validation retained 20 successful plain cases, including the required route/subtab/theme/text-scale/rotation sweep. The first host-backed case failed because the disposable Podman fixture rejected a stale boot ID; only that container's temporary runtime cache was cleared. On unchanged source the host-backed Docker/Podman/SFTP/SMB/FTP/WebDAV case, key generation/import and startup recovery passed (seven additional plain cases). The remaining nine native Patrol cases also passed, zero skips and no unexpected warnings. Combined final-source coverage is 27 plain integration cases and nine native cases; the original interrupted profile is not called passing.
+- Reproduce Flutter runtime coverage with `JAVA_HOME=<jdk21> ANDROID_HOME=<sdk> FLUTTER_BIN=<flutter> ./scripts/flutter-device-test.sh --device <API35-device> --profile all` and repository fixtures from `./scripts/test-hosts.sh up`. Required companion Android completion uses `./gradlew connectedOpenSourceDebugAndroidTest` on the same final tree after removing only conflicting disposable fixture installs.
+- The normal `lib/main.dart` debug APK is archived at `artifacts/flutter-builds/20261003-server-health/OmniTerm-Flutter-debug.apk` (SHA-256 `a1b019df1b5017b3d1a12728c4f534dfda700d2b1b8e80bb217888e967a5a400`). Package, version, expected debug signature, debuggable state and absence of the Patrol entrypoint were verified. It installed and opened on API 35 without a recorded fatal error.
+- Remaining: sign/push this Flutter checkpoint and monitor every replacement PR-head check to a terminal result. Broad Flutter parity remains open.
+
+
+Updated: 2026-10-03. Working branch: `migration-to-flutter`; PR: #92.
 Independent return review implemented and locally validated; **not** a parity-complete or release-ready declaration.
 
 This sanitized tracker is intentionally committed so work can resume on another machine.
@@ -14,8 +28,8 @@ The user has explicitly requested the existing Kotlin UI throughout Flutter: eve
 submenu, popup and option, including the SSH terminal, Settings, sizing and navigation. Kotlin is
 the reference, not an invitation to redesign. The previous return-review checkpoint is complete;
 its passing checks do not establish visual parity. The latest archived normal Flutter debug APK is
-`artifacts/flutter-builds/20261002-host-selector/OmniTerm-Flutter-debug.apk` (SHA-256
-`3fa830e7a2618c737fa8720203d913151e7b56f73dbace6a37804af7fa8cff38`). It is package
+`artifacts/flutter-builds/20261003-server-health/OmniTerm-Flutter-debug.apk` (SHA-256
+`a1b019df1b5017b3d1a12728c4f534dfda700d2b1b8e80bb217888e967a5a400`). It is package
 `com.jetsetslow.omniterm.app.flutter`, version `1.0.0-flutter` (code 1), signed by the expected
 debug certificate; it installed and opened on API 35 without a recorded fatal error. Broader
 terminal and app-wide visual/behavior parity remain in progress.

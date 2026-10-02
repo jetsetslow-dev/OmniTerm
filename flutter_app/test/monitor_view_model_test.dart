@@ -195,7 +195,10 @@ void main() {
     test('overview fetches host metrics and caches the OS for the other tabs', () async {
       final id = await repo.insertServer(server(name: 'a'));
       final transport = RecordingTransport(
-        replies: {"echo '@OS'": '@OS\nFreeBSD\n@CPU\nCPU: 10.0% idle\n'},
+        replies: {
+          "echo '@OS'":
+              '@OS\nFreeBSD\n@CPU\nCPU: 10.0% idle\n@SYSMEM\nphys 1000000\nfree 10\npagesize 4096\n@DISKS\n/dev/ada0 100 1 99 1% /\n',
+        },
       );
       final vm = await boot(transport: transport);
       await Future<void>.delayed(Duration.zero);
@@ -509,6 +512,7 @@ void main() {
     /// Ten percent of memory used, in the shapes `free -b` and `df -PB1 /` actually print.
     const reply =
         '@OS\nLinux\n'
+        '@CPU\n%Cpu(s): 100.0 id\n'
         '@MEM\nMem: 100 10 0 0 0 90\n'
         '@DISK\n/dev/sda1 100 1 1 1% /\n';
 

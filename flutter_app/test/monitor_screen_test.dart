@@ -124,10 +124,11 @@ void main() {
     await pump(tester, transport: RecordingTransport());
 
     expect(find.byKey(const ValueKey('monitor.hostPicker')), findsOneWidget);
-    expect(find.text('82'), findsOneWidget);
+    expect(find.byKey(const ValueKey('monitor.healthScore')), findsOneWidget);
+    expect(tester.widget<Text>(find.byKey(const ValueKey('monitor.healthScore'))).data, '—');
     expect(
       tester.getSemantics(find.byKey(const ValueKey('monitor.healthScore.open'))).label,
-      'Health score: 82 out of 100',
+      'Health unavailable. Waiting for verified metrics.',
     );
     for (final tab in MonitorTab.values) {
       expect(find.byKey(ValueKey('monitor.tab.${tab.name}')), findsOneWidget);
@@ -199,6 +200,7 @@ void main() {
               '@OS\nLinux\n'
               '@CPU\n%Cpu(s):  4.0 us,  1.0 sy,  0.0 ni, 75.0 id\n'
               '@MEM\nMem: 8589934592 4294967296 0 0 0 4294967296\n'
+              '@DISK\n/dev/sda1 100 1 99 1% /\n'
               '@LOAD\n0.50 0.40 0.30 1/200 1234\n'
               '@UP\n86400.00 100000.00\n'
               '@PROC\n200\n',
@@ -494,6 +496,7 @@ void main() {
     /// 95% memory and 1% disk, in the shapes `free -b` and `df -PB1 /` print.
     const strained =
         '@OS\nLinux\n'
+        '@CPU\n%Cpu(s): 100.0 id\n'
         '@MEM\nMem: 100 95 0 0 0 5\n'
         '@DISK\n/dev/sda1 100 1 1 1% /\n';
 
@@ -528,7 +531,8 @@ void main() {
       final poller = TelemetryPoller(
         app,
         transport: RecordingTransport(
-          fallback: '@OS\nLinux\n@MEM\nMem: 100 5 0 0 0 95\n@DISK\n/dev/sda1 100 1 1 1% /\n',
+          fallback:
+              '@OS\nLinux\n@CPU\n%Cpu(s): 100.0 id\n@MEM\nMem: 100 5 0 0 0 95\n@DISK\n/dev/sda1 100 1 1 1% /\n',
         ),
       );
       await pump(tester, poller: poller);
@@ -566,7 +570,8 @@ void main() {
   });
 
   group('the overview charts', () {
-    const reply = '@OS\nLinux\n@MEM\nMem: 100 40 0 0 0 60\n@DISK\n/dev/sda1 100 1 1 1% /\n';
+    const reply =
+        '@OS\nLinux\n@CPU\n%Cpu(s): 100.0 id\n@MEM\nMem: 100 40 0 0 0 60\n@DISK\n/dev/sda1 100 1 1 1% /\n';
 
     testWidgets('a chart per headline reading, fed by the poller', (tester) async {
       await repo.insertServer(server(name: 'nas'));
@@ -583,14 +588,20 @@ void main() {
       poller.dispose();
     });
 
-    testWidgets('with no poller the charts are honest about having no series', (tester) async {
-      // Every build without SSH wired. A line drawn from one on-demand fetch would be a claim about
-      // a period nobody sampled.
+    testWidgets('without verified metrics the overview shows availability instead of readings', (
+      tester,
+    ) async {
+      // A command that returned no readings cannot supply a chart or an idle percentage.
       await repo.insertServer(server(name: 'nas'));
-      await pump(tester);
+      await pump(tester, transport: RecordingTransport());
       await tester.pumpAndSettle();
 
-      expect(find.text('CPU utilisation · 0 samples'), findsOneWidget);
+      expect(find.byKey(const ValueKey('monitor.overview.cpuChart')), findsNothing);
+      expect(
+        find.text('CPU, memory or disk metrics are incomplete. Refresh to retry.'),
+        findsWidgets,
+      );
+      expect(vm.hasCurrentMetrics, isFalse);
       vm.dispose();
     });
   });
@@ -783,7 +794,7 @@ void main() {
 
     /// A metrics reply that says what the host is, which is what the targeting reads.
     String metricsFor(String os, {String platforms = 'docker'}) =>
-        '@OS\n$os\n@PLATFORM\n$platforms\n@MEM\nMem: 100 10 0 0 0 90\n'
+        '@OS\n$os\n@CPU\n%Cpu(s): 100.0 id\n@PLATFORM\n$platforms\n@MEM\nMem: 100 10 0 0 0 90\n'
         '@DISK\n/dev/sda1 100 1 1 1% /\n';
 
     Future<void> openScripts(WidgetTester tester) async {

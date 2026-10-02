@@ -97,11 +97,13 @@ class HealthFactor {
 class HealthBreakdown {
   const HealthBreakdown(this.score, {required this.offline, required this.factors});
 
+  static const unavailable = HealthBreakdown(-1, offline: false, factors: []);
+
   final int score;
   final bool offline;
   final List<HealthFactor> factors;
 
-  bool get healthy => !offline && factors.isEmpty;
+  bool get healthy => score >= 0 && !offline && factors.isEmpty;
 }
 
 /// User-tunable health-scoring configuration.

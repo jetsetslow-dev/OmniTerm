@@ -48,12 +48,19 @@ class MonitorViewModel extends ChangeNotifier {
   /// first sample" beside a screen full of real numbers — which is what a device run showed — tells
   /// the user the figures are not to be trusted when they are.
   DateTime? get metricsSampledAt {
+    if (!hasCurrentMetrics) return null;
     final server = monitoredServer;
     final polled = server == null ? null : poller?.sampledAtFor(server.id);
     if (polled == null) return _metricsAt;
     if (_metricsAt == null) return polled;
     return polled.isAfter(_metricsAt!) ? polled : _metricsAt;
   }
+
+  bool get hasCurrentMetrics => poller != null
+      ? monitoredServer != null && poller!.metricsForServer(monitoredServer!.id) != null
+      : _metricsAt != null &&
+            DateTime.now().difference(_metricsAt!) <
+                Duration(seconds: _app.preferences.telemetryIntervalSeconds * 3);
 
   DateTime? _metricsAt;
 
@@ -126,10 +133,18 @@ class MonitorViewModel extends ChangeNotifier {
   HealthBreakdown? get healthBreakdown {
     final server = monitoredServer;
     if (server == null) return null;
+    if (poller != null
+        ? poller!.metricsForServer(server.id) == null
+        : _metricsAt == null ||
+              DateTime.now().difference(_metricsAt!) >=
+                  Duration(seconds: _app.preferences.telemetryIntervalSeconds * 3)) {
+      return HealthBreakdown.unavailable;
+    }
+    final currentMetrics = metrics;
     return _app.healthScoring.breakdown(
-      _metrics.cpuPercent,
-      _metrics.memPercent,
-      _metrics.diskPercent,
+      currentMetrics.cpuPercent,
+      currentMetrics.memPercent,
+      currentMetrics.diskPercent,
       server.lastLatency,
       online: server.status == 'online',
     );
@@ -141,7 +156,11 @@ class MonitorViewModel extends ChangeNotifier {
     final sample = poller?.metricsForServer(server.id);
     // The poller notifies at the start and end of every cycle too; only a real sample replaces what
     // is on screen.
-    if (sample == null) return;
+    if (sample == null) {
+      _metrics = HostMetrics.empty;
+      _safeNotify();
+      return;
+    }
     _metrics = sample;
     _metricsAt = poller?.sampledAtFor(server.id);
     _safeNotify();
@@ -257,7 +276,11 @@ class MonitorViewModel extends ChangeNotifier {
   HostMetrics _metrics = HostMetrics.empty;
   bool _metricsLoading = false;
 
-  HostMetrics get metrics => _metrics;
+  HostMetrics get metrics => poller == null
+      ? _metrics
+      : (monitoredServer == null
+            ? HostMetrics.empty
+            : poller!.metricsForServer(monitoredServer!.id) ?? HostMetrics.empty);
   bool get metricsLoading => _metricsLoading;
 
   /// One round trip returning every section Overview needs.
@@ -270,8 +293,27 @@ class MonitorViewModel extends ChangeNotifier {
       operation: 'hostMetrics',
       setLoading: (v) => _metricsLoading = v,
       run: (server, exec) async {
+        final livePoller = poller;
+        if (livePoller != null) {
+          final failure = await livePoller.pollOne(server);
+          return () {
+            _metrics = livePoller.metricsForServer(server.id) ?? HostMetrics.empty;
+            _metricsAt = failure == null ? livePoller.sampledAtFor(server.id) : null;
+            _error = failure;
+          };
+        }
         final out = await exec(metricsFor(_osFor(server)));
         final parsed = parseMetrics(out, host: server.host);
+        if (!hasReliableHealthMetrics(out, parsed: parsed)) {
+          return () {
+            _metrics = HostMetrics.empty;
+            _metricsAt = null;
+            _error = out.startsWith('SSH Error')
+                ? out
+                : 'CPU, memory or disk metrics are incomplete. Refresh to retry.';
+            unawaited(_app.repository.updateHealthScore(server.id, -1));
+          };
+        }
         return () {
           _metrics = parsed;
           _metricsAt = DateTime.now();

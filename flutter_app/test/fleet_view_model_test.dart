@@ -132,7 +132,7 @@ void main() {
   }
 
   group('the fleet summary', () {
-    test('counts total, online, critical and the average score', () async {
+    test('stored scores are not measured fleet health', () async {
       await repo.insertServer(server(name: 'a', host: '10.0.0.1', healthScore: 90));
       await repo.insertServer(server(name: 'b', host: '10.0.0.2', healthScore: 30));
       await repo.insertServer(
@@ -143,14 +143,14 @@ void main() {
 
       expect(vm.totalCount, 3);
       expect(vm.onlineCount, 2);
-      expect(vm.criticalCount, 1, reason: 'only online hosts below 50 are actionable');
-      expect(vm.averageScore, 60);
+      expect(vm.criticalCount, 0, reason: 'critical health requires current measured metrics');
+      expect(vm.averageScore, -1);
       vm.dispose();
     });
 
-    test('an empty fleet scores 100 rather than dividing by zero', () async {
+    test('an empty fleet has no measured health score', () async {
       final vm = await boot();
-      expect(vm.averageScore, 100);
+      expect(vm.averageScore, -1);
       vm.dispose();
     });
   });

@@ -31,6 +31,7 @@ class TelemetryPoller extends ChangeNotifier {
     this.transport,
     Duration? interval,
     this.onSample,
+    this.onReachable,
     DateTime Function()? clock,
   }) : _intervalOverride = interval,
        _clock = clock ?? DateTime.now {
@@ -71,6 +72,9 @@ class TelemetryPoller extends ChangeNotifier {
   /// because a poller that swallowed them would hide the fact that no alert is being evaluated.
   final Future<void> Function(Server server, HostMetrics metrics)? onSample;
 
+  /// A validated SSH reply supersedes an older reachability probe still in flight.
+  final Future<void> Function(Server server)? onReachable;
+
   final DateTime Function() _clock;
 
   bool get canPoll => transport != null;
@@ -88,7 +92,53 @@ class TelemetryPoller extends ChangeNotifier {
   ///
   /// Null rather than [HostMetrics.empty]: a host nobody has asked yet is not a host running at
   /// zero, and a screen that cannot tell the two apart will draw an idle machine.
-  HostMetrics? metricsForServer(int serverId) => _metrics[serverId];
+  Duration get freshnessWindow => Duration(
+    milliseconds: effectiveInterval.inMilliseconds * 3 < 30000
+        ? 30000
+        : effectiveInterval.inMilliseconds * 3,
+  );
+
+  HostMetrics? metricsForServer(int serverId) {
+    final at = sampledAtFor(serverId);
+    final server = _app.servers.where((s) => s.id == serverId).firstOrNull;
+    if (server?.status != 'online' ||
+        server!.healthScore < 0 ||
+        at == null ||
+        _clock().difference(at) >= freshnessWindow) {
+      return null;
+    }
+    return _metrics[serverId];
+  }
+
+  final Map<int, Timer> _expiryTimers = {};
+  final Map<int, Future<void>> _hostWork = {};
+
+  Future<T> _withHostLock<T>(int id, Future<T> Function() work) {
+    final previous = _hostWork[id] ?? Future<void>.value();
+    final result = previous.then((_) => work());
+    final tail = result.then<void>((_) {}, onError: (Object error, StackTrace stack) {});
+    _hostWork[id] = tail;
+    unawaited(
+      tail.then((_) {
+        if (identical(_hostWork[id], tail)) _hostWork.remove(id);
+      }),
+    );
+    return result;
+  }
+
+  void _expireAfter(int id, DateTime at) {
+    _expiryTimers.remove(id)?.cancel();
+    _expiryTimers[id] = Timer(freshnessWindow, () {
+      if (_disposed) return;
+      unawaited(
+        _withHostLock(id, () async {
+          if (!_disposed && sampledAtFor(id) == at && _clock().difference(at) >= freshnessWindow) {
+            await _invalidate(id);
+          }
+        }),
+      );
+    });
+  }
 
   /// The recent samples for [serverId], oldest first, for the sparklines.
   List<TimedSample> historyForServer(int serverId) => _history[serverId] ?? const [];
@@ -208,7 +258,10 @@ class TelemetryPoller extends ChangeNotifier {
   ///
   /// Background cycles intentionally ignore the return value so one host cannot stop the fleet,
   /// while buttons can surface the same failure instead of completing as if refresh succeeded.
-  Future<String?> pollOne(Server server, {int? workGeneration}) async {
+  Future<String?> pollOne(Server server, {int? workGeneration}) =>
+      _withHostLock(server.id, () => _pollOne(server, workGeneration: workGeneration));
+
+  Future<String?> _pollOne(Server server, {int? workGeneration}) async {
     final ssh = transport;
     if (ssh == null) return 'SSH is unavailable in this build.';
     final generation = workGeneration ?? _workGeneration;
@@ -251,13 +304,19 @@ class TelemetryPoller extends ChangeNotifier {
         // host with a wrong key looked identical to a healthy one no matter how often it failed.
         // `serversStream` is a drift watch, so the write reaches AppState on its own.
         final failure = describeSshFailure(raw);
+        await _invalidate(server.id);
         await _app.repository.updateAuthState(server.id, 'failed', failure);
         return failure;
       }
 
+      final parsed = parseMetrics(raw, host: server.host);
+      if (!hasReliableHealthMetrics(raw, parsed: parsed)) {
+        await _invalidate(server.id);
+        return 'CPU, memory or disk metrics are incomplete. Retry when the host is available.';
+      }
       final now = _clock();
       final sample = enrichMetrics(
-        parsed: parseMetrics(raw, host: server.host),
+        parsed: parsed,
         raw: raw,
         nowMs: now.millisecondsSinceEpoch,
         previous: _baselines[server.id],
@@ -272,6 +331,7 @@ class TelemetryPoller extends ChangeNotifier {
       _metrics[server.id] = sample.metrics;
       if (sample.baseline != null) _baselines[server.id] = sample.baseline!;
       _recordHistory(server.id, sample.metrics, now);
+      _expireAfter(server.id, now);
       if (sample.metrics.os.isNotEmpty) {
         _app.recordOsForServer(server.id, sample.metrics.os);
       }
@@ -282,6 +342,9 @@ class TelemetryPoller extends ChangeNotifier {
       // old `failed` forever. The poller already writes metrics and a history row here, so one
       // more small update is proportionate.
       await _app.repository.updateAuthState(server.id, 'ok', null);
+      if (!_workIsCurrent(generation)) return null;
+
+      await onReachable?.call(server);
       if (!_workIsCurrent(generation)) return null;
 
       await _persist(server, sample.metrics, now, generation);
@@ -295,9 +358,18 @@ class TelemetryPoller extends ChangeNotifier {
       // says nothing certain about reachability, and marking the host offline from here would fight
       // the probe that actually measured it.
       final failure = describeSshFailure(error.toString());
+      await _invalidate(server.id);
       await _app.repository.updateAuthState(server.id, 'failed', failure);
       return failure;
     }
+  }
+
+  Future<void> _invalidate(int serverId) async {
+    _expiryTimers.remove(serverId)?.cancel();
+    _metrics.remove(serverId);
+    _baselines.remove(serverId);
+    await _app.repository.updateHealthScore(serverId, -1);
+    _safeNotify();
   }
 
   void _recordHistory(int serverId, HostMetrics metrics, DateTime at) {
@@ -333,12 +405,7 @@ class TelemetryPoller extends ChangeNotifier {
     if (!_workIsCurrent(generation)) return;
     // The status stays whatever the reachability probe last wrote — this call is here for the
     // health score, which is the one column only real telemetry can fill in.
-    await _app.repository.updateConnectionState(
-      server.id,
-      server.status,
-      health,
-      server.lastLatency,
-    );
+    await _app.repository.updateHealthScore(server.id, health);
   }
 
   Future<void> _pruneHistory() async {
@@ -355,6 +422,10 @@ class TelemetryPoller extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    for (final timer in _expiryTimers.values) {
+      timer.cancel();
+    }
+    _expiryTimers.clear();
     stop();
     _app.removeListener(_onAppChanged);
     super.dispose();

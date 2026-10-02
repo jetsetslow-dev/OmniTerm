@@ -83,6 +83,16 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('an online row with no verified metrics does not advertise perfect health', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'unmeasured', status: 'online', authStatus: 'ok'));
+    await pump(tester);
+    expect(find.text('100'), findsNothing);
+    expect(find.text('—'), findsWidgets);
+    expect(find.text('Metrics unavailable · Refresh to retry'), findsOneWidget);
+  });
+
   // Bulk delete removes host connections *and their saved credentials*, and the screen says it
   // "cannot be undone here". `servers_view_model_test` covers `deleteSelectedServers()` directly,
   // which bypasses the dialog entirely — so nothing covered the wiring: that the dialog appears at

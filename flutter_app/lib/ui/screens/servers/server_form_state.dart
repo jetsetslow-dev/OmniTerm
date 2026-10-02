@@ -244,7 +244,7 @@ class ServerFormState extends ChangeNotifier {
       proxyKeyAlias: (proxyKeyAlias.trim().isNotEmpty && proxyType == 'ssh') ? proxyKeyAlias : null,
       agentForwarding: agentForwarding,
       // A new or duplicated host starts unprobed rather than inheriting the source's health.
-      healthScore: existing?.healthScore ?? 100,
+      healthScore: existing?.healthScore ?? -1,
       lastLatency: existing?.lastLatency ?? 0,
       status: existing?.status ?? 'offline',
       authStatus: existing?.authStatus ?? 'unknown',

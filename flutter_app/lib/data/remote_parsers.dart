@@ -403,8 +403,71 @@ HostMetrics parseMetrics(String output, {String host = ''}) {
   };
 }
 
-final _linuxIdleRe = RegExp(r'([\d.]+)\s*%?\s*id');
-final _bsdIdleRe = RegExp(r'([\d.]+)%\s*idle', caseSensitive: false);
+final _linuxIdleRe = RegExp(r'([+-]?[\d.]+)\s*%?\s*id');
+final _bsdIdleRe = RegExp(r'([+-]?[\d.]+)%\s*idle', caseSensitive: false);
+
+/// A score needs actual CPU, memory and root-disk readings, not parser defaults.
+bool hasReliableHealthMetrics(String output, {HostMetrics? parsed}) {
+  final sections = _splitSections(output);
+  final os = normaliseOs(sections['OS'] ?? '');
+  final metrics = parsed ?? parseMetrics(output);
+  final cpu = os == 'Windows'
+      ? double.tryParse((sections['WINCPU'] ?? '').trim().lines.firstOrNull ?? '')
+      : double.tryParse(
+          (os == 'Darwin' || os == 'FreeBSD' ? _bsdIdleRe : _linuxIdleRe)
+                  .firstMatch(sections['CPU'] ?? '')
+                  ?.group(1) ??
+              '',
+        );
+  if (cpu == null || !cpu.isFinite || cpu < 0 || cpu > 100) return false;
+
+  bool numericPair(String text, int totalAt, int usedAt) {
+    final cells = splitWhitespace(text.trim());
+    final total = int.tryParse(cells.getOrElse(totalAt, ''));
+    final used = int.tryParse(cells.getOrElse(usedAt, ''));
+    return total != null && total > 0 && used != null && used >= 0 && used <= total;
+  }
+
+  bool hasNumber(String text, String pattern) => RegExp(pattern, multiLine: true).hasMatch(text);
+  final memoryValid = switch (os) {
+    'Windows' => numericPair(sections['WINMEM'] ?? '', 0, 1),
+    'FreeBSD' =>
+      hasNumber(sections['SYSMEM'] ?? '', r'^phys\s+[1-9]\d*') &&
+          hasNumber(sections['SYSMEM'] ?? '', r'^free\s+\d+'),
+    'Darwin' =>
+      (int.tryParse((sections['MEMSIZE'] ?? '').trim()) ?? 0) > 0 &&
+          hasNumber(sections['VMSTAT'] ?? '', r'Pages free:\s+\d+'),
+    _ =>
+      (numericPair(sections['MEM'] ?? '', 1, 2) &&
+              (splitWhitespace((sections['MEM'] ?? '').trim()).length < 7 ||
+                  numericPair(sections['MEM'] ?? '', 1, 6))) ||
+          (hasNumber(sections['MEMINFO'] ?? '', r'MemTotal:\s+[1-9]\d*\s*kB') &&
+              hasNumber(sections['MEMINFO'] ?? '', r'Mem(?:Available|Free):\s+\d+\s*kB')),
+  };
+  final diskText =
+      (sections[os == 'Windows'
+                  ? 'WINDISK'
+                  : os == 'Linux'
+                  ? 'DISK'
+                  : 'DISKS'] ??
+              '')
+          .trim()
+          .removePrefix('KB1024')
+          .trim();
+  final diskValid = diskText.lines.any(
+    (line) =>
+        numericPair(line, 1, 2) && (os == 'Windows' || splitWhitespace(line).lastOrNull == '/'),
+  );
+  return memoryValid &&
+      diskValid &&
+      metrics.memTotalBytes > 0 &&
+      metrics.diskTotalBytes > 0 &&
+      metrics.memUsedBytes >= 0 &&
+      metrics.memUsedBytes <= metrics.memTotalBytes &&
+      metrics.diskUsedBytes >= 0 &&
+      metrics.diskUsedBytes <= metrics.diskTotalBytes &&
+      [metrics.cpuPercent, metrics.memPercent, metrics.diskPercent].every((v) => v.isFinite);
+}
 
 HostMetrics _parseMetricsLinux(Map<String, String> sections) {
   // CPU idle: GNU top "95.6 id" or BusyBox top "98% idle" → 100 - idle.

@@ -17,7 +17,7 @@ Future<void> showHealthBreakdown(
   required String name,
   required HealthBreakdown? breakdown,
 }) async {
-  if (breakdown == null) return;
+  final health = breakdown ?? HealthBreakdown.unavailable;
 
   await showDialog<void>(
     context: context,
@@ -32,18 +32,23 @@ Future<void> showHealthBreakdown(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Score: ${breakdown.score} / 100',
+                health.score < 0 ? 'Health unavailable' : 'Score: ${health.score} / 100',
                 key: const ValueKey('health.score'),
                 style: const TextStyle(fontWeight: FontWeight.bold, fontFamily: OmniFonts.mono),
               ),
               const Divider(height: 16),
-              if (breakdown.offline)
+              if (health.score < 0)
+                const Text(
+                  'Waiting for verified CPU, memory and disk metrics. Refresh to retry.',
+                  key: ValueKey('health.unavailable'),
+                )
+              else if (health.offline)
                 const Text(
                   'Host offline or unreachable — the score is forced to 0.',
                   key: ValueKey('health.offline'),
                   style: TextStyle(fontSize: 14, color: OmniColors.red),
                 )
-              else if (breakdown.healthy)
+              else if (health.healthy)
                 const Text(
                   'Every reading is within its healthy threshold. Nothing was deducted.',
                   key: ValueKey('health.healthy'),
@@ -55,7 +60,7 @@ Future<void> showHealthBreakdown(
                   style: TextStyle(fontSize: 14),
                 ),
                 const SizedBox(height: 6),
-                for (final (index, factor) in breakdown.factors.indexed)
+                for (final (index, factor) in health.factors.indexed)
                   Padding(
                     key: ValueKey('health.factor.$index'),
                     padding: const EdgeInsets.symmetric(vertical: 2),
