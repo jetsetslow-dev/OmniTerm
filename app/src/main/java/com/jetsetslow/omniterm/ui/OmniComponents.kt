@@ -148,12 +148,13 @@ fun StatusDot(online: Boolean, modifier: Modifier = Modifier, color: Color = Omn
 @Composable
 fun ScoreRing(score: Int, modifier: Modifier = Modifier, size: Dp = 44.dp, contentDescription: String? = null) {
     val color = when {
+        score < 0 -> OmniColors.textMuted
         score >= 90 -> OmniColors.green
         score >= 70 -> OmniColors.cyan
         score >= 50 -> OmniColors.amber
         else -> OmniColors.red
     }
-    val desc = contentDescription ?: "Health score: $score out of 100"
+    val desc = contentDescription ?: if (score < 0) "Health unavailable. Waiting for verified metrics." else "Health score: $score out of 100"
     Box(modifier.size(size).semantics { this.contentDescription = desc }, contentAlignment = Alignment.Center) {
         Canvas(Modifier.fillMaxSize()) {
             val stroke = (size.toPx() * 0.09f).coerceAtLeast(3f)
@@ -174,7 +175,7 @@ fun ScoreRing(score: Int, modifier: Modifier = Modifier, size: Dp = 44.dp, conte
             )
         }
         Text(
-            "$score",
+            if (score < 0) "—" else "$score",
             color = color,
             fontFamily = OmniFonts.display,
             fontWeight = FontWeight.Bold,
