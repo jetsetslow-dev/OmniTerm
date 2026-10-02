@@ -23,11 +23,18 @@ interface ServerDao {
     @Update
     suspend fun updateServer(server: ServerEntity)
 
-    @Query("UPDATE servers SET status = 'offline', healthScore = 0, lastLatency = 0, authStatus = 'unknown', authError = NULL")
+    @Query("UPDATE servers SET status = 'offline', healthScore = -1, lastLatency = 0, authStatus = 'unknown', authError = NULL")
     suspend fun resetAllConnectionStates()
 
     @Query("UPDATE servers SET status = :status, healthScore = :health, lastLatency = :latency WHERE id = :id")
     suspend fun updateConnectionState(id: Int, status: String, health: Int, latency: Int)
+
+    // Reachability checks must not overwrite a score obtained from actual telemetry.
+    @Query("UPDATE servers SET status = :status, lastLatency = :latency WHERE id = :id")
+    suspend fun updateReachability(id: Int, status: String, latency: Int)
+
+    @Query("UPDATE servers SET healthScore = :health WHERE id = :id")
+    suspend fun updateHealthScore(id: Int, health: Int)
 
     @Query("UPDATE servers SET authStatus = :authStatus, authError = :authError WHERE id = :id")
     suspend fun updateAuthState(id: Int, authStatus: String, authError: String?)

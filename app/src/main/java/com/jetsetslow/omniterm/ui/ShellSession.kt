@@ -237,6 +237,8 @@ class ShellSession(
     var reconnectJob: Job? = null
     /** True while the auto-reconnect backoff loop is running (drives the "Reconnecting…" UI). */
     var reconnecting by mutableStateOf(false)
+    /** A confirmed missing remote tmux must not be re-created by reconnect bookkeeping. */
+    var tmuxSessionMissing by mutableStateOf(false)
     /** Set true by a user-initiated disconnect so the drop handler doesn't try to auto-reconnect. */
     var userClosed: Boolean = false
 }

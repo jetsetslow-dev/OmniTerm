@@ -421,6 +421,24 @@ fun ShellScreen(viewModel: AppViewModel) {
             // Status bar is handled by the app bar above; only lift the key bar above the keyboard.
             .imePadding(),
     ) {
+        if (viewModel.isTerminalConnecting && viewModel.isMultiSsh) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(viewModel.terminalConnectionPhase, Modifier.weight(1f), color = OmniColors.cyan)
+                TextButton(onClick = { viewModel.cancelConnect() }) { Text("Cancel") }
+            }
+        }
+        if (!viewModel.isTerminalConnecting) {
+            viewModel.terminalConnectError?.let { error ->
+                Column(Modifier.fillMaxWidth().padding(8.dp)) {
+                    Text(error, Modifier.fillMaxWidth().heightIn(max = 90.dp).verticalScrollWithIndicators(rememberScrollState()), color = OmniColors.red)
+                    Row {
+                        TextButton(onClick = { viewModel.retryTerminalConnectError() }) { Text("Retry") }
+                        TextButton(onClick = { viewModel.dismissTerminalConnectError() }) { Text("Dismiss") }
+                    }
+                }
+            }
+        }
         Box(Modifier.fillMaxWidth().weight(1f)) {
             Box(Modifier.fillMaxSize()) {
                 // The overlaid header is now two rows (host info + action chips), so its height is
@@ -1007,7 +1025,10 @@ private fun ConnectPrompt(srv: ServerEntity, viewModel: AppViewModel) {
             Spacer(Modifier.height(18.dp))
             Box(
                 Modifier
-                    .clickable { viewModel.connectTerminal() }
+                    .clickable {
+                        if (viewModel.terminalConnectError != null) viewModel.retryTerminalConnectError()
+                        else viewModel.connectTerminal()
+                    }
                     .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(8.dp))
                     .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
                     .padding(horizontal = 22.dp, vertical = 12.dp),

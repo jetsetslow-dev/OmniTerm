@@ -1476,10 +1476,50 @@ object RemoteParsers {
         }
     }
 
+    /** A parser's zero defaults must never turn missing CPU/RAM/disk readings into healthy data. */
+    fun hasReliableHealthMetrics(output: String, parsed: HostMetrics = parseMetrics(output)): Boolean {
+        val sections = splitSections(output)
+        val cpuReading = when (RemoteCommands.normaliseOs(sections["OS"].orEmpty())) {
+            "Windows" -> sections["WINCPU"]?.trim()?.lineSequence()?.firstOrNull()?.trim()?.toFloatOrNull()
+            "Darwin", "FreeBSD" -> Regex("""([+-]?[\d.]+)%\s*idle""", RegexOption.IGNORE_CASE)
+                .find(sections["CPU"].orEmpty())?.groupValues?.get(1)?.toFloatOrNull()
+            else -> Regex("""([+-]?[\d.]+)\s*%?\s*id""")
+                .find(sections["CPU"].orEmpty())?.groupValues?.get(1)?.toFloatOrNull()
+        }
+        fun numericPair(text: String, totalAt: Int, usedAt: Int): Boolean {
+            val cells = text.trim().split(Regex("""\s+"""))
+            val total = cells.getOrNull(totalAt)?.toLongOrNull() ?: return false
+            val used = cells.getOrNull(usedAt)?.toLongOrNull() ?: return false
+            return total > 0 && used in 0..total
+        }
+        fun hasNumber(text: String, pattern: String) = Regex(pattern, RegexOption.MULTILINE).containsMatchIn(text)
+        val os = RemoteCommands.normaliseOs(sections["OS"].orEmpty())
+        val memoryValid = when (os) {
+            "Windows" -> numericPair(sections["WINMEM"].orEmpty(), 0, 1)
+            "FreeBSD" -> hasNumber(sections["SYSMEM"].orEmpty(), """^phys\s+[1-9]\d*""") &&
+                hasNumber(sections["SYSMEM"].orEmpty(), """^free\s+\d+""")
+            "Darwin" -> (sections["MEMSIZE"]?.trim()?.toLongOrNull() ?: 0L) > 0 &&
+                hasNumber(sections["VMSTAT"].orEmpty(), """Pages free:\s+\d+""")
+            else -> (numericPair(sections["MEM"].orEmpty(), 1, 2) &&
+                (sections["MEM"].orEmpty().trim().split(Regex("""\s+""")).size < 7 ||
+                 numericPair(sections["MEM"].orEmpty(), 1, 6))) ||
+                (hasNumber(sections["MEMINFO"].orEmpty(), """MemTotal:\s+[1-9]\d*\s*kB""") &&
+                 hasNumber(sections["MEMINFO"].orEmpty(), """Mem(?:Available|Free):\s+\d+\s*kB"""))
+        }
+        val diskSection = when (os) { "Windows" -> "WINDISK"; "Linux" -> "DISK"; else -> "DISKS" }
+        val diskValid = sections[diskSection].orEmpty().trim().removePrefix("KB1024").trim().lineSequence().any {
+            numericPair(it, 1, 2) && (os == "Windows" || it.trim().split(Regex("""\s+""")).lastOrNull() == "/")
+        }
+        return cpuReading != null && cpuReading.isFinite() && cpuReading in 0f..100f && memoryValid && diskValid &&
+            parsed.memTotalBytes > 0 && parsed.diskTotalBytes > 0 &&
+            parsed.memUsedBytes in 0..parsed.memTotalBytes && parsed.diskUsedBytes in 0..parsed.diskTotalBytes &&
+            parsed.cpuPercent.isFinite() && parsed.memPercent.isFinite() && parsed.diskPercent.isFinite()
+    }
+
     private fun parseMetricsLinux(sections: Map<String, String>): HostMetrics {
         // CPU idle: GNU top "95.6 id" or BusyBox top "98% idle" → 100 - idle.
         val cpu = sections["CPU"]?.let { line ->
-            Regex("""([\d.]+)\s*%?\s*id""").find(line)?.groupValues?.get(1)?.toFloatOrNull()
+            Regex("""([+-]?[\d.]+)\s*%?\s*id""").find(line)?.groupValues?.get(1)?.toFloatOrNull()
                 ?.let { (100f - it).coerceIn(0f, 100f) }
         } ?: 0f
         // MEM (free -b): "Mem:  total used free shared buff/cache available"
@@ -1559,7 +1599,7 @@ object RemoteParsers {
     /** FreeBSD/OpenBSD metrics (sysctl/df -k/netstat). Per-core/temp/disk-I/O/SMART are not collected. */
     private fun parseMetricsBsd(sections: Map<String, String>, os: String): HostMetrics {
         val cpu = sections["CPU"]?.let { line ->
-            Regex("""([\d.]+)%\s*idle""", RegexOption.IGNORE_CASE).find(line)?.groupValues?.get(1)
+            Regex("""([+-]?[\d.]+)%\s*idle""", RegexOption.IGNORE_CASE).find(line)?.groupValues?.get(1)
                 ?.toFloatOrNull()?.let { (100f - it).coerceIn(0f, 100f) }
         } ?: 0f
         val mem = sections["SYSMEM"].orEmpty()
@@ -1587,7 +1627,7 @@ object RemoteParsers {
     /** macOS metrics: like BSD but memory from vm_stat + hw.memsize. */
     private fun parseMetricsDarwin(sections: Map<String, String>): HostMetrics {
         val cpu = sections["CPU"]?.let { line ->
-            Regex("""([\d.]+)%\s*idle""", RegexOption.IGNORE_CASE).find(line)?.groupValues?.get(1)
+            Regex("""([+-]?[\d.]+)%\s*idle""", RegexOption.IGNORE_CASE).find(line)?.groupValues?.get(1)
                 ?.toFloatOrNull()?.let { (100f - it).coerceIn(0f, 100f) }
         } ?: 0f
         val memTotal = sections["MEMSIZE"]?.trim()?.toLongOrNull() ?: 0L

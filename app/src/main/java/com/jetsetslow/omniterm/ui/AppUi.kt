@@ -324,10 +324,11 @@ fun HealthBreakdownDialog(viewModel: AppViewModel, server: ServerEntity, onDismi
         onDismissRequest = onDismiss,
         title = { Text("Health score · ${server.name}") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("Score: ${breakdown.score} / 100", fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
+            Column(Modifier.heightIn(max = 360.dp).verticalScrollWithIndicators(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text(if (breakdown.score < 0) "Health unavailable" else "Score: ${breakdown.score} / 100", fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono)
                 HorizontalDivider()
                 when {
+                    breakdown.score < 0 -> Text("Waiting for verified CPU, memory and disk metrics. Refresh to retry.")
                     breakdown.offline ->
                         Text(stringResource(R.string.host_is_offline_or_unreachable_score), color = Color.Red, fontSize = 14.sp)
                     breakdown.healthy ->
@@ -1797,7 +1798,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                         val identityColor = getServerColor(server)
                         // Live metrics for THIS host — populated for every reachable host by
                         // the concurrent telemetry loop, so all cards show real host measurements.
-                        val liveMetrics = viewModel.hostMetricsById[server.id]
+                        val liveMetrics = viewModel.currentMetricsForServer(server.id)
                         Box(
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -1834,7 +1835,11 @@ fun ServersMainView(viewModel: AppViewModel) {
                                             }
                                             StatusDot(
                                                 online = server.status == "online" || server.status == "connecting",
-                                                color = if (server.status == "connecting") OmniColors.amber else identityColor,
+                                                color = when {
+                                                    server.status == "connecting" -> OmniColors.amber
+                                                    liveMetrics == null -> OmniColors.textMuted
+                                                    else -> identityColor
+                                                },
                                                 size = 8.dp,
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
@@ -1863,7 +1868,7 @@ fun ServersMainView(viewModel: AppViewModel) {
                                             )
                                             Spacer(modifier = Modifier.width(8.dp))
                                             Box(modifier = Modifier.clickable { scoreDialogServer = server }) {
-                                                ScoreRing(score = if (server.status == "online") server.healthScore else 0, size = 38.dp)
+                                                ScoreRing(score = viewModel.currentHealthScore(server), size = 38.dp)
                                             }
                                             IconButton(onClick = { selectedForActionSheet = server }) {
                                                 Icon(Icons.Filled.MoreVert, contentDescription = "Actions")
@@ -1935,6 +1940,9 @@ fun ServersMainView(viewModel: AppViewModel) {
                                                 )
                                             }
                                         }
+                                    } else if (server.status == "online" && liveMetrics == null) {
+                                        Text(viewModel.metricsErrorsById[server.id] ?: "Waiting for verified metrics…", color = OmniColors.textMuted, fontSize = 12.sp)
+                                        OmniButton(label = "Retry", onClick = { viewModel.refreshServer(server.id) }, small = true)
                                     } else if (server.status == "online") {
                                         Row(
                                             modifier = Modifier.fillMaxWidth(),
