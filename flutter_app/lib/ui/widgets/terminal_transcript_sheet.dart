@@ -18,12 +18,16 @@ import '../view_model/shell_session.dart';
 /// chooser at `:2491`). The default matters in both directions: the common reason to reach for this
 /// is to copy the error currently on screen, and rendering a two-thousand-row scrollback into
 /// selectable text on every long press is the expensive case, not the useful one.
-Future<void> openTerminalTranscript(BuildContext context, ShellSession session) {
+Future<void> openTerminalTranscript(
+  BuildContext context,
+  ShellSession session, {
+  TranscriptRange initialRange = TranscriptRange.visibleScreen,
+}) {
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
-    builder: (_) => _TranscriptSheet(session: session),
+    builder: (_) => _TranscriptSheet(session: session, initialRange: initialRange),
   );
 }
 
@@ -46,16 +50,17 @@ String transcriptTextFor(ShellSession session, TranscriptRange range) => switch 
 };
 
 class _TranscriptSheet extends StatefulWidget {
-  const _TranscriptSheet({required this.session});
+  const _TranscriptSheet({required this.session, required this.initialRange});
 
   final ShellSession session;
+  final TranscriptRange initialRange;
 
   @override
   State<_TranscriptSheet> createState() => _TranscriptSheetState();
 }
 
 class _TranscriptSheetState extends State<_TranscriptSheet> {
-  TranscriptRange _range = TranscriptRange.visibleScreen;
+  late TranscriptRange _range = widget.initialRange;
 
   /// Drops the scrollback after confirming, as Kotlin does (`ui/ShellScreen.kt:2508`).
   ///

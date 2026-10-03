@@ -22,6 +22,7 @@ class FakeTerminalSession implements TerminalSession {
 
   bool closeCalled = false;
   Object? writeFailure;
+  Completer<void>? gateWrite;
   void Function(String command)? onWrite;
 
   @override
@@ -38,6 +39,8 @@ class FakeTerminalSession implements TerminalSession {
 
   @override
   Future<void> write(Uint8List bytes) async {
+    final gate = gateWrite;
+    if (gate != null) await gate.future;
     final failure = writeFailure;
     if (failure != null) throw failure;
     writes.add(bytes);

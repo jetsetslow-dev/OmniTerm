@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:omniterm/data/app_database.dart';
@@ -11,6 +12,7 @@ import 'package:omniterm/data/ssh/ssh_transport.dart';
 import 'package:omniterm/domain/terminal_key_encoder.dart';
 import 'package:omniterm/main.dart' as app;
 import 'package:omniterm/ui/navigation.dart';
+import 'package:omniterm/ui/shell_state.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/fleet_view_model.dart';
 import 'package:omniterm/ui/view_model/host_status_probe.dart';
@@ -20,6 +22,8 @@ import 'package:omniterm/ui/view_model/shell_view_model.dart';
 import 'package:omniterm/ui/view_model/telemetry_poller.dart';
 import 'package:omniterm/ui/widgets/terminal_surface.dart';
 import 'package:provider/provider.dart';
+
+import '../test/support/terminal_options_contract.dart';
 
 const _enabled = bool.fromEnvironment('OMNITERM_E2E_HOSTS');
 const _host = String.fromEnvironment('OMNITERM_E2E_HOST', defaultValue: '127.0.0.1');
@@ -281,6 +285,9 @@ Future<void> _exerciseTerminals(
           },
         );
         await tester.longPress(find.byType(TerminalSurface).first);
+        await _waitForPopup(tester, find.byKey(const ValueKey('terminalOptions.visible')));
+        expectTerminalOptionsReady(tester);
+        await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
         await _waitForPopup(tester, find.byKey(const ValueKey('transcript.toggleRange')));
         await tester.tap(find.byKey(const ValueKey('transcript.toggleRange')));
         await _waitFor(
@@ -306,6 +313,73 @@ Future<void> _exerciseTerminals(
         );
         await _waitFor(tester, () => find.text('↑ More above').evaluate().isNotEmpty);
         await tester.tap(find.byKey(const ValueKey('transcript.close')));
+        await tester.pump();
+        // Exercise the runtime controls on the actual Android terminal, retaining saved defaults.
+        await tester.tap(find.byKey(const ValueKey('shell.options')));
+        await _waitForPopup(tester, find.byKey(const ValueKey('terminalOptions.cancel')));
+        final optionsContext = tester.element(find.byKey(const ValueKey('shell.surface')).first);
+        final shell = optionsContext.read<ShellState>();
+        final savedSwipe = optionsContext.read<AppState>().preferences.smartSwipeInput;
+        final initialSwipe = terminals.smartSwipeInput;
+        await tester.ensureVisible(find.byKey(const ValueKey('terminalOptions.swipe')));
+        await tester.tap(find.byKey(const ValueKey('terminalOptions.swipe')));
+        await _waitFor(tester, () => terminals.smartSwipeInput != initialSwipe);
+        expect(optionsContext.read<AppState>().preferences.smartSwipeInput, savedSwipe);
+        // The model changes synchronously, before the controlled Switch rebuilds. Wait for that
+        // rendered value before tapping again, otherwise the second gesture repeats the old intent.
+        await _waitFor(
+          tester,
+          () =>
+              tester
+                  .widget<SwitchListTile>(find.byKey(const ValueKey('terminalOptions.swipe')))
+                  .value !=
+              initialSwipe,
+        );
+        await tester.tap(find.byKey(const ValueKey('terminalOptions.swipe')));
+        await _waitFor(tester, () => terminals.smartSwipeInput == initialSwipe);
+        final initialAwake = shell.isKeepScreenOnEnabled;
+        await tester.ensureVisible(find.byKey(const ValueKey('terminalOptions.awake')));
+        await tester.tap(find.byKey(const ValueKey('terminalOptions.awake')));
+        await _waitFor(
+          tester,
+          () => !shell.isSettingKeepScreenOn && shell.isKeepScreenOnEnabled != initialAwake,
+        );
+        expect(shell.keepScreenOnError, isNull);
+        expect(shell.showKeepScreenOnWarning, isFalse);
+        await _waitFor(tester, () {
+          final toggle = tester.widget<SwitchListTile>(
+            find.byKey(const ValueKey('terminalOptions.awake')),
+          );
+          return toggle.value != initialAwake && toggle.onChanged != null;
+        });
+        await tester.tap(find.byKey(const ValueKey('terminalOptions.awake')));
+        await _waitFor(
+          tester,
+          () => !shell.isSettingKeepScreenOn && shell.isKeepScreenOnEnabled == initialAwake,
+        );
+        await Clipboard.setData(
+          const ClipboardData(text: "printf '%s%s\\n' 'clipboard-' 'menu-ok'"),
+        );
+        await tester.tap(find.byKey(const ValueKey('terminalOptions.paste')));
+        await _waitFor(
+          tester,
+          () => find.textContaining('characters to terminal.').evaluate().isNotEmpty,
+        );
+        await tester.tap(find.byKey(const ValueKey('terminalOptions.cancel')));
+        await tester.pump();
+        expect(terminals.sendKey(TermKey.enter), isTrue);
+        await _waitFor(tester, () => transcript().contains('clipboard-menu-ok'));
+        terminals.setTerminalReadOnly(true);
+        await tester.tap(find.byKey(const ValueKey('shell.options')));
+        await _waitForPopup(tester, find.byKey(const ValueKey('terminalOptions.paste')));
+        expect(
+          tester
+              .widget<FilledButton>(find.byKey(const ValueKey('terminalOptions.paste')))
+              .onPressed,
+          isNull,
+        );
+        await tester.tap(find.byKey(const ValueKey('terminalOptions.cancel')));
+        terminals.setTerminalReadOnly(false);
         await tester.pump();
       }
       for (var cycle = 0; cycle < 3; cycle++) {

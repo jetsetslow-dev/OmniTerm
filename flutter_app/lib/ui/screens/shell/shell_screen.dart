@@ -19,7 +19,7 @@ import '../../view_model/shell_view_model.dart';
 import '../servers/server_form_state.dart';
 import '../../widgets/terminal_key_bar.dart';
 import '../../widgets/terminal_surface.dart';
-import '../../widgets/terminal_transcript_sheet.dart';
+import '../../widgets/terminal_options_dialog.dart';
 import '../../widgets/host_selector_bar.dart';
 import '../../widgets/popup_scroll_behavior.dart';
 import '../../widgets/omni_components.dart';
@@ -872,7 +872,7 @@ class _TerminalHeaderState extends State<_TerminalHeader> {
                   'Open terminal options',
                   scheme.onSurfaceVariant,
                   scheme.surfaceContainerHighest,
-                  session == null || busy ? null : () => openTerminalTranscript(context, session),
+                  session == null || busy ? null : () => openTerminalOptions(context, vm, session),
                 ),
                 if (session != null && !session.isOpen && !session.reconnecting)
                   _action(
@@ -1281,6 +1281,8 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
   /// the user cannot even see.
   final FocusNode _keyFocus = FocusNode(debugLabel: 'terminal-keys');
   String _smartValue = '';
+  bool? _lastSmartSwipeInput;
+  bool _isPasting = false;
 
   /// The last (session, pane focus, read-only) triple acted on, standing in for the key list of
   /// Kotlin's `LaunchedEffect` — see the comparison in [build].
@@ -1300,7 +1302,7 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
   }
 
   void _onCommit(BuildContext context, String text) {
-    if (widget.vm.preferences.smartSwipeInput) {
+    if (widget.vm.smartSwipeInput) {
       final old = _smartValue;
       if (insertedTerminalRuneDelta(old, text) > softInputPasteThreshold) {
         _resetSmartInput();
@@ -1343,28 +1345,29 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
   }
 
   Future<void> _confirmPaste(BuildContext context, String text) async {
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        key: const ValueKey('shell.pasteConfirm'),
-        title: const Text('Paste into terminal?'),
-        content: Text(
-          '${text.runes.length} characters will be sent to the remote shell. '
-          'Pasted lines may execute commands immediately.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('Paste'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed == true && mounted) widget.vm.paste(text);
+    if (_isPasting) {
+      ScaffoldMessenger.maybeOf(
+        context,
+      )?.showSnackBar(const SnackBar(content: Text('A terminal paste is already pending.')));
+      return;
+    }
+    setState(() => _isPasting = true);
+    String result;
+    try {
+      result = await pasteTerminalText(
+        context,
+        widget.vm,
+        widget.session,
+        text,
+        connectionRevision: widget.session.connectionRevision,
+        requireConfirmation: true,
+      );
+    } catch (error) {
+      result = 'Could not paste into terminal: $error';
+    }
+    if (!mounted || !context.mounted) return;
+    setState(() => _isPasting = false);
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(SnackBar(content: Text(result)));
   }
 
   KeyEventResult _onKey(FocusNode node, KeyEvent event) {
@@ -1382,7 +1385,7 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
       // bare Left, because the encoder was only ever told about the on-screen sticky modifiers.
       widget.vm.applyHardwareModifiers(shift: shift, alt: alt, ctrl: ctrl);
       widget.vm.sendKey(key);
-      if (widget.vm.preferences.smartSwipeInput) _resetSmartInput();
+      if (widget.vm.smartSwipeInput) _resetSmartInput();
       return KeyEventResult.handled;
     }
 
@@ -1398,7 +1401,7 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
       if (label.length == 1 && label.codeUnitAt(0) >= 0x20) {
         widget.vm.applyHardwareModifiers(shift: shift, alt: alt, ctrl: ctrl);
         widget.vm.typeText(label.toLowerCase());
-        if (widget.vm.preferences.smartSwipeInput) _resetSmartInput();
+        if (widget.vm.smartSwipeInput) _resetSmartInput();
         return KeyEventResult.handled;
       }
     }
@@ -1415,6 +1418,12 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
   Widget build(BuildContext context) {
     final session = widget.session;
     final preferences = widget.vm.preferences;
+    // The VM is mutable and shared by oldWidget/newWidget. Keep the actual previously rendered
+    // mode so an override clears composition once, without clearing it on unrelated host updates.
+    if (_lastSmartSwipeInput != widget.vm.smartSwipeInput) {
+      _lastSmartSwipeInput = widget.vm.smartSwipeInput;
+      _resetSmartInput();
+    }
     final palette = terminalPaletteFor(context, preferences.terminalTheme);
 
     return ListenableBuilder(
@@ -1446,6 +1455,10 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
         }
         return Column(
           children: [
+            if (_isPasting) ...[
+              const LinearProgressIndicator(key: ValueKey('shell.paste.progress')),
+              const Text('Preparing terminal paste…', maxLines: 1, overflow: TextOverflow.ellipsis),
+            ],
             if (!session.isOpen || session.controlRefreshing || session.paneChangePending)
               _TerminalStatusRow(vm: widget.vm, session: session),
             if (session.controlRefreshError != null)
@@ -1472,6 +1485,16 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
                       focused: _imeFocus.hasFocus,
                       onGridChanged: widget.vm.rememberGrid,
                       onLongPressFocus: () => widget.vm.focusPane(session.id),
+                      onOpenOptions: () async {
+                        if (!session.readOnly) _imeFocus.requestFocus();
+                        await openTerminalOptions(context, widget.vm, session);
+                        if (mounted &&
+                            identical(widget.vm.current, session) &&
+                            session.isOpen &&
+                            !session.readOnly) {
+                          _imeFocus.requestFocus();
+                        }
+                      },
                       queryTuiActive: () => widget.vm.isPaneTuiActiveFor(session),
                       sendTuiPages: (up, count) =>
                           widget.vm.sendPageKeysFor(session, up: up, count: count),
@@ -1523,13 +1546,13 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
                           // A terminal needs literal keystrokes. Sentence casing would capitalise the
                           // first letter of every command, and autocorrect would rewrite flag names.
                           autocorrect: false,
-                          enableSuggestions: preferences.smartSwipeInput,
+                          enableSuggestions: widget.vm.smartSwipeInput,
                           textCapitalization: TextCapitalization.none,
                           // Kotlin uses ImeAction.None: Enter inserts a newline into this hidden
                           // multiline field, which the input interpreter sends as terminal CR.
                           textInputAction: TextInputAction.newline,
-                          keyboardType: preferences.smartSwipeInput
-                              ? TextInputType.text
+                          keyboardType: widget.vm.smartSwipeInput
+                              ? TextInputType.multiline
                               : TextInputType.visiblePassword,
                           maxLines: null,
                         ),

@@ -11,6 +11,7 @@ import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/shell/shell_screen.dart';
+import 'package:omniterm/ui/shell_state.dart';
 import 'package:omniterm/ui/view_model/app_lock_controller.dart';
 import 'package:omniterm/ui/widgets/app_lock_gate.dart';
 import 'package:omniterm/ui/widgets/popup_scroll_behavior.dart';
@@ -23,6 +24,7 @@ import 'package:provider/provider.dart';
 import 'support/fake_secure_storage.dart';
 import 'support/fake_session_service.dart';
 import 'support/fake_shell_transport.dart';
+import 'support/terminal_options_contract.dart';
 
 void main() {
   late AppDatabase db;
@@ -81,6 +83,7 @@ void main() {
     double textScale = 1,
     AppLockController? lock,
     EdgeInsets viewInsets = EdgeInsets.zero,
+    ShellState? shellState,
   }) async {
     tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
@@ -96,6 +99,7 @@ void main() {
       MultiProvider(
         providers: [
           ChangeNotifierProvider<AppState>.value(value: app),
+          ChangeNotifierProvider<ShellState>(create: (_) => shellState ?? ShellState()),
           ChangeNotifierProvider<ShellViewModel>.value(value: vm),
         ],
         child: MaterialApp(
@@ -141,6 +145,291 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('terminal OPT exposes runtime options and both copy ranges before scrolling', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester);
+    await connect(tester);
+    await tester.tap(find.byKey(const ValueKey('shell.options')));
+    await tester.pumpAndSettle();
+    expectTerminalOptionsReady(tester);
+    await tester.tap(find.byKey(const ValueKey('terminalOptions.cancel')));
+    await tester.pumpAndSettle();
+    await finish(tester);
+  });
+
+  testWidgets('runtime Swipe-typing changes input without saving defaults or leaking composition', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester);
+    await connect(tester);
+    final saved = app.preferences.smartSwipeInput;
+    vm.setSmartSwipeRuntime(true);
+    await tester.pumpAndSettle();
+    final input = find.byKey(const ValueKey('shell.input'));
+    expect(tester.widget<TextField>(input).enableSuggestions, isTrue);
+    await tester.enterText(input, 'hello');
+    await tester.pumpAndSettle();
+    vm.setSmartSwipeRuntime(false);
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(input).controller!.text, isEmpty);
+    expect(tester.widget<TextField>(input).enableSuggestions, isFalse);
+    await tester.enterText(input, 'x');
+    await tester.pumpAndSettle();
+    expect(transport.opened.single.writes.last, 'x'.codeUnits);
+    expect(app.preferences.smartSwipeInput, saved);
+    await tester.tap(find.byKey(const ValueKey('shell.options')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('terminalOptions.swipe')));
+    await tester.pumpAndSettle();
+    expect(vm.smartSwipeInput, isTrue);
+    expect(app.preferences.smartSwipeInput, saved);
+    await tester.tap(find.byKey(const ValueKey('terminalOptions.cancel')));
+    await tester.pumpAndSettle();
+    expect(tester.widget<TextField>(input).enableSuggestions, isTrue);
+    await finish(tester);
+  });
+
+  testWidgets('clipboard paste reports pending, empty, failure and a changed-pane skip', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester);
+    await connect(tester);
+    final first = vm.current!;
+    final clipboard = Completer<Object?>();
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async => call.method == 'Clipboard.getData' ? clipboard.future : null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('shell.options')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('terminalOptions.paste')));
+    await tester.pump();
+    expect(find.byKey(const ValueKey('terminalOptions.progress')), findsOneWidget);
+    await vm.connect(vm.server!);
+    clipboard.complete({'text': 'must-not-go-to-other-pane'});
+    await tester.pumpAndSettle();
+    expect(find.text('Paste skipped: the selected terminal changed.'), findsOneWidget);
+    expect(transport.opened.first.writes, isEmpty);
+    expect(transport.opened.last.writes, isEmpty);
+    vm.select(first.id);
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async => null,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('terminalOptions.paste')));
+    await tester.pumpAndSettle();
+    expect(find.text('Clipboard has no text to paste'), findsOneWidget);
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(SystemChannels.platform, (
+      call,
+    ) async {
+      if (call.method == 'Clipboard.getData') {
+        throw PlatformException(code: 'fixture', message: 'clipboard unavailable');
+      }
+      return null;
+    });
+    await tester.tap(find.byKey(const ValueKey('terminalOptions.paste')));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Could not paste from clipboard:'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('terminalOptions.cancel')));
+    await tester.pumpAndSettle();
+    await finish(tester);
+  });
+
+  testWidgets('large clipboard paste confirms and cannot redirect after a focus change', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester);
+    await connect(tester);
+    final first = vm.current!;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async => call.method == 'Clipboard.getData' ? {'text': 'x' * 1000} : null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('shell.options')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('terminalOptions.paste')));
+    // The progress indicator is active until the nested confirmation completes.
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byKey(const ValueKey('shell.pasteConfirm')), findsOneWidget);
+    await vm.connect(vm.server!);
+    await tester.tap(find.widgetWithText(FilledButton, 'Paste'));
+    await tester.pumpAndSettle();
+    expect(find.text('Paste skipped: the selected terminal changed.'), findsOneWidget);
+    expect(transport.opened.first.writes, isEmpty);
+    expect(transport.opened.last.writes, isEmpty);
+    vm.select(first.id);
+    await tester.tap(find.byKey(const ValueKey('terminalOptions.cancel')));
+    await tester.pumpAndSettle();
+    await finish(tester);
+  });
+
+  testWidgets('runtime awake switch waits for platform acknowledgment and exposes retry', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas'));
+    final platform = Completer<void>();
+    var attempts = 0;
+    final shell = ShellState(
+      keepScreenOnSetter: (_) async {
+        attempts++;
+        if (attempts == 1) await platform.future;
+      },
+    );
+    await pump(tester, shellState: shell);
+    await connect(tester);
+    await tester.tap(find.byKey(const ValueKey('shell.options')));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('terminalOptions.awake')));
+    await tester.tap(find.byKey(const ValueKey('terminalOptions.awake')));
+    await tester.pump();
+    expect(shell.showKeepScreenOnWarning, isFalse);
+    expect(shell.isSettingKeepScreenOn, isTrue);
+    expect(shell.isKeepScreenOnEnabled, isFalse);
+    expect(
+      tester.widget<SwitchListTile>(find.byKey(const ValueKey('terminalOptions.awake'))).onChanged,
+      isNull,
+    );
+    platform.completeError(StateError('fixture window unavailable'));
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.byKey(const ValueKey('keepScreenOn.retry')));
+    await tester.tap(find.byKey(const ValueKey('keepScreenOn.retry')));
+    await tester.pumpAndSettle();
+    expect(shell.isKeepScreenOnEnabled, isTrue);
+    expect(shell.keepScreenOnError, isNull);
+    expect(attempts, 2);
+    await tester.tap(find.byKey(const ValueKey('terminalOptions.cancel')));
+    await tester.pumpAndSettle();
+    await finish(tester);
+  });
+
+  for (final size in [const Size(360, 780), const Size(740, 380)]) {
+    testWidgets('terminal options keep paste and copy ranges visible at large text in $size', (
+      tester,
+    ) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, size: size, textScale: 2);
+      await vm.connect(vm.server!);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('shell.options')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      for (final key in ['paste', 'visible', 'full', 'clear', 'cancel']) {
+        expect(find.byKey(ValueKey('terminalOptions.$key')).hitTestable(), findsOneWidget);
+      }
+      expect(find.text('↓ More below'), findsOneWidget);
+      await tester.drag(
+        find.byKey(const ValueKey('terminalOptions.scroll')),
+        const Offset(0, -900),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('↑ More above'), findsOneWidget);
+      expect(find.text('↓ More below'), findsNothing);
+      await tester.tap(find.byKey(const ValueKey('terminalOptions.full')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('transcript.title'))).data,
+        'Full buffer',
+      );
+      await tester.tap(find.byKey(const ValueKey('transcript.close')));
+      await tester.pumpAndSettle();
+      await finish(tester);
+    });
+  }
+
+  testWidgets('clipboard paste reports a transport write failure instead of success', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester);
+    await connect(tester);
+    transport.opened.single.writeFailure = StateError('fixture write unavailable');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async => call.method == 'Clipboard.getData' ? {'text': 'fixture'} : null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    await tester.tap(find.byKey(const ValueKey('shell.options')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('terminalOptions.paste')));
+    await tester.pumpAndSettle();
+    expect(find.text('Paste skipped: the terminal did not accept the text.'), findsOneWidget);
+    expect(find.textContaining('characters into terminal.'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('terminalOptions.cancel')));
+    await tester.pumpAndSettle();
+    await finish(tester);
+  });
+
+  testWidgets('menu clear scrollback confirms, preserves cancel and reports completion', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester);
+    await connect(tester);
+    for (var i = 0; i < 200; i++) {
+      transport.opened.single.emit('fixture-history-$i\r\n');
+    }
+    await tester.pump(const Duration(milliseconds: 50));
+    final session = vm.current!;
+    expect(session.emulator.scrollbackRowCount(), greaterThan(0));
+    await tester.tap(find.byKey(const ValueKey('shell.options')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('terminalOptions.clear')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Cancel').last);
+    await tester.pumpAndSettle();
+    expect(session.emulator.scrollbackRowCount(), greaterThan(0));
+    await tester.tap(find.byKey(const ValueKey('terminalOptions.clear')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Clear'));
+    await tester.pumpAndSettle();
+    expect(session.emulator.scrollbackRowCount(), 0);
+    expect(find.text('Terminal scrollback cleared.'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('terminalOptions.cancel')));
+    await tester.pumpAndSettle();
+    await finish(tester);
+  });
+
+  testWidgets('software-keyboard paste exposes preparation and cancellation', (tester) async {
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester);
+    await connect(tester);
+    await tester.enterText(find.byKey(const ValueKey('shell.input')), 'x' * 1000);
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
+    expect(find.byKey(const ValueKey('shell.pasteConfirm')), findsOneWidget);
+    expect(find.byKey(const ValueKey('shell.paste.progress')), findsOneWidget);
+    await tester.tap(find.widgetWithText(TextButton, 'Cancel'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('shell.paste.progress')), findsNothing);
+    expect(find.text('Paste cancelled.'), findsOneWidget);
+    expect(transport.opened.single.writes, isEmpty);
+    await finish(tester);
+  });
+
   testWidgets('Kotlin terminal header shows host identity above session actions', (tester) async {
     final id = await repo.insertServer(server(name: 'nas'));
     await pump(tester, size: const Size(360, 780));
@@ -156,8 +445,8 @@ void main() {
     expect(actions.top, greaterThanOrEqualTo(host.bottom));
     await tester.tap(find.byKey(const ValueKey('shell.options')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('transcript.close')), findsOneWidget);
-    await tester.tap(find.byKey(const ValueKey('transcript.close')));
+    expect(find.byKey(const ValueKey('terminalOptions.cancel')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('terminalOptions.cancel')));
     await tester.pumpAndSettle();
     await finish(tester);
   });
@@ -824,6 +1113,8 @@ void main() {
 
       await tester.longPress(find.byKey(const ValueKey('shell.surface')));
       await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
+      await tester.pumpAndSettle();
       expect(find.byType(BottomSheet), findsOneWidget, reason: 'the copy sheet is open');
 
       Navigator.of(tester.element(find.byType(BottomSheet))).pop();
@@ -839,6 +1130,8 @@ void main() {
       expect(keyboardIsUp(tester), isFalse);
 
       await tester.longPress(find.byKey(const ValueKey('shell.surface')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
       await tester.pumpAndSettle();
       Navigator.of(tester.element(find.byType(BottomSheet))).pop();
       await tester.pumpAndSettle();
@@ -1104,6 +1397,8 @@ void main() {
         await tester.pumpAndSettle();
         await tester.longPress(find.byKey(const ValueKey('shell.surface')));
         await tester.pumpAndSettle();
+        await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
+        await tester.pumpAndSettle();
         String shown() =>
             tester.widget<SelectableText>(find.byKey(const ValueKey('transcript.text'))).data!;
         expect(shown(), contains('${own}_LINE_199'));
@@ -1132,6 +1427,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 30));
 
       await tester.longPress(find.byKey(const ValueKey('shell.surface')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
       await tester.pumpAndSettle();
 
       final text = tester
@@ -1165,6 +1462,8 @@ void main() {
       await tester.pump(const Duration(milliseconds: 30));
 
       await tester.longPress(find.byKey(const ValueKey('shell.surface')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
       await tester.pumpAndSettle();
 
       String shown() =>
@@ -1215,6 +1514,8 @@ void main() {
 
       await tester.longPress(find.byKey(const ValueKey('shell.surface')));
       await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('transcript.toggleRange')));
       await tester.pumpAndSettle();
 
@@ -1263,6 +1564,8 @@ void main() {
 
       await tester.longPress(find.byKey(const ValueKey('shell.surface')));
       await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('transcript.toggleRange')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('transcript.toggleRange')));
@@ -1288,6 +1591,8 @@ void main() {
       await connect(tester);
 
       await tester.longPress(find.byKey(const ValueKey('shell.surface')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
       await tester.pumpAndSettle();
 
       expect(find.text('Nothing has been printed yet.'), findsOneWidget);
@@ -1445,6 +1750,8 @@ void main() {
         matching: find.byKey(const ValueKey('shell.surface')),
       );
       await tester.longPress(inactiveSurface);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('terminalOptions.visible')));
       await tester.pumpAndSettle();
 
       expect(vm.current!.id, other.id, reason: 'long press must focus the pane it acted on');

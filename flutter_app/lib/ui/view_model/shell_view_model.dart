@@ -41,6 +41,8 @@ class ShellViewModel extends ChangeNotifier {
     this.recheckHost,
     this.shortcuts,
   }) {
+    _smartSwipeInput = _app.preferences.smartSwipeInput;
+    _lastPreferenceSmartSwipe = _smartSwipeInput;
     _useControlMode = _app.preferences.tmuxControlMode;
     _lastPreferenceControlMode = _useControlMode;
     _app.addListener(_onAppChanged);
@@ -74,6 +76,17 @@ class ShellViewModel extends ChangeNotifier {
   final Future<void> Function(Server server)? recheckHost;
 
   AppPreferences get preferences => _app.preferences;
+
+  late bool _smartSwipeInput;
+  late bool _lastPreferenceSmartSwipe;
+  bool get smartSwipeInput => _smartSwipeInput;
+
+  /// A runtime override; Settings continues to supply the saved default.
+  void setSmartSwipeRuntime(bool enabled) {
+    if (_disposed || _smartSwipeInput == enabled) return;
+    _smartSwipeInput = enabled;
+    _safeNotify();
+  }
 
   /// Null in tests and in any build without a transport wired. Connecting then reports that the
   /// terminal is unavailable rather than opening a screen that will never receive a byte
@@ -349,6 +362,11 @@ class ShellViewModel extends ChangeNotifier {
   }
 
   void _onAppChanged() {
+    final savedSwipe = preferences.smartSwipeInput;
+    if (savedSwipe != _lastPreferenceSmartSwipe) {
+      _lastPreferenceSmartSwipe = savedSwipe;
+      _smartSwipeInput = savedSwipe;
+    }
     final savedControlMode = preferences.tmuxControlMode;
     // Settings supplies the default for a new connection, while the checkbox remains a genuine
     // per-connection override. Only follow a changed default when the user has not diverged from
@@ -1810,16 +1828,29 @@ class ShellViewModel extends ChangeNotifier {
     }
   }
 
-  /// Send a clipboard paste as one contiguous write.
+  /// Send immediate input as one contiguous write, preserving the bounded control-pane queue.
   bool paste(String text) {
     final session = current;
     if (session == null || text.isEmpty) return false;
-    // Modifiers are deliberately not consumed: a stuck Ctrl must not rewrite the paste's first byte,
-    // and silently swallowing the modifier here would surprise the very next keystroke.
-    //
-    // The remote's DECSET 2004 state is read now rather than cached: a shell turns bracketed paste
-    // on and off around its own prompt, so the only moment the answer is true is this one.
     return session.write(encodePastedText(text, bracketed: session.emulator.bracketedPasteMode));
+  }
+
+  /// Clipboard reads and confirmation dialogs must never redirect a paste to a newer pane/channel.
+  Future<bool> pasteTo(ShellSession session, String text, {required int connectionRevision}) async {
+    if (_disposed ||
+        !identical(current, session) ||
+        !_sessions.contains(session) ||
+        session.connectionRevision != connectionRevision ||
+        !session.isOpen ||
+        session.readOnly ||
+        text.isEmpty) {
+      return false;
+    }
+    // A stuck modifier never rewrites pasted bytes. Bracketed mode is read at the moment of sending.
+    return session.writeAndWait(
+      encodePastedText(text, bracketed: session.emulator.bracketedPasteMode),
+      connectionRevision: connectionRevision,
+    );
   }
 
   /// Mirrors an editor-style swipe/autocorrect edit as one ordered terminal write.

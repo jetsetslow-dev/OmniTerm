@@ -268,6 +268,7 @@ class TerminalSurface extends StatefulWidget {
     this.onTapCell,
     this.onScrolledBack,
     this.onLongPressFocus,
+    this.onOpenOptions,
     this.queryTuiActive,
     this.sendTuiPages,
   });
@@ -290,6 +291,7 @@ class TerminalSurface extends StatefulWidget {
 
   /// Focus the touched split pane before showing its transcript and copy actions.
   final VoidCallback? onLongPressFocus;
+  final VoidCallback? onOpenOptions;
 
   /// Asks whether the touched pane owns the alternate screen; regular tmux may need a side query.
   final Future<bool> Function()? queryTuiActive;
@@ -401,7 +403,12 @@ class _TerminalSurfaceState extends State<TerminalSurface> with SingleTickerProv
                 // press opens the scrollback as selectable text instead — the Kotlin's answer too.
                 onLongPress: () {
                   widget.onLongPressFocus?.call();
-                  openTerminalTranscript(context, widget.session);
+                  final open = widget.onOpenOptions;
+                  if (open != null) {
+                    open();
+                  } else {
+                    openTerminalTranscript(context, widget.session);
+                  }
                 },
                 // The grid is painted, so it puts nothing in the semantics tree by itself — the app's
                 // primary content was unreadable to a screen reader. The label is built from the

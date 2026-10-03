@@ -119,6 +119,77 @@ void main() {
     return vm = ShellViewModel(app, transport: ssh ?? transport);
   }
 
+  test(
+    'runtime Swipe-typing persists through unrelated updates and follows changed saved defaults',
+    () async {
+      await start();
+      expect(vm.smartSwipeInput, app.preferences.smartSwipeInput);
+      vm.setSmartSwipeRuntime(true);
+      expect(app.preferences.smartSwipeInput, isFalse);
+      app.applyPreferences(app.preferences.copyWith(terminalFontSize: 18));
+      expect(vm.smartSwipeInput, isTrue);
+      app.applyPreferences(app.preferences.copyWith(smartSwipeInput: true));
+      vm.setSmartSwipeRuntime(false);
+      app.applyPreferences(app.preferences.copyWith(terminalFontSize: 19));
+      expect(vm.smartSwipeInput, isFalse);
+      app.applyPreferences(app.preferences.copyWith(smartSwipeInput: false));
+      vm.setSmartSwipeRuntime(true);
+      app.applyPreferences(app.preferences.copyWith(smartSwipeInput: true));
+      expect(vm.smartSwipeInput, isTrue);
+      app.applyPreferences(app.preferences.copyWith(smartSwipeInput: false));
+      expect(vm.smartSwipeInput, isFalse);
+    },
+  );
+
+  test(
+    'a targeted paste cannot cross selection, channel replacement or read-only changes',
+    () async {
+      await repo.insertServer(server(name: 'nas'));
+      await start();
+      await vm.connect(vm.server!);
+      final first = vm.current!;
+      final revision = first.connectionRevision;
+      await vm.connect(vm.server!);
+      expect(await vm.pasteTo(first, 'wrong pane', connectionRevision: revision), isFalse);
+      vm.select(first.id);
+      expect(await vm.pasteTo(first, 'stale channel', connectionRevision: revision - 1), isFalse);
+      vm.setTerminalReadOnly(true);
+      expect(await vm.pasteTo(first, 'read-only', connectionRevision: revision), isFalse);
+      vm.setTerminalReadOnly(false);
+      expect(await vm.pasteTo(first, 'original pane', connectionRevision: revision), isTrue);
+      expect(transport.opened.first.writes.single, 'original pane'.codeUnits);
+      expect(transport.opened.last.writes, isEmpty);
+    },
+  );
+
+  test('explicit paste awaits transport completion and preserves a failed write result', () async {
+    await repo.insertServer(server(name: 'nas'));
+    await start();
+    await vm.connect(vm.server!);
+    final session = vm.current!;
+    final gate = Completer<void>();
+    final channel = transport.opened.single..gateWrite = gate;
+    var completed = false;
+    final sending = vm
+        .pasteTo(session, 'fixture', connectionRevision: session.connectionRevision)
+        .then((value) {
+          completed = true;
+          return value;
+        });
+    await Future<void>.delayed(Duration.zero);
+    expect(completed, isFalse);
+    expect(channel.writes, isEmpty);
+    gate.complete();
+    expect(await sending, isTrue);
+    expect(channel.writes.single, 'fixture'.codeUnits);
+    channel.writeFailure = StateError('fixture write unavailable');
+    expect(
+      await vm.pasteTo(session, 'again', connectionRevision: session.connectionRevision),
+      isFalse,
+    );
+    expect(session.isOpen, isFalse);
+  });
+
   group('automatic reconnect preserves the terminal', () {
     Future<void> until(bool Function() ready) async {
       await Future<void>(() async {

@@ -439,6 +439,21 @@ class ShellSession extends ChangeNotifier {
     return true;
   }
 
+  /// Explicit paste actions await the transport write instead of reporting queued input as sent.
+  /// Refuse an unresolved control pane: ordinary keystrokes retain their existing bounded queue.
+  Future<bool> writeAndWait(Uint8List bytes, {required int connectionRevision}) async {
+    if (_disposed ||
+        !isOpen ||
+        readOnly ||
+        bytes.isEmpty ||
+        connectionRevision != _connectionRevision ||
+        !isInputPaneReady) {
+      return false;
+    }
+    if (!_followTail) scrollToTail();
+    return _write(bytes);
+  }
+
   /// The pane tmux is streaming, in control mode. Null until the first `%output`.
   String? _controlPaneId;
 
@@ -457,6 +472,9 @@ class ShellSession extends ChangeNotifier {
 
   /// True once tmux has reported a pane change that has not been resolved yet.
   bool paneChangePending = false;
+
+  /// Explicit clipboard work requires a known, settled control pane before it starts writing.
+  bool get isInputPaneReady => !controlMode || (_controlPaneId != null && !paneChangePending);
   bool controlRefreshing = false;
   String? controlRefreshError;
   final _pendingInput = <int>[];
@@ -581,7 +599,7 @@ class ShellSession extends ChangeNotifier {
   /// Invoked when the active pane may have moved; the view model does the side-channel query.
   void Function(ShellSession session)? onPaneChanged;
 
-  Future<void> _write(Uint8List bytes) async {
+  Future<bool> _write(Uint8List bytes) async {
     final channel = _channel;
     try {
       if (controlMode) {
@@ -589,11 +607,13 @@ class ShellSession extends ChangeNotifier {
       } else {
         await channel.write(bytes);
       }
+      return !_disposed && identical(channel, _channel) && isOpen;
     } catch (_) {
       // A write can fail before the output stream notices the dead socket. Marking the session
       // disconnected here prevents further keystrokes from being accepted and gives the terminal
       // an immediate visible "Connection lost" state instead of silently dropping input.
       if (identical(channel, _channel)) _finish(ShellSessionEnd.disconnected);
+      return false;
     }
   }
 
