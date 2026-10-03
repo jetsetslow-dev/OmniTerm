@@ -19,6 +19,9 @@ import '../../view_model/shell_view_model.dart';
 import '../servers/server_form_state.dart';
 import '../../widgets/terminal_key_bar.dart';
 import '../../widgets/terminal_surface.dart';
+import '../../widgets/terminal_transcript_sheet.dart';
+import '../../widgets/host_selector_bar.dart';
+import '../../widgets/popup_scroll_behavior.dart';
 import '../../widgets/omni_components.dart';
 
 /// The Shell screen, ported from `ShellScreen` in `ui/ShellScreen.kt`.
@@ -58,10 +61,15 @@ class _ShellScreenState extends State<ShellScreen> {
           final contents = Column(
             key: _contentsKey,
             children: [
-              if (!compactIme && (vm.sessions.isNotEmpty || session != null)) _SessionBar(vm: vm),
-              if (vm.isLeavingSessions) ...[
+              if (!compactIme && vm.server != null)
+                _TerminalHeader(vm: vm, licenseController: licenseController),
+              if (vm.isLeavingSessions || vm.isBackgroundingSession) ...[
                 const LinearProgressIndicator(),
-                const Text('Saving resumable sessions…'),
+                Text(
+                  vm.isLeavingSessions
+                      ? 'Saving resumable sessions…'
+                      : 'Sending session to background…',
+                ),
               ],
               if (session != null && vm.error != null)
                 Padding(
@@ -136,18 +144,32 @@ class _ShellScreenState extends State<ShellScreen> {
                     : session == null
                     ? _ConnectPane(vm: vm, licenseController: licenseController)
                     : vm.isSplit
-                    ? _SplitTerminals(vm: vm, first: session, second: vm.splitSession!)
-                    : _ActiveTerminal(vm: vm, session: session, showStatus: !compactIme),
+                    ? _SplitTerminals(
+                        vm: vm,
+                        first: vm.splitFirstSession!,
+                        second: vm.splitSecondSession!,
+                      )
+                    : _ActiveTerminal(vm: vm, session: session),
               ),
               if (session != null) TerminalKeyBar(viewModel: vm, compact: compactIme),
             ],
           );
           // Android can briefly deliver the new orientation with the old IME height. Preserve
           // usable controls in that tiny viewport until the keyboard finishes resizing.
-          final minimumHeight = session == null
+          final scaler = MediaQuery.textScalerOf(context);
+          final headerHeight = compactIme || vm.server == null
               ? 0.0
-              : (compactIme ? 42.0 : 120.0) +
-                    (vm.error == null ? 0 : 96 + MediaQuery.textScalerOf(context).scale(60));
+              : scaler.scale(24) + 28 + (scaler.scale(24) + 12).clamp(34, double.infinity) + 4;
+          final bodyMinimum = session == null
+              ? 80.0 + (vm.resumableSessions.isEmpty ? 0 : 200)
+              : (compactIme || session.readOnly ? 42.0 : 80.0) +
+                    (vm.isSplit && vm.splitStacked
+                        ? 80.0
+                        : compactIme
+                        ? 0.0
+                        : 40.0);
+          final minimumHeight =
+              headerHeight + bodyMinimum + (vm.error == null ? 0 : 96 + scaler.scale(60));
           return constraints.maxHeight < minimumHeight
               ? SingleChildScrollView(
                   child: SizedBox(height: minimumHeight, child: contents),
@@ -415,74 +437,91 @@ class _ResumableSessions extends StatelessWidget {
       key: const ValueKey('shell.resumable'),
       constraints: const BoxConstraints(maxHeight: 200),
       padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Text('Left running', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-          Text(
-            // Saying where they are, because "resumable" alone reads as a local draft rather than
-            // work still executing on someone else's machine.
-            'These are still running on their servers. Resuming attaches to one again.',
-            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+      child: ScrollConfiguration(
+        behavior: const PopupScrollBehavior(popupsOnly: false),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Left running',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
+              ),
+              Text(
+                // Saying where they are, because "resumable" alone reads as a local draft rather than
+                // work still executing on someone else's machine.
+                'These are still running on their servers. Resuming attaches to one again.',
+                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+              ),
+              const SizedBox(height: 6),
+              for (final row in vm.resumableSessions) _ResumableCard(vm: vm, row: row),
+            ],
           ),
-          const SizedBox(height: 6),
-          Flexible(
-            child: ListView(
-              shrinkWrap: true,
-              children: [
-                for (final row in vm.resumableSessions)
-                  OmniCard(
-                    key: ValueKey('shell.resumable.${row.tmuxName}'),
-                    leftAccent: OmniColors.amber,
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                row.serverName,
-                                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-                              ),
-                              Text(
-                                // The name alone cannot be acted on: "left running 4m ago" and
-                                // "left running last month" are the same card otherwise, and Forget
-                                // is the button next to it.
-                                '${row.tmuxName}  ·  ${describeSessionAge(row)}',
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  fontSize: 10,
-                                  fontFamily: OmniFonts.mono,
-                                  color: scheme.onSurfaceVariant,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        TextButton(
-                          key: ValueKey('shell.resumable.${row.tmuxName}.resume'),
-                          onPressed: vm.isConnecting ? null : () => vm.resume(row),
-                          child: const Text('Resume', style: TextStyle(fontSize: 12)),
-                        ),
-                        TextButton(
-                          key: ValueKey('shell.resumable.${row.tmuxName}.forget'),
-                          onPressed: () => _confirmForget(context, vm, row),
-                          child: Text(
-                            'Forget',
-                            style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
+}
+
+class _ResumableCard extends StatelessWidget {
+  const _ResumableCard({required this.vm, required this.row});
+  final ShellViewModel vm;
+  final PersistentSession row;
+
+  @override
+  Widget build(BuildContext context) => OmniCard(
+    key: ValueKey('shell.resumable.${row.tmuxName}'),
+    leftAccent: OmniColors.amber,
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final scheme = Theme.of(context).colorScheme;
+        final metadata = Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(row.serverName, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+            Text(
+              '${row.tmuxName}  ·  ${describeSessionAge(row)}',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 10,
+                fontFamily: OmniFonts.mono,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        );
+        final actions = [
+          TextButton(
+            key: ValueKey('shell.resumable.${row.tmuxName}.resume'),
+            onPressed: vm.isConnecting ? null : () => vm.resume(row),
+            child: const Text('Resume', style: TextStyle(fontSize: 12)),
+          ),
+          TextButton(
+            key: ValueKey('shell.resumable.${row.tmuxName}.forget'),
+            onPressed: () => _confirmForget(context, vm, row),
+            child: Text('Forget', style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant)),
+          ),
+        ];
+        // Keep both actions reachable when system text scaling leaves no room beside the metadata.
+        return constraints.maxWidth < 280 || MediaQuery.textScalerOf(context).scale(12) > 16
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  metadata,
+                  Wrap(children: actions),
+                ],
+              )
+            : Row(
+                children: [
+                  Expanded(child: metadata),
+                  ...actions,
+                ],
+              );
+      },
+    ),
+  );
 }
 
 Future<void> _confirmForget(BuildContext context, ShellViewModel vm, PersistentSession row) async {
@@ -701,68 +740,463 @@ class _ConnectingView extends StatelessWidget {
 
 // ── session chips ─────────────────────────────────────────────────────────────
 
-class _SessionBar extends StatelessWidget {
-  const _SessionBar({required this.vm});
-
+class _TerminalHeader extends StatefulWidget {
+  const _TerminalHeader({required this.vm, this.licenseController});
   final ShellViewModel vm;
+  final LicenseController? licenseController;
+
+  @override
+  State<_TerminalHeader> createState() => _TerminalHeaderState();
+}
+
+class _TerminalHeaderState extends State<_TerminalHeader> {
+  String? _workPhase;
+  ShellViewModel get vm => widget.vm;
+  bool get busy =>
+      vm.isConnecting || vm.isLeavingSessions || vm.isBackgroundingSession || _workPhase != null;
+
+  Future<void> _switchHost(int? id) async {
+    final host = vm.connectableServers.where((s) => s.id == id).firstOrNull;
+    if (host == null || busy) return;
+    final session = vm.current;
+    if (session != null && session.serverId != host.id) {
+      if (!await _confirmBackground(context, session)) return;
+    }
+    if (mounted) await vm.switchTerminalHost(host);
+  }
 
   @override
   Widget build(BuildContext context) {
-    final current = vm.current;
-
+    final session = vm.current;
+    final scheme = Theme.of(context).colorScheme;
+    final persistent = session?.tmuxName != null;
     return Container(
       key: const ValueKey('shell.sessionBar'),
-      height: 40,
-      color: const Color(0xFF0B1017),
-      padding: const EdgeInsets.symmetric(horizontal: 6),
-      child: Row(
+      color: scheme.surface.computeLuminance() > .5 ? scheme.surface : scheme.surfaceContainerHigh,
+      child: Column(
         children: [
-          Expanded(
-            child: ListView(
-              scrollDirection: Axis.horizontal,
+          HostSelectorBar(
+            keyPrefix: 'shell.host',
+            hosts: vm.connectableServers,
+            selected: vm.server!,
+            enabled: !busy,
+            onChanged: _switchHost,
+            leading: Text(
+              vm.isSplit ? 'P${vm.focusedPane}' : 'TERM',
+              style: const TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.bold,
+                fontFamily: OmniFonts.mono,
+              ),
+            ),
+            trailing: Text(
+              vm.isSplit ? 'FOCUSED' : 'CURRENT',
+              style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 4),
+            child: Row(
+              key: const ValueKey('shell.header.actions'),
+              spacing: 6,
               children: [
-                for (final session in vm.sessions)
-                  _SessionChip(
-                    session: session,
-                    selected: session.id == current?.id,
-                    onTap: () => vm.select(session.id),
-                    onClose: () => _requestCloseSession(context, vm, session),
+                Expanded(
+                  child: _TerminalOpenButton(
+                    vm: vm,
+                    enabled: !busy,
+                    licenseController: widget.licenseController,
                   ),
+                ),
+                _action(
+                  persistent ? 'LEAVE' : 'BG',
+                  'shell.background',
+                  persistent
+                      ? 'Leave current tmux session resumable'
+                      : 'Send current session to background',
+                  scheme.onPrimaryContainer,
+                  scheme.primaryContainer,
+                  session != null && (persistent || session.isOpen) && !busy
+                      ? () async {
+                          if (await _confirmBackground(context, session)) {
+                            await vm.backgroundSession(session);
+                          }
+                        }
+                      : null,
+                ),
+                if (vm.isSplit) ...[
+                  _action(
+                    vm.splitStacked ? '⬌ COLS' : '⬍ STACK',
+                    'shell.split.axis',
+                    vm.splitStacked ? 'Show split panes side by side' : 'Stack split panes',
+                    scheme.onSecondaryContainer,
+                    scheme.secondaryContainer,
+                    busy ? null : vm.toggleSplitAxis,
+                  ),
+                  _action(
+                    'SINGLE',
+                    'shell.split.single',
+                    'Return to single terminal',
+                    scheme.onTertiaryContainer,
+                    scheme.tertiaryContainer,
+                    busy ? null : vm.unsplit,
+                  ),
+                ] else
+                  _action(
+                    'SPLIT',
+                    'shell.split',
+                    'Open split terminal',
+                    scheme.onSecondaryContainer,
+                    scheme.secondaryContainer,
+                    session != null && !busy ? () => _openSplitPicker(context, vm) : null,
+                  ),
+                _action(
+                  session?.readOnly == true ? '🔒 VIEW' : '🔓 INPUT',
+                  'shell.readOnly',
+                  session?.readOnly == true
+                      ? 'Enable terminal input'
+                      : 'Enable read-only terminal mode',
+                  session?.readOnly == true
+                      ? scheme.onTertiaryContainer
+                      : scheme.onSecondaryContainer,
+                  session?.readOnly == true ? scheme.tertiaryContainer : scheme.secondaryContainer,
+                  session == null || busy
+                      ? null
+                      : () {
+                          session.setReadOnly(!session.readOnly);
+                          if (session.readOnly) {
+                            FocusManager.instance.primaryFocus?.unfocus();
+                            SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+                          }
+                        },
+                ),
+                _action(
+                  '⋮ OPT',
+                  'shell.options',
+                  'Open terminal options',
+                  scheme.onSurfaceVariant,
+                  scheme.surfaceContainerHighest,
+                  session == null || busy ? null : () => openTerminalTranscript(context, session),
+                ),
+                if (session != null && !session.isOpen && !session.reconnecting)
+                  _action(
+                    'RECON',
+                    'shell.header.reconnect',
+                    'Reconnect current session',
+                    scheme.onPrimaryContainer,
+                    scheme.primaryContainer,
+                    busy ? null : () => vm.retrySession(session),
+                  ),
+                _action(
+                  'DISC',
+                  'shell.disconnect',
+                  'Disconnect current session',
+                  scheme.onErrorContainer,
+                  scheme.errorContainer,
+                  session == null || busy
+                      ? null
+                      : () => _requestCloseSession(
+                          context,
+                          vm,
+                          session,
+                          onBegin: (phase) {
+                            if (mounted) setState(() => _workPhase = phase);
+                          },
+                          onEnd: () {
+                            if (mounted) setState(() => _workPhase = null);
+                          },
+                        ),
+                ),
               ],
             ),
           ),
-          // Splitting needs a second session to show, so the control lives next to the one that
-          // creates them.
-          // A second pane needs something to put in it — another open session, or a host that can
-          // be connected into it. Gating on open sessions alone hid the button in exactly the case
-          // Kotlin supports: one terminal open, and another host a tap away.
-          if (!vm.isSplit && (vm.sessions.length > 1 || vm.canConnectSecondPane))
-            IconButton(
-              key: const ValueKey('shell.split'),
-              tooltip: 'Split the view',
-              iconSize: 18,
-              icon: const Icon(Icons.vertical_split, color: OmniColors.cyan),
-              onPressed: () => _openSplitPicker(context, vm),
+          if (_workPhase != null) ...[const LinearProgressIndicator(), Text(_workPhase!)],
+        ],
+      ),
+    );
+  }
+
+  Widget _action(
+    String label,
+    String keyName,
+    String hint,
+    Color color,
+    Color background,
+    VoidCallback? onTap,
+  ) => Expanded(
+    child: _TerminalHeaderAction(
+      label: label,
+      keyName: keyName,
+      hint: hint,
+      color: color,
+      background: background,
+      onTap: onTap,
+    ),
+  );
+}
+
+class _TerminalHeaderAction extends StatelessWidget {
+  const _TerminalHeaderAction({
+    required this.label,
+    required this.keyName,
+    required this.hint,
+    required this.color,
+    required this.background,
+    this.onTap,
+  });
+  final String label, keyName, hint;
+  final Color color, background;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: hint,
+    child: Semantics(
+      label: hint,
+      button: true,
+      enabled: onTap != null,
+      child: Material(
+        color: background,
+        borderRadius: BorderRadius.circular(6),
+        child: InkWell(
+          key: ValueKey(keyName),
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(6),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 34),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 6),
+              child: Center(
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context).textTheme.bodyLarge!.copyWith(
+                    fontSize: 10,
+                    height:
+                        MediaQuery.textScalerOf(context).scale(24) /
+                        MediaQuery.textScalerOf(context).scale(10),
+                    letterSpacing: MediaQuery.textScalerOf(context).scale(.5),
+                    fontWeight: FontWeight.bold,
+                    color: onTap == null
+                        ? Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: .58)
+                        : color,
+                  ),
+                ),
+              ),
             ),
-          if (vm.server != null && !vm.isConnecting)
-            IconButton(
-              key: const ValueKey('shell.newSession'),
-              tooltip: 'New session',
-              iconSize: 18,
-              icon: const Icon(Icons.add, color: OmniColors.cyan),
-              onPressed: vm.canConnect ? () => vm.connect(vm.server!) : null,
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+Future<bool> _confirmBackground(BuildContext context, ShellSession session) async {
+  final persistent = session.tmuxName != null;
+  return await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: Text(persistent ? 'Leave Session Resumable?' : 'Send Session to Background?'),
+          content: Text(
+            persistent
+                ? 'OmniTerm will detach and close this local SSH connection. The tmux session and anything running inside it stay available to resume.'
+                : 'OmniTerm will keep the SSH session active in the background. This may increase battery consumption.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              key: const ValueKey('shell.background.confirm'),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(persistent ? 'Leave resumable' : 'Send to background'),
+            ),
+          ],
+        ),
+      ) ??
+      false;
+}
+
+class _TerminalOpenButton extends StatelessWidget {
+  const _TerminalOpenButton({required this.vm, required this.enabled, this.licenseController});
+  final ShellViewModel vm;
+  final bool enabled;
+  final LicenseController? licenseController;
+
+  Future<void> _open(BuildContext context) async {
+    final current = vm.current;
+    final background = vm.sessions.where((s) => s != current && s != vm.splitSession).toList();
+    final saved = vm.resumableSessions
+        .where((row) => vm.sessions.every((s) => s.tmuxName != row.tmuxName))
+        .toList();
+    final anchor = context.findRenderObject()! as RenderBox;
+    final overlay = Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
+    final origin = anchor.localToGlobal(Offset.zero, ancestor: overlay);
+    final choice = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        Rect.fromLTWH(origin.dx, origin.dy + anchor.size.height, anchor.size.width, 0),
+        Offset.zero & overlay.size,
+      ),
+      constraints: const BoxConstraints(minWidth: 260, maxWidth: 340, maxHeight: 440),
+      items: [
+        if (current != null) ...[
+          PopupMenuItem<String>(
+            enabled: false,
+            child: _TerminalSessionMenuLabel(
+              title: '${vm.isSplit ? 'PANE ${vm.focusedPane}' : 'CURRENT'} · ${current.serverName}',
+              detail: current.tmuxName,
+              startedAt: current.startedAt.millisecondsSinceEpoch,
+            ),
+          ),
+          const PopupMenuDivider(),
+        ],
+        if (background.isNotEmpty) ...[
+          const PopupMenuItem<String>(
+            enabled: false,
+            child: Text(
+              'Background sessions',
+              style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+            ),
+          ),
+          for (final session in background)
+            PopupMenuItem<String>(
+              key: ValueKey('shell.session.${session.id}'),
+              value: 'session:${session.id}',
+              child: _TerminalSessionMenuLabel(
+                title: session.serverName,
+                detail: session.tmuxName ?? 'Live SSH session',
+                startedAt: session.startedAt.millisecondsSinceEpoch,
+                backgroundedAt: vm.backgroundedAtFor(session.id),
+              ),
             ),
         ],
+        if (saved.isNotEmpty) ...[
+          if (background.isNotEmpty) const PopupMenuDivider(),
+          const PopupMenuItem<String>(
+            enabled: false,
+            child: Text(
+              'Resumable tmux',
+              style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold),
+            ),
+          ),
+          for (final row in saved)
+            PopupMenuItem<String>(
+              key: ValueKey('shell.open.saved.${row.tmuxName}'),
+              value: 'saved:${row.tmuxName}',
+              child: _TerminalSessionMenuLabel(
+                title: row.serverName,
+                detail: row.tmuxName,
+                startedAt: row.createdAt,
+                backgroundedAt: row.backgroundedAt,
+              ),
+            ),
+        ],
+        if (current != null || background.isNotEmpty || saved.isNotEmpty) const PopupMenuDivider(),
+        PopupMenuItem<String>(
+          key: const ValueKey('shell.newSession'),
+          value: 'new',
+          enabled: vm.canConnect && vm.server != null,
+          child: Text(
+            'New session · ${vm.server?.name ?? 'selected host'}',
+            style: const TextStyle(fontFamily: OmniFonts.mono),
+          ),
+        ),
+        if (licenseController == null ||
+            !licenseController!.state.value.enabled ||
+            licenseController!.state.value.unlocked)
+          const PopupMenuItem<String>(
+            value: 'quick',
+            child: Text(
+              "Quick connect (don't save)…",
+              style: TextStyle(fontFamily: OmniFonts.mono),
+            ),
+          ),
+      ],
+    );
+    if (!context.mounted || choice == null) return;
+    if (choice.startsWith('session:')) {
+      vm.resumeExisting(choice.substring(8));
+    } else if (choice.startsWith('saved:')) {
+      final row = saved.where((r) => r.tmuxName == choice.substring(6)).firstOrNull;
+      if (row != null) await vm.resume(row);
+    } else if (choice == 'new') {
+      if (vm.server != null) await vm.connect(vm.server!);
+    } else if (choice == 'quick') {
+      await _quickConnect(context, vm, licenseController: licenseController);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Builder(
+      builder: (anchorContext) => _TerminalHeaderAction(
+        label: 'OPEN',
+        keyName: 'shell.open',
+        hint: 'Open or switch terminal session',
+        color: scheme.onPrimaryContainer,
+        background: scheme.primaryContainer,
+        onTap: enabled ? () => _open(anchorContext) : null,
       ),
     );
   }
 }
 
+class _TerminalSessionMenuLabel extends StatefulWidget {
+  const _TerminalSessionMenuLabel({
+    required this.title,
+    required this.startedAt,
+    this.detail,
+    this.backgroundedAt,
+  });
+  final String title;
+  final String? detail;
+  final int startedAt;
+  final int? backgroundedAt;
+  @override
+  State<_TerminalSessionMenuLabel> createState() => _TerminalSessionMenuLabelState();
+}
+
+class _TerminalSessionMenuLabelState extends State<_TerminalSessionMenuLabel> {
+  Timer? _clock;
+  @override
+  void initState() {
+    super.initState();
+    _clock = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _clock?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) => Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(widget.title, style: const TextStyle(fontFamily: OmniFonts.mono, fontSize: 12)),
+      if (widget.detail != null) Text(widget.detail!, style: const TextStyle(fontSize: 10)),
+      Text(
+        'Started ${formatSessionAge(DateTime.fromMillisecondsSinceEpoch(widget.startedAt))} ago${widget.backgroundedAt != null && widget.backgroundedAt! > 0 ? ' · backgrounded ${formatSessionAge(DateTime.fromMillisecondsSinceEpoch(widget.backgroundedAt!))} ago' : ''}',
+        style: const TextStyle(fontSize: 10),
+      ),
+    ],
+  );
+}
+
 Future<void> _requestCloseSession(
   BuildContext context,
   ShellViewModel vm,
-  ShellSession session,
-) async {
+  ShellSession session, {
+  ValueChanged<String>? onBegin,
+  VoidCallback? onEnd,
+}) async {
   if (!session.isOpen) {
     vm.dismissEnded(session);
     return;
@@ -801,98 +1235,30 @@ Future<void> _requestCloseSession(
       ],
     ),
   );
-  if (choice == 'leave') {
-    await vm.leaveResumable(session);
-  } else if (choice == 'disconnect') {
-    if (persistent) {
-      await vm.terminate(session);
-    } else {
-      vm.close(session);
+  if (choice == null) return;
+  onBegin?.call(choice == 'leave' ? 'Saving session recovery…' : 'Disconnecting session…');
+  try {
+    if (choice == 'leave') {
+      await vm.leaveResumable(session);
+    } else if (choice == 'disconnect') {
+      if (persistent) {
+        await vm.terminate(session);
+      } else {
+        vm.close(session);
+      }
     }
+  } finally {
+    onEnd?.call();
   }
-}
-
-class _SessionChip extends StatelessWidget {
-  const _SessionChip({
-    required this.session,
-    required this.selected,
-    required this.onTap,
-    required this.onClose,
-  });
-
-  final ShellSession session;
-  final bool selected;
-  final VoidCallback onTap;
-  final VoidCallback onClose;
-
-  @override
-  Widget build(BuildContext context) => ListenableBuilder(
-    listenable: session,
-    builder: (context, _) {
-      // A dead session keeps its chip until it is dismissed: its scrollback is the only record
-      // of why it died, and closing it automatically would erase that at the worst moment.
-      final live = session.isOpen;
-      final colour = live ? OmniColors.green : OmniColors.red;
-
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 3),
-        child: Tooltip(
-          // The chip is too narrow for the age, and Kotlin shows it in the session dropdown. A
-          // tooltip is the equivalent surface here: secondary detail, on demand, without spending
-          // width that the session name needs.
-          message:
-              '${session.serverName}\n'
-              'Started ${formatSessionAge(session.startedAt)} ago',
-          child: InkWell(
-            key: ValueKey('shell.session.${session.id}'),
-            onTap: onTap,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              decoration: BoxDecoration(
-                color: selected ? const Color(0xFF16202F) : Colors.transparent,
-                borderRadius: BorderRadius.circular(4),
-                border: Border.all(color: selected ? OmniColors.cyan : const Color(0xFF243044)),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 6,
-                    height: 6,
-                    decoration: BoxDecoration(color: colour, shape: BoxShape.circle),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    session.serverName,
-                    style: const TextStyle(
-                      fontFamily: OmniFonts.mono,
-                      fontSize: 11,
-                      color: Color(0xFFC8D4E8),
-                    ),
-                  ),
-                  const SizedBox(width: 4),
-                  InkWell(
-                    key: ValueKey('shell.session.${session.id}.close'),
-                    onTap: onClose,
-                    child: const Icon(Icons.close, size: 13, color: Color(0xFF7C8AA5)),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      );
-    },
-  );
 }
 
 // ── the live terminal ─────────────────────────────────────────────────────────
 
 class _ActiveTerminal extends StatefulWidget {
-  const _ActiveTerminal({required this.vm, required this.session, this.showStatus = true});
+  const _ActiveTerminal({required this.vm, required this.session});
 
   final ShellViewModel vm;
   final ShellSession session;
-  final bool showStatus;
 
   @override
   State<_ActiveTerminal> createState() => _ActiveTerminalState();
@@ -1083,10 +1449,7 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
         }
         return Column(
           children: [
-            if (widget.showStatus ||
-                !session.isOpen ||
-                session.controlRefreshing ||
-                session.paneChangePending)
+            if (!session.isOpen || session.controlRefreshing || session.paneChangePending)
               _TerminalStatusRow(vm: widget.vm, session: session),
             if (session.controlRefreshError != null)
               Padding(
@@ -1272,14 +1635,6 @@ class _TerminalStatusRow extends StatelessWidget {
               onPressed: () => vm.refreshControlActivePane(session),
               child: const Text('Retry pane', style: TextStyle(fontSize: 11)),
             ),
-          if (!ended)
-            _Toggle(
-              label: 'RO',
-              tooltip: 'Read-only: refuse every keystroke',
-              active: session.readOnly,
-              keyName: 'shell.readOnly',
-              onTap: () => session.setReadOnly(!session.readOnly),
-            ),
           if (ended)
             if (session.endReason == ShellSessionEnd.disconnected && !session.reconnecting)
               TextButton(
@@ -1319,47 +1674,6 @@ class _TerminalStatusRow extends StatelessWidget {
         };
 }
 
-class _Toggle extends StatelessWidget {
-  const _Toggle({
-    required this.label,
-    required this.tooltip,
-    required this.active,
-    required this.keyName,
-    required this.onTap,
-  });
-
-  final String label;
-  final String tooltip;
-  final bool active;
-  final String keyName;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) => Tooltip(
-    message: tooltip,
-    child: InkWell(
-      key: ValueKey(keyName),
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: active ? OmniColors.amber.withValues(alpha: 0.2) : Colors.transparent,
-          borderRadius: BorderRadius.circular(3),
-          border: Border.all(color: active ? OmniColors.amber : const Color(0xFF243044)),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontFamily: OmniFonts.mono,
-            fontSize: 10,
-            color: active ? OmniColors.amber : const Color(0xFF7C8AA5),
-          ),
-        ),
-      ),
-    ),
-  );
-}
-
 /// Two terminals at once, the app's headline Shell feature.
 ///
 /// Each pane is an ordinary [_ActiveTerminal]; nothing about a session changes because it is in a
@@ -1377,18 +1691,17 @@ class _SplitTerminals extends StatelessWidget {
   Widget build(BuildContext context) {
     final panes = [
       Expanded(
-        child: _FocusablePane(paneIndex: 1, vm: vm, session: first, focused: true),
+        child: _FocusablePane(paneIndex: 1, vm: vm, session: first, focused: first == vm.current),
       ),
       const _SplitDivider(),
       Expanded(
-        child: _FocusablePane(paneIndex: 2, vm: vm, session: second, focused: false),
+        child: _FocusablePane(paneIndex: 2, vm: vm, session: second, focused: second == vm.current),
       ),
     ];
 
     return Column(
       key: const ValueKey('shell.splitView'),
       children: [
-        _SplitControls(vm: vm),
         Expanded(
           child: vm.splitStacked ? Column(children: panes) : Row(children: panes),
         ),
@@ -1442,47 +1755,6 @@ class _FocusablePane extends StatelessWidget {
           border: Border.all(color: focused ? OmniColors.cyan : Colors.transparent),
         ),
         child: _ActiveTerminal(vm: vm, session: session),
-      ),
-    );
-  }
-}
-
-class _SplitControls extends StatelessWidget {
-  const _SplitControls({required this.vm});
-
-  final ShellViewModel vm;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      key: const ValueKey('shell.splitControls'),
-      height: 34,
-      color: const Color(0xFF0B1017),
-      padding: const EdgeInsets.symmetric(horizontal: 8),
-      child: Row(
-        children: [
-          TextButton.icon(
-            key: const ValueKey('shell.split.axis'),
-            icon: Icon(
-              vm.splitStacked ? Icons.swap_vert : Icons.swap_horiz,
-              size: 16,
-              color: OmniColors.cyan,
-            ),
-            // Named for what the layout *is*, matching the Kotlin's own chips, so the button says
-            // the current state rather than the action.
-            label: Text(
-              vm.splitStacked ? 'STACK' : 'COLS',
-              style: const TextStyle(fontSize: 11, color: OmniColors.cyan),
-            ),
-            onPressed: vm.toggleSplitAxis,
-          ),
-          const Spacer(),
-          TextButton(
-            key: const ValueKey('shell.split.single'),
-            onPressed: vm.unsplit,
-            child: const Text('SINGLE', style: TextStyle(fontSize: 11, color: OmniColors.cyan)),
-          ),
-        ],
       ),
     );
   }

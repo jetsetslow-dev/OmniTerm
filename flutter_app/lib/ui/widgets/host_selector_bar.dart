@@ -24,6 +24,9 @@ class HostSelectorBar extends StatelessWidget {
     required this.selected,
     required this.onChanged,
     this.labelPrefix = '',
+    this.leading,
+    this.trailing,
+    this.enabled = true,
   });
 
   /// Prefix for this bar's widget keys, so each screen keeps its own stable identifiers.
@@ -35,6 +38,9 @@ class HostSelectorBar extends StatelessWidget {
 
   /// Optional text before the host name, e.g. Infra's `Containers · `.
   final String labelPrefix;
+  final Widget? leading;
+  final Widget? trailing;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
@@ -53,7 +59,7 @@ class HostSelectorBar extends StatelessWidget {
           child: InkWell(
             key: ValueKey(keyPrefix),
             borderRadius: BorderRadius.circular(8),
-            onTap: hosts.isEmpty ? null : () => _showHosts(anchorContext),
+            onTap: !enabled || hosts.isEmpty ? null : () => _showHosts(anchorContext),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               child: _closedLabel(context, selected, display, accent, muted),
@@ -146,6 +152,7 @@ class HostSelectorBar extends StatelessWidget {
     return Row(
       key: ValueKey('$keyPrefix.label.${host.id}'),
       children: [
+        if (leading != null) ...[leading!, const SizedBox(width: 8)],
         _StatusDot(online: host.status == 'online', color: accent),
         const SizedBox(width: 8),
         Flexible(
@@ -170,15 +177,18 @@ class HostSelectorBar extends StatelessWidget {
           ),
         ),
         const SizedBox(width: 8),
-        Text(
-          'HOST',
-          style: _labelStyle(
-            context,
-            10,
-            letterSpacing: 1,
-          ).copyWith(fontWeight: FontWeight.bold, color: accent),
-        ),
-        const SizedBox(width: 8),
+        if (trailing != null)
+          trailing!
+        else
+          Text(
+            'HOST',
+            style: _labelStyle(
+              context,
+              10,
+              letterSpacing: 1,
+            ).copyWith(fontWeight: FontWeight.bold, color: accent),
+          ),
+        if (trailing == null) const SizedBox(width: 8),
         Icon(Icons.arrow_drop_down, color: accent, semanticLabel: 'Switch host'),
       ],
     );

@@ -13,6 +13,7 @@ import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/shell/shell_screen.dart';
 import 'package:omniterm/ui/view_model/app_lock_controller.dart';
 import 'package:omniterm/ui/widgets/app_lock_gate.dart';
+import 'package:omniterm/ui/widgets/popup_scroll_behavior.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/platform/session_service.dart';
@@ -98,6 +99,7 @@ void main() {
           ChangeNotifierProvider<ShellViewModel>.value(value: vm),
         ],
         child: MaterialApp(
+          scrollBehavior: const PopupScrollBehavior(),
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
           home: MediaQuery(
             data: MediaQueryData(
@@ -138,6 +140,107 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('shell.connect')));
     await tester.pumpAndSettle();
   }
+
+  testWidgets('Kotlin terminal header shows host identity above session actions', (tester) async {
+    final id = await repo.insertServer(server(name: 'nas'));
+    await pump(tester, size: const Size(360, 780));
+    await connect(tester);
+    expect(find.text('TERM'), findsOneWidget);
+    expect(find.text('CURRENT'), findsOneWidget);
+    expect(find.byKey(ValueKey('shell.host.detail.$id')), findsOneWidget);
+    for (final label in ['OPEN', 'BG', 'SPLIT', '🔓 INPUT', '⋮ OPT', 'DISC']) {
+      expect(find.text(label), findsOneWidget);
+    }
+    final host = tester.getRect(find.byKey(const ValueKey('shell.host')));
+    final actions = tester.getRect(find.byKey(const ValueKey('shell.header.actions')));
+    expect(actions.top, greaterThanOrEqualTo(host.bottom));
+    await tester.tap(find.byKey(const ValueKey('shell.options')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('transcript.close')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('transcript.close')));
+    await tester.pumpAndSettle();
+    await finish(tester);
+  });
+
+  testWidgets('header and OPEN overflow cues stay usable at large phone text', (tester) async {
+    final id = await repo.insertServer(server(name: 'nas'));
+    for (var i = 0; i < 12; i++) {
+      await repo.upsertPersistentSession(
+        PersistentSessionsCompanion.insert(
+          tmuxName: 'fixture-menu-$i',
+          serverId: id,
+          serverName: 'nas',
+          createdAt: 1,
+          backgroundedAt: 1,
+        ),
+      );
+    }
+    await pump(tester, size: const Size(320, 640), textScale: 2);
+    await connect(tester);
+    expect(tester.takeException(), isNull);
+    expect(find.byKey(const ValueKey('shell.disconnect')).hitTestable(), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('shell.open')));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('↓ More below'), findsOneWidget);
+    expect(find.text('↑ More above'), findsNothing);
+    await tester.drag(find.byType(SingleChildScrollView).last, const Offset(0, -180));
+    await tester.pumpAndSettle();
+    expect(find.text('↑ More above'), findsOneWidget);
+    Navigator.pop(tester.element(find.text('↑ More above')));
+    await tester.pumpAndSettle();
+    await finish(tester);
+  });
+
+  testWidgets('header follows pane focus without moving either terminal', (tester) async {
+    await repo.insertServer(server(name: 'nas'));
+    await repo.insertServer(server(name: 'pi'));
+    await pump(tester);
+    await connect(tester);
+    final first = vm.current!;
+    await vm.connect(app.servers.last);
+    vm.splitWith(first.id);
+    await tester.pumpAndSettle();
+    final pane = find.byKey(ValueKey('shell.pane.${first.id}'));
+    final before = tester.getRect(pane);
+    vm.focusPane(first.id);
+    await tester.pumpAndSettle();
+    try {
+      expect(find.text('P2'), findsOneWidget);
+      expect(find.text('FOCUSED'), findsOneWidget);
+      expect(tester.getRect(pane), before);
+      await tester.tap(find.byKey(const ValueKey('shell.readOnly')));
+      await tester.pumpAndSettle();
+      expect(first.readOnly, isTrue);
+      expect(vm.sessions.last.readOnly, isFalse);
+    } finally {
+      await finish(tester);
+    }
+  });
+
+  testWidgets('header background keeps SSH live and OPEN restores the same session', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester);
+    await connect(tester);
+    final session = vm.current!;
+    await tester.tap(find.byKey(const ValueKey('shell.background')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('shell.background.confirm')));
+    await tester.pumpAndSettle();
+    expect(vm.current, isNull);
+    expect(vm.sessions, contains(session));
+    expect(transport.opened.single.closeCalled, isFalse);
+    await tester.tap(find.byKey(const ValueKey('shell.open')));
+    await tester.pumpAndSettle();
+    expect(find.text('Background sessions'), findsOneWidget);
+    await tester.tap(find.byKey(ValueKey('shell.session.${session.id}')));
+    await tester.pumpAndSettle();
+    expect(vm.current, same(session));
+    expect(transport.opened, hasLength(1));
+    await finish(tester);
+  });
 
   testWidgets('saved tmux resume shows progress with another terminal already open', (
     tester,
@@ -267,7 +370,7 @@ void main() {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester);
 
-      expect(find.text('nas'), findsOneWidget);
+      expect(find.text('nas'), findsNWidgets(2));
       expect(find.text('root@10.0.0.1:22'), findsOneWidget);
       await finish(tester);
     });
@@ -320,7 +423,7 @@ void main() {
       await vm.connect(target, confirmedOffline: true);
       await tester.pumpAndSettle();
 
-      expect(find.text('offline-nas'), findsOneWidget);
+      expect(find.text('offline-nas'), findsNWidgets(2));
       expect(find.byKey(const ValueKey('shell.error')), findsOneWidget);
       expect(find.textContaining('Connection refused'), findsOneWidget);
       expect(
@@ -1172,20 +1275,29 @@ void main() {
       await repo.insertServer(server(name: 'pi'));
       await pump(tester);
       await connect(tester);
+      await tester.tap(find.byKey(const ValueKey('shell.open')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('shell.newSession')));
       await tester.pumpAndSettle();
     }
 
-    testWidgets('splitting needs a second session to show', (tester) async {
+    testWidgets('split remains discoverable and explains when nothing is available', (
+      tester,
+    ) async {
       await repo.insertServer(server(name: 'nas'));
       await pump(tester);
       await connect(tester);
 
       expect(
         find.byKey(const ValueKey('shell.split')),
-        findsNothing,
-        reason: 'one terminal cannot be split against anything',
+        findsOneWidget,
+        reason: 'Kotlin keeps its SPLIT action discoverable',
       );
+      await tester.tap(find.byKey(const ValueKey('shell.split')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('shell.split.none')), findsOneWidget);
+      Navigator.pop(tester.element(find.byKey(const ValueKey('shell.split.none'))));
+      await tester.pumpAndSettle();
       await finish(tester);
     });
 
@@ -1233,9 +1345,14 @@ void main() {
 
       expect(
         find.byKey(const ValueKey('shell.split')),
-        findsNothing,
-        reason: 'the only host is already open, so there is nothing to add',
+        findsOneWidget,
+        reason: 'Kotlin keeps SPLIT visible even when this host is already open',
       );
+      await tester.tap(find.byKey(const ValueKey('shell.split')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('shell.split.none')), findsOneWidget);
+      Navigator.pop(tester.element(find.byKey(const ValueKey('shell.split.none'))));
+      await tester.pumpAndSettle();
       await finish(tester);
     });
 
@@ -1358,10 +1475,10 @@ void main() {
       await tester.tap(find.byKey(ValueKey('shell.split.pick.${vm.sessions.first.id}')));
       await tester.pumpAndSettle();
 
-      expect(find.text('STACK'), findsOneWidget);
+      expect(find.text('⬌ COLS'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('shell.split.axis')));
       await tester.pumpAndSettle();
-      expect(find.text('COLS'), findsOneWidget, reason: 'the button names the layout, not the act');
+      expect(find.text('⬍ STACK'), findsOneWidget, reason: 'Kotlin names the next layout action');
 
       await tester.tap(find.byKey(const ValueKey('shell.split.single')));
       await tester.pumpAndSettle();

@@ -81,6 +81,7 @@ class ShellViewModel extends ChangeNotifier {
   final SshTransport? transport;
 
   final _sessionCredentials = <ShellSession, SshCredentials>{};
+  final _sessionHosts = <ShellSession, Server>{};
   final _paneAltCache = <ShellSession, ({bool active, int checkedAtMs})>{};
   final _reconnectRuns = <ShellSession, _ReconnectRun>{};
 
@@ -218,6 +219,7 @@ class ShellViewModel extends ChangeNotifier {
   StreamSubscription<SessionServiceAction>? _actionsSub;
   bool _terminalVisible = true;
   List<BackgroundSession>? _lastBackgroundSessions;
+  Future<void>? _backgroundSyncWork;
 
   void setTerminalVisible(bool visible) {
     if (_terminalVisible == visible) return;
@@ -245,7 +247,7 @@ class ShellViewModel extends ChangeNotifier {
   ///
   /// Called after every change to the list rather than only on backgrounding: the notification is
   /// the user's view of what this app is holding open, and one that lags reality is worse than none.
-  void _syncBackgroundSessions() {
+  Future<void> _syncBackgroundSessions() {
     final live = [
       for (final session in _sessions)
         if (session.isOpen || session.reconnecting)
@@ -256,26 +258,37 @@ class ShellViewModel extends ChangeNotifier {
     // enabled, protection starts as soon as a session opens, before the lifecycle can race the app
     // into the background.
     final shouldKeepAlive =
-        live.isNotEmpty && (!_terminalVisible || preferences.backgroundKeepAlive);
+        live.isNotEmpty &&
+        (!_terminalVisible ||
+            preferences.backgroundKeepAlive ||
+            live.any((s) => _backgroundedAt.containsKey(s.id)));
     final desired = shouldKeepAlive ? live : const <BackgroundSession>[];
     // Terminal repaint notifications are not service-state changes. Sending a foreground start
     // for every output frame floods Android and races rapid background/foreground transitions.
-    if (listEquals(_lastBackgroundSessions, desired)) return;
+    if (listEquals(_lastBackgroundSessions, desired)) {
+      return _backgroundSyncWork ?? Future<void>.value();
+    }
     _lastBackgroundSessions = desired;
     final operation = shouldKeepAlive ? sessionService?.sync(live) : sessionService?.stop();
     if (operation != null) {
-      unawaited(
-        operation.then((result) {
-          // Clearing the cache is what lets the next change retry; it is not, on its own, telling
-          // anyone. A keep-alive that Android refused used to end here in silence, leaving the user
-          // to believe their shells were protected in the background when they were not.
-          if (result.failed && identical(_lastBackgroundSessions, desired)) {
-            _lastBackgroundSessions = null;
-          }
-          _reportBackgroundServiceResult(result, keepAlive: shouldKeepAlive);
-        }),
-      );
+      late final Future<void> work;
+      work = operation
+          .then((result) {
+            // Clearing the cache is what lets the next change retry; it is not, on its own, telling
+            // anyone. A keep-alive that Android refused used to end here in silence, leaving the user
+            // to believe their shells were protected in the background when they were not.
+            if (result.failed && identical(_lastBackgroundSessions, desired)) {
+              _lastBackgroundSessions = null;
+            }
+            _reportBackgroundServiceResult(result, keepAlive: shouldKeepAlive);
+          })
+          .whenComplete(() {
+            if (identical(_backgroundSyncWork, work)) _backgroundSyncWork = null;
+          });
+      _backgroundSyncWork = work;
+      return work;
     }
+    return Future<void>.value();
   }
 
   /// The last background-service failure the user has not dismissed, or null.
@@ -388,6 +401,8 @@ class ShellViewModel extends ChangeNotifier {
     if (session != null) {
       final owner = _app.servers.where((s) => s.id == session.serverId).firstOrNull;
       if (owner != null) return owner;
+      final temporary = _sessionHosts[session];
+      if (temporary != null) return temporary;
     }
     final online = connectableServers;
     return online.where((s) => s.id == _app.selectedServerId).firstOrNull ??
@@ -421,17 +436,87 @@ class ShellViewModel extends ChangeNotifier {
   }
 
   String? _currentId;
+  bool _showConnectPrompt = false;
+  final Map<String, int> _backgroundedAt = {};
+  int? backgroundedAtFor(String id) => _backgroundedAt[id];
+  bool _isBackgroundingSession = false;
+  bool get isBackgroundingSession => _isBackgroundingSession;
 
-  ShellSession? get current =>
-      _sessions.where((s) => s.id == _currentId).firstOrNull ??
-      (_sessions.isNotEmpty ? _sessions.last : null);
+  ShellSession? get current => _showConnectPrompt
+      ? null
+      : _sessions.where((s) => s.id == _currentId).firstOrNull ??
+            (_sessions.isNotEmpty ? _sessions.last : null);
 
   void select(String id) {
     final session = _sessions.where((s) => s.id == id).firstOrNull;
     if (session == null) return;
-    _currentId = id;
-    _safeNotify();
+    _selectWithoutValidation(session);
     if (session.tmuxName != null) unawaited(_validateExistingTmux(session));
+  }
+
+  void _selectWithoutValidation(ShellSession session) {
+    if (isSplit) {
+      if (session.id == _splitId) {
+        _splitId = _currentId;
+      } else if (focusedPane == 1) {
+        _splitFirstId = session.id;
+      }
+    }
+    _showConnectPrompt = false;
+    _backgroundedAt.remove(session.id);
+    _currentId = session.id;
+    _safeNotify();
+    unawaited(_syncBackgroundSessions());
+  }
+
+  /// Detach tmux or keep plain SSH alive while returning to the connection prompt.
+  Future<bool> backgroundSession(ShellSession session) async {
+    if (_disposed ||
+        _isBackgroundingSession ||
+        _isLeavingSessions ||
+        !_sessions.contains(session)) {
+      return false;
+    }
+    final other = isSplit && current == session ? splitSession : null;
+    _isBackgroundingSession = true;
+    _safeNotify();
+    try {
+      if (session.tmuxName != null) {
+        if (!await leaveResumable(session)) return false;
+      } else {
+        _backgroundedAt[session.id] = DateTime.now().millisecondsSinceEpoch;
+      }
+      if (other != null && _sessions.contains(other)) {
+        _currentId = other.id;
+        _showConnectPrompt = false;
+      } else {
+        _currentId = null;
+        _showConnectPrompt = true;
+      }
+      _splitId = null;
+      await _syncBackgroundSessions();
+      return true;
+    } catch (error) {
+      _error = 'Could not send this session to background: $error';
+      return false;
+    } finally {
+      _isBackgroundingSession = false;
+      _safeNotify();
+    }
+  }
+
+  Future<void> switchTerminalHost(Server server) async {
+    final previous = current;
+    if (previous != null && previous.serverId != server.id) {
+      if (!await backgroundSession(previous)) return;
+    }
+    _app.selectedServerId = server.id;
+    final existing = _sessions.where((s) => s.serverId == server.id && s.isOpen).firstOrNull;
+    if (existing != null) {
+      resumeExisting(existing.id);
+    } else {
+      await connect(server);
+    }
   }
 
   int _terminalResumeRevision = 0;
@@ -514,6 +599,7 @@ class ShellViewModel extends ChangeNotifier {
   /// resolving — [splitSession] returns null and the view falls back to single, instead of the
   /// screen holding a reference to a terminal that no longer exists.
   String? _splitId;
+  String? _splitFirstId;
 
   /// True when the panes stack vertically. The Kotlin calls these `⬍ STACK` and `⬌ COLS`.
   bool _splitStacked = true;
@@ -523,6 +609,10 @@ class ShellViewModel extends ChangeNotifier {
       _splitId == null ? null : _sessions.where((s) => s.id == _splitId).firstOrNull;
 
   bool get isSplit => splitSession != null && current != null && splitSession != current;
+  int get focusedPane => isSplit && current?.id != _splitFirstId ? 2 : 1;
+  ShellSession? get splitFirstSession =>
+      _sessions.where((s) => s.id == _splitFirstId).firstOrNull ?? current;
+  ShellSession? get splitSecondSession => focusedPane == 1 ? splitSession : current;
 
   /// Sessions that could occupy the second pane: everything except the one already in the first.
   List<ShellSession> get splitCandidates => _sessions.where((s) => s.id != current?.id).toList();
@@ -530,6 +620,7 @@ class ShellViewModel extends ChangeNotifier {
   /// Shows [id] in the second pane.
   void splitWith(String id) {
     if (id == current?.id) return;
+    _splitFirstId = current?.id;
     _splitId = id;
     _offerSplitShortcut();
     _safeNotify();
@@ -550,8 +641,8 @@ class ShellViewModel extends ChangeNotifier {
   void _offerSplitShortcut() {
     final helper = shortcuts;
     if (helper == null) return;
-    final first = current;
-    final second = splitSession;
+    final first = splitFirstSession;
+    final second = splitSecondSession;
     if (first == null || second == null) return;
     final firstServer = _app.servers.where((server) => server.id == first.serverId).firstOrNull;
     final secondServer = _app.servers.where((server) => server.id == second.serverId).firstOrNull;
@@ -598,6 +689,7 @@ class ShellViewModel extends ChangeNotifier {
   void unsplit() {
     if (_splitId == null) return;
     _splitId = null;
+    _splitFirstId = null;
     _safeNotify();
   }
 
@@ -612,13 +704,10 @@ class ShellViewModel extends ChangeNotifier {
   /// split view "the current session" has to mean "the pane the user last touched", not whichever
   /// pane happens to be first.
   void focusPane(String id) {
-    if (!_sessions.any((s) => s.id == id)) return;
+    final session = _sessions.where((s) => s.id == id).firstOrNull;
+    if (session == null) return;
     if (id == _currentId) return;
-    // Swap rather than replace: the pane being focused becomes the primary, and the one that was
-    // primary keeps its place in the split instead of vanishing.
-    if (id == _splitId) _splitId = _currentId;
-    _currentId = id;
-    _safeNotify();
+    _selectWithoutValidation(session);
   }
 
   bool _connecting = false;
@@ -746,7 +835,7 @@ class ShellViewModel extends ChangeNotifier {
         .where((s) => s.tmuxName == row.tmuxName && s.serverId == row.serverId)
         .firstOrNull;
     if (existing != null) {
-      _currentId = existing.id;
+      _selectWithoutValidation(existing);
       await _validateExistingTmux(existing);
       return;
     }
@@ -1136,7 +1225,10 @@ class ShellViewModel extends ChangeNotifier {
       session.addListener(_syncReachabilityEvidence);
       _sessions.add(session);
       _sessionCredentials[session] = creds;
+      _sessionHosts[session] = server;
+      if (_splitId != null && _splitFirstId == _currentId) _splitFirstId = session.id;
       _currentId = session.id;
+      _showConnectPrompt = false;
       _failedConnectTarget = null;
       _syncReachabilityEvidence();
 
@@ -1229,6 +1321,7 @@ class ShellViewModel extends ChangeNotifier {
   void _close(ShellSession session, {bool saveRecovery = true}) {
     _reconnectRuns.remove(session)?.timer?.cancel();
     _sessionCredentials.remove(session);
+    _sessionHosts.remove(session);
     _paneAltCache.remove(session);
     session.reconnecting = false;
     final tmuxName = session.tmuxName;
@@ -1245,6 +1338,7 @@ class ShellViewModel extends ChangeNotifier {
     session.removeListener(_syncBackgroundSessions);
     session.removeListener(_syncReachabilityEvidence);
     _sessions.remove(session);
+    _backgroundedAt.remove(session.id);
     if (_splitId == session.id) _splitId = null;
     if (_currentId == session.id) {
       _currentId = _sessions.isEmpty ? null : _sessions.last.id;
@@ -1736,6 +1830,8 @@ class ShellViewModel extends ChangeNotifier {
     }
     _reconnectRuns.clear();
     _sessionCredentials.clear();
+    _sessionHosts.clear();
+    _backgroundedAt.clear();
     _paneAltCache.clear();
     _app.removeListener(_onAppChanged);
     unawaited(_actionsSub?.cancel());

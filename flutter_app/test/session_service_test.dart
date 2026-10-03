@@ -191,6 +191,45 @@ void main() {
       return vm = ShellViewModel(app, transport: transport, sessionService: service);
     }
 
+    test('explicit background awaits the existing foreground startup', () async {
+      await repo.insertServer(server(name: 'nas'));
+      await repo.insertSetting('background_keep_alive', 'true');
+      await boot();
+      final gate = Completer<void>();
+      service.syncGate = gate;
+      await vm.connect(vm.server!);
+      final pending = vm.backgroundSession(vm.current!);
+      await Future<void>.delayed(Duration.zero);
+      try {
+        expect(vm.isBackgroundingSession, isTrue);
+        expect(service.synced, hasLength(1));
+      } finally {
+        gate.complete();
+        await pending;
+      }
+    });
+
+    test('explicit per-session background waits for protection and preserves plain SSH', () async {
+      await repo.insertServer(server(name: 'nas'));
+      await boot();
+      await vm.connect(vm.server!);
+      final session = vm.current!;
+      final gate = Completer<void>();
+      service.syncGate = gate;
+      final pending = vm.backgroundSession(session);
+      await Future<void>.delayed(Duration.zero);
+      expect(vm.isBackgroundingSession, isTrue);
+      expect(vm.current, isNull);
+      expect(service.synced.last.single.id, session.id);
+      expect(transport.opened.single.closeCalled, isFalse);
+      gate.complete();
+      expect(await pending, isTrue);
+      expect(vm.isBackgroundingSession, isFalse);
+      vm.resumeExisting(session.id);
+      expect(vm.current, same(session));
+      expect(transport.opened, hasLength(1));
+    });
+
     test('opening a session tells the platform about it', () async {
       await repo.insertServer(server(name: 'nas'));
       await repo.insertSetting('background_keep_alive', 'true');

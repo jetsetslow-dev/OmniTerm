@@ -17,6 +17,7 @@ class FakeSessionService implements SessionService {
   /// What the platform answers. Defaults to success; a test sets it to stage a refusal or an
   /// unsupported platform.
   SessionServiceResult result = const SessionServiceResult.ok();
+  Completer<void>? syncGate;
 
   @override
   Future<SessionServiceResult> sync(List<BackgroundSession> sessions) async {
@@ -25,6 +26,7 @@ class FakeSessionService implements SessionService {
     } else {
       synced.add(List.of(sessions));
     }
+    if (syncGate != null) await syncGate!.future;
     return result;
   }
 

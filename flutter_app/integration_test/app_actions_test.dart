@@ -326,7 +326,14 @@ void main() {
         findsOneWidget,
         reason: 'the refused real SSH attempt must explain why it returned to the shell page',
       );
-      expect(find.text(name), findsOneWidget, reason: 'the failed target must remain identified');
+      expect(
+        find.descendant(
+          of: find.byKey(ValueKey('shell.host.label.${saved.id}')),
+          matching: find.text(name),
+        ),
+        findsOneWidget,
+        reason: 'the header must identify the failed target above its connection prompt',
+      );
       expect(find.text('Retry'), findsOneWidget, reason: 'the failed attempt must be retryable');
     });
   });
