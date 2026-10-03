@@ -209,10 +209,41 @@ void main() {
       expect(find.text('P2'), findsOneWidget);
       expect(find.text('FOCUSED'), findsOneWidget);
       expect(tester.getRect(pane), before);
+      vm.toggleCtrl();
+      vm.toggleAlt();
+      vm.toggleShift();
       await tester.tap(find.byKey(const ValueKey('shell.readOnly')));
       await tester.pumpAndSettle();
       expect(first.readOnly, isTrue);
-      expect(vm.sessions.last.readOnly, isFalse);
+      expect(vm.sessions.last.readOnly, isTrue, reason: 'Kotlin protects both terminal panes');
+      expect(vm.hasModifier, isFalse, reason: 'read-only mode cancels armed input modifiers');
+    } finally {
+      await finish(tester);
+    }
+  });
+
+  testWidgets('read-only can be enabled before connecting and protects new sessions', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas'));
+    await pump(tester);
+    try {
+      await tester.tap(find.byKey(const ValueKey('shell.readOnly')));
+      await tester.pumpAndSettle();
+      expect(find.text('🔒 VIEW'), findsOneWidget);
+      await connect(tester);
+      expect(vm.current!.readOnly, isTrue);
+      expect(vm.typeText('do not send'), isFalse);
+      expect(transport.opened.single.writes, isEmpty);
+      await vm.connect(app.servers.single);
+      await tester.pumpAndSettle();
+      expect(vm.sessions, hasLength(2));
+      expect(vm.sessions.every((session) => session.readOnly), isTrue);
+      await tester.tap(find.byKey(const ValueKey('shell.readOnly')));
+      await tester.pumpAndSettle();
+      expect(vm.sessions.every((session) => !session.readOnly), isTrue);
+      expect(vm.typeText('allowed'), isTrue);
+      expect(transport.opened.last.writes.last, 'allowed'.codeUnits);
     } finally {
       await finish(tester);
     }

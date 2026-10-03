@@ -441,6 +441,19 @@ class ShellViewModel extends ChangeNotifier {
   int? backgroundedAtFor(String id) => _backgroundedAt[id];
   bool _isBackgroundingSession = false;
   bool get isBackgroundingSession => _isBackgroundingSession;
+  bool _terminalReadOnly = false;
+  bool get terminalReadOnly => _terminalReadOnly;
+
+  /// Kotlin's runtime display mode protects every pane, including sessions opened afterward.
+  void setTerminalReadOnly(bool enabled) {
+    if (_disposed) return;
+    _terminalReadOnly = enabled;
+    if (enabled) _clearModifiers();
+    for (final session in _sessions) {
+      session.setReadOnly(enabled);
+    }
+    _safeNotify();
+  }
 
   ShellSession? get current => _showConnectPrompt
       ? null
@@ -1219,6 +1232,7 @@ class ShellViewModel extends ChangeNotifier {
         }
       }
       // The parser must not block on repaint; the session buffers input until the pane is ready.
+      session.setReadOnly(_terminalReadOnly);
       session.onPaneChanged = (changed) => unawaited(refreshControlActivePane(changed));
       session.addListener(_onSessionChanged);
       session.addListener(_syncBackgroundSessions);

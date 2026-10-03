@@ -770,6 +770,7 @@ class _TerminalHeaderState extends State<_TerminalHeader> {
     final session = vm.current;
     final scheme = Theme.of(context).colorScheme;
     final persistent = session?.tmuxName != null;
+    final readOnly = session?.readOnly ?? vm.terminalReadOnly;
     return Container(
       key: const ValueKey('shell.sessionBar'),
       color: scheme.surface.computeLuminance() > .5 ? scheme.surface : scheme.surfaceContainerHigh,
@@ -850,20 +851,16 @@ class _TerminalHeaderState extends State<_TerminalHeader> {
                     session != null && !busy ? () => _openSplitPicker(context, vm) : null,
                   ),
                 _action(
-                  session?.readOnly == true ? '🔒 VIEW' : '🔓 INPUT',
+                  readOnly ? '🔒 VIEW' : '🔓 INPUT',
                   'shell.readOnly',
-                  session?.readOnly == true
-                      ? 'Enable terminal input'
-                      : 'Enable read-only terminal mode',
-                  session?.readOnly == true
-                      ? scheme.onTertiaryContainer
-                      : scheme.onSecondaryContainer,
-                  session?.readOnly == true ? scheme.tertiaryContainer : scheme.secondaryContainer,
-                  session == null || busy
+                  readOnly ? 'Enable terminal input' : 'Enable read-only terminal mode',
+                  readOnly ? scheme.onTertiaryContainer : scheme.onSecondaryContainer,
+                  readOnly ? scheme.tertiaryContainer : scheme.secondaryContainer,
+                  busy
                       ? null
                       : () {
-                          session.setReadOnly(!session.readOnly);
-                          if (session.readOnly) {
+                          vm.setTerminalReadOnly(!readOnly);
+                          if (!readOnly) {
                             FocusManager.instance.primaryFocus?.unfocus();
                             SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
                           }
