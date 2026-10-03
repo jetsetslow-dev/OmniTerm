@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Alpha mask for themed icons. This follows the existing infinity/terminal mark; it is not used
+  for the normal full-colour launcher icon or the biometric system bitmap. A dedicated single-colour
+  layer prevents Android 13+ from interpreting the full-colour, semi-transparent PNG as a mask.
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M18,54 C18,31 40,30 54,54 C68,78 90,77 90,54 C90,31 68,30 54,54 C40,78 18,77 18,54"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="8" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M38,45 L48,54 L38,63 M58,63 L71,63"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeWidth="5" />
+</vector>

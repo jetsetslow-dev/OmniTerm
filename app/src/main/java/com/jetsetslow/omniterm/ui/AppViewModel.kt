@@ -829,6 +829,8 @@ class AppViewModel @JvmOverloads constructor(
 ) : AndroidViewModel(application) {
     private val db = AppDatabase.getDatabase(application)
     private val repository = AppRepository(db)
+    // Initialize before init launches the startup read on Main.immediate.
+    private val persistentSessionMutationMutex = Mutex()
     private val freePlayStoreLimit = 1
 
     // NAVIGATION SYSTEM with full backstack history
@@ -2140,8 +2142,12 @@ class AppViewModel @JvmOverloads constructor(
         startNetworkShareAvailabilityProbe()
 
         viewModelScope.launch {
-            restorablePersistentSessions = withContext(Dispatchers.IO) {
-                repository.getPersistentSessions()
+            // Reading and publishing must share the mutation lock: a startup snapshot taken
+            // before a leave/save must never replace the newly committed recovery entries.
+            persistentSessionMutationMutex.withLock {
+                restorablePersistentSessions = withContext(Dispatchers.IO) {
+                    repository.getPersistentSessions()
+                }
             }
         }
 
@@ -5954,8 +5960,6 @@ class AppViewModel @JvmOverloads constructor(
             }
         }
     }
-
-    private val persistentSessionMutationMutex = Mutex()
 
     private suspend fun rememberRestorablePersistentSession(shellSession: ShellSession) {
         rememberRestorablePersistentSessions(listOf(shellSession))

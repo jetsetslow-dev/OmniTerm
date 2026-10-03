@@ -1,0 +1,23 @@
+{
+  "allowedLicenses": [
+    "apache-2.0", "mit", "bsd-2-clause", "bsd-3-clause", "isc", "epl-2.0",
+    "mpl-2.0", "unicode-3.0", "ofl-1.1", "cc0-1.0", "unlicense", "zlib"
+  ],
+  "reviewedPackages": [
+    {
+      "manifest": "flutter_app/pubspec.lock",
+      "ecosystem": "PUB",
+      "name": "file_selector_android",
+      "version": "0.5.2+9",
+      "license": "LicenseRef-bad-apache-2.0-bsd-3-clause",
+      "source_repository_url": "https://github.com/flutter/packages",
+      "licenses": ["bsd-3-clause", "apache-2.0"],
+      "reviewedOn": "2026-09-12",
+      "licenseSource": "https://pub.dev/packages/file_selector_android/versions/0.5.2%2B9/license",
+      "archiveSource": "https://pub.dev/api/archives/file_selector_android-0.5.2%2B9.tar.gz",
+      "archiveSha256": "1d45e9910f68c16eb0c74f0b10097ad81aed516ea28054c027137e8f7d75e840",
+      "licenseSha256": "8e139d4c7faa5e7a76752e743a745113f46e658071733bfae4914a04da12ae0e",
+      "review": "The complete published LICENSE has Flutter's BSD-3-Clause notice followed by aFileChooser's Apache-2.0 notice (Paul Burke). Both components are already allowed; this is not a blanket approval of GitHub's non-SPDX identifier. The downloaded archive matched pubspec.lock and its LICENSE matched the installed package. Flutter retains these notices in its generated license bundle. Re-review any version, source, manifest, or identifier change."
+    }
+  ]
+}

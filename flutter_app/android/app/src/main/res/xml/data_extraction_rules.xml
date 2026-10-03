@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+   The encrypted export flow is OmniTerm's supported migration path. Android cloud backup and
+   device transfer must not transplant databases or encrypted preferences independently of the
+   non-exportable Keystore material that protects them.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="file" path="." />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="database" path="." />
+        <exclude domain="sharedpref" path="." />
+        <exclude domain="file" path="." />
+    </device-transfer>
+</data-extraction-rules>
