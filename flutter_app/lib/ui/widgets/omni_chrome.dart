@@ -42,7 +42,7 @@ class OmniAppBar extends StatelessWidget implements PreferredSizeWidget {
   final bool keepScreenOn;
   final VoidCallback onHome;
   final VoidCallback onAlerts;
-  final VoidCallback onToggleKeepScreenOn;
+  final VoidCallback? onToggleKeepScreenOn;
 
   static const double _contentHeight = 52;
 

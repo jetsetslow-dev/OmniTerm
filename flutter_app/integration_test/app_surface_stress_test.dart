@@ -27,8 +27,15 @@ import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/widgets/host_selector_bar.dart';
 import 'package:provider/provider.dart';
 
+import '../test/support/keep_screen_on_feedback_fixture.dart';
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
+
+  testWidgets(
+    'a short viewport keeps error details and recovery actions reachable',
+    exerciseKeepScreenOnErrorFixture,
+  );
 
   testWidgets('every route and subtab opens in every app theme and orientation', (tester) async {
     installErrorLocationProbe();

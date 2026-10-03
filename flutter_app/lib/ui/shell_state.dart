@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 
 /// The slice of app state the root scaffold needs.
@@ -14,6 +16,11 @@ class ShellState extends ChangeNotifier {
   String? _refreshError;
   bool _isKeepScreenOnEnabled = false;
   bool _showKeepScreenOnWarning = false;
+  bool _isSettingKeepScreenOn = false;
+  bool _requestedKeepScreenOn = false;
+  String? _keepScreenOnError;
+  Future<void>? _keepScreenOnOperation;
+  bool _disposed = false;
   bool _showAlertsPopup = false;
   int _visibleAlertCount = 0;
 
@@ -43,6 +50,9 @@ class ShellState extends ChangeNotifier {
 
   bool get isKeepScreenOnEnabled => _isKeepScreenOnEnabled;
   bool get showKeepScreenOnWarning => _showKeepScreenOnWarning;
+  bool get isSettingKeepScreenOn => _isSettingKeepScreenOn;
+  String? get keepScreenOnError => _keepScreenOnError;
+  bool get requestedKeepScreenOn => _requestedKeepScreenOn;
   bool get showAlertsPopup => _showAlertsPopup;
 
   /// Unacknowledged, unmuted alerts — 0 while alerts are disabled.
@@ -67,8 +77,9 @@ class ShellState extends ChangeNotifier {
   }
 
   void requestKeepScreenOnToggle() {
+    if (_disposed || _isSettingKeepScreenOn) return;
     if (_isKeepScreenOnEnabled) {
-      _applyKeepScreenOn(false);
+      unawaited(setKeepScreenOnDirect(false));
       return;
     }
     _showKeepScreenOnWarning = true;
@@ -76,8 +87,8 @@ class ShellState extends ChangeNotifier {
   }
 
   void confirmKeepScreenOn() {
-    _showKeepScreenOnWarning = false;
-    _applyKeepScreenOn(true);
+    if (_disposed || _isSettingKeepScreenOn) return;
+    unawaited(setKeepScreenOnDirect(true));
   }
 
   void cancelKeepScreenOnWarning() {
@@ -86,13 +97,75 @@ class ShellState extends ChangeNotifier {
     notifyListeners();
   }
 
-  void setKeepScreenOnDirect(bool enabled) => _applyKeepScreenOn(enabled);
-
-  void _applyKeepScreenOn(bool enabled) {
-    if (_isKeepScreenOnEnabled == enabled) return;
-    _isKeepScreenOnEnabled = enabled;
-    keepScreenOnSetter?.call(enabled);
+  /// Serializes platform writes, including a saved default or battery-saver change arriving while
+  /// another write is pending. The displayed flag always reflects the last acknowledged write.
+  Future<void> setKeepScreenOnDirect(bool enabled) {
+    if (_disposed) return Future<void>.value();
+    final hadFeedback = _showKeepScreenOnWarning || _keepScreenOnError != null;
+    _requestedKeepScreenOn = enabled;
+    _showKeepScreenOnWarning = false;
+    _keepScreenOnError = null;
+    if (_keepScreenOnOperation != null) {
+      notifyListeners();
+      return _keepScreenOnOperation!;
+    }
+    if (_isKeepScreenOnEnabled == enabled) {
+      if (hadFeedback) notifyListeners();
+      return Future<void>.value();
+    }
+    if (keepScreenOnSetter == null) {
+      _isKeepScreenOnEnabled = enabled;
+      notifyListeners();
+      return Future<void>.value();
+    }
+    final completion = Completer<void>();
+    _keepScreenOnOperation = completion.future;
+    _isSettingKeepScreenOn = true;
     notifyListeners();
+    unawaited(_applyKeepScreenOn(completion));
+    return completion.future;
+  }
+
+  Future<void> _applyKeepScreenOn(Completer<void> completion) async {
+    try {
+      while (!_disposed && _requestedKeepScreenOn != _isKeepScreenOnEnabled) {
+        final target = _requestedKeepScreenOn;
+        try {
+          await keepScreenOnSetter!(target);
+          if (_disposed) break;
+          _isKeepScreenOnEnabled = target;
+        } catch (error) {
+          if (_disposed) break;
+          // A newer request may already match the acknowledged state. A failure of the
+          // superseded request must not prevent applying that newer request.
+          if (target != _requestedKeepScreenOn) continue;
+          _keepScreenOnError = 'Could not ${target ? 'enable' : 'disable'} Keep screen on: $error';
+          break;
+        }
+      }
+    } finally {
+      _keepScreenOnOperation = null;
+      _isSettingKeepScreenOn = false;
+      if (!_disposed) notifyListeners();
+      completion.complete();
+    }
+  }
+
+  void retryKeepScreenOn() {
+    if (_keepScreenOnError == null || _isSettingKeepScreenOn) return;
+    unawaited(setKeepScreenOnDirect(_requestedKeepScreenOn));
+  }
+
+  void dismissKeepScreenOnError() {
+    if (_disposed || _keepScreenOnError == null) return;
+    _keepScreenOnError = null;
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
   }
 
   /// Mirrors `viewModel.updateLicenseEntitlement(...)`, which the legacy scaffold drove from the

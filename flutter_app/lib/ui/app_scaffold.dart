@@ -47,6 +47,7 @@ import 'view_model/telemetry_poller.dart';
 import 'widgets/ad_banner.dart';
 import '../domain/permission_copy.dart';
 import 'widgets/host_limit_gate.dart';
+import 'widgets/keep_screen_on_feedback.dart';
 import 'widgets/omni_chrome.dart';
 import 'widgets/omni_components.dart';
 import 'widgets/screen_swipe_area.dart';
@@ -200,6 +201,15 @@ class _AppCoreScaffoldState extends State<AppCoreScaffold> {
       );
     }
 
+    if (shell.isSettingKeepScreenOn || shell.keepScreenOnError != null) {
+      overlayBody = Column(
+        children: [
+          KeepScreenOnFeedback(shell: shell),
+          Expanded(child: overlayBody),
+        ],
+      );
+    }
+
     // A phone in landscape has tablet width but very little height. Keeping the 52dp app bar,
     // 96dp free-plan banner and bottom navigation left less than half the display for several
     // screens. The same destinations and global actions move to a scrollable side rail, while an
@@ -219,7 +229,9 @@ class _AppCoreScaffoldState extends State<AppCoreScaffold> {
                 showFreePlan: shell.showFreePlanBanner,
                 onHome: () => nav.navigateTo(Screen.servers),
                 onAlerts: shell.openAlertsPopup,
-                onToggleKeepScreenOn: shell.requestKeepScreenOnToggle,
+                onToggleKeepScreenOn: shell.isSettingKeepScreenOn
+                    ? null
+                    : shell.requestKeepScreenOnToggle,
                 onUnlock: license.launchPurchase,
               ),
               Expanded(
@@ -264,7 +276,9 @@ class _AppCoreScaffoldState extends State<AppCoreScaffold> {
                     keepScreenOn: shell.isKeepScreenOnEnabled,
                     onHome: () => nav.navigateTo(Screen.servers),
                     onAlerts: shell.openAlertsPopup,
-                    onToggleKeepScreenOn: shell.requestKeepScreenOnToggle,
+                    onToggleKeepScreenOn: shell.isSettingKeepScreenOn
+                        ? null
+                        : shell.requestKeepScreenOnToggle,
                   ),
                   if (shell.showFreePlanBanner) _FreePlanBanner(controller: license),
                 ],
@@ -438,7 +452,7 @@ class _LandscapeNav extends StatelessWidget {
   final bool showFreePlan;
   final VoidCallback onHome;
   final VoidCallback onAlerts;
-  final VoidCallback onToggleKeepScreenOn;
+  final VoidCallback? onToggleKeepScreenOn;
   final VoidCallback onUnlock;
 
   @override
@@ -570,7 +584,7 @@ class _LandscapeAction extends StatelessWidget {
   final String label;
   final IconData icon;
   final Color color;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final int badge;
 
   @override
