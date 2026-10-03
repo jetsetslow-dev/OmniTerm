@@ -539,6 +539,15 @@ object RemoteCommands {
         return "$cr $verb ${shellQuote(id)} 2>&1"
     }
 
+    /** Existing replicas can be managed even after the Compose definition has been deleted. */
+    fun dockerContainersAction(ids: List<String>, action: String, runtime: String): String {
+        require(action in setOf("start", "stop", "restart", "pause", "unpause", "remove")) { "Unsupported container action" }
+        val targets = ids.filter(String::isNotBlank).distinct()
+        require(targets.isNotEmpty()) { "No container IDs" }
+        val verb = if (action == "remove") "rm -f" else action
+        return "${runtimeCommand(runtime)} $verb ${targets.joinToString(" ", transform = ::shellQuote)} 2>&1"
+    }
+
     fun dockerImageAction(id: String, action: String, runtime: String = ""): String {
         val cr = runtimeCommand(runtime)
         val verb = when (action) {
@@ -580,6 +589,8 @@ object RemoteCommands {
      * One-shot resource stats for a single container. `--no-stream` prints one sample and exits;
      * the tab-separated format keeps parsing trivial (CPU%, mem usage/limit, mem%, net I/O, block I/O, PIDs).
      */
+    fun dockerFollowLogs(id: String, runtime: String = "") = "${runtimeCommand(runtime)} logs -f --tail 200 ${shellQuote(id)} 2>&1"
+
     fun dockerStats(id: String, runtime: String = ""): String =
         "${runtimeCommand(runtime)} stats --no-stream --format " +
             "'{{.CPUPerc}}\\t{{.MemUsage}}\\t{{.MemPerc}}\\t{{.NetIO}}\\t{{.BlockIO}}\\t{{.PIDs}}' ${shellQuote(id)} 2>&1"

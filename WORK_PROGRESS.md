@@ -1,6 +1,17 @@
-# Server metrics and tmux recovery fixes
+# Server metrics, tmux recovery and container action fixes
 
 Branch: `kotlin-bug-fixes`. No merge or release is authorized.
+
+## October 4: individual container actions — local gates passed; hosted checks pending
+
+- Stack service rows now carry each container ID and expose direct Start/Stop/Restart/Pause/Unpause/Remove, Logs/Follow and Shell controls. They use the owning runtime and require no Compose file. Service-wide Stop/Restart/Remove operate only on observed replicas for that runtime/project/service, with explicit all-replica confirmation. Stack lifecycle and Scale retain Compose behavior.
+- Confirmations for individual containers scroll with visible overflow indicators and retain fixed actions. A changed selected host or missing container rejects the pending action; existing streaming progress/result/error feedback and runtime refresh remain.
+- Ordinary unfixed service-stop regression failed with a Compose command; the unfixed API 35 app also failed after deleting the owned fixture Compose file, leaving both containers running. The final Docker fixture invocation passed four selected cases, zero skips: provisioning, trust, deleted-file container isolation/lifecycle and the required route/subtab/theme/rotation/loader sweep. The final Podman invocation passed provisioning, trust and deleted-file Stop/Start/Restart/Remove isolation (three cases, zero skips). Podman pause/unpause was not selected because the disposable fixture has no cgroups and explicitly refuses pause; Docker exercised both. Command checks cover both engine names and quoted target IDs.
+- The first native full gate failed an existing tmux reboot regression in the Play Store variant. Its fake presence check reported an unreachable host while background authentication/reconnect still claimed success, contradicting the fresh-SSH rule under load. The fake transport now consistently refuses all SSH paths once that scenario marks the host unavailable; production reboot logic is unchanged. All five focused tmux cases passed in each variant with zero skips.
+- Final `./scripts/local-pr-check.sh --full` passed: 578 passing JVM cases and two optional external-capture diagnostics skipped in each variant, both lints and fresh strict dependency/release-SBOM/compile verification. Fresh API 35 plain instrumentation executed 24 passing cases; 35 opt-in assumptions did not execute and are not counted as passes. Actual runner exit was zero.
+- The normal debug APK was verified for package, version, debuggable state and development signature, archived, installed and opened without a fatal exception. SHA-256: `10fa6514ee7e50875859b891de085668dcd346088612d0fe205b5c6909d918cd`.
+- Reproduce the selected runtime exercise with the disposable fleet, `E2eLabHostProvisioner` and `E2eContainerActionWithoutComposeTest`, using `omniterm_e2e_provision_host=yes`, `omniterm_e2e_trust_host=yes`, `omniterm_e2e_container_actions=yes`, and `omniterm_container_runtime=docker` or `podman`. Enable `omniterm_e2e_surfaces=yes` and the fixture SFTP home for the required surface sweep. Provision and exercise in one invocation.
+- Signed checkpoint publishing and all exact-head PR #112 checks remain pending. Existing completed server-health/tmux evidence below is historical. No merge or release is authorized.
 
 ## Implemented
 

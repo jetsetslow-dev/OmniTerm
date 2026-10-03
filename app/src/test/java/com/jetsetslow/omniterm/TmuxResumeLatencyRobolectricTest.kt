@@ -174,8 +174,12 @@ class TmuxResumeLatencyRobolectricTest {
             }
             return ""
         }
-        override suspend fun testConnection(creds: SshCredentials): String? = null
+        override suspend fun testConnection(creds: SshCredentials): String? =
+            if (blockPresence && presenceReply.startsWith("SSH Error:")) "connection refused" else null
         override suspend fun openShell(creds: SshCredentials, cols: Int, rows: Int, onPhaseChange: ((String) -> Unit)?): TerminalSession {
+            // The unavailable-host scenario must refuse every SSH path, including background
+            // authentication and automatic reconnect; a successful fake probe is fresh evidence.
+            if (blockPresence && presenceReply.startsWith("SSH Error:")) error("connection refused")
             onPhaseChange?.invoke("Opening channel…")
             opened.complete(Unit)
             return shell

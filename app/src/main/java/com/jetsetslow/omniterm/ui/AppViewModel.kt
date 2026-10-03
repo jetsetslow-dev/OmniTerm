@@ -7018,7 +7018,12 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    fun dockerAction(containerId: String, action: String, runtime: String = "") {
+    fun dockerAction(containerId: String, action: String, runtime: String = "", expectedServerId: Int? = null) {
+        if ((expectedServerId != null && selectedServer?.id != expectedServerId) ||
+            dockerContainers.none { it.id == containerId && it.runtime == runtime }) {
+            showActionMessage("container $action", "Action skipped: the host or container changed. Refresh and retry.")
+            return
+        }
         runStreamingAction("container $action", RemoteCommands.dockerAction(containerId, action, runtime)) { loadDocker() }
     }
 
@@ -7049,6 +7054,10 @@ class AppViewModel @JvmOverloads constructor(
     /** Stream a container's recent logs into the shared action panel. */
     fun dockerContainerLogs(containerId: String, name: String, runtime: String = "") {
         runStreamingAction("logs · $name", RemoteCommands.dockerLogs(containerId, runtime))
+    }
+
+    fun dockerContainerFollowLogs(containerId: String, name: String, runtime: String = "") {
+        runStreamingAction("follow logs · $name", RemoteCommands.dockerFollowLogs(containerId, runtime))
     }
 
     /** Show a one-shot resource-usage sample (CPU/mem/net/IO) for a container in the action panel. */
@@ -7323,7 +7332,36 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    fun dockerStackServiceAction(project: String, workingDir: String, configFiles: String, service: String, action: String, replicas: Int? = null, runtime: String = "", expectedServerId: Int?) {
+        if (expectedServerId != null && selectedServer?.id != expectedServerId) {
+            showActionMessage("$project/$service", "Action skipped: the selected host changed. Refresh and retry.")
+            return
+        }
+        dockerStackServiceAction(project, workingDir, configFiles, service, action, replicas, runtime)
+    }
+
     fun dockerStackServiceAction(project: String, workingDir: String, configFiles: String, service: String, action: String, replicas: Int? = null, runtime: String = "") {
+        val containerVerb = when (action) {
+            "serviceRestart" -> "restart"
+            "serviceStop" -> "stop"
+            "serviceRemove" -> "remove"
+            else -> null
+        }
+        if (containerVerb != null) {
+            val ids = dockerContainers.filter {
+                it.runtime == runtime && it.group == project &&
+                    it.composeService.ifBlank { it.name.substringBefore('_') } == service
+            }.map { it.id }.filter(String::isNotBlank)
+            if (ids.isEmpty()) {
+                showActionMessage("$project/$service", "Action skipped: no current containers for this service. Refresh and retry.")
+                return
+            }
+            runStreamingAction(
+                "$project/$service · $containerVerb containers",
+                RemoteCommands.dockerContainersAction(ids, containerVerb, runtime),
+            ) { loadDocker() }
+            return
+        }
         if (project == "standalone" || workingDir.isBlank() || service.isBlank()) {
             showActionMessage("$project · $service", "This service does not expose enough compose metadata for service-level actions.")
             return
