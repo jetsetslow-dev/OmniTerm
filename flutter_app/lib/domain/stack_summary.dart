@@ -3,7 +3,14 @@ import '../data/remote_parsers.dart';
 
 /// One container within a compose service.
 class StackContainer {
-  const StackContainer({required this.name, required this.status, required this.ports});
+  const StackContainer({
+    required this.id,
+    required this.name,
+    required this.status,
+    required this.ports,
+  });
+
+  final String id;
 
   final String name;
   final String status;
@@ -136,7 +143,7 @@ List<StackSummary> summariseStacks(List<SimContainer> containers) {
             '',
         containers: [
           for (final c in serviceContainers)
-            StackContainer(name: c.name, status: c.status, ports: c.ports),
+            StackContainer(id: c.id, name: c.name, status: c.status, ports: c.ports),
         ],
       );
     }).toList()..sort((a, b) => a.name.compareTo(b.name));

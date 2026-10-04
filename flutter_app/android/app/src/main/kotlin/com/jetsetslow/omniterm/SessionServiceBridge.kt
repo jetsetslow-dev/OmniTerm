@@ -149,9 +149,11 @@ object SessionServiceBridge {
     }
 
     private fun stop(context: Context) {
-        // Match Kotlin's TerminalSessionManager: cancel the service itself, including a pending
-        // foreground start. Enqueuing STOP via startService can race a following SYNC and let an
-        // older stopSelf() tear down the new foreground start before it is acknowledged.
-        context.stopService(Intent(context, SessionService::class.java))
+        // Let any preceding foreground start reach onStartCommand before stopping. Cancelling
+        // it with stopService while Android is waiting for startForeground crashes the process.
+        // The service uses this command's startId so a newer SYNC cannot be stopped by this STOP.
+        context.startService(Intent(context, SessionService::class.java).apply {
+            action = SessionService.ACTION_STOP
+        })
     }
 }

@@ -201,6 +201,7 @@ void main() {
             (w.key! as ValueKey<String>).value.startsWith('alerts.rule.') &&
             (w.key! as ValueKey<String>).value.endsWith('.delete'),
       );
+      final previousRuleKeys = row.evaluate().map((element) => element.widget.key).toSet();
       await tester.ensureVisible(save);
       await tester.tap(save);
       // A pump can settle before SQLite and its rule stream publish the save. The list exists
@@ -227,9 +228,21 @@ void main() {
       // Delete it again, so the suite leaves the device as it found it and the delete path is
       // exercised rather than assumed.
       expect(row, findsWidgets, reason: 'no rule row to delete');
-      await tester.tap(row.last);
+      final createdKey = row
+          .evaluate()
+          .map((element) => element.widget.key)
+          .singleWhere((key) => !previousRuleKeys.contains(key));
+      final createdRow = find.byKey(createdKey!);
+      await tester.tap(createdRow);
       await tester.pumpAndSettle();
       await tapKey(tester, 'alerts.deleteRule.confirm');
+      // SQLite and its stream finish outside animation settling. Wait for this exact row's
+      // removal, then check the resulting list; never delete a pre-existing fixture rule.
+      for (var attempt = 0; attempt < 100 && createdRow.evaluate().isNotEmpty; attempt++) {
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      }
+      expect(createdRow, findsNothing, reason: 'the created rule was not removed');
 
       if (before) {
         expect(

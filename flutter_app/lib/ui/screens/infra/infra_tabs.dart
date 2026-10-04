@@ -386,101 +386,137 @@ class _ServiceRow extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(top: 6, left: 8),
-      child: Row(
+      child: Column(
         children: [
-          Container(
-            width: 8,
-            height: 8,
-            decoration: BoxDecoration(
-              color: service.unhealthy > 0
-                  ? OmniColors.red
-                  : service.running == service.total
-                  ? OmniColors.green
-                  : OmniColors.textMuted,
-              shape: BoxShape.circle,
-            ),
+          Row(
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: service.unhealthy > 0
+                      ? OmniColors.red
+                      : service.running == service.total
+                      ? OmniColors.green
+                      : OmniColors.textMuted,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  service.name,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 12, fontFamily: OmniFonts.mono),
+                ),
+              ),
+              Text(
+                '${service.running}/${service.total}',
+                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
+              ),
+              PopupMenuButton<String>(
+                key: ValueKey('infra.service.${stack.name}.${service.name}.menu'),
+                tooltip: 'Actions for all ${service.name} containers',
+                onSelected: (action) => switch (action) {
+                  'scale' => _promptScale(context, vm, stack, service),
+                  'ports' => _showPorts(context, vm, stack, service.name),
+                  'serviceLogs' => _showServiceLogs(context, vm, stack, service.name),
+                  'followLogs' => vm.stackAction(stack, 'followLogs', service: service.name),
+                  'shell' => _openServiceShell(context, vm, stack, service),
+                  'serviceRestart' ||
+                  'serviceStop' ||
+                  'serviceRemove' => _confirmServiceAction(context, vm, stack, service, action),
+                  _ => vm.stackAction(stack, action, service: service.name),
+                },
+                itemBuilder: (_) => [
+                  const PopupMenuItem(
+                    value: 'serviceRestart',
+                    child: Text('Restart all containers'),
+                  ),
+                  const PopupMenuItem(value: 'serviceStop', child: Text('Stop all containers')),
+                  if (stack.canRunComposeActions)
+                    const PopupMenuItem(value: 'scale', child: Text('Scale…')),
+                  const PopupMenuItem(value: 'ports', child: Text('Ports')),
+                  if (stack.canRunComposeActions) ...[
+                    const PopupMenuItem(value: 'serviceLogs', child: Text('Logs')),
+                    const PopupMenuItem(value: 'followLogs', child: Text('Follow logs')),
+                  ],
+                  const PopupMenuItem(value: 'shell', child: Text('Shell')),
+                  const PopupMenuItem(value: 'serviceRemove', child: Text('Remove all containers')),
+                ],
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              service.name,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontSize: 12, fontFamily: OmniFonts.mono),
-            ),
-          ),
-          Text(
-            '${service.running}/${service.total}',
-            style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
-          ),
-          if (stack.canRunComposeActions)
-            PopupMenuButton<String>(
-              key: ValueKey('infra.service.${stack.name}.${service.name}.menu'),
-              onSelected: (action) => switch (action) {
-                'scale' => _promptScale(context, vm, stack, service),
-                'ports' => _showPorts(context, vm, stack, service.name),
-                'serviceLogs' => _showServiceLogs(context, vm, stack, service.name),
-                'followLogs' => vm.stackAction(stack, 'followLogs', service: service.name),
-                'shell' => _openServiceShell(context, vm, stack, service),
-                'serviceRestart' ||
-                'serviceStop' ||
-                'serviceRemove' => _confirmServiceAction(context, vm, stack, service, action),
-                _ => vm.stackAction(stack, action, service: service.name),
-              },
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'serviceRestart', child: Text('Restart')),
-                PopupMenuItem(value: 'serviceStop', child: Text('Stop')),
-                PopupMenuItem(value: 'scale', child: Text('Scale…')),
-                PopupMenuItem(value: 'ports', child: Text('Ports')),
-                PopupMenuItem(value: 'serviceLogs', child: Text('Logs')),
-                PopupMenuItem(value: 'followLogs', child: Text('Follow logs')),
-                PopupMenuItem(value: 'shell', child: Text('Shell')),
-                PopupMenuItem(value: 'serviceRemove', child: Text('Remove')),
-              ],
-            ),
+          for (final container in service.containers)
+            _ContainerRow(vm: vm, stack: stack, container: container),
         ],
       ),
     );
   }
 }
 
-Future<void> _openServiceShell(
-  BuildContext context,
-  InfraViewModel vm,
-  StackSummary stack,
-  StackService service,
-) async {
-  final server = vm.inspectedServer;
-  if (server == null || service.containerId.isEmpty) return;
-  final shell = context.read<ShellViewModel>();
-  context.read<NavigationController>().navigateTo(Screen.shell);
-  await shell.connect(
-    server,
-    initialCommand: dockerExecShell(service.containerId, runtime: stack.runtime),
+class _ContainerRow extends StatelessWidget {
+  const _ContainerRow({required this.vm, required this.stack, required this.container});
+  final InfraViewModel vm;
+  final StackSummary stack;
+  final StackContainer container;
+
+  @override
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(left: 16),
+    child: Row(
+      children: [
+        Expanded(
+          child: Text(
+            '${container.name} · ${container.status}',
+            style: const TextStyle(fontSize: 11, fontFamily: OmniFonts.mono),
+          ),
+        ),
+        PopupMenuButton<String>(
+          key: ValueKey('infra.container.${stack.runtime}.${container.id}.menu'),
+          tooltip: 'Actions for ${container.name}',
+          onSelected: (action) => switch (action) {
+            'logs' => vm.containerLogs(container.id, runtime: stack.runtime),
+            'followLogs' => vm.containerLogs(container.id, runtime: stack.runtime, follow: true),
+            'shell' => _openContainerShell(context, vm, stack.runtime, container.id),
+            _ => _confirmContainerAction(context, vm, stack.runtime, container, action),
+          },
+          itemBuilder: (_) => const [
+            PopupMenuItem(value: 'start', child: Text('Start')),
+            PopupMenuItem(value: 'stop', child: Text('Stop')),
+            PopupMenuItem(value: 'restart', child: Text('Restart')),
+            PopupMenuItem(value: 'pause', child: Text('Pause')),
+            PopupMenuItem(value: 'unpause', child: Text('Unpause')),
+            PopupMenuItem(value: 'logs', child: Text('Logs')),
+            PopupMenuItem(value: 'followLogs', child: Text('Follow logs')),
+            PopupMenuItem(value: 'shell', child: Text('Shell')),
+            PopupMenuItem(value: 'remove', child: Text('Remove')),
+          ],
+        ),
+      ],
+    ),
   );
 }
 
-Future<void> _confirmServiceAction(
+Future<void> _confirmContainerAction(
   BuildContext context,
   InfraViewModel vm,
-  StackSummary stack,
-  StackService service,
+  String runtime,
+  StackContainer container,
   String action,
 ) async {
-  final verb = switch (action) {
-    'serviceRestart' => 'Restart',
-    'serviceStop' => 'Stop',
-    'serviceRemove' => 'Remove',
-    _ => 'Run',
-  };
+  final serverId = vm.inspectedServer?.id;
+  final verb = '${action[0].toUpperCase()}${action.substring(1)}';
   final accepted = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      key: ValueKey('infra.service.$action.confirm'),
-      title: Text('$verb ${service.name}?'),
+      key: ValueKey('infra.container.$runtime.${container.id}.$action.confirm'),
+      scrollable: true,
+      title: Text('$verb ${container.name}?'),
       content: Text(
-        action == 'serviceRemove'
-            ? 'Stop and remove this service container. Its Compose definition is not deleted.'
-            : '$verb this service in ${stack.name}? It will briefly be unavailable.',
+        action == 'remove'
+            ? 'Stop and remove only this container. Other replicas, volumes and the Compose file are kept.'
+            : '$verb only this container. Other containers in this service and stack are kept.',
       ),
       actions: [
         TextButton(
@@ -492,7 +528,78 @@ Future<void> _confirmServiceAction(
     ),
   );
   if (accepted == true) {
-    await vm.stackAction(stack, action, service: service.name);
+    await vm.containerActionById(
+      container.id,
+      action,
+      runtime: runtime,
+      expectedServerId: serverId,
+    );
+  }
+}
+
+Future<void> _openServiceShell(
+  BuildContext context,
+  InfraViewModel vm,
+  StackSummary stack,
+  StackService service,
+) async {
+  await _openContainerShell(context, vm, stack.runtime, service.containerId);
+}
+
+Future<void> _openContainerShell(
+  BuildContext context,
+  InfraViewModel vm,
+  String runtime,
+  String id,
+) async {
+  final server = vm.inspectedServer;
+  if (server == null || id.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Shell skipped: select a host and refresh its containers.')),
+    );
+    return;
+  }
+  final shell = context.read<ShellViewModel>();
+  context.read<NavigationController>().navigateTo(Screen.shell);
+  await shell.connect(server, initialCommand: dockerExecShell(id, runtime: runtime));
+}
+
+Future<void> _confirmServiceAction(
+  BuildContext context,
+  InfraViewModel vm,
+  StackSummary stack,
+  StackService service,
+  String action,
+) async {
+  final serverId = vm.inspectedServer?.id;
+  final verb = switch (action) {
+    'serviceRestart' => 'Restart',
+    'serviceStop' => 'Stop',
+    'serviceRemove' => 'Remove',
+    _ => 'Run',
+  };
+  final accepted = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      key: ValueKey('infra.service.$action.confirm'),
+      scrollable: true,
+      title: Text('$verb ${service.name}?'),
+      content: Text(
+        action == 'serviceRemove'
+            ? 'Stop and remove all ${service.total} current containers for this service. Volumes and its Compose definition are kept.'
+            : '$verb all ${service.total} current containers for this service in ${stack.name}?',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(dialogContext, false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(verb)),
+      ],
+    ),
+  );
+  if (accepted == true) {
+    await vm.stackAction(stack, action, service: service.name, expectedServerId: serverId);
   }
 }
 

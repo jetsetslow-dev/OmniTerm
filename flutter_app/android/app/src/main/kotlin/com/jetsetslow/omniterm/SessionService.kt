@@ -77,7 +77,7 @@ class SessionService : Service() {
         // isolate — and with it every SSH session — is gone, so there is nothing left to keep alive
         // and a notification claiming otherwise would be false.
         if (intent == null) {
-            stopEverything()
+            stopEverything(startId)
             return START_NOT_STICKY
         }
 
@@ -85,12 +85,12 @@ class SessionService : Service() {
 
         when (intent.action) {
             ACTION_STOP -> {
-                stopEverything()
+                stopEverything(startId)
                 return START_NOT_STICKY
             }
             ACTION_DISCONNECT_ALL -> {
                 SessionServiceBridge.emit("disconnectAll", null)
-                stopEverything()
+                stopEverything(startId)
                 return START_NOT_STICKY
             }
             ACTION_DISCONNECT_SESSION -> {
@@ -105,7 +105,7 @@ class SessionService : Service() {
         val ids = intent.getStringArrayListExtra(EXTRA_SESSION_IDS).orEmpty()
         val names = intent.getStringArrayListExtra(EXTRA_SESSION_NAMES).orEmpty()
         if (ids.isEmpty()) {
-            stopEverything()
+            stopEverything(startId)
             return START_NOT_STICKY
         }
 
@@ -118,7 +118,7 @@ class SessionService : Service() {
             // notification permission). Failing loudly here would take the app down over a
             // notification; the sessions simply do not survive backgrounding.
             android.util.Log.w("SessionService", "Could not start the foreground session service", t)
-            stopEverything()
+            stopEverything(startId)
         }
         return START_NOT_STICKY
     }
@@ -260,11 +260,13 @@ class SessionService : Service() {
         wakeLock = null
     }
 
-    private fun stopEverything() {
+    private fun stopEverything(startId: Int) {
+        // A later SYNC may already be queued even though its callback has not run. Do not remove
+        // its service/notification or wake lock when this older STOP is superseded.
+        if (!stopSelfResult(startId)) return
         clearSessionNotifications()
         releaseWakeLock()
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        stopSelf()
     }
 
     private fun clearSessionNotifications() {

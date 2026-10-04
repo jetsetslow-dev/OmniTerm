@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -11,6 +12,7 @@ import 'package:omniterm/data/ssh/ssh_host_key_trust.dart';
 import 'package:omniterm/data/ssh/ssh_transport.dart';
 import 'package:omniterm/domain/terminal_key_encoder.dart';
 import 'package:omniterm/main.dart' as app;
+import 'package:omniterm/platform/session_service.dart';
 import 'package:omniterm/ui/navigation.dart';
 import 'package:omniterm/ui/shell_state.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
@@ -24,6 +26,7 @@ import 'package:omniterm/ui/widgets/terminal_surface.dart';
 import 'package:provider/provider.dart';
 
 import '../test/support/terminal_options_contract.dart';
+import '../test/support/container_actions_contract.dart';
 
 const _enabled = bool.fromEnvironment('OMNITERM_E2E_HOSTS');
 const _host = String.fromEnvironment('OMNITERM_E2E_HOST', defaultValue: '127.0.0.1');
@@ -41,6 +44,34 @@ void main() {
 
     await app.main();
     await tester.pumpAndSettle(const Duration(seconds: 2));
+
+    // Queue stop/restart before Android can acknowledge the foreground service start. This uses
+    // the real bridge: stopping a pending foreground start used to kill the entire app.
+    if (Platform.isAndroid) {
+      const serviceChannel = MethodChannel(SessionService.methodChannelName);
+      for (var cycle = 0; cycle < 20; cycle++) {
+        final results = await tester.runAsync(
+          () => Future.wait([
+            serviceChannel.invokeMethod<bool>('sync', {
+              'sessions': [
+                {'id': 'e2e-service-race', 'serverName': 'E2E lifecycle fixture'},
+              ],
+            }),
+            serviceChannel.invokeMethod<bool>('stop'),
+            serviceChannel.invokeMethod<bool>('sync', {
+              'sessions': [
+                {'id': 'e2e-service-race', 'serverName': 'E2E lifecycle fixture'},
+              ],
+            }),
+          ]),
+        );
+        expect(results, everyElement(isTrue));
+        await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
+      }
+      expect(await tester.runAsync(() => serviceChannel.invokeMethod<bool>('stop')), isTrue);
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 100)));
+      debugPrint('HOST-E2E foreground service stop/restart race passed');
+    }
 
     // Read below MultiProvider; the OmniTermApp element itself is its parent and therefore cannot
     // see providers created by its own build method.
@@ -127,6 +158,7 @@ void main() {
       transport: transport,
       serverId: runtimeIds.docker,
       runtime: 'docker',
+      navigation: navigation,
     );
     await _exerciseRuntime(
       tester,
@@ -135,6 +167,7 @@ void main() {
       transport: transport,
       serverId: runtimeIds.podman,
       runtime: 'podman',
+      navigation: navigation,
     );
 
     final shares = (await tester.runAsync(() async {
@@ -526,6 +559,7 @@ Future<void> _exerciseRuntime(
   required SshTransport transport,
   required int serverId,
   required String runtime,
+  required NavigationController navigation,
 }) async {
   debugPrint('HOST-E2E runtime start: $runtime');
   infra.selectServer(serverId);
@@ -554,7 +588,7 @@ Future<void> _exerciseRuntime(
 services:
   smoke:
     image: alpine:3.22
-    command: ["sh", "-c", "printf 'omniterm-device-e2e-ready\\n'; sleep 600"]
+    command: ["sh", "-c", "trap 'exit 0' TERM; printf 'omniterm-device-e2e-ready\\n'; while :; do sleep 1 & wait \$\$!; done"]
     labels:
       com.jetsetslow.omniterm.fixture: device-e2e
 ''';
@@ -573,6 +607,130 @@ services:
     reason: '$runtime compose down did not remove the live stack',
   );
   expect(infra.downedStacks.map((candidate) => candidate.project), contains(project));
+  // Create two replicas, then delete only this test-owned Compose definition. Container-ID
+  // operations must still work and never affect the sibling; whole-stack Compose must fail.
+  await tester.runAsync(
+    () => infra.bringUpDownedStack(infra.downedStacks.firstWhere((s) => s.project == project)),
+  );
+  await tester.runAsync(infra.load);
+  final live = infra.stacks.firstWhere((s) => s.name == project && s.runtime == runtime);
+  await tester.runAsync(() => infra.stackAction(live, 'scale', service: 'smoke', replicas: 2));
+  await tester.runAsync(infra.load);
+  final replicas = infra.containers
+      .where((c) => c.group == project && c.runtime == runtime)
+      .toList();
+  expect(replicas, hasLength(2));
+  final target = replicas.first;
+  final sibling = replicas.last;
+  final creds = SshCredentials(
+    host: server.host,
+    port: server.port,
+    username: server.username,
+    password: _password,
+  );
+  Future<String?> exec(String command) => tester.runAsync(() => transport.exec(creds, command));
+  try {
+    await exec('rm -f "\$HOME/omniterm-e2e/device/$runtime-compose.yml"');
+    await tester.runAsync(() => infra.stackAction(live, 'down'));
+    expect(
+      infra.actionOutput,
+      anyOf(
+        contains('No such file'),
+        contains('no such file'),
+        contains('not found'),
+        contains('missing files'),
+      ),
+      reason: 'Stack actions must report the missing Compose definition',
+    );
+    await tester.runAsync(infra.load);
+    expect(
+      infra.containers.where(
+        (c) => c.group == project && c.runtime == runtime && c.status == 'running',
+      ),
+      hasLength(2),
+    );
+    navigation.navigateTo(Screen.infra);
+    await tester.pumpAndSettle();
+    final services = find.byKey(ValueKey('infra.stack.$project.services'));
+    await tester.scrollUntilVisible(
+      services,
+      180,
+      scrollable: find
+          .descendant(
+            of: find.byKey(const ValueKey('infra.stacks.list')),
+            matching: find.byType(Scrollable),
+          )
+          .first,
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(services);
+    await tester.pumpAndSettle();
+    await openContainerAction(
+      tester,
+      runtime: runtime,
+      id: target.id,
+      action: 'stop',
+      confirm: false,
+    );
+    await tester.pumpAndSettle();
+    expect(
+      infra.containers.singleWhere((c) => c.id == target.id && c.runtime == runtime).status,
+      'running',
+    );
+    // Podman's isolated fixture has no cgroups, so pause/unpause cannot execute there.
+    final actions = [
+      if (runtime == 'docker') ...['pause', 'unpause'],
+      'stop',
+      'start',
+      'restart',
+    ];
+    for (final action in actions) {
+      debugPrint('HOST-E2E container action start: $runtime $action');
+      await openContainerAction(tester, runtime: runtime, id: target.id, action: action);
+      await _waitFor(
+        tester,
+        () => !infra.actionRunning && !infra.loading,
+        diagnostic: () =>
+            '$runtime $action running=${infra.actionRunning} loading=${infra.loading} '
+            'output=${infra.actionOutput} error=${infra.error}',
+      );
+      debugPrint('HOST-E2E container action completed: $runtime $action');
+      await tester.runAsync(infra.load);
+      await tester.pumpAndSettle();
+      final status = action == 'pause'
+          ? 'paused'
+          : action == 'stop'
+          ? 'exited'
+          : 'running';
+      expect(
+        infra.containers.singleWhere((c) => c.id == target.id && c.runtime == runtime).status,
+        status,
+      );
+      expect(
+        infra.containers.singleWhere((c) => c.id == sibling.id && c.runtime == runtime).status,
+        'running',
+        reason: 'An individual action must preserve its sibling replica',
+      );
+    }
+    await tester.runAsync(() => infra.containerLogs(target.id, runtime: runtime));
+    expect(infra.actionOutput, contains('omniterm-device-e2e-ready'));
+    await openContainerAction(tester, runtime: runtime, id: target.id, action: 'remove');
+    await _waitFor(tester, () => !infra.actionRunning && !infra.loading);
+    await tester.runAsync(infra.load);
+    expect(infra.containers.where((c) => c.id == target.id && c.runtime == runtime), isEmpty);
+    expect(
+      infra.containers.singleWhere((c) => c.id == sibling.id && c.runtime == runtime).status,
+      'running',
+    );
+    debugPrint('HOST-E2E deleted Compose file container isolation passed: $runtime');
+  } finally {
+    // Exact test-created IDs only; cleanup cannot depend on the now-deleted Compose file.
+    for (final container in replicas) {
+      await exec(dockerAction(container.id, 'remove', runtime: runtime));
+    }
+    await exec('$runtime network rm ${shellQuote('${project}_default')} 2>&1 || true');
+    await tester.runAsync(infra.load);
+  }
   debugPrint('HOST-E2E runtime passed: $runtime');
 }
 

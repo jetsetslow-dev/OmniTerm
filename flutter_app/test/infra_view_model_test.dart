@@ -477,6 +477,59 @@ void main() {
       vm.dispose();
     });
 
+    for (final runtime in ['docker', 'podman']) {
+      for (final action in ['serviceRestart', 'serviceStop', 'serviceRemove']) {
+        test('$runtime $action targets only current service containers without Compose', () async {
+          await repo.insertServer(server(name: 'nas'));
+          final transport = RecordingTransport(
+            replies: {
+              'ps -a --no-trunc': [
+                psRow(
+                  runtime: runtime,
+                  id: 'replica1',
+                  name: 'web_front_1',
+                  workdir: '/deleted/stack',
+                ),
+                psRow(
+                  runtime: runtime,
+                  id: 'replica2',
+                  name: 'web_front_2',
+                  workdir: '/deleted/stack',
+                ),
+                psRow(runtime: runtime, id: 'database', name: 'web_db_1', service: 'db'),
+                psRow(
+                  runtime: runtime == 'docker' ? 'podman' : 'docker',
+                  id: 'other-engine',
+                  name: 'web_front_1',
+                ),
+                psRow(
+                  runtime: runtime,
+                  id: 'other-project',
+                  name: 'other_front_1',
+                  project: 'other',
+                ),
+              ].join('\n'),
+            },
+          );
+          final vm = await boot(transport: transport);
+          await vm.load();
+          final stack = vm.stacks.singleWhere((s) => s.name == 'web' && s.runtime == runtime);
+          final before = transport.commands.length;
+          await vm.stackAction(stack, action, service: 'front');
+          final command = transport.commands[before];
+          final verb = action == 'serviceRemove'
+              ? 'rm -f'
+              : action == 'serviceStop'
+              ? 'stop'
+              : 'restart';
+          expect(command, "$runtime $verb 'replica1' 'replica2' 2>&1");
+          expect(command, isNot(contains('compose')));
+          expect(command, isNot(contains('cd ')));
+          vm.dispose();
+        });
+      }
+    }
+
     test('a stack action cds into the working directory', () async {
       // Compose resolves relative bind mounts and .env against the working directory, so running
       // from elsewhere can silently bring up a different stack from the same file.

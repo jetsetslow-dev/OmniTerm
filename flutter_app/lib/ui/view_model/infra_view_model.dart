@@ -486,7 +486,40 @@ class InfraViewModel extends ChangeNotifier {
   // ── actions ─────────────────────────────────────────────────────────────────
 
   Future<void> containerAction(SimContainer container, String action) =>
-      _runAction(dockerAction(container.id, action, runtime: container.runtime));
+      containerActionById(container.id, action, runtime: container.runtime);
+
+  Future<void> containerActionById(
+    String id,
+    String action, {
+    required String runtime,
+    int? expectedServerId,
+  }) async {
+    if ((expectedServerId != null && inspectedServer?.id != expectedServerId) ||
+        !_containers.any((c) => c.id == id && c.runtime == runtime)) {
+      _showActionResult(
+        'Container action',
+        'Action skipped: the host or container changed. Refresh and retry.',
+      );
+      return;
+    }
+    await _runStreamingAction('container $action', dockerAction(id, action, runtime: runtime));
+  }
+
+  Future<void> containerLogs(String id, {required String runtime, bool follow = false}) =>
+      _runStreamingAction(
+        'container logs',
+        dockerContainerLogs(id, runtime: runtime, follow: follow),
+      );
+
+  void _showActionResult(String title, String message) {
+    _actionCancellation?.cancel();
+    _actionCancellation = null;
+    _actionEpoch++;
+    _actionTitle = title;
+    _actionOutput = message;
+    _actionRunning = false;
+    _safeNotify();
+  }
 
   Future<void> imageAction(SimDockerImage image, String action) =>
       _runAction(dockerImageAction(image.id, action, runtime: image.runtime));
@@ -510,19 +543,57 @@ class InfraViewModel extends ChangeNotifier {
     String? service,
     int? replicas,
     bool removeOrphans = false,
-  }) => _runStreamingAction(
-    '${stack.name} · $action',
-    dockerComposeAction(
-      stack.name,
-      stack.workingDir,
-      stack.configFiles,
-      action,
-      service: service,
-      replicas: replicas,
-      removeOrphans: removeOrphans,
-      runtime: stack.runtime,
-    ),
-  );
+    int? expectedServerId,
+  }) async {
+    if (expectedServerId != null && inspectedServer?.id != expectedServerId) {
+      _showActionResult(
+        'Service action',
+        'Action skipped: the selected host changed. Refresh and retry.',
+      );
+      return;
+    }
+    final verb = switch (action) {
+      'serviceRestart' => 'restart',
+      'serviceStop' => 'stop',
+      'serviceRemove' => 'remove',
+      _ => null,
+    };
+    if (verb != null) {
+      final ids = _containers
+          .where(
+            (c) =>
+                c.runtime == stack.runtime && c.group == stack.name && serviceNameOf(c) == service,
+          )
+          .map((c) => c.id)
+          .where((id) => id.isNotEmpty)
+          .toList();
+      if (ids.isEmpty) {
+        _showActionResult(
+          '$service · $verb',
+          'Action skipped: no current containers for this service. Refresh and retry.',
+        );
+        return;
+      }
+      await _runStreamingAction(
+        '$service · $verb containers',
+        dockerContainersAction(ids, verb, runtime: stack.runtime),
+      );
+      return;
+    }
+    await _runStreamingAction(
+      '${stack.name} · $action',
+      dockerComposeAction(
+        stack.name,
+        stack.workingDir,
+        stack.configFiles,
+        action,
+        service: service,
+        replicas: replicas,
+        removeOrphans: removeOrphans,
+        runtime: stack.runtime,
+      ),
+    );
+  }
 
   /// The output of the last `logs` request, and which service it came from.
   ///

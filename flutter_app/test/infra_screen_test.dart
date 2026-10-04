@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:drift/native.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -10,6 +11,7 @@ import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/infra/infra_screen.dart';
 import 'package:omniterm/ui/screens/infra/infra_tabs.dart';
 import 'package:omniterm/ui/theme/theme.dart';
+import 'package:omniterm/ui/widgets/popup_scroll_behavior.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
 import 'package:omniterm/ui/view_model/infra_view_model.dart';
 import 'package:provider/provider.dart';
@@ -17,6 +19,7 @@ import 'package:provider/provider.dart';
 import 'infra_view_model_test.dart' show psRow;
 import 'monitor_view_model_test.dart' show RecordingTransport;
 import 'support/fake_secure_storage.dart';
+import 'support/container_actions_contract.dart';
 
 /// The shape of error this screen actually receives — the emulator's landscape sweep produced this
 /// exact class of message, and its length is what pushes the layout over.
@@ -91,6 +94,7 @@ void main() {
           ChangeNotifierProvider<NavigationController>.value(value: nav),
         ],
         child: MaterialApp(
+          scrollBehavior: const PopupScrollBehavior(),
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
           home: MediaQuery(
             data: MediaQueryData(size: size, textScaler: TextScaler.linear(textScale)),
@@ -776,6 +780,103 @@ void main() {
     HostDisplay.instance.hideSensitiveInfo = true;
     await tester.pumpAndSettle();
     expect(find.textContaining('10.0.0.1'), findsNothing);
+    vm.dispose();
+  });
+
+  for (final size in [const Size(360, 720), const Size(640, 360)]) {
+    testWidgets('container actions and confirmation remain reachable at large text $size', (
+      tester,
+    ) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester, transport: withStack(), size: size, textScale: 2);
+      final services = find.byKey(const ValueKey('infra.stack.web.services'));
+      await tester.scrollUntilVisible(
+        services,
+        160,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('infra.stacks.list')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(services);
+      await tester.pumpAndSettle();
+      final menu = find.byKey(const ValueKey('infra.container.docker.a1.menu'));
+      await tester.ensureVisible(menu);
+      await tester.pumpAndSettle();
+      await tester.tap(menu);
+      await tester.pumpAndSettle();
+      final popup = find
+          .ancestor(
+            of: find.widgetWithText(PopupMenuItem<String>, 'Start'),
+            matching: find.byType(Scrollable),
+          )
+          .first;
+      final position = tester.state<ScrollableState>(popup).position;
+      if (position.extentAfter > 1) expect(find.text('↓ More below'), findsWidgets);
+      final remove = find.byWidgetPredicate(
+        (w) => w is PopupMenuItem<String> && w.value == 'remove',
+      );
+      await tester.ensureVisible(remove);
+      await tester.pumpAndSettle();
+      if (position.extentBefore > 1) expect(find.text('↑ More above'), findsWidgets);
+      await tester.tap(remove);
+      await tester.pumpAndSettle();
+      final dialog = find.byKey(const ValueKey('infra.container.docker.a1.remove.confirm'));
+      expect(
+        find.descendant(of: dialog, matching: find.text('Cancel')).hitTestable(),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: dialog, matching: find.byType(FilledButton)).hitTestable(),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      await tester.tap(find.descendant(of: dialog, matching: find.text('Cancel')));
+      await tester.pumpAndSettle();
+      vm.dispose();
+    });
+  }
+
+  testWidgets('each replica has direct Stop without Compose and keeps sibling running', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas'));
+    final transport = RecordingTransport(
+      replies: {
+        'ps -a --no-trunc': [
+          psRow(id: 'replica1', name: 'web_front_1', workdir: '', configs: ''),
+          psRow(id: 'replica2', name: 'web_front_2', workdir: '', configs: ''),
+        ].join('\n'),
+      },
+    );
+    await pump(tester, transport: transport);
+    await tester.tap(find.byKey(const ValueKey('infra.stack.web.services')));
+    await tester.pumpAndSettle();
+    final before = transport.commands.length;
+    await openContainerAction(
+      tester,
+      runtime: 'docker',
+      id: 'replica2',
+      action: 'stop',
+      confirm: false,
+    );
+    await tester.pumpAndSettle();
+    expect(transport.commands.length, before, reason: 'Cancel must perform no remote operation');
+    transport.gate = Completer<void>();
+    await openContainerAction(tester, runtime: 'docker', id: 'replica2', action: 'stop');
+    await tester.pump(const Duration(milliseconds: 50));
+    expect(vm.actionRunning, isTrue);
+    expect(find.byKey(const ValueKey('infra.actionOutput')), findsOneWidget);
+    transport.gate!.complete();
+    transport.gate = null;
+    await tester.pumpAndSettle();
+    expect(transport.commands[before], "docker stop 'replica2' 2>&1");
+    expect(transport.commands[before], isNot(contains('replica1')));
+    expect(vm.stacks.single.services.single.containers.map((c) => c.id), ['replica1', 'replica2']);
+    expect(tester.takeException(), isNull);
     vm.dispose();
   });
 

@@ -437,6 +437,20 @@ String dockerAction(String id, String action, {String runtime = ''}) {
   return '${_runtimeCommand(runtime)} $verb ${shellQuote(id)} 2>&1';
 }
 
+/// Operate on the observed replicas, independent of their Compose file or provider.
+String dockerContainersAction(Iterable<String> ids, String action, {required String runtime}) {
+  if (!const ['start', 'stop', 'restart', 'pause', 'unpause', 'remove'].contains(action)) {
+    throw ArgumentError.value(action, 'action', 'Unsupported container action');
+  }
+  final targets = ids.where((id) => id.isNotEmpty).toSet();
+  if (targets.isEmpty) throw ArgumentError('No container IDs');
+  final verb = action == 'remove' ? 'rm -f' : action;
+  return '${_runtimeCommand(runtime)} $verb ${targets.map(shellQuote).join(' ')} 2>&1';
+}
+
+String dockerContainerLogs(String id, {required String runtime, bool follow = false}) =>
+    '${_runtimeCommand(runtime)} logs ${follow ? '-f ' : ''}--tail 200 ${shellQuote(id)} 2>&1';
+
 /// Interactive shell inside a container, preferring bash and falling back to POSIX sh.
 String dockerExecShell(String id, {String runtime = ''}) =>
     '${_runtimeCommand(runtime)} exec -it ${shellQuote(id)} '
