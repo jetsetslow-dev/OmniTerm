@@ -1281,6 +1281,7 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
   /// the user cannot even see.
   final FocusNode _keyFocus = FocusNode(debugLabel: 'terminal-keys');
   String _smartValue = '';
+  final Object _smartInputOwner = Object();
   bool? _lastSmartSwipeInput;
   bool _isPasting = false;
 
@@ -1290,10 +1291,21 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
 
   @override
   void dispose() {
+    widget.vm.unregisterSmartInput(_smartInputOwner);
     _input.dispose();
     _imeFocus.dispose();
     _keyFocus.dispose();
     super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(covariant _ActiveTerminal oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.vm, widget.vm) || !identical(oldWidget.session, widget.session)) {
+      oldWidget.vm.unregisterSmartInput(_smartInputOwner);
+      _resetSmartInput();
+      _lastFocusState = null;
+    }
   }
 
   void _resetSmartInput() {
@@ -1302,6 +1314,18 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
   }
 
   void _onCommit(BuildContext context, String text) {
+    if (!identical(widget.vm.current, widget.session) ||
+        widget.session.readOnly ||
+        !widget.session.isOpen) {
+      _resetSmartInput();
+      return;
+    }
+    if (widget.vm.hasModifier) {
+      final inserted = insertedTerminalModifierText(_smartValue, text);
+      if (inserted.isNotEmpty) widget.vm.typeText(inserted);
+      _resetSmartInput();
+      return;
+    }
     if (widget.vm.smartSwipeInput) {
       final old = _smartValue;
       if (insertedTerminalRuneDelta(old, text) > softInputPasteThreshold) {
@@ -1443,15 +1467,21 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
           readOnly: session.readOnly,
         );
         if (_lastFocusState != focusState) {
+          _resetSmartInput();
           _lastFocusState = focusState;
           WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (!mounted) return;
+            if (!mounted || _lastFocusState != focusState) return;
             if (focusState.focused && !focusState.readOnly) {
               _imeFocus.requestFocus();
-            } else if (focusState.readOnly) {
+            } else {
               _imeFocus.unfocus();
             }
           });
+        }
+        if (focusState.focused && !focusState.readOnly && widget.vm.smartSwipeInput) {
+          widget.vm.registerSmartInput(_smartInputOwner, session, _resetSmartInput);
+        } else {
+          widget.vm.unregisterSmartInput(_smartInputOwner);
         }
         return Column(
           children: [

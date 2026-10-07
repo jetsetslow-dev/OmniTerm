@@ -62,6 +62,26 @@ const softInputPasteThreshold = 100;
 /// One editor-style edit to mirror into a remote shell line.
 typedef TerminalLineEdit = ({int backspaces, String insert});
 
+/// Extracts the newly inserted typing for a sticky modifier, matching Kotlin's UTF-16 growth
+/// policy. Unlike an editor replacement, this must not replay an unchanged suffix or erase text.
+String insertedTerminalModifierText(String oldText, String newText) {
+  final growth = newText.length - oldText.length;
+  if (growth <= 0) return '';
+  final oldRunes = oldText.runes.iterator;
+  final newRunes = newText.runes.iterator;
+  var prefix = 0;
+  while (oldRunes.moveNext() && newRunes.moveNext() && oldRunes.current == newRunes.current) {
+    prefix += oldRunes.current > 0xffff ? 2 : 1;
+  }
+  var end = (prefix + growth).clamp(0, newText.length);
+  if (end > 0 && end < newText.length) {
+    final before = newText.codeUnitAt(end - 1);
+    final after = newText.codeUnitAt(end);
+    if (before >= 0xd800 && before <= 0xdbff && after >= 0xdc00 && after <= 0xdfff) end++;
+  }
+  return newText.substring(prefix, end);
+}
+
 /// Converts an IME/autocorrect replacement into terminal DEL bytes plus a replacement tail.
 ///
 /// Dart strings are UTF-16, while a terminal backspace removes one Unicode scalar. Comparing rune

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ui' show SemanticsActionEvent, Tristate;
 
 import 'package:drift/native.dart';
@@ -9,6 +10,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/domain/host_display.dart';
+import 'package:omniterm/domain/terminal_key_encoder.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/shell/shell_screen.dart';
 import 'package:omniterm/ui/shell_state.dart';
@@ -190,6 +192,143 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.widget<TextField>(input).enableSuggestions, isTrue);
     await finish(tester);
+  });
+
+  group('Smart IME parity', () {
+    for (final (modifier, previous, committed, expected) in <(String, String, String, List<int>)>[
+      ('CTRL', '', 'c', [3]),
+      ('ALT', '', 'b', [27, 98]),
+      ('SHFT', '', 'c', [67]),
+      ('ALT', 'ab', 'a😀b', [27, ...utf8.encode('😀')]),
+      ('ALT', '😀b', '😁😀b', [27, ...utf8.encode('😁')]),
+    ]) {
+      testWidgets('$modifier sends only the inserted input in $committed', (tester) async {
+        await repo.insertServer(server(name: 'nas'));
+        await pump(tester);
+        await connect(tester);
+        try {
+          vm.setSmartSwipeRuntime(true);
+          await tester.pumpAndSettle();
+          final input = find.byKey(const ValueKey('shell.input'));
+          if (previous.isNotEmpty) {
+            await tester.enterText(input, previous);
+            await tester.pumpAndSettle();
+          }
+          transport.opened.single.writes.clear();
+          await tester.tap(find.byKey(ValueKey('shell.key.$modifier')));
+          await tester.pumpAndSettle();
+          await tester.enterText(input, committed);
+          await tester.pumpAndSettle();
+
+          expect(transport.opened.single.writes.single, expected);
+          expect(vm.hasModifier, isFalse, reason: 'sticky modifiers apply to one input');
+          expect(tester.widget<TextField>(input).controller!.text, isEmpty);
+        } finally {
+          await finish(tester);
+        }
+      });
+    }
+
+    for (final key in ['↵', 'TAB', '←']) {
+      testWidgets('$key clears the mirrored segment before the next input', (tester) async {
+        await repo.insertServer(server(name: 'nas'));
+        await pump(tester);
+        await connect(tester);
+        try {
+          vm.setSmartSwipeRuntime(true);
+          await tester.pumpAndSettle();
+          final input = find.byKey(const ValueKey('shell.input'));
+          await tester.enterText(input, 'hello');
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(ValueKey('shell.key.$key')));
+          await tester.pumpAndSettle();
+
+          expect(tester.widget<TextField>(input).controller!.text, isEmpty);
+          transport.opened.single.writes.clear();
+          await tester.enterText(input, 'x');
+          await tester.pumpAndSettle();
+          expect(
+            transport.opened.single.writes.single,
+            [120],
+            reason: 'the next input must not erase an obsolete mirrored word',
+          );
+        } finally {
+          await finish(tester);
+        }
+      });
+    }
+
+    testWidgets('read-only clears composition without changing remote text', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+      try {
+        vm.setSmartSwipeRuntime(true);
+        await tester.pumpAndSettle();
+        final input = find.byKey(const ValueKey('shell.input'));
+        await tester.enterText(input, 'hello');
+        await tester.pumpAndSettle();
+        transport.opened.single.writes.clear();
+        await tester.tap(find.byKey(const ValueKey('shell.readOnly')));
+        await tester.pumpAndSettle();
+        expect(transport.opened.single.writes, isEmpty);
+        expect(tester.widget<TextField>(input).controller!.text, isEmpty);
+        await tester.tap(find.byKey(const ValueKey('shell.readOnly')));
+        await tester.pumpAndSettle();
+        await tester.enterText(input, 'x');
+        await tester.pumpAndSettle();
+        expect(transport.opened.single.writes.single, [120]);
+      } finally {
+        await finish(tester);
+      }
+    });
+
+    testWidgets('shell-owned input resets composition before another widget frame', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+      try {
+        vm.setSmartSwipeRuntime(true);
+        await tester.pumpAndSettle();
+        final input = find.byKey(const ValueKey('shell.input'));
+        await tester.enterText(input, 'hello');
+        await tester.pumpAndSettle();
+        expect(vm.sendKey(TermKey.enter), isTrue);
+        expect(
+          tester.widget<TextField>(input).controller!.text,
+          isEmpty,
+          reason: 'an IME event can arrive before the next frame',
+        );
+        await tester.enterText(input, 'hello');
+        await tester.pumpAndSettle();
+        expect(vm.typeText('raw'), isTrue);
+        expect(tester.widget<TextField>(input).controller!.text, isEmpty);
+      } finally {
+        await finish(tester);
+      }
+    });
+
+    testWidgets('unrelated output preserves a composing word', (tester) async {
+      await repo.insertServer(server(name: 'nas'));
+      await pump(tester);
+      await connect(tester);
+      try {
+        vm.setSmartSwipeRuntime(true);
+        await tester.pumpAndSettle();
+        final input = find.byKey(const ValueKey('shell.input'));
+        await tester.enterText(input, 'hello');
+        await tester.pumpAndSettle();
+        transport.opened.single.writes.clear();
+        transport.opened.single.emit('unrelated output\r\n');
+        await tester.pumpAndSettle();
+        expect(tester.widget<TextField>(input).controller!.text, 'hello');
+        await tester.enterText(input, 'hello!');
+        await tester.pumpAndSettle();
+        expect(transport.opened.single.writes.single, [33]);
+      } finally {
+        await finish(tester);
+      }
+    });
   });
 
   testWidgets('clipboard paste reports pending, empty, failure and a changed-pane skip', (
@@ -1616,6 +1755,80 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('shell.newSession')));
       await tester.pumpAndSettle();
     }
+
+    testWidgets('Smart IME parity clears composition when split focus moves and returns', (
+      tester,
+    ) async {
+      await connectTwo(tester);
+      try {
+        final first = vm.current!;
+        final second = vm.splitCandidates.single;
+        await tester.tap(find.byKey(const ValueKey('shell.split')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(ValueKey('shell.split.pick.${second.id}')));
+        await tester.pumpAndSettle();
+        vm.setSmartSwipeRuntime(true);
+        await tester.pumpAndSettle();
+        Finder inputFor(String id) => find.descendant(
+          of: find.byKey(ValueKey('shell.pane.$id')),
+          matching: find.byKey(const ValueKey('shell.input')),
+        );
+        await tester.enterText(inputFor(first.id), 'hello');
+        await tester.pumpAndSettle();
+        for (final shell in transport.opened) {
+          shell.writes.clear();
+        }
+        await tester.tap(find.byKey(ValueKey('shell.pane.${second.id}')));
+        await tester.pumpAndSettle();
+        expect(vm.current, same(second));
+        await tester.tap(find.byKey(ValueKey('shell.pane.${first.id}')));
+        await tester.pumpAndSettle();
+        expect(vm.current, same(first));
+        expect(tester.widget<TextField>(inputFor(first.id)).controller!.text, isEmpty);
+        expect(transport.opened.expand((shell) => shell.writes), isEmpty);
+        await tester.enterText(inputFor(first.id), 'x');
+        await tester.pumpAndSettle();
+        expect(transport.opened.expand((shell) => shell.writes).single, [120]);
+      } finally {
+        await finish(tester);
+      }
+    });
+
+    testWidgets('Smart IME parity rejects a late commit from an inactive split pane', (
+      tester,
+    ) async {
+      await connectTwo(tester);
+      try {
+        final first = vm.current!;
+        final second = vm.splitCandidates.single;
+        await tester.tap(find.byKey(const ValueKey('shell.split')));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(ValueKey('shell.split.pick.${second.id}')));
+        await tester.pumpAndSettle();
+        vm.setSmartSwipeRuntime(true);
+        await tester.pumpAndSettle();
+        final input = find.descendant(
+          of: find.byKey(ValueKey('shell.pane.${first.id}')),
+          matching: find.byKey(const ValueKey('shell.input')),
+        );
+        final oldCommit = tester.widget<TextField>(input).onChanged!;
+        await tester.tap(find.byKey(ValueKey('shell.pane.${second.id}')));
+        await tester.pumpAndSettle();
+        for (final shell in transport.opened) {
+          shell.writes.clear();
+        }
+        oldCommit('late');
+        await tester.pumpAndSettle();
+        expect(vm.current, same(second));
+        expect(
+          transport.opened.expand((shell) => shell.writes),
+          isEmpty,
+          reason: 'a queued old-pane input must never be redirected to the new pane',
+        );
+      } finally {
+        await finish(tester);
+      }
+    });
 
     testWidgets('split remains discoverable and explains when nothing is available', (
       tester,

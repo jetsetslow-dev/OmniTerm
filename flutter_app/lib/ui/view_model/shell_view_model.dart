@@ -465,6 +465,7 @@ class ShellViewModel extends ChangeNotifier {
   /// Kotlin's runtime display mode protects every pane, including sessions opened afterward.
   void setTerminalReadOnly(bool enabled) {
     if (_disposed) return;
+    if (enabled) _resetPendingSmartInput();
     _terminalReadOnly = enabled;
     if (enabled) _clearModifiers();
     for (final session in _sessions) {
@@ -1594,6 +1595,24 @@ class ShellViewModel extends ChangeNotifier {
 
   // ── input ───────────────────────────────────────────────────────────────────
 
+  ({Object owner, ShellSession session, VoidCallback reset})? _smartInput;
+
+  /// The focused input owns this callback, as in Kotlin's pendingSwipeFlush. Reset synchronously
+  /// before shell-owned input; waiting for a rebuild would leave a stale IME edit between frames.
+  void registerSmartInput(Object owner, ShellSession session, VoidCallback reset) {
+    if (_disposed || !identical(current, session)) return;
+    _smartInput = (owner: owner, session: session, reset: reset);
+  }
+
+  void unregisterSmartInput(Object owner) {
+    if (identical(_smartInput?.owner, owner)) _smartInput = null;
+  }
+
+  void _resetPendingSmartInput() {
+    final pending = _smartInput;
+    if (pending != null && identical(pending.session, current)) pending.reset();
+  }
+
   /// Send a special key.
   ///
   /// Returns false when nothing was sent — no session, a dead one, or read-only. Paging is the one
@@ -1607,6 +1626,9 @@ class ShellViewModel extends ChangeNotifier {
       _scrollByPage(session, key == TermKey.pageUp ? -1 : 1);
       return true;
     }
+
+    if (!session.isOpen) return false;
+    _resetPendingSmartInput();
 
     final bytes = TerminalKeyEncoder.encode(
       key,
@@ -1669,7 +1691,8 @@ class ShellViewModel extends ChangeNotifier {
   /// Send typed text under the current modifiers.
   bool typeText(String text) {
     final session = current;
-    if (session == null || text.isEmpty) return false;
+    if (session == null || session.readOnly || !session.isOpen || text.isEmpty) return false;
+    _resetPendingSmartInput();
     final bytes = encodeTypedText(text, shift: shift, alt: alt, ctrl: ctrl);
     final sent = session.write(bytes);
     _clearModifiers();
@@ -1870,6 +1893,7 @@ class ShellViewModel extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _smartInput = null;
     for (final run in _reconnectRuns.values) {
       run.timer?.cancel();
     }

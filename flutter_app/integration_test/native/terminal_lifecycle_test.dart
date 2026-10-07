@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -240,6 +241,53 @@ void main() {
     semanticsEnabled: false,
     skip: !_enabled || !Platform.isAndroid,
   );
+  patrolTest(
+    'Smart IME modifiers and resets send the expected bytes to the SSH fixture',
+    ($) async {
+      expect(_user, isNotEmpty);
+      expect(_password, isNotEmpty);
+      $.tester.binding.platformDispatcher.semanticsEnabledTestValue = false;
+      await app.main();
+      await $.pumpAndSettle();
+      final context = $.tester.element(find.byKey(const ValueKey('screen.servers')));
+      final state = context.read<AppState>();
+      final shell = context.read<ShellViewModel>();
+      final navigation = context.read<NavigationController>();
+      final trust = context.read<SshHostKeyTrust>();
+      final status = context.read<HostStatusProbe>()..stop();
+      final telemetry = context.read<TelemetryPoller>()..stop();
+      final owner = Object();
+      trust.registerApprovalHandler(owner, (request) {
+        expect(request.host, _host, reason: 'Only repository fixture SSH keys may be approved');
+        request.completer.complete(true);
+      });
+      addTearDown(() {
+        trust.clearApprovalHandler(owner);
+        status.stop();
+        telemetry.stop();
+      });
+      final id = (await $.tester.runAsync(() => state.repository.insertServer(_server())))!;
+      await _until($, () => state.servers.any((server) => server.id == id));
+      final host = state.servers.singleWhere((server) => server.id == id);
+      navigation.navigateTo(Screen.shell);
+      await $.tester.pump();
+      await $.tester.runAsync(() => shell.connect(host));
+      expect(shell.error, isNull);
+      final session = shell.current!;
+      final savedMode = shell.smartSwipeInput;
+      try {
+        await _until($, () => session.isOpen);
+        await _checkSmartIme($, shell, session);
+      } finally {
+        shell.setSmartSwipeRuntime(savedMode);
+        shell.close(session);
+        await $.tester.runAsync(() => state.repository.deleteServerAndDependents(id));
+      }
+    },
+    tags: 'smart-ime',
+    semanticsEnabled: false,
+    skip: !_enabled || !Platform.isAndroid,
+  );
   // Home, notification and Back automation may enable Android accessibility mid-test. Retain a
   // suite-owned semantics baseline, matching the other native fixtures, until teardown finishes.
   final binding = WidgetsBinding.instance;
@@ -342,6 +390,102 @@ Future<void> _until(PatrolIntegrationTester $, bool Function() ready) async {
     await $.tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 50)));
   }
   expect(ready(), isTrue, reason: 'The SSH lifecycle condition did not become ready');
+}
+
+Future<void> _checkSmartIme(
+  PatrolIntegrationTester $,
+  ShellViewModel shell,
+  ShellSession session,
+) async {
+  for (final (modifier, previous, committed, expected) in <(String, String, String, List<int>)>[
+    ('CTRL', '', 'c', [3]),
+    ('ALT', '', 'b', [27, 98]),
+    ('SHFT', '', 'c', [67]),
+    ('ALT', 'ab', 'a😀b', [97, 98, 27, ...utf8.encode('😀')]),
+  ]) {
+    await _captureSmartImeBytes($, shell, session, expected, () async {
+      final input = find.byKey(const ValueKey('shell.input'));
+      if (previous.isNotEmpty) {
+        await $.tester.enterText(input, previous);
+        await $.tester.pump();
+      }
+      await $.tester.tap(find.byKey(ValueKey('shell.key.$modifier')));
+      await $.tester.pump();
+      await $.tester.enterText(input, committed);
+      await $.tester.pump();
+    });
+    expect(shell.hasModifier, isFalse);
+    expect(
+      $.tester.widget<TextField>(find.byKey(const ValueKey('shell.input'))).controller!.text,
+      isEmpty,
+    );
+  }
+  for (final (key, bytes) in [
+    ('↵', [13]),
+    ('TAB', [9]),
+    ('←', [27, 91, 68]),
+  ]) {
+    await _captureSmartImeBytes(
+      $,
+      shell,
+      session,
+      [...utf8.encode('hello'), ...bytes, 120],
+      () async {
+        final input = find.byKey(const ValueKey('shell.input'));
+        await $.tester.enterText(input, 'hello');
+        await $.tester.pump();
+        await $.tester.tap(find.byKey(ValueKey('shell.key.$key')));
+        await $.tester.pump();
+        await $.tester.enterText(input, 'x');
+        await $.tester.pump();
+      },
+    );
+  }
+  await _captureSmartImeBytes($, shell, session, [...utf8.encode('hello'), 120], () async {
+    final input = find.byKey(const ValueKey('shell.input'));
+    await $.tester.enterText(input, 'hello');
+    await $.tester.pump();
+    shell.setTerminalReadOnly(true);
+    await $.tester.pump();
+    shell.setTerminalReadOnly(false);
+    await $.tester.pump();
+    await $.tester.enterText(input, 'x');
+    await $.tester.pump();
+  });
+}
+
+Future<void> _captureSmartImeBytes(
+  PatrolIntegrationTester $,
+  ShellViewModel shell,
+  ShellSession session,
+  List<int> expected,
+  Future<void> Function() input,
+) async {
+  shell.setSmartSwipeRuntime(false);
+  await $.tester.pump();
+  final token = '${DateTime.now().microsecondsSinceEpoch}';
+  final command =
+      r'ot_keybar_state=$(stty -g); stty raw -echo min 0 time 20; '
+      r'printf "\r\nKEYBAR_READY_%s\r\n" '
+      "'$token'; "
+      r"ot_keybar_bytes=$(dd bs=1 count=60 2>/dev/null | od -v -An -tu1 | tr -s '[:space:]' ','); "
+      r'stty "$ot_keybar_state"; printf "\r\nKEYBAR_%s:%s:END_%s\r\n" '
+      "'$token' "
+      r'"$ot_keybar_bytes" '
+      "'$token'\r";
+  expect(shell.typeText(command), isTrue);
+  String output() => session.snapshot.rows.map((row) => row.text).join();
+  await _until($, () => output().contains('KEYBAR_READY_$token'));
+  shell.setSmartSwipeRuntime(true);
+  await $.tester.pump();
+  await input();
+  await _until($, () => output().contains(':END_$token'));
+  expect(
+    readTerminalFixtureBytes(output(), token),
+    expected,
+    reason: 'The repository SSH fixture must receive the exact input bytes',
+  );
+  debugPrint('SMART-IME-E2E fixture received ${expected.length} expected bytes');
 }
 
 Future<void> _checkHeldKey(
