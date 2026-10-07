@@ -2,7 +2,14 @@
 
 Branch: `kotlin-bug-fixes`. No merge or release is authorized.
 
-## October 4: individual container actions — local gates passed; hosted checks pending
+## October 7: navigation fixture isolation — local gates complete; publishing pending
+
+- PR #92 failed an existing shared native navigation fixture: an expected empty-host swipe remained on Infra after Room published a leftover offline host. The exact failed job and unit XML were inspected; controlled contamination reproduced expected SFTP versus actual Infra on unfixed code.
+- The fixture now clears Room before creating its ViewModel, owns it in a ViewModelStore, and drains Main while waiting for cancelled IO continuations to finish during teardown. Production navigation and assertions remain unchanged. The same source passed all thirteen navigation cases in each companion variant, zero skips, and the contaminated-data after case passed with zero skips.
+- The final `./scripts/local-pr-check.sh --full` passed both native unit variants (578 passing cases and two optional external-capture replay diagnostics skipped each), both lints and fresh strict project/release-SBOM/compile dependency verification. No device was online during that invocation; after restarting the disposable API 35 emulator, the unchanged final tree passed fresh `./gradlew connectedOpenSourceDebugAndroidTest`: 24 executed cases, 35 opt-in E2E assumptions unexecuted, actual runner exit zero. All thirteen navigation cases executed in each unit variant. Existing Docker/reboot/health runtime evidence below remains valid for unchanged production code.
+- Final diff/secret checks, signed checkpoint publishing and every selected exact-head PR #112 check remain required. No merge or release is authorized.
+
+## October 4: individual container actions — signed checkpoint and hosted checks complete
 
 - Stack service rows now carry each container ID and expose direct Start/Stop/Restart/Pause/Unpause/Remove, Logs/Follow and Shell controls. They use the owning runtime and require no Compose file. Service-wide Stop/Restart/Remove operate only on observed replicas for that runtime/project/service, with explicit all-replica confirmation. Stack lifecycle and Scale retain Compose behavior.
 - Confirmations for individual containers scroll with visible overflow indicators and retain fixed actions. A changed selected host or missing container rejects the pending action; existing streaming progress/result/error feedback and runtime refresh remain.
@@ -11,7 +18,7 @@ Branch: `kotlin-bug-fixes`. No merge or release is authorized.
 - Final `./scripts/local-pr-check.sh --full` passed: 578 passing JVM cases and two optional external-capture diagnostics skipped in each variant, both lints and fresh strict dependency/release-SBOM/compile verification. Fresh API 35 plain instrumentation executed 24 passing cases; 35 opt-in assumptions did not execute and are not counted as passes. Actual runner exit was zero.
 - The normal debug APK was verified for package, version, debuggable state and development signature, archived, installed and opened without a fatal exception. SHA-256: `10fa6514ee7e50875859b891de085668dcd346088612d0fe205b5c6909d918cd`.
 - Reproduce the selected runtime exercise with the disposable fleet, `E2eLabHostProvisioner` and `E2eContainerActionWithoutComposeTest`, using `omniterm_e2e_provision_host=yes`, `omniterm_e2e_trust_host=yes`, `omniterm_e2e_container_actions=yes`, and `omniterm_container_runtime=docker` or `podman`. Enable `omniterm_e2e_surfaces=yes` and the fixture SFTP home for the required surface sweep. Provision and exercise in one invocation.
-- Signed checkpoint publishing and all exact-head PR #112 checks remain pending. Existing completed server-health/tmux evidence below is historical. No merge or release is authorized.
+- Signed/pushed `e99bb3d` completed all fifteen exact-head PR #112 contexts: ten successes, four unselected companion skips and one neutral annotation. Native build/test, API 29 Room, release SBOM, actual CodeQL and selected security checks succeeded. No merge or release is authorized.
 
 ## Implemented
 
