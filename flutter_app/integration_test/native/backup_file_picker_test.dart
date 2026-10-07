@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:patrol/patrol.dart';
+import 'package:provider/provider.dart';
 
 import 'package:omniterm/main.dart' as app;
+import 'package:omniterm/ui/view_model/backup_view_model.dart';
 
 /// The system document picker, driven for real — Patrol's native half.
 ///
@@ -61,6 +63,39 @@ void main() {
     await $.pumpAndSettle();
   }
 
+  Future<void> waitForSavePicker(PatrolIntegrationTester $) async {
+    final context = $.tester.element($(const ValueKey('backup.list')).finder);
+    final vm = context.read<BackupViewModel>();
+    final deadline = DateTime.now().add(const Duration(seconds: 20));
+    // Native visibility polling does not pump Flutter frames or wait for the SQLite reads that
+    // build the backup. The permission reply can arrive after pumpAndSettle has returned. Wait
+    // for that export to start and finish before handing the observation over to Android, using
+    // the same twenty-second budget rather than extending the picker deadline.
+    while ((vm.busyMessage != 'Creating backup…' || vm.busy) &&
+        vm.error == null &&
+        DateTime.now().isBefore(deadline)) {
+      await $.tester.pump(const Duration(milliseconds: 100));
+      await $.tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 20)));
+    }
+    expect(vm.error, isNull, reason: 'the backup must be built before its save picker opens');
+    expect(vm.busyMessage, 'Creating backup…', reason: 'the export must actually have started');
+    expect(
+      vm.busy,
+      false,
+      reason: 'the backup reads must finish before checking the native picker',
+    );
+    final remaining = deadline.difference(DateTime.now());
+    expect(
+      remaining,
+      greaterThan(Duration.zero),
+      reason: 'the original picker deadline still applies',
+    );
+    await $.platformAutomator.android.waitUntilVisible(
+      AndroidSelector(applicationPackage: 'com.google.android.documentsui'),
+      timeout: remaining,
+    );
+  }
+
   patrolTest('cancelling the save claims nothing was written', ($) async {
     // The failure this guards against is a screen that reports success on the way *into* the
     // picker rather than on the way out of it — "Backup ready." left standing over a file that was
@@ -85,10 +120,7 @@ void main() {
     await answerNotificationPromptIfShown($);
 
     // The picker belongs to another app, so this is the only way to know it opened at all.
-    await $.platformAutomator.android.waitUntilVisible(
-      AndroidSelector(applicationPackage: 'com.google.android.documentsui'),
-      timeout: const Duration(seconds: 20),
-    );
+    await waitForSavePicker($);
 
     await cancelPicker($);
 
@@ -137,10 +169,7 @@ void main() {
     // Settled before the picker, as in the cancellation test above.
     await answerNotificationPromptIfShown($);
 
-    await $.platformAutomator.android.waitUntilVisible(
-      AndroidSelector(applicationPackage: 'com.google.android.documentsui'),
-      timeout: const Duration(seconds: 20),
-    );
+    await waitForSavePicker($);
 
     // Query the filename leaf directly. Asking UIAutomator for the DocumentsUI package root makes
     // Patrol recursively serialize every descendant; Samsung's API 36 picker can mutate that tree
