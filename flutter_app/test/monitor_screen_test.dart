@@ -1,4 +1,5 @@
 import 'package:drift/drift.dart' show Value;
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:drift/native.dart';
@@ -11,6 +12,7 @@ import 'package:omniterm/domain/health_scoring.dart';
 import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/monitor/monitor_screen.dart';
+import 'package:omniterm/ui/screens/monitor/monitor_tabs.dart';
 import 'package:omniterm/data/remote_models.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/theme/typography.dart';
@@ -239,6 +241,117 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('monitor.processes.sortMem')));
     await tester.pumpAndSettle();
     expect(transport.commands.length, callsBefore, reason: 'the list is re-sorted locally');
+    vm.dispose();
+    scriptsVm.dispose();
+    await tester.pump(const Duration(milliseconds: 10));
+  });
+
+  for (final width in [320.0, 760.0]) {
+    for (final loading in [true, false]) {
+      testWidgets(
+        'process controls and status fit a short large-text viewport width=$width loading=$loading',
+        (tester) async {
+          await repo.insertServer(server(name: 'nas'));
+          await app.start();
+          final gate = Completer<void>();
+          final transport = RecordingTransport()..gate = loading ? gate : null;
+          vm = MonitorViewModel(app, transport: transport);
+          try {
+            await tester.pumpWidget(
+              ChangeNotifierProvider<MonitorViewModel>.value(
+                value: vm,
+                child: MaterialApp(
+                  theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
+                  builder: (context, child) => MediaQuery(
+                    data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(2)),
+                    child: child!,
+                  ),
+                  home: Scaffold(
+                    body: Align(
+                      alignment: Alignment.topCenter,
+                      child: SizedBox(
+                        width: width,
+                        height: 48,
+                        child: Consumer<MonitorViewModel>(
+                          builder: (_, vm, _) => ProcessesTab(vm: vm),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            );
+            await tester.pump();
+            await tester.pump(const Duration(milliseconds: 100));
+            expect(tester.takeException(), isNull);
+            expect(
+              find.byKey(const ValueKey('monitor.processes.sortCpu')).hitTestable(),
+              findsOneWidget,
+            );
+            if (loading) {
+              expect(
+                find.byKey(const ValueKey('monitor.processes.firstLoadProgress')).hitTestable(),
+                findsOneWidget,
+              );
+              expect(find.text('Reading…').hitTestable(), findsOneWidget);
+            }
+            await tester.drag(
+              find.byKey(const ValueKey('monitor.processes.scroll')),
+              const Offset(0, -100),
+            );
+            await tester.pump(const Duration(milliseconds: 100));
+            final status = find.byKey(
+              ValueKey(loading ? 'monitor.processes.loading' : 'monitor.processes.empty'),
+            );
+            final viewport = tester.getRect(find.byKey(const ValueKey('monitor.processes.scroll')));
+            expect(tester.getRect(status).overlaps(viewport), isTrue);
+            // The explanation can be taller than this viewport. Its last line must still
+            // be reachable rather than clipped inside an otherwise scrollable panel.
+            final scrollable = tester.state<ScrollableState>(
+              find.descendant(
+                of: find.byKey(const ValueKey('monitor.processes.scroll')),
+                matching: find.byType(Scrollable),
+              ),
+            );
+            scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+            await tester.pump();
+            expect(tester.takeException(), isNull);
+            expect(tester.getRect(status).bottom, lessThanOrEqualTo(viewport.bottom + 0.5));
+          } finally {
+            gate.complete();
+            vm.dispose();
+            await tester.pump(const Duration(milliseconds: 10));
+          }
+        },
+      );
+    }
+  }
+
+  testWidgets('process sorting stays visible while rows scroll in a normal viewport', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas'));
+    await pump(
+      tester,
+      transport: RecordingTransport(
+        replies: {
+          'ps -eo':
+              'PID USER %CPU %MEM VSZ ELAPSED STAT COMMAND\n'
+              '${List.generate(30, (i) => '${101 + i} root 1.0 1.0 100000 01:00:00 S process-$i').join('\n')}\n',
+        },
+      ),
+    );
+    vm.activeTab = MonitorTab.processes;
+    await tester.pumpAndSettle();
+    final sort = find.byKey(const ValueKey('monitor.processes.sortCpu'));
+    final top = tester.getTopLeft(sort).dy;
+    await tester.drag(
+      find.byKey(const ValueKey('monitor.processes.scroll')),
+      const Offset(0, -300),
+    );
+    await tester.pumpAndSettle();
+    expect(sort.hitTestable(), findsOneWidget);
+    expect(tester.getTopLeft(sort).dy, closeTo(top, 0.5));
     vm.dispose();
     scriptsVm.dispose();
     await tester.pump(const Duration(milliseconds: 10));

@@ -486,6 +486,83 @@ class _CardLabel extends StatelessWidget {
   );
 }
 
+class _ProcessesToolbar extends StatelessWidget {
+  const _ProcessesToolbar({required this.vm});
+  final MonitorViewModel vm;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ColoredBox(
+      color: Theme.of(context).scaffoldBackgroundColor,
+      child: Column(
+        children: [
+          // Only while refreshing rows that are already on screen. A 2px bar above an *empty* list is
+          // indistinguishable from a host with nothing running, which is the wrong thing to tell
+          // someone waiting for a first load — Kotlin splits the two the same way
+          // (`ui/MonitorScreen.kt`, `processesLoading && isEmpty`).
+          if (vm.processesLoading && vm.processes.isNotEmpty)
+            const LinearProgressIndicator(minHeight: 2),
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Row(
+                  children: [
+                    ChoiceChip(
+                      key: const ValueKey('monitor.processes.sortCpu'),
+                      label: const Text('CPU'),
+                      selected: vm.sortByCpu,
+                      onSelected: (_) => vm.sortByCpu = true,
+                    ),
+                    const SizedBox(width: 8),
+                    ChoiceChip(
+                      key: const ValueKey('monitor.processes.sortMem'),
+                      label: const Text('MEM'),
+                      selected: !vm.sortByCpu,
+                      onSelected: (_) => vm.sortByCpu = false,
+                    ),
+                  ],
+                ),
+                Flexible(
+                  child: vm.processesLoading && vm.processes.isEmpty
+                      ? Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const SizedBox(
+                              key: ValueKey('monitor.processes.firstLoadProgress'),
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: Text(
+                                'Reading…',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                              ),
+                            ),
+                          ],
+                        )
+                      : Text(
+                          '${vm.processes.length} Procs',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                        ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// The running process list, sortable by CPU or memory.
 class ProcessesTab extends StatefulWidget {
   const ProcessesTab({super.key, required this.vm});
@@ -508,75 +585,49 @@ class _ProcessesTabState extends State<ProcessesTab> {
     final vm = widget.vm;
     final scheme = Theme.of(context).colorScheme;
 
-    return Column(
-      children: [
-        // Only while refreshing rows that are already on screen. A 2px bar above an *empty* list is
-        // indistinguishable from a host with nothing running, which is the wrong thing to tell
-        // someone waiting for a first load — Kotlin splits the two the same way
-        // (`ui/MonitorScreen.kt`, `processesLoading && isEmpty`).
-        if (vm.processesLoading && vm.processes.isNotEmpty)
-          const LinearProgressIndicator(minHeight: 2),
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Row(
-                children: [
-                  ChoiceChip(
-                    key: const ValueKey('monitor.processes.sortCpu'),
-                    label: const Text('CPU'),
-                    selected: vm.sortByCpu,
-                    onSelected: (_) => vm.sortByCpu = true,
-                  ),
-                  const SizedBox(width: 8),
-                  ChoiceChip(
-                    key: const ValueKey('monitor.processes.sortMem'),
-                    label: const Text('MEM'),
-                    selected: !vm.sortByCpu,
-                    onSelected: (_) => vm.sortByCpu = false,
-                  ),
-                ],
+    return LayoutBuilder(
+      builder: (context, constraints) => CustomScrollView(
+        key: const ValueKey('monitor.processes.scroll'),
+        slivers: [
+          // Keep sorting visible with enough space. In a tiny viewport the toolbar
+          // scrolls with its content; first-load progress is visible in either layout.
+          if (constraints.maxHeight >=
+              96 * (MediaQuery.textScalerOf(context).scale(14) / 14).clamp(1.0, double.infinity))
+            PinnedHeaderSliver(child: _ProcessesToolbar(vm: vm))
+          else
+            SliverToBoxAdapter(child: _ProcessesToolbar(vm: vm)),
+          if (vm.processes.isEmpty)
+            SliverFillRemaining(
+              hasScrollBody: false,
+              child: Center(
+                child: vm.processesLoading
+                    ? const Column(
+                        key: ValueKey('monitor.processes.loading'),
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          ),
+                          SizedBox(height: 10),
+                          Text('Reading the process list…', style: TextStyle(fontSize: 12)),
+                        ],
+                      )
+                    : Text(
+                        // Every host runs *something*, so an empty list after a successful read is
+                        // the parse failing, not the host being idle. Saying "no processes" would be
+                        // a confident false statement about the machine.
+                        'The process list came back empty — this host may not support the '
+                        'command, or its output was not understood.',
+                        key: const ValueKey('monitor.processes.empty'),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
+                      ),
               ),
-              Text(
-                '${vm.processes.length} Procs',
-                style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-              ),
-            ],
-          ),
-        ),
-        if (vm.processes.isEmpty)
-          Expanded(
-            child: Center(
-              child: vm.processesLoading
-                  ? const Column(
-                      key: ValueKey('monitor.processes.loading'),
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        ),
-                        SizedBox(height: 10),
-                        Text('Reading the process list…', style: TextStyle(fontSize: 12)),
-                      ],
-                    )
-                  : Text(
-                      // Every host runs *something*, so an empty list after a successful read is
-                      // the parse failing, not the host being idle. Saying "no processes" would be
-                      // a confident false statement about the machine.
-                      'The process list came back empty — this host may not support the '
-                      'command, or its output was not understood.',
-                      key: const ValueKey('monitor.processes.empty'),
-                      textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
-                    ),
-            ),
-          )
-        else
-          Expanded(
-            child: ListView.separated(
+            )
+          else
+            SliverList.separated(
               key: const ValueKey('monitor.processes.list'),
               itemCount: vm.processes.length,
               separatorBuilder: (_, _) => const SizedBox(height: 6),
@@ -642,8 +693,8 @@ class _ProcessesTabState extends State<ProcessesTab> {
                 );
               },
             ),
-          ),
-      ],
+        ],
+      ),
     );
   }
 

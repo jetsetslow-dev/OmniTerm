@@ -176,6 +176,9 @@ class _TerminalOptionsState extends State<_TerminalOptions> {
       final session = widget.session;
       final vm = widget.vm;
       final shell = widget.shell;
+      final fontScale = (MediaQuery.textScalerOf(context).scale(14) / 14)
+          .clamp(1.0, double.infinity)
+          .toDouble();
       final writable =
           identical(vm.current, session) &&
           session.isOpen &&
@@ -188,9 +191,9 @@ class _TerminalOptionsState extends State<_TerminalOptions> {
           insetPadding: const EdgeInsets.all(18),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 560, maxHeight: 360),
+            constraints: BoxConstraints(maxHeight: 360 * fontScale),
             child: Padding(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(16),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -232,9 +235,12 @@ class _TerminalOptionsState extends State<_TerminalOptions> {
                             if (_pasting) const Text('Reading clipboard and preparing paste…'),
                             if (_pasteResult != null)
                               Text(_pasteResult!, key: const ValueKey('terminalOptions.result')),
-                            const Text(
+                            Text(
                               'Use this when an incognito keyboard does not expose clipboard history.',
-                              style: TextStyle(fontSize: 12),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
                             ),
                             const Divider(),
                             const Text(
@@ -244,11 +250,18 @@ class _TerminalOptionsState extends State<_TerminalOptions> {
                             SwitchListTile(
                               key: const ValueKey('terminalOptions.swipe'),
                               contentPadding: EdgeInsets.zero,
-                              title: const Text('Swipe-typing'),
+                              title: const Text(
+                                'Swipe-typing',
+                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+                              ),
                               subtitle: Text(
                                 vm.smartSwipeInput
                                     ? 'On — text streams as you swipe/autocorrect'
                                     : 'Off — each keystroke is sent immediately',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                ),
                               ),
                               value: vm.smartSwipeInput,
                               onChanged: vm.setSmartSwipeRuntime,
@@ -256,11 +269,18 @@ class _TerminalOptionsState extends State<_TerminalOptions> {
                             SwitchListTile(
                               key: const ValueKey('terminalOptions.awake'),
                               contentPadding: EdgeInsets.zero,
-                              title: const Text('Keep screen on'),
+                              title: const Text(
+                                'Keep screen on',
+                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+                              ),
                               subtitle: Text(
                                 shell.isKeepScreenOnEnabled
                                     ? 'On — screen stays awake in this session'
                                     : 'Off — screen may sleep normally',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                ),
                               ),
                               value: shell.isKeepScreenOnEnabled,
                               onChanged: shell.isSettingKeepScreenOn
@@ -272,9 +292,12 @@ class _TerminalOptionsState extends State<_TerminalOptions> {
                               'Copy terminal text',
                               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                             ),
-                            const Text(
+                            Text(
                               'Choose the terminal text range to copy.',
-                              style: TextStyle(fontSize: 14),
+                              style: TextStyle(
+                                fontSize: 14,
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                              ),
                             ),
                           ],
                         ),
@@ -305,14 +328,16 @@ class _TerminalOptionsState extends State<_TerminalOptions> {
                       ),
                     ],
                   ),
-                  Row(
+                  OverflowBar(
+                    alignment: MainAxisAlignment.spaceBetween,
+                    overflowAlignment: OverflowBarAlignment.end,
+                    spacing: 6,
+                    overflowSpacing: 6,
                     children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          key: const ValueKey('terminalOptions.clear'),
-                          onPressed: _pasting ? null : _clear,
-                          child: const Text('Clear scrollback'),
-                        ),
+                      OutlinedButton(
+                        key: const ValueKey('terminalOptions.clear'),
+                        onPressed: _pasting ? null : _clear,
+                        child: const Text('Clear scrollback'),
                       ),
                       TextButton(
                         key: const ValueKey('terminalOptions.cancel'),

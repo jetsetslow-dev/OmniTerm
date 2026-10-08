@@ -107,6 +107,11 @@ void main() {
         child: MaterialApp(
           scrollBehavior: const PopupScrollBehavior(),
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
+          // Navigator overlays need the same text scale as the terminal underneath them.
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(textScaler: TextScaler.linear(textScale)),
+            child: child!,
+          ),
           home: MediaQuery(
             data: MediaQueryData(
               size: size,
@@ -193,6 +198,33 @@ void main() {
     expect(tester.widget<TextField>(input).enableSuggestions, isTrue);
     await finish(tester);
   });
+
+  for (final size in [const Size(360, 800), const Size(800, 360)]) {
+    for (final scale in [1.0, 1.5, 2.0]) {
+      testWidgets('terminal options primary actions stay visible at $size and scale $scale', (
+        tester,
+      ) async {
+        await repo.insertServer(server(name: 'nas'));
+        await pump(tester, size: size, textScale: scale);
+        await tester.ensureVisible(find.byKey(const ValueKey('shell.connect')));
+        await connect(tester);
+        try {
+          await tester.tap(find.byKey(const ValueKey('shell.options')));
+          await tester.pumpAndSettle();
+          expect(find.byKey(const ValueKey('terminalOptions.dialog')), findsOneWidget);
+          // Opening the menu must expose its actions before any scrolling gesture.
+          for (final key in ['paste', 'visible', 'full', 'clear', 'cancel']) {
+            expect(find.byKey(ValueKey('terminalOptions.$key')).hitTestable(), findsOneWidget);
+          }
+          expect(tester.takeException(), isNull);
+          await tester.tap(find.byKey(const ValueKey('terminalOptions.cancel')));
+          await tester.pumpAndSettle();
+        } finally {
+          await finish(tester);
+        }
+      });
+    }
+  }
 
   group('Smart IME parity', () {
     for (final (modifier, previous, committed, expected) in <(String, String, String, List<int>)>[
@@ -481,6 +513,15 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.text('↑ More above'), findsOneWidget);
+      final scrollable = tester.state<ScrollableState>(
+        find.descendant(
+          of: find.byKey(const ValueKey('terminalOptions.scroll')),
+          matching: find.byType(Scrollable),
+        ),
+      );
+      // Larger dialog text changes the content extent; reach its actual end after the gesture.
+      scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+      await tester.pumpAndSettle();
       expect(find.text('↓ More below'), findsNothing);
       await tester.tap(find.byKey(const ValueKey('terminalOptions.full')));
       await tester.pumpAndSettle();

@@ -20,6 +20,7 @@ import 'package:omniterm/ui/view_model/fleet_view_model.dart';
 import 'package:omniterm/ui/view_model/host_status_probe.dart';
 import 'package:omniterm/ui/view_model/infra_view_model.dart';
 import 'package:omniterm/ui/view_model/sftp_view_model.dart';
+import 'package:omniterm/ui/view_model/settings_view_model.dart';
 import 'package:omniterm/ui/view_model/shell_view_model.dart';
 import 'package:omniterm/ui/view_model/telemetry_poller.dart';
 import 'package:omniterm/ui/widgets/terminal_surface.dart';
@@ -278,6 +279,62 @@ Future<void> _exerciseCommandCancellation(SshHostKeyTrust trust) async {
   }
 }
 
+Future<void> _exerciseTerminalOptionsLayouts(WidgetTester tester) async {
+  final screen = find.byKey(const ValueKey('screen.shell'));
+  final settings = tester.element(screen).read<SettingsViewModel>();
+  final original = settings.saved;
+  try {
+    for (final percent in [100, 150, 200]) {
+      settings.update((current) => current.copyWith(textScalePercent: percent));
+      await settings.save();
+      await _waitFor(tester, () {
+        final scaler = MediaQuery.textScalerOf(tester.element(screen));
+        return (scaler.scale(14) - 14 * percent / 100).abs() < 0.5;
+      });
+      for (final (orientation, expected) in [
+        (DeviceOrientation.portraitUp, Orientation.portrait),
+        (DeviceOrientation.landscapeLeft, Orientation.landscape),
+      ]) {
+        // Closing options restores terminal focus and can reopen the keyboard. The
+        // landscape IME deliberately hides the header, so settle the full viewport
+        // before measuring this menu's controls.
+        FocusManager.instance.primaryFocus?.unfocus();
+        await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+        await SystemChrome.setPreferredOrientations([orientation]);
+        final options = find.byKey(const ValueKey('shell.options'));
+        await _waitFor(tester, () {
+          final media = MediaQuery.of(tester.element(screen));
+          return media.orientation == expected &&
+              media.viewInsets.bottom == 0 &&
+              options.hitTestable().evaluate().length == 1;
+        });
+        await tester.tap(options);
+        await _waitForPopup(tester, find.byKey(const ValueKey('terminalOptions.cancel')));
+        final dialog = find.byKey(const ValueKey('terminalOptions.dialog'));
+        final scaler = MediaQuery.textScalerOf(tester.element(dialog));
+        expect((scaler.scale(14) - 14 * percent / 100).abs(), lessThan(0.5));
+        for (final key in ['paste', 'visible', 'full', 'clear', 'cancel']) {
+          expect(find.byKey(ValueKey('terminalOptions.$key')).hitTestable(), findsOneWidget);
+        }
+        expect(tester.takeException(), isNull);
+        await tester.tap(find.byKey(const ValueKey('terminalOptions.cancel')));
+        await _waitFor(tester, () => dialog.evaluate().isEmpty);
+        debugPrint('HOST-E2E terminal options passed: $percent percent ${expected.name}');
+      }
+    }
+  } finally {
+    final dialog = find.byKey(const ValueKey('terminalOptions.dialog'));
+    if (dialog.evaluate().isNotEmpty) {
+      final context = tester.element(dialog);
+      if (ModalRoute.of(context)?.isCurrent == true) Navigator.of(context).pop();
+    }
+    settings.update((_) => original);
+    await settings.save();
+    await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    await tester.pump();
+  }
+}
+
 Future<void> _exerciseTerminals(
   WidgetTester tester,
   ShellViewModel terminals,
@@ -347,6 +404,7 @@ Future<void> _exerciseTerminals(
         await _waitFor(tester, () => find.text('↑ More above').evaluate().isNotEmpty);
         await tester.tap(find.byKey(const ValueKey('transcript.close')));
         await tester.pump();
+        await _exerciseTerminalOptionsLayouts(tester);
         // Exercise the runtime controls on the actual Android terminal, retaining saved defaults.
         await tester.tap(find.byKey(const ValueKey('shell.options')));
         await _waitForPopup(tester, find.byKey(const ValueKey('terminalOptions.cancel')));
