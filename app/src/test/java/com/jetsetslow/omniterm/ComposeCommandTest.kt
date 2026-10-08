@@ -20,6 +20,25 @@ class ComposeCommandTest {
         assertValidShell(command)
     }
 
+    @Test fun replicaActionsQuoteOnlyTheObservedIdsWithoutCompose() {
+        for (runtime in listOf("docker", "podman")) {
+            for (action in listOf("start", "stop", "restart", "pause", "unpause", "remove")) {
+                val verb = if (action == "remove") "rm -f" else action
+                val command = RemoteCommands.dockerContainersAction(listOf("first", "second", "first"), action, runtime)
+                org.junit.Assert.assertEquals("$runtime $verb 'first' 'second' 2>&1", command)
+                assertValidShell(command)
+            }
+            val quoted = RemoteCommands.dockerContainersAction(listOf("a'; echo injected"), "stop", runtime)
+            assertValidShell(quoted)
+            assertTrue(quoted.contains(RemoteCommands.shellQuote("a'; echo injected")))
+        }
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun emptyReplicaActionsAreRefused() {
+        RemoteCommands.dockerContainersAction(emptyList(), "stop", "docker")
+    }
+
     private fun assertValidShell(script: String) {
         // Skip silently if there's no bash on the build machine.
         val bash = listOf("/bin/bash", "/usr/bin/bash").firstOrNull { File(it).exists() } ?: return

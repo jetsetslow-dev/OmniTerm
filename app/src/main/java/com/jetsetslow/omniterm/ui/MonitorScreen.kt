@@ -71,7 +71,7 @@ fun MonitorScreen(viewModel: AppViewModel) {
                     modifier = Modifier.clickable { showScoreDialog = true }.padding(end = 4.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    ScoreRing(score = srv.healthScore, size = 32.dp)
+                    ScoreRing(score = viewModel.currentHealthScore(srv), size = 32.dp)
                 }
             },
             trailingContent = {
@@ -682,7 +682,9 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
         viewModel.loadHostMetrics()
         viewModel.loadMetricsHistory(srv.id)
     }
-    val m = viewModel.hostMetrics
+    val currentMetrics = viewModel.currentMetricsForServer(srv.id)
+    val metricsAvailable = currentMetrics != null
+    val m = currentMetrics ?: HostMetrics.EMPTY
     val accent = getServerColor(srv)
     val spark = viewModel.fetchCachedSparkline(srv.id)
     val ramSpark = viewModel.fetchCachedRamSparkline(srv.id)
@@ -693,13 +695,22 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
         verticalArrangement = Arrangement.spacedBy(12.dp),
         modifier = Modifier.fillMaxSize()
     ) {
+        if (!metricsAvailable) {
+            item {
+                OmniCard(modifier = Modifier.fillMaxWidth()) {
+                    if (viewModel.metricsLoading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                    Text(viewModel.metricsErrorsById[srv.id] ?: "Waiting for verified CPU, memory and disk metrics.")
+                    TextButton(onClick = { viewModel.loadHostMetrics() }, enabled = !viewModel.metricsLoading) { Text("Retry metrics") }
+                }
+            }
+        }
         // The header's RefreshCountdown is the single refresh indicator — no separate spinner here.
         item {
             OmniCard(modifier = Modifier.fillMaxWidth()) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Column {
                         Text(stringResource(R.string.cpu_utilisation), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Text("Load: ${m.load1} · ${m.load5} · ${m.load15}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(if (metricsAvailable) "Load: ${m.load1} · ${m.load5} · ${m.load15}" else "Current load unavailable", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         m.cpuTempC?.let {
                             Text(
                                 "Temp: ${formatTemperature(it, measurementSystem)}",
@@ -708,7 +719,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                             )
                         }
                     }
-                    Text("${m.cpuPercent.roundToInt()}%", fontSize = 28.sp, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, color = accent)
+                    Text(if (metricsAvailable) "${m.cpuPercent.roundToInt()}%" else "—", fontSize = 28.sp, fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, color = accent)
                 }
                 Spacer(modifier = Modifier.height(12.dp))
                 MetricLineChart(
@@ -738,7 +749,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
                 Text(stringResource(R.string.memory_occupancy), fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    "${RemoteParsers.humanBytes(m.memUsedBytes)} of ${RemoteParsers.humanBytes(m.memTotalBytes)} occupied (${m.memPercent.roundToInt()}%)",
+                    if (metricsAvailable) "${RemoteParsers.humanBytes(m.memUsedBytes)} of ${RemoteParsers.humanBytes(m.memTotalBytes)} occupied (${m.memPercent.roundToInt()}%)" else "Current memory unavailable",
                     fontSize = 14.sp
                 )
                 Spacer(modifier = Modifier.height(10.dp))
@@ -754,6 +765,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
             }
         }
 
+        if (metricsAvailable) {
         item {
             OmniCard(modifier = Modifier.fillMaxWidth()) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -858,6 +870,7 @@ fun OverviewTab(viewModel: AppViewModel, srv: ServerEntity) {
             }
         }
 
+        }
         val history = viewModel.metricsHistory
         if (history.size >= 2) {
             item {

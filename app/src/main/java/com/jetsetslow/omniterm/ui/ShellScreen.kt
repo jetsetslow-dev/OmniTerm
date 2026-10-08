@@ -421,6 +421,24 @@ fun ShellScreen(viewModel: AppViewModel) {
             // Status bar is handled by the app bar above; only lift the key bar above the keyboard.
             .imePadding(),
     ) {
+        if (viewModel.isTerminalConnecting && viewModel.isMultiSsh) {
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+            Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(viewModel.terminalConnectionPhase, Modifier.weight(1f), color = OmniColors.cyan)
+                TextButton(onClick = { viewModel.cancelConnect() }) { Text("Cancel") }
+            }
+        }
+        if (!viewModel.isTerminalConnecting) {
+            viewModel.terminalConnectError?.let { error ->
+                Column(Modifier.fillMaxWidth().padding(8.dp)) {
+                    Text(error, Modifier.fillMaxWidth().heightIn(max = 90.dp).verticalScrollWithIndicators(rememberScrollState()), color = OmniColors.red)
+                    Row {
+                        TextButton(onClick = { viewModel.retryTerminalConnectError() }) { Text("Retry") }
+                        TextButton(onClick = { viewModel.dismissTerminalConnectError() }) { Text("Dismiss") }
+                    }
+                }
+            }
+        }
         Box(Modifier.fillMaxWidth().weight(1f)) {
             Box(Modifier.fillMaxSize()) {
                 // The overlaid header is now two rows (host info + action chips), so its height is
@@ -1007,7 +1025,10 @@ private fun ConnectPrompt(srv: ServerEntity, viewModel: AppViewModel) {
             Spacer(Modifier.height(18.dp))
             Box(
                 Modifier
-                    .clickable { viewModel.connectTerminal() }
+                    .clickable {
+                        if (viewModel.terminalConnectError != null) viewModel.retryTerminalConnectError()
+                        else viewModel.connectTerminal()
+                    }
                     .background(MaterialTheme.colorScheme.primaryContainer, RoundedCornerShape(8.dp))
                     .border(1.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
                     .padding(horizontal = 22.dp, vertical = 12.dp),
@@ -2430,7 +2451,7 @@ private fun PaneTerminalContent(
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 360.dp)
+                            .heightIn(max = 360.dp * density.fontScale.coerceAtLeast(1f))
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
@@ -2439,8 +2460,8 @@ private fun PaneTerminalContent(
                         tonalElevation = 6.dp,
                     ) {
                         Column(
-                            Modifier.fillMaxWidth().verticalScrollWithIndicators(rememberScrollState()).padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                            Modifier.fillMaxWidth().padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
                         ) {
                             Text("Terminal input", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                             Button(
@@ -2478,73 +2499,84 @@ private fun PaneTerminalContent(
                                 Spacer(Modifier.width(8.dp))
                                 Text(if (viewModel.terminalReadOnly) "Paste unavailable in read-only mode" else "Paste from clipboard")
                             }
-                            Text(
-                                "Use this when an incognito keyboard does not expose clipboard history.",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            // Keep primary/range actions visible; only settings and explanations scroll.
+                            Column(
+                                Modifier.fillMaxWidth().weight(1f, fill = false)
+                                    .verticalScrollWithIndicators(rememberScrollState()),
+                                verticalArrangement = Arrangement.spacedBy(10.dp),
+                            ) {
+                                Text(
+                                    "Use this when an incognito keyboard does not expose clipboard history.",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                HorizontalDivider()
+                                // ── Session-scoped options (runtime only, not saved to settings) ──
+                                // Rendered as Switch rows: the switch shows current state at a glance, and
+                                // flipping it acts immediately. Unlike the copy actions, these stay on the
+                                // menu after toggling so the user can adjust both without re-opening it.
+                                Text(stringResource(R.string.this_session), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                                TerminalToggleRow(
+                                    title = "Swipe-typing",
+                                    subtitle = if (viewModel.smartSwipeInput) "On — text streams as you swipe/autocorrect"
+                                        else "Off — each keystroke is sent immediately",
+                                    checked = viewModel.smartSwipeInput,
+                                    onCheckedChange = { viewModel.toggleSmartSwipeRuntime() },
+                                )
+                                TerminalToggleRow(
+                                    title = "Keep screen on",
+                                    subtitle = if (viewModel.isKeepScreenOnEnabled) "On — screen stays awake in this session"
+                                        else "Off — screen may sleep normally",
+                                    checked = viewModel.isKeepScreenOnEnabled,
+                                    // Toggle directly: the long-press menu is already an explicit opt-in, so
+                                    // skip the battery-warning follow-up dialog.
+                                    onCheckedChange = { viewModel.toggleKeepScreenOnDirect() },
+                                )
+                                HorizontalDivider()
+                                Text(stringResource(R.string.copy_terminal_text), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                                Text(stringResource(R.string.choose_the_terminal_text_range_to), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                             HorizontalDivider()
-                            // ── Session-scoped options (runtime only, not saved to settings) ──
-                            // Rendered as Switch rows: the switch shows current state at a glance, and
-                            // flipping it acts immediately. Unlike the copy actions, these stay on the
-                            // menu after toggling so the user can adjust both without re-opening it.
-                            Text(stringResource(R.string.this_session), fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                            TerminalToggleRow(
-                                title = "Swipe-typing",
-                                subtitle = if (viewModel.smartSwipeInput) "On — text streams as you swipe/autocorrect"
-                                    else "Off — each keystroke is sent immediately",
-                                checked = viewModel.smartSwipeInput,
-                                onCheckedChange = { viewModel.toggleSmartSwipeRuntime() },
-                            )
-                            TerminalToggleRow(
-                                title = "Keep screen on",
-                                subtitle = if (viewModel.isKeepScreenOnEnabled) "On — screen stays awake in this session"
-                                    else "Off — screen may sleep normally",
-                                checked = viewModel.isKeepScreenOnEnabled,
-                                // Toggle directly: the long-press menu is already an explicit opt-in, so
-                                // skip the battery-warning follow-up dialog.
-                                onCheckedChange = { viewModel.toggleKeepScreenOnDirect() },
-                            )
-                            HorizontalDivider()
-                            Text(stringResource(R.string.copy_terminal_text), fontWeight = FontWeight.Bold, fontSize = 18.sp)
-                            Text(stringResource(R.string.choose_the_terminal_text_range_to), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Button(
-                                onClick = {
-                                    val start = viewport.firstVisibleRow.coerceIn(0, snapshot.totalRows)
-                                    openSelectableText("Visible screen", viewModel.terminalBufferTextFor(currentSession, full = false, firstRow = start, rowCount = visibleRowCount))
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(stringResource(R.string.visible_screen))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Button(
+                                    onClick = {
+                                        val start = viewport.firstVisibleRow.coerceIn(0, snapshot.totalRows)
+                                        openSelectableText("Visible screen", viewModel.terminalBufferTextFor(currentSession, full = false, firstRow = start, rowCount = visibleRowCount))
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Text(stringResource(R.string.visible_screen))
+                                }
+                                OutlinedButton(
+                                    onClick = {
+                                        openSelectableText("Full buffer", viewModel.terminalBufferTextFor(currentSession, full = true))
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Text(stringResource(R.string.full_buffer))
+                                }
                             }
-                            OutlinedButton(
-                                onClick = {
-                                    openSelectableText("Full buffer", viewModel.terminalBufferTextFor(currentSession, full = true))
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(stringResource(R.string.full_buffer))
-                            }
-                            OutlinedButton(
-                                onClick = {
-                                    showCopyOptions = false
-                                    confirm.ask(
-                                        "Clear scrollback?",
-                                        "Clear the current terminal scrollback buffer? This removes buffered terminal output from this session.",
-                                        confirmLabel = "Clear",
-                                    ) {
-                                        viewModel.clearTerminalScrollbackFor(currentSession)
-                                    }
-                                },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(stringResource(R.string.clear_scrollback))
-                            }
-                            TextButton(
-                                onClick = { showCopyOptions = false },
-                                modifier = Modifier.align(Alignment.End),
-                            ) {
-                                Text(stringResource(R.string.cancel))
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                OutlinedButton(
+                                    onClick = {
+                                        showCopyOptions = false
+                                        confirm.ask(
+                                            "Clear scrollback?",
+                                            "Clear the current terminal scrollback buffer? This removes buffered terminal output from this session.",
+                                            confirmLabel = "Clear",
+                                        ) {
+                                            viewModel.clearTerminalScrollbackFor(currentSession)
+                                        }
+                                    },
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Text(stringResource(R.string.clear_scrollback))
+                                }
+                                TextButton(
+                                    onClick = { showCopyOptions = false },
+                                ) {
+                                    Text(stringResource(R.string.cancel))
+                                }
                             }
                         }
                     }

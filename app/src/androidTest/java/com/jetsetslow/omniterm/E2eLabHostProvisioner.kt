@@ -93,6 +93,7 @@ class E2eLabHostProvisioner {
         assumeTrue(args.getString("omniterm_e2e_trust_host") == "yes")
         val vm = ViewModelProvider(composeRule.activity)[AppViewModel::class.java]
         composeRule.runOnUiThread { vm.isAppLocked = false }
+        await("host row loaded") { vm.servers.value.any { it.name == HOST_NAME } }
         val host = requireNotNull(vm.servers.value.find { it.name == HOST_NAME }) { "host row missing" }
         composeRule.runOnUiThread {
             vm.selectedServerId = host.id

@@ -18,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -171,6 +172,8 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
     val copyToClipboard = rememberClipboardCopy()
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
+    val containerConfirm = rememberConfirm()
+    ContainerActionConfirmHost(containerConfirm)
     val stacks = remember(containers) {
         containers.groupBy { it.runtime to it.group }.map { (key, list) ->
             val (runtime, name) = key
@@ -206,6 +209,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                             containerId = serviceContainers.firstOrNull { it.status == "running" }?.id ?: serviceContainers.firstOrNull()?.id.orEmpty(),
                             containers = serviceContainers.map {
                                 StackContainer(
+                                    id = it.id,
                                     name = it.name,
                                     status = it.status,
                                     ports = it.ports,
@@ -280,7 +284,7 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
         items(stacks) { stack ->
             val canCompose = stack.name != "standalone" && stack.workingDir.isNotBlank()
             val servicesExpanded = expandedStacks[stack.name] == true
-            OmniCard(modifier = Modifier.fillMaxWidth(), leftAccent = OmniColors.cyan) {
+            OmniCard(modifier = Modifier.fillMaxWidth().testTag("infra.stack.${stack.runtime}.${stack.name}"), leftAccent = OmniColors.cyan) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(4.dp),
@@ -393,6 +397,21 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                                 ) {
                                   StackServiceRow(
                                     service = service,
+                                    canCompose = canCompose,
+                                    runtime = stack.runtime,
+                                    onContainerAction = { container, action ->
+                                        val hostId = viewModel.selectedServer?.id
+                                        val verb = action.replaceFirstChar { it.uppercase() }
+                                        containerConfirm.ask(
+                                            "$verb ${container.name}?",
+                                            if (action == "remove") "Stop and remove only this container. Other replicas, volumes and the Compose file are kept."
+                                            else "$verb only this container. Other containers in this service and stack are kept.",
+                                            confirmLabel = verb,
+                                        ) { viewModel.dockerAction(container.id, action, stack.runtime, expectedServerId = hostId) }
+                                    },
+                                    onContainerLogs = { container -> viewModel.dockerContainerLogs(container.id, container.name, stack.runtime) },
+                                    onContainerFollow = { container -> viewModel.dockerContainerFollowLogs(container.id, container.name, stack.runtime) },
+                                    onContainerShell = { container -> viewModel.openDockerExecShell(container.id, stack.runtime) },
                                     onLogs = { follow ->
                                         viewModel.dockerStackServiceAction(
                                             stack.name,
@@ -404,27 +423,30 @@ private fun StacksView(viewModel: AppViewModel, containers: List<SimContainer>) 
                                         )
                                     },
                                     onRestart = {
+                                        val hostId = viewModel.selectedServer?.id
                                         confirm.ask(
                                             "Restart ${service.name}?",
-                                            "Restart this service in ${stack.name}? It will briefly go down.",
+                                            "Restart all ${service.total} current containers for this service in ${stack.name}?",
                                             confirmLabel = "Restart",
-                                        ) { viewModel.dockerStackServiceAction(stack.name, stack.workingDir, stack.configFiles, service.name, "serviceRestart", runtime = stack.runtime) }
+                                        ) { viewModel.dockerStackServiceAction(stack.name, stack.workingDir, stack.configFiles, service.name, "serviceRestart", runtime = stack.runtime, expectedServerId = hostId) }
                                     },
                                     onStop = {
+                                        val hostId = viewModel.selectedServer?.id
                                         confirm.ask(
                                             "Stop ${service.name}?",
-                                            "Stop this service in ${stack.name}? It will remain stopped until started again.",
+                                            "Stop all ${service.total} current containers for this service in ${stack.name}?",
                                             confirmLabel = "Stop",
-                                        ) { viewModel.dockerStackServiceAction(stack.name, stack.workingDir, stack.configFiles, service.name, "serviceStop", runtime = stack.runtime) }
+                                        ) { viewModel.dockerStackServiceAction(stack.name, stack.workingDir, stack.configFiles, service.name, "serviceStop", runtime = stack.runtime, expectedServerId = hostId) }
                                     },
                                     onShell = { viewModel.openDockerExecShell(service.containerId, stack.runtime) },
                                     onScale = { scaleTarget = ScaleTarget(stack, service) },
                                     onRemove = {
+                                        val hostId = viewModel.selectedServer?.id
                                         confirm.ask(
                                             "Remove ${service.name}?",
-                                            "Stop and remove the container(s) for this service in ${stack.name}. The service definition in the compose file is not deleted.",
+                                            "Stop and remove all ${service.total} current containers for this service in ${stack.name}. Volumes and its Compose definition are kept.",
                                             confirmLabel = "Remove",
-                                        ) { viewModel.dockerStackServiceAction(stack.name, stack.workingDir, stack.configFiles, service.name, "serviceRemove", runtime = stack.runtime) }
+                                        ) { viewModel.dockerStackServiceAction(stack.name, stack.workingDir, stack.configFiles, service.name, "serviceRemove", runtime = stack.runtime, expectedServerId = hostId) }
                                     },
                                   )
                                 }
@@ -648,9 +670,38 @@ private fun StackHealthSummary(stack: StackSummary, onPortsClick: () -> Unit) {
     }
 }
 
+/** Long container names and confirmation text scroll; actions remain outside the viewport. */
+@Composable
+private fun ContainerActionConfirmHost(controller: ConfirmController) {
+    val request = controller.pending ?: return
+    val scroll = rememberScrollState()
+    AlertDialog(
+        modifier = Modifier.testTag("infra.container.confirm"),
+        onDismissRequest = { controller.dismiss() },
+        text = {
+            Column(Modifier.heightIn(max = 200.dp).verticalScrollWithIndicators(scroll), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(request.title, style = MaterialTheme.typography.headlineSmall)
+                Text(request.message)
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { controller.dismiss(); request.onConfirm() }) {
+                Text(request.confirmLabel, color = OmniColors.red)
+            }
+        },
+        dismissButton = { TextButton(onClick = { controller.dismiss() }) { Text("Cancel") } },
+    )
+}
+
 @Composable
 private fun StackServiceRow(
     service: StackService,
+    canCompose: Boolean,
+    runtime: String,
+    onContainerAction: (StackContainer, String) -> Unit,
+    onContainerLogs: (StackContainer) -> Unit,
+    onContainerShell: (StackContainer) -> Unit,
+    onContainerFollow: (StackContainer) -> Unit,
     onLogs: (Boolean) -> Unit,
     onRestart: () -> Unit,
     onStop: () -> Unit,
@@ -671,18 +722,28 @@ private fun StackServiceRow(
             Column(Modifier.fillMaxWidth().padding(start = 15.dp)) {
                 Text("${c.name} · ${c.status}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontFamily = OmniFonts.mono)
                 Text("Ports: ${c.ports}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp, fontFamily = OmniFonts.mono)
+                FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    for ((action, label) in listOf("start" to "Start", "stop" to "Stop", "restart" to "Restart", "pause" to "Pause", "unpause" to "Unpause", "remove" to "Remove")) {
+                        OmniButton(label, onClick = { onContainerAction(c, action) }, small = true,
+                            modifier = Modifier.testTag("infra.container.$runtime.${c.id}.$action"),
+                            color = if (action in listOf("stop", "remove")) OmniColors.red else OmniColors.amber)
+                    }
+                    OmniButton("Logs", onClick = { onContainerLogs(c) }, color = OmniColors.cyan, small = true)
+                    OmniButton("Follow", onClick = { onContainerFollow(c) }, color = OmniColors.cyan, small = true)
+                    OmniButton("Shell", onClick = { onContainerShell(c) }, color = OmniColors.purple, small = true)
+                }
             }
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End)) {
-            OmniButton("Logs", onClick = { onLogs(false) }, color = OmniColors.cyan, small = true)
-            OmniButton("FOLLOW", onClick = { onLogs(true) }, color = OmniColors.cyan, small = true)
-            OmniButton("Restart", onClick = onRestart, color = OmniColors.amber, small = true)
-        }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp, Alignment.End)) {
-            OmniButton("Scale", onClick = onScale, color = OmniColors.green, small = true)
+        FlowRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            if (canCompose) {
+                OmniButton("Service logs", onClick = { onLogs(false) }, color = OmniColors.cyan, small = true)
+                OmniButton("FOLLOW SERVICE", onClick = { onLogs(true) }, color = OmniColors.cyan, small = true)
+                OmniButton("Scale", onClick = onScale, color = OmniColors.green, small = true)
+            }
+            OmniButton("Restart all", onClick = onRestart, color = OmniColors.amber, small = true)
             OmniButton("SHELL", onClick = onShell, color = OmniColors.purple, small = true)
-            OmniButton("Stop", onClick = onStop, color = OmniColors.red, small = true)
-            OmniButton("Remove", onClick = onRemove, color = OmniColors.red, small = true)
+            OmniButton("Stop all", onClick = onStop, color = OmniColors.red, small = true)
+            OmniButton("Remove all", onClick = onRemove, color = OmniColors.red, small = true)
         }
     }
 }
@@ -712,7 +773,7 @@ private data class StackService(
     val containers: List<StackContainer>,
 )
 
-private data class StackContainer(val name: String, val status: String, val ports: String)
+private data class StackContainer(val id: String, val name: String, val status: String, val ports: String)
 private data class ContainerPortDetail(val container: String, val service: String, val ports: String)
 private data class ScaleTarget(val stack: StackSummary, val service: StackService)
 

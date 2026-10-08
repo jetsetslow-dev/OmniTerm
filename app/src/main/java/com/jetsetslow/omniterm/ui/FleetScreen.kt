@@ -91,8 +91,8 @@ fun FleetScreen(viewModel: AppViewModel) {
 fun FleetSummaryBar(viewModel: AppViewModel, srvList: List<ServerEntity>) {
     val total = srvList.size
     val online = srvList.count { it.status == "online" }
-    val critical = srvList.count { it.status == "online" && it.healthScore < 50 }
-    val avgScore = if (srvList.isNotEmpty()) srvList.map { it.healthScore }.average().toInt() else 100
+    val critical = srvList.count { it.status == "online" && viewModel.currentHealthScore(it) in 0..49 }
+    val avgScore = srvList.map { viewModel.currentHealthScore(it) }.filter { it >= 0 }.takeIf { it.isNotEmpty() }?.average()?.toInt() ?: -1
 
     Box(modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 4.dp)) {
         Row(
@@ -106,7 +106,7 @@ fun FleetSummaryBar(viewModel: AppViewModel, srvList: List<ServerEntity>) {
         ) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(stringResource(R.string.fleet_2), fontWeight = FontWeight.Bold, fontFamily = OmniFonts.mono, fontSize = 16.sp, letterSpacing = 1.sp)
-                Text("Avg Score: $avgScore", fontSize = 12.sp, color = OmniColors.cyan, fontWeight = FontWeight.Bold)
+                Text("Avg Score: ${if (avgScore < 0) "—" else avgScore}", fontSize = 12.sp, color = OmniColors.cyan, fontWeight = FontWeight.Bold)
                 Text("$online / $total Online", fontSize = 12.sp, color = if (critical > 0) OmniColors.red else OmniColors.green)
             }
             RefreshCountdown(viewModel.lastTelemetryStartMs, viewModel.telemetryIntervalMs, size = 16.dp, color = OmniColors.green)
@@ -129,13 +129,13 @@ fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
             ) {
                 val total = srvList.size
                 val online = srvList.count { it.status == "online" }
-                val critical = srvList.count { it.status == "online" && it.healthScore < 50 }
-                val avgScore = if (srvList.isNotEmpty()) srvList.map { it.healthScore }.average().toInt() else 100
+                val critical = srvList.count { it.status == "online" && viewModel.currentHealthScore(it) in 0..49 }
+                val avgScore = srvList.map { viewModel.currentHealthScore(it) }.filter { it >= 0 }.takeIf { it.isNotEmpty() }?.average()?.toInt() ?: -1
 
                 OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$total", label = "Hosts") }
                 OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$online", label = "Online", color = OmniColors.green) }
                 OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$critical", label = "Critical", color = if (critical > 0) OmniColors.red else MaterialTheme.colorScheme.onSurfaceVariant) }
-                OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = "$avgScore", label = "Avg Score", color = OmniColors.cyan) }
+                OmniCard(modifier = Modifier.weight(1f)) { OmniStatBox(value = if (avgScore < 0) "—" else "$avgScore", label = "Avg Score", color = OmniColors.cyan) }
             }
         }
 
@@ -165,7 +165,7 @@ fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                         }
 
                         Box(modifier = Modifier.clickable { scoreDialogServer = s }) {
-                            ScoreRing(score = if (s.status == "online") s.healthScore else 0, size = 42.dp)
+                            ScoreRing(score = viewModel.currentHealthScore(s), size = 42.dp)
                         }
                     }
 
