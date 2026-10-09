@@ -5388,9 +5388,10 @@ class AppViewModel @JvmOverloads constructor(
         session: ShellSession,
         commands: List<ByteArray>,
         awaitLastReply: Boolean = false,
+        receipt: CompletableDeferred<TerminalWriteOutcome>? = null,
     ): Long? {
         synchronized(session.controlReplyLock) {
-            if (!enqueueTerminalWireBatch(session, commands)) return null
+            if (!enqueueTerminalWireBatch(session, commands, receipt)) return null
             session.controlCommandsEnqueued += commands.size
             val target = session.controlReplyBaseline + session.controlCommandsEnqueued
             if (awaitLastReply) session.controlAwaitedOrdinals.add(target)
@@ -5533,18 +5534,13 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /** Reserve and enqueue one logical input atomically: never deliver a truncated paste prefix. */
-    private fun enqueueTerminalWireBatch(session: ShellSession, chunks: List<ByteArray>): Boolean {
+    private fun enqueueTerminalWireBatch(
+        session: ShellSession,
+        chunks: List<ByteArray>,
+        receipt: CompletableDeferred<TerminalWriteOutcome>? = null,
+    ): Boolean {
         val queue = session.terminalInputQueue ?: return false
-        synchronized(queue) {
-            val total = chunks.sumOf { it.size.toLong() }
-            if (total > Int.MAX_VALUE || queue.queuedBytes.toLong() + total > TERMINAL_INPUT_QUEUE_MAX_BYTES) return false
-            // Cleanup/reconnect closes this channel under the same monitor, so after the open check
-            // every send to the unlimited channel succeeds and the batch cannot be partially queued.
-            if (queue.closed) return false
-            queue.queuedBytes += total.toInt()
-            for (chunk in chunks) check(queue.channel.trySend(chunk).isSuccess)
-            return true
-        }
+        return queue.enqueueBatch(chunks, TERMINAL_INPUT_QUEUE_MAX_BYTES, receipt)
     }
 
     private fun warnTerminalInputOverflow(session: ShellSession, controlInit: Boolean = false) {
@@ -5816,7 +5812,7 @@ class AppViewModel @JvmOverloads constructor(
         val emulator = shellSession.emulator
 
         shellSession.terminalInputJob?.cancel()
-        shellSession.terminalInputQueue?.let { synchronized(it) { it.closed = true; it.channel.close() } }
+        shellSession.terminalInputQueue?.close()
 
         // Serialize keystrokes through a single bounded channel so writes never reorder and a large
         // paste cannot grow memory without backpressure. Recreated per (re)connect so it always
@@ -5839,29 +5835,33 @@ class AppViewModel @JvmOverloads constructor(
             shellSession.controlExitReason = null
         }
         shellSession.terminalInputJob = TerminalSessionManager.scope.launch(Dispatchers.IO) {
-            for (bytes in inputQueue.channel) {
-                synchronized(inputQueue) {
-                    inputQueue.queuedBytes = (inputQueue.queuedBytes - bytes.size).coerceAtLeast(0)
-                }
-                try {
-                    session.write(bytes)
-                } catch (error: Exception) {
-                    if (error is kotlinx.coroutines.CancellationException) throw error
-                    // Output EOF can lag a failed socket write. Stop accepting input immediately
-                    // and close the channel so the output owner takes the normal visible reconnect
-                    // path instead of silently dropping every subsequent key.
-                    withContext(Dispatchers.Main) {
-                        if (shellSession.session !== session || shellSession.userClosed) return@withContext
-                        shellSession.disconnectError =
-                            "Could not send terminal input: ${error.message ?: "connection lost"}"
-                        shellSession.isConnected = false
-                        TerminalSessionManager.updateKeepaliveCount()
+            try {
+                for (bytes in inputQueue.channel) {
+                    if (!inputQueue.beginWrite(bytes)) break
+                    try {
+                        session.write(bytes)
+                        inputQueue.finishWrite(bytes, TerminalWriteOutcome.ACCEPTED)
+                    } catch (error: Exception) {
+                        inputQueue.finishWrite(bytes, TerminalWriteOutcome.UNCERTAIN)
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        // Output EOF can lag a failed socket write. Stop accepting input immediately
+                        // and close the channel so the output owner takes the normal visible reconnect
+                        // path instead of silently dropping every subsequent key.
+                        withContext(Dispatchers.Main) {
+                            if (shellSession.session !== session || shellSession.userClosed) return@withContext
+                            shellSession.disconnectError =
+                                "Could not send terminal input: ${error.message ?: "connection lost"}"
+                            shellSession.isConnected = false
+                            TerminalSessionManager.updateKeepaliveCount()
+                        }
+                        // This worker belongs to one transport generation. A cancelled/late write
+                        // from the previous channel must never close its successful replacement.
+                        runCatching { session.close() }
+                        break
                     }
-                    // This worker belongs to one transport generation. A cancelled/late write
-                    // from the previous channel must never close its successful replacement.
-                    runCatching { session.close() }
-                    break
                 }
+            } finally {
+                inputQueue.workerFinished()
             }
         }
 
@@ -6547,6 +6547,74 @@ class AppViewModel @JvmOverloads constructor(
         val normalized = text.replace("\r\n", "\n").replace('\n', '\r')
         val bracketed = synchronized(session.emulator) { session.emulator.bracketedPasteMode }
         sendBytes(bracketedPastePayload(normalized, bracketed).toByteArray())
+    }
+
+    internal fun captureTerminalPasteTarget(session: ShellSession): TerminalPasteTarget = TerminalPasteTarget(session)
+
+    internal fun cancelTerminalPaste(target: TerminalPasteTarget) {
+        if (target.shell.pasteFeedback?.busy != true) {
+            target.shell.pasteFeedback = TerminalPasteFeedback("Paste cancelled. Nothing was sent.")
+        }
+    }
+
+    /** Explicit/confirmed paste uses one captured target and awaits the ordered writer receipt. */
+    internal fun pasteText(text: String, target: TerminalPasteTarget) {
+        val owner = target.shell
+        if (owner.pasteFeedback?.busy == true) {
+            owner.pasteFeedback = TerminalPasteFeedback("A paste is still being sent. Wait for it to finish.", busy = true)
+            return
+        }
+        fun reject(message: String) { owner.pasteFeedback = TerminalPasteFeedback(message) }
+        if (text.isEmpty()) { reject("Clipboard has no text to paste."); return }
+        target.rejection(focusedTerminalSession, terminalReadOnly)?.let { reject(it); return }
+        val normalized = text.replace("\r\n", "\n").replace('\n', '\r')
+        val bracketed = synchronized(owner.emulator) { owner.emulator.bracketedPasteMode }
+        val bytes = bracketedPastePayload(normalized, bracketed).toByteArray()
+        if (bytes.size > TERMINAL_INPUT_QUEUE_MAX_BYTES) {
+            reject("Paste is too large for the input queue. Paste a smaller section and try again.")
+            return
+        }
+        val chunks = if (target.controlMode) {
+            TmuxControlCommands.sendKeysHex(requireNotNull(target.paneId), bytes).map { (it + "\n").toByteArray() }
+        } else {
+            buildList {
+                var offset = 0
+                while (offset < bytes.size) {
+                    val end = (offset + TERMINAL_INPUT_CHUNK_BYTES).coerceAtMost(bytes.size)
+                    add(bytes.copyOfRange(offset, end))
+                    offset = end
+                }
+            }
+        }
+        // tmux hexadecimal commands consume more queue space than their decoded text.
+        // An intrinsically oversized batch cannot recover by waiting for the writer.
+        if (chunks.sumOf { it.size.toLong() } > TERMINAL_INPUT_QUEUE_MAX_BYTES) {
+            reject("Paste is too large for the input queue. Paste a smaller section and try again.")
+            return
+        }
+        // Rendering/encoding must not turn a saved decision into input for a replacement pane.
+        target.rejection(focusedTerminalSession, terminalReadOnly)?.let { reject(it); return }
+        val receipt = CompletableDeferred<TerminalWriteOutcome>()
+        val accepted = if (target.controlMode) {
+            enqueueControlCommandBatch(owner, chunks, receipt = receipt) != null
+        } else enqueueTerminalWireBatch(owner, chunks, receipt)
+        if (!accepted) {
+            reject("Paste could not be queued. Wait for the connection to catch up, then try again.")
+            return
+        }
+        owner.pasteFeedback = TerminalPasteFeedback("Sending text to ${owner.serverName}…", busy = true)
+        // The session manager outlives Activity/ViewModel destruction. Cleanup resolves the
+        // receipt; completion never re-resolves focus or writes to a new connection.
+        TerminalSessionManager.scope.launch(Dispatchers.Main.immediate) {
+            owner.pasteFeedback = when (receipt.await()) {
+                TerminalWriteOutcome.ACCEPTED -> TerminalPasteFeedback(
+                    "Sent ${text.codePointCount(0, text.length)} characters to terminal.",
+                )
+                TerminalWriteOutcome.UNCERTAIN -> TerminalPasteFeedback(
+                    "Paste was interrupted. Some text may have been sent; check the terminal before retrying.",
+                )
+            }
+        }
     }
 
     /**

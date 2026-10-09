@@ -13,6 +13,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import com.jetsetslow.omniterm.ui.AppViewModel
 import com.jetsetslow.omniterm.ui.Screen
 import com.jetsetslow.omniterm.ui.TerminalSessionManager
+import com.jetsetslow.omniterm.ui.TerminalPasteFeedback
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -73,6 +74,16 @@ class E2eTerminalOptionsTest {
                             decor.width > 0 && decor.height > 0 &&
                             (decor.width < decor.height) == (expected == android.content.res.Configuration.ORIENTATION_PORTRAIT)
                     }
+                    // This matrix checks the full viewport. Closing result dialogs restores the
+                    // terminal's keyboard; landscape deliberately uses compact header chrome.
+                    // Settle composition, then close the IME and await its actual inset before
+                    // asking for the full-header menu instead of increasing the finder timeout.
+                    composeRule.waitForIdle()
+                    androidx.test.espresso.Espresso.closeSoftKeyboard()
+                    await("full viewport without IME", 10_000) {
+                        androidx.core.view.ViewCompat.getRootWindowInsets(composeRule.activity.window.decorView)
+                            ?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) != true
+                    }
                     // Resources update before the old Activity/Compose root is destroyed. Await
                     // the replacement's rendered action rather than tapping during that gap.
                     composeRule.waitUntil(10_000) {
@@ -87,6 +98,19 @@ class E2eTerminalOptionsTest {
                         composeRule.onNodeWithText(label).assertIsDisplayed().assertIsEnabled()
                     }
                     composeRule.onNodeWithText("Cancel").performClick()
+                    composeRule.waitForIdle()
+                    // Held writer behavior is covered with the real IO worker in JVM tests.
+                    // Exercise its session-owned pending/result UI on each actual configuration.
+                    val shell = requireNotNull(TerminalSessionManager.activeSessions.firstOrNull())
+                    composeRule.runOnUiThread {
+                        shell.pasteFeedback = TerminalPasteFeedback("Sending text to fixture…", busy = true)
+                    }
+                    composeRule.onNodeWithText("Terminal paste").assertIsDisplayed()
+                    composeRule.onNodeWithText("Hide progress").assertIsDisplayed().assertIsEnabled().performClick()
+                    composeRule.runOnUiThread {
+                        shell.pasteFeedback = TerminalPasteFeedback("Paste was interrupted. Some text may have been sent; check the terminal before retrying.")
+                    }
+                    composeRule.onNodeWithText("OK").assertIsDisplayed().assertIsEnabled().performClick()
                     composeRule.waitForIdle()
                 }
             }

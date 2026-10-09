@@ -1891,7 +1891,8 @@ private fun PaneTerminalContent(
     var showCopyOptions by remember { mutableStateOf(false) }
     var copyDialogTitle by remember { mutableStateOf<String?>(null) }
     var copyDialogText by remember { mutableStateOf("") }
-    var pendingLargePaste by remember { mutableStateOf<String?>(null) }
+    var pendingLargePaste by remember { mutableStateOf<PendingTerminalPaste?>(null) }
+    var hidePasteFeedback by remember(currentSession.pasteFeedback) { mutableStateOf(false) }
     val viewport = remember(sessionId) { TerminalViewportState() }
     var visibleRowCount by remember(sessionId) { mutableStateOf(1) }
 
@@ -2287,7 +2288,7 @@ private fun PaneTerminalContent(
                 val insertedDelta = insertedCodePointDelta(prevText, newText)
                 if (insertedDelta > 100) {
                     // Large paste: defer to the paste dialog and clear the field.
-                    pendingLargePaste = newText
+                    pendingLargePaste = PendingTerminalPaste(newText, viewModel.captureTerminalPasteTarget(currentSession))
                     inputField = TextFieldValue("")
                     return@BasicTextField
                 }
@@ -2466,6 +2467,7 @@ private fun PaneTerminalContent(
                             Text("Terminal input", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                             Button(
                                 onClick = {
+                                    val pasteTarget = viewModel.captureTerminalPasteTarget(currentSession)
                                     val clipboard = linkContext.getSystemService(android.content.ClipboardManager::class.java)
                                     val clip = clipboard?.primaryClip
                                     val text = if (clip != null && clip.itemCount > 0) {
@@ -2484,15 +2486,15 @@ private fun PaneTerminalContent(
                                         ).show()
                                         TerminalClipboardPasteAction.CONFIRM -> {
                                             showCopyOptions = false
-                                            pendingLargePaste = text
+                                            pendingLargePaste = PendingTerminalPaste(text.orEmpty(), pasteTarget)
                                         }
                                         TerminalClipboardPasteAction.SEND -> {
                                             showCopyOptions = false
-                                            viewModel.pasteText(text.orEmpty())
+                                            viewModel.pasteText(text.orEmpty(), pasteTarget)
                                         }
                                     }
                                 },
-                                enabled = !viewModel.terminalReadOnly,
+                                enabled = !viewModel.terminalReadOnly && currentSession.pasteFeedback?.busy != true,
                                 modifier = Modifier.fillMaxWidth(),
                             ) {
                                 Icon(Icons.Filled.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))
@@ -2584,19 +2586,52 @@ private fun PaneTerminalContent(
             }
         }
 
-        pendingLargePaste?.let { paste ->
+        currentSession.pasteFeedback?.let { feedback ->
+            if (feedback.busy) {
+                LinearProgressIndicator(Modifier.fillMaxWidth().align(Alignment.TopCenter))
+            }
+            if (!hidePasteFeedback || !feedback.busy) {
+                fun dismissFeedback() {
+                    if (feedback.busy) hidePasteFeedback = true else currentSession.pasteFeedback = null
+                }
+                AlertDialog(
+                    onDismissRequest = { dismissFeedback() },
+                    title = { Text("Terminal paste") },
+                    text = {
+                        Column(
+                            Modifier.heightIn(max = 160.dp).verticalScrollWithIndicators(rememberScrollState()),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            if (feedback.busy) CircularProgressIndicator(Modifier.size(24.dp))
+                            Text(feedback.message)
+                        }
+                    },
+                    confirmButton = {
+                        TextButton(onClick = { dismissFeedback() }) {
+                            Text(if (feedback.busy) "Hide progress" else "OK")
+                        }
+                    },
+                )
+            }
+        }
+
+        pendingLargePaste?.let { pending ->
+            fun cancelPaste() {
+                pendingLargePaste = null
+                viewModel.cancelTerminalPaste(pending.target)
+            }
             AlertDialog(
-                onDismissRequest = { pendingLargePaste = null },
-                title = { Text("Paste ${paste.length} characters?") },
+                onDismissRequest = { cancelPaste() },
+                title = { Text("Paste ${pending.text.length} characters?") },
                 text = { Text(stringResource(R.string.you_re_about_to_paste_a)) },
                 confirmButton = {
                     TextButton(onClick = {
                         pendingLargePaste = null
-                        viewModel.pasteText(paste)
+                        viewModel.pasteText(pending.text, pending.target)
                     }) { Text(stringResource(R.string.paste)) }
                 },
                 dismissButton = {
-                    TextButton(onClick = { pendingLargePaste = null }) { Text(stringResource(R.string.cancel)) }
+                    TextButton(onClick = { cancelPaste() }) { Text(stringResource(R.string.cancel)) }
                 },
             )
         }
