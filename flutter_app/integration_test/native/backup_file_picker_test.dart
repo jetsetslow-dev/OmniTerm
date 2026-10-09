@@ -4,6 +4,7 @@ import 'package:patrol/patrol.dart';
 import 'package:provider/provider.dart';
 
 import 'package:omniterm/main.dart' as app;
+import 'package:omniterm/domain/backup_selection.dart';
 import 'package:omniterm/ui/view_model/backup_view_model.dart';
 
 /// The system document picker, driven for real — Patrol's native half.
@@ -35,7 +36,12 @@ void main() {
   /// first, and this flow is about the picker, not the passphrase dialog.
   Future<void> selectSettingsOnly(PatrolIntegrationTester $) async {
     await $(const ValueKey('backup.selectNone')).tap();
-    await $(const ValueKey('backup.section.settings')).tap();
+    await $(const ValueKey('backup.section.settings')).scrollTo().tap();
+    final context = $.tester.element($(const ValueKey('backup.list')).finder);
+    final vm = context.read<BackupViewModel>();
+    expect(vm.selection.sections, {BackupSection.settings});
+    expect(vm.canExport, isTrue, reason: 'Settings must remain selected before export');
+    expect(vm.requiresPassphrase, isFalse);
   }
 
   /// Answers the notification-permission prompt, which a first backup raises before the picker.
