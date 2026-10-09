@@ -150,13 +150,45 @@ void main() {
       final first = vm.current!;
       final revision = first.connectionRevision;
       await vm.connect(vm.server!);
-      expect(await vm.pasteTo(first, 'wrong pane', connectionRevision: revision), isFalse);
+      expect(
+        await vm.pasteTo(
+          first,
+          'wrong pane',
+          connectionRevision: revision,
+          paneChangeRevision: first.paneChangeRevision,
+        ),
+        isFalse,
+      );
       vm.select(first.id);
-      expect(await vm.pasteTo(first, 'stale channel', connectionRevision: revision - 1), isFalse);
+      expect(
+        await vm.pasteTo(
+          first,
+          'stale channel',
+          connectionRevision: revision - 1,
+          paneChangeRevision: first.paneChangeRevision,
+        ),
+        isFalse,
+      );
       vm.setTerminalReadOnly(true);
-      expect(await vm.pasteTo(first, 'read-only', connectionRevision: revision), isFalse);
+      expect(
+        await vm.pasteTo(
+          first,
+          'read-only',
+          connectionRevision: revision,
+          paneChangeRevision: first.paneChangeRevision,
+        ),
+        isFalse,
+      );
       vm.setTerminalReadOnly(false);
-      expect(await vm.pasteTo(first, 'original pane', connectionRevision: revision), isTrue);
+      expect(
+        await vm.pasteTo(
+          first,
+          'original pane',
+          connectionRevision: revision,
+          paneChangeRevision: first.paneChangeRevision,
+        ),
+        isTrue,
+      );
       expect(transport.opened.first.writes.single, 'original pane'.codeUnits);
       expect(transport.opened.last.writes, isEmpty);
     },
@@ -171,7 +203,12 @@ void main() {
     final channel = transport.opened.single..gateWrite = gate;
     var completed = false;
     final sending = vm
-        .pasteTo(session, 'fixture', connectionRevision: session.connectionRevision)
+        .pasteTo(
+          session,
+          'fixture',
+          connectionRevision: session.connectionRevision,
+          paneChangeRevision: session.paneChangeRevision,
+        )
         .then((value) {
           completed = true;
           return value;
@@ -184,10 +221,74 @@ void main() {
     expect(channel.writes.single, 'fixture'.codeUnits);
     channel.writeFailure = StateError('fixture write unavailable');
     expect(
-      await vm.pasteTo(session, 'again', connectionRevision: session.connectionRevision),
+      await vm.pasteTo(
+        session,
+        'again',
+        connectionRevision: session.connectionRevision,
+        paneChangeRevision: session.paneChangeRevision,
+      ),
       isFalse,
     );
     expect(session.isOpen, isFalse);
+  });
+
+  test(
+    'completed paste write stays accepted when its channel closes before continuation',
+    () async {
+      await repo.insertServer(server(name: 'nas'));
+      await start();
+      await vm.connect(vm.server!);
+      final session = vm.current!;
+      final channel = transport.opened.single;
+      channel.onWrite = (_) => channel.close();
+      expect(
+        await vm.pasteTo(
+          session,
+          'accepted once',
+          connectionRevision: session.connectionRevision,
+          paneChangeRevision: session.paneChangeRevision,
+        ),
+        isTrue,
+        reason: 'channel closure after a successful write does not undo accepted bytes',
+      );
+      expect(channel.writes.single, 'accepted once'.codeUnits);
+      expect(session.isOpen, isFalse);
+    },
+  );
+
+  test('direct paste refuses a prior resolved control pane on the same channel', () async {
+    await repo.insertServer(server(name: 'nas', persistent: true));
+    await start();
+    await vm.connect(vm.server!, controlMode: true);
+    final session = vm.current!;
+    final channel = transport.opened.single;
+    channel.emit('%output %7 ready\n');
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    final revision = session.paneChangeRevision;
+    channel.emit('%window-pane-changed @0 %9\n');
+    await Future<void>.delayed(const Duration(milliseconds: 40));
+    expect(session.adoptControlPane('%9', session.paneChangeRevision), isTrue);
+    channel.writes.clear();
+    expect(
+      await vm.pasteTo(
+        session,
+        'stale',
+        connectionRevision: session.connectionRevision,
+        paneChangeRevision: revision,
+      ),
+      isFalse,
+    );
+    expect(channel.writes, isEmpty);
+    expect(
+      await vm.pasteTo(
+        session,
+        'fresh',
+        connectionRevision: session.connectionRevision,
+        paneChangeRevision: session.paneChangeRevision,
+      ),
+      isTrue,
+    );
+    expect(channel.writes.map(utf8.decode).join(), contains('send-keys -t %9'));
   });
 
   group('automatic reconnect preserves the terminal', () {

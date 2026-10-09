@@ -441,16 +441,23 @@ class ShellSession extends ChangeNotifier {
 
   /// Explicit paste actions await the transport write instead of reporting queued input as sent.
   /// Refuse an unresolved control pane: ordinary keystrokes retain their existing bounded queue.
-  Future<bool> writeAndWait(Uint8List bytes, {required int connectionRevision}) async {
-    if (_disposed ||
-        !isOpen ||
-        readOnly ||
-        bytes.isEmpty ||
-        connectionRevision != _connectionRevision ||
-        !isInputPaneReady) {
-      return false;
-    }
+  Future<bool> writeAndWait(
+    Uint8List bytes, {
+    required int connectionRevision,
+    required int paneChangeRevision,
+  }) async {
+    bool ownsTarget() =>
+        !_disposed &&
+        isOpen &&
+        !readOnly &&
+        bytes.isNotEmpty &&
+        connectionRevision == _connectionRevision &&
+        paneChangeRevision == _paneChangeRevision &&
+        isInputPaneReady;
+    if (!ownsTarget()) return false;
     if (!_followTail) scrollToTail();
+    // Publishing the viewport can synchronously notify focus/read-only/channel listeners.
+    if (!ownsTarget()) return false;
     return _write(bytes);
   }
 
@@ -607,7 +614,9 @@ class ShellSession extends ChangeNotifier {
       } else {
         await channel.write(bytes);
       }
-      return !_disposed && identical(channel, _channel) && isOpen;
+      // A completed transport write accepted these bytes, even if EOF or reconnect
+      // arrived before this continuation. It does not acknowledge remote execution.
+      return true;
     } catch (_) {
       // A write can fail before the output stream notices the dead socket. Marking the session
       // disconnected here prevents further keystrokes from being accepted and gives the terminal

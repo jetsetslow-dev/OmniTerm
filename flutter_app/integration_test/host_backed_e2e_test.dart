@@ -511,10 +511,41 @@ Future<void> _exerciseTerminals(
           return false;
         });
         expect(populated, isTrue);
+        // Hold a real clipboard confirmation while tmux moves to another pane on
+        // the same control channel. A settled new pane must not inherit this paste.
+        await _waitFor(tester, () => session.isInputPaneReady);
+        await Clipboard.setData(ClipboardData(text: 'x' * 1000));
+        await tester.tap(find.byKey(const ValueKey('shell.options')));
+        await _waitForPopup(tester, find.byKey(const ValueKey('terminalOptions.paste')));
+        await tester.tap(find.byKey(const ValueKey('terminalOptions.paste')));
+        await _waitForPopup(tester, find.byKey(const ValueKey('shell.pasteConfirm')));
+        final pasteRevision = session.paneChangeRevision;
         await tester.runAsync(
           () => transport.exec(credentials, 'tmux select-window -t ${shellQuote(quietPane)}'),
         );
-        await _waitFor(tester, () => session.controlPaneId == quietPane);
+        await _waitFor(
+          tester,
+          () => session.controlPaneId == quietPane && session.isInputPaneReady,
+        );
+        expect(session.paneChangeRevision, greaterThan(pasteRevision));
+        await tester.tap(find.widgetWithText(FilledButton, 'Paste'));
+        await _waitFor(
+          tester,
+          () => find
+              .text('Paste skipped: the tmux pane changed. Try pasting again.')
+              .evaluate()
+              .isNotEmpty,
+        );
+        final untouchedPane = await tester.runAsync(
+          () => transport.exec(credentials, 'tmux capture-pane -p -t ${shellQuote(quietPane)}'),
+        );
+        expect(untouchedPane, isNot(contains('x' * 20)));
+        await tester.tap(find.byKey(const ValueKey('terminalOptions.cancel')));
+        await _waitFor(
+          tester,
+          () => find.byKey(const ValueKey('terminalOptions.dialog')).evaluate().isEmpty,
+        );
+        debugPrint('HOST-E2E pending paste stayed with its original tmux pane');
         await _waitFor(tester, () => transcript().contains('quiet-window-ready'));
         expect(transcript(), isNot(contains('term-$label-ok')));
         await tester.runAsync(

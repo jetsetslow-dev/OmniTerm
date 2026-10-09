@@ -65,6 +65,30 @@ void main() {
     expect(session.write(Uint8List.fromList('y'.codeUnits)), isFalse);
   });
 
+  test('explicit paste rechecks read-only after publishing its tail viewport', () async {
+    build(rows: 1);
+    channel.emit('first\r\nsecond\r\nthird');
+    await settle();
+    session.scrollBy(-1);
+    expect(session.followTail, isFalse);
+    void lockOnViewportChange() {
+      session.removeListener(lockOnViewportChange);
+      session.setReadOnly(true);
+    }
+
+    session.addListener(lockOnViewportChange);
+    expect(
+      await session.writeAndWait(
+        Uint8List.fromList('must not send'.codeUnits),
+        connectionRevision: session.connectionRevision,
+        paneChangeRevision: session.paneChangeRevision,
+      ),
+      isFalse,
+    );
+    expect(session.readOnly, isTrue);
+    expect(channel.writes, isEmpty);
+  });
+
   group('ordered control repaint', () {
     String transcript() => session.snapshot.rows.map((row) => row.text).join('\n');
 

@@ -453,6 +453,68 @@ void main() {
     await finish(tester);
   });
 
+  for (final source in ['clipboard read', 'clipboard confirmation', 'keyboard confirmation']) {
+    testWidgets('pending paste rejects a settled tmux pane change during $source', (tester) async {
+      await repo.insertServer(server(name: 'nas', persistent: true));
+      await pump(tester);
+      await vm.connect(vm.server!, controlMode: true);
+      await tester.pumpAndSettle();
+      final session = vm.current!;
+      final channel = transport.opened.single;
+      channel.emit('%output %7 ready\n');
+      await tester.pump(const Duration(milliseconds: 40));
+      expect(session.isInputPaneReady, isTrue);
+      final clipboard = Completer<Object?>();
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        (call) async => call.method == 'Clipboard.getData' ? clipboard.future : null,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          SystemChannels.platform,
+          null,
+        ),
+      );
+      try {
+        if (source == 'keyboard confirmation') {
+          await tester.enterText(find.byKey(const ValueKey('shell.input')), 'x' * 1000);
+        } else {
+          await tester.tap(find.byKey(const ValueKey('shell.options')));
+          await tester.pumpAndSettle();
+          if (source == 'clipboard confirmation') clipboard.complete({'text': 'x' * 1000});
+          await tester.tap(find.byKey(const ValueKey('terminalOptions.paste')));
+        }
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+        if (source != 'clipboard read') {
+          expect(find.byKey(const ValueKey('shell.pasteConfirm')), findsOneWidget);
+        }
+        final revision = session.paneChangeRevision;
+        channel.emit('%window-pane-changed @0 %9\n');
+        await tester.pump(const Duration(milliseconds: 40));
+        expect(session.paneChangeRevision, greaterThan(revision));
+        expect(session.adoptControlPane('%9', session.paneChangeRevision), isTrue);
+        expect(session.isInputPaneReady, isTrue);
+        expect(vm.current, same(session));
+        channel.writes.clear();
+        if (source == 'clipboard read') {
+          clipboard.complete({'text': 'must-stay-with-original-pane'});
+        } else {
+          await tester.tap(find.widgetWithText(FilledButton, 'Paste'));
+        }
+        await tester.pumpAndSettle();
+        expect(channel.writes.map(utf8.decode).join(), isNot(contains('send-keys')));
+        expect(
+          find.text('Paste skipped: the tmux pane changed. Try pasting again.'),
+          findsOneWidget,
+        );
+      } finally {
+        if (!clipboard.isCompleted) clipboard.complete(null);
+        await finish(tester);
+      }
+    });
+  }
+
   testWidgets('runtime awake switch waits for platform acknowledgment and exposes retry', (
     tester,
   ) async {
@@ -556,7 +618,12 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('terminalOptions.paste')));
     await tester.pumpAndSettle();
-    expect(find.text('Paste skipped: the terminal did not accept the text.'), findsOneWidget);
+    expect(
+      find.text(
+        'Paste failed or was interrupted. Some text may have been sent; check the terminal before retrying.',
+      ),
+      findsOneWidget,
+    );
     expect(find.textContaining('characters into terminal.'), findsNothing);
     await tester.tap(find.byKey(const ValueKey('terminalOptions.cancel')));
     await tester.pumpAndSettle();

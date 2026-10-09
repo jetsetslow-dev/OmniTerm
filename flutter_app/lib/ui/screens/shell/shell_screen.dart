@@ -1384,6 +1384,7 @@ class _ActiveTerminalState extends State<_ActiveTerminal> {
         widget.session,
         text,
         connectionRevision: widget.session.connectionRevision,
+        paneChangeRevision: widget.session.paneChangeRevision,
         requireConfirmation: true,
       );
     } catch (error) {

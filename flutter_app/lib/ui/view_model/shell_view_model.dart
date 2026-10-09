@@ -1859,11 +1859,17 @@ class ShellViewModel extends ChangeNotifier {
   }
 
   /// Clipboard reads and confirmation dialogs must never redirect a paste to a newer pane/channel.
-  Future<bool> pasteTo(ShellSession session, String text, {required int connectionRevision}) async {
+  Future<bool> pasteTo(
+    ShellSession session,
+    String text, {
+    required int connectionRevision,
+    required int paneChangeRevision,
+  }) async {
     if (_disposed ||
         !identical(current, session) ||
         !_sessions.contains(session) ||
         session.connectionRevision != connectionRevision ||
+        session.paneChangeRevision != paneChangeRevision ||
         !session.isOpen ||
         session.readOnly ||
         text.isEmpty) {
@@ -1873,6 +1879,7 @@ class ShellViewModel extends ChangeNotifier {
     return session.writeAndWait(
       encodePastedText(text, bracketed: session.emulator.bracketedPasteMode),
       connectionRevision: connectionRevision,
+      paneChangeRevision: paneChangeRevision,
     );
   }
 

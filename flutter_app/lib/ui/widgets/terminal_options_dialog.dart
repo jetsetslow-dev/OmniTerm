@@ -19,12 +19,16 @@ Future<String> pasteTerminalText(
   ShellSession session,
   String text, {
   required int connectionRevision,
+  required int paneChangeRevision,
   bool requireConfirmation = false,
 }) async {
   if (text.isEmpty) return 'Clipboard has no text to paste';
   String? unavailable() {
     if (!identical(vm.current, session) || session.connectionRevision != connectionRevision) {
       return 'Paste skipped: the selected terminal changed.';
+    }
+    if (session.paneChangeRevision != paneChangeRevision) {
+      return 'Paste skipped: the tmux pane changed. Try pasting again.';
     }
     if (session.readOnly) return 'Disable read-only mode before pasting';
     if (!session.isOpen) return 'Paste skipped: the terminal is disconnected.';
@@ -65,9 +69,14 @@ Future<String> pasteTerminalText(
   if (!context.mounted) return 'Paste skipped: the terminal screen closed.';
   final problem = unavailable();
   if (problem != null) return problem;
-  return await vm.pasteTo(session, text, connectionRevision: connectionRevision)
+  return await vm.pasteTo(
+        session,
+        text,
+        connectionRevision: connectionRevision,
+        paneChangeRevision: paneChangeRevision,
+      )
       ? 'Sent ${text.runes.length} characters to terminal.'
-      : 'Paste skipped: the terminal did not accept the text.';
+      : 'Paste failed or was interrupted. Some text may have been sent; check the terminal before retrying.';
 }
 
 Future<void> openTerminalOptions(
@@ -114,6 +123,7 @@ class _TerminalOptionsState extends State<_TerminalOptions> {
   Future<void> _paste() async {
     if (_pasting) return;
     final revision = widget.session.connectionRevision;
+    final paneRevision = widget.session.paneChangeRevision;
     setState(() {
       _pasting = true;
       _pasteResult = null;
@@ -128,6 +138,7 @@ class _TerminalOptionsState extends State<_TerminalOptions> {
         widget.session,
         clip?.text ?? '',
         connectionRevision: revision,
+        paneChangeRevision: paneRevision,
       );
     } catch (error) {
       result = 'Could not paste from clipboard: $error';
