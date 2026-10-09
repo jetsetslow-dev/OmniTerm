@@ -1,0 +1,156 @@
+name: omniterm
+description: "A new Flutter project."
+# The following line prevents the package from being accidentally published to
+# pub.dev using `flutter pub publish`. This is preferred for private packages.
+publish_to: 'none' # Remove this line if you wish to publish to pub.dev
+
+# The following defines the version and build number for your application.
+# A version number is three numbers separated by dots, like 1.2.43
+# followed by an optional build number separated by a +.
+# Both the version and the builder number may be overridden in flutter
+# build by specifying --build-name and --build-number, respectively.
+# In Android, build-name is used as versionName while build-number used as versionCode.
+# Read more about Android versioning at https://developer.android.com/studio/publish/versioning
+# In iOS, build-name is used as CFBundleShortVersionString while build-number is used as CFBundleVersion.
+# Read more about iOS versioning at
+# https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
+# In Windows, build-name is used as the major, minor, and patch parts
+# of the product and file versions while build-number is used as the build suffix.
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.12.2
+
+# Dependencies specify other packages that your package needs in order to work.
+# To automatically upgrade your package dependencies to the latest versions
+# consider running `flutter pub upgrade --major-versions`. Alternatively,
+# dependencies can be manually updated by changing the version numbers below to
+# the latest version available on pub.dev. To see which dependencies have newer
+# versions available, run `flutter pub outdated`.
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # The following adds the Cupertino Icons font to your application.
+  # Use with the CupertinoIcons class for iOS style icons.
+  cupertino_icons: ^1.0.8
+  # OmniTerm's reviewed fork adds RFC 4253 stateful zlib and delayed
+  # zlib@openssh.com compression. Pin the exact tested commit, never a moving branch.
+  dartssh2:
+    git:
+      url: https://github.com/jetsetslow-dev/dartssh2.git
+      ref: c5015f3101010060fa45e5d7d27b0b2230712d60
+  xterm: ^4.0.0
+  drift: ^2.34.3
+  drift_flutter: ^0.3.1
+  path_provider: ^2.1.6
+  provider: ^6.1.5+1
+  flutter_secure_storage: ^11.0.0
+  local_auth: ^3.0.2
+  shared_preferences: ^2.5.5
+  package_info_plus: ^10.2.1
+  device_info_plus: ^13.2.0
+  connectivity_plus: ^7.3.1
+  network_info_plus: ^8.2.1
+  wakelock_plus: ^1.7.0
+  share_plus: ^13.3.0
+  ftpconnect: ^2.0.10
+  dio: ^5.11.0
+  pointycastle: ^4.0.0
+  cryptography: ^2.9.0
+  flutter_local_notifications: ^22.3.0
+  flutter_foreground_task: ^10.0.0
+  home_widget: ^0.9.3
+  intl: ^0.20.3
+  collection: ^1.19.1
+  url_launcher: ^6.3.2
+  file_selector: ^1.1.0
+  flutter_file_dialog: ^3.3.2
+  path: ^1.9.1
+  sqlite3: ^3.5.1
+  crypto: ^3.0.7
+  in_app_purchase: ^3.3.0
+  uuid: ^4.6.0
+  xml: ^7.0.1
+  battery_plus: ^7.1.1
+  google_mobile_ads: ^9.0.0
+  dart_smb2: 0.1.1
+
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  # End-to-end automation (requirement 6, §11). Patrol is `integration_test` plus real native
+  # interaction — permission dialogs, notifications, the biometric prompt — which the widget tests
+  # cannot reach and which this app depends on.
+  integration_test:
+    sdk: flutter
+  patrol: ^4.0.0
+
+  # The "flutter_lints" package below contains a set of recommended lints to
+  # encourage good coding practices. The lint set provided by the package is
+  # activated in the `analysis_options.yaml` file located at the root of your
+  # package. See that file for information about deactivating specific lint
+  # rules and activating additional ones.
+  flutter_lints: ^6.0.0
+  drift_dev: ^2.34.5
+  # 2.15.2+ needs meta >=1.18.3; Flutter 3.44.9 pins meta 1.18.0.
+  build_runner: ^2.15.1
+  mocktail: ^1.0.5
+
+# For information on the generic Dart part of this file, see the
+# following page: https://dart.dev/tools/pub/pubspec
+
+# The following section is specific to Flutter packages.
+flutter:
+
+  # The following line ensures that the Material Icons font is
+  # included with your application, so that you can use the icons in
+  # the material Icons class.
+  uses-material-design: true
+
+  # OmniTerm type families, mirroring the prototype: Oxanium for the techno display/wordmark,
+  # JetBrains Mono for code, hostnames, metrics and the terminal. These are the same .ttf files
+  # the Android build ships in app/src/main/res/font/.
+  fonts:
+    - family: JetBrainsMono
+      fonts:
+        - asset: assets/fonts/jetbrains_mono_regular.ttf
+        - asset: assets/fonts/jetbrains_mono_medium.ttf
+          weight: 500
+        - asset: assets/fonts/jetbrains_mono_bold.ttf
+          weight: 700
+    - family: Oxanium
+      fonts:
+        - asset: assets/fonts/oxanium.ttf
+
+  # To add assets to your application, add an assets section, like this:
+  # assets:
+  #   - images/a_dot_burr.jpeg
+  #   - images/a_dot_ham.jpeg
+
+  # An image asset can refer to one or more resolution-specific "variants", see
+  # https://flutter.dev/to/resolution-aware-images
+
+  # For details regarding adding assets from package dependencies, see
+  # https://flutter.dev/to/asset-from-package
+
+  # To add custom fonts to your application, add a fonts section here,
+  # in this "flutter" section. Each entry in this list should have a
+  # "family" key with the font family name, and a "fonts" key with a
+  # list giving the asset and other descriptors for the font. For
+  # example:
+  # fonts:
+  #   - family: Schyler
+  #     fonts:
+  #       - asset: fonts/Schyler-Regular.ttf
+  #       - asset: fonts/Schyler-Italic.ttf
+  #         style: italic
+  #   - family: Trajan Pro
+  #     fonts:
+  #       - asset: fonts/TrajanPro.ttf
+  #       - asset: fonts/TrajanPro_Bold.ttf
+  #         weight: 700
+  #
+  # For details regarding fonts from package dependencies,
+  # see https://flutter.dev/to/font-from-package

@@ -1,0 +1,43 @@
+# Launch smoke test against the *installed release APK* — black box, no Dart test harness.
+#
+# ## What this is for, and what it deliberately is not
+#
+# Every other suite runs a **debug** build through Flutter's own test binding. None of them would
+# notice if the thing that ships failed to start: a bad R8 rule, a missing native library, a
+# manifest mistake, a signing problem. That is the one question this answers, against the same APK
+# a user would install, knowing nothing about the app beyond what is on screen.
+#
+# ## Why it is shallow
+#
+# Flutter paints its own pixels, and to a non-accessibility client the entire app collapses into a
+# single merged node — verified here with `maestro hierarchy`, which reports **two** labels for the
+# whole host screen. Maestro therefore cannot address individual widgets in a Flutter release build
+# without the app permanently enabling its semantics tree, and building a *different* artifact for
+# the smoke suite would defeat the only reason this suite exists.
+#
+# So the depth lives in the Patrol suite (§11.1), which sees the real widget tree, and this stays a
+# launch gate: does the artifact we are about to publish start, render its own UI, and survive being
+# put in the background and brought back.
+appId: com.jetsetslow.omniterm.app
+---
+- launchApp:
+    clearState: true
+
+# The app's own content, not a splash screen and not a system error dialog: proof the engine came
+# up, the database opened, and the first frame is ours. Matched loosely because the whole screen
+# arrives as one merged node.
+- extendedWaitUntil:
+    visible: ".*No servers yet.*"
+    timeout: 30000
+
+# The empty state has to *say* it is empty. A blank screen and a broken screen look identical, and
+# on a cleared install this is the difference between "nothing to show" and "failed to load".
+- assertVisible: ".*Search hosts.*"
+
+# Backgrounded and resumed. A release build that dies on the way back is a crash no host test sees,
+# and this app deliberately keeps sessions alive across exactly this transition.
+- pressKey: Home
+- launchApp
+- assertVisible: ".*No servers yet.*"
+
+- stopApp
