@@ -63,13 +63,33 @@ void main() {
   /// around: the export now settles the permission before opening the picker, so the prompt is
   /// answered here, at the point it actually appears. Denial is exercised on purpose — a backup
   /// must work without notification permission.
-  Future<void> answerNotificationPromptIfShown(PatrolIntegrationTester $) async {
-    if (await $.platformAutomator.mobile.isPermissionDialogVisible(
-      timeout: const Duration(seconds: 5),
-    )) {
-      await $.platformAutomator.mobile.denyPermission();
-      await $.pumpAndSettle();
+  Future<void> answerNotificationPromptIfShown(
+    PatrolIntegrationTester $, {
+    DateTime? deadline,
+  }) async {
+    final end = deadline ?? DateTime.now().add(const Duration(seconds: 5));
+    Duration remaining(Duration maximum) {
+      final left = end.difference(DateTime.now());
+      expect(left, greaterThan(Duration.zero), reason: 'the permission deadline still applies');
+      return left < maximum ? left : maximum;
     }
+
+    var visible = await $.platformAutomator.mobile.isPermissionDialogVisible(
+      timeout: remaining(const Duration(seconds: 5)),
+    );
+    if (!visible) return;
+    // Patrol's legacy UiObject click does not verify dismissal. Hosted evidence showed a
+    // successful denial call with the permission window still open and no recorded decision.
+    // Repeat the same choice only while that modal remains; share the original picker deadline.
+    while (visible) {
+      await $.platformAutomator.mobile.denyPermission().timeout(
+        remaining(const Duration(seconds: 20)),
+      );
+      visible = await $.platformAutomator.mobile.isPermissionDialogVisible(
+        timeout: remaining(const Duration(milliseconds: 200)),
+      );
+    }
+    await $.pumpAndSettle();
   }
 
   Future<void> cancelPicker(PatrolIntegrationTester $) async {
@@ -84,6 +104,7 @@ void main() {
     final context = $.tester.element($(const ValueKey('backup.list')).finder);
     final vm = context.read<BackupViewModel>();
     final deadline = DateTime.now().add(const Duration(seconds: 20));
+    await answerNotificationPromptIfShown($, deadline: deadline);
     // Native visibility polling does not pump Flutter frames or wait for the SQLite reads that
     // build the backup. The permission reply can arrive after pumpAndSettle has returned. Wait
     // for that export to start and finish before handing the observation over to Android, using
@@ -132,11 +153,7 @@ void main() {
     // tests were ever executed.
     await $(const ValueKey('backup.export')).scrollTo().tap();
 
-    // The permission prompt is raised and settled before the picker now, so it is answered here
-    // rather than being discovered behind DocumentsUI afterwards.
-    await answerNotificationPromptIfShown($);
-
-    // The picker belongs to another app, so this is the only way to know it opened at all.
+    // Settle permission and require the actual platform picker within one unchanged budget.
     await waitForSavePicker($);
 
     await cancelPicker($);
@@ -182,9 +199,6 @@ void main() {
     await openBackup($);
     await selectSettingsOnly($);
     await $(const ValueKey('backup.export')).scrollTo().tap();
-
-    // Settled before the picker, as in the cancellation test above.
-    await answerNotificationPromptIfShown($);
 
     await waitForSavePicker($);
 
