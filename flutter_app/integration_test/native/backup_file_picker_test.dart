@@ -26,10 +26,13 @@ void main() {
     $.tester.binding.platformDispatcher.semanticsEnabledTestValue = false;
     await app.main();
     await $.pumpAndSettle();
-    // Connect Android's native window observer while our Activity is still foreground. The
-    // permission prompt and DocumentsUI replace this window. Hosted evidence showed both
-    // platform modals displayed while native polling found no nodes. Require a usable app
-    // window root before triggering either transition; retain actual modal/result assertions.
+    // Flutter frames do not establish Android's interactive window registration. Hosted runs
+    // displayed this Activity while accessibility could not resolve its window. Drive an actual
+    // foreground transition after Patrol connects, then require the native app root before a
+    // permission or DocumentsUI transition. The launch intent preserves this task and its data.
+    await $.platformAutomator.android.pressHome();
+    await $.platformAutomator.android.openApp(appId: 'com.jetsetslow.omniterm.app.flutter');
+    await $.pumpAndSettle();
     await $.platformAutomator.android.waitUntilVisible(
       AndroidSelector(applicationPackage: 'com.jetsetslow.omniterm.app.flutter'),
       timeout: const Duration(seconds: 10),
