@@ -26,6 +26,14 @@ void main() {
     $.tester.binding.platformDispatcher.semanticsEnabledTestValue = false;
     await app.main();
     await $.pumpAndSettle();
+    // Connect Android's native window observer while our Activity is still foreground. The
+    // permission prompt and DocumentsUI replace this window. Hosted evidence showed both
+    // platform modals displayed while native polling found no nodes. Require a usable app
+    // window root before triggering either transition; retain actual modal/result assertions.
+    await $.platformAutomator.android.waitUntilVisible(
+      AndroidSelector(applicationPackage: 'com.jetsetslow.omniterm.app.flutter'),
+      timeout: const Duration(seconds: 10),
+    );
     await $(const ValueKey('nav.tools')).tap();
     await $(const ValueKey('tools.backup')).tap();
   }
