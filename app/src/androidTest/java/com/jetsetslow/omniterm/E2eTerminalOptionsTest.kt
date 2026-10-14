@@ -81,8 +81,18 @@ class E2eTerminalOptionsTest {
                     composeRule.waitForIdle()
                     androidx.test.espresso.Espresso.closeSoftKeyboard()
                     await("full viewport without IME", 10_000) {
-                        androidx.core.view.ViewCompat.getRootWindowInsets(composeRule.activity.window.decorView)
-                            ?.isVisible(androidx.core.view.WindowInsetsCompat.Type.ime()) != true
+                        // Rotation can finish rebinding the IME after Espresso's first hide.
+                        // Dismiss only an actually visible keyboard on the current Activity,
+                        // using the same deadline and rejecting an unattached replacement root.
+                        val activity = composeRule.activity
+                        val ime = androidx.core.view.WindowInsetsCompat.Type.ime()
+                        if (androidx.core.view.ViewCompat.getRootWindowInsets(activity.window.decorView)
+                                ?.isVisible(ime) == true) {
+                            androidx.test.espresso.Espresso.closeSoftKeyboard()
+                        }
+                        val insets = androidx.core.view.ViewCompat.getRootWindowInsets(activity.window.decorView)
+                        activity === composeRule.activity && activity.hasWindowFocus() &&
+                            insets != null && !insets.isVisible(ime)
                     }
                     // Resources update before the old Activity/Compose root is destroyed. Await
                     // the replacement's rendered action rather than tapping during that gap.
