@@ -1111,6 +1111,8 @@ class AppViewModel @JvmOverloads constructor(
     var backupExportSelection by mutableStateOf(BackupSelection()); private set
     var backupSelectionSaving by mutableStateOf(false); private set
     var backupSelectionError by mutableStateOf<String?>(null); private set
+    var backupFeedback by mutableStateOf(""); private set
+    var backupFeedbackSuccess by mutableStateOf<Boolean?>(null); private set
     private val backupSelectionWrites = Mutex()
     private var backupSelectionRevision = 0L
     private var backupSelectionAwaitingEcho: BackupSelection? = null
@@ -2472,6 +2474,11 @@ class AppViewModel @JvmOverloads constructor(
                 if (revision == backupSelectionRevision) backupSelectionSaving = false
             }
         }
+    }
+
+    fun reportBackupFeedback(message: String, success: Boolean? = null) {
+        backupFeedback = message
+        backupFeedbackSuccess = success
     }
 
     // Real telemetry: TCP reachability + SSH metrics for every reachable host, concurrently.

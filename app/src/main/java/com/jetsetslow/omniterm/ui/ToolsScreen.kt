@@ -2674,8 +2674,6 @@ fun BackupToolView(viewModel: AppViewModel) {
     var importInspecting by remember { mutableStateOf(false) }
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
-    var exportFeedback by remember { mutableStateOf("") }
-    var exportFeedbackOk by remember { mutableStateOf(true) }
     var showImportPasswordDialog by remember { mutableStateOf(false) }
     var showExportPasswordDialog by remember { mutableStateOf(false) }
     var showExportSelectionDialog by remember { mutableStateOf(false) }
@@ -2693,6 +2691,26 @@ fun BackupToolView(viewModel: AppViewModel) {
     val exportSelection = viewModel.backupExportSelection
     fun setExportSelection(selection: BackupSelection) {
         viewModel.updateBackupExportSelection(selection)
+    }
+
+    fun cancelExport() {
+        showExportSelectionDialog = false
+        showExportPasswordDialog = false
+        exportPassword = ""
+        pendingExportPassword = ""
+        pendingExportSelection = BackupSelection()
+        viewModel.reportBackupFeedback("Backup cancelled. Nothing was written.")
+    }
+    fun cancelRestore() {
+        showImportPasswordDialog = false
+        showRestoreSelectionDialog = false
+        pendingImportContent = ""
+        importPassword = ""
+        pendingRestorePassword = ""
+        restoreContents = null
+        restoreHosts = emptyList()
+        selectedRestoreHostIds = emptySet()
+        viewModel.reportBackupFeedback("Restore cancelled. Nothing was changed.")
     }
 
     ToolScaffold(viewModel, "App backup") {
@@ -2722,7 +2740,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                     ) { uri ->
                         if (uri != null && !importReading && !importInspecting) {
                             importReading = true
-                            exportFeedback = ""
+                            viewModel.reportBackupFeedback("")
                             importScope.launch {
                                 try {
                                     val (content, needsPassword) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -2747,26 +2765,25 @@ fun BackupToolView(viewModel: AppViewModel) {
                                                         selectedRestoreHostIds = hosts.map { it.oldId }.toSet()
                                                         showRestoreSelectionDialog = true
                                                     } else {
-                                                        exportFeedbackOk = false
-                                                        exportFeedback = hostsMsg
+                                                        viewModel.reportBackupFeedback(hostsMsg, false)
                                                     }
                                                 }
                                             } else {
                                                 importInspecting = false
-                                                exportFeedbackOk = false
-                                                exportFeedback = msg
+                                                viewModel.reportBackupFeedback(msg, false)
                                             }
                                         }
                                     }
                                 } catch(e: Exception) {
                                     if (e is kotlinx.coroutines.CancellationException) throw e
                                     pendingImportContent = ""
-                                    exportFeedbackOk = false
-                                    exportFeedback = e.message ?: "Error reading backup file."
+                                    viewModel.reportBackupFeedback(e.message ?: "Error reading backup file.", false)
                                 } finally {
                                     importReading = false
                                 }
                             }
+                        } else if (uri == null) {
+                            cancelRestore()
                         }
                     }
 
@@ -2775,11 +2792,12 @@ fun BackupToolView(viewModel: AppViewModel) {
                     ) { uri ->
                         if (uri != null) {
                             viewModel.exportBackup(uri, pendingExportPassword, context, pendingExportSelection) { ok, msg ->
-                                exportFeedbackOk = ok
-                                exportFeedback = msg
+                                viewModel.reportBackupFeedback(msg, ok)
                                 pendingExportPassword = ""
                                 pendingExportSelection = BackupSelection()
                             }
+                        } else {
+                            cancelExport()
                         }
                     }
 
@@ -2835,13 +2853,22 @@ fun BackupToolView(viewModel: AppViewModel) {
                         }
                     }
 
-                    if (exportFeedback.isNotEmpty()) {
-                        Text(exportFeedback, color = if (exportFeedbackOk) Color(0xFF10B981) else Color.Red, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+                    if (viewModel.backupFeedback.isNotEmpty()) {
+                        Text(
+                            viewModel.backupFeedback,
+                            color = when (viewModel.backupFeedbackSuccess) {
+                                true -> OmniColors.green
+                                false -> OmniColors.red
+                                null -> OmniColors.amber
+                            },
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
                     }
 
                     if (showExportSelectionDialog) {
                         AlertDialog(
-                            onDismissRequest = { showExportSelectionDialog = false },
+                            onDismissRequest = { cancelExport() },
                             title = { Text(stringResource(R.string.backup_sections)) },
                             text = {
                                 Column(
@@ -2888,14 +2915,14 @@ fun BackupToolView(viewModel: AppViewModel) {
                                 }
                             },
                             dismissButton = {
-                                TextButton(onClick = { showExportSelectionDialog = false }) { Text(stringResource(R.string.cancel)) }
+                                TextButton(onClick = { cancelExport() }) { Text(stringResource(R.string.cancel)) }
                             },
                         )
                     }
 
                     if (showExportPasswordDialog) {
                         AlertDialog(
-                            onDismissRequest = { showExportPasswordDialog = false; exportPassword = "" },
+                            onDismissRequest = { cancelExport() },
                             title = { Text(stringResource(R.string.encrypt_backup)) },
                             text = {
                                 Column {
@@ -2920,7 +2947,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                                 ) { Text(stringResource(R.string.choose_location)) }
                             },
                             dismissButton = {
-                                TextButton(onClick = { showExportPasswordDialog = false; exportPassword = "" }) { Text(stringResource(R.string.cancel)) }
+                                TextButton(onClick = { cancelExport() }) { Text(stringResource(R.string.cancel)) }
                             }
                         )
                     }
@@ -2934,7 +2961,7 @@ fun BackupToolView(viewModel: AppViewModel) {
             }
             if (showImportPasswordDialog) {
                 AlertDialog(
-                    onDismissRequest = { showImportPasswordDialog = false; pendingImportContent = ""; importPassword = ""; pendingRestorePassword = "" },
+                    onDismissRequest = { cancelRestore() },
                     title = { Text(stringResource(R.string.encrypted_backup)) },
                     text = {
                         Column {
@@ -2970,16 +2997,14 @@ fun BackupToolView(viewModel: AppViewModel) {
                                             } else {
                                                 pendingImportContent = ""
                                                 pendingRestorePassword = ""
-                                                exportFeedbackOk = false
-                                                exportFeedback = hostsMsg
+                                                viewModel.reportBackupFeedback(hostsMsg, false)
                                             }
                                         }
                                     } else {
                                         importInspecting = false
                                         pendingImportContent = ""
                                         pendingRestorePassword = ""
-                                        exportFeedbackOk = false
-                                        exportFeedback = msg
+                                        viewModel.reportBackupFeedback(msg, false)
                                     }
                                 }
                             }
@@ -2988,7 +3013,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                         }
                     },
                     dismissButton = {
-                        TextButton(onClick = { showImportPasswordDialog = false; pendingImportContent = ""; importPassword = ""; pendingRestorePassword = "" }) {
+                        TextButton(onClick = { cancelRestore() }) {
                             Text(stringResource(R.string.cancel))
                         }
                     }
@@ -2998,12 +3023,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                 val contents = restoreContents
                 AlertDialog(
                     onDismissRequest = {
-                        showRestoreSelectionDialog = false
-                        pendingImportContent = ""
-                        pendingRestorePassword = ""
-                        restoreContents = null
-                        restoreHosts = emptyList()
-                        selectedRestoreHostIds = emptySet()
+                        cancelRestore()
                     },
                     title = { Text(stringResource(R.string.restore_backup)) },
                     text = {
@@ -3048,10 +3068,10 @@ fun BackupToolView(viewModel: AppViewModel) {
                                     "Restore selected data?",
                                     "Restoring selected sections will add matching backup contents into OmniTerm. This cannot be undone.",
                                     confirmLabel = "Restore",
+                                    onCancel = { cancelRestore() },
                                 ) {
                                     viewModel.restoreEncryptedBackup(content, pwd, selection, selectedHostIds) { ok, msg ->
-                                        exportFeedbackOk = ok
-                                        exportFeedback = msg
+                                        viewModel.reportBackupFeedback(msg, ok)
                                     }
                                 }
                             }
@@ -3060,12 +3080,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                     dismissButton = {
                         TextButton(
                             onClick = {
-                                showRestoreSelectionDialog = false
-                                pendingImportContent = ""
-                                pendingRestorePassword = ""
-                                restoreContents = null
-                                restoreHosts = emptyList()
-                                selectedRestoreHostIds = emptySet()
+                                cancelRestore()
                             }
                         ) { Text(stringResource(R.string.cancel)) }
                     }

@@ -358,6 +358,7 @@ data class ConfirmRequest(
     val confirmLabel: String,
     val destructive: Boolean,
     val onConfirm: () -> Unit,
+    val onCancel: () -> Unit = {},
 )
 
 /** Holds the pending confirmation for a screen; `ask` queues one, `ConfirmHost` renders it. */
@@ -370,13 +371,22 @@ class ConfirmController {
         message: String,
         confirmLabel: String = "Confirm",
         destructive: Boolean = true,
+        onCancel: () -> Unit = {},
         onConfirm: () -> Unit,
     ) {
-        pending = ConfirmRequest(title, message, confirmLabel, destructive, onConfirm)
+        pending = ConfirmRequest(title, message, confirmLabel, destructive, onConfirm, onCancel)
     }
 
     fun dismiss() {
+        val request = pending ?: return
         pending = null
+        request.onCancel()
+    }
+
+    fun confirm() {
+        val request = pending ?: return
+        pending = null
+        request.onConfirm()
     }
 }
 
@@ -393,8 +403,7 @@ fun ConfirmHost(controller: ConfirmController) {
         text = { Text(req.message) },
         confirmButton = {
             TextButton(onClick = {
-                controller.dismiss()
-                req.onConfirm()
+                controller.confirm()
             }) {
                 Text(req.confirmLabel, color = if (req.destructive) OmniColors.red else MaterialTheme.colorScheme.primary)
             }
