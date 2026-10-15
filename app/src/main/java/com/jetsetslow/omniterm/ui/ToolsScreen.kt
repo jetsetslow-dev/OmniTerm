@@ -2657,6 +2657,17 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
 
 // 7.7 BACKUPS SCHEDULERS PANEL
 @Composable
+private fun BackupSelectionFeedback(viewModel: AppViewModel) {
+    if (viewModel.backupSelectionSaving) {
+        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        Text("Remembering backup selection…", fontSize = 11.sp)
+    }
+    viewModel.backupSelectionError?.let {
+        Text(it, color = OmniColors.red, fontSize = 11.sp)
+    }
+}
+
+@Composable
 fun BackupToolView(viewModel: AppViewModel) {
     val importScope = rememberCoroutineScope()
     var importReading by remember { mutableStateOf(false) }
@@ -2778,6 +2789,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                     )
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    BackupSelectionFeedback(viewModel)
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             onClick = {
@@ -2836,6 +2848,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                                     modifier = Modifier.heightIn(max = 420.dp).verticalScrollWithIndicators(rememberScrollState()),
                                     verticalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
+                                    BackupSelectionFeedback(viewModel)
                                     BackupSelectionList(
                                         title = "Choose what to include",
                                         selection = pendingExportSelection,
@@ -2863,7 +2876,16 @@ fun BackupToolView(viewModel: AppViewModel) {
                                             launcher.launch("omniterm_backup_${System.currentTimeMillis() / 1000}.json")
                                         }
                                     }
-                                ) { Text(stringResource(R.string.continue_label)) }
+                                ) {
+                                    if (viewModel.backupSelectionSaving) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(14.dp),
+                                            strokeWidth = 2.dp,
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                    }
+                                    Text(stringResource(R.string.continue_label))
+                                }
                             },
                             dismissButton = {
                                 TextButton(onClick = { showExportSelectionDialog = false }) { Text(stringResource(R.string.cancel)) }

@@ -1109,7 +1109,13 @@ class AppViewModel @JvmOverloads constructor(
     var alertPresetsEnabled by mutableStateOf(false); private set
     var fleetPresetsEnabled by mutableStateOf(false); private set
     var backupExportSelection by mutableStateOf(BackupSelection()); private set
+    var backupSelectionSaving by mutableStateOf(false); private set
+    var backupSelectionError by mutableStateOf<String?>(null); private set
+    private val backupSelectionWrites = Mutex()
+    private var backupSelectionRevision = 0L
+    private var backupSelectionAwaitingEcho: BackupSelection? = null
     var lastBackupExportTime by mutableStateOf(0L); private set
+    private var latestBackupWrittenAt = 0L
     var isLanScanning by mutableStateOf(false)
     var sftpLargeBatchFileThreshold by mutableStateOf(50); private set
     var sftpLargeBatchBytesThreshold by mutableStateOf(1_000_000_000L); private set
@@ -2306,8 +2312,16 @@ class AppViewModel @JvmOverloads constructor(
                 alertsEnabled = list.find { it.key == "alerts_enabled" }?.value != "false"
                 alertPresetsEnabled = list.find { it.key == "alert_presets" }?.value == "true"
                 fleetPresetsEnabled = list.find { it.key == "fleet_presets" }?.value == "true"
-                backupExportSelection = decodeBackupSelection(list.find { it.key == "backup_export_selection" }?.value)
-                lastBackupExportTime = list.find { it.key == "backup_last_export_time" }?.value?.toLongOrNull() ?: 0L
+                val storedBackupSelection = decodeBackupSelection(list.find { it.key == "backup_export_selection" }?.value)
+                if (!backupSelectionSaving && backupSelectionError == null &&
+                    (backupSelectionAwaitingEcho == null || backupSelectionAwaitingEcho == storedBackupSelection)) {
+                    backupExportSelection = storedBackupSelection
+                    backupSelectionAwaitingEcho = null
+                }
+                lastBackupExportTime = maxOf(
+                    latestBackupWrittenAt,
+                    list.find { it.key == "backup_last_export_time" }?.value?.toLongOrNull() ?: 0L,
+                )
 
                 val hasPinLock = !pinVal.isNullOrBlank() && lockEnabled
                 savedPin = pinVal
@@ -2438,8 +2452,26 @@ class AppViewModel @JvmOverloads constructor(
 
     fun updateBackupExportSelection(selection: BackupSelection) {
         val closed = selection.withReferentialClosure()
+        val revision = ++backupSelectionRevision
         backupExportSelection = closed
-        viewModelScope.launch { repository.insertSetting("backup_export_selection", closed.encode()) }
+        backupSelectionAwaitingEcho = closed
+        backupSelectionSaving = true
+        backupSelectionError = null
+        viewModelScope.launch {
+            try {
+                backupSelectionWrites.withLock {
+                    repository.insertSetting("backup_export_selection", closed.encode())
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (revision == backupSelectionRevision) {
+                    backupSelectionError = "Your selection is active for this export, but could not be remembered. " +
+                        "Choose the sections again to retry saving it for next time."
+                }
+            } finally {
+                if (revision == backupSelectionRevision) backupSelectionSaving = false
+            }
+        }
     }
 
     // Real telemetry: TCP reachability + SSH metrics for every reachable host, concurrently.
@@ -12242,6 +12274,7 @@ class AppViewModel @JvmOverloads constructor(
                 destination = "backup",
             )
             var operationSucceeded = false
+            var outcome = false to "Export failed."
             try {
                 val srvs = repository.getAllServers()
                 val keys = repository.getAllKeys()
@@ -12290,17 +12323,31 @@ class AppViewModel @JvmOverloads constructor(
                     }
                 }
                 val mode = if (encrypted) "Encrypted" else "Plain"
+                var timestampWarning = ""
                 if (ok) {
                     val now = System.currentTimeMillis()
+                    latestBackupWrittenAt = now
                     lastBackupExportTime = now
-                    repository.insertSetting("backup_last_export_time", now.toString())
+                    try {
+                        repository.insertSetting("backup_last_export_time", now.toString())
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        timestampWarning = " The backup file is saved, but its time could not be recorded. " +
+                            "This screen may show the previous export time next time."
+                    }
                 }
                 operationSucceeded = ok
-                onResult(ok, if (ok) "$mode backup written: ${if (closedSelection.servers) srvs.size else 0} servers, ${if (closedSelection.sshKeys) keys.size else 0} keys, ${if (closedSelection.credentialProfiles) profiles.size else 0} profiles, ${if (closedSelection.scripts) scriptsForCount.size else 0} scripts, ${if (closedSelection.alertRules) rulesForCount else 0} rules, ${if (closedSelection.alertHistory) historyForCount else 0} alert history, ${if (closedSelection.wolTargets) wolTargets.size else 0} WoL, ${if (closedSelection.networkShares) networkShares.size else 0} shares, ${if (closedSelection.portForwards) portForwardsForCount else 0} tunnels, ${if (closedSelection.settings) settings.size else 0} settings." else "Export failed.")
+                outcome = ok to if (ok) "$mode backup written: ${if (closedSelection.servers) srvs.size else 0} servers, ${if (closedSelection.sshKeys) keys.size else 0} keys, ${if (closedSelection.credentialProfiles) profiles.size else 0} profiles, ${if (closedSelection.scripts) scriptsForCount.size else 0} scripts, ${if (closedSelection.alertRules) rulesForCount else 0} rules, ${if (closedSelection.alertHistory) historyForCount else 0} alert history, ${if (closedSelection.wolTargets) wolTargets.size else 0} WoL, ${if (closedSelection.networkShares) networkShares.size else 0} shares, ${if (closedSelection.portForwards) portForwardsForCount else 0} tunnels, ${if (closedSelection.settings) settings.size else 0} settings.$timestampWarning" else "Export failed."
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                outcome = false to "Could not export backup: ${e.message ?: "The saved configuration could not be read."}"
             } finally {
                 backupExportRunning = false
                 LongOperationNotifications.finish(getApplication(), operationId, operationSucceeded)
             }
+            // Completion callbacks run once, after cleanup; a caller's exception is not a second
+            // export failure and must never turn a file already written into a failed result.
+            onResult(outcome.first, outcome.second)
         }
     }
 
