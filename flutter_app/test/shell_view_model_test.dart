@@ -18,6 +18,7 @@ import 'package:omniterm/ui/view_model/shell_view_model.dart';
 
 import 'support/fake_secure_storage.dart';
 import 'support/fake_shell_transport.dart';
+import 'support/fake_terminal_session.dart';
 
 /// Records what would have been pushed to the launcher, instead of calling the platform.
 class _RecordingShortcuts extends ShortcutHelper {
@@ -53,6 +54,21 @@ class _FailsReadingAfterWriting extends AppRepository {
   Future<List<PersistentSession>> getPersistentSessions() {
     if (_wrote) throw StateError('fixture storage unavailable');
     return super.getPersistentSessions();
+  }
+}
+
+class _HeldBootstrapTransport extends FakeShellTransport {
+  final bootstrap = Completer<void>();
+  @override
+  Future<TerminalSession> openShell(
+    SshCredentials creds,
+    int cols,
+    int rows, {
+    void Function(String phase)? onPhaseChange,
+  }) async {
+    final channel = await super.openShell(creds, cols, rows, onPhaseChange: onPhaseChange);
+    (channel as FakeTerminalSession).gateWrite = bootstrap;
+    return channel;
   }
 }
 
@@ -532,6 +548,362 @@ void main() {
       expect(() => model.splitWith(other.id), returnsNormally);
       expect(model.splitSession?.id, other.id);
     });
+  });
+
+  test('pending second-pane connect keeps the first terminal and explicit empty slot', () async {
+    await repo.insertServer(server(name: 'first fixture'));
+    await repo.insertServer(server(name: 'second fixture'));
+    await start();
+    final hosts = app.servers.toList();
+    await vm.connect(hosts.first);
+    final first = vm.current!;
+    final gate = Completer<void>();
+    transport.gate = gate;
+    final connecting = vm.splitWithNewSession(hosts.last);
+    try {
+      await Future<void>(() async {
+        while (transport.openedWith.length < 2) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      }).timeout(const Duration(seconds: 5));
+      expect(vm.isSplit, isTrue, reason: 'mode must exist before the second transport completes');
+      expect(vm.splitFirstSession, same(first));
+      expect(vm.splitSecondSession, isNull);
+      expect(vm.isConnecting, isTrue);
+    } finally {
+      if (!gate.isCompleted) gate.complete();
+      await connecting;
+    }
+  });
+
+  test('closing the focused second pane preserves its empty slot', () async {
+    await repo.insertServer(server(name: 'first fixture'));
+    await repo.insertServer(server(name: 'second fixture'));
+    await start();
+    for (final host in app.servers) {
+      await vm.connect(host);
+    }
+    final first = vm.sessions.first;
+    final second = vm.sessions.last;
+    vm.select(first.id);
+    vm.splitWith(second.id);
+    vm.focusPane(second.id);
+    vm.close(second);
+    expect(vm.isSplit, isTrue);
+    expect(vm.splitFirstSession, same(first));
+    expect(vm.splitSecondSession, isNull);
+    expect(vm.focusedPane, 2);
+    expect(vm.current, isNull);
+  });
+
+  test('keys in a closed focused split slot do not fall through to its sibling', () async {
+    await repo.insertServer(server(name: 'first fixture'));
+    await repo.insertServer(server(name: 'second fixture'));
+    await start();
+    for (final host in app.servers) {
+      await vm.connect(host);
+    }
+    final first = vm.sessions.first;
+    final second = vm.sessions.last;
+    vm.select(first.id);
+    vm.splitWith(second.id);
+    vm.focusPane(second.id);
+    vm.close(second);
+    final before = transport.opened.first.writes.length;
+    expect(vm.typeText('must remain unsent'), isFalse);
+    await Future<void>.delayed(Duration.zero);
+    expect(transport.opened.first.writes.length, before);
+  });
+
+  test('a cancelled split attempt cannot adopt a newer connection or change its focus', () async {
+    await repo.insertServer(server(name: 'first fixture'));
+    await repo.insertServer(server(name: 'abandoned fixture'));
+    await repo.insertServer(server(name: 'newer fixture'));
+    await start();
+    final hosts = app.servers.toList();
+    await vm.connect(hosts.first);
+    final gate = Completer<void>();
+    transport.gate = gate;
+    final abandoned = vm.splitWithNewSession(hosts[1]);
+    try {
+      await Future<void>(() async {
+        while (transport.openedWith.length < 2) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      }).timeout(const Duration(seconds: 5));
+      vm.cancelConnect();
+      transport.gate = null;
+      await vm.connect(hosts.last);
+      final current = vm.current;
+      final first = vm.splitFirstSession;
+      final second = vm.splitSecondSession;
+      final mode = vm.isSplit;
+      gate.complete();
+      await abandoned;
+      expect(vm.current, same(current), reason: 'the abandoned wrapper must not steal newer focus');
+      expect(vm.splitFirstSession, same(first));
+      expect(vm.splitSecondSession, same(second));
+      expect(vm.isSplit, mode);
+      expect(
+        transport.opened.last.closeCalled,
+        isTrue,
+        reason: 'the late abandoned channel is closed',
+      );
+    } finally {
+      if (!gate.isCompleted) gate.complete();
+      await abandoned;
+    }
+  });
+
+  group('split slot ownership across connection decisions', () {
+    test('backgrounding the focused slot keeps it empty and rejects input', () async {
+      await repo.insertServer(server(name: 'first fixture'));
+      await repo.insertServer(server(name: 'second fixture'));
+      await start();
+      for (final host in app.servers) {
+        await vm.connect(host);
+      }
+      final first = vm.sessions.first;
+      final second = vm.sessions.last;
+      vm.select(first.id);
+      vm.splitWith(second.id);
+      vm.focusPane(second.id);
+      expect(await vm.backgroundSession(second), isTrue);
+      expect(vm.isSplit, isTrue);
+      expect(vm.current, isNull);
+      expect(vm.focusedPane, 2);
+      expect(vm.splitFirstSession, same(first));
+      expect(vm.splitSecondSession, isNull);
+      expect(vm.sessions, contains(second));
+      expect(vm.paste('must stay unsent'), isFalse);
+      expect(vm.sendKey(TermKey.enter), isFalse);
+      expect(transport.opened.every((shell) => shell.writes.isEmpty), isTrue);
+      vm.unsplit();
+      expect(vm.current, same(first), reason: 'Single uses the surviving pane explicitly');
+    });
+
+    test('the same SSH terminal cannot occupy both slots', () async {
+      await repo.insertServer(server(name: 'fixture'));
+      await start();
+      await vm.connect(app.servers.single);
+      final first = vm.current!;
+      vm.enterSplit();
+      expect(vm.assignSplitPane(2, first.id), isFalse);
+      expect(vm.splitFirstSession, same(first));
+      expect(vm.splitSecondSession, isNull);
+      vm.focusSplitPane(2);
+      expect(vm.current, isNull);
+      expect(vm.typeText('unsent'), isFalse);
+    });
+
+    test('offline approval preserves the slot and initial command after focus changes', () async {
+      await repo.insertServer(server(name: 'first fixture'));
+      await repo.insertServer(server(name: 'offline fixture', status: 'offline'));
+      await start();
+      vm.dispose();
+      vm = ShellViewModel(app, transport: transport, hasProbed: (_) => true);
+      final firstHost = app.servers.firstWhere((s) => s.status == 'online');
+      final target = app.servers.firstWhere((s) => s.status == 'offline');
+      await vm.connect(firstHost);
+      final first = vm.current!;
+      vm.enterSplit();
+      await vm.connect(target, pane: 2, initialCommand: 'printf requested-slot');
+      expect(vm.offlineConnectPromptServer?.id, target.id);
+      vm.focusSplitPane(1);
+      await vm.connectConfirmedOffline();
+      expect(vm.current, same(first));
+      expect(vm.splitSecondSession!.serverId, target.id);
+      expect(
+        transport.opened.last.writes.map(utf8.decode).join(),
+        contains('printf requested-slot'),
+      );
+      expect(transport.opened.first.writes, isEmpty);
+    });
+
+    test('saved split resume keeps its exact tmux target after persistence is disabled', () async {
+      await repo.insertServer(server(name: 'saved fixture', persistent: false));
+      await start();
+      final host = app.servers.single;
+      await repo.upsertPersistentSession(
+        PersistentSessionsCompanion.insert(
+          tmuxName: 'saved-split-fixture',
+          serverId: host.id,
+          serverName: host.name,
+          createdAt: 1,
+          backgroundedAt: 0,
+        ),
+      );
+      final row = (await repo.getPersistentSessions()).single;
+      transport.execAnswers['command -v tmux'] = 'yes';
+      transport.execAnswers['has-session'] = tmuxSessionPresentMarker;
+      vm.useControlMode = true;
+      await vm.resumeIntoSplitPane(row, 2);
+      expect(
+        vm.splitSecondSession!.tmuxName,
+        row.tmuxName,
+        reason: 'an explicit saved target overrides only the default for new terminals',
+      );
+      expect(vm.splitSecondSession!.controlMode, isTrue);
+      expect(transport.commands.any((command) => command.contains('has-session')), isTrue);
+      expect((await repo.getServerById(host.id))!.persistentSession, isFalse);
+    });
+
+    test('the nonpersistent tmux choice keeps its slot and command', () async {
+      await repo.insertServer(server(name: 'first fixture'));
+      await repo.insertServer(server(name: 'tmux fixture', persistent: true));
+      await start();
+      await vm.connect(app.servers.first);
+      final first = vm.current!;
+      transport.execAnswers['command -v tmux'] = 'no';
+      vm.enterSplit();
+      await vm.connect(
+        app.servers.last,
+        pane: 2,
+        controlMode: true,
+        initialCommand: 'printf plain-choice',
+        freshSession: true,
+      );
+      expect(vm.tmuxPromptServer, isNotNull);
+      vm.focusSplitPane(1);
+      await vm.connectWithoutPersistence();
+      expect(vm.current, same(first));
+      expect(vm.splitSecondSession!.tmuxName, isNull);
+      expect(transport.opened.last.writes.map(utf8.decode).join(), contains('printf plain-choice'));
+      expect(transport.opened.first.writes, isEmpty);
+    });
+
+    test('launching a pair reuses a live terminal and preserves it on partial failure', () async {
+      await repo.insertServer(server(name: 'first fixture'));
+      await repo.insertServer(server(name: 'second fixture'));
+      await start();
+      final hosts = app.servers.toList();
+      await vm.connect(hosts.first);
+      final first = vm.current!;
+      transport.failure = SshConnectException('Connection refused');
+      await vm.openSplitForServers(hosts.first, hosts.last);
+      expect(transport.opened, hasLength(1));
+      expect(vm.isSplit, isTrue);
+      expect(vm.splitFirstSession, same(first));
+      expect(vm.splitSecondSession, isNull);
+      expect(vm.paneError(2), contains('refused'));
+      transport.failure = null;
+      await vm.retryPane(2);
+      expect(vm.current, same(first));
+      expect(vm.splitSecondSession!.serverId, hosts.last.id);
+    });
+
+    test('a failed first slot keeps its retry after the second slot connects', () async {
+      await repo.insertServer(server(name: 'first fixture'));
+      await repo.insertServer(server(name: 'second fixture'));
+      await start();
+      final hosts = app.servers.toList();
+      transport.failure = SshConnectException('Connection refused');
+      void allowSecond() {
+        if (vm.paneError(1) != null) transport.failure = null;
+      }
+
+      vm.addListener(allowSecond);
+      try {
+        await vm.openSplitForServers(hosts.first, hosts.last);
+        expect(vm.splitFirstSession, isNull);
+        expect(vm.splitSecondSession!.serverId, hosts.last.id);
+        expect(vm.paneError(1), contains('Connection refused'));
+        expect(vm.canRetryPane(1), isTrue);
+        expect(vm.current, isNull);
+        await vm.retryPane(1);
+        expect(vm.splitFirstSession!.serverId, hosts.first.id);
+        expect(vm.paneError(1), isNull);
+        expect(vm.splitSecondSession!.serverId, hosts.last.id);
+        expect(vm.current, same(vm.splitFirstSession));
+      } finally {
+        vm.removeListener(allowSecond);
+      }
+    });
+
+    test('a launcher queue waits for the tmux decision before dialing its next host', () async {
+      await repo.insertServer(server(name: 'tmux fixture', persistent: true));
+      await repo.insertServer(server(name: 'second fixture'));
+      await start();
+      final hosts = [
+        app.servers.singleWhere((host) => host.persistentSession),
+        app.servers.singleWhere((host) => !host.persistentSession),
+      ];
+      transport.execAnswers['command -v tmux'] = 'no';
+      await vm.openSplitForServers(hosts.first, hosts.last);
+      expect(vm.isSplit, isTrue);
+      expect(vm.tmuxPromptServer?.id, hosts.first.id);
+      expect(transport.openedWith, isEmpty);
+      await vm.connectWithoutPersistence();
+      await Future<void>(() async {
+        while (vm.splitSecondSession == null) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      }).timeout(const Duration(seconds: 5));
+      expect(vm.splitFirstSession!.serverId, hosts.first.id);
+      expect(vm.splitSecondSession!.serverId, hosts.last.id);
+      expect(vm.current, same(vm.splitFirstSession));
+    });
+
+    test('a newer launcher queue starts without waiting for an abandoned SSH open', () async {
+      for (final name in ['old first', 'old second', 'new first', 'new second']) {
+        await repo.insertServer(server(name: name));
+      }
+      await start();
+      final hosts = app.servers.toList();
+      final gate = Completer<void>();
+      transport.gate = gate;
+      final abandoned = vm.openSplitForServers(hosts[0], hosts[1]);
+      try {
+        await Future<void>(() async {
+          while (transport.openedWith.isEmpty) {
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+        }).timeout(const Duration(seconds: 5));
+        transport.gate = null;
+        await vm.openSplitForServers(hosts[2], hosts[3]).timeout(const Duration(seconds: 5));
+        final first = vm.splitFirstSession;
+        final second = vm.splitSecondSession;
+        expect(first!.serverId, hosts[2].id);
+        expect(second!.serverId, hosts[3].id);
+        gate.complete();
+        await abandoned;
+        expect(vm.splitFirstSession, same(first));
+        expect(vm.splitSecondSession, same(second));
+        expect(transport.opened.last.closeCalled, isTrue);
+      } finally {
+        if (!gate.isCompleted) gate.complete();
+        await abandoned;
+      }
+    });
+  });
+
+  test('a cancelled tmux bootstrap cannot run its deferred initial command', () async {
+    await repo.insertServer(server(name: 'bootstrap fixture', persistent: true));
+    final held = _HeldBootstrapTransport();
+    await start(ssh: held);
+    final connecting = vm.connect(app.servers.single, initialCommand: 'must-not-run-after-cancel');
+    try {
+      await Future<void>(() async {
+        while (vm.sessions.isEmpty) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      }).timeout(const Duration(seconds: 5));
+      vm.cancelConnect();
+      held.bootstrap.complete();
+      await connecting;
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(
+        held.opened.single.writes.map(utf8.decode).join(),
+        isNot(contains('must-not-run-after-cancel')),
+        reason: 'Cancel must revoke the queued initial command as well as later focus',
+      );
+      expect(held.opened.single.closeCalled, isTrue);
+      expect(vm.sessions, isEmpty);
+    } finally {
+      if (!held.bootstrap.isCompleted) held.bootstrap.complete();
+      await connecting;
+      await held.dispose();
+    }
   });
 
   String sent(FakeShellTransport t) =>

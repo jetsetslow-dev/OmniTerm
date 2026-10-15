@@ -141,6 +141,7 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
       context: context,
       builder: (dialogContext) => AlertDialog(
         key: const ValueKey('serverForm.unverified.dialog'),
+        scrollable: true,
         title: Text(failedCheck ? 'Save after failed check?' : 'Save without testing?'),
         content: Text(
           failedCheck
@@ -229,112 +230,139 @@ class _ServerFormSheetState extends State<ServerFormSheet> {
         padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
         child: SizedBox(
           height: MediaQuery.of(context).size.height * 0.85,
-          child: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
-                child: Row(
-                  children: [
-                    Expanded(child: Text(_title, style: Theme.of(context).textTheme.titleLarge)),
-                    IconButton(
-                      tooltip: 'Close',
-                      key: const ValueKey('serverForm.close'),
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.of(context).pop(),
-                    ),
-                  ],
-                ),
-              ),
-              const TabBar(
-                key: ValueKey('serverForm.tabs'),
-                tabs: [
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxHeight < 260;
+              final tabs = TabBar(
+                key: const ValueKey('serverForm.tabs'),
+                isScrollable: compact,
+                tabAlignment: compact ? TabAlignment.start : TabAlignment.fill,
+                tabs: const [
                   Tab(text: 'Connect'),
                   Tab(text: 'Auth'),
                   Tab(text: 'Advanced'),
                 ],
-              ),
-              Expanded(
-                child: ListenableBuilder(
-                  listenable: _form,
-                  builder: (context, _) => TabBarView(
-                    children: [
-                      _ConnectTab(form: _form, existingServers: widget.existingServers),
-                      _AuthTab(
-                        form: _form,
-                        savedKeyAliases: widget.savedKeyAliases,
-                        savedProfiles: widget.savedProfiles,
+              );
+              final close = IconButton(
+                tooltip: 'Close',
+                key: const ValueKey('serverForm.close'),
+                icon: const Icon(Icons.close),
+                onPressed: () => Navigator.of(context).pop(),
+              );
+              return Column(
+                children: [
+                  if (compact)
+                    Semantics(
+                      label: _title,
+                      child: Padding(
+                        key: const ValueKey('serverForm.compactHeader'),
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Row(
+                          children: [
+                            Expanded(child: tabs),
+                            close,
+                          ],
+                        ),
                       ),
-                      _AdvancedTab(form: _form),
-                    ],
-                  ),
-                ),
-              ),
-              if (_testResult != null)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  child: Text(
-                    _testResult!,
-                    key: const ValueKey('serverForm.testResult'),
-                    style: TextStyle(
-                      color: _testPassed ? OmniColors.green : OmniColors.red,
-                      fontSize: 12,
-                    ),
-                  ),
-                ),
-              if (_saveError != null)
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                  child: Text(
-                    _saveError!,
-                    key: const ValueKey('serverForm.error'),
-                    style: const TextStyle(color: OmniColors.red, fontSize: 12),
-                  ),
-                ),
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        key: const ValueKey('serverForm.test'),
-                        onPressed: _testing || widget.onTestConnection == null ? null : _test,
-                        icon: _testing
-                            ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.wifi_tethering, size: 18),
-                        label: Text(_testing ? 'Testing…' : 'Test connection'),
+                    )
+                  else ...[
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(_title, style: Theme.of(context).textTheme.titleLarge),
+                          ),
+                          close,
+                        ],
                       ),
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: ListenableBuilder(
-                        listenable: _form,
-                        builder: (context, _) => FilledButton(
-                          key: const ValueKey('serverForm.save'),
-                          onPressed: _saving ? null : _save,
-                          child: _saving
-                              ? const SizedBox(
-                                  width: 18,
-                                  height: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    semanticsLabel: 'Saving host…',
-                                  ),
-                                )
-                              : Text(
-                                  _form.requiresConnectionTest ? 'Save anyway' : 'Save',
-                                  style: TextStyle(color: scheme.onPrimary),
-                                ),
+                    tabs,
+                  ],
+                  Expanded(
+                    child: ListenableBuilder(
+                      listenable: _form,
+                      builder: (context, _) => TabBarView(
+                        children: [
+                          _ConnectTab(form: _form, existingServers: widget.existingServers),
+                          _AuthTab(
+                            form: _form,
+                            savedKeyAliases: widget.savedKeyAliases,
+                            savedProfiles: widget.savedProfiles,
+                          ),
+                          _AdvancedTab(form: _form),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (_testResult != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      child: Text(
+                        _testResult!,
+                        key: const ValueKey('serverForm.testResult'),
+                        style: TextStyle(
+                          color: _testPassed ? OmniColors.green : OmniColors.red,
+                          fontSize: 12,
                         ),
                       ),
                     ),
-                  ],
-                ),
-              ),
-            ],
+                  if (_saveError != null)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                      child: Text(
+                        _saveError!,
+                        key: const ValueKey('serverForm.error'),
+                        style: const TextStyle(color: OmniColors.red, fontSize: 12),
+                      ),
+                    ),
+                  Padding(
+                    padding: EdgeInsets.all(compact ? 8 : 12),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            key: const ValueKey('serverForm.test'),
+                            onPressed: _testing || widget.onTestConnection == null ? null : _test,
+                            icon: _testing
+                                ? const SizedBox(
+                                    width: 14,
+                                    height: 14,
+                                    child: CircularProgressIndicator(strokeWidth: 2),
+                                  )
+                                : const Icon(Icons.wifi_tethering, size: 18),
+                            label: Text(_testing ? 'Testing…' : 'Test connection'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ListenableBuilder(
+                            listenable: _form,
+                            builder: (context, _) => FilledButton(
+                              key: const ValueKey('serverForm.save'),
+                              onPressed: _saving ? null : _save,
+                              child: _saving
+                                  ? const SizedBox(
+                                      width: 18,
+                                      height: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        semanticsLabel: 'Saving host…',
+                                      ),
+                                    )
+                                  : Text(
+                                      _form.requiresConnectionTest ? 'Save anyway' : 'Save',
+                                      style: TextStyle(color: scheme.onPrimary),
+                                    ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              );
+            },
           ),
         ),
       ),

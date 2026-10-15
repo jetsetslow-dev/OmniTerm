@@ -139,16 +139,16 @@ class _ShellScreenState extends State<ShellScreen> {
                   ),
                 ),
               Expanded(
-                child: vm.isConnecting
+                child: vm.isSplit
+                    ? _SplitTerminals(
+                        vm: vm,
+                        first: vm.splitFirstSession,
+                        second: vm.splitSecondSession,
+                      )
+                    : vm.isConnecting
                     ? _ConnectingView(phase: vm.connectPhase)
                     : session == null
                     ? _ConnectPane(vm: vm, licenseController: licenseController)
-                    : vm.isSplit
-                    ? _SplitTerminals(
-                        vm: vm,
-                        first: vm.splitFirstSession!,
-                        second: vm.splitSecondSession!,
-                      )
                     : _ActiveTerminal(vm: vm, session: session),
               ),
               if (session != null) TerminalKeyBar(viewModel: vm, compact: compactIme),
@@ -160,7 +160,14 @@ class _ShellScreenState extends State<ShellScreen> {
           final headerHeight = compactIme || vm.server == null
               ? 0.0
               : scaler.scale(24) + 28 + (scaler.scale(24) + 12).clamp(34, double.infinity) + 4;
-          final bodyMinimum = session == null
+          final bodyMinimum = vm.isSplit
+              ? (session == null
+                        ? 0
+                        : compactIme || session.readOnly
+                        ? 42.0
+                        : 80.0) +
+                    (vm.splitStacked ? 2 : 1) * (80 + scaler.scale(28))
+              : session == null
               ? 80.0 + (vm.resumableSessions.isEmpty ? 0 : 200)
               : (compactIme || session.readOnly ? 42.0 : 80.0) +
                     (vm.isSplit && vm.splitStacked
@@ -782,6 +789,19 @@ class _TerminalHeaderState extends State<_TerminalHeader> {
             selected: vm.server!,
             enabled: !busy,
             onChanged: _switchHost,
+            onOpenSplit: !vm.isSplit
+                ? null
+                : (ids) {
+                    final first = vm.connectableServers
+                        .where((host) => host.id == ids[0])
+                        .firstOrNull;
+                    final second = vm.connectableServers
+                        .where((host) => host.id == ids[1])
+                        .firstOrNull;
+                    if (first != null && second != null) {
+                      unawaited(vm.openSplitForServers(first, second));
+                    }
+                  },
             leading: Text(
               vm.isSplit ? 'P${vm.focusedPane}' : 'TERM',
               style: const TextStyle(
@@ -1735,18 +1755,18 @@ class _SplitTerminals extends StatelessWidget {
   const _SplitTerminals({required this.vm, required this.first, required this.second});
 
   final ShellViewModel vm;
-  final ShellSession first;
-  final ShellSession second;
+  final ShellSession? first;
+  final ShellSession? second;
 
   @override
   Widget build(BuildContext context) {
     final panes = [
       Expanded(
-        child: _FocusablePane(paneIndex: 1, vm: vm, session: first, focused: first == vm.current),
+        child: _FocusablePane(paneIndex: 1, vm: vm, session: first, focused: vm.focusedPane == 1),
       ),
       const _SplitDivider(),
       Expanded(
-        child: _FocusablePane(paneIndex: 2, vm: vm, session: second, focused: second == vm.current),
+        child: _FocusablePane(paneIndex: 2, vm: vm, session: second, focused: vm.focusedPane == 2),
       ),
     ];
 
@@ -1783,104 +1803,217 @@ class _FocusablePane extends StatelessWidget {
 
   final int paneIndex;
   final ShellViewModel vm;
-  final ShellSession session;
+  final ShellSession? session;
   final bool focused;
 
   @override
   Widget build(BuildContext context) {
+    final terminal = session;
     // No gesture detector here on purpose — the terminal surface below claims the arena, so a
     // wrapper's tap would never fire. Focus is taken in `_ActiveTerminal`, where the tap lands.
     return Semantics(
-      key: ValueKey('shell.pane.${session.id}'),
+      key: ValueKey(terminal == null ? 'shell.pane.empty.$paneIndex' : 'shell.pane.${terminal.id}'),
       container: true,
       explicitChildNodes: true,
-      label: 'Terminal pane $paneIndex: ${session.serverName}',
+      label: 'Terminal pane $paneIndex: ${terminal?.serverName ?? 'No session'}',
       value: focused ? 'Active terminal pane' : 'Inactive terminal pane',
       selected: focused,
       hint: 'Focus terminal pane $paneIndex',
       // This is an accessibility action, not a competing pointer handler. The terminal surface
       // keeps owning real taps while TalkBack can move the same focus that a tap would move.
-      onTap: () => vm.focusPane(session.id),
+      onTap: () => vm.focusSplitPane(paneIndex),
       child: DecoratedBox(
         decoration: BoxDecoration(
           border: Border.all(color: focused ? OmniColors.cyan : Colors.transparent),
         ),
-        child: _ActiveTerminal(vm: vm, session: session),
+        child: terminal == null
+            ? GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () => vm.focusSplitPane(paneIndex),
+                child: _EmptySplitPane(vm: vm, pane: paneIndex),
+              )
+            : Column(
+                children: [
+                  if (vm.isPaneConnecting(paneIndex)) ...[
+                    const LinearProgressIndicator(),
+                    Wrap(
+                      children: [
+                        Text(vm.connectPhase ?? 'Connecting…'),
+                        TextButton(onPressed: vm.cancelConnect, child: const Text('Cancel')),
+                      ],
+                    ),
+                  ],
+                  Expanded(
+                    child: _ActiveTerminal(vm: vm, session: terminal),
+                  ),
+                ],
+              ),
       ),
     );
   }
 }
 
-/// Picks what goes in the second pane: an open session, or a host to connect into it.
-Future<void> _openSplitPicker(BuildContext context, ShellViewModel vm) async {
-  final candidates = vm.splitCandidates;
-  // Hosts with no session open. Kotlin lets two hosts be loaded into panes in one action, so an
-  // unconnected host belongs in this list; picking one connects it into the second pane.
-  final openIds = vm.sessions.map((session) => session.serverId).toSet();
-  final connectable = vm.connectableServers
-      .where((server) => !openIds.contains(server.id))
-      .toList();
+class _EmptySplitPane extends StatelessWidget {
+  const _EmptySplitPane({required this.vm, required this.pane});
+  final ShellViewModel vm;
+  final int pane;
+
+  @override
+  Widget build(BuildContext context) {
+    final busy = vm.isPaneConnecting(pane);
+    final awaiting = vm.isPaneAwaitingDecision(pane);
+    final error = vm.paneError(pane);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (busy) const LinearProgressIndicator(),
+        Expanded(
+          child: ScrollConfiguration(
+            behavior: const PopupScrollBehavior(popupsOnly: false),
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                children: [
+                  Text('Pane $pane', style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 8),
+                  if (busy) const CircularProgressIndicator(),
+                  Text(
+                    busy
+                        ? vm.connectPhase ?? 'Connecting…'
+                        : awaiting
+                        ? 'Waiting for your connection decision…'
+                        : error ?? vm.paneMessage(pane) ?? 'Choose a session for this pane.',
+                    key: ValueKey('shell.pane.$pane.status'),
+                    style: error == null ? null : const TextStyle(color: OmniColors.red),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        Wrap(
+          alignment: WrapAlignment.center,
+          children: [
+            if (busy || awaiting)
+              TextButton(
+                key: ValueKey('shell.pane.$pane.cancel'),
+                onPressed: vm.cancelConnect,
+                child: const Text('Cancel'),
+              )
+            else ...[
+              if (vm.canRetryPane(pane))
+                TextButton(
+                  key: ValueKey('shell.pane.$pane.retry'),
+                  onPressed: vm.isConnecting ? null : () => vm.retryPane(pane),
+                  child: const Text('Retry'),
+                ),
+              TextButton(
+                key: ValueKey('shell.pane.$pane.choose'),
+                onPressed: vm.isConnecting
+                    ? null
+                    : () {
+                        vm.focusSplitPane(pane);
+                        _openSplitPicker(context, vm, pane: pane);
+                      },
+                child: const Text('Choose session'),
+              ),
+            ],
+          ],
+        ),
+      ],
+    );
+  }
+}
+
+/// Pick a distinct existing terminal, saved tmux session, or a fresh connection for a fixed slot.
+Future<void> _openSplitPicker(BuildContext context, ShellViewModel vm, {int pane = 2}) async {
+  final candidates = vm.isSplit ? vm.splitCandidatesFor(pane) : vm.splitCandidates;
+  final connectable = vm.connectableServers;
+  final saved = vm.resumableSessions;
   await showModalBottomSheet<void>(
     context: context,
     useSafeArea: true,
-    // Scroll-controlled because a sheet is otherwise capped at half the available height: on a
-    // small phone in landscape at 200% text that is ~180px, and this content needs far more.
-    // The clipped part is the bottom, which is where the buttons are. Parity defects 112-115
-    // are the same failure in dialogs.
     isScrollControlled: true,
     builder: (sheetContext) => SafeArea(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Padding(
-            padding: EdgeInsets.all(16),
-            child: Text('Show alongside', style: TextStyle(fontWeight: FontWeight.bold)),
-          ),
-          if (candidates.isEmpty && connectable.isEmpty)
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: SizedBox(
+        height: MediaQuery.sizeOf(sheetContext).height * .75,
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
               child: Text(
-                // Nothing open and nothing online: saying so beats an empty sheet.
-                'No other session or online host to show alongside this one.',
-                key: ValueKey('shell.split.none'),
-                style: TextStyle(fontSize: 12),
+                'Choose session for pane $pane',
+                style: const TextStyle(fontWeight: FontWeight.bold),
               ),
             ),
-          for (final session in candidates)
-            ListTile(
-              key: ValueKey('shell.split.pick.${session.id}'),
-              dense: true,
-              title: Text(session.serverName, style: const TextStyle(fontSize: 13)),
-              onTap: () {
-                vm.splitWith(session.id);
-                Navigator.of(sheetContext).pop();
-              },
-            ),
-          if (connectable.isNotEmpty) ...[
-            const Divider(height: 1),
-            const Padding(
-              padding: EdgeInsets.fromLTRB(16, 12, 16, 4),
-              child: Text(
-                // Named so the two groups cannot be confused: one is already running, the other
-                // costs a connection.
-                'Connect into the second pane',
-                key: ValueKey('shell.split.connectHeader'),
-                style: TextStyle(fontSize: 11, color: OmniColors.textMuted),
+            Expanded(
+              child: ScrollConfiguration(
+                behavior: const PopupScrollBehavior(),
+                child: ListView(
+                  key: const ValueKey('shell.split.choices'),
+                  padding: const EdgeInsets.only(bottom: 28),
+                  children: [
+                    if (candidates.isEmpty && connectable.isEmpty && saved.isEmpty)
+                      const Padding(
+                        padding: EdgeInsets.all(16),
+                        child: Text(
+                          'No session or online host is available.',
+                          key: ValueKey('shell.split.none'),
+                        ),
+                      ),
+                    for (final session in candidates)
+                      ListTile(
+                        key: ValueKey('shell.split.pick.${session.id}'),
+                        title: Text(session.serverName),
+                        subtitle: Text(session.tmuxName ?? 'SSH terminal'),
+                        onTap: () {
+                          vm.enterSplit();
+                          vm.assignSplitPane(pane, session.id, focus: false);
+                          Navigator.of(sheetContext).pop();
+                        },
+                      ),
+                    for (final row in saved)
+                      ListTile(
+                        key: ValueKey('shell.split.saved.${row.tmuxName}'),
+                        title: Text(row.serverName),
+                        subtitle: Text('Resume tmux: ${row.tmuxName}'),
+                        onTap: () {
+                          Navigator.of(sheetContext).pop();
+                          unawaited(vm.resumeIntoSplitPane(row, pane));
+                        },
+                      ),
+                    if (connectable.isNotEmpty) ...[
+                      const Divider(height: 1),
+                      Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Text(
+                          'Open a new terminal in pane $pane',
+                          key: const ValueKey('shell.split.connectHeader'),
+                        ),
+                      ),
+                      for (final server in connectable)
+                        ListTile(
+                          key: ValueKey('shell.split.connect.${server.id}'),
+                          leading: const Icon(Icons.add_link, color: OmniColors.cyan),
+                          title: Text(server.name),
+                          subtitle: const Text('New SSH / tmux session'),
+                          onTap: () {
+                            Navigator.of(sheetContext).pop();
+                            unawaited(vm.splitWithNewSession(server, pane: pane));
+                          },
+                        ),
+                    ],
+                  ],
+                ),
               ),
             ),
-            for (final server in connectable)
-              ListTile(
-                key: ValueKey('shell.split.connect.${server.id}'),
-                dense: true,
-                leading: const Icon(Icons.add_link, size: 18, color: OmniColors.cyan),
-                title: Text(server.name, style: const TextStyle(fontSize: 13)),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  unawaited(vm.splitWithNewSession(server));
-                },
-              ),
+            TextButton(
+              key: const ValueKey('shell.split.cancel'),
+              onPressed: () => Navigator.of(sheetContext).pop(),
+              child: const Text('Cancel'),
+            ),
           ],
-        ],
+        ),
       ),
     ),
   );

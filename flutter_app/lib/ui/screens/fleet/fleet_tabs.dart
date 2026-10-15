@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'package:provider/provider.dart';
@@ -336,7 +338,7 @@ class _FleetBroadcastTabState extends State<FleetBroadcastTab> {
             // with a floor: the results list scrolls internally, and a pane too short to show one row
             // is worse than a form the user has to scroll to.
             SizedBox(
-              height: (constraints.maxHeight * 0.35).clamp(120.0, constraints.maxHeight),
+              height: math.max(120.0, constraints.maxHeight * 0.35),
               child: vm.results.isEmpty
                   ? Center(
                       key: const ValueKey('fleet.broadcast.idle'),

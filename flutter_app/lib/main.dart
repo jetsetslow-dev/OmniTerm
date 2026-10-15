@@ -761,16 +761,7 @@ class _RuntimeBindingsState extends State<_RuntimeBindings> with WidgetsBindingO
           return;
         }
         nav.navigateTo(Screen.shell);
-        final beforeFirst = shell.sessions.map((session) => session.id).toSet();
-        await shell.connect(first, controlMode: shell.useControlMode);
-        final firstSession = shell.sessions.where((s) => !beforeFirst.contains(s.id)).firstOrNull;
-        final beforeSecond = shell.sessions.map((session) => session.id).toSet();
-        await shell.connect(second, controlMode: shell.useControlMode);
-        final secondSession = shell.sessions.where((s) => !beforeSecond.contains(s.id)).firstOrNull;
-        if (firstSession != null && secondSession != null) {
-          shell.select(firstSession.id);
-          shell.splitWith(secondSession.id);
-        }
+        await shell.openSplitForServers(first, second);
       case 'resume_session':
         final id = action.target;
         if (id != null && shell.resumeExisting(id)) {

@@ -184,7 +184,21 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('tools.about')));
       await tester.pumpAndSettle();
 
-      final text = tester.widget<Text>(find.byKey(const ValueKey('about.diagnostics.text'))).data!;
+      // The list builds this card only when it reaches the viewport on smaller displays.
+      // Scroll the actual About list before reading the platform diagnostics.
+      final diagnostics = find.byKey(const ValueKey('about.diagnostics.text'));
+      await tester.scrollUntilVisible(
+        diagnostics,
+        200,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey('about.list')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.pumpAndSettle();
+      final text = tester.widget<Text>(diagnostics).data!;
       expect(text, contains('Platform:'));
       expect(text, isNot(contains('@')), reason: 'no user@host may appear');
     });
@@ -209,11 +223,27 @@ void main() {
       await tester.enterText(find.byKey(const ValueKey('serverForm.host')), '203.0.113.1');
       await tester.enterText(find.byKey(const ValueKey('serverForm.username')), 'root');
       await tester.pumpAndSettle();
+      final editorError = tester.takeException();
+      expect(
+        editorError,
+        isNull,
+        reason: editorError is FlutterError
+            ? editorError.toStringDeep()
+            : 'The host editor must fit while entering a draft.',
+      );
 
       // Automatic checks are advisory: saving is possible, but only through a second explicit
       // decision that explains host-key approval is still mandatory.
       await tester.tap(find.byKey(const ValueKey('serverForm.save')));
       await tester.pumpAndSettle();
+      final decisionError = tester.takeException();
+      expect(
+        decisionError,
+        isNull,
+        reason: decisionError is FlutterError
+            ? decisionError.toStringDeep()
+            : 'The save decision must fit above the keyboard.',
+      );
       expect(find.byKey(const ValueKey('serverForm.unverified.dialog')), findsOneWidget);
       expect(find.textContaining('host key'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('serverForm.unverified.review')));

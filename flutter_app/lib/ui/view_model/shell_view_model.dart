@@ -24,6 +24,43 @@ import '../../platform/shortcut_helper.dart';
 
 class _LeaveSuperseded implements Exception {}
 
+/// The requested destination survives offline/tmux decisions and asynchronous SSH setup.
+class _ShellConnectRequest {
+  const _ShellConnectRequest({
+    required this.server,
+    this.resumeName,
+    this.controlMode = false,
+    this.initialCommand,
+    this.forcePlainShell = false,
+    this.confirmedOffline = false,
+    this.freshSession = false,
+    this.pane,
+    this.paneRevision,
+  });
+  final Server server;
+  final String? resumeName;
+  final bool controlMode;
+  final String? initialCommand;
+  final bool forcePlainShell;
+  final bool confirmedOffline;
+  final bool freshSession;
+  final int? pane;
+  final int? paneRevision;
+
+  _ShellConnectRequest continueWith({bool? forcePlainShell, bool? confirmedOffline}) =>
+      _ShellConnectRequest(
+        server: server,
+        resumeName: resumeName,
+        controlMode: controlMode,
+        initialCommand: initialCommand,
+        forcePlainShell: forcePlainShell ?? this.forcePlainShell,
+        confirmedOffline: confirmedOffline ?? this.confirmedOffline,
+        freshSession: freshSession,
+        pane: pane,
+        paneRevision: paneRevision,
+      );
+}
+
 /// The Shell screen's state and actions, split out of `ui/AppViewModel.kt` per §5.2.
 ///
 /// Owns the open sessions, which one is focused, the sticky modifier keys, and the one path every
@@ -474,7 +511,9 @@ class ShellViewModel extends ChangeNotifier {
     _safeNotify();
   }
 
-  ShellSession? get current => _showConnectPrompt
+  ShellSession? get current => isSplit
+      ? (focusedPane == 1 ? splitFirstSession : splitSecondSession)
+      : _showConnectPrompt
       ? null
       : _sessions.where((s) => s.id == _currentId).firstOrNull ??
             (_sessions.isNotEmpty ? _sessions.last : null);
@@ -488,11 +527,14 @@ class ShellViewModel extends ChangeNotifier {
 
   void _selectWithoutValidation(ShellSession session) {
     if (isSplit) {
-      if (session.id == _splitId) {
-        _splitId = _currentId;
-      } else if (focusedPane == 1) {
-        _splitFirstId = session.id;
+      if (session.id == _splitFirstId) {
+        focusSplitPane(1);
+      } else if (session.id == _splitId) {
+        focusSplitPane(2);
+      } else {
+        assignSplitPane(focusedPane, session.id);
       }
+      return;
     }
     _showConnectPrompt = false;
     _backgroundedAt.remove(session.id);
@@ -509,7 +551,7 @@ class ShellViewModel extends ChangeNotifier {
         !_sessions.contains(session)) {
       return false;
     }
-    final other = isSplit && current == session ? splitSession : null;
+    final split = isSplit;
     _isBackgroundingSession = true;
     _safeNotify();
     try {
@@ -518,14 +560,12 @@ class ShellViewModel extends ChangeNotifier {
       } else {
         _backgroundedAt[session.id] = DateTime.now().millisecondsSinceEpoch;
       }
-      if (other != null && _sessions.contains(other)) {
-        _currentId = other.id;
-        _showConnectPrompt = false;
+      if (split && isSplit) {
+        _clearSplitSession(session.id);
       } else {
         _currentId = null;
         _showConnectPrompt = true;
       }
-      _splitId = null;
       await _syncBackgroundSessions();
       return true;
     } catch (error) {
@@ -543,11 +583,18 @@ class ShellViewModel extends ChangeNotifier {
       if (!await backgroundSession(previous)) return;
     }
     _app.selectedServerId = server.id;
-    final existing = _sessions.where((s) => s.serverId == server.id && s.isOpen).firstOrNull;
+    final otherId = !isSplit
+        ? null
+        : focusedPane == 1
+        ? _splitId
+        : _splitFirstId;
+    final existing = _sessions
+        .where((s) => s.serverId == server.id && s.isOpen && s.id != otherId)
+        .firstOrNull;
     if (existing != null) {
       resumeExisting(existing.id);
     } else {
-      await connect(server);
+      await connect(server, controlMode: useControlMode, freshSession: isSplit);
     }
   }
 
@@ -564,8 +611,15 @@ class ShellViewModel extends ChangeNotifier {
   }
 
   Future<void> _validateExistingTmux(ShellSession session) async {
-    if (_connecting || _disposed) return;
+    if (_connecting || _pendingConnectRequest != null || _tmuxInstalling || _disposed) return;
     _connecting = true;
+    _validationPane = !isSplit
+        ? null
+        : session.id == _splitFirstId
+        ? 1
+        : session.id == _splitId
+        ? 2
+        : null;
     _phase = 'Checking tmux session…';
     _error = null;
     _failedConnectTarget = null;
@@ -617,6 +671,7 @@ class ShellViewModel extends ChangeNotifier {
     } finally {
       if (!_disposed && generation == _connectGeneration) {
         _connecting = false;
+        _validationPane = null;
         _phase = null;
         _safeNotify();
       }
@@ -625,37 +680,124 @@ class ShellViewModel extends ChangeNotifier {
 
   // ── split view ──────────────────────────────────────────────────────────────
 
-  /// The session shown in the second pane, or null when the view is single.
-  ///
-  /// Held as an id rather than a `ShellSession` so a session that ends while split simply stops
-  /// resolving — [splitSession] returns null and the view falls back to single, instead of the
-  /// screen holding a reference to a terminal that no longer exists.
+  /// Layout and focus belong to slots, including slots with no attached SSH channel.
   String? _splitId;
   String? _splitFirstId;
+  bool _splitMode = false;
+  int _focusedPane = 1;
+  final _splitPaneRevisions = <int, int>{1: 0, 2: 0};
+  final _splitPaneMessages = <int, String>{};
+  final _splitPaneFailures = <int, ({_ShellConnectRequest request, String message})>{};
+  _ShellConnectRequest? _activeConnectRequest;
+  ShellSession? _connectingSession;
+  int? _validationPane;
+  _ShellConnectRequest? _pendingConnectRequest;
+  _ShellConnectRequest? _failedConnectRequest;
+  final _splitConnectQueue = <_ShellConnectRequest>[];
+  int _splitQueueRevision = 0;
+  int? _drainingSplitRevision;
 
   /// True when the panes stack vertically. The Kotlin calls these `⬍ STACK` and `⬌ COLS`.
   bool _splitStacked = true;
   bool get splitStacked => _splitStacked;
 
-  ShellSession? get splitSession =>
-      _splitId == null ? null : _sessions.where((s) => s.id == _splitId).firstOrNull;
+  ShellSession? get splitSession => focusedPane == 1 ? splitSecondSession : splitFirstSession;
 
-  bool get isSplit => splitSession != null && current != null && splitSession != current;
-  int get focusedPane => isSplit && current?.id != _splitFirstId ? 2 : 1;
-  ShellSession? get splitFirstSession =>
-      _sessions.where((s) => s.id == _splitFirstId).firstOrNull ?? current;
-  ShellSession? get splitSecondSession => focusedPane == 1 ? splitSession : current;
+  bool get isSplit => _splitMode;
+  int get focusedPane => _focusedPane;
+  ShellSession? get splitFirstSession => _sessions.where((s) => s.id == _splitFirstId).firstOrNull;
+  ShellSession? get splitSecondSession => _sessions.where((s) => s.id == _splitId).firstOrNull;
+
+  bool isPaneConnecting(int pane) =>
+      (_connecting && (_activeConnectRequest?.pane == pane || _validationPane == pane)) ||
+      (_tmuxInstalling && _pendingConnectRequest?.pane == pane);
+  String? paneMessage(int pane) => _splitPaneMessages[pane];
+  String? paneError(int pane) => _splitPaneFailures[pane]?.message;
+  bool isPaneAwaitingDecision(int pane) => _pendingConnectRequest?.pane == pane;
+  bool canRetryPane(int pane) => _splitPaneFailures.containsKey(pane);
+
+  Future<void> retryPane(int pane) async {
+    final failure = _splitPaneFailures[pane];
+    if (failure == null || _pendingConnectRequest != null || _tmuxInstalling) return;
+    await _connect(failure.request.continueWith(confirmedOffline: true));
+  }
+
+  List<ShellSession> splitCandidatesFor(int pane) =>
+      _sessions.where((s) => s.id != (pane == 1 ? _splitId : _splitFirstId)).toList();
 
   /// Sessions that could occupy the second pane: everything except the one already in the first.
-  List<ShellSession> get splitCandidates => _sessions.where((s) => s.id != current?.id).toList();
+  List<ShellSession> get splitCandidates =>
+      isSplit ? splitCandidatesFor(2) : _sessions.where((s) => s.id != current?.id).toList();
+
+  void enterSplit() {
+    if (isSplit) return;
+    final first = current;
+    _splitFirstId = first?.id;
+    _splitId = null;
+    _focusedPane = 1;
+    _splitMode = true;
+    _showConnectPrompt = false;
+    _safeNotify();
+  }
+
+  void focusSplitPane(int pane) {
+    if (!isSplit || (pane != 1 && pane != 2)) return;
+    if (_focusedPane != pane) _resetPendingSmartInput();
+    _focusedPane = pane;
+    _currentId = (pane == 1 ? splitFirstSession : splitSecondSession)?.id;
+    final selected = current;
+    if (selected != null) _app.selectedServerId = selected.serverId;
+    _safeNotify();
+  }
+
+  bool assignSplitPane(int pane, String id, {bool focus = true}) {
+    if (!isSplit || (pane != 1 && pane != 2)) return false;
+    if (!_sessions.any((s) => s.id == id)) return false;
+    final other = pane == 1 ? splitSecondSession : splitFirstSession;
+    if (other?.id == id) return false;
+    _invalidatePane(pane);
+    if (pane == 1) {
+      _splitFirstId = id;
+    } else {
+      _splitId = id;
+    }
+    _backgroundedAt.remove(id);
+    if (focus) focusSplitPane(pane);
+    _offerSplitShortcut();
+    _safeNotify();
+    unawaited(_syncBackgroundSessions());
+    return true;
+  }
+
+  void _invalidatePane(int pane) {
+    if (_activeConnectRequest?.pane == pane ||
+        _pendingConnectRequest?.pane == pane ||
+        _validationPane == pane) {
+      cancelConnect();
+    }
+    _splitPaneRevisions[pane] = _splitPaneRevisions[pane]! + 1;
+    _splitPaneMessages.remove(pane);
+    _splitPaneFailures.remove(pane);
+    if (_failedConnectRequest?.pane == pane) clearError();
+  }
+
+  void _clearSplitSession(String id) {
+    if (_splitFirstId == id) {
+      _invalidatePane(1);
+      _splitFirstId = null;
+    }
+    if (_splitId == id) {
+      _invalidatePane(2);
+      _splitId = null;
+    }
+    _currentId = current?.id;
+  }
 
   /// Shows [id] in the second pane.
   void splitWith(String id) {
-    if (id == current?.id) return;
-    _splitFirstId = current?.id;
-    _splitId = id;
-    _offerSplitShortcut();
-    _safeNotify();
+    if (id == current?.id && !isSplit) return;
+    enterSplit();
+    assignSplitPane(2, id, focus: false);
   }
 
   /// Launcher shortcuts. Null in tests and on platforms without them; the split shortcut is then
@@ -687,41 +829,120 @@ class ShellViewModel extends ChangeNotifier {
   /// Distinct from [splitCandidates], which lists sessions that are already running: this is what
   /// makes the split control worth showing when only one terminal is open.
   bool get canConnectSecondPane {
-    final open = _sessions.map((session) => session.serverId).toSet();
-    return connectableServers.any((server) => !open.contains(server.id));
+    return connectableServers.isNotEmpty;
   }
 
-  /// Connects [server] and shows it in the second pane.
-  ///
-  /// Kotlin can load two *hosts* into panes in one action (`ui/AppUi.kt:196–235`, gated by
-  /// `allowSplitSelection`). The port could only split sessions that were **already connected**, so
-  /// putting a second host alongside meant connecting it, having it take over the screen, and then
-  /// splitting back — three steps for what Kotlin does in one, and the split picker said so:
-  /// "Open a second session first".
-  ///
-  /// The current pane is deliberately restored afterwards. `connect` focuses what it opens, which
-  /// is right when connecting normally and wrong here: the user asked for this host *alongside* the
-  /// one they are looking at, not instead of it.
-  ///
-  /// A failed or cancelled connection leaves the split untouched. `connect` has already reported
-  /// why on screen, and forcing a split with nothing in it would replace that explanation with an
-  /// empty pane.
-  Future<void> splitWithNewSession(Server server) async {
-    final keepCurrent = _currentId;
-    final before = _sessions.map((session) => session.id).toSet();
-    await connect(server);
-    final opened = _sessions.where((session) => !before.contains(session.id)).firstOrNull;
-    if (opened == null) return;
-    if (keepCurrent != null && _sessions.any((session) => session.id == keepCurrent)) {
-      _currentId = keepCurrent;
+  /// Open a separate terminal without attaching a second client to an already displayed tmux PTY.
+  Future<void> splitWithNewSession(Server server, {int pane = 2, String? resumeName}) async {
+    if (pane != 1 && pane != 2) return;
+    if (_connecting || _pendingConnectRequest != null || _tmuxInstalling) return;
+    enterSplit();
+    _invalidatePane(pane);
+    if (pane == 1) {
+      _splitFirstId = null;
+    } else {
+      _splitId = null;
     }
-    splitWith(opened.id);
+    if (resumeName != null) {
+      final existing = _sessions.where((s) => s.tmuxName == resumeName).firstOrNull;
+      if (existing != null) {
+        if (!assignSplitPane(pane, existing.id)) {
+          _splitPaneMessages[pane] = 'That tmux session is already shown in the other pane.';
+          _safeNotify();
+        }
+        return;
+      }
+    }
+    await connect(
+      server,
+      pane: pane,
+      resumeName: resumeName,
+      controlMode: useControlMode,
+      freshSession: resumeName == null,
+    );
+  }
+
+  Future<void> resumeIntoSplitPane(PersistentSession row, int pane) async {
+    if (pane != 1 && pane != 2) return;
+    enterSplit();
+    final revision = _splitPaneRevisions[pane];
+    final host = await _app.repository.getServerById(row.serverId);
+    if (_disposed || !isSplit || _splitPaneRevisions[pane] != revision) return;
+    if (host == null) {
+      _error = 'The host for this saved tmux session no longer exists. Restore the host first.';
+      _safeNotify();
+      return;
+    }
+    // A saved target is existing remote work, regardless of the host's default for new shells.
+    await splitWithNewSession(
+      host.copyWith(persistentSession: true),
+      pane: pane,
+      resumeName: row.tmuxName,
+    );
+  }
+
+  /// Launcher pairs reuse live terminals and serialize connection dialogs through one owner.
+  Future<void> openSplitForServers(Server first, Server second) async {
+    if (first.id == second.id || _disposed) return;
+    cancelConnect();
+    enterSplit();
+    _splitFirstId = null;
+    _splitId = null;
+    _focusedPane = 1;
+    for (final entry in [(1, first), (2, second)]) {
+      final pane = entry.$1;
+      final host = entry.$2;
+      _invalidatePane(pane);
+      final existing = _sessions.where((s) => s.serverId == host.id && s.isOpen).firstOrNull;
+      if (existing != null) {
+        assignSplitPane(pane, existing.id, focus: false);
+      } else {
+        _splitConnectQueue.add(
+          _ShellConnectRequest(
+            server: host,
+            controlMode: useControlMode,
+            pane: pane,
+            paneRevision: _splitPaneRevisions[pane],
+          ),
+        );
+      }
+    }
+    focusSplitPane(1);
+    await _drainSplitQueue();
+  }
+
+  Future<void> _drainSplitQueue() async {
+    final revision = _splitQueueRevision;
+    if (_drainingSplitRevision == revision) return;
+    _drainingSplitRevision = revision;
+    try {
+      while (!_disposed &&
+          revision == _splitQueueRevision &&
+          !_connecting &&
+          _pendingConnectRequest == null &&
+          !_tmuxInstalling &&
+          _splitConnectQueue.isNotEmpty) {
+        final request = _splitConnectQueue.removeAt(0);
+        if (_requestStillValid(request)) await _connect(request);
+      }
+    } finally {
+      if (_drainingSplitRevision == revision) _drainingSplitRevision = null;
+    }
   }
 
   void unsplit() {
-    if (_splitId == null) return;
+    if (!isSplit) return;
+    final keep = current ?? splitFirstSession ?? splitSecondSession;
+    cancelConnect();
+    _splitMode = false;
     _splitId = null;
     _splitFirstId = null;
+    _focusedPane = 1;
+    _splitPaneRevisions.updateAll((_, revision) => revision + 1);
+    _splitPaneMessages.clear();
+    _splitPaneFailures.clear();
+    _currentId = keep?.id;
+    _showConnectPrompt = keep == null;
     _safeNotify();
   }
 
@@ -736,6 +957,11 @@ class ShellViewModel extends ChangeNotifier {
   /// split view "the current session" has to mean "the pane the user last touched", not whichever
   /// pane happens to be first.
   void focusPane(String id) {
+    if (isSplit) {
+      if (id == _splitFirstId) focusSplitPane(1);
+      if (id == _splitId) focusSplitPane(2);
+      return;
+    }
     final session = _sessions.where((s) => s.id == id).firstOrNull;
     if (session == null) return;
     if (id == _currentId) return;
@@ -747,10 +973,24 @@ class ShellViewModel extends ChangeNotifier {
   bool get isConnecting => _connecting;
 
   void cancelConnect() {
-    if (!_connecting) return;
+    if (!_connecting && _pendingConnectRequest == null && _splitConnectQueue.isEmpty) return;
+    final pane = (_activeConnectRequest ?? _pendingConnectRequest)?.pane;
+    final unfinished = _connectingSession;
     _connectGeneration++;
     _connecting = false;
+    _activeConnectRequest = null;
+    _connectingSession = null;
+    _validationPane = null;
+    _pendingConnectRequest = null;
+    _offlineConnectPromptServer = null;
+    _tmuxPromptServer = null;
+    _splitConnectQueue.clear();
+    _splitQueueRevision++;
     _phase = null;
+    // The bootstrap may already have reached tmux; retain its recovery entry while closing only
+    // this attempt's client. Revoke ownership before closing, which can notify slot listeners.
+    if (unfinished != null && _sessions.contains(unfinished)) _close(unfinished);
+    if (pane != null) _splitPaneMessages[pane] = 'Connection cancelled. Choose a session to retry.';
     _safeNotify();
   }
 
@@ -770,6 +1010,11 @@ class ShellViewModel extends ChangeNotifier {
   Future<void> retryConnection() async {
     final target = _failedConnectTarget;
     if (target != null) {
+      final request = _failedConnectRequest;
+      if (request != null) {
+        await _connect(request.continueWith(confirmedOffline: true));
+        return;
+      }
       await connect(
         target,
         resumeName: _failedResumeName,
@@ -783,16 +1028,28 @@ class ShellViewModel extends ChangeNotifier {
 
   void clearError() {
     if (_error == null) return;
+    final pane = _failedConnectRequest?.pane;
+    if (pane != null) _splitPaneFailures.remove(pane);
     _error = null;
     _failedConnectTarget = null;
+    _failedConnectRequest = null;
     _safeNotify();
   }
 
   void _recordConnectFailure(Server server, String message) {
     _failedConnectTarget = server;
+    _failedConnectRequest = _activeConnectRequest;
     _error = message.contains('recovery entry') ? message : describeSshFailure(message);
+    _rememberPaneFailure(_activeConnectRequest, _error!);
     unawaited(_app.repository.updateHealthScore(server.id, -1));
     unawaited(recheckHost?.call(server) ?? Future<void>.value());
+  }
+
+  void _rememberPaneFailure(_ShellConnectRequest? request, String message) {
+    final pane = request?.pane;
+    if (request != null && pane != null && _requestStillValid(request)) {
+      _splitPaneFailures[pane] = (request: request, message: message);
+    }
   }
 
   /// Decides which tmux session a connection to [server] should join, creating a row if needed.
@@ -803,6 +1060,7 @@ class ShellViewModel extends ChangeNotifier {
     Server server, {
     String? resumeName,
     bool controlMode = false,
+    bool freshSession = false,
   }) async {
     final scrollback = PreferenceLimits.terminalScrollback.parse(
       await _app.repository.getSetting('terminal_scrollback_limit'),
@@ -810,7 +1068,7 @@ class ShellViewModel extends ChangeNotifier {
     final rows = (await _app.repository.getPersistentSessions())
         .where((row) => row.serverId == server.id)
         .toList();
-    final existing = resumeName ?? (rows.isEmpty ? null : rows.last.tmuxName);
+    final existing = resumeName ?? (freshSession || rows.isEmpty ? null : rows.last.tmuxName);
 
     if (existing != null) {
       // The exact-name probe in connect() has already proved this row still exists. Attach only:
@@ -962,17 +1220,17 @@ class ShellViewModel extends ChangeNotifier {
 
   void dismissOfflineConnectPrompt() {
     if (_offlineConnectPromptServer == null) return;
-    _offlineConnectPromptServer = null;
-    _safeNotify();
+    cancelConnect();
   }
 
   /// Re-enters [connect] with the offline gate bypassed.
   Future<void> connectConfirmedOffline() async {
-    final server = _offlineConnectPromptServer;
-    if (server == null) return;
+    final request = _pendingConnectRequest;
+    if (_offlineConnectPromptServer == null || request == null) return;
     _offlineConnectPromptServer = null;
+    _pendingConnectRequest = null;
     _safeNotify();
-    await connect(server, confirmedOffline: true);
+    await _connect(request.continueWith(confirmedOffline: true));
   }
 
   // ── tmux availability ───────────────────────────────────────────────────────
@@ -997,24 +1255,28 @@ class ShellViewModel extends ChangeNotifier {
 
   void dismissTmuxPrompt() {
     if (_tmuxPromptServer == null) return;
-    _tmuxPromptServer = null;
+    cancelConnect();
     _tmuxInstallOutput = null;
     _safeNotify();
   }
 
   /// Connects anyway, accepting an ordinary non-resumable shell.
   Future<void> connectWithoutPersistence() async {
-    final server = _tmuxPromptServer;
-    if (server == null) return;
-    dismissTmuxPrompt();
-    await connect(server, forcePlainShell: true);
+    final request = _pendingConnectRequest;
+    if (_tmuxPromptServer == null || request == null) return;
+    _tmuxPromptServer = null;
+    _pendingConnectRequest = null;
+    _tmuxInstallOutput = null;
+    await _connect(request.continueWith(forcePlainShell: true));
   }
 
   /// Installs tmux on the prompted host, then connects with persistence.
   Future<void> installTmuxAndConnect() async {
     final server = _tmuxPromptServer;
+    final request = _pendingConnectRequest;
     final ssh = transport;
-    if (server == null || ssh == null || _tmuxInstalling) return;
+    if (server == null || request == null || ssh == null || _tmuxInstalling) return;
+    final generation = _connectGeneration;
     _tmuxInstalling = true;
     _tmuxInstallOutput = '';
     _safeNotify();
@@ -1031,7 +1293,7 @@ class ShellViewModel extends ChangeNotifier {
         tmuxInstallCommand(),
         stdin: sudoStdin(server.sudoPassword),
         onChunk: (chunk) async {
-          if (_disposed) return;
+          if (_disposed || generation != _connectGeneration) return;
           _tmuxInstallOutput = (_tmuxInstallOutput ?? '') + chunk;
           _safeNotify();
         },
@@ -1043,7 +1305,11 @@ class ShellViewModel extends ChangeNotifier {
     } catch (e) {
       _tmuxInstallOutput = '${_tmuxInstallOutput ?? ''}\n\n$e';
     }
-    if (_disposed) return;
+    if (_disposed || generation != _connectGeneration || !_requestStillValid(request)) {
+      _tmuxInstalling = false;
+      _safeNotify();
+      return;
+    }
     _tmuxInstalling = false;
 
     if (!installed) {
@@ -1054,8 +1320,10 @@ class ShellViewModel extends ChangeNotifier {
       return;
     }
     _tmuxVerified.add(server.id);
-    dismissTmuxPrompt();
-    await connect(server);
+    _tmuxPromptServer = null;
+    _pendingConnectRequest = null;
+    _tmuxInstallOutput = null;
+    await _connect(request);
   }
 
   /// `true` present, `false` definitely absent, `null` the probe could not answer.
@@ -1089,29 +1357,82 @@ class ShellViewModel extends ChangeNotifier {
     String? initialCommand,
     bool forcePlainShell = false,
     bool confirmedOffline = false,
+    bool freshSession = false,
+    int? pane,
   }) async {
-    if (_connecting) return;
+    if (_connecting || _pendingConnectRequest != null || _tmuxInstalling || _disposed) return;
+    final destination = isSplit ? pane ?? focusedPane : null;
+    if (destination != null) {
+      if (destination != 1 && destination != 2) return;
+      _invalidatePane(destination);
+    }
+    await _connect(
+      _ShellConnectRequest(
+        server: server,
+        resumeName: resumeName,
+        controlMode: controlMode,
+        initialCommand: initialCommand,
+        forcePlainShell: forcePlainShell,
+        confirmedOffline: confirmedOffline,
+        freshSession: freshSession || (destination != null && resumeName == null),
+        pane: destination,
+        paneRevision: destination == null ? null : _splitPaneRevisions[destination],
+      ),
+    );
+  }
+
+  bool _requestStillValid(_ShellConnectRequest request) =>
+      !_disposed &&
+      (request.pane == null ||
+          (isSplit && _splitPaneRevisions[request.pane] == request.paneRevision));
+
+  Future<void> _connect(_ShellConnectRequest request) async {
+    if (_connecting || !_requestStillValid(request)) return;
+    final server = request.server;
+    final resumeName = request.resumeName;
+    final controlMode = request.controlMode;
+    final initialCommand = request.initialCommand;
+    final forcePlainShell = request.forcePlainShell;
+    final confirmedOffline = request.confirmedOffline;
+    final other = request.pane == 1 ? splitSecondSession : splitFirstSession;
+    if (request.pane != null &&
+        resumeName != null &&
+        other?.serverId == server.id &&
+        other?.tmuxName == resumeName) {
+      _splitPaneMessages[request.pane!] =
+          'That tmux session is already shown in the other pane. Choose another session.';
+      _safeNotify();
+      return;
+    }
 
     // Checked before the tmux probe, which costs a round trip: there is no point asking a host
     // whether it has tmux when the last check said it was not answering at all.
     if (!confirmedOffline &&
         shouldWarnHostOffline(probed: hasProbed?.call(server.id) ?? false, status: server.status)) {
       _offlineConnectPromptServer = server;
+      _pendingConnectRequest = request;
       _safeNotify();
       return;
     }
     final ssh = transport;
     if (ssh == null) {
       _error = 'The terminal is unavailable in this build: no SSH transport is wired.';
+      _rememberPaneFailure(request, _error!);
       _safeNotify();
       return;
     }
 
     _connecting = true;
+    _activeConnectRequest = request;
     final generation = ++_connectGeneration;
     _phase = 'Connecting…';
     _error = null;
     _failedConnectTarget = null;
+    _failedConnectRequest = null;
+    if (request.pane != null) {
+      _splitPaneMessages.remove(request.pane);
+      _splitPaneFailures.remove(request.pane);
+    }
     _failedResumeName = resumeName;
     _failedControlMode = controlMode;
     _safeNotify();
@@ -1137,6 +1458,7 @@ class ShellViewModel extends ChangeNotifier {
           _tmuxVerified.add(server.id);
         } else if (present == false) {
           _tmuxPromptServer = server;
+          _pendingConnectRequest = request;
           _tmuxInstallOutput = null;
           return;
         }
@@ -1158,10 +1480,12 @@ class ShellViewModel extends ChangeNotifier {
       if (server.persistentSession && !forcePlainShell) {
         final remembered =
             resumeName ??
-            (await _app.repository.getPersistentSessions())
-                .where((row) => row.serverId == server.id)
-                .lastOrNull
-                ?.tmuxName;
+            (request.freshSession
+                ? null
+                : (await _app.repository.getPersistentSessions())
+                      .where((row) => row.serverId == server.id)
+                      .lastOrNull
+                      ?.tmuxName);
         if (remembered != null) {
           String rawPresence;
           try {
@@ -1173,6 +1497,7 @@ class ShellViewModel extends ChangeNotifier {
               error,
             );
           }
+          if (generation != _connectGeneration || !_requestStillValid(request)) return;
           final presence = parseTmuxSessionProbe(rawPresence);
           if (presence == null) {
             throw SshConnectException(
@@ -1184,11 +1509,14 @@ class ShellViewModel extends ChangeNotifier {
             await _app.repository.deletePersistentSession(remembered);
             await _app.repository.updateHealthScore(server.id, -1);
             await _reloadSaved();
+            if (generation != _connectGeneration || !_requestStillValid(request)) return;
             unawaited(markReachable?.call(server) ?? Future<void>.value());
             _failedConnectTarget = server;
+            _failedConnectRequest = request;
             _error =
                 'Connected to ${server.name}, but tmux confirmed that "$remembered" no longer '
                 'exists. Its recovery entry was removed; no empty replacement was created.';
+            _rememberPaneFailure(request, _error!);
             return;
           }
         }
@@ -1214,7 +1542,7 @@ class ShellViewModel extends ChangeNotifier {
       var channelAdopted = false;
       final ShellSession session;
       try {
-        if (_disposed || generation != _connectGeneration) return;
+        if (generation != _connectGeneration || !_requestStillValid(request)) return;
         final emulator = TerminalEmulator(
           cols: _preferredCols,
           rows: _preferredRows,
@@ -1223,9 +1551,14 @@ class ShellViewModel extends ChangeNotifier {
         // Resolved before the session is built so it can carry its own tmux name — that is what
         // lets the resumable list tell "open in a tab" from "running with nobody watching".
         final persistentTarget = server.persistentSession && !forcePlainShell
-            ? await _persistentTarget(server, resumeName: resumeName, controlMode: controlMode)
+            ? await _persistentTarget(
+                server,
+                resumeName: resumeName,
+                controlMode: controlMode,
+                freshSession: request.freshSession,
+              )
             : null;
-        if (_disposed || generation != _connectGeneration) return;
+        if (generation != _connectGeneration || !_requestStillValid(request)) return;
         persistent = persistentTarget;
 
         session = ShellSession(
@@ -1257,13 +1590,24 @@ class ShellViewModel extends ChangeNotifier {
       session.addListener(_syncBackgroundSessions);
       session.addListener(_syncReachabilityEvidence);
       _sessions.add(session);
+      _connectingSession = session;
       _sessionCredentials[session] = creds;
       _sessionHosts[session] = server;
-      if (_splitId != null && _splitFirstId == _currentId) _splitFirstId = session.id;
-      _currentId = session.id;
+      if (request.pane != null) {
+        if (request.pane == 1) {
+          _splitFirstId = session.id;
+        } else {
+          _splitId = session.id;
+        }
+        _currentId = current?.id;
+        _offerSplitShortcut();
+      } else {
+        _currentId = session.id;
+      }
       _showConnectPrompt = false;
       _failedConnectTarget = null;
       _syncReachabilityEvidence();
+      if (generation != _connectGeneration || !_requestStillValid(request)) return;
 
       // A shell channel opened, so any earlier advisory reachability result is stale. Do not make
       // the user fight the same false offline warning on their next connection.
@@ -1282,6 +1626,7 @@ class ShellViewModel extends ChangeNotifier {
         // This is the shell bootstrap, not user input on an established control channel.
         try {
           await channel.write(Uint8List.fromList(utf8.encode(persistent.$2)));
+          if (generation != _connectGeneration || !_requestStillValid(request)) return;
         } catch (_) {
           session.closeByUser();
           rethrow;
@@ -1302,6 +1647,7 @@ class ShellViewModel extends ChangeNotifier {
           }
         }
       }
+      if (generation != _connectGeneration || !_requestStillValid(request)) return;
       if (initialCommand != null && initialCommand.trim().isNotEmpty) {
         session.write(Uint8List.fromList(utf8.encode('${initialCommand.trim()}\r')));
       }
@@ -1316,6 +1662,7 @@ class ShellViewModel extends ChangeNotifier {
       // server or someone standing between you and it, and the app must not blur the two.
       if (generation == _connectGeneration) {
         _failedConnectTarget = server;
+        _failedConnectRequest = request;
         _error = switch (e.verdict) {
           HostKeyVerdict.changed =>
             'The host key for ${server.name} has CHANGED. This is what a machine-in-the-middle looks '
@@ -1325,6 +1672,7 @@ class ShellViewModel extends ChangeNotifier {
             'The host key for ${server.name} was not accepted, so the connection was refused. '
                 'Connect again to see the fingerprint prompt.',
         };
+        _rememberPaneFailure(request, _error!);
       }
     } on SshConnectException catch (e) {
       if (generation == _connectGeneration) {
@@ -1337,8 +1685,11 @@ class ShellViewModel extends ChangeNotifier {
     } finally {
       if (generation == _connectGeneration) {
         _connecting = false;
+        _activeConnectRequest = null;
+        _connectingSession = null;
         _phase = null;
         _safeNotify();
+        if (_pendingConnectRequest == null) unawaited(_drainSplitQueue());
       }
     }
   }
@@ -1372,8 +1723,9 @@ class ShellViewModel extends ChangeNotifier {
     session.removeListener(_syncReachabilityEvidence);
     _sessions.remove(session);
     _backgroundedAt.remove(session.id);
-    if (_splitId == session.id) _splitId = null;
-    if (_currentId == session.id) {
+    if (isSplit) {
+      _clearSplitSession(session.id);
+    } else if (_currentId == session.id) {
       _currentId = _sessions.isEmpty ? null : _sessions.last.id;
     }
     session.dispose();

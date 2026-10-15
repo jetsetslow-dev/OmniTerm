@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'popup_scroll_behavior.dart';
 
 import '../../data/app_database.dart';
 import '../../domain/host_display.dart';
@@ -27,6 +28,7 @@ class HostSelectorBar extends StatelessWidget {
     this.leading,
     this.trailing,
     this.enabled = true,
+    this.onOpenSplit,
   });
 
   /// Prefix for this bar's widget keys, so each screen keeps its own stable identifiers.
@@ -41,6 +43,7 @@ class HostSelectorBar extends StatelessWidget {
   final Widget? leading;
   final Widget? trailing;
   final bool enabled;
+  final ValueChanged<List<int>>? onOpenSplit;
 
   @override
   Widget build(BuildContext context) {
@@ -74,7 +77,7 @@ class HostSelectorBar extends StatelessWidget {
     final anchor = context.findRenderObject()! as RenderBox;
     final overlay = Navigator.of(context).overlay!.context.findRenderObject()! as RenderBox;
     final origin = anchor.localToGlobal(Offset.zero, ancestor: overlay);
-    final chosen = await showMenu<int>(
+    final chosen = await showMenu<Object>(
       context: context,
       position: RelativeRect.fromRect(
         Rect.fromLTWH(origin.dx, origin.dy + anchor.size.height, anchor.size.width, 0),
@@ -83,6 +86,12 @@ class HostSelectorBar extends StatelessWidget {
       constraints: BoxConstraints.tightFor(width: anchor.size.width),
       semanticLabel: 'Switch host',
       items: [
+        if (onOpenSplit != null && hosts.length >= 2)
+          PopupMenuItem(
+            key: ValueKey('$keyPrefix.openPair'),
+            value: _HostPickerAction.pair,
+            child: const Text('Open two hosts'),
+          ),
         for (final host in hosts)
           PopupMenuItem(
             key: ValueKey('$keyPrefix.item.${host.id}'),
@@ -114,7 +123,18 @@ class HostSelectorBar extends StatelessWidget {
           ),
       ],
     );
-    if (context.mounted && chosen != null && chosen != selected.id) onChanged(chosen);
+    if (!context.mounted) return;
+    if (chosen == _HostPickerAction.pair) {
+      final pair = await showModalBottomSheet<List<int>>(
+        context: context,
+        useSafeArea: true,
+        isScrollControlled: true,
+        builder: (_) => _HostPairPicker(hosts: hosts, keyPrefix: keyPrefix),
+      );
+      if (context.mounted && pair != null) onOpenSplit?.call(pair);
+    } else if (chosen is int && chosen != selected.id) {
+      onChanged(chosen);
+    }
   }
 
   TextStyle _menuStyle(BuildContext context) {
@@ -193,6 +213,79 @@ class HostSelectorBar extends StatelessWidget {
       ],
     );
   }
+}
+
+enum _HostPickerAction { pair }
+
+class _HostPairPicker extends StatefulWidget {
+  const _HostPairPicker({required this.hosts, required this.keyPrefix});
+  final List<Server> hosts;
+  final String keyPrefix;
+  @override
+  State<_HostPairPicker> createState() => _HostPairPickerState();
+}
+
+class _HostPairPickerState extends State<_HostPairPicker> {
+  final _selected = <int>[];
+  @override
+  Widget build(BuildContext context) => SafeArea(
+    child: SizedBox(
+      height: MediaQuery.sizeOf(context).height * .8,
+      child: Column(
+        children: [
+          const Padding(
+            padding: EdgeInsets.all(12),
+            child: Text('Choose two hosts', style: TextStyle(fontWeight: FontWeight.bold)),
+          ),
+          Expanded(
+            child: ScrollConfiguration(
+              behavior: const PopupScrollBehavior(),
+              child: ListView(
+                key: ValueKey('${widget.keyPrefix}.pair.choices'),
+                padding: const EdgeInsets.only(bottom: 28),
+                children: [
+                  for (final host in widget.hosts)
+                    CheckboxListTile(
+                      key: ValueKey('${widget.keyPrefix}.pair.${host.id}'),
+                      value: _selected.contains(host.id),
+                      title: Text(HostDisplay.instance.name(host)),
+                      subtitle: Text(HostDisplay.instance.userAtHost(host)),
+                      onChanged: _selected.length < 2 || _selected.contains(host.id)
+                          ? (checked) => setState(() {
+                              if (checked == true) {
+                                _selected.add(host.id);
+                              } else {
+                                _selected.remove(host.id);
+                              }
+                            })
+                          : null,
+                    ),
+                ],
+              ),
+            ),
+          ),
+          Text('${_selected.length} of 2 hosts selected'),
+          Wrap(
+            alignment: WrapAlignment.center,
+            children: [
+              TextButton(
+                key: ValueKey('${widget.keyPrefix}.pair.cancel'),
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              FilledButton(
+                key: ValueKey('${widget.keyPrefix}.pair.open'),
+                onPressed: _selected.length == 2
+                    ? () => Navigator.pop(context, List<int>.of(_selected))
+                    : null,
+                child: const Text('Open split'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 class _StatusDot extends StatelessWidget {

@@ -120,6 +120,14 @@ void main() {
     }))!;
     await _waitFor(tester, () => appState.servers.any((row) => row.id == runtimeIds.podman));
 
+    await _exerciseSplitPaneRecovery(
+      tester,
+      terminals,
+      navigation,
+      appState.servers.singleWhere((row) => row.id == runtimeIds.docker),
+      transport,
+    );
+
     await _exerciseTerminals(
       tester,
       terminals,
@@ -331,6 +339,174 @@ Future<void> _exerciseTerminalOptionsLayouts(WidgetTester tester) async {
     settings.update((_) => original);
     await settings.save();
     await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    await tester.pump();
+  }
+}
+
+/// A real SSH/tmux client must never redirect input from a closed focused split slot.
+Future<void> _exerciseSplitPaneRecovery(
+  WidgetTester tester,
+  ShellViewModel terminals,
+  NavigationController navigation,
+  Server server,
+  SshTransport transport,
+) async {
+  debugPrint('HOST-E2E split ownership start');
+  navigation.navigateTo(Screen.shell);
+  await tester.pump();
+  final screen = find.byKey(const ValueKey('screen.shell'));
+  final settings = tester.element(screen).read<SettingsViewModel>();
+  final original = settings.saved;
+  final originalControl = terminals.useControlMode;
+  terminals.useControlMode = false;
+  try {
+    await tester.runAsync(() => terminals.connect(server.copyWith(persistentSession: true)));
+    expect(terminals.error, isNull);
+    final first = terminals.current!;
+    // An accepted bootstrap write is not proof that the remote tmux process has created its PTY.
+    await tester.runAsync(() async {
+      final deadline = DateTime.now().add(const Duration(seconds: 20));
+      while (DateTime.now().isBefore(deadline)) {
+        final result = await transport.exec(
+          SshCredentials(
+            host: server.host,
+            port: server.port,
+            username: server.username,
+            password: _password,
+          ),
+          'tmux has-session -t ${shellQuote(first.tmuxName!)} 2>/dev/null && printf SPLIT_TMUX_READY',
+        );
+        if (result.trim() == 'SPLIT_TMUX_READY') return;
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+      throw StateError('The fixture did not finish creating the first split tmux session');
+    });
+    await tester.runAsync(
+      () => terminals.splitWithNewSession(server.copyWith(persistentSession: true)),
+    );
+    expect(terminals.error, isNull);
+    expect(terminals.sessions, hasLength(2));
+    final second = terminals.sessions.firstWhere((session) => session != first);
+    expect(
+      second.tmuxName,
+      isNot(first.tmuxName),
+      reason: 'same host requires a separate tmux PTY',
+    );
+    await _waitFor(tester, () => first.isOpen && second.isOpen);
+    await tester.pump();
+    expect(find.byType(TerminalSurface), findsNWidgets(2));
+    terminals.focusPane(second.id);
+    terminals.close(second);
+    await tester.pump();
+    expect(terminals.isSplit, isTrue, reason: 'closing SSH must preserve the empty focused slot');
+    expect(terminals.current, isNull);
+    expect(terminals.splitFirstSession, same(first));
+    expect(terminals.paste('printf must-not-reach-sibling'), isFalse);
+    expect(terminals.sendKey(TermKey.enter), isFalse);
+    expect(find.byType(TerminalSurface), findsOneWidget);
+    final choose = find.byKey(const ValueKey('shell.pane.2.choose'));
+    expect(choose, findsOneWidget);
+    for (final dark in [true, false]) {
+      settings.update((current) => current.copyWith(darkMode: dark, textScalePercent: 200));
+      await tester.runAsync(settings.save);
+      await _waitFor(
+        tester,
+        () => (MediaQuery.textScalerOf(tester.element(screen)).scale(14) - 28).abs() < .5,
+      );
+      for (final orientation in [DeviceOrientation.portraitUp, DeviceOrientation.landscapeLeft]) {
+        FocusManager.instance.primaryFocus?.unfocus();
+        await SystemChannels.textInput.invokeMethod<void>('TextInput.hide');
+        await SystemChrome.setPreferredOrientations([orientation]);
+        final expected = orientation == DeviceOrientation.portraitUp
+            ? Orientation.portrait
+            : Orientation.landscape;
+        await _waitFor(
+          tester,
+          () =>
+              MediaQuery.orientationOf(tester.element(screen)) == expected &&
+              MediaQuery.viewInsetsOf(tester.element(screen)).bottom == 0,
+        );
+        await tester.ensureVisible(choose);
+        await tester.tap(choose);
+        await _waitForPopup(tester, find.byKey(const ValueKey('shell.split.cancel')));
+        expect(find.byKey(const ValueKey('shell.split.choices')), findsOneWidget);
+        expect(find.byKey(const ValueKey('shell.split.cancel')).hitTestable(), findsOneWidget);
+        await tester.tap(find.byKey(const ValueKey('shell.split.cancel')));
+        await tester.pump();
+        final hosts = find.byKey(const ValueKey('shell.host'));
+        await tester.ensureVisible(hosts);
+        await tester.tap(hosts);
+        await _waitForPopup(tester, find.byKey(const ValueKey('shell.host.openPair')));
+        await tester.tap(find.byKey(const ValueKey('shell.host.openPair')));
+        await _waitForPopup(tester, find.byKey(const ValueKey('shell.host.pair.cancel')));
+        expect(find.byKey(const ValueKey('shell.host.pair.cancel')).hitTestable(), findsOneWidget);
+        expect(
+          tester.widget<FilledButton>(find.byKey(const ValueKey('shell.host.pair.open'))).onPressed,
+          isNull,
+        );
+        await tester.tap(find.byKey(const ValueKey('shell.host.pair.cancel')));
+        await tester.pump();
+        expect(terminals.current, isNull);
+        expect(terminals.splitFirstSession, same(first));
+        expect(tester.takeException(), isNull);
+      }
+    }
+    settings.update((_) => original);
+    await tester.runAsync(settings.save);
+    await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    await _waitFor(
+      tester,
+      () => MediaQuery.orientationOf(tester.element(screen)) == Orientation.portrait,
+    );
+    await tester.ensureVisible(choose);
+    await tester.tap(choose);
+    await _waitForPopup(tester, find.byKey(const ValueKey('shell.split.cancel')));
+    final resume = find.byKey(ValueKey('shell.split.saved.${second.tmuxName}'));
+    await _waitFor(tester, () => resume.evaluate().isNotEmpty);
+    await tester.ensureVisible(resume);
+    await tester.tap(resume);
+    await _waitFor(tester, () => terminals.sessions.length == 2 && !terminals.isConnecting);
+    expect(terminals.error, isNull);
+    expect(terminals.splitSecondSession!.tmuxName, second.tmuxName);
+    expect(terminals.current, same(terminals.splitSecondSession));
+    expect(terminals.splitFirstSession, same(first));
+    expect(find.byType(TerminalSurface), findsNWidgets(2));
+    final hostSelector = find.byKey(const ValueKey('shell.host'));
+    await tester.ensureVisible(hostSelector);
+    await tester.tap(hostSelector);
+    await _waitForPopup(tester, find.byKey(const ValueKey('shell.host.openPair')));
+    await tester.tap(find.byKey(const ValueKey('shell.host.openPair')));
+    await _waitForPopup(tester, find.byKey(const ValueKey('shell.host.pair.open')));
+    final otherHost = terminals.connectableServers.firstWhere((host) => host.id != server.id);
+    for (final id in [server.id, otherHost.id]) {
+      final row = find.byKey(ValueKey('shell.host.pair.$id'));
+      await tester.ensureVisible(row);
+      await tester.tap(row);
+      await tester.pump();
+    }
+    await tester.tap(find.byKey(const ValueKey('shell.host.pair.open')));
+    await _waitFor(
+      tester,
+      () => terminals.splitSecondSession?.serverId == otherHost.id && !terminals.isConnecting,
+    );
+    expect(
+      terminals.splitFirstSession,
+      same(first),
+      reason: 'two-host selection reuses the live first terminal',
+    );
+    expect(terminals.current, same(first));
+    expect(terminals.error, isNull);
+    expect(find.byType(TerminalSurface), findsNWidgets(2));
+    debugPrint(
+      'HOST-E2E split empty-focus input, saved tmux, two-host picker, theme/font/rotation passed',
+    );
+  } finally {
+    settings.update((_) => original);
+    await tester.runAsync(settings.save);
+    terminals.useControlMode = originalControl;
+    await SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
+    await tester.runAsync(() => terminals.disconnectAll(terminatePersistent: true));
+    terminals.unsplit();
     await tester.pump();
   }
 }

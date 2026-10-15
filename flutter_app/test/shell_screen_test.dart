@@ -1938,7 +1938,7 @@ void main() {
       }
     });
 
-    testWidgets('split remains discoverable and explains when nothing is available', (
+    testWidgets('split choices remain discoverable and cancelling opens no session', (
       tester,
     ) async {
       await repo.insertServer(server(name: 'nas'));
@@ -1952,9 +1952,137 @@ void main() {
       );
       await tester.tap(find.byKey(const ValueKey('shell.split')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('shell.split.none')), findsOneWidget);
-      Navigator.pop(tester.element(find.byKey(const ValueKey('shell.split.none'))));
+      expect(find.byKey(ValueKey('shell.split.connect.${vm.current!.serverId}')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('shell.split.cancel')));
       await tester.pumpAndSettle();
+      expect(vm.sessions, hasLength(1));
+      expect(vm.isSplit, isFalse);
+      await finish(tester);
+    });
+
+    testWidgets('the first pane stays rendered while the second connection is pending', (
+      tester,
+    ) async {
+      await repo.insertServer(server(name: 'first fixture'));
+      await repo.insertServer(server(name: 'second fixture'));
+      await pump(tester);
+      await connect(tester);
+      final first = vm.current!;
+      final target = vm.connectableServers.firstWhere((server) => server.id != first.serverId);
+      final gate = Completer<void>();
+      transport.gate = gate;
+      late Future<void> connecting;
+      try {
+        await tester.runAsync(() async {
+          connecting = vm.splitWithNewSession(target);
+          await Future<void>(() async {
+            while (transport.openedWith.length < 2) {
+              await Future<void>.delayed(const Duration(milliseconds: 10));
+            }
+          }).timeout(const Duration(seconds: 5));
+        });
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(
+          find.byKey(const ValueKey('shell.surface')),
+          findsOneWidget,
+          reason: 'connecting the second pane must keep the first terminal rendered',
+        );
+        expect(find.byType(CircularProgressIndicator), findsWidgets);
+        expect(vm.current, same(first));
+      } finally {
+        await tester.runAsync(() async {
+          if (!gate.isCompleted) gate.complete();
+          await connecting;
+        });
+        await finish(tester);
+      }
+    });
+
+    testWidgets('a failed split slot keeps its sibling and offers a working retry', (tester) async {
+      await repo.insertServer(server(name: 'first fixture'));
+      await repo.insertServer(server(name: 'second fixture'));
+      await pump(tester);
+      await connect(tester);
+      final first = vm.current!;
+      final target = vm.connectableServers.firstWhere((host) => host.id != first.serverId);
+      transport.failure = StateError('fixture connection refused');
+      await tester.runAsync(() => vm.splitWithNewSession(target));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('shell.surface')), findsOneWidget);
+      expect(find.byKey(const ValueKey('shell.pane.2.retry')), findsOneWidget);
+      expect(find.textContaining('Connection refused'), findsWidgets);
+      expect(vm.current, same(first));
+      transport.failure = null;
+      await tester.tap(find.byKey(const ValueKey('shell.pane.2.retry')));
+      await tester.pumpAndSettle();
+      expect(vm.splitFirstSession, same(first));
+      expect(vm.splitSecondSession!.serverId, target.id);
+      expect(find.byKey(const ValueKey('shell.surface')), findsNWidgets(2));
+      await finish(tester);
+    });
+
+    testWidgets(
+      'a split picker has initial and updating overflow cues with a fixed cancel action',
+      (tester) async {
+        for (var i = 0; i < 20; i++) {
+          await repo.insertServer(server(name: 'fixture $i'));
+        }
+        await pump(tester, size: const Size(360, 640), textScale: 2);
+        await connect(tester);
+        final first = vm.current!;
+        await tester.tap(find.byKey(const ValueKey('shell.split')));
+        await tester.pumpAndSettle();
+        final choices = find.byKey(const ValueKey('shell.split.choices'));
+        final cancel = find.byKey(const ValueKey('shell.split.cancel'));
+        expect(find.text('↓ More below'), findsOneWidget);
+        expect(find.text('↑ More above'), findsNothing);
+        expect(cancel.hitTestable(), findsOneWidget);
+        await tester.drag(choices, const Offset(0, -700));
+        await tester.pumpAndSettle();
+        expect(find.text('↑ More above'), findsOneWidget);
+        expect(cancel.hitTestable(), findsOneWidget);
+        await tester.drag(choices, const Offset(0, -10000));
+        await tester.pumpAndSettle();
+        expect(find.text('↓ More below'), findsNothing);
+        expect(find.text('↑ More above'), findsOneWidget);
+        await tester.tap(cancel);
+        await tester.pumpAndSettle();
+        expect(vm.current, same(first));
+        expect(vm.sessions, hasLength(1));
+        expect(tester.takeException(), isNull);
+        await finish(tester);
+      },
+    );
+
+    testWidgets('an empty focused pane stays safe at large landscape phone text', (tester) async {
+      await repo.insertServer(server(name: 'first fixture'));
+      await repo.insertServer(server(name: 'second fixture'));
+      await pump(tester, size: const Size(640, 360), textScale: 2);
+      await tester.runAsync(() async {
+        for (final host in vm.connectableServers) {
+          await vm.connect(host);
+        }
+      });
+      final first = vm.sessions.first;
+      final second = vm.sessions.last;
+      vm.select(first.id);
+      vm.splitWith(second.id);
+      vm.focusPane(second.id);
+      vm.close(second);
+      await tester.pumpAndSettle();
+      final choose = find.byKey(const ValueKey('shell.pane.2.choose'));
+      expect(choose, findsOneWidget);
+      await tester.ensureVisible(choose);
+      await tester.tap(choose);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('shell.split.cancel')).hitTestable(), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('shell.split.cancel')));
+      await tester.pumpAndSettle();
+      expect(vm.current, isNull);
+      expect(vm.splitFirstSession, same(first));
+      expect(vm.paste('unsent'), isFalse);
+      expect(tester.takeException(), isNull);
       await finish(tester);
     });
 
@@ -1993,23 +2121,60 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('a host already open is not offered again', (tester) async {
-      // It would be offered twice — once as a session, once as a host — and connecting it a second
-      // time would open a duplicate terminal to the same machine.
-      await repo.insertServer(server(name: 'nas'));
+    testWidgets('a host already open offers a separate new terminal', (tester) async {
+      await repo.insertServer(server(name: 'nas', persistent: true));
       await pump(tester);
       await connect(tester);
-
-      expect(
-        find.byKey(const ValueKey('shell.split')),
-        findsOneWidget,
-        reason: 'Kotlin keeps SPLIT visible even when this host is already open',
-      );
+      final first = vm.current!;
+      final host = vm.connectableServers.single;
       await tester.tap(find.byKey(const ValueKey('shell.split')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('shell.split.none')), findsOneWidget);
-      Navigator.pop(tester.element(find.byKey(const ValueKey('shell.split.none'))));
+      expect(find.byKey(ValueKey('shell.split.connect.${host.id}')), findsOneWidget);
+      await tester.tap(find.byKey(ValueKey('shell.split.connect.${host.id}')));
       await tester.pumpAndSettle();
+      expect(vm.sessions, hasLength(2));
+      expect(vm.splitFirstSession, same(first));
+      expect(vm.splitSecondSession!.serverId, first.serverId);
+      expect(vm.splitSecondSession!.tmuxName, isNot(first.tmuxName));
+      expect(find.byKey(const ValueKey('shell.surface')), findsNWidgets(2));
+      await finish(tester);
+    });
+
+    testWidgets('the split host picker opens an ordered pair without duplicating live sessions', (
+      tester,
+    ) async {
+      await connectTwo(tester);
+      vm.splitWith(vm.sessions.first.id);
+      await tester.pumpAndSettle();
+      final sessions = vm.sessions.toList();
+      await tester.tap(find.byKey(const ValueKey('shell.host')));
+      await tester.pumpAndSettle();
+      try {
+        expect(
+          find.byKey(const ValueKey('shell.host.openPair')),
+          findsOneWidget,
+          reason: 'native split mode offers two-host selection in its host picker',
+        );
+      } catch (_) {
+        Navigator.pop(tester.element(find.byType(PopupMenuItem<int>).first));
+        await tester.pumpAndSettle();
+        await finish(tester);
+        rethrow;
+      }
+      await tester.tap(find.byKey(const ValueKey('shell.host.openPair')));
+      await tester.pumpAndSettle();
+      final open = find.byKey(const ValueKey('shell.host.pair.open'));
+      expect(tester.widget<FilledButton>(open).onPressed, isNull);
+      for (final session in sessions.reversed) {
+        await tester.tap(find.byKey(ValueKey('shell.host.pair.${session.serverId}')));
+        await tester.pumpAndSettle();
+      }
+      await tester.tap(open);
+      await tester.pumpAndSettle();
+      expect(transport.opened, hasLength(2));
+      expect(vm.splitFirstSession, same(sessions.last));
+      expect(vm.splitSecondSession, same(sessions.first));
+      expect(vm.current, same(sessions.last));
       await finish(tester);
     });
 
@@ -2146,8 +2311,8 @@ void main() {
       await finish(tester);
     });
 
-    testWidgets('closing a split session falls back to a single view', (tester) async {
-      // Otherwise the screen holds an id for a terminal that no longer exists.
+    testWidgets('closing a split session keeps a discoverable empty pane', (tester) async {
+      // The slot survives its channel and offers a replacement without redirecting input.
       await connectTwo(tester);
       final first = vm.sessions.first;
 
@@ -2160,8 +2325,10 @@ void main() {
       vm.close(first);
       await tester.pumpAndSettle();
 
-      expect(vm.isSplit, isFalse);
-      expect(find.byKey(const ValueKey('shell.splitView')), findsNothing);
+      expect(vm.isSplit, isTrue);
+      expect(find.byKey(const ValueKey('shell.splitView')), findsOneWidget);
+      expect(find.byKey(const ValueKey('shell.pane.2.choose')), findsOneWidget);
+      expect(find.byKey(const ValueKey('shell.surface')), findsOneWidget);
       await finish(tester);
     });
   });

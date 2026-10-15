@@ -252,6 +252,31 @@ void main() {
   });
 
   group('broadcast', () {
+    testWidgets('a short landscape viewport keeps broadcast controls reachable at large text', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(640, 240);
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = 2;
+      addTearDown(tester.view.reset);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await pump(tester, transport: BroadcastTransport());
+      await goToBroadcast(tester);
+      expect(tester.takeException(), isNull);
+      final command = find.byKey(const ValueKey('fleet.command'));
+      await tester.ensureVisible(command);
+      expect(command.hitTestable(), findsOneWidget);
+      final run = find.byKey(const ValueKey('fleet.run'));
+      await tester.ensureVisible(run);
+      expect(run.hitTestable(), findsOneWidget);
+      expect(find.byKey(const ValueKey('fleet.broadcast.idle')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      vm.dispose();
+      scriptsVm.dispose();
+      await tester.pump(const Duration(milliseconds: 10));
+    });
+
     testWidgets('running is blocked until a command and a target exist', (tester) async {
       final id = await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
       await pump(tester, transport: BroadcastTransport());

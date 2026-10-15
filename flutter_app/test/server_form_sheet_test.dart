@@ -7,6 +7,7 @@ import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/ui/screens/servers/server_form_sheet.dart';
 import 'package:omniterm/ui/screens/servers/server_form_state.dart';
 import 'package:omniterm/ui/theme/theme.dart';
+import 'package:omniterm/ui/widgets/popup_scroll_behavior.dart';
 
 /// The sheet is the only way to create a host, so these tests are the check that the app can do its
 /// primary job at all — plus that the two security controls survive the trip through the widget.
@@ -113,6 +114,79 @@ void main() {
     await tester.enterText(find.byKey(const ValueKey('serverForm.host')), '10.0.0.9');
     await tester.enterText(find.byKey(const ValueKey('serverForm.username')), 'root');
     await tester.pumpAndSettle();
+  }
+
+  for (final (orientation, size, keyboardHeight) in [
+    ('portrait', const Size(360, 640), 380.0),
+    ('landscape', const Size(640, 360), 196.0),
+  ]) {
+    testWidgets('unverified save stays usable above the keyboard in $orientation', (tester) async {
+      tester.view.physicalSize = const Size(360, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        MaterialApp(
+          scrollBehavior: const PopupScrollBehavior(),
+          theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => showModalBottomSheet<void>(
+                  context: context,
+                  isScrollControlled: true,
+                  useSafeArea: true,
+                  builder: (_) => ServerFormSheet(
+                    mode: ServerFormMode.add,
+                    onSave: (server) async => savedRows.add(server),
+                  ),
+                ),
+                child: const Text('Add host'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Add host'));
+      await tester.pumpAndSettle();
+      await fillNewHost(tester);
+      tester.view.physicalSize = size;
+      tester.view.viewInsets = FakeViewPadding(bottom: keyboardHeight);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull, reason: 'the host editor must fit above the keyboard');
+      await tester.tap(find.byKey(const ValueKey('serverForm.save')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'the unverified decision must fit above the keyboard',
+      );
+      expect(find.byKey(const ValueKey('serverForm.unverified.dialog')), findsOneWidget);
+      final dialog = find.byKey(const ValueKey('serverForm.unverified.dialog'));
+      expect(find.descendant(of: dialog, matching: find.text('↓ More below')), findsOneWidget);
+      await tester.drag(
+        find.descendant(of: dialog, matching: find.byType(Scrollable)).first,
+        const Offset(0, -200),
+      );
+      await tester.pumpAndSettle();
+      expect(find.descendant(of: dialog, matching: find.text('↑ More above')), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('serverForm.unverified.review')).hitTestable(),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('serverForm.unverified.saveAnyway')).hitTestable(),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const ValueKey('serverForm.unverified.review')));
+      await tester.pumpAndSettle();
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'Review must return to a usable keyboard layout',
+      );
+      expect(savedRows, isEmpty);
+      expect(find.byKey(const ValueKey('serverForm.tabs')), findsOneWidget);
+    });
   }
 
   testWidgets('an identical login is rejected without offering Save anyway', (tester) async {

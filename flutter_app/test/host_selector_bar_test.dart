@@ -51,6 +51,7 @@ void main() {
     required Server selected,
     String labelPrefix = '',
     ValueChanged<int?>? onChanged,
+    ValueChanged<List<int>>? onOpenSplit,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -63,6 +64,7 @@ void main() {
             selected: selected,
             labelPrefix: labelPrefix,
             onChanged: onChanged ?? (_) {},
+            onOpenSplit: onOpenSplit,
           ),
         ),
       ),
@@ -147,6 +149,62 @@ void main() {
 
     expect(chosen, isEmpty, reason: 'Kotlin ignores an unchanged host selection');
     expect(find.text('web-1 — root@10.0.0.1'), findsNothing);
+  });
+
+  testWidgets('two-host selection limits the pair and reports its selected order', (tester) async {
+    final hosts = [for (var i = 1; i <= 3; i++) host(id: i, name: 'fixture $i')];
+    final pairs = <List<int>>[];
+    final single = <int?>[];
+    await pump(
+      tester,
+      hosts: hosts,
+      selected: hosts.first,
+      onOpenSplit: pairs.add,
+      onChanged: single.add,
+    );
+    await tester.tap(find.byKey(const ValueKey('test.picker')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('test.picker.openPair')));
+    await tester.pumpAndSettle();
+    final open = find.byKey(const ValueKey('test.picker.pair.open'));
+    expect(tester.widget<FilledButton>(open).onPressed, isNull);
+    for (final id in [3, 1]) {
+      await tester.tap(find.byKey(ValueKey('test.picker.pair.$id')));
+      await tester.pumpAndSettle();
+    }
+    expect(
+      tester.widget<CheckboxListTile>(find.byKey(const ValueKey('test.picker.pair.2'))).onChanged,
+      isNull,
+    );
+    await tester.tap(open);
+    await tester.pumpAndSettle();
+    expect(pairs, [
+      [3, 1],
+    ]);
+    expect(single, isEmpty);
+  });
+
+  testWidgets('cancelling two-host selection never changes the current host', (tester) async {
+    final hosts = [host(id: 1, name: 'a'), host(id: 2, name: 'b')];
+    final pairs = <List<int>>[];
+    final single = <int?>[];
+    await pump(
+      tester,
+      hosts: hosts,
+      selected: hosts.first,
+      onOpenSplit: pairs.add,
+      onChanged: single.add,
+    );
+    await tester.tap(find.byKey(const ValueKey('test.picker')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('test.picker.openPair')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('test.picker.pair.2')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('test.picker.pair.cancel')));
+    await tester.pumpAndSettle();
+    expect(pairs, isEmpty);
+    expect(single, isEmpty);
   });
 
   testWidgets('the address obeys Hide addresses', (tester) async {

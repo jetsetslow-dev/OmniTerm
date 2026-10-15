@@ -147,6 +147,35 @@ void main() {
     expect(find.text('No servers yet'), findsOneWidget);
   });
 
+  for (final filtered in [false, true]) {
+    testWidgets('the ${filtered ? "filtered" : "empty"} fleet fits behind the keyboard', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(360, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      if (filtered) {
+        await repo.insertServer(server(name: 'nas'));
+      }
+      await pump(tester);
+      if (filtered) {
+        await tester.enterText(find.byKey(const ValueKey('servers.search')), 'no match');
+        await tester.pumpAndSettle();
+      }
+      final empty = find.byKey(const ValueKey('servers.empty'));
+      // The actual Android save flow leaves this underlying viewport only 110 dp tall.
+      final originalHeight = tester.getSize(empty).height;
+      expect(originalHeight, greaterThan(110));
+      tester.view.viewInsets = FakeViewPadding(bottom: originalHeight - 110);
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      final message = find.text(filtered ? 'No hosts match your filter' : 'No servers yet');
+      await tester.ensureVisible(message);
+      await tester.pumpAndSettle();
+      expect(message.hitTestable(), findsOneWidget);
+    });
+  }
+
   testWidgets('hosts render as cards with their user@host line', (tester) async {
     await repo.insertServer(server(name: 'nas', host: '10.0.0.2'));
     await pump(tester);
