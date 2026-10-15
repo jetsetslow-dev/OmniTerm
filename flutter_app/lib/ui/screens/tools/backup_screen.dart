@@ -26,9 +26,32 @@ class BackupScreen extends StatefulWidget {
 
 class _BackupScreenState extends State<BackupScreen> {
   final _scrollController = ScrollController();
+  BackupViewModel? _feedbackModel;
+  String? _lastSelectionSaveError;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final model = context.read<BackupViewModel>();
+    if (identical(model, _feedbackModel)) return;
+    _feedbackModel?.removeListener(_selectionFeedbackChanged);
+    _feedbackModel = model;
+    _lastSelectionSaveError = null;
+    model.addListener(_selectionFeedbackChanged);
+    _selectionFeedbackChanged();
+  }
+
+  void _selectionFeedbackChanged() {
+    final error = _feedbackModel?.selectionSaveError;
+    if (error != null && error != _lastSelectionSaveError) {
+      WidgetsBinding.instance.addPostFrameCallback((_) => _revealFeedback());
+    }
+    _lastSelectionSaveError = error;
+  }
 
   @override
   void dispose() {
+    _feedbackModel?.removeListener(_selectionFeedbackChanged);
     _scrollController.dispose();
     super.dispose();
   }
@@ -95,6 +118,25 @@ class _BackupScreenState extends State<BackupScreen> {
                 ),
               ),
             const SectionHeader(title: 'What to include'),
+            if (vm.selectionSaving) ...[
+              const LinearProgressIndicator(),
+              const Text('Remembering backup selection…', style: TextStyle(fontSize: 11)),
+            ],
+            if (vm.selectionSaveError != null) ...[
+              Text(
+                vm.selectionSaveError!,
+                key: const ValueKey('backup.selection.error'),
+                style: const TextStyle(fontSize: 11, color: OmniColors.red),
+              ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  key: const ValueKey('backup.selection.retry'),
+                  onPressed: vm.retrySelectionSave,
+                  child: const Text('Retry remembering selection'),
+                ),
+              ),
+            ],
             Row(
               children: [
                 TextButton(
@@ -115,6 +157,15 @@ class _BackupScreenState extends State<BackupScreen> {
                 dense: true,
                 contentPadding: EdgeInsets.zero,
                 controlAffinity: ListTileControlAffinity.leading,
+                secondary: vm.selectionSaving
+                    ? const SizedBox.square(
+                        dimension: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          semanticsLabel: 'Remembering backup selection',
+                        ),
+                      )
+                    : null,
                 title: Text(section.label, style: const TextStyle(fontSize: 13)),
                 subtitle: _dependencyNote(section, scheme),
                 value: vm.selection.contains(section),
@@ -141,7 +192,11 @@ class _BackupScreenState extends State<BackupScreen> {
             Text(
               // The whole value of this line is the "Never" case: a user who believes they have a
               // backup and does not is exactly who this screen is for.
-              vm.lastExportTime == null
+              vm.lastExportTimeLoading
+                  ? 'Checking last backup time…'
+                  : vm.lastExportTimeError != null && vm.lastExportTime == null
+                  ? 'Last backup: Unknown'
+                  : vm.lastExportTime == null
                   ? 'Last backup: Never'
                   : 'Last backup: ${DateFormat.yMMMd().add_jm().format(vm.lastExportTime!)}',
               key: const ValueKey('backup.lastExport'),
@@ -150,6 +205,20 @@ class _BackupScreenState extends State<BackupScreen> {
                 color: vm.lastExportTime == null ? OmniColors.amber : scheme.onSurfaceVariant,
               ),
             ),
+            if (vm.lastExportTimeError != null) ...[
+              Text(
+                vm.lastExportTimeError!,
+                style: const TextStyle(fontSize: 11, color: OmniColors.amber),
+              ),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton(
+                  key: const ValueKey('backup.lastExport.retry'),
+                  onPressed: vm.loadLastExportTime,
+                  child: const Text('Retry checking backup time'),
+                ),
+              ),
+            ],
             const SizedBox(height: 24),
             const SectionHeader(title: 'Restore'),
             Text(

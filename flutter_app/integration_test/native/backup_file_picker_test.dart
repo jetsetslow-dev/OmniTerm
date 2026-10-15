@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:patrol/patrol.dart';
 import 'package:provider/provider.dart';
 
 import 'package:omniterm/main.dart' as app;
+import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/domain/backup_selection.dart';
 import 'package:omniterm/ui/view_model/backup_view_model.dart';
 
@@ -113,6 +116,87 @@ void main() {
       timeout: remaining,
     );
   }
+
+  patrolTest('backup selection storage shows progress, failure and retry', ($) async {
+    await openBackup($);
+    final context = $.tester.element($(const ValueKey('backup.list')).finder);
+    final db = context.read<AppDatabase>();
+    final vm = context.read<BackupViewModel>();
+    final previous = await db.appDataDao.getSetting('backup_export_selection');
+    final held = Completer<void>();
+    final release = Completer<void>();
+    Future<void>? transaction;
+    try {
+      await db.customStatement(
+        "CREATE TRIGGER reject_backup_selection BEFORE INSERT ON app_settings "
+        "WHEN NEW.`key` = 'backup_export_selection' "
+        "BEGIN SELECT RAISE(ABORT, 'fixture selection unavailable'); END",
+      );
+      transaction = db.transaction(() async {
+        await db.customSelect('SELECT 1').get();
+        held.complete();
+        await release.future;
+      });
+      try {
+        await held.future.timeout(const Duration(seconds: 10));
+        // Tap without waiting for animations: the pending write deliberately keeps progress active.
+        await $.tester.tap(find.byKey(const ValueKey('backup.selectAll')));
+        await $.tester.pump();
+        expect(
+          find.text('Remembering backup selection…'),
+          findsOneWidget,
+          reason: 'a held settings write must show progress before it completes',
+        );
+      } finally {
+        release.complete();
+        await transaction;
+      }
+      Future<void> waitFor(Finder finder) async {
+        final deadline = DateTime.now().add(const Duration(seconds: 10));
+        while (finder.evaluate().isEmpty && DateTime.now().isBefore(deadline)) {
+          await $.tester.pump(const Duration(milliseconds: 50));
+        }
+        expect(finder, findsOneWidget);
+      }
+
+      await waitFor(find.byKey(const ValueKey('backup.selection.error')));
+      expect(vm.selection.contains(BackupSection.crashLogs), isTrue);
+      expect((await db.appDataDao.getSetting('backup_export_selection'))?.value, previous?.value);
+      await db.customStatement('DROP TRIGGER reject_backup_selection');
+      await $.tester.tap(find.byKey(const ValueKey('backup.selection.retry')));
+      await $.pumpAndSettle();
+      final deadline = DateTime.now().add(const Duration(seconds: 10));
+      while ((await db.appDataDao.getSetting('backup_export_selection'))?.value !=
+              vm.selection.encode() &&
+          DateTime.now().isBefore(deadline)) {
+        await $.tester.pump(const Duration(milliseconds: 50));
+      }
+      expect(
+        (await db.appDataDao.getSetting('backup_export_selection'))?.value,
+        vm.selection.encode(),
+      );
+      await $.pumpAndSettle();
+      expect(find.byKey(const ValueKey('backup.selection.error')), findsNothing);
+      expect(find.text('Remembering backup selection…'), findsNothing);
+    } finally {
+      if (!release.isCompleted) release.complete();
+      if (transaction != null) await transaction;
+      await db.customStatement('DROP TRIGGER IF EXISTS reject_backup_selection');
+      if (previous == null) {
+        await db.customStatement(
+          "DELETE FROM app_settings WHERE `key` = 'backup_export_selection'",
+        );
+      } else {
+        await db.customStatement(
+          'INSERT OR REPLACE INTO app_settings (`key`, value) VALUES (?, ?)',
+          [previous.key, previous.value],
+        );
+      }
+    }
+  });
+
+  // A focused control can run this one device regression on the original implementation.
+  if (const bool.fromEnvironment('OMNITERM_E2E_BACKUP_PERSISTENCE_ONLY')) return;
 
   patrolTest('cancelling the save claims nothing was written', ($) async {
     // The failure this guards against is a screen that reports success on the way *into* the

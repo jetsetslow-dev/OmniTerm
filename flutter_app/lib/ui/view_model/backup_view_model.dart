@@ -155,10 +155,42 @@ class BackupViewModel extends ChangeNotifier {
   /// visit to this screen starts from "everything", so a user who deliberately excludes crash logs
   /// or alert history has to exclude them again every single time.
   ///
-  /// Fire-and-forget, as Kotlin does: the checkbox has already moved, and the write must not make
-  /// the UI wait on the database.
+  /// Keep the draft usable while ordered writes finish, and expose persistence failures separately
+  /// from the outcome of writing the backup file.
+  Future<void> _selectionWrites = Future<void>.value();
+  int _selectionRevision = 0;
+  bool _selectionSaving = false;
+  String? _selectionSaveError;
+  bool get selectionSaving => _selectionSaving;
+  String? get selectionSaveError => _selectionSaveError;
+
+  void retrySelectionSave() {
+    _persistSelection();
+    _safeNotify();
+  }
+
   void _persistSelection() {
-    unawaited(_app.repository.insertSetting('backup_export_selection', _selection.encode()));
+    final revision = ++_selectionRevision;
+    final encoded = _selection.encode();
+    _selectionLoaded = true;
+    _selectionSaving = true;
+    _selectionSaveError = null;
+    _selectionWrites = _selectionWrites.then((_) async {
+      try {
+        await _app.repository.insertSetting('backup_export_selection', encoded);
+      } catch (_) {
+        if (!_disposed && revision == _selectionRevision) {
+          _selectionSaveError =
+              'Your selection is active for this export, but could not be remembered. '
+              'Retry saving it for next time.';
+        }
+      } finally {
+        if (!_disposed && revision == _selectionRevision) {
+          _selectionSaving = false;
+          _safeNotify();
+        }
+      }
+    });
   }
 
   /// Reads the stored selection back. Safe to call more than once.
@@ -171,9 +203,10 @@ class BackupViewModel extends ChangeNotifier {
   Future<void> loadSelection() async {
     if (_selectionLoaded || _selectionLoading) return;
     _selectionLoading = true;
+    final revision = _selectionRevision;
     try {
       final stored = await _app.repository.getSetting('backup_export_selection');
-      if (_disposed) return;
+      if (_disposed || revision != _selectionRevision) return;
       _selectionLoaded = true;
       if (stored == null || stored.trim().isEmpty) return;
       _selection = BackupSelection.decode(stored);
@@ -181,7 +214,7 @@ class BackupViewModel extends ChangeNotifier {
     } catch (_) {
       // Deliberately leaves `_selectionLoaded` false so the next visit tries again. What the user
       // is looking at is not their selection, and that is worth saying before they export.
-      if (_disposed) return;
+      if (_disposed || revision != _selectionRevision) return;
       _error =
           'Your saved backup selection could not be read, so this is showing the default — '
           'everything. Check the sections below before exporting.';
@@ -336,14 +369,37 @@ class BackupViewModel extends ChangeNotifier {
   /// believes they have a backup and does not is the one this screen exists for.
   DateTime? get lastExportTime => _lastExportTime;
   DateTime? _lastExportTime;
+  bool _lastExportTimeLoading = false;
+  bool get lastExportTimeLoading => _lastExportTimeLoading;
+  String? _lastExportTimeError;
+  String? get lastExportTimeError => _lastExportTimeError;
+  int _lastExportTimeRevision = 0;
 
   /// Reads the recorded time. Safe to call more than once.
   Future<void> loadLastExportTime() async {
-    final stored = await _app.repository.getSetting('backup_last_export_time');
-    final ms = int.tryParse(stored?.trim() ?? '');
-    if (_disposed || ms == null || ms <= 0) return;
-    _lastExportTime = DateTime.fromMillisecondsSinceEpoch(ms);
+    if (_disposed || _lastExportTimeLoading) return;
+    final revision = _lastExportTimeRevision;
+    _lastExportTimeLoading = true;
+    _lastExportTimeError = null;
     _safeNotify();
+    try {
+      final stored = await _app.repository.getSetting('backup_last_export_time');
+      final ms = int.tryParse(stored?.trim() ?? '');
+      if (_disposed || revision != _lastExportTimeRevision) return;
+      if (ms != null && ms > 0) {
+        final recorded = DateTime.fromMillisecondsSinceEpoch(ms);
+        if (_lastExportTime == null || recorded.isAfter(_lastExportTime!)) {
+          _lastExportTime = recorded;
+        }
+      }
+    } catch (_) {
+      if (!_disposed && revision == _lastExportTimeRevision) {
+        _lastExportTimeError = 'The last backup time could not be read. Retry to check it.';
+      }
+    } finally {
+      _lastExportTimeLoading = false;
+      _safeNotify();
+    }
   }
 
   /// Report a completed save.
@@ -357,6 +413,8 @@ class BackupViewModel extends ChangeNotifier {
     // a "last backup" that counts an export the user abandoned is worse than none at all. Kotlin
     // records it on write success too (`AppViewModel.kt:11415`).
     final now = DateTime.now();
+    _lastExportTimeRevision++;
+    _lastExportTimeError = null;
     _lastExportTime = now;
     // Fire-and-forget, but not fire-and-ignore. When this write failed the file was still saved and
     // the screen still said "last backup: just now" — and then the next launch read the old value

@@ -2,6 +2,21 @@
 
 These rules apply to every contributor and automation tool working in this repository.
 
+## GitHub publishing and review identities
+
+- Create human-authored pull requests and push repository changes as `jetsetslow-dev`.
+  Reserve `sbvino` for the user's independent reviews; never create a PR or publish a commit
+  under that reviewer account, and never use it to submit an automated approval.
+- Before creating or updating a PR, verify the authenticated GitHub login is `jetsetslow-dev`.
+  Before pushing, verify the repository's actual Git transport authenticates as `jetsetslow-dev`;
+  the active GitHub CLI account and Git SSH identity can differ.
+- Human commit authors and committers must use the Jetsetslow identity associated with
+  `jetsetslow-dev`; preserve legitimate bot attribution and verified signatures. Check the
+  published commit's GitHub attribution. Do not rewrite correct history to repair a PR author.
+- GitHub cannot change an existing PR's author. Replace a wrongly authored PR, preserve its
+  discussion through a link, and require fresh independent review on the final candidate.
+  Keep code-owner, stale-review and last-push approval protections intact.
+
 ## Frequent recoverable checkpoints
 
 - Commit and push completed, validated checkpoints frequently on the current working branch.
