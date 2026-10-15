@@ -29,6 +29,7 @@ import androidx.compose.runtime.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -191,6 +192,7 @@ fun FleetDashboardView(viewModel: AppViewModel, srvList: List<ServerEntity>) {
                             targetLabelAction.forEach { (lbl, cmd) ->
                                 OmniButton(
                                     label = lbl,
+                                    modifier = Modifier.testTag("fleet.host.${s.id}.${lbl.lowercase()}"),
                                     onClick = {
                                         viewModel.runStreamingAction("$lbl · ${s.name}", cmd, server = s)
                                     },

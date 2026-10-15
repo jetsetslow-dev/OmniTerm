@@ -410,6 +410,8 @@ jobs:
           SBOM_CONFIGURATION=playStoreReleaseRuntimeClasspath \
             SBOM_COMPONENT_NAME="OmniTerm Play Store" \
             ./gradlew cyclonedxBom --init-script .github/cyclonedx.init.gradle.kts --no-daemon
+          python3 scripts/verify-native-sbom-baselines.py build/reports/cyclonedx/bom.json \
+            --configuration playStoreReleaseRuntimeClasspath
           PLAY_SBOM="github-artifacts/OmniTerm-PlayStore-${RELEASE_LABEL}.cdx.json"
           cp build/reports/cyclonedx/bom.json "$PLAY_SBOM"
           jq -e '
@@ -424,6 +426,8 @@ jobs:
             SBOM_CONFIGURATION=openSourceReleaseRuntimeClasspath \
               SBOM_COMPONENT_NAME="OmniTerm Source Available" \
               ./gradlew cyclonedxBom --init-script .github/cyclonedx.init.gradle.kts --no-daemon
+            python3 scripts/verify-native-sbom-baselines.py build/reports/cyclonedx/bom.json \
+              --configuration openSourceReleaseRuntimeClasspath
             OSS_SBOM="github-artifacts/OmniTerm-SourceAvailable-${RELEASE_LABEL}.cdx.json"
             cp build/reports/cyclonedx/bom.json "$OSS_SBOM"
             jq -e '
