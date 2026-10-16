@@ -143,6 +143,33 @@ class ComposeStackUpdateStreamingRobolectricTest {
         }
     }
 
+    @Test
+    fun stoppingServiceContainersDoesNotRequireItsDeletedComposeFile() = runBlocking {
+        val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
+        Dispatchers.setMain(main)
+        val store = ViewModelStore()
+        val transport = UpdateTransport()
+        transport.psOutput = listOf(
+            "docker\tfirst\tfixture_front_1\tnginx\tUp 1 hour\t—\tfixture-stack\tfront\t/deleted/stack\tcompose.yml\t",
+            "docker\tsecond\tfixture_front_2\tnginx\tUp 1 hour\t—\tfixture-stack\tfront\t/deleted/stack\tcompose.yml\t",
+            "docker\tdb\tfixture_db_1\tnginx\tUp 1 hour\t—\tfixture-stack\tdb\t/deleted/stack\tcompose.yml\t",
+            "podman\tother\tfixture_front_1\tnginx\tUp 1 hour\t—\tfixture-stack\tfront\t/deleted/stack\tcompose.yml\t",
+        ).joinToString("\n")
+        try {
+            val model = newModel(transport, store, main)
+            withContext(main) { model.loadDocker() }
+            withTimeout(5_000) { while (model.dockerLoading || model.dockerContainers.size != 4) delay(10) }
+            withContext(main) {
+                model.dockerStackServiceAction(project, "/deleted/stack", configFiles, "front", "serviceStop", runtime = "docker")
+            }
+            withTimeout(5_000) { while (transport.commands.isEmpty()) delay(10) }
+            assertEquals("docker stop 'first' 'second' 2>&1", transport.commands.single())
+            assertTrue("operation must stay pending while transport waits", model.actionStreamRunning)
+        } finally {
+            transport.finish(); store.clear(); Dispatchers.resetMain(); main.close()
+        }
+    }
+
     private fun withUpdate(body: suspend (AppViewModel, UpdateTransport) -> Unit) = runBlocking {
         // Real time: AppViewModel does its database work on Dispatchers.IO.
         val main = Executors.newSingleThreadExecutor().asCoroutineDispatcher()
@@ -191,8 +218,11 @@ class ComposeStackUpdateStreamingRobolectricTest {
         suspend fun emit(chunk: String) { chunks.send(chunk) }
         fun finish() { chunks.close() }
 
+        var psOutput = ""
+
         // loadDocker() runs as update's onComplete; it must find nothing rather than fail.
-        override suspend fun exec(creds: SshCredentials, command: String, stdin: String?): String = ""
+        override suspend fun exec(creds: SshCredentials, command: String, stdin: String?): String =
+            if (command.contains("ps -a --no-trunc")) psOutput else ""
 
         override suspend fun execStream(
             creds: SshCredentials,

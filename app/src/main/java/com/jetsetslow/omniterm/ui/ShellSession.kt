@@ -189,6 +189,7 @@ class ShellSession(
     @Volatile var controlExitSeen: Boolean = false
     @Volatile var controlExitReason: String? = null
     var terminalInputQueue: TerminalInputQueue? = null
+    var pasteFeedback by mutableStateOf<TerminalPasteFeedback?>(null)
     var terminalInputOverflowWarned: Boolean = false
     var terminalInputJob: Job? = null
     var terminalOutputJob: Job? = null
@@ -237,9 +238,13 @@ class ShellSession(
     var reconnectJob: Job? = null
     /** True while the auto-reconnect backoff loop is running (drives the "Reconnecting…" UI). */
     var reconnecting by mutableStateOf(false)
+    /** A confirmed missing remote tmux must not be re-created by reconnect bookkeeping. */
+    var tmuxSessionMissing by mutableStateOf(false)
     /** Set true by a user-initiated disconnect so the drop handler doesn't try to auto-reconnect. */
     var userClosed: Boolean = false
 }
+
+enum class TerminalWriteOutcome { ACCEPTED, UNCERTAIN }
 
 /**
  * Non-blocking, byte-budgeted wire queue. The channel itself is unlimited so a UI caller never
@@ -248,5 +253,71 @@ class ShellSession(
 class TerminalInputQueue {
     val channel = Channel<ByteArray>(Channel.UNLIMITED)
     var queuedBytes: Int = 0
+        private set
     var closed: Boolean = false
+        private set
+    private val receipts = java.util.IdentityHashMap<ByteArray, CompletableDeferred<TerminalWriteOutcome>>()
+    private var inFlight: ByteArray? = null
+
+    /** Reserve a whole logical input and register its final-chunk receipt under one monitor. */
+    fun enqueueBatch(
+        chunks: List<ByteArray>,
+        maxBytes: Int,
+        receipt: CompletableDeferred<TerminalWriteOutcome>? = null,
+    ): Boolean = synchronized(this) {
+        val total = chunks.sumOf { it.size.toLong() }
+        if (closed || total > Int.MAX_VALUE || queuedBytes.toLong() + total > maxBytes) return false
+        if (chunks.isEmpty()) {
+            receipt?.complete(TerminalWriteOutcome.ACCEPTED)
+            return true
+        }
+        // Channels are unlimited and closed only under this monitor: reserve all, or send none.
+        queuedBytes += total.toInt()
+        if (receipt != null) receipts[chunks.last()] = receipt
+        for (chunk in chunks) check(channel.trySend(chunk).isSuccess)
+        true
+    }
+
+    /** A close between dequeue and this boundary must prevent a new old-channel write. */
+    fun beginWrite(bytes: ByteArray): Boolean = synchronized(this) {
+        if (closed) return false
+        check(inFlight == null) { "Terminal input has more than one wire consumer" }
+        queuedBytes = (queuedBytes - bytes.size).coerceAtLeast(0)
+        inFlight = bytes
+        true
+    }
+
+    /** Called immediately after the actual transport result; never inspect later EOF here. */
+    fun finishWrite(bytes: ByteArray, outcome: TerminalWriteOutcome) {
+        val receipt = synchronized(this) {
+            check(inFlight === bytes) { "Terminal write completed a different chunk" }
+            inFlight = null
+            receipts.remove(bytes)
+        }
+        receipt?.complete(outcome)
+    }
+
+    /** Reject buffered work while allowing an already-started write to report its real result. */
+    fun close() {
+        val rejected = synchronized(this) {
+            closed = true
+            channel.cancel()
+            queuedBytes = 0
+            val pending = receipts.keys.filter { it !== inFlight }
+            pending.mapNotNull { receipts.remove(it) }
+        }
+        rejected.forEach { it.complete(TerminalWriteOutcome.UNCERTAIN) }
+    }
+
+    /** Worker finally: cancellation, failure and cleanup must never strand a receipt waiter. */
+    fun workerFinished() {
+        val interrupted = synchronized(this) {
+            closed = true
+            channel.cancel()
+            queuedBytes = 0
+            inFlight = null
+            receipts.values.toList().also { receipts.clear() }
+        }
+        interrupted.forEach { it.complete(TerminalWriteOutcome.UNCERTAIN) }
+    }
 }

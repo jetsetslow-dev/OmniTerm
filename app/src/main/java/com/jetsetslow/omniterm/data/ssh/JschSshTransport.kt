@@ -528,14 +528,20 @@ private class JschTerminalSession(
     }
 
     override suspend fun write(bytes: ByteArray) {
-        if (_closed.value) return
+        if (_closed.value) throw java.io.IOException("Terminal channel is closed")
         withContext(Dispatchers.IO) {
             try {
+                // The reader can close the channel while this write waits for an IO thread.
+                if (_closed.value) throw java.io.IOException("Terminal channel is closed")
                 shellOut.write(bytes)
                 shellOut.flush()
-            } catch (_: Throwable) {
+            } catch (failure: Throwable) {
                 close()
+                // A caller must distinguish wire acceptance from failure or cancellation. A
+                // flush failure can occur after bytes were sent, so preserve that uncertainty.
+                throw failure
             }
+            // Successful write/flush remains accepted even if the reader sees EOF afterwards.
         }
     }
 

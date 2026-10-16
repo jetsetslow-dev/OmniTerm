@@ -10,6 +10,15 @@ import org.junit.Test
 class RemoteParsersTest {
 
     @Test
+    fun healthRequiresValidSourceReadingsBeforeParserClamping() {
+        val valid = "@OS\nLinux\n@CPU\n100.0 id\n@MEM\nMem: 100 20 0 0 0 80\n" +
+            "@DISK\n/dev/root 100 10 90 10% /\n"
+        assertTrue(RemoteParsers.hasReliableHealthMetrics(valid))
+        assertFalse(RemoteParsers.hasReliableHealthMetrics(valid.replace("100.0 id", "-100.0 id")))
+        assertFalse(RemoteParsers.hasReliableHealthMetrics(valid.replace("0 80", "0 180")))
+    }
+
+    @Test
     fun parsesPsOutput() {
         // Columns: pid user %cpu %mem vsz etime stat comm
         val out = """

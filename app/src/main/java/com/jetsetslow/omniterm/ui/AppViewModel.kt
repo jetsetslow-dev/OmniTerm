@@ -1109,7 +1109,15 @@ class AppViewModel @JvmOverloads constructor(
     var alertPresetsEnabled by mutableStateOf(false); private set
     var fleetPresetsEnabled by mutableStateOf(false); private set
     var backupExportSelection by mutableStateOf(BackupSelection()); private set
+    var backupSelectionSaving by mutableStateOf(false); private set
+    var backupSelectionError by mutableStateOf<String?>(null); private set
+    var backupFeedback by mutableStateOf(""); private set
+    var backupFeedbackSuccess by mutableStateOf<Boolean?>(null); private set
+    private val backupSelectionWrites = Mutex()
+    private var backupSelectionRevision = 0L
+    private var backupSelectionAwaitingEcho: BackupSelection? = null
     var lastBackupExportTime by mutableStateOf(0L); private set
+    private var latestBackupWrittenAt = 0L
     var isLanScanning by mutableStateOf(false)
     var sftpLargeBatchFileThreshold by mutableStateOf(50); private set
     var sftpLargeBatchBytesThreshold by mutableStateOf(1_000_000_000L); private set
@@ -1838,6 +1846,7 @@ class AppViewModel @JvmOverloads constructor(
     // Error from an initial connect that never produced a session (bad creds, host down, …). Unlike
     // [terminalDisconnectError] this isn't tied to a session, so it can surface on the connect prompt.
     var terminalConnectError by mutableStateOf<String?>(null)
+    private var terminalTmuxRetryName: String? = null
     var terminalConnectionFailure by mutableStateOf<SshConnectionFailure?>(null)
         private set
     private val _terminalConnectionState = MutableStateFlow<TerminalConnectionState>(TerminalConnectionState.Idle)
@@ -1878,33 +1887,29 @@ class AppViewModel @JvmOverloads constructor(
 
     private suspend fun markServerReachableAfterSsh(srv: ServerEntity) {
         if (srv.id <= 0) return
+        noteFreshSshEvidence(srv.id)
         // Serialize with that host's background probe. If the probe started first, this online write
-        // lands last; if it starts later, it sees the live session and cannot write offline.
+        // lands last. Only fresh SSH evidence received during a probe can override its failure.
         telemetryProbeMutexes.computeIfAbsent(srv.id) { Mutex() }.withLock {
             repository.updateAuthState(srv.id, "ok", null)
-            repository.updateConnectionState(
-                srv.id,
-                "online",
-                srv.healthScore.takeIf { it > 0 } ?: 100,
-                srv.lastLatency.coerceAtLeast(0),
-            )
+            repository.updateReachability(srv.id, "online", srv.lastLatency.coerceAtLeast(0))
             withContext(Dispatchers.Main) { probedServerIds[srv.id] = true }
         }
     }
 
-    private fun hasLiveSshSession(serverId: Int): Boolean =
-        activeSessions.any { it.serverId == serverId && it.isConnected && !it.userClosed }
+    // A stored open flag is not proof that a rebooted host is still reachable.
+    private val sshEvidenceRevision = java.util.concurrent.ConcurrentHashMap<Int, java.util.concurrent.atomic.AtomicLong>()
+    private fun sshRevision(serverId: Int): Long = sshEvidenceRevision[serverId]?.get() ?: 0L
+    private fun noteFreshSshEvidence(serverId: Int) {
+        sshEvidenceRevision.computeIfAbsent(serverId) { java.util.concurrent.atomic.AtomicLong() }.incrementAndGet()
+    }
 
-    private suspend fun markServerOfflineUnlessConnected(srv: ServerEntity) {
-        if (hasLiveSshSession(srv.id)) {
-            repository.updateConnectionState(
-                srv.id,
-                "online",
-                srv.healthScore.takeIf { it > 0 } ?: 100,
-                srv.lastLatency.coerceAtLeast(0),
-            )
+    private suspend fun markServerOfflineUnlessConnected(srv: ServerEntity, revisionAtStart: Long) {
+        if (sshRevision(srv.id) != revisionAtStart) {
+            repository.updateReachability(srv.id, "online", srv.lastLatency.coerceAtLeast(0))
         } else {
-            repository.updateConnectionState(srv.id, "offline", 0, 0)
+            invalidateCurrentHealth(srv.id, "The host could not be reached. Retry when it is available.")
+            repository.updateReachability(srv.id, "offline", 0)
         }
     }
 
@@ -2309,8 +2314,16 @@ class AppViewModel @JvmOverloads constructor(
                 alertsEnabled = list.find { it.key == "alerts_enabled" }?.value != "false"
                 alertPresetsEnabled = list.find { it.key == "alert_presets" }?.value == "true"
                 fleetPresetsEnabled = list.find { it.key == "fleet_presets" }?.value == "true"
-                backupExportSelection = decodeBackupSelection(list.find { it.key == "backup_export_selection" }?.value)
-                lastBackupExportTime = list.find { it.key == "backup_last_export_time" }?.value?.toLongOrNull() ?: 0L
+                val storedBackupSelection = decodeBackupSelection(list.find { it.key == "backup_export_selection" }?.value)
+                if (!backupSelectionSaving && backupSelectionError == null &&
+                    (backupSelectionAwaitingEcho == null || backupSelectionAwaitingEcho == storedBackupSelection)) {
+                    backupExportSelection = storedBackupSelection
+                    backupSelectionAwaitingEcho = null
+                }
+                lastBackupExportTime = maxOf(
+                    latestBackupWrittenAt,
+                    list.find { it.key == "backup_last_export_time" }?.value?.toLongOrNull() ?: 0L,
+                )
 
                 val hasPinLock = !pinVal.isNullOrBlank() && lockEnabled
                 savedPin = pinVal
@@ -2404,12 +2417,25 @@ class AppViewModel @JvmOverloads constructor(
      */
     fun healthBreakdown(server: ServerEntity): HealthBreakdown {
         val online = server.status == "online"
-        val m = hostMetricsById[server.id] ?: HostMetrics.EMPTY
+        val m = currentMetricsForServer(server.id)
+            ?: return HealthBreakdown(HEALTH_SCORE_UNKNOWN, offline = !online, factors = emptyList())
         return healthConfig.breakdown(
             cpu = m.cpuPercent, ram = m.memPercent, disk = m.diskPercent,
             rtt = server.lastLatency, online = online,
         )
     }
+
+    fun currentMetricsForServer(serverId: Int): HostMetrics? {
+        val timestamp = sparklineTimestampCache[serverId]?.lastOrNull() ?: return null
+        if (servers.value.firstOrNull { it.id == serverId }?.status != "online" ||
+            System.currentTimeMillis() - timestamp >= (telemetryIntervalMs * 3).coerceAtLeast(30_000)) return null
+        return hostMetricsById[serverId]
+    }
+
+    fun currentHealthScore(server: ServerEntity): Int =
+        if (currentMetricsForServer(server.id) == null) HEALTH_SCORE_UNKNOWN else server.healthScore
+
+    private val metricsExpiryJobs = mutableMapOf<Int, Job>()
 
     /** Persist and apply edited health-scoring thresholds/weights. */
     fun saveHealthConfig(config: HealthScoringConfig) {
@@ -2428,8 +2454,31 @@ class AppViewModel @JvmOverloads constructor(
 
     fun updateBackupExportSelection(selection: BackupSelection) {
         val closed = selection.withReferentialClosure()
+        val revision = ++backupSelectionRevision
         backupExportSelection = closed
-        viewModelScope.launch { repository.insertSetting("backup_export_selection", closed.encode()) }
+        backupSelectionAwaitingEcho = closed
+        backupSelectionSaving = true
+        backupSelectionError = null
+        viewModelScope.launch {
+            try {
+                backupSelectionWrites.withLock {
+                    repository.insertSetting("backup_export_selection", closed.encode())
+                }
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                if (revision == backupSelectionRevision) {
+                    backupSelectionError = "Your selection is active for this export, but could not be remembered. " +
+                        "Choose the sections again to retry saving it for next time."
+                }
+            } finally {
+                if (revision == backupSelectionRevision) backupSelectionSaving = false
+            }
+        }
+    }
+
+    fun reportBackupFeedback(message: String, success: Boolean? = null) {
+        backupFeedback = message
+        backupFeedbackSuccess = success
     }
 
     // Real telemetry: TCP reachability + SSH metrics for every reachable host, concurrently.
@@ -2500,11 +2549,12 @@ class AppViewModel @JvmOverloads constructor(
     private suspend fun probeServer(srv: ServerEntity) {
         telemetryProbeMutexes.computeIfAbsent(srv.id) { Mutex() }.withLock {
             var completed = false
+            val revisionAtStart = sshRevision(srv.id)
             try {
                 // Make the periodic retry visible: an offline host shows "connecting" while its
                 // direct and configured-SSH routes are checked instead of silently sitting Offline.
                 if (srv.status == "offline") {
-                    repository.updateConnectionState(srv.id, "connecting", 0, 0)
+                    repository.updateReachability(srv.id, "connecting", 0)
                 }
                 val directRtt = if (shouldProbeSshPortDirectly(srv.proxyType)) {
                     tcpReachable(srv.host, srv.port)
@@ -2525,16 +2575,17 @@ class AppViewModel @JvmOverloads constructor(
                         val sshRtt = (System.currentTimeMillis() - startedAt).toInt().coerceAtLeast(0)
                         if (osProbe.startsWith("SSH Error")) {
                             val failure = classifySshConnectionFailure(osProbe)
-                            val hasLiveSession = hasLiveSshSession(srv.id)
+                            val hasLiveSession = sshRevision(srv.id) != revisionAtStart
                             if (hasLiveSession) {
                                 // Do not replace a live terminal's successful authentication with
                                 // a second background connection's failure.
-                                markServerOfflineUnlessConnected(srv)
+                                markServerOfflineUnlessConnected(srv, revisionAtStart)
                             } else if (sshFailureShouldMarkHostOffline(failure, hasLiveSession)) {
-                                markServerOfflineUnlessConnected(srv)
+                                markServerOfflineUnlessConnected(srv, revisionAtStart)
                             } else {
                                 repository.updateAuthState(srv.id, "failed", failure.userMessage)
-                                repository.updateConnectionState(srv.id, "online", 100, sshRtt)
+                                invalidateCurrentHealth(srv.id, failure.userMessage)
+                                repository.updateReachability(srv.id, "online", sshRtt)
                             }
                         } else {
                             probeServerInner(srv, sshRtt, osProbe)
@@ -2553,16 +2604,11 @@ class AppViewModel @JvmOverloads constructor(
                 // rather than inventing an Offline we never observed, and deliberately leave the
                 // host unprobed so the next polling pass checks it again.
                 withContext(NonCancellable) {
-                    repository.updateConnectionState(
-                        srv.id,
-                        srv.status,
-                        srv.healthScore.coerceAtLeast(0),
-                        srv.lastLatency.coerceAtLeast(0),
-                    )
+                    repository.updateReachability(srv.id, srv.status, srv.lastLatency.coerceAtLeast(0))
                 }
                 throw e
             } catch (e: Exception) {
-                markServerOfflineUnlessConnected(srv)
+                markServerOfflineUnlessConnected(srv, revisionAtStart)
                 completed = true
             } finally {
                 // Only a probe that actually reached a verdict counts as probed; see the
@@ -2601,11 +2647,16 @@ class AppViewModel @JvmOverloads constructor(
                 } else {
                     repository.updateAuthState(srv.id, "failed", cleanSshError(raw))
                 }
-                val health = (100 - healthConfig.latency.penaltyFor(rtt.toFloat())).coerceIn(0, 100)
-                repository.updateConnectionState(srv.id, "online", health, rtt)
+                invalidateCurrentHealth(srv.id, cleanSshError(raw))
+                repository.updateReachability(srv.id, "online", rtt)
             } else {
                 repository.updateAuthState(srv.id, "ok", null)
                 val parsed = RemoteParsers.parseMetrics(raw, srv.name)
+                if (!RemoteParsers.hasReliableHealthMetrics(raw, parsed)) {
+                    invalidateCurrentHealth(srv.id, "The host did not return complete CPU, memory and disk readings. Retry metrics.")
+                    repository.updateReachability(srv.id, "online", rtt)
+                    return
+                }
                 // Per-core CPU% and per-interface network rates are derived from the delta between
                 // this poll and the previous one for this host.
                 val now = System.currentTimeMillis()
@@ -2664,6 +2715,17 @@ class AppViewModel @JvmOverloads constructor(
      * Records every successful host sample, not just the currently open Monitor host. This keeps
      * retained history complete and gives CPU/RAM charts the same real sampling timestamps.
      */
+    val metricsErrorsById = mutableStateMapOf<Int, String>()
+
+    private suspend fun invalidateCurrentHealth(serverId: Int, reason: String) {
+        withContext(Dispatchers.Main) {
+            hostMetricsById.remove(serverId)
+            metricsErrorsById[serverId] = reason
+            if (serverId == selectedServerId) hostMetrics = HostMetrics.EMPTY
+        }
+        repository.updateHealthScore(serverId, HEALTH_SCORE_UNKNOWN)
+    }
+
     private suspend fun recordTelemetrySample(
         srv: ServerEntity,
         metrics: HostMetrics,
@@ -2672,6 +2734,16 @@ class AppViewModel @JvmOverloads constructor(
         updateMonitor: Boolean,
     ) {
         withContext(Dispatchers.Main) {
+            metricsErrorsById.remove(srv.id)
+            metricsExpiryJobs.remove(srv.id)?.cancel()
+            metricsExpiryJobs[srv.id] = viewModelScope.launch {
+                delay((telemetryIntervalMs * 3).coerceAtLeast(30_000))
+                telemetryProbeMutexes.computeIfAbsent(srv.id) { Mutex() }.withLock {
+                    if (sparklineTimestampCache[srv.id]?.lastOrNull() == timestamp) {
+                        invalidateCurrentHealth(srv.id, "Metrics are stale. Refresh to obtain current health.")
+                    }
+                }
+            }
             hostMetricsById[srv.id] = metrics
             cpuSparklineCache[srv.id] =
                 (cpuSparklineCache[srv.id].orEmpty() + metrics.cpuPercent).takeLast(30)
@@ -2755,7 +2827,7 @@ class AppViewModel @JvmOverloads constructor(
     fun refreshServer(serverId: Int) {
         viewModelScope.launch(Dispatchers.IO) {
             withContext(Dispatchers.Main) { manualRefreshError = null }
-            repository.updateConnectionState(serverId, "connecting", 100, 0)
+            repository.updateReachability(serverId, "connecting", 0)
             val srv = repository.getAllServers().find { it.id == serverId }
             if (srv == null) {
                 withContext(Dispatchers.Main) { manualRefreshError = "Refresh failed: host was removed." }
@@ -2769,6 +2841,9 @@ class AppViewModel @JvmOverloads constructor(
                     "Refresh failed for ${srv.name}: the host did not respond on its configured SSH route."
                 refreshed.authStatus == "failed" ->
                     "Refresh failed for ${srv.name}: ${refreshed.authError ?: "SSH authentication failed."}"
+                refreshed.healthScore < 0 -> withContext(Dispatchers.Main) {
+                    "Refresh failed for ${srv.name}: ${metricsErrorsById[serverId] ?: "Current metrics could not be verified."}"
+                }
                 else -> null
             }
             withContext(Dispatchers.Main) { manualRefreshError = failure }
@@ -3199,7 +3274,7 @@ class AppViewModel @JvmOverloads constructor(
             try {
                 val list = repository.getAllServers()
                 for (s in list) {
-                    repository.updateConnectionState(s.id, "connecting", 100, 0)
+                    repository.updateReachability(s.id, "connecting", 0)
                 }
                 startTelemetryPolling() // Restart polling immediately
                 // Wait for this pull's probes to actually reach a verdict. The old code span a
@@ -4798,6 +4873,20 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    fun dismissTerminalConnectError() {
+        terminalConnectError = null
+        terminalTmuxRetryName = null
+        terminalConnectionFailure = null
+        _terminalConnectionState.value = TerminalConnectionState.Idle
+    }
+
+    fun retryTerminalConnectError() {
+        val tmuxName = terminalTmuxRetryName
+        if (tmuxName != null) resumePersistentSession(tmuxName)
+        else if (currentSessionId != null) attachSession(currentSessionId!!)
+        else connectTerminal()
+    }
+
     fun cancelConnect() {
         pendingMultiSshConnections.clear()
         terminalConnectGeneration++
@@ -5024,6 +5113,7 @@ class AppViewModel @JvmOverloads constructor(
         onFinished: ((Boolean) -> Unit)? = null,
     ) {
         if (isTerminalConnecting) return
+        terminalTmuxRetryName = null
         // Publish/refresh the launcher shortcut for this host; connecting is the usage signal
         // that keeps frequently used hosts ranked in the launcher's dynamic shortcut list.
         // Skipped for ad-hoc hosts (negative id, see quickConnect): they have no database row, so
@@ -5337,9 +5427,10 @@ class AppViewModel @JvmOverloads constructor(
         session: ShellSession,
         commands: List<ByteArray>,
         awaitLastReply: Boolean = false,
+        receipt: CompletableDeferred<TerminalWriteOutcome>? = null,
     ): Long? {
         synchronized(session.controlReplyLock) {
-            if (!enqueueTerminalWireBatch(session, commands)) return null
+            if (!enqueueTerminalWireBatch(session, commands, receipt)) return null
             session.controlCommandsEnqueued += commands.size
             val target = session.controlReplyBaseline + session.controlCommandsEnqueued
             if (awaitLastReply) session.controlAwaitedOrdinals.add(target)
@@ -5482,18 +5573,13 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     /** Reserve and enqueue one logical input atomically: never deliver a truncated paste prefix. */
-    private fun enqueueTerminalWireBatch(session: ShellSession, chunks: List<ByteArray>): Boolean {
+    private fun enqueueTerminalWireBatch(
+        session: ShellSession,
+        chunks: List<ByteArray>,
+        receipt: CompletableDeferred<TerminalWriteOutcome>? = null,
+    ): Boolean {
         val queue = session.terminalInputQueue ?: return false
-        synchronized(queue) {
-            val total = chunks.sumOf { it.size.toLong() }
-            if (total > Int.MAX_VALUE || queue.queuedBytes.toLong() + total > TERMINAL_INPUT_QUEUE_MAX_BYTES) return false
-            // Cleanup/reconnect closes this channel under the same monitor, so after the open check
-            // every send to the unlimited channel succeeds and the batch cannot be partially queued.
-            if (queue.closed) return false
-            queue.queuedBytes += total.toInt()
-            for (chunk in chunks) check(queue.channel.trySend(chunk).isSuccess)
-            return true
-        }
+        return queue.enqueueBatch(chunks, TERMINAL_INPUT_QUEUE_MAX_BYTES, receipt)
     }
 
     private fun warnTerminalInputOverflow(session: ShellSession, controlInit: Boolean = false) {
@@ -5584,13 +5670,20 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     fun resumePersistentSession(tmuxName: String) {
+        terminalTmuxRetryName = tmuxName
         val existingSession = activeSessions.find { it.tmuxName == tmuxName }
         if (existingSession != null) {
-            if (isMultiSsh) assignMultiSshPane(multiSshFocusedPane, existingSession.id)
-            else attachSession(existingSession.id)
+            if (isMultiSsh) {
+                assignMultiSshPane(multiSshFocusedPane, existingSession.id)
+                validateExistingTmuxSession(existingSession)
+            } else attachSession(existingSession.id)
             return
         }
-        val sessionEntity = restorablePersistentSessions.find { it.tmuxName == tmuxName } ?: return
+        val sessionEntity = restorablePersistentSessions.find { it.tmuxName == tmuxName }
+        if (sessionEntity == null) {
+            terminalConnectError = "This tmux recovery entry is no longer available. Select another session or connect to the host."
+            return
+        }
         val srv = servers.value.find { it.id == sessionEntity.serverId }
         if (srv == null) {
             terminalConnectError =
@@ -5609,14 +5702,19 @@ class AppViewModel @JvmOverloads constructor(
         _terminalConnectionState.value = TerminalConnectionState.Connecting(SshConnectionPhase.Connecting)
         val attemptGeneration = ++terminalConnectGeneration
 
+        val revisionAtStart = sshRevision(srv.id)
         terminalConnectJob = viewModelScope.launch {
             var openedSession: TerminalSession? = null
             var registeredSession: ShellSession? = null
             var setupComplete = false
             try {
                 val creds = buildCredentials(srv)
-                when (remoteTmuxSessionExists(creds, tmuxName)) {
+                val presenceReply = sshTransport.exec(creds, RemoteCommands.tmuxHasSessionCommand(tmuxName)).trim()
+                if (presenceReply.startsWith("SSH Error")) throw IllegalStateException(presenceReply)
+                when (parseRemoteTmuxSessionPresence(presenceReply)) {
                     false -> {
+                        invalidateCurrentHealth(srv.id, "The tmux session no longer exists. Waiting for current host metrics.")
+                        markServerReachableAfterSsh(srv)
                         forgetPersistentSession(tmuxName)
                         isTerminalConnecting = false
                         val failure = SshConnectionFailure.Dropped
@@ -5628,6 +5726,7 @@ class AppViewModel @JvmOverloads constructor(
                         return@launch
                     }
                     null -> {
+                        invalidateCurrentHealth(srv.id, "Could not verify the saved tmux session. Retry when the host is available.")
                         isTerminalConnecting = false
                         val failure = SshConnectionFailure.NetworkUnreachable
                         terminalConnectionFailure = failure
@@ -5706,6 +5805,10 @@ class AppViewModel @JvmOverloads constructor(
                 throw e
             } catch (e: Exception) {
                 if (attemptGeneration == terminalConnectGeneration) {
+                    invalidateCurrentHealth(srv.id, "Connection failed. Retry when the host is available.")
+                    if (sshFailureProvesEndpointUnreachable(classifySshConnectionFailure(e.message.orEmpty()))) {
+                        markServerOfflineUnlessConnected(srv, revisionAtStart)
+                    }
                     val msg = e.message ?: "Connection failed."
                     if (msg.contains("reject HostKey", ignoreCase = true) ||
                         msg.contains("HostKey has been changed", ignoreCase = true)) {
@@ -5748,7 +5851,7 @@ class AppViewModel @JvmOverloads constructor(
         val emulator = shellSession.emulator
 
         shellSession.terminalInputJob?.cancel()
-        shellSession.terminalInputQueue?.let { synchronized(it) { it.closed = true; it.channel.close() } }
+        shellSession.terminalInputQueue?.close()
 
         // Serialize keystrokes through a single bounded channel so writes never reorder and a large
         // paste cannot grow memory without backpressure. Recreated per (re)connect so it always
@@ -5771,29 +5874,33 @@ class AppViewModel @JvmOverloads constructor(
             shellSession.controlExitReason = null
         }
         shellSession.terminalInputJob = TerminalSessionManager.scope.launch(Dispatchers.IO) {
-            for (bytes in inputQueue.channel) {
-                synchronized(inputQueue) {
-                    inputQueue.queuedBytes = (inputQueue.queuedBytes - bytes.size).coerceAtLeast(0)
-                }
-                try {
-                    session.write(bytes)
-                } catch (error: Exception) {
-                    if (error is kotlinx.coroutines.CancellationException) throw error
-                    // Output EOF can lag a failed socket write. Stop accepting input immediately
-                    // and close the channel so the output owner takes the normal visible reconnect
-                    // path instead of silently dropping every subsequent key.
-                    withContext(Dispatchers.Main) {
-                        if (shellSession.session !== session || shellSession.userClosed) return@withContext
-                        shellSession.disconnectError =
-                            "Could not send terminal input: ${error.message ?: "connection lost"}"
-                        shellSession.isConnected = false
-                        TerminalSessionManager.updateKeepaliveCount()
+            try {
+                for (bytes in inputQueue.channel) {
+                    if (!inputQueue.beginWrite(bytes)) break
+                    try {
+                        session.write(bytes)
+                        inputQueue.finishWrite(bytes, TerminalWriteOutcome.ACCEPTED)
+                    } catch (error: Exception) {
+                        inputQueue.finishWrite(bytes, TerminalWriteOutcome.UNCERTAIN)
+                        if (error is kotlinx.coroutines.CancellationException) throw error
+                        // Output EOF can lag a failed socket write. Stop accepting input immediately
+                        // and close the channel so the output owner takes the normal visible reconnect
+                        // path instead of silently dropping every subsequent key.
+                        withContext(Dispatchers.Main) {
+                            if (shellSession.session !== session || shellSession.userClosed) return@withContext
+                            shellSession.disconnectError =
+                                "Could not send terminal input: ${error.message ?: "connection lost"}"
+                            shellSession.isConnected = false
+                            TerminalSessionManager.updateKeepaliveCount()
+                        }
+                        // This worker belongs to one transport generation. A cancelled/late write
+                        // from the previous channel must never close its successful replacement.
+                        runCatching { session.close() }
+                        break
                     }
-                    // This worker belongs to one transport generation. A cancelled/late write
-                    // from the previous channel must never close its successful replacement.
-                    runCatching { session.close() }
-                    break
                 }
+            } finally {
+                inputQueue.workerFinished()
             }
         }
 
@@ -5808,6 +5915,7 @@ class AppViewModel @JvmOverloads constructor(
                 // channel, so a reconnect never resumes half a protocol line.
                 val controlParser = if (shellSession.controlMode) TmuxControlParser() else null
                 session.output.collect { bytes ->
+                    if (bytes.isNotEmpty()) noteFreshSshEvidence(shellSession.serverId)
                     if (controlParser != null) {
                         var fed = false
                         for (event in controlParser.feed(bytes)) when (event) {
@@ -5933,7 +6041,9 @@ class AppViewModel @JvmOverloads constructor(
             withContext(Dispatchers.Main) {
                 shellSession.isConnected = false
                 TerminalSessionManager.updateKeepaliveCount()
+                if (shellSession.tmuxSessionMissing) return@withContext
                 if (shouldReconnect) {
+                    invalidateCurrentHealth(shellSession.serverId, "Connection lost. Waiting for current metrics.")
                     rememberRestorablePersistentSession(shellSession)
                     reconnectSession(shellSession)
                 } else if (shouldTearDown) {
@@ -5962,14 +6072,16 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     private suspend fun rememberRestorablePersistentSessions(sessions: List<ShellSession>) {
-        val persistent = sessions.filter { it.persistent }
+        val persistent = sessions.filter { it.persistent && !it.tmuxSessionMissing }
         if (persistent.isEmpty()) return
         persistentSessionMutationMutex.withLock {
+            val eligible = persistent.filter { !it.tmuxSessionMissing }
+            if (eligible.isEmpty()) return@withLock
             // Commit every pane together. A failed later write must not partially update recovery
             // state, and no session is closed until this transaction has actually committed.
             val saved = repository.inTransaction {
                 val known = repository.getPersistentSessions().associateBy { it.tmuxName }
-                persistent.forEach { shellSession ->
+                eligible.forEach { shellSession ->
                     repository.upsertPersistentSession(PersistentSessionEntity(
                         shellSession.tmuxName,
                         shellSession.serverId,
@@ -6011,6 +6123,7 @@ class AppViewModel @JvmOverloads constructor(
      * up after [RECONNECT_MAX_ATTEMPTS], leaving a "Connection lost." session the user can retry.
      */
     private fun reconnectSession(shellSession: ShellSession) {
+        if (shellSession.tmuxSessionMissing) return
         if (shellSession.reconnectJob?.isActive == true) return
         val creds = shellSession.creds ?: return
         shellSession.reconnecting = true
@@ -6475,6 +6588,74 @@ class AppViewModel @JvmOverloads constructor(
         sendBytes(bracketedPastePayload(normalized, bracketed).toByteArray())
     }
 
+    internal fun captureTerminalPasteTarget(session: ShellSession): TerminalPasteTarget = TerminalPasteTarget(session)
+
+    internal fun cancelTerminalPaste(target: TerminalPasteTarget) {
+        if (target.shell.pasteFeedback?.busy != true) {
+            target.shell.pasteFeedback = TerminalPasteFeedback("Paste cancelled. Nothing was sent.")
+        }
+    }
+
+    /** Explicit/confirmed paste uses one captured target and awaits the ordered writer receipt. */
+    internal fun pasteText(text: String, target: TerminalPasteTarget) {
+        val owner = target.shell
+        if (owner.pasteFeedback?.busy == true) {
+            owner.pasteFeedback = TerminalPasteFeedback("A paste is still being sent. Wait for it to finish.", busy = true)
+            return
+        }
+        fun reject(message: String) { owner.pasteFeedback = TerminalPasteFeedback(message) }
+        if (text.isEmpty()) { reject("Clipboard has no text to paste."); return }
+        target.rejection(focusedTerminalSession, terminalReadOnly)?.let { reject(it); return }
+        val normalized = text.replace("\r\n", "\n").replace('\n', '\r')
+        val bracketed = synchronized(owner.emulator) { owner.emulator.bracketedPasteMode }
+        val bytes = bracketedPastePayload(normalized, bracketed).toByteArray()
+        if (bytes.size > TERMINAL_INPUT_QUEUE_MAX_BYTES) {
+            reject("Paste is too large for the input queue. Paste a smaller section and try again.")
+            return
+        }
+        val chunks = if (target.controlMode) {
+            TmuxControlCommands.sendKeysHex(requireNotNull(target.paneId), bytes).map { (it + "\n").toByteArray() }
+        } else {
+            buildList {
+                var offset = 0
+                while (offset < bytes.size) {
+                    val end = (offset + TERMINAL_INPUT_CHUNK_BYTES).coerceAtMost(bytes.size)
+                    add(bytes.copyOfRange(offset, end))
+                    offset = end
+                }
+            }
+        }
+        // tmux hexadecimal commands consume more queue space than their decoded text.
+        // An intrinsically oversized batch cannot recover by waiting for the writer.
+        if (chunks.sumOf { it.size.toLong() } > TERMINAL_INPUT_QUEUE_MAX_BYTES) {
+            reject("Paste is too large for the input queue. Paste a smaller section and try again.")
+            return
+        }
+        // Rendering/encoding must not turn a saved decision into input for a replacement pane.
+        target.rejection(focusedTerminalSession, terminalReadOnly)?.let { reject(it); return }
+        val receipt = CompletableDeferred<TerminalWriteOutcome>()
+        val accepted = if (target.controlMode) {
+            enqueueControlCommandBatch(owner, chunks, receipt = receipt) != null
+        } else enqueueTerminalWireBatch(owner, chunks, receipt)
+        if (!accepted) {
+            reject("Paste could not be queued. Wait for the connection to catch up, then try again.")
+            return
+        }
+        owner.pasteFeedback = TerminalPasteFeedback("Sending text to ${owner.serverName}…", busy = true)
+        // The session manager outlives Activity/ViewModel destruction. Cleanup resolves the
+        // receipt; completion never re-resolves focus or writes to a new connection.
+        TerminalSessionManager.scope.launch(Dispatchers.Main.immediate) {
+            owner.pasteFeedback = when (receipt.await()) {
+                TerminalWriteOutcome.ACCEPTED -> TerminalPasteFeedback(
+                    "Sent ${text.codePointCount(0, text.length)} characters to terminal.",
+                )
+                TerminalWriteOutcome.UNCERTAIN -> TerminalPasteFeedback(
+                    "Paste was interrupted. Some text may have been sent; check the terminal before retrying.",
+                )
+            }
+        }
+    }
+
     /**
      * Apply an editor-style line edit from the swipe input field: [backspaces] DEL bytes (0x7F) to
      * erase the changed tail, then the [insert] text. Sent as one ordered write and deliberately does
@@ -6649,6 +6830,85 @@ class AppViewModel @JvmOverloads constructor(
     }
 
     fun attachSession(sessionId: String) {
+        val target = activeSessions.find { it.id == sessionId }
+        if (target?.persistent == true) {
+            showSession(sessionId)
+            validateExistingTmuxSession(target)
+        } else showSession(sessionId)
+    }
+
+    private fun validateExistingTmuxSession(session: ShellSession) {
+        if (isTerminalConnecting) return
+        terminalTmuxRetryName = session.tmuxName
+        val srv = servers.value.firstOrNull { it.id == session.serverId }
+        if (srv == null) {
+            terminalConnectError = "The saved host is unavailable. The tmux recovery entry was kept."
+            return
+        }
+        val revisionAtStart = sshRevision(srv.id)
+        isTerminalConnecting = true
+        terminalConnectionPhase = "Checking tmux session…"
+        terminalConnectError = null
+        val generation = ++terminalConnectGeneration
+        _terminalConnectionState.value = TerminalConnectionState.Connecting(SshConnectionPhase.Connecting)
+        terminalConnectJob = viewModelScope.launch {
+            try {
+                val raw = sshTransport.exec(buildCredentials(srv), RemoteCommands.tmuxHasSessionCommand(session.tmuxName))
+                ensureActive()
+                if (generation != terminalConnectGeneration) return@launch
+                when (parseRemoteTmuxSessionPresence(raw)) {
+                    null -> throw IllegalStateException(raw.takeIf { it.isNotBlank() } ?: "Could not verify tmux on the host.")
+                    false -> {
+                        session.tmuxSessionMissing = true
+                        forgetPersistentSession(session.tmuxName)
+                        invalidateCurrentHealth(srv.id, "The tmux session no longer exists. Waiting for current host metrics.")
+                        markServerReachableAfterSsh(srv)
+                        session.isConnected = false
+                        session.disconnectError = "tmux confirmed that this session no longer exists. No replacement was created."
+                        session.reconnectJob?.cancel()
+                        session.session.close()
+                        terminalConnectError = session.disconnectError
+                    }
+                    true -> {
+                        session.tmuxSessionMissing = false
+                        markServerReachableAfterSsh(srv)
+                        if (!session.isConnected || session.session.closed.value) {
+                            session.isConnected = false
+                            reconnectSession(session)
+                        }
+                        _terminalConnectionState.value = TerminalConnectionState.Connected(session.id)
+                    }
+                }
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                if (generation == terminalConnectGeneration) {
+                    val failure = classifySshConnectionFailure(error.message.orEmpty())
+                    terminalConnectionFailure = failure
+                    terminalConnectError = failure.userMessage + " The tmux recovery entry was kept; retry when the host is available."
+                    _terminalConnectionState.value = TerminalConnectionState.Failed(failure)
+                    invalidateCurrentHealth(srv.id, terminalConnectError!!)
+                    if (sshFailureProvesEndpointUnreachable(failure)) {
+                        markServerOfflineUnlessConnected(srv, revisionAtStart)
+                        if (sshRevision(srv.id) == revisionAtStart) {
+                            session.isConnected = false
+                            session.disconnectError = failure.userMessage
+                            session.session.close()
+                            reconnectSession(session)
+                        }
+                    }
+                }
+            } finally {
+                if (generation == terminalConnectGeneration) {
+                    isTerminalConnecting = false
+                    terminalConnectJob = null
+                    terminalConnectionPhase = "Connecting…"
+                }
+            }
+        }
+    }
+
+    private fun showSession(sessionId: String) {
         // A notification can resume a terminal while a leave-terminal dialog is visible. That
         // external navigation supersedes the pending target; never leave a stale dialog over Shell.
         cancelTerminalNavigation()
@@ -6865,7 +7125,12 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
-    fun dockerAction(containerId: String, action: String, runtime: String = "") {
+    fun dockerAction(containerId: String, action: String, runtime: String = "", expectedServerId: Int? = null) {
+        if ((expectedServerId != null && selectedServer?.id != expectedServerId) ||
+            dockerContainers.none { it.id == containerId && it.runtime == runtime }) {
+            showActionMessage("container $action", "Action skipped: the host or container changed. Refresh and retry.")
+            return
+        }
         runStreamingAction("container $action", RemoteCommands.dockerAction(containerId, action, runtime)) { loadDocker() }
     }
 
@@ -6896,6 +7161,10 @@ class AppViewModel @JvmOverloads constructor(
     /** Stream a container's recent logs into the shared action panel. */
     fun dockerContainerLogs(containerId: String, name: String, runtime: String = "") {
         runStreamingAction("logs · $name", RemoteCommands.dockerLogs(containerId, runtime))
+    }
+
+    fun dockerContainerFollowLogs(containerId: String, name: String, runtime: String = "") {
+        runStreamingAction("follow logs · $name", RemoteCommands.dockerFollowLogs(containerId, runtime))
     }
 
     /** Show a one-shot resource-usage sample (CPU/mem/net/IO) for a container in the action panel. */
@@ -7170,7 +7439,36 @@ class AppViewModel @JvmOverloads constructor(
         }
     }
 
+    fun dockerStackServiceAction(project: String, workingDir: String, configFiles: String, service: String, action: String, replicas: Int? = null, runtime: String = "", expectedServerId: Int?) {
+        if (expectedServerId != null && selectedServer?.id != expectedServerId) {
+            showActionMessage("$project/$service", "Action skipped: the selected host changed. Refresh and retry.")
+            return
+        }
+        dockerStackServiceAction(project, workingDir, configFiles, service, action, replicas, runtime)
+    }
+
     fun dockerStackServiceAction(project: String, workingDir: String, configFiles: String, service: String, action: String, replicas: Int? = null, runtime: String = "") {
+        val containerVerb = when (action) {
+            "serviceRestart" -> "restart"
+            "serviceStop" -> "stop"
+            "serviceRemove" -> "remove"
+            else -> null
+        }
+        if (containerVerb != null) {
+            val ids = dockerContainers.filter {
+                it.runtime == runtime && it.group == project &&
+                    it.composeService.ifBlank { it.name.substringBefore('_') } == service
+            }.map { it.id }.filter(String::isNotBlank)
+            if (ids.isEmpty()) {
+                showActionMessage("$project/$service", "Action skipped: no current containers for this service. Refresh and retry.")
+                return
+            }
+            runStreamingAction(
+                "$project/$service · $containerVerb containers",
+                RemoteCommands.dockerContainersAction(ids, containerVerb, runtime),
+            ) { loadDocker() }
+            return
+        }
         if (project == "standalone" || workingDir.isBlank() || service.isBlank()) {
             showActionMessage("$project · $service", "This service does not expose enough compose metadata for service-level actions.")
             return
@@ -7264,8 +7562,14 @@ class AppViewModel @JvmOverloads constructor(
         hostMetricsJob = viewModelScope.launch {
             metricsLoading = true
             try {
-                val parsed = RemoteParsers.parseMetrics(executeSshCommand(srv, RemoteCommands.metricsFor(osByServer[srv.id].orEmpty())), srv.name)
+                telemetryProbeMutexes.computeIfAbsent(srv.id) { Mutex() }.withLock {
+                val raw = executeSshCommand(srv, RemoteCommands.metricsFor(osByServer[srv.id].orEmpty()))
+                val parsed = RemoteParsers.parseMetrics(raw, srv.name)
                 if (srv.id != selectedServerId) return@launch
+                if (!RemoteParsers.hasReliableHealthMetrics(raw, parsed)) {
+                    invalidateCurrentHealth(srv.id, if (raw.startsWith("SSH Error")) cleanSshError(raw) else "Metrics are incomplete. Retry metrics.")
+                    return@launch
+                }
                 // This one-shot fetch can't compute per-core/network rates (those need two samples
                 // from the poller), so preserve whatever the poller already derived for this host.
                 val prev = hostMetricsById[srv.id]
@@ -7279,6 +7583,8 @@ class AppViewModel @JvmOverloads constructor(
                     latency = srv.lastLatency,
                     updateMonitor = true,
                 )
+                repository.updateHealthScore(srv.id, healthFromMetrics(m.cpuPercent, m.memPercent, m.diskPercent, srv.lastLatency))
+                }
             } finally {
                 if (hostMetricsJob == coroutineContext[Job]) metricsLoading = false
             }
@@ -11975,6 +12281,7 @@ class AppViewModel @JvmOverloads constructor(
                 destination = "backup",
             )
             var operationSucceeded = false
+            var outcome = false to "Export failed."
             try {
                 val srvs = repository.getAllServers()
                 val keys = repository.getAllKeys()
@@ -12023,17 +12330,31 @@ class AppViewModel @JvmOverloads constructor(
                     }
                 }
                 val mode = if (encrypted) "Encrypted" else "Plain"
+                var timestampWarning = ""
                 if (ok) {
                     val now = System.currentTimeMillis()
+                    latestBackupWrittenAt = now
                     lastBackupExportTime = now
-                    repository.insertSetting("backup_last_export_time", now.toString())
+                    try {
+                        repository.insertSetting("backup_last_export_time", now.toString())
+                    } catch (e: Exception) {
+                        if (e is CancellationException) throw e
+                        timestampWarning = " The backup file is saved, but its time could not be recorded. " +
+                            "This screen may show the previous export time next time."
+                    }
                 }
                 operationSucceeded = ok
-                onResult(ok, if (ok) "$mode backup written: ${if (closedSelection.servers) srvs.size else 0} servers, ${if (closedSelection.sshKeys) keys.size else 0} keys, ${if (closedSelection.credentialProfiles) profiles.size else 0} profiles, ${if (closedSelection.scripts) scriptsForCount.size else 0} scripts, ${if (closedSelection.alertRules) rulesForCount else 0} rules, ${if (closedSelection.alertHistory) historyForCount else 0} alert history, ${if (closedSelection.wolTargets) wolTargets.size else 0} WoL, ${if (closedSelection.networkShares) networkShares.size else 0} shares, ${if (closedSelection.portForwards) portForwardsForCount else 0} tunnels, ${if (closedSelection.settings) settings.size else 0} settings." else "Export failed.")
+                outcome = ok to if (ok) "$mode backup written: ${if (closedSelection.servers) srvs.size else 0} servers, ${if (closedSelection.sshKeys) keys.size else 0} keys, ${if (closedSelection.credentialProfiles) profiles.size else 0} profiles, ${if (closedSelection.scripts) scriptsForCount.size else 0} scripts, ${if (closedSelection.alertRules) rulesForCount else 0} rules, ${if (closedSelection.alertHistory) historyForCount else 0} alert history, ${if (closedSelection.wolTargets) wolTargets.size else 0} WoL, ${if (closedSelection.networkShares) networkShares.size else 0} shares, ${if (closedSelection.portForwards) portForwardsForCount else 0} tunnels, ${if (closedSelection.settings) settings.size else 0} settings.$timestampWarning" else "Export failed."
+            } catch (e: Exception) {
+                if (e is CancellationException) throw e
+                outcome = false to "Could not export backup: ${e.message ?: "The saved configuration could not be read."}"
             } finally {
                 backupExportRunning = false
                 LongOperationNotifications.finish(getApplication(), operationId, operationSucceeded)
             }
+            // Completion callbacks run once, after cleanup; a caller's exception is not a second
+            // export failure and must never turn a file already written into a failed result.
+            onResult(outcome.first, outcome.second)
         }
     }
 

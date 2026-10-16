@@ -34,6 +34,9 @@ class AppRepository(private val db: AppDatabase) {
     suspend fun updateConnectionState(id: Int, status: String, health: Int, latency: Int) =
         db.serverDao().updateConnectionState(id, status, health, latency)
     suspend fun resetAllConnectionStates() = db.serverDao().resetAllConnectionStates()
+    suspend fun updateReachability(id: Int, status: String, latency: Int) =
+        db.serverDao().updateReachability(id, status, latency)
+    suspend fun updateHealthScore(id: Int, health: Int) = db.serverDao().updateHealthScore(id, health)
     suspend fun updateAuthState(id: Int, authStatus: String, authError: String?) =
         db.serverDao().updateAuthState(id, authStatus, authError)
     suspend fun deleteServer(server: ServerEntity) = db.serverDao().deleteServer(server)

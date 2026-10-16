@@ -78,7 +78,7 @@ data class ServerEntity(
     val proxyKeyAlias: String? = null,
     // Forward the SSH auth agent to this host (ssh -A) so onward hops can use our key.
     val agentForwarding: Boolean = false,
-    val healthScore: Int = 100,
+    val healthScore: Int = HEALTH_SCORE_UNKNOWN,
     val lastLatency: Int = 0,
     val status: String = "offline", // "online", "offline", "connecting"
     // Auth state is tracked separately from TCP reachability: a host can be "online"

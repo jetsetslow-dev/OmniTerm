@@ -1,7 +1,11 @@
 package com.jetsetslow.omniterm
 
 import android.app.Application
+import android.os.Looper
+import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.viewModelScope
 import androidx.test.core.app.ApplicationProvider
+import com.jetsetslow.omniterm.data.AppDatabase
 import com.jetsetslow.omniterm.data.ssh.TerminalSession
 import com.jetsetslow.omniterm.data.term.TerminalEmulator
 import com.jetsetslow.omniterm.ui.AppViewModel
@@ -11,9 +15,12 @@ import com.jetsetslow.omniterm.ui.TerminalSessionManager
 import com.jetsetslow.omniterm.ui.normalizeBackupDocument
 import java.io.File
 import org.json.JSONObject
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -24,6 +31,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -31,6 +39,7 @@ import org.robolectric.annotation.Config
 class TerminalNavigationRobolectricTest {
 
     private lateinit var viewModel: AppViewModel
+    private val viewModelStore = ViewModelStore()
 
     @Before
     fun setUp() {
@@ -40,14 +49,33 @@ class TerminalNavigationRobolectricTest {
                 System.getProperty("os.arch").equals("aarch64", ignoreCase = true),
         )
         TerminalSessionManager.clearAll()
-        viewModel = AppViewModel(ApplicationProvider.getApplicationContext<Application>())
+        val application = ApplicationProvider.getApplicationContext<Application>()
+        // Navigation assertions require an empty host fixture, not the initial empty StateFlow
+        // value before Room publishes hosts left by another test.
+        runBlocking(Dispatchers.IO) {
+            AppDatabase.getDatabase(application).clearAllTables()
+        }
+        viewModel = AppViewModel(application)
+        viewModelStore.put("navigation", viewModel)
         viewModel.navigateTo(Screen.Shell)
     }
 
     @After
     fun tearDown() {
-        if (::viewModel.isInitialized) viewModel.cancelTerminalNavigation()
+        if (::viewModel.isInitialized) {
+            viewModel.cancelTerminalNavigation()
+            val modelJob = checkNotNull(viewModel.viewModelScope.coroutineContext[Job])
+            viewModelStore.clear()
+            // Clearing cancels the scope; drain Main while its real IO continuations finish.
+            val deadline = System.nanoTime() + java.util.concurrent.TimeUnit.SECONDS.toNanos(5)
+            while (!modelJob.isCompleted && System.nanoTime() < deadline) {
+                shadowOf(Looper.getMainLooper()).idle()
+                Thread.sleep(10)
+            }
+            assertTrue("Navigation ViewModel cleanup did not finish", modelJob.isCompleted)
+        }
         TerminalSessionManager.clearAll()
+        shadowOf(Looper.getMainLooper()).idle()
     }
 
     @Test

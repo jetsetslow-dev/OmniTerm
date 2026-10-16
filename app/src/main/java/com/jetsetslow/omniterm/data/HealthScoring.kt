@@ -2,6 +2,9 @@ package com.jetsetslow.omniterm.data
 
 import kotlin.math.roundToInt
 
+/** No current verified metrics. This is not a measured score of zero. */
+const val HEALTH_SCORE_UNKNOWN = -1
+
 /**
  * One metric's three escalating (threshold, penalty) tiers used to score host health. A reading
  * at or above a tier's threshold subtracts that tier's penalty (the highest matching tier wins).
@@ -41,7 +44,7 @@ data class HealthBreakdown(
     val offline: Boolean,
     val factors: List<HealthFactor>,
 ) {
-    val healthy: Boolean get() = !offline && factors.isEmpty()
+    val healthy: Boolean get() = score >= 0 && !offline && factors.isEmpty()
 }
 
 /**
