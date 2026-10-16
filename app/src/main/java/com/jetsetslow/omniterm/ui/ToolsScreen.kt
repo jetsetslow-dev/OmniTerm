@@ -2657,14 +2657,23 @@ fun AuthKeysToolView(viewModel: AppViewModel) {
 
 // 7.7 BACKUPS SCHEDULERS PANEL
 @Composable
+private fun BackupSelectionFeedback(viewModel: AppViewModel) {
+    if (viewModel.backupSelectionSaving) {
+        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        Text("Remembering backup selection…", fontSize = 11.sp)
+    }
+    viewModel.backupSelectionError?.let {
+        Text(it, color = OmniColors.red, fontSize = 11.sp)
+    }
+}
+
+@Composable
 fun BackupToolView(viewModel: AppViewModel) {
     val importScope = rememberCoroutineScope()
     var importReading by remember { mutableStateOf(false) }
     var importInspecting by remember { mutableStateOf(false) }
     val confirm = rememberConfirm()
     ConfirmHost(confirm)
-    var exportFeedback by remember { mutableStateOf("") }
-    var exportFeedbackOk by remember { mutableStateOf(true) }
     var showImportPasswordDialog by remember { mutableStateOf(false) }
     var showExportPasswordDialog by remember { mutableStateOf(false) }
     var showExportSelectionDialog by remember { mutableStateOf(false) }
@@ -2682,6 +2691,26 @@ fun BackupToolView(viewModel: AppViewModel) {
     val exportSelection = viewModel.backupExportSelection
     fun setExportSelection(selection: BackupSelection) {
         viewModel.updateBackupExportSelection(selection)
+    }
+
+    fun cancelExport() {
+        showExportSelectionDialog = false
+        showExportPasswordDialog = false
+        exportPassword = ""
+        pendingExportPassword = ""
+        pendingExportSelection = BackupSelection()
+        viewModel.reportBackupFeedback("Backup cancelled. Nothing was written.")
+    }
+    fun cancelRestore() {
+        showImportPasswordDialog = false
+        showRestoreSelectionDialog = false
+        pendingImportContent = ""
+        importPassword = ""
+        pendingRestorePassword = ""
+        restoreContents = null
+        restoreHosts = emptyList()
+        selectedRestoreHostIds = emptySet()
+        viewModel.reportBackupFeedback("Restore cancelled. Nothing was changed.")
     }
 
     ToolScaffold(viewModel, "App backup") {
@@ -2711,7 +2740,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                     ) { uri ->
                         if (uri != null && !importReading && !importInspecting) {
                             importReading = true
-                            exportFeedback = ""
+                            viewModel.reportBackupFeedback("")
                             importScope.launch {
                                 try {
                                     val (content, needsPassword) = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -2736,26 +2765,25 @@ fun BackupToolView(viewModel: AppViewModel) {
                                                         selectedRestoreHostIds = hosts.map { it.oldId }.toSet()
                                                         showRestoreSelectionDialog = true
                                                     } else {
-                                                        exportFeedbackOk = false
-                                                        exportFeedback = hostsMsg
+                                                        viewModel.reportBackupFeedback(hostsMsg, false)
                                                     }
                                                 }
                                             } else {
                                                 importInspecting = false
-                                                exportFeedbackOk = false
-                                                exportFeedback = msg
+                                                viewModel.reportBackupFeedback(msg, false)
                                             }
                                         }
                                     }
                                 } catch(e: Exception) {
                                     if (e is kotlinx.coroutines.CancellationException) throw e
                                     pendingImportContent = ""
-                                    exportFeedbackOk = false
-                                    exportFeedback = e.message ?: "Error reading backup file."
+                                    viewModel.reportBackupFeedback(e.message ?: "Error reading backup file.", false)
                                 } finally {
                                     importReading = false
                                 }
                             }
+                        } else if (uri == null) {
+                            cancelRestore()
                         }
                     }
 
@@ -2764,11 +2792,12 @@ fun BackupToolView(viewModel: AppViewModel) {
                     ) { uri ->
                         if (uri != null) {
                             viewModel.exportBackup(uri, pendingExportPassword, context, pendingExportSelection) { ok, msg ->
-                                exportFeedbackOk = ok
-                                exportFeedback = msg
+                                viewModel.reportBackupFeedback(msg, ok)
                                 pendingExportPassword = ""
                                 pendingExportSelection = BackupSelection()
                             }
+                        } else {
+                            cancelExport()
                         }
                     }
 
@@ -2778,6 +2807,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                     )
                     Spacer(modifier = Modifier.height(12.dp))
 
+                    BackupSelectionFeedback(viewModel)
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             onClick = {
@@ -2823,19 +2853,29 @@ fun BackupToolView(viewModel: AppViewModel) {
                         }
                     }
 
-                    if (exportFeedback.isNotEmpty()) {
-                        Text(exportFeedback, color = if (exportFeedbackOk) Color(0xFF10B981) else Color.Red, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+                    if (viewModel.backupFeedback.isNotEmpty()) {
+                        Text(
+                            viewModel.backupFeedback,
+                            color = when (viewModel.backupFeedbackSuccess) {
+                                true -> OmniColors.green
+                                false -> OmniColors.red
+                                null -> OmniColors.amber
+                            },
+                            fontSize = 12.sp,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
                     }
 
                     if (showExportSelectionDialog) {
                         AlertDialog(
-                            onDismissRequest = { showExportSelectionDialog = false },
+                            onDismissRequest = { cancelExport() },
                             title = { Text(stringResource(R.string.backup_sections)) },
                             text = {
                                 Column(
                                     modifier = Modifier.heightIn(max = 420.dp).verticalScrollWithIndicators(rememberScrollState()),
                                     verticalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
+                                    BackupSelectionFeedback(viewModel)
                                     BackupSelectionList(
                                         title = "Choose what to include",
                                         selection = pendingExportSelection,
@@ -2863,17 +2903,26 @@ fun BackupToolView(viewModel: AppViewModel) {
                                             launcher.launch("omniterm_backup_${System.currentTimeMillis() / 1000}.json")
                                         }
                                     }
-                                ) { Text(stringResource(R.string.continue_label)) }
+                                ) {
+                                    if (viewModel.backupSelectionSaving) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(14.dp),
+                                            strokeWidth = 2.dp,
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                    }
+                                    Text(stringResource(R.string.continue_label))
+                                }
                             },
                             dismissButton = {
-                                TextButton(onClick = { showExportSelectionDialog = false }) { Text(stringResource(R.string.cancel)) }
+                                TextButton(onClick = { cancelExport() }) { Text(stringResource(R.string.cancel)) }
                             },
                         )
                     }
 
                     if (showExportPasswordDialog) {
                         AlertDialog(
-                            onDismissRequest = { showExportPasswordDialog = false; exportPassword = "" },
+                            onDismissRequest = { cancelExport() },
                             title = { Text(stringResource(R.string.encrypt_backup)) },
                             text = {
                                 Column {
@@ -2898,7 +2947,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                                 ) { Text(stringResource(R.string.choose_location)) }
                             },
                             dismissButton = {
-                                TextButton(onClick = { showExportPasswordDialog = false; exportPassword = "" }) { Text(stringResource(R.string.cancel)) }
+                                TextButton(onClick = { cancelExport() }) { Text(stringResource(R.string.cancel)) }
                             }
                         )
                     }
@@ -2912,7 +2961,7 @@ fun BackupToolView(viewModel: AppViewModel) {
             }
             if (showImportPasswordDialog) {
                 AlertDialog(
-                    onDismissRequest = { showImportPasswordDialog = false; pendingImportContent = ""; importPassword = ""; pendingRestorePassword = "" },
+                    onDismissRequest = { cancelRestore() },
                     title = { Text(stringResource(R.string.encrypted_backup)) },
                     text = {
                         Column {
@@ -2948,16 +2997,14 @@ fun BackupToolView(viewModel: AppViewModel) {
                                             } else {
                                                 pendingImportContent = ""
                                                 pendingRestorePassword = ""
-                                                exportFeedbackOk = false
-                                                exportFeedback = hostsMsg
+                                                viewModel.reportBackupFeedback(hostsMsg, false)
                                             }
                                         }
                                     } else {
                                         importInspecting = false
                                         pendingImportContent = ""
                                         pendingRestorePassword = ""
-                                        exportFeedbackOk = false
-                                        exportFeedback = msg
+                                        viewModel.reportBackupFeedback(msg, false)
                                     }
                                 }
                             }
@@ -2966,7 +3013,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                         }
                     },
                     dismissButton = {
-                        TextButton(onClick = { showImportPasswordDialog = false; pendingImportContent = ""; importPassword = ""; pendingRestorePassword = "" }) {
+                        TextButton(onClick = { cancelRestore() }) {
                             Text(stringResource(R.string.cancel))
                         }
                     }
@@ -2976,12 +3023,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                 val contents = restoreContents
                 AlertDialog(
                     onDismissRequest = {
-                        showRestoreSelectionDialog = false
-                        pendingImportContent = ""
-                        pendingRestorePassword = ""
-                        restoreContents = null
-                        restoreHosts = emptyList()
-                        selectedRestoreHostIds = emptySet()
+                        cancelRestore()
                     },
                     title = { Text(stringResource(R.string.restore_backup)) },
                     text = {
@@ -3026,10 +3068,10 @@ fun BackupToolView(viewModel: AppViewModel) {
                                     "Restore selected data?",
                                     "Restoring selected sections will add matching backup contents into OmniTerm. This cannot be undone.",
                                     confirmLabel = "Restore",
+                                    onCancel = { cancelRestore() },
                                 ) {
                                     viewModel.restoreEncryptedBackup(content, pwd, selection, selectedHostIds) { ok, msg ->
-                                        exportFeedbackOk = ok
-                                        exportFeedback = msg
+                                        viewModel.reportBackupFeedback(msg, ok)
                                     }
                                 }
                             }
@@ -3038,12 +3080,7 @@ fun BackupToolView(viewModel: AppViewModel) {
                     dismissButton = {
                         TextButton(
                             onClick = {
-                                showRestoreSelectionDialog = false
-                                pendingImportContent = ""
-                                pendingRestorePassword = ""
-                                restoreContents = null
-                                restoreHosts = emptyList()
-                                selectedRestoreHostIds = emptySet()
+                                cancelRestore()
                             }
                         ) { Text(stringResource(R.string.cancel)) }
                     }

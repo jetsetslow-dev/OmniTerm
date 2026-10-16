@@ -89,7 +89,7 @@ object TerminalSessionManager {
         scope.launch(Dispatchers.IO) { try { closing.close() } catch (_: Exception) {} }
         s.terminalOutputJob?.cancel()
         s.terminalInputJob?.cancel()
-        s.terminalInputQueue?.let { synchronized(it) { it.closed = true; it.channel.close() } }
+        s.terminalInputQueue?.close()
         s.resizeJob?.cancel()
         s.resizeChannel.close()
         activeSessions.remove(s)
@@ -188,7 +188,7 @@ object TerminalSessionManager {
             scope.launch(Dispatchers.IO) { try { closing.close() } catch (_: Exception) {} }
             it.terminalOutputJob?.cancel()
             it.terminalInputJob?.cancel()
-            it.terminalInputQueue?.let { queue -> synchronized(queue) { queue.closed = true; queue.channel.close() } }
+            it.terminalInputQueue?.close()
             it.resizeJob?.cancel()
             it.resizeChannel.close()
         }

@@ -608,6 +608,10 @@ grep -Ein '(^|[[:space:]])warning:|^WARNING:|deprecated|RenderFlex overflow' \
 #    by its own transitive AndroidX/Play Services versions, and some plugins still compile Java 8
 #    sources. Keep these messages exact: warnings from OmniTerm source or a different API must still
 #    fail the run. Dependency upgrades can remove entries when their upstream fixes land.
+# 3. AGP 9.4 and the pinned Flutter 3.44 SDK still require legacy DSL/KGP compatibility.
+#    Keep the exact observed tool messages and versioned external source locations below. The
+#    SDK/plugin API migrations belong upstream; app source warnings remain errors. Remove these
+#    entries when the pinned SDK/plugins stop producing them.
 cat >"$RUN_DIR/warnings-allowed.txt" <<'ALLOWED'
 plugins that apply Kotlin Gradle Plugin (KGP)
 Future versions of Flutter will fail to build if your app uses plugins that apply KGP
@@ -619,6 +623,52 @@ TAG_FOR_UNDER_AGE_OF_CONSENT_UNSPECIFIED in RequestConfiguration has been deprec
 warning: [options] source value 8 is obsolete and will be removed in a future release
 warning: [options] target value 8 is obsolete and will be removed in a future release
 warning: [options] To suppress warnings about obsolete options, use -Xlint:-options.
+WARNING: The option setting 'android.builtInKotlin=false' is deprecated.
+WARNING: The option setting 'android.newDsl=false' is deprecated.
+WARNING: API 'applicationVariants' is obsolete and has been replaced with 'AndroidComponentsExtension'.
+WARNING: API 'libraryVariants' is obsolete and has been replaced with 'AndroidComponentsExtension'.
+WARNING: API 'testVariants' is obsolete and has been replaced with 'AndroidComponentsExtension'.
+WARNING: API 'unitTestVariants' is obsolete and has been replaced with 'AndroidComponentsExtension'.
+Deprecated 'org.jetbrains.kotlin.android' plugin usage
+Add android.sync.suppressAgpWarnings=DEPRECATED_DSL to the gradle.properties file to suppress this warning.
+Add android.sync.suppressAgpWarnings=JAVA_COMPILE_DEPRECATED_SOURCE_TARGET to the gradle.properties file to suppress this warning.
+Java compiler version 21 has deprecated support for compiling with source/target version 8.
+Deprecated Gradle features were used in this build, making it incompatible with Gradle 10.
+/packages/flutter_tools/gradle/src/main/kotlin/FlutterPlugin.kt:13:8 'interface ApkVariant : Any, BaseVariant, InstallableVariant, AndroidArtifactVariant, InternalBaseVariant' is deprecated. Deprecated in Java.
+/packages/flutter_tools/gradle/src/main/kotlin/FlutterPlugin.kt:171:29 'val properties: (Mutable)Map<String, out Any?>' is deprecated. Deprecated in Java.
+/packages/flutter_tools/gradle/src/main/kotlin/FlutterPlugin.kt:178:31 'val properties: (Mutable)Map<String, out Any?>' is deprecated. Deprecated in Java.
+/packages/flutter_tools/gradle/src/main/kotlin/FlutterPlugin.kt:233:49 'val properties: (Mutable)Map<String, out Any?>' is deprecated. Deprecated in Java.
+/packages/flutter_tools/gradle/src/main/kotlin/FlutterPlugin.kt:241:53 'val properties: (Mutable)Map<String, out Any?>' is deprecated. Deprecated in Java.
+/packages/flutter_tools/gradle/src/main/kotlin/FlutterPlugin.kt:662:69 'interface ApkVariant : Any, BaseVariant, InstallableVariant, AndroidArtifactVariant, InternalBaseVariant' is deprecated. Deprecated in Java.
+/packages/flutter_tools/gradle/src/main/kotlin/FlutterPluginUtils.kt:12:8 'interface BaseVariantOutput : Any, OutputFile' is deprecated. Deprecated in Java.
+/packages/flutter_tools/gradle/src/main/kotlin/VersionFetcher.kt:56:47 'val properties: (Mutable)Map<String, out Any?>' is deprecated. Deprecated in Java.
+/hosted/pub.dev/battery_plus-7.1.1/android/build.gradle.kts:41:1: 'fun Project.android(configure: Action<LibraryExtension>): Unit' is deprecated. Replaced by com.android.build.api.dsl.LibraryExtension.
+/hosted/pub.dev/dart_smb2-0.1.1/android/build.gradle.kts:29:1: 'fun Project.android(configure: Action<LibraryExtension>): Unit' is deprecated. Replaced by com.android.build.api.dsl.LibraryExtension.
+/hosted/pub.dev/dart_smb2-0.1.1/android/build.gradle.kts:80:26: 'val Project.android: LibraryExtension' is deprecated. Replaced by com.android.build.api.dsl.LibraryExtension.
+/hosted/pub.dev/dart_smb2-0.1.1/android/build.gradle.kts:106:21: 'constructor(p0: String!): URL' is deprecated. Deprecated in Java.
+/hosted/pub.dev/device_info_plus-13.2.0/android/build.gradle.kts:41:1: 'fun Project.android(configure: Action<LibraryExtension>): Unit' is deprecated. Replaced by com.android.build.api.dsl.LibraryExtension.
+/hosted/pub.dev/file_selector_android-0.5.2+9/android/build.gradle.kts:34:1: 'fun Project.android(configure: Action<LibraryExtension>): Unit' is deprecated. Replaced by com.android.build.api.dsl.LibraryExtension.
+/hosted/pub.dev/flutter_plugin_android_lifecycle-2.0.35/android/build.gradle.kts:26:1: 'fun Project.android(configure: Action<LibraryExtension>): Unit' is deprecated. Replaced by com.android.build.api.dsl.LibraryExtension.
+/hosted/pub.dev/in_app_purchase_android-0.5.2/android/build.gradle.kts:34:1: 'fun Project.android(configure: Action<LibraryExtension>): Unit' is deprecated. Replaced by com.android.build.api.dsl.LibraryExtension.
+/packages/integration_test/android/build.gradle.kts:34:1: 'fun Project.android(configure: Action<LibraryExtension>): Unit' is deprecated. Replaced by com.android.build.api.dsl.LibraryExtension.
+/hosted/pub.dev/local_auth_android-2.0.9/android/build.gradle.kts:34:1: 'fun Project.android(configure: Action<LibraryExtension>): Unit' is deprecated. Replaced by com.android.build.api.dsl.LibraryExtension.
+/hosted/pub.dev/network_info_plus-8.2.1/android/build.gradle.kts:41:1: 'fun Project.android(configure: Action<LibraryExtension>): Unit' is deprecated. Replaced by com.android.build.api.dsl.LibraryExtension.
+/hosted/pub.dev/package_info_plus-10.2.1/android/build.gradle.kts:41:1: 'fun Project.android(configure: Action<LibraryExtension>): Unit' is deprecated. Replaced by com.android.build.api.dsl.LibraryExtension.
+/hosted/pub.dev/share_plus-13.3.0/android/build.gradle.kts:42:1: 'fun Project.android(configure: Action<LibraryExtension>): Unit' is deprecated. Replaced by com.android.build.api.dsl.LibraryExtension.
+/hosted/pub.dev/shared_preferences_android-2.4.27/android/build.gradle.kts:40:1: 'fun Project.android(configure: Action<LibraryExtension>): Unit' is deprecated. Replaced by com.android.build.api.dsl.LibraryExtension.
+/hosted/pub.dev/url_launcher_android-6.3.32/android/build.gradle.kts:34:1: 'fun Project.android(configure: Action<LibraryExtension>): Unit' is deprecated. Replaced by com.android.build.api.dsl.LibraryExtension.
+/hosted/pub.dev/webview_flutter_android-4.13.0/android/build.gradle.kts:34:1: 'fun Project.android(configure: Action<LibraryExtension>): Unit' is deprecated. Replaced by com.android.build.api.dsl.LibraryExtension.
+/hosted/pub.dev/flutter_foreground_task-10.0.0/android/src/main/kotlin/com/pravera/flutter_foreground_task/service/ForegroundService.kt:298:9 'fun stopForeground(p0: Boolean): Unit' is deprecated. Deprecated in Java.
+/hosted/pub.dev/flutter_foreground_task-10.0.0/android/src/main/kotlin/com/pravera/flutter_foreground_task/service/ForegroundService.kt:441:48 'static field WIFI_MODE_FULL_HIGH_PERF: Int' is deprecated. Deprecated in Java.
+/hosted/pub.dev/flutter_foreground_task-10.0.0/android/src/main/kotlin/com/pravera/flutter_foreground_task/service/ForegroundService.kt:584:37 'constructor(p0: Int, p1: CharSequence!, p2: PendingIntent?): Notification.Action.Builder' is deprecated. Deprecated in Java.
+/hosted/pub.dev/flutter_foreground_task-10.0.0/android/src/main/kotlin/com/pravera/flutter_foreground_task/service/RestartReceiver.kt:72:34 'fun getRunningServices(p0: Int): (Mutable)List<ActivityManager.RunningServiceInfo!>!' is deprecated. Deprecated in Java.
+/hosted/pub.dev/flutter_foreground_task-10.0.0/android/src/main/kotlin/com/pravera/flutter_foreground_task/utils/PluginUtils.kt:75:74 'static field FLAG_SHOW_WHEN_LOCKED: Int' is deprecated. Deprecated in Java.
+/hosted/pub.dev/flutter_foreground_task-10.0.0/android/src/main/kotlin/com/pravera/flutter_foreground_task/utils/PluginUtils.kt:77:76 'static field FLAG_SHOW_WHEN_LOCKED: Int' is deprecated. Deprecated in Java.
+/hosted/pub.dev/flutter_foreground_task-10.0.0/android/src/main/kotlin/com/pravera/flutter_foreground_task/utils/PluginUtils.kt:85:44 'static field SCREEN_BRIGHT_WAKE_LOCK: Int' is deprecated. Deprecated in Java.
+/hosted/pub.dev/flutter_foreground_task-10.0.0/android/src/main/kotlin/com/pravera/flutter_foreground_task/utils/PluginUtils.kt:86:38 'static field ACQUIRE_CAUSES_WAKEUP: Int' is deprecated. Deprecated in Java.
+/hosted/pub.dev/home_widget-0.9.3/android/src/main/kotlin/es/antonborri/home_widget/HomeWidgetBackgroundService.kt:27:70 'class JobIntentService : Service' is deprecated. Deprecated in Java.
+/hosted/pub.dev/home_widget-0.9.3/android/src/main/kotlin/es/antonborri/home_widget/HomeWidgetBackgroundService.kt:41:28 'class HomeWidgetBackgroundService : MethodChannel.MethodCallHandler, JobIntentService' is deprecated. This class uses the deprecated JobIntentService. Use HomeWidgetBackgroundWorker instead. If encountered in the Android Manifest you can remove this service entry.
+/hosted/pub.dev/patrol-4.8.0/android/src/main/kotlin/pl/leancode/patrol/Automator.kt:252:33 'static field LOCATION_MODE: String' is deprecated. Deprecated in Java.
 ALLOWED
 
 if [ -s "$RUN_DIR/warnings.log" ]; then

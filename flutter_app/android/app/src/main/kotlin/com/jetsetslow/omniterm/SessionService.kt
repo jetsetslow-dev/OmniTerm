@@ -274,13 +274,19 @@ class SessionService : Service() {
         manager?.let { nm ->
             shownSessionIds.forEach(nm::cancel)
             // Notification ids outlive this Service instance when Android kills and recreates the
-            // process, so the channel is reconciled too — otherwise a previous incarnation leaves
+            // process, so active rows are reconciled too — otherwise a previous incarnation leaves
             // orphaned session rows that nothing will ever clean up.
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                nm.activeNotifications
-                    .filter { it.notification.channelId == CHANNEL_ID }
-                    .forEach { nm.cancel(it.id) }
-            }
+            nm.activeNotifications
+                .filter {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        it.notification.channelId == CHANNEL_ID
+                    } else {
+                        // API 24–25 has no notification channels. Every session row carries this
+                        // group; unrelated alert/transfer notifications must survive cleanup.
+                        NotificationCompat.getGroup(it.notification) == NOTIFICATION_GROUP
+                    }
+                }
+                .forEach { nm.cancel(it.id) }
         }
         shownSessionIds.clear()
     }

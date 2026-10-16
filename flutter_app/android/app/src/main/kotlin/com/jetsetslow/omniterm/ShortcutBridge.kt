@@ -6,6 +6,7 @@ import android.content.pm.ShortcutInfo
 import android.content.pm.ShortcutManager
 import android.graphics.drawable.Icon
 import android.os.Build
+import androidx.annotation.RequiresApi
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 
@@ -60,6 +61,7 @@ object ShortcutBridge {
         }
     }
 
+    @RequiresApi(Build.VERSION_CODES.N_MR1)
     private fun serverShortcut(context: Context, args: Map<*, *>): ShortcutInfo {
         val id = args.int("id")
         val name = args.text("name").ifBlank { args.text("host") }
@@ -72,6 +74,7 @@ object ShortcutBridge {
         )
     }
 
+    @RequiresApi(Build.VERSION_CODES.N_MR1)
     private fun splitShortcut(context: Context, args: Map<*, *>): ShortcutInfo {
         val first = args.int("firstId")
         val second = args.int("secondId")
@@ -88,6 +91,7 @@ object ShortcutBridge {
         )
     }
 
+    @RequiresApi(Build.VERSION_CODES.N_MR1)
     private fun shareShortcut(context: Context, args: Map<*, *>): ShortcutInfo {
         val id = args.int("id")
         val name = args.text("name").ifBlank { args.text("address") }
@@ -100,6 +104,7 @@ object ShortcutBridge {
         )
     }
 
+    @RequiresApi(Build.VERSION_CODES.N_MR1)
     private fun shortcut(
         context: Context,
         id: String,
@@ -113,6 +118,7 @@ object ShortcutBridge {
         .setIntent(intent.apply { action = Intent.ACTION_VIEW; flags = this@ShortcutBridge.flags })
         .build()
 
+    @RequiresApi(Build.VERSION_CODES.N_MR1)
     private fun upsert(manager: ShortcutManager, shortcut: ShortcutInfo): Boolean {
         val present = manager.dynamicShortcuts.any { it.id == shortcut.id }
         return if (present) manager.updateShortcuts(listOf(shortcut)) else manager.addDynamicShortcuts(listOf(shortcut))

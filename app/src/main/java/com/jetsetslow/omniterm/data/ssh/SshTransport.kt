@@ -76,7 +76,11 @@ interface TerminalSession {
      */
     val remoteExited: StateFlow<Boolean>
 
-    /** Send raw bytes (keystrokes / escape sequences) to the remote PTY. */
+    /**
+     * Send raw bytes to the remote PTY. Return only after the transport write and flush complete;
+     * throw on a closed channel, write failure or cancellation. Failure can follow partial
+     * delivery. A successful return acknowledges transport acceptance, not remote execution.
+     */
     suspend fun write(bytes: ByteArray)
 
     /** Inform the remote of a new terminal window size (SIGWINCH). */

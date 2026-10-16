@@ -190,6 +190,11 @@ jobs:
         run: flutter test
         working-directory: flutter_app
 
+      # Resolve verification builds before the real signing key and final release artifacts exist.
+      - name: Verify strict Android dependency graphs
+        run: ../scripts/refresh-flutter-android-verification-metadata.sh --verify
+        working-directory: flutter_app
+
       - name: Decode signing key
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}

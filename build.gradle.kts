@@ -13,9 +13,9 @@ buildscript {
         Triple("com.google.guava:guava", "30.1.1-jre", "33.6.0-jre"),
         Triple("org.apache.commons:commons-lang3", "3.16.0", "3.19.0"),
         Triple("org.bitbucket.b_c:jose4j", "0.9.5", "0.9.6"),
-        Triple("org.bouncycastle:bcprov-jdk18on", "1.79", "1.85"),
-        Triple("org.bouncycastle:bcpkix-jdk18on", "1.79", "1.85"),
-        Triple("org.bouncycastle:bcutil-jdk18on", "1.79", "1.85"),
+        Triple("org.bouncycastle:bcprov-jdk18on", "1.79", "1.86"),
+        Triple("org.bouncycastle:bcpkix-jdk18on", "1.79", "1.86"),
+        Triple("org.bouncycastle:bcutil-jdk18on", "1.79", "1.86"),
         Triple("org.jdom:jdom2", "2.0.6", "2.0.6.1"),
       )
       patchedModules.forEach { (moduleId, vulnerableVersion, patchedVersion) ->
@@ -36,6 +36,27 @@ plugins {
 }
 
 val kotlinBaseline = libs.versions.kotlin.get()
+val bouncyCastleBaseline = libs.versions.bcprov.get()
+val guavaAndroidBaseline = libs.versions.guavaAndroid.get()
+
+fun baselineAtLeast(actual: String, minimum: String): Boolean {
+  val actualParts = actual.substringBefore('-').split('.').map(String::toInt)
+  val minimumParts = minimum.split('.').map(String::toInt)
+  for (index in 0 until maxOf(actualParts.size, minimumParts.size)) {
+    val difference = actualParts.getOrElse(index) { 0 }.compareTo(minimumParts.getOrElse(index) { 0 })
+    if (difference != 0) return difference > 0
+  }
+  return true
+}
+
+// Catalog upgrades must remain effective without permitting a later downgrade below the existing
+// patched security floors. Keep these minima independent of the catalog being reviewed.
+require(baselineAtLeast(bouncyCastleBaseline, "1.85.2")) {
+  "The Bouncy Castle catalog baseline must be at least 1.85.2"
+}
+require(baselineAtLeast(guavaAndroidBaseline, "33.6.0")) {
+  "The Android Guava catalog baseline must be at least 33.6.0"
+}
 
 // Android's lint, emulator, bundle and test tooling resolves several older transitive libraries
 // even though the top-level plugins are current. Keep those build-time parsers and network stacks
@@ -49,9 +70,9 @@ allprojects {
       val patchedModules = listOf(
         Triple("com.google.guava:guava", "30.1.1-jre", "33.6.0-jre"),
         Triple("org.apache.commons:commons-lang3", "3.16.0", "3.19.0"),
-        Triple("org.bouncycastle:bcprov-jdk18on", "1.79", "1.85"),
-        Triple("org.bouncycastle:bcpkix-jdk18on", "1.79", "1.85"),
-        Triple("org.bouncycastle:bcutil-jdk18on", "1.79", "1.85"),
+        Triple("org.bouncycastle:bcprov-jdk18on", "1.79", bouncyCastleBaseline),
+        Triple("org.bouncycastle:bcpkix-jdk18on", "1.79", bouncyCastleBaseline),
+        Triple("org.bouncycastle:bcutil-jdk18on", "1.79", bouncyCastleBaseline),
       )
       patchedModules.forEach { (moduleId, vulnerableVersion, patchedVersion) ->
         substitute(module("$moduleId:$vulnerableVersion"))
@@ -75,27 +96,17 @@ allprojects {
           useVersion("4.1.135.Final")
           because("align the Netty family to the patched security baseline")
         }
-        // bcprov diverges from its siblings on purpose: 1.85.2 is a security patch that exists
-        // only for bcprov (bcpkix and bcutil have no 1.85.2 on Maven Central, verified 2026-08-11).
-        // It fixes an AES-256/CBC cipher obtained via the id_aes256_CBC OID silently deriving a
-        // 192-bit key from a password-based key -- an unannounced downgrade to AES-192.
-        //
-        // This rule is why the version catalog alone is not enough: a bump there is inert while
-        // `useVersion` pins the resolved version, so the two must be changed together or the app
-        // ships the old artifact while libs.versions.toml claims otherwise.
-        requested.group == "org.bouncycastle" && requested.name == "bcprov-jdk18on" -> {
-          useVersion("1.85.2")
-          because("AES-256/CBC via the id_aes256_CBC OID derived a 192-bit key before 1.85.2")
-        }
+        // Keep the security floor aligned with reviewed catalog updates. A hardcoded 1.85.2
+        // previously overrode the catalog's 1.86 and silently shipped the older provider.
         requested.group == "org.bouncycastle" && requested.name in setOf(
-          "bcpkix-jdk18on", "bcutil-jdk18on"
+          "bcprov-jdk18on", "bcpkix-jdk18on", "bcutil-jdk18on"
         ) -> {
-          useVersion("1.85")
+          useVersion(bouncyCastleBaseline)
           because("align Bouncy Castle runtime and Android build tooling to patched releases")
         }
         requested.group == "com.google.guava" && requested.name == "guava" &&
           requested.version.orEmpty().endsWith("-android") -> {
-          useVersion("33.6.0-android")
+          useVersion(guavaAndroidBaseline)
           because("replace vulnerable Android-flavoured Guava transitives")
         }
         requested.group == "org.apache.commons" && requested.name == "commons-lang3" -> {

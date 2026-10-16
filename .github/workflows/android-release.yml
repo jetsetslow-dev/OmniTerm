@@ -293,6 +293,8 @@ jobs:
           SBOM_CONFIGURATION=playStoreReleaseRuntimeClasspath \
             SBOM_COMPONENT_NAME="OmniTerm Play Store" \
             ./gradlew cyclonedxBom --init-script .github/cyclonedx.init.gradle.kts --no-daemon
+          python3 scripts/verify-native-sbom-baselines.py build/reports/cyclonedx/bom.json \
+            --configuration playStoreReleaseRuntimeClasspath
           PLAY_SBOM="github-artifacts/OmniTerm-PlayStore-${RELEASE_LABEL}.cdx.json"
           cp build/reports/cyclonedx/bom.json "$PLAY_SBOM"
           jq -e '
@@ -307,6 +309,8 @@ jobs:
             SBOM_CONFIGURATION=openSourceReleaseRuntimeClasspath \
               SBOM_COMPONENT_NAME="OmniTerm Source Available" \
               ./gradlew cyclonedxBom --init-script .github/cyclonedx.init.gradle.kts --no-daemon
+            python3 scripts/verify-native-sbom-baselines.py build/reports/cyclonedx/bom.json \
+              --configuration openSourceReleaseRuntimeClasspath
             OSS_SBOM="github-artifacts/OmniTerm-SourceAvailable-${RELEASE_LABEL}.cdx.json"
             cp build/reports/cyclonedx/bom.json "$OSS_SBOM"
             jq -e '
@@ -323,7 +327,7 @@ jobs:
         run: (cd github-artifacts && sha256sum -- ./* > SHA256SUMS.txt)
 
       - name: Upload workflow artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           # Uploaded artifacts are immutable within a workflow run. A failed external publication may
           # require a full-job retry, so each attempt needs its own name instead of failing 409.

@@ -1,3 +1,5 @@
+import com.android.build.api.dsl.ApplicationExtension
+
 plugins {
     id("com.android.application")
     // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
@@ -7,7 +9,9 @@ plugins {
 val admobTestAppId = "ca-app-pub-3940256099942544~3347511713"
 val admobAppId = System.getenv("ADMOB_APP_ID") ?: admobTestAppId
 
-android {
+// The public interface is also implemented by AGP's legacy extension while Flutter 3.44 still
+// requires android.newDsl=false. Avoid the deprecated generated BaseAppModuleExtension accessor.
+extensions.configure<ApplicationExtension>("android") {
     namespace = "com.jetsetslow.omniterm"
     // Match the shipped Kotlin app and the newest installed stable platform. Flutter 3.44 defaults
     // to 36, but current flutter_secure_storage compiles against 37; Android SDKs are backward
@@ -117,6 +121,11 @@ flutter {
 }
 
 dependencies {
+    constraints {
+        implementation(libs.guava.android) {
+            because("Keep Android Guava transitives on the reviewed production security baseline")
+        }
+    }
     // Same prompt implementation as the Kotlin app; the bridge requires strong, per-use auth.
     implementation("androidx.biometric:biometric:1.4.0-alpha05")
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
@@ -131,7 +140,7 @@ dependencies {
     // transitive is not a contract: this app calls the API directly, so it declares it directly.
     implementation("androidx.browser:browser:1.9.0")
 
-    implementation("org.bouncycastle:bcprov-jdk18on:1.85")
+    implementation(libs.bcprov)
 
     // SMB2/3. Native rather than Dart because the only pub package for SMB pins
     // a pointycastle major dartssh2 cannot coexist with, and is an unmaintained implementation of a

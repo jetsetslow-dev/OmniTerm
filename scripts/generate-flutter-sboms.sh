@@ -83,6 +83,9 @@ jq -e '
   ((.components // []) | length >= 20)
 ' "$NATIVE_SBOM" >/dev/null
 
+python3 "$ROOT/scripts/verify-native-sbom-baselines.py" "$NATIVE_SBOM" \
+  --configuration releaseRuntimeClasspath
+
 echo "Generated Flutter runtime SBOMs:"
 echo "  $DART_SBOM"
 echo "  $NATIVE_SBOM"

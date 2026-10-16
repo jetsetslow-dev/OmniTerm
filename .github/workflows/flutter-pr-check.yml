@@ -67,7 +67,7 @@ jobs:
             echo "code=true" >> "$GITHUB_OUTPUT"; exit 0
           fi
           match=0
-          grep -qE '^(flutter_app/|\.github/(cyclonedx\.init\.gradle\.kts|release-engine)$|scripts/(flutter-pub-cyclonedx\.jq|generate-flutter-sboms\.sh|verify-flutter-release-apk\.sh|resolve-release-version\.sh|test-release-engine\.sh|test-release-resolution\.sh|test-change-detectors\.sh)$|\.github/workflows/(flutter-pr-check|flutter-release|android-release)\.yml$)' "$changed_list" || match=$?
+          grep -qE '^(flutter_app/|gradle/libs\.versions\.toml$|gradle/wrapper/gradle-wrapper\.(properties|jar)$|build\.gradle\.kts$|\.github/(cyclonedx\.init\.gradle\.kts|release-engine)$|scripts/(refresh-flutter-android-verification-metadata\.sh|verify-flutter-android-toolchain\.py|verify-native-sbom-baselines\.py|local-pr-check\.sh|flutter-pub-cyclonedx\.jq|generate-flutter-sboms\.sh|verify-flutter-release-apk\.sh|resolve-release-version\.sh|test-release-engine\.sh|test-release-resolution\.sh|test-change-detectors\.sh)$|\.github/workflows/(flutter-pr-check|flutter-release|android-release)\.yml$)' "$changed_list" || match=$?
           rm -f "$changed_list"
           if [ "$match" -eq 0 ]; then
             echo "code=true" >> "$GITHUB_OUTPUT"
@@ -182,6 +182,9 @@ jobs:
 
       - name: Resolve dependencies
         run: flutter pub get
+
+      - name: Verify strict Android dependency graphs
+        run: ../scripts/refresh-flutter-android-verification-metadata.sh --verify
 
       # **Release, not debug.** PR checks once built only debug variants, so a broken release
       # classpath first failed after merge. Everything release-only lives here — R8, the shrinker,

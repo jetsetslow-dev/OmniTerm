@@ -282,6 +282,8 @@ jobs:
             echo "::group::cyclonedxBom ($config)"
             SBOM_CONFIGURATION="$config" \
               ./gradlew cyclonedxBom --init-script .github/cyclonedx.init.gradle.kts --no-daemon
+            python3 scripts/verify-native-sbom-baselines.py build/reports/cyclonedx/bom.json \
+              --configuration "$config"
             echo "::endgroup::"
           done
 

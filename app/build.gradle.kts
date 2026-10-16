@@ -173,6 +173,7 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
       "**/ColdStartRobolectricTest.class",
       "**/TerminalNavigationRobolectricTest.class",
       "**/TmuxResumeLatencyRobolectricTest.class",
+      "**/TerminalPasteReceiptRobolectricTest.class",
       "**/TerminalLeavePersistenceRobolectricTest.class",
     )
   }

@@ -57,6 +57,8 @@ resolve_release_sboms() {
       rm -f -- "$log_file"
       return 1
     fi
+    python3 scripts/verify-native-sbom-baselines.py build/reports/cyclonedx/bom.json \
+      --configuration "$config"
     rm -f -- "$log_file"
   done
 }

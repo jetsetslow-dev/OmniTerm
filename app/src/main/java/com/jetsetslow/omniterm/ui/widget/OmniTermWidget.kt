@@ -363,6 +363,7 @@ private class OmniTermWidgetRowFactory(
             setTextViewText(
                 R.id.widget_server_health,
                 when {
+                    server.status == "online" && server.healthScore < 0 -> "Health unavailable"
                     server.status == "online" ->
                         context.getString(R.string.widget_health, server.healthScore)
                     server.status == "connecting" ->

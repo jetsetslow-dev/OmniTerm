@@ -63,19 +63,31 @@ class OmniTermWidgetReceiver : HomeWidgetProvider() {
             val showRows = readable && rows.isNotEmpty()
             views.setViewVisibility(R.id.widget_empty, if (showRows) View.GONE else View.VISIBLE)
             views.setViewVisibility(R.id.widget_rows, if (showRows) View.VISIBLE else View.GONE)
-            views.setRemoteAdapter(
-                R.id.widget_rows,
-                Intent(context, OmniTermWidgetService::class.java)
-                    .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
-                    .setData(Uri.parse("omniterm://widget/$widgetId/rows")),
-            )
+            bindServiceBackedRows(context, views, widgetId)
             views.setPendingIntentTemplate(
                 R.id.widget_rows,
                 rowPendingIntentTemplate(context, widgetId),
             )
             appWidgetManager.updateAppWidget(widgetId, views)
-            appWidgetManager.notifyAppWidgetViewDataChanged(widgetId, R.id.widget_rows)
+            notifyServiceBackedRowsChanged(appWidgetManager, widgetId)
         }
+    }
+
+    // Keep the service-backed collection protocol used by installed widgets and API 24–30.
+    // A future RemoteCollectionItems migration must replace binding and refresh together.
+    @Suppress("DEPRECATION")
+    private fun bindServiceBackedRows(context: Context, views: RemoteViews, widgetId: Int) {
+        views.setRemoteAdapter(
+            R.id.widget_rows,
+            Intent(context, OmniTermWidgetService::class.java)
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, widgetId)
+                .setData(Uri.parse("omniterm://widget/$widgetId/rows")),
+        )
+    }
+
+    @Suppress("DEPRECATION")
+    private fun notifyServiceBackedRowsChanged(manager: AppWidgetManager, widgetId: Int) {
+        manager.notifyAppWidgetViewDataChanged(widgetId, R.id.widget_rows)
     }
 
     private fun rowPendingIntentTemplate(context: Context, widgetId: Int): PendingIntent {

@@ -168,6 +168,12 @@ if [[ "$MODE" == "--full" ]]; then
     PATH="$JAVA_HOME/bin:$PATH"
     export PATH
     export ADMOB_APP_ID=ca-app-pub-3940256099942544~3347511713
+    if [[ "$LINUX_ARM64" == "true" ]]; then
+      OMNITERM_DEPENDENCY_JVMARGS="-Xmx2g -Dfile.encoding=UTF-8" \
+        ../scripts/refresh-flutter-android-verification-metadata.sh --verify
+    else
+      ../scripts/refresh-flutter-android-verification-metadata.sh --verify
+    fi
     echo "Building Flutter release APK and App Bundle"
     flutter build apk --release \
       --dart-define=OMNITERM_PLAY_STORE=true \
