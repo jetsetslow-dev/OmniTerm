@@ -90,15 +90,22 @@ flutter() {
         printf '1\n' >"$OMNITERM_TEST_FLUTTER_COUNTER"
         if [[ "$OMNITERM_TEST_VM_ATTACH_FAILURE" == after_test ]]; then
           printf '00:01 +1: a real test already executed\n'
+        elif [[ "$OMNITERM_TEST_VM_ATTACH_FAILURE" == after_failed_test ]]; then
+          printf '00:00 +0: a real test started\n'
+          printf '00:01 +0 -1: a real test failed [E]\n'
         fi
         printf '00:00 +0 -1: loading /workspace/integration_test/app_surface_stress_test.dart [E]\n'
         if [[ "${OMNITERM_TEST_VM_ATTACH_KIND:-timeout}" == disappeared ]]; then
           printf "  Failed to load \"app_surface_stress_test.dart\": Instance of 'VmServiceDisappearedException'\n"
           printf '  package:flutter_tools/src/vmservice.dart 882:7 FlutterVmService._getIsolateRefs\n'
+        elif [[ "${OMNITERM_TEST_VM_ATTACH_KIND:-timeout}" == disposed ]]; then
+          printf '  Failed to load "app_surface_stress_test.dart": streamListen: (-32000) Service connection disposed\n'
+          printf '  package:vm_service/src/vm_service.dart 1878:7 VmService.streamListen\n'
         else
           printf '  Failed to load "app_surface_stress_test.dart": Connecting to the VM Service timed out.\n'
         fi
         printf '  package:flutter_tools/src/test/integration_test_device.dart 103:28 IntegrationTestTestDevice.start.<fn>\n'
+        printf '00:00 +0 -1: Some tests failed.\n'
         return 1
       fi
       if [[ "${OMNITERM_TEST_DDS_FAIL_ONCE:-false}" == true ]] &&
@@ -225,11 +232,12 @@ check_vm_attach_recovery() {
     exit 1
   fi
 }
-for OMNITERM_TEST_VM_ATTACH_KIND in timeout disappeared; do
+for OMNITERM_TEST_VM_ATTACH_KIND in timeout disappeared disposed; do
   export OMNITERM_TEST_VM_ATTACH_KIND
   check_vm_attach_recovery once emulator-5554 0 2 1
   check_vm_attach_recovery always emulator-5554 1 2 1
   check_vm_attach_recovery after_test emulator-5554 1 1 0
+  check_vm_attach_recovery after_failed_test emulator-5554 1 1 0
   check_vm_attach_recovery once daily-device 1 1 0
 done
 unset OMNITERM_TEST_VM_ATTACH_KIND
