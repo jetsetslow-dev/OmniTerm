@@ -1,4 +1,4 @@
-gradle-wrapper.jar
+# Track the reviewed wrapper JAR so fresh checkouts can verify it before Flutter builds.
 /.gradle
 /captures/
 /gradlew

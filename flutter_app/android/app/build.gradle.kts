@@ -9,9 +9,14 @@ plugins {
 val admobTestAppId = "ca-app-pub-3940256099942544~3347511713"
 val admobAppId = System.getenv("ADMOB_APP_ID") ?: admobTestAppId
 
-// The public interface is also implemented by AGP's legacy extension while Flutter 3.44 still
-// requires android.newDsl=false. Avoid the deprecated generated BaseAppModuleExtension accessor.
-extensions.configure<ApplicationExtension>("android") {
+// Flutter 3.44 discovers the namespace from an android { ... } block before the first APK exists.
+// Keep that entrypoint while configuring through AGP's public interface, avoiding its deprecated
+// generated BaseAppModuleExtension accessor until Flutter supports the new DSL.
+fun android(configure: ApplicationExtension.() -> Unit) {
+    extensions.configure<ApplicationExtension>("android", configure)
+}
+
+android {
     namespace = "com.jetsetslow.omniterm"
     // Match the shipped Kotlin app and the newest installed stable platform. Flutter 3.44 defaults
     // to 36, but current flutter_secure_storage compiles against 37; Android SDKs are backward
