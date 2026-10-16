@@ -28,6 +28,8 @@ class _BackupScreenState extends State<BackupScreen> {
   final _scrollController = ScrollController();
   BackupViewModel? _feedbackModel;
   String? _lastSelectionSaveError;
+  bool _exportPending = false;
+  String? _exportProgress;
 
   @override
   void didChangeDependencies() {
@@ -76,6 +78,9 @@ class _BackupScreenState extends State<BackupScreen> {
   Widget build(BuildContext context) {
     final vm = context.watch<BackupViewModel>();
     final scheme = Theme.of(context).colorScheme;
+    final working = vm.busy || _exportPending;
+    final showProgress = vm.busy || (_exportPending && _exportProgress != null);
+    final progressMessage = vm.busy ? vm.busyMessage : _exportProgress ?? 'Preparing backup…';
 
     return Stack(
       children: [
@@ -141,12 +146,12 @@ class _BackupScreenState extends State<BackupScreen> {
               children: [
                 TextButton(
                   key: const ValueKey('backup.selectAll'),
-                  onPressed: vm.selectAll,
+                  onPressed: working ? null : vm.selectAll,
                   child: const Text('All', style: TextStyle(fontSize: 12)),
                 ),
                 TextButton(
                   key: const ValueKey('backup.selectNone'),
-                  onPressed: vm.selectNone,
+                  onPressed: working ? null : vm.selectNone,
                   child: const Text('None', style: TextStyle(fontSize: 12)),
                 ),
               ],
@@ -169,7 +174,9 @@ class _BackupScreenState extends State<BackupScreen> {
                 title: Text(section.label, style: const TextStyle(fontSize: 13)),
                 subtitle: _dependencyNote(section, scheme),
                 value: vm.selection.contains(section),
-                onChanged: (value) => vm.toggleSection(section, enabled: value ?? false),
+                onChanged: working
+                    ? null
+                    : (value) => vm.toggleSection(section, enabled: value ?? false),
               ),
             const SizedBox(height: 8),
             if (vm.requiresPassphrase)
@@ -185,8 +192,8 @@ class _BackupScreenState extends State<BackupScreen> {
             FilledButton.icon(
               key: const ValueKey('backup.export'),
               icon: const Icon(Icons.upload_file, size: 18),
-              label: Text(vm.busy ? 'Working…' : 'Create backup'),
-              onPressed: vm.canExport ? () => _export(context, vm) : null,
+              label: Text(working ? 'Working…' : 'Create backup'),
+              onPressed: vm.canExport && !working ? () => _export(context, vm) : null,
             ),
             const SizedBox(height: 6),
             Text(
@@ -233,11 +240,11 @@ class _BackupScreenState extends State<BackupScreen> {
               key: const ValueKey('backup.import'),
               icon: const Icon(Icons.restore, size: 18),
               label: const Text('Restore from backup'),
-              onPressed: vm.busy ? null : () => _import(context, vm),
+              onPressed: working ? null : () => _import(context, vm),
             ),
           ],
         ),
-        if (vm.busy) ...[
+        if (showProgress) ...[
           const Positioned.fill(child: ModalBarrier(dismissible: false, color: Colors.black38)),
           Center(
             child: Semantics(
@@ -250,9 +257,9 @@ class _BackupScreenState extends State<BackupScreen> {
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      CircularProgressIndicator(semanticsLabel: vm.busyMessage),
+                      CircularProgressIndicator(semanticsLabel: progressMessage),
                       const SizedBox(height: 16),
-                      Text(vm.busyMessage),
+                      Text(progressMessage),
                       const SizedBox(height: 8),
                       const Text('This may take a little while. Please wait.'),
                     ],
@@ -284,8 +291,28 @@ class _BackupScreenState extends State<BackupScreen> {
   }
 
   Future<void> _export(BuildContext context, BackupViewModel vm) async {
+    if (_exportPending || vm.busy) return;
+    final selection = vm.selection;
+    setState(() {
+      _exportPending = true;
+      // The passphrase dialog already exposes the pending decision; show progress for the
+      // platform/IO preparation after it closes, without animating behind the dialog.
+      _exportProgress = selection.hasSensitiveData ? null : 'Preparing backup…';
+    });
+    try {
+      await _performExport(context, vm, selection);
+    } finally {
+      if (mounted) setState(() => _exportPending = false);
+    }
+  }
+
+  Future<void> _performExport(
+    BuildContext context,
+    BackupViewModel vm,
+    BackupSelection selection,
+  ) async {
     var passphrase = '';
-    if (vm.requiresPassphrase) {
+    if (selection.hasSensitiveData) {
       final entered = await _askPassphrase(
         context,
         title: 'Choose a passphrase',
@@ -302,13 +329,16 @@ class _BackupScreenState extends State<BackupScreen> {
       passphrase = entered;
     }
 
+    if (!mounted) return;
+    setState(() => _exportProgress = 'Preparing backup…');
+
     // Sequenced before the export, because the export starts a foreground operation whose
     // permission request would otherwise land on top of the file picker opened moments later.
     // Import does not need this: it opens the picker before any operation begins.
     await vm.operationNotifications?.ensureNotificationPermission();
     if (!context.mounted) return;
 
-    final contents = await vm.exportBackup(passphrase);
+    final contents = await vm.exportBackup(passphrase, selection: selection);
     _revealFeedback();
     if (contents == null) return;
     if (!context.mounted) {
@@ -323,6 +353,7 @@ class _BackupScreenState extends State<BackupScreen> {
       return;
     }
 
+    setState(() => _exportProgress = 'Waiting for a save location…');
     final result = await widget.fileStore.save(vm.suggestedFileName(), contents);
     // Deliberately NOT gated on `context.mounted`. Saving hands off to the system file picker — a
     // separate Activity — so this screen is routinely unmounted by the time the file is actually

@@ -274,19 +274,21 @@ class BackupViewModel extends ChangeNotifier {
   ///
   /// The passphrase is required whenever the selection is sensitive — this is not a preference the
   /// caller can skip, because the alternative is every stored secret in plain text on disk.
-  Future<String?> exportBackup(String passphrase) async {
+  Future<String?> exportBackup(String passphrase, {BackupSelection? selection}) async {
     if (_busy) return null;
-    if (_selection.isEmpty) {
+    // Keep the action's original choice across permission dialogs and asynchronous reads.
+    final chosen = selection ?? _selection;
+    if (chosen.isEmpty) {
       _error = 'Choose at least one thing to back up.';
       _safeNotify();
       return null;
     }
-    if (requiresPassphrase && passphrase.isEmpty) {
+    if (chosen.hasSensitiveData && passphrase.isEmpty) {
       _error = 'This backup contains credentials, so it needs a passphrase.';
       _safeNotify();
       return null;
     }
-    if (requiresPassphrase && passphrase.length < passphraseMinLength) {
+    if (chosen.hasSensitiveData && passphrase.length < passphraseMinLength) {
       // Enforced here as well as in the dialog: this is the boundary that decides whether
       // credentials get encrypted weakly, and it must not depend on which screen called it.
       _error =
@@ -312,7 +314,7 @@ class BackupViewModel extends ChangeNotifier {
     try {
       final repository = _app.repository;
       final json = BackupPayload.encode(
-        selection: _selection,
+        selection: chosen,
         servers: await repository.getAllServers(),
         keys: await repository.getAllKeys(),
         profiles: await repository.getAllProfiles(),
@@ -327,7 +329,7 @@ class BackupViewModel extends ChangeNotifier {
         crashLogs: crashLog.entries,
         // `BackupPayload.encode` drops these unless the closed selection carries servers, so a
         // trust-store failure is only worth reading — or reporting — when they would be written.
-        knownHosts: _selection.withReferentialClosure().contains(BackupSection.servers)
+        knownHosts: chosen.withReferentialClosure().contains(BackupSection.servers)
             ? await _pinnedHostKeys()
             : const {},
       );

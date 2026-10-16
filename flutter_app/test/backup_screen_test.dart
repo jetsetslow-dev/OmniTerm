@@ -493,7 +493,8 @@ void main() {
       await tester.pumpAndSettle();
 
       await tester.tap(find.byKey(const ValueKey('backup.export')));
-      await tester.pumpAndSettle();
+      // Preparation remains visibly busy until the held platform callback completes.
+      await tester.pump();
 
       expect(surfaces.order, ['permission'], reason: 'the dialog is up and still unanswered');
       expect(
@@ -507,6 +508,73 @@ void main() {
 
       expect(surfaces.order, ['permission', 'picker']);
       expect(files.saved, hasLength(1), reason: 'and the export still finishes afterwards');
+      await finish(tester);
+    });
+
+    testWidgets('export keeps the sections chosen before waiting for permission', (tester) async {
+      final surfaces = _SystemSurfaceLog()..permissionGate = Completer<void>();
+      await pump(
+        tester,
+        notifications: LongOperationNotifications(
+          channel: const MethodChannel('omniterm/long_operations.test'),
+          requestNotificationPermission: surfaces.requestPermission,
+        ),
+      );
+      vm.selectNone();
+      vm.toggleSection(BackupSection.settings, enabled: true);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tester.pump();
+      expect(surfaces.order, ['permission']);
+
+      // An app-scoped draft can change while a platform callback is outstanding. The running
+      // export must keep the settings-only choice that was checked before asking permission.
+      vm.selectAll();
+      surfaces.permissionGate!.complete();
+      await tester.pumpAndSettle();
+
+      expect(files.saved, hasLength(1));
+      expect(files.saved.single.contents, contains('"settings"'));
+      expect(files.saved.single.contents, isNot(contains('"servers"')));
+      expect(vm.error, isNull);
+      expect(vm.selection.contains(BackupSection.servers), isTrue);
+      await finish(tester);
+    });
+
+    testWidgets('permission preparation shows progress and prevents duplicate export', (
+      tester,
+    ) async {
+      final surfaces = _SystemSurfaceLog()..permissionGate = Completer<void>();
+      await pump(
+        tester,
+        notifications: LongOperationNotifications(
+          channel: const MethodChannel('omniterm/long_operations.test'),
+          requestNotificationPermission: surfaces.requestPermission,
+        ),
+      );
+      vm.selectNone();
+      vm.toggleSection(BackupSection.settings, enabled: true);
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tester.pump();
+      try {
+        expect(find.text('Preparing backup…'), findsOneWidget);
+        expect(
+          tester.widget<FilledButton>(find.byKey(const ValueKey('backup.export'))).onPressed,
+          isNull,
+        );
+        expect(
+          tester
+              .widget<CheckboxListTile>(find.byKey(const ValueKey('backup.section.settings')))
+              .onChanged,
+          isNull,
+        );
+        expect(files.saved, isEmpty);
+      } finally {
+        surfaces.permissionGate!.complete();
+        await tester.pumpAndSettle();
+      }
+      expect(files.saved, hasLength(1));
       await finish(tester);
     });
 

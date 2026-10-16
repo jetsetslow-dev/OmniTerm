@@ -35,5 +35,8 @@ Future<void> settleNativePermissionDialog(
       timeout: remaining(const Duration(milliseconds: 200)),
     );
   }
-  await $.pumpAndSettle();
+  // The permission callback can start work whose progress stays animated behind DocumentsUI.
+  // Observe that work through the caller's result/picker deadline instead of waiting for every
+  // Flutter animation to stop while the native surface is still intentionally open.
+  await $.tester.pump();
 }
