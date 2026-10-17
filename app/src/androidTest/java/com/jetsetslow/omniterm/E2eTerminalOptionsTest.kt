@@ -103,9 +103,23 @@ class E2eTerminalOptionsTest {
                     composeRule.waitForIdle()
                     composeRule.onNodeWithContentDescription("Open terminal options").performClick()
                     composeRule.waitForIdle()
-                    // No performScrollTo: clipping an action inside the scroll body is the bug.
-                    for (label in listOf("Paste from clipboard", "Visible screen", "Full buffer", "Clear scrollback", "Cancel")) {
-                        composeRule.onNodeWithText(label).assertIsDisplayed().assertIsEnabled()
+                    val configuration = "font scale $scale, " +
+                        if (expected == android.content.res.Configuration.ORIENTATION_PORTRAIT) "portrait" else "landscape"
+                    try {
+                        // No performScrollTo: clipping an action inside the scroll body is the bug.
+                        for (label in listOf("Paste from clipboard", "Visible screen", "Full buffer", "Clear scrollback", "Cancel")) {
+                            composeRule.onNodeWithText(label).assertIsDisplayed().assertIsEnabled()
+                        }
+                        // A section heading must stay with the controls it names, not scroll away from them.
+                        composeRule.onNodeWithText("Copy terminal text").assertIsDisplayed()
+                        if (scale == "1.0" && orientation == ActivityInfo.SCREEN_ORIENTATION_PORTRAIT) {
+                            // At default text size the dialog has room for every option without scrolling.
+                            for (label in listOf("Swipe-typing", "Keep screen on")) {
+                                composeRule.onNodeWithText(label).assertIsDisplayed()
+                            }
+                        }
+                    } catch (failure: AssertionError) {
+                        throw AssertionError("Terminal options at $configuration: ${failure.message}", failure)
                     }
                     composeRule.onNodeWithText("Cancel").performClick()
                     composeRule.waitForIdle()
