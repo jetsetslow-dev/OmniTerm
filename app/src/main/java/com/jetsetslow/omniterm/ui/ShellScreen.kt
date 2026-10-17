@@ -2426,6 +2426,7 @@ private fun PaneTerminalContent(
         } // end if (isFocused) — hidden input sink
 
         if (showCopyOptions) {
+            val wideLayout = LocalConfiguration.current.let { it.screenWidthDp > it.screenHeightDp }
             fun openSelectableText(title: String, text: String) {
                 copyDialogTitle = title
                 copyDialogText = text
@@ -2446,13 +2447,15 @@ private fun PaneTerminalContent(
                             interactionSource = remember { MutableInteractionSource() },
                             indication = null,
                         ) { showCopyOptions = false }
-                        .padding(18.dp),
+                        .padding(horizontal = 18.dp, vertical = if (wideLayout) 8.dp else 18.dp),
                     contentAlignment = Alignment.Center,
                 ) {
                     Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .heightIn(max = 360.dp * density.fontScale.coerceAtLeast(1f))
+                            // No fixed height cap: the card may use the whole padded window so every
+                            // option fits without scrolling on ordinary phones; the middle group
+                            // still scrolls when large text or landscape leaves too little room.
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = null,
@@ -2460,10 +2463,8 @@ private fun PaneTerminalContent(
                         shape = RoundedCornerShape(8.dp),
                         tonalElevation = 6.dp,
                     ) {
-                        Column(
-                            Modifier.fillMaxWidth().padding(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(6.dp),
-                        ) {
+                        @Composable
+                        fun PasteAction() {
                             Text("Terminal input", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                             Button(
                                 onClick = {
@@ -2501,6 +2502,9 @@ private fun PaneTerminalContent(
                                 Spacer(Modifier.width(8.dp))
                                 Text(if (viewModel.terminalReadOnly) "Paste unavailable in read-only mode" else "Paste from clipboard")
                             }
+                        }
+                        @Composable
+                        fun ColumnScope.SessionOptions() {
                             // Keep primary/range actions visible; only settings and explanations scroll.
                             Column(
                                 Modifier.fillMaxWidth().weight(1f, fill = false)
@@ -2534,51 +2538,87 @@ private fun PaneTerminalContent(
                                     // skip the battery-warning follow-up dialog.
                                     onCheckedChange = { viewModel.toggleKeepScreenOnDirect() },
                                 )
-                                HorizontalDivider()
-                                Text(stringResource(R.string.copy_terminal_text), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                            }
+                        }
+                        @Composable
+                        fun RowScope.RangeActions() {
+                            Button(
+                                onClick = {
+                                    val start = viewport.firstVisibleRow.coerceIn(0, snapshot.totalRows)
+                                    openSelectableText("Visible screen", viewModel.terminalBufferTextFor(currentSession, full = false, firstRow = start, rowCount = visibleRowCount))
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(stringResource(R.string.visible_screen))
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    openSelectableText("Full buffer", viewModel.terminalBufferTextFor(currentSession, full = true))
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(stringResource(R.string.full_buffer))
+                            }
+                        }
+                        @Composable
+                        fun RowScope.ClosingActions() {
+                            OutlinedButton(
+                                onClick = {
+                                    showCopyOptions = false
+                                    confirm.ask(
+                                        "Clear scrollback?",
+                                        "Clear the current terminal scrollback buffer? This removes buffered terminal output from this session.",
+                                        confirmLabel = "Clear",
+                                    ) {
+                                        viewModel.clearTerminalScrollbackFor(currentSession)
+                                    }
+                                },
+                                modifier = Modifier.weight(1f),
+                            ) {
+                                Text(stringResource(R.string.clear_scrollback))
+                            }
+                            TextButton(
+                                onClick = { showCopyOptions = false },
+                            ) {
+                                Text(stringResource(R.string.cancel))
+                            }
+                        }
+                        @Composable
+                        fun CopyHeading(withDescription: Boolean) {
+                            Text(stringResource(R.string.copy_terminal_text), fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                            if (withDescription) {
                                 Text(stringResource(R.string.choose_the_terminal_text_range_to), fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
-                            HorizontalDivider()
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                Button(
-                                    onClick = {
-                                        val start = viewport.firstVisibleRow.coerceIn(0, snapshot.totalRows)
-                                        openSelectableText("Visible screen", viewModel.terminalBufferTextFor(currentSession, full = false, firstRow = start, rowCount = visibleRowCount))
-                                    },
-                                    modifier = Modifier.weight(1f),
+                        }
+                        Column(
+                            Modifier.fillMaxWidth().padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                        ) {
+                            // Each heading stays beside the controls it names. Landscape splits input/session options
+                            // from the copy actions so neither group is squeezed behind the other's scroll area;
+                            // the copy column omits its one-line explanation there to keep every action on screen.
+                            if (wideLayout) {
+                                Row(
+                                    Modifier.fillMaxWidth().weight(1f, fill = false),
+                                    horizontalArrangement = Arrangement.spacedBy(20.dp),
                                 ) {
-                                    Text(stringResource(R.string.visible_screen))
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        PasteAction()
+                                        SessionOptions()
+                                    }
+                                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        CopyHeading(withDescription = false)
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) { RangeActions() }
+                                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) { ClosingActions() }
+                                    }
                                 }
-                                OutlinedButton(
-                                    onClick = {
-                                        openSelectableText("Full buffer", viewModel.terminalBufferTextFor(currentSession, full = true))
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                ) {
-                                    Text(stringResource(R.string.full_buffer))
-                                }
-                            }
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                OutlinedButton(
-                                    onClick = {
-                                        showCopyOptions = false
-                                        confirm.ask(
-                                            "Clear scrollback?",
-                                            "Clear the current terminal scrollback buffer? This removes buffered terminal output from this session.",
-                                            confirmLabel = "Clear",
-                                        ) {
-                                            viewModel.clearTerminalScrollbackFor(currentSession)
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                ) {
-                                    Text(stringResource(R.string.clear_scrollback))
-                                }
-                                TextButton(
-                                    onClick = { showCopyOptions = false },
-                                ) {
-                                    Text(stringResource(R.string.cancel))
-                                }
+                            } else {
+                                PasteAction()
+                                SessionOptions()
+                                HorizontalDivider()
+                                CopyHeading(withDescription = true)
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) { RangeActions() }
+                                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) { ClosingActions() }
                             }
                         }
                     }
