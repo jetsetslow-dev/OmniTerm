@@ -3,15 +3,28 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/app_database.dart';
 import 'package:omniterm/data/app_repository.dart';
+import 'package:omniterm/data/network/network_probe.dart';
 import 'package:omniterm/domain/host_display.dart';
 import 'package:omniterm/platform/secret_store.dart';
 import 'package:omniterm/ui/screens/servers/servers_screen.dart';
+import 'package:omniterm/ui/theme/colors.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 import 'package:omniterm/ui/view_model/app_state.dart';
+import 'package:omniterm/ui/view_model/host_status_probe.dart';
 import 'package:omniterm/ui/view_model/servers_view_model.dart';
 import 'package:provider/provider.dart';
 
 import 'support/fake_secure_storage.dart';
+
+/// Answers no TCP ping, so a probe reaches an offline verdict without touching the network.
+class _UnreachableProbe implements NetworkProbe {
+  @override
+  Future<Duration?> tcpPing(String host, int port, {Duration timeout = Duration.zero}) async =>
+      null;
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 void main() {
   late AppDatabase db;
@@ -66,7 +79,7 @@ void main() {
     authStatus: authStatus,
   );
 
-  Future<void> pump(WidgetTester tester) async {
+  Future<void> pump(WidgetTester tester, {HostStatusProbe? hostProbe, bool settle = true}) async {
     await app.start();
     await tester.pumpWidget(
       MultiProvider(
@@ -76,11 +89,25 @@ void main() {
         ],
         child: MaterialApp(
           theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
-          home: const Scaffold(body: ServersScreen()),
+          home: Scaffold(body: ServersScreen(hostProbe: hostProbe)),
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    // The "Checking host…" spinner never settles.
+    settle ? await tester.pumpAndSettle() : await tester.pump();
+  }
+
+  Color? dotColor(WidgetTester tester) {
+    final dot = tester.widget<Container>(
+      find.byWidgetPredicate(
+        (w) =>
+            w is Container &&
+            w.decoration is BoxDecoration &&
+            (w.decoration! as BoxDecoration).shape == BoxShape.circle &&
+            w.constraints?.maxWidth == 8,
+      ),
+    );
+    return (dot.decoration! as BoxDecoration).color;
   }
 
   testWidgets('an online row with no verified metrics does not advertise perfect health', (
@@ -192,6 +219,39 @@ void main() {
     expect(find.text('AUTOMATIC SSH CHECK FAILED'), findsOneWidget);
     expect(find.text('SSH ANYWAY'), findsOneWidget);
     expect(find.textContaining('No TCP route'), findsNothing);
+  });
+
+  // Kotlin's card reads `probedServerIds`: a host's stored status is `offline` until something has
+  // looked at it, so a just-added host showed a failed check before its first probe had even run.
+  testWidgets('an unprobed host reads as being checked, then as failed once probed', (
+    tester,
+  ) async {
+    await repo.insertServer(server(name: 'nas', status: 'offline'));
+    final probe = HostStatusProbe(repo, probe: _UnreachableProbe());
+    addTearDown(probe.dispose);
+    await pump(tester, hostProbe: probe, settle: false);
+
+    expect(find.text('Checking host…'), findsOneWidget);
+    expect(find.text('…'), findsOneWidget);
+    expect(find.text('AUTOMATIC SSH CHECK FAILED'), findsNothing);
+    expect(dotColor(tester), OmniColors.red);
+
+    final probing = probe.probeOne((await repo.getAllServers()).single);
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+    await probing;
+    await tester.pumpAndSettle();
+
+    expect(find.text('Checking host…'), findsNothing);
+    expect(find.text('Offline'), findsWidgets);
+    expect(find.text('AUTOMATIC SSH CHECK FAILED'), findsOneWidget);
+  });
+
+  testWidgets('a host being checked has the amber status dot Kotlin uses', (tester) async {
+    await repo.insertServer(server(name: 'nas', status: 'connecting'));
+    await pump(tester, settle: false);
+    expect(dotColor(tester), OmniColors.amber);
   });
 
   testWidgets('the summary banner counts total, online and offline', (tester) async {

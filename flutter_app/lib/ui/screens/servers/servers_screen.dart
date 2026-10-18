@@ -537,6 +537,10 @@ class _ServerCard extends StatelessWidget {
     final display = HostDisplay.instance;
     final accent = OmniColors.serverAccent(server.serverColor, server.name);
     final ticked = vm.selectedServerIdsForBulk.contains(server.id);
+    // Kotlin's `probedServerIds`: the stored status is only `offline` because nothing has looked yet,
+    // so an unprobed host reads as being checked rather than as a failed check.
+    final probed = hostProbe?.hasProbed(server.id) ?? true;
+    final checking = server.status == 'connecting' || !probed;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -569,7 +573,7 @@ class _ServerCard extends StatelessWidget {
                     value: ticked,
                     onChanged: (_) => vm.toggleBulkSelection(server.id),
                   ),
-                _StatusDot(server: server, measured: metrics != null),
+                _StatusDot(server: server, measured: metrics != null, accent: accent),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -587,7 +591,7 @@ class _ServerCard extends StatelessWidget {
                 Text(
                   server.status == 'online'
                       ? '${server.lastLatency}ms'
-                      : server.status == 'connecting'
+                      : checking
                       ? '…'
                       : 'Offline',
                   style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
@@ -742,7 +746,7 @@ class _ServerCard extends StatelessWidget {
                   ),
                 ],
               ),
-            ] else if (server.status == 'connecting')
+            ] else if (checking)
               Row(
                 children: [
                   const SizedBox.square(
@@ -1066,19 +1070,21 @@ class _AuthFailure extends StatelessWidget {
 }
 
 class _StatusDot extends StatelessWidget {
-  final bool measured;
-  const _StatusDot({required this.server, required this.measured});
+  const _StatusDot({required this.server, required this.measured, required this.accent});
 
   final Server server;
+  final bool measured;
+  final Color accent;
 
+  /// Kotlin's `StatusDot` on the host card: red unless online or connecting; amber while connecting,
+  /// muted until live metrics arrive, then the host's identity colour.
   @override
   Widget build(BuildContext context) {
-    final color = switch (server) {
-      _ when server.authStatus == 'failed' => OmniColors.amber,
-      _ when server.status == 'online' && measured => OmniColors.green,
-      _ when server.status == 'online' => OmniColors.textMuted,
-      _ when server.status == 'connecting' => OmniColors.cyan,
-      _ => OmniColors.textMuted,
+    final color = switch (server.status) {
+      'connecting' => OmniColors.amber,
+      'online' when !measured => OmniColors.textMuted,
+      'online' => accent,
+      _ => OmniColors.red,
     };
     return Container(
       width: 8,

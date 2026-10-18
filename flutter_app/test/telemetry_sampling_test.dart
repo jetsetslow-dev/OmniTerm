@@ -212,6 +212,29 @@ void main() {
       expect(immediate.metrics.cpuPercent, second.metrics.cpuPercent);
     });
 
+    // Seen live: switching to Monitor refreshes right after a scheduled poll, and the per-core bars
+    // vanished for that sample while the aggregate figure stayed. Kotlin always shows them.
+    test('keeps the last per-core figures rather than dropping them', () {
+      final cores = [
+        sample(probe(cpuIdle: 900, cpuTotal: 1000, cores: [(450, 500), (450, 500)]), nowMs: 0),
+      ];
+      cores.add(
+        sample(
+          probe(cpuIdle: 950, cpuTotal: 1200, cores: [(500, 600), (450, 600)]),
+          previous: cores.last.baseline,
+          nowMs: 15000,
+        ),
+      );
+      final soon = sample(
+        probe(cpuIdle: 951, cpuTotal: 1201, cores: [(500, 601), (451, 601)]),
+        previous: cores.last.baseline,
+        nowMs: 15100,
+      );
+
+      expect(cores.last.metrics.perCoreCpu, [50, 100]);
+      expect(soon.metrics.perCoreCpu, cores.last.metrics.perCoreCpu);
+    });
+
     test('does not become the baseline', () {
       // Otherwise every future window would be measured from a moment that was never measurable,
       // and someone tapping refresh repeatedly would never see a rate again.

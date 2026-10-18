@@ -337,6 +337,7 @@ class OmniTermApp extends StatelessWidget {
             context.read<AppState>(),
             transport: context.read<SshTransport>(),
             shortcuts: context.read<ShortcutHelper>(),
+            probeHost: context.read<HostStatusProbe>().probeOne,
           ),
           update: (_, app, previous) => previous!,
         ),

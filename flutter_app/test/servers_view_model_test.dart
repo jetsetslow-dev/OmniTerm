@@ -91,6 +91,19 @@ void main() {
     await db.close();
   });
 
+  // Kotlin's `addServer` probes the new host straight away; otherwise it waits for the next sweep.
+  test('saving a new host probes it immediately, but an edit does not', () async {
+    final probed = <Server>[];
+    final probing = ServersViewModel(app, probeHost: (server) async => probed.add(server));
+    addTearDown(probing.dispose);
+
+    final id = await probing.saveServer(hostFixture(name: 'fresh'));
+    expect(probed.map((s) => (s.id, s.name)), [(id, 'fresh')]);
+
+    await probing.updateServer(probed.single.copyWith(name: 'renamed'));
+    expect(probed, hasLength(1));
+  });
+
   test(
     'manual add and edit reject renamed duplicate connections with an actionable error',
     () async {

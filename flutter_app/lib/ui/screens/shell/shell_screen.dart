@@ -872,9 +872,20 @@ class _TerminalHeaderState extends State<_TerminalHeader> {
                 fontFamily: OmniFonts.mono,
               ),
             ),
-            trailing: Text(
-              vm.isSplit ? 'FOCUSED' : 'CURRENT',
-              style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold),
+            // Kotlin's trailing content brings its own arrow, since it replaces the default one.
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  vm.isSplit ? 'FOCUSED' : 'CURRENT',
+                  style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold),
+                ),
+                Icon(
+                  Icons.arrow_drop_down,
+                  color: scheme.onSurfaceVariant,
+                  semanticLabel: 'Switch host',
+                ),
+              ],
             ),
           ),
           Padding(

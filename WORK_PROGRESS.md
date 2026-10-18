@@ -1,5 +1,14 @@
 # Kotlin / Flutter reliability review — temporary branch tracker
 
+## October 18: live-host screens against Kotlin — local/runtime complete
+
+- Compared Servers, Monitor, Fleet and Term with a live fixture host against the Kotlin reference captures. Fleet matches. Three gaps found and fixed:
+  - Servers card: a newly saved host showed "Automatic SSH check failed" until the next 45-second sweep. Kotlin probes a host as soon as it is added and shows "Checking host…" until a host's first probe completes; Flutter now does both (edits do not re-probe, as in Kotlin). The status dot follows Kotlin's rules: red offline, amber while checking, muted until metrics arrive, then the host's colour.
+  - Monitor: the per-core CPU list disappeared for one sample whenever a refresh landed within a second of the previous poll (for example right after switching to the tab). That sample now repeats the last per-core figures, as it already did for the aggregate CPU.
+  - Term: the "Switch host" arrow next to CURRENT, lost in the previous slice, is back.
+- Each fix has a test that fails on the previous code.
+- Validation: `./scripts/local-pr-check.sh --full` passed (2,939 Flutter tests, seven optional skips; plain API 35 instrumentation 24 passes, 42 opt-in assumptions unexecuted). The Flutter core device profile passed at 420 dpi with zero skips and no unexpected warnings.
+
 ## October 18: remaining screens in Kotlin's layout — local/runtime complete
 
 - Published checkpoint `d43c22a`: 15 hosted contexts passed and Scorecard skipped; the emulator job failed one native backup case ("cancelling the save claims nothing was written": the encryption note was not found right after selecting Settings). All plain device entrypoints passed there. CI runs the emulator at 420 dpi; local runs had used a 480 dpi override, where the case passed. That head is superseded rather than rerun; this slice rewrites the screen and test, and the case passes at 420 dpi.

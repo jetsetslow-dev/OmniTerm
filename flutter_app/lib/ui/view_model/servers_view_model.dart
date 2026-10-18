@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:drift/drift.dart' show Value;
 import 'package:flutter/foundation.dart';
 
@@ -17,7 +19,7 @@ import 'app_state.dart';
 /// Owns only what the Servers screen needs — search text, the group filter, multi-select — and reads
 /// the host list from the shared [AppState] rather than holding a second copy that could drift.
 class ServersViewModel extends ChangeNotifier {
-  ServersViewModel(this._app, {this.transport, this.shortcuts}) {
+  ServersViewModel(this._app, {this.transport, this.shortcuts, this.probeHost}) {
     _app.addListener(notifyListeners);
   }
 
@@ -27,6 +29,10 @@ class ServersViewModel extends ChangeNotifier {
   /// rather than silently reporting success.
   final SshTransport? transport;
   final ShortcutHelper? shortcuts;
+
+  /// Checks one host through its configured route. Kotlin's `addServer` probes a new host as soon as
+  /// it is saved; without that the card sits on its stored `offline` until the next sweep.
+  final Future<void> Function(Server server)? probeHost;
 
   bool get canTestConnections => transport != null;
 
@@ -212,7 +218,15 @@ class ServersViewModel extends ChangeNotifier {
 
   // ── actions ────────────────────────────────────────────────────────────────
 
-  Future<int> saveServer(Server server) => _app.repository.saveUniqueServer(server);
+  Future<int> saveServer(Server server) async {
+    final id = await _app.repository.saveUniqueServer(server);
+    final probe = probeHost;
+    if (probe != null) {
+      final saved = await _app.repository.getServerById(id);
+      if (saved != null) unawaited(probe(saved));
+    }
+    return id;
+  }
 
   Future<void> updateServer(Server server) async {
     await _app.repository.saveUniqueServer(server, update: true);

@@ -27,6 +27,7 @@ class TelemetryBaseline {
     this.diskReadPerSec = 0,
     this.diskWritePerSec = 0,
     this.cpuPercent,
+    this.perCoreCpu = const [],
   });
 
   final int takenAtMs;
@@ -40,6 +41,7 @@ class TelemetryBaseline {
   final int diskReadPerSec;
   final int diskWritePerSec;
   final double? cpuPercent;
+  final List<double> perCoreCpu;
 }
 
 /// One enriched sample plus the baseline the next one should be measured against.
@@ -87,7 +89,9 @@ TelemetrySample enrichMetrics({
   final aggregateCpu = tooSoon
       ? previous.cpuPercent
       : computeCpuUsageDelta(previous?.cpu, cpuCounters, 'cpu');
-  final perCore = tooSoon ? const <double>[] : computePerCoreCpuDeltas(previous?.cpu, cpuCounters);
+  final perCore = tooSoon
+      ? previous.perCoreCpu
+      : computePerCoreCpuDeltas(previous?.cpu, cpuCounters);
 
   /// Per-second change in a cumulative counter.
   ///
@@ -165,6 +169,7 @@ TelemetrySample enrichMetrics({
             diskReadPerSec: readPerSec,
             diskWritePerSec: writePerSec,
             cpuPercent: metrics.cpuPercent,
+            perCoreCpu: metrics.perCoreCpu,
           ),
   );
 }

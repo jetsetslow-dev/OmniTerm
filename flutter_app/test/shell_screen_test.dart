@@ -701,6 +701,14 @@ void main() {
     await connect(tester);
     expect(find.text('TERM'), findsOneWidget);
     expect(find.text('CURRENT'), findsOneWidget);
+    // Kotlin's trailing content carries its own "Switch host" arrow next to CURRENT.
+    expect(
+      find.descendant(
+        of: find.byKey(const ValueKey('shell.host')),
+        matching: find.byIcon(Icons.arrow_drop_down),
+      ),
+      findsOneWidget,
+    );
     expect(find.byKey(ValueKey('shell.host.detail.$id')), findsOneWidget);
     for (final label in ['OPEN', 'BG', 'SPLIT', '🔓 INPUT', '⋮ OPT', 'DISC']) {
       expect(find.text(label), findsOneWidget);
