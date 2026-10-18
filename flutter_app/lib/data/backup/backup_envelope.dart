@@ -20,6 +20,8 @@ import 'dart:typed_data';
 
 import 'package:cryptography/cryptography.dart';
 
+import 'android_json.dart';
+
 /// Raised for a backup that cannot be read, with a message meant for the user.
 class BackupException implements Exception {
   const BackupException(this.message);
@@ -83,7 +85,8 @@ Future<String> encryptBackup(String json, String passphrase) async {
   final secretKey = await _deriveKey(passphrase, salt, BackupLimits.kdfIterations);
   final box = await AesGcm.with256bits().encrypt(compressed, secretKey: secretKey);
 
-  return jsonEncode({
+  // Written by org.json in Kotlin, so the envelope uses the same serializer (`\/` in base64).
+  return encodeAndroidJson({
     'v': 2,
     'compression': 'gzip',
     'kdf': 'PBKDF2WithHmacSHA256',

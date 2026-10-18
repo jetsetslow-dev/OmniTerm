@@ -212,9 +212,32 @@ void main() {
     await tester.pump(const Duration(milliseconds: 10));
   });
 
-  testWidgets('the dashboard puts the worst host first', (tester) async {
-    // The reason to open a fleet dashboard is to find what needs attention; a name-sorted list
-    // buries it.
+  Future<void> pickTargets(WidgetTester tester, List<String> names) async {
+    await tester.tap(find.byKey(const ValueKey('fleet.targets.hosts')));
+    await tester.pumpAndSettle();
+    for (final name in names) {
+      await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.text(name)));
+      await tester.pumpAndSettle();
+    }
+    await tester.tap(find.text('Done'));
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> runAndConfirm(WidgetTester tester, {bool settle = true}) async {
+    await tester.tap(find.byKey(const ValueKey('fleet.run')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('run.confirm')));
+    if (settle) {
+      await tester.pumpAndSettle();
+    } else {
+      await tester.pump();
+    }
+  }
+
+  testWidgets('the dashboard lists online hosts in saved order under Kotlin\'s stat cards', (
+    tester,
+  ) async {
+    // Kotlin's dashboard is fed only the online hosts, in the order they are saved (by name).
     await repo.insertServer(server(name: 'healthy', host: '10.0.0.1', healthScore: 95));
     await repo.insertServer(server(name: 'sick', host: '10.0.0.2', healthScore: 20));
     await repo.insertServer(
@@ -223,29 +246,25 @@ void main() {
     await pump(tester);
 
     double top(String name) => tester.getTopLeft(find.text(name)).dy;
-    expect(top('sick'), lessThan(top('healthy')));
-    expect(
-      top('healthy'),
-      lessThan(top('gone')),
-      reason: 'an offline host has no live score to rank on, so it sorts last',
-    );
+    expect(top('healthy'), lessThan(top('sick')));
+    expect(find.text('gone'), findsNothing, reason: 'offline hosts are not on the dashboard');
+    expect(find.bySemanticsLabel('Hosts: 2'), findsOneWidget);
+    expect(find.bySemanticsLabel('Online: 2'), findsOneWidget);
+    expect(find.bySemanticsLabel('Critical: 0'), findsOneWidget);
     vm.dispose();
     scriptsVm.dispose();
     await tester.pump(const Duration(milliseconds: 10));
   });
 
-  testWidgets('an offline host shows a tag, not a stale score', (tester) async {
+  testWidgets('an offline fleet says details return when hosts come back online', (tester) async {
     await repo.insertServer(
       server(name: 'down', host: '10.0.0.1', status: 'offline', healthScore: 88),
     );
     await pump(tester);
 
-    expect(find.text('OFFLINE'), findsOneWidget);
-    expect(
-      find.text('88'),
-      findsNothing,
-      reason: 'a score for an unreachable host is a stale number pretending to be current',
-    );
+    expect(find.byKey(const ValueKey('fleet.dashboard.empty')), findsOneWidget);
+    expect(find.text('down'), findsNothing);
+    expect(find.text('88'), findsNothing, reason: 'no stale score for an unreachable host');
     vm.dispose();
     scriptsVm.dispose();
     await tester.pump(const Duration(milliseconds: 10));
@@ -269,7 +288,6 @@ void main() {
       final run = find.byKey(const ValueKey('fleet.run'));
       await tester.ensureVisible(run);
       expect(run.hitTestable(), findsOneWidget);
-      expect(find.byKey(const ValueKey('fleet.broadcast.idle')), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       vm.dispose();
@@ -277,30 +295,35 @@ void main() {
       await tester.pump(const Duration(milliseconds: 10));
     });
 
-    testWidgets('running is blocked until a command and a target exist', (tester) async {
-      final id = await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
+    testWidgets('Run only asks to confirm once a command and a target exist', (tester) async {
+      await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
       await pump(tester, transport: BroadcastTransport());
       await goToBroadcast(tester);
 
-      var button = tester.widget<FilledButton>(find.byKey(const ValueKey('fleet.run')));
-      expect(button.onPressed, isNull);
+      expect(find.text('RUN ON 0 HOSTS'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('fleet.run')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('run.dialog')), findsNothing);
 
       await tester.enterText(find.byKey(const ValueKey('fleet.command')), 'uptime');
       await tester.pumpAndSettle();
-      button = tester.widget<FilledButton>(find.byKey(const ValueKey('fleet.run')));
-      expect(button.onPressed, isNull, reason: 'still no targets');
-
-      await tester.tap(find.byKey(ValueKey('fleet.target.$id')));
+      await tester.tap(find.byKey(const ValueKey('fleet.run')));
       await tester.pumpAndSettle();
-      button = tester.widget<FilledButton>(find.byKey(const ValueKey('fleet.run')));
-      expect(button.onPressed, isNotNull);
+      expect(find.byKey(const ValueKey('run.dialog')), findsNothing, reason: 'still no targets');
+
+      await pickTargets(tester, ['a']);
+      expect(find.text('RUN ON 1 HOSTS'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('fleet.run')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('run.dialog')), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('run.cancel')));
+      await tester.pumpAndSettle();
       vm.dispose();
       scriptsVm.dispose();
       await tester.pump(const Duration(milliseconds: 10));
     });
 
     testWidgets('the dialog names every host that will be hit', (tester) async {
-      // "5 hosts" is not something a user can check; a list is.
       await repo.insertServer(server(name: 'alpha', host: '10.0.0.1'));
       await repo.insertServer(server(name: 'beta', host: '10.0.0.2'));
       final transport = BroadcastTransport();
@@ -314,9 +337,11 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.text('Run on 2 hosts?'), findsOneWidget);
-      expect(find.text('\$ uptime'), findsOneWidget);
-      expect(find.textContaining('alpha'), findsWidgets);
-      expect(find.textContaining('beta'), findsWidgets);
+      expect(
+        find.text('\$ uptime\n\n• alpha (root@10.0.0.1)\n• beta (root@10.0.0.2)'),
+        findsOneWidget,
+        reason: 'Kotlin\'s ConfirmHost message: the command, then every host by name',
+      );
 
       await tester.tap(find.byKey(const ValueKey('run.cancel')));
       await tester.pumpAndSettle();
@@ -326,20 +351,18 @@ void main() {
       await tester.pump(const Duration(milliseconds: 10));
     });
 
-    testWidgets('a destructive command is flagged in the field and the dialog', (tester) async {
-      final id = await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
+    testWidgets('a destructive command is flagged in the confirmation', (tester) async {
+      await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
       await pump(tester, transport: BroadcastTransport());
       await goToBroadcast(tester);
 
       await tester.enterText(find.byKey(const ValueKey('fleet.command')), 'rm -rf /var/lib');
-      await tester.tap(find.byKey(ValueKey('fleet.target.$id')));
+      await tester.tap(find.byKey(const ValueKey('fleet.targets.all')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('fleet.dangerWarning')), findsOneWidget);
-
       await tester.tap(find.byKey(const ValueKey('fleet.run')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('run.dialog.danger')), findsOneWidget);
-      expect(find.textContaining('recursive/forced delete'), findsWidgets);
+      expect(find.textContaining('⚠ This command looks destructive'), findsOneWidget);
+      expect(find.textContaining('recursive/forced delete'), findsOneWidget);
 
       // Flagged, not blocked — the user chose these hosts.
       expect(find.byKey(const ValueKey('run.confirm')), findsOneWidget);
@@ -360,21 +383,23 @@ void main() {
       await tester.enterText(find.byKey(const ValueKey('fleet.command')), 'uptime');
       await tester.tap(find.byKey(const ValueKey('fleet.targets.all')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('fleet.run')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('run.confirm')));
-      await tester.pumpAndSettle();
+      await runAndConfirm(tester);
 
       expect(transport.commands, hasLength(2));
       expect(find.byKey(const ValueKey('fleet.results')), findsOneWidget);
-      expect(find.text('OK'), findsNWidgets(2));
+      expect(find.text('complete'), findsNWidgets(2));
       expect(find.textContaining('up 3 days'), findsWidgets);
+      expect(
+        find.text('RUN 2'),
+        findsOneWidget,
+        reason: 'Kotlin collapses the controls to a compact Run once outputs arrive',
+      );
       vm.dispose();
       scriptsVm.dispose();
       await tester.pump(const Duration(milliseconds: 10));
     });
 
-    testWidgets('a running broadcast exposes a cancel action', (tester) async {
+    testWidgets('a running broadcast exposes a stop action', (tester) async {
       await repo.insertServer(server(name: 'alpha', host: '10.0.0.1'));
       final stall = Completer<void>();
       final transport = BroadcastTransport()..stalls = {'10.0.0.1': stall};
@@ -384,15 +409,15 @@ void main() {
       await tester.enterText(find.byKey(const ValueKey('fleet.command')), 'sleep 600');
       await tester.tap(find.byKey(const ValueKey('fleet.targets.all')));
       await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('fleet.run')));
-      await tester.pump();
-      await tester.tap(find.byKey(const ValueKey('run.confirm')));
+      await runAndConfirm(tester, settle: false);
       await tester.pump();
 
-      expect(find.text('Cancel'), findsOneWidget);
+      expect(find.text('streaming'), findsOneWidget);
+      expect(find.textContaining('STOP'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('fleet.run')));
       await tester.pumpAndSettle();
-      expect(find.text('CANCELLED'), findsOneWidget);
+      expect(find.text('failed'), findsOneWidget);
+      expect(find.textContaining('Cancelled.'), findsOneWidget);
 
       stall.complete();
       vm.dispose();
@@ -410,13 +435,10 @@ void main() {
       await tester.enterText(find.byKey(const ValueKey('fleet.command')), 'uptime');
       await tester.tap(find.byKey(const ValueKey('fleet.targets.all')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('fleet.run')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('run.confirm')));
-      await tester.pumpAndSettle();
+      await runAndConfirm(tester);
 
-      expect(find.text('OK'), findsOneWidget);
-      expect(find.text('FAILED'), findsOneWidget);
+      expect(find.text('complete'), findsOneWidget);
+      expect(find.text('failed'), findsOneWidget);
       expect(find.textContaining('connection refused'), findsOneWidget);
       vm.dispose();
       scriptsVm.dispose();
@@ -430,22 +452,33 @@ void main() {
       await pump(tester, transport: BroadcastTransport());
       await goToBroadcast(tester);
 
-      await tester.tap(find.text('Groups'));
+      await tester.tap(find.byKey(const ValueKey('fleet.targetMode.groups')));
       await tester.pumpAndSettle();
+      expect(find.text('prod (2)'), findsOneWidget);
       await tester.tap(find.byKey(const ValueKey('fleet.targetGroup.prod')));
       await tester.pumpAndSettle();
 
-      expect(find.text('2 targets'), findsOneWidget);
+      expect(find.text('2 target(s) · no command'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('fleet.targets.all')));
+      await tester.pumpAndSettle();
+      expect(find.text('3 target(s) · no command'), findsOneWidget, reason: 'All Groups');
       vm.dispose();
       scriptsVm.dispose();
       await tester.pump(const Duration(milliseconds: 10));
     });
 
-    testWidgets('without a transport it says broadcasting is unavailable', (tester) async {
+    testWidgets('without a transport Run explains that broadcasting is unavailable', (
+      tester,
+    ) async {
       await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
       await pump(tester);
       await goToBroadcast(tester);
 
+      await tester.enterText(find.byKey(const ValueKey('fleet.command')), 'uptime');
+      await tester.tap(find.byKey(const ValueKey('fleet.targets.all')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('fleet.run')));
+      await tester.pumpAndSettle();
       expect(find.textContaining('unavailable in this build'), findsOneWidget);
       vm.dispose();
       scriptsVm.dispose();
@@ -455,7 +488,7 @@ void main() {
 
   group('logs', () {
     testWidgets('picking hosts and fetching merges their lines', (tester) async {
-      final aId = await repo.insertServer(server(name: 'alpha', host: '10.0.0.1'));
+      await repo.insertServer(server(name: 'alpha', host: '10.0.0.1'));
       await pump(
         tester,
         transport: BroadcastTransport(
@@ -466,46 +499,20 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('fleet.logs.empty')), findsOneWidget);
+      expect(find.text('No logs. Select hosts and tap Fetch Logs.'), findsOneWidget);
 
-      await tester.tap(find.byKey(ValueKey('fleet.logs.host.$aId')));
+      await tester.tap(find.byKey(const ValueKey('fleet.logs.hosts')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.descendant(of: find.byType(AlertDialog), matching: find.text('alpha')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Done'));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('fleet.logs.reload')));
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('fleet.logs.list')), findsOneWidget);
       expect(find.textContaining('disk errors detected'), findsOneWidget);
-      // The host name leads: in a merged view, which machine a line came from comes first.
-      expect(find.text('alpha'), findsWidgets);
-      vm.dispose();
-      scriptsVm.dispose();
-      await tester.pump(const Duration(milliseconds: 10));
-    });
-
-    testWidgets('the level filter narrows the rendered lines', (tester) async {
-      final aId = await repo.insertServer(server(name: 'alpha', host: '10.0.0.1'));
-      await pump(
-        tester,
-        transport: BroadcastTransport(
-          replies: {
-            'journalctl':
-                '2026-08-04T10:00:00+0000 host sshd: accepted connection\n'
-                '2026-08-04T10:00:01+0000 host kernel: disk errors detected\n',
-          },
-        ),
-      );
-      await tester.tap(find.byKey(const ValueKey('fleet.tab.logs')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(ValueKey('fleet.logs.host.$aId')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('fleet.logs.reload')));
-      await tester.pumpAndSettle();
-
-      expect(find.textContaining('accepted connection'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('fleet.logs.filter.ERROR')));
-      await tester.pumpAndSettle();
-
-      expect(find.textContaining('accepted connection'), findsNothing);
-      expect(find.textContaining('disk errors detected'), findsOneWidget);
+      expect(find.text('1 entries'), findsOneWidget);
       vm.dispose();
       scriptsVm.dispose();
       await tester.pump(const Duration(milliseconds: 10));
@@ -515,11 +522,11 @@ void main() {
   testWidgets('hide-sensitive-info masks addresses on the dashboard', (tester) async {
     await repo.insertServer(server(name: 'nas', host: '10.0.0.9'));
     await pump(tester);
-    expect(find.text('root@10.0.0.9'), findsOneWidget);
+    expect(find.text('root@10.0.0.9:22'), findsOneWidget);
 
     HostDisplay.instance.hideSensitiveInfo = true;
     await tester.pumpAndSettle();
-    expect(find.text('root@10.0.0.9'), findsNothing);
+    expect(find.textContaining('10.0.0.9'), findsNothing);
     vm.dispose();
     scriptsVm.dispose();
     await tester.pump(const Duration(milliseconds: 10));
@@ -656,52 +663,43 @@ void main() {
       }
     }
 
-    testWidgets('a short list is offered without a filter in the way', (tester) async {
-      // Below the threshold the filter is more work than the thing it filters.
+    Future<void> openPicker(WidgetTester tester) async {
+      await tester.tap(find.byKey(const ValueKey('fleet.presets.open')));
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('Presets opens Kotlin\'s searchable chooser', (tester) async {
       await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
       await seedPresets(3);
       await pump(tester);
       await goToBroadcast(tester);
+      await openPicker(tester);
 
-      expect(find.byKey(const ValueKey('fleet.presets')), findsOneWidget);
-      expect(find.byKey(const ValueKey('fleet.presets.search')), findsNothing);
+      expect(find.text('Choose fleet script'), findsOneWidget);
+      expect(find.byKey(const ValueKey('fleet.presets.search')), findsOneWidget);
+      expect(find.text('* preset0'), findsOneWidget);
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
       vm.dispose();
       scriptsVm.dispose();
       await tester.pump(const Duration(milliseconds: 10));
     });
 
-    testWidgets('a long list gets a filter that matches name or command', (tester) async {
-      // Half of what makes a saved command recognisable is what it runs.
+    testWidgets('the search matches name or command', (tester) async {
       await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
       await seedPresets(9);
       await pump(tester);
       await goToBroadcast(tester);
+      await openPicker(tester);
 
-      expect(find.byKey(const ValueKey('fleet.presets.search')), findsOneWidget);
       await tester.enterText(find.byKey(const ValueKey('fleet.presets.search')), 'journalctl');
       await tester.pumpAndSettle();
-
-      expect(find.text('preset0'), findsOneWidget);
-      expect(find.text('preset1'), findsNothing);
-
-      await tester.tap(find.byKey(const ValueKey('fleet.presets.search.clear')));
-      await tester.pumpAndSettle();
-      expect(find.text('preset1'), findsOneWidget);
-      vm.dispose();
-      scriptsVm.dispose();
-      await tester.pump(const Duration(milliseconds: 10));
-    });
-
-    testWidgets('a filter that matches nothing blames the filter', (tester) async {
-      await repo.insertServer(server(name: 'a', host: '10.0.0.1'));
-      await seedPresets(9);
-      await pump(tester);
-      await goToBroadcast(tester);
+      expect(find.text('* preset0'), findsOneWidget);
+      expect(find.text('* preset1'), findsNothing);
 
       await tester.enterText(find.byKey(const ValueKey('fleet.presets.search')), 'zzz');
       await tester.pumpAndSettle();
-
-      expect(find.byKey(const ValueKey('fleet.presets.noMatch')), findsOneWidget);
+      expect(find.text('No presets match your search.'), findsOneWidget);
       vm.dispose();
       scriptsVm.dispose();
       await tester.pump(const Duration(milliseconds: 10));
@@ -713,6 +711,7 @@ void main() {
       await seedPresets(2);
       await pump(tester, transport: BroadcastTransport());
       await goToBroadcast(tester);
+      await openPicker(tester);
 
       final id = (await repo.getAllScripts()).first.id;
       await tester.tap(find.byKey(ValueKey('fleet.preset.$id')));

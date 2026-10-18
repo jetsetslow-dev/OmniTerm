@@ -7,7 +7,11 @@ import 'package:omniterm/ui/screens/tools/tools_hub_screen.dart';
 import 'package:omniterm/ui/theme/theme.dart';
 import 'package:provider/provider.dart';
 
+import 'support/material_fonts.dart';
+
 void main() {
+  setUpAll(loadMaterialRoboto);
+
   late NavigationController navigation;
 
   setUp(() => navigation = NavigationController());
@@ -29,6 +33,46 @@ void main() {
     );
     await tester.pumpAndSettle();
   }
+
+  group('tile size', () {
+    Future<void> pumpPhone(WidgetTester tester, double textScale) async {
+      // The API 35 device profile's portrait width, where 150% text first wrapped a label past
+      // Kotlin's fixed tile.
+      tester.view.physicalSize = const Size(360, 740);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      await tester.pumpWidget(
+        ChangeNotifierProvider<NavigationController>.value(
+          value: navigation,
+          child: MaterialApp(
+            theme: omniTheme(OmniThemeMode.dark, Brightness.dark),
+            home: MediaQuery(
+              data: MediaQueryData(
+                size: const Size(360, 740),
+                textScaler: TextScaler.linear(textScale),
+              ),
+              child: const Scaffold(body: ToolsHubScreen()),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    testWidgets('tiles are Kotlin\'s 110dp at normal text', (tester) async {
+      await pumpPhone(tester, 1);
+      for (final (screen, _, _) in ToolsHubScreen.tools) {
+        expect(tester.getSize(find.byKey(ValueKey('tools.${screen.name}'))).height, 110);
+      }
+    });
+
+    for (final scale in const [1.3, 1.5, 1.75, 2.0]) {
+      testWidgets('no label overflows its tile at ${(scale * 100).round()}% text', (tester) async {
+        await pumpPhone(tester, scale);
+        expect(tester.takeException(), isNull);
+      });
+    }
+  });
 
   group('the hub', () {
     testWidgets('offers every tool screen', (tester) async {

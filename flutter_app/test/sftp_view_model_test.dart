@@ -2167,13 +2167,14 @@ void main() {
   /// Flutter held it in memory only, so a browser that had been asked to show newest-first was back
   /// to Name A-Z on the next launch — a setting the user can change that does not survive.
   group('sort order persistence', () {
-    test('choosing a sort writes it under the Kotlin key', () async {
+    test('choosing a sort writes it under the Kotlin key and spelling', () async {
       final vm = await booted(homeTree());
 
       vm.sortOption = SftpSortOption.modifiedDesc;
       await Future<void>.delayed(Duration.zero);
 
-      expect(await repo.getSetting('sftp_sort'), 'modifiedDesc');
+      // Kotlin matches `SftpSortOption.entries.firstOrNull { it.name == v }` exactly.
+      expect(await repo.getSetting('sftp_sort'), 'ModifiedDesc');
       vm.dispose();
     });
 
@@ -2234,7 +2235,7 @@ void main() {
       vm.sortOption = SftpSortOption.nameDesc;
       await Future<void>.delayed(Duration.zero);
 
-      expect(await repo.getSetting('sftp_sort'), 'nameDesc');
+      expect(await repo.getSetting('sftp_sort'), 'NameDesc');
       vm.dispose();
     });
   });

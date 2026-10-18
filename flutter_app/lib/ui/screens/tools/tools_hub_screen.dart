@@ -23,6 +23,31 @@ class ToolsHubScreen extends StatelessWidget {
     (Screen.about, 'About OmniTerm', Icons.info),
   ];
 
+  static const _labelStyle = TextStyle(fontWeight: FontWeight.w600, fontSize: 14);
+
+  /// Kotlin's tiles are a fixed 110dp. Compose clips a label that outgrows one (a two-line label
+  /// at large text); Flutter would report the overflow instead, so a tile grows exactly as much
+  /// as its tallest label needs at the current width and text scale, and no more.
+  static double tileExtent(BuildContext context, double tileWidth) {
+    final scaler = MediaQuery.textScalerOf(context);
+    final direction = Directionality.of(context);
+    var tallest = 0.0;
+    for (final (_, label, _) in tools) {
+      final painter = TextPainter(
+        text: TextSpan(text: label, style: DefaultTextStyle.of(context).style.merge(_labelStyle)),
+        textAlign: TextAlign.center,
+        textDirection: direction,
+        textScaler: scaler,
+      )..layout(maxWidth: tileWidth - 24);
+      tallest = painter.height > tallest ? painter.height : tallest;
+      painter.dispose();
+    }
+    // Card padding (2 × 12) + icon (28) + gap (8) + label, rounded up so sub-pixel text never
+    // overflows.
+    final needed = (24 + 28 + 8 + tallest).ceilToDouble();
+    return needed > 110 ? needed : 110;
+  }
+
   @override
   Widget build(BuildContext context) {
     final navigation = context.read<NavigationController>();
@@ -32,35 +57,34 @@ class ToolsHubScreen extends StatelessWidget {
       children: [
         const SectionHeader(title: 'OmniTerm utilities'),
         Expanded(
-          child: GridView.count(
-            key: const ValueKey('tools.grid'),
-            crossAxisCount: 2,
-            crossAxisSpacing: 12,
-            mainAxisSpacing: 12,
-            padding: const EdgeInsets.all(12),
-            // Tiles get taller as the text grows. A fixed ratio means a fixed height, and at 200%
-            // the label no longer fits beside the icon — the column overflowed by 17px, which on a
-            // navigation grid is a clipped tool name.
-            childAspectRatio: 1.6 / MediaQuery.textScalerOf(context).scale(1).clamp(1.0, 2.0),
-            children: [
-              for (final (screen, label, icon) in tools)
-                OmniCard(
-                  key: ValueKey('tools.${screen.name}'),
-                  onTap: () => navigation.navigateTo(screen),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(icon, size: 26, color: OmniColors.cyan),
-                      const SizedBox(height: 8),
-                      Text(
-                        label,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13),
+          child: LayoutBuilder(
+            builder: (context, constraints) => GridView(
+              key: const ValueKey('tools.grid'),
+              padding: const EdgeInsets.all(12),
+              gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 2,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
+                mainAxisExtent: tileExtent(context, (constraints.maxWidth - 24 - 12) / 2),
+              ),
+              children: [
+                for (final (screen, label, icon) in tools)
+                  OmniCard(
+                    key: ValueKey('tools.${screen.name}'),
+                    onTap: () => navigation.navigateTo(screen),
+                    child: SizedBox.expand(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(icon, size: 28, color: OmniColors.cyan),
+                          const SizedBox(height: 8),
+                          Text(label, textAlign: TextAlign.center, style: _labelStyle),
+                        ],
                       ),
-                    ],
+                    ),
                   ),
-                ),
-            ],
+              ],
+            ),
           ),
         ),
       ],

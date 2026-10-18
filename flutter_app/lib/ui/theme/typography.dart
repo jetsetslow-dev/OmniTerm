@@ -9,8 +9,15 @@ import 'package:flutter/material.dart';
 abstract final class OmniFonts {
   static const mono = 'JetBrainsMono';
 
-  /// Oxanium ships as a variable font; the default instance + synthetic bold is fine for our use.
+  /// Oxanium ships as a variable font (wght 200–800, default 200).
   static const display = 'Oxanium';
+
+  /// The weight every Oxanium use renders at. Kotlin asks for Bold, but Android draws the variable
+  /// font's default instance with synthetic emboldening; Flutter instead moves the `wght` axis to
+  /// 700, which made the wordmark and titles visibly heavier. Normal weight measures within 5% of
+  /// Kotlin's stroke density (device screenshots, Oct 2026), so display text uses it regardless of
+  /// the weight Kotlin's source names.
+  static const displayWeight = FontWeight.normal;
 }
 
 /// Compose's `Typography` overrides only four roles; the rest inherit Material defaults. Flutter's
@@ -27,14 +34,14 @@ TextTheme omniTextTheme(TextTheme base) => base.copyWith(
   ),
   titleLarge: base.titleLarge?.copyWith(
     fontFamily: OmniFonts.display,
-    fontWeight: FontWeight.bold,
+    fontWeight: OmniFonts.displayWeight,
     fontSize: 22,
     height: 28 / 22,
     letterSpacing: 0.5,
   ),
   titleMedium: base.titleMedium?.copyWith(
     fontFamily: OmniFonts.display,
-    fontWeight: FontWeight.w600,
+    fontWeight: OmniFonts.displayWeight,
     fontSize: 16,
     height: 22 / 16,
     letterSpacing: 0.5,

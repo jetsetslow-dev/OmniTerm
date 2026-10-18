@@ -275,7 +275,7 @@ void main() {
   }
 
   group('a trust store that could not be read', () {
-    test('the omission is real: the file carries no knownHosts at all', () async {
+    test('the omission is real: the file carries no pinned host keys', () async {
       // Asserting the message without asserting the file would let a warning describe a backup
       // that actually did contain the keys, or miss one that silently did not.
       await app.start();
@@ -291,7 +291,8 @@ void main() {
 
       final document = await exportedDocument(unreadable);
       expect(document['servers'], isNotEmpty, reason: 'the rest of the backup is intact');
-      expect(document.containsKey('knownHosts'), isFalse);
+      // Kotlin always writes the object; an unreadable trust store leaves it empty.
+      expect(document['knownHosts'], isEmpty);
       unreadable.dispose();
     });
   });
@@ -388,7 +389,7 @@ void main() {
   });
 
   group('export', () {
-    test('carries the selected sections and omits the rest', () async {
+    test('carries the selected sections and leaves the rest empty, as Kotlin does', () async {
       await repo.insertServer(server(name: 'nas'));
       final vm = await boot();
       vm
@@ -397,8 +398,8 @@ void main() {
 
       final document = await exportedDocument(vm);
       expect(document['servers'], hasLength(1));
-      expect(document.containsKey('sshKeys'), isFalse);
-      expect(document.containsKey('settings'), isFalse);
+      expect(document['sshKeys'], isEmpty);
+      expect(document['settings'], isEmpty);
       vm.dispose();
     });
 
@@ -491,23 +492,22 @@ void main() {
       vm.dispose();
     });
 
-    test('settings alone can be exported without one', () async {
+    test('settings alone still need one, as in Kotlin', () async {
       await repo.insertSetting('theme', 'dark');
       final vm = await boot();
       vm
         ..selectNone()
         ..toggleSection(BackupSection.settings, enabled: true);
 
-      expect(vm.requiresPassphrase, isFalse);
-      final contents = await vm.exportBackup('');
-      expect(contents, isNotNull);
-      expect(BackupViewModel.looksEncrypted(contents!), isFalse);
+      expect(vm.requiresPassphrase, isTrue);
+      expect(await vm.exportBackup(''), isNull);
+      expect(vm.error, contains('needs a passphrase'));
       vm.dispose();
     });
 
-    test('the suggested file name is dated, so backups do not overwrite each other', () async {
+    test('the suggested file name is Kotlin\'s timestamped JSON name', () async {
       final vm = await boot();
-      expect(vm.suggestedFileName(), matches(RegExp(r'^omniterm-\d{8}-\d{4}\.omnibak$')));
+      expect(vm.suggestedFileName(), matches(RegExp(r'^omniterm_backup_\d{10}\.json$')));
       vm.dispose();
     });
   });
@@ -1372,12 +1372,14 @@ void main() {
     }
 
     test('Flutter export uses the published Kotlin schema', () async {
+      // Stored before boot: like Kotlin's snapshot, export reads the app's live settings.
+      await repo.insertSetting('dark_mode', 'false');
       final vm = await boot();
       vm.selectNone();
       vm.toggleSection(BackupSection.settings, enabled: true);
-      await repo.insertSetting('dark_mode', 'false');
-      final text = await vm.exportBackup('');
-      final root = jsonDecode(text!) as Map;
+      const passphrase = 'a-long-enough-passphrase';
+      final text = await decryptBackup((await vm.exportBackup(passphrase))!, passphrase);
+      final root = jsonDecode(text) as Map;
       expect(root['format'], 'omniterm-backup');
       expect(root['schema'], 5);
       expect(root['settings'], isA<Map>());

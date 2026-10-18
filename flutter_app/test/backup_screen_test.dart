@@ -1,12 +1,15 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:drift/native.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:omniterm/data/ssh/secure_host_key_store.dart';
 import 'package:omniterm/data/ssh/ssh_host_key_trust.dart';
 import 'package:omniterm/data/app_database.dart';
+import 'package:omniterm/data/backup/android_json.dart';
 import 'package:omniterm/data/app_repository.dart';
 import 'package:omniterm/domain/backup_selection.dart';
 import 'package:omniterm/platform/backup_file_store.dart';
@@ -86,6 +89,18 @@ void main() {
     authStatus: 'unknown',
   );
 
+  /// Every export is encrypted, as Kotlin requires, so export flows answer the passphrase first.
+  Future<void> tapExportWithPassphrase(WidgetTester tester) async {
+    await tester.tap(find.byKey(const ValueKey('backup.export')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('backup.passphrase.field')),
+      'a-long-enough-passphrase',
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('backup.passphrase.confirm')));
+  }
+
   Future<void> pump(WidgetTester tester, {LongOperationNotifications? notifications}) async {
     // The screen is a long scrolling form; the default 800x600 surface leaves the lower half
     // unlaid-out, so finders below the fold see nothing.
@@ -102,6 +117,14 @@ void main() {
         SecureHostKeyStore(storage: FakeSecureStorage(<String, String>{})),
       ),
       operationNotifications: notifications,
+      // Kotlin encrypts every export. Real PBKDF2 cannot finish on the widget clock, so the
+      // screen flow gets an envelope-shaped stand-in; the cipher has its own tests.
+      encrypt: (json, passphrase) async => encodeAndroidJson({
+        'v': 2,
+        'salt': 'test',
+        'iv': 'test',
+        'data': base64.encode(utf8.encode(json)),
+      }),
     );
     await tester.pumpWidget(
       MultiProvider(
@@ -201,14 +224,14 @@ void main() {
     await finish(tester);
   });
 
-  testWidgets('a settings-only backup needs no passphrase', (tester) async {
+  testWidgets('a settings-only backup still needs a passphrase, as in Kotlin', (tester) async {
     await pump(tester);
     vm
       ..selectNone()
       ..toggleSection(BackupSection.settings, enabled: true);
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('backup.sensitiveNote')), findsNothing);
+    expect(find.byKey(const ValueKey('backup.sensitiveNote')), findsOneWidget);
     await finish(tester);
   });
 
@@ -223,11 +246,10 @@ void main() {
     await pump(tester);
     await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
     await tester.pumpAndSettle();
-    // A section with no credentials in it, so the export needs no passphrase dialog.
     await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('backup.export')));
+    await tapExportWithPassphrase(tester);
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 50));
     expect(
@@ -433,12 +455,12 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tapExportWithPassphrase(tester);
       await tester.pumpAndSettle();
 
       expect(files.saved, hasLength(1));
-      expect(files.saved.single.fileName, endsWith('.omnibak'));
-      expect(files.saved.single.contents, contains('wolTargets'));
+      expect(files.saved.single.fileName, matches(RegExp(r'^omniterm_backup_\d{10}\.json$')));
+      expect(BackupViewModel.looksEncrypted(files.saved.single.contents), isTrue);
       await finish(tester);
     });
 
@@ -450,26 +472,25 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tapExportWithPassphrase(tester);
       await tester.pumpAndSettle();
 
       expect(find.textContaining('/storage/Download/backup'), findsOneWidget);
       await finish(tester);
     });
 
-    testWidgets('an unencrypted backup says so plainly', (tester) async {
-      // Nothing sensitive was selected, so there is no passphrase — and the file is readable by
-      // anyone who opens it. That is worth saying at the moment it becomes a portable file.
+    testWidgets('a wake-target-only backup is still encrypted, as in Kotlin', (tester) async {
       await pump(tester);
       await tester.tap(find.byKey(const ValueKey('backup.selectNone')));
       await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tapExportWithPassphrase(tester);
       await tester.pumpAndSettle();
 
-      expect(find.textContaining('not encrypted'), findsOneWidget);
+      expect(BackupViewModel.looksEncrypted(files.saved.single.contents), isTrue);
+      expect(find.textContaining('not encrypted'), findsNothing);
       await finish(tester);
     });
 
@@ -492,7 +513,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tapExportWithPassphrase(tester);
       // Preparation remains visibly busy until the held platform callback completes.
       await tester.pump();
 
@@ -523,7 +544,7 @@ void main() {
       vm.selectNone();
       vm.toggleSection(BackupSection.settings, enabled: true);
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tapExportWithPassphrase(tester);
       await tester.pump();
       expect(surfaces.order, ['permission']);
 
@@ -534,8 +555,13 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(files.saved, hasLength(1));
-      expect(files.saved.single.contents, contains('"settings"'));
-      expect(files.saved.single.contents, isNot(contains('"servers"')));
+      // Every Kotlin-format section is present; only the chosen one carries rows.
+      final envelope = jsonDecode(files.saved.single.contents) as Map<String, dynamic>;
+      final document =
+          jsonDecode(utf8.decode(base64.decode(envelope['data'] as String)))
+              as Map<String, dynamic>;
+      expect(document['settings'], isNotEmpty);
+      expect(document['servers'], isEmpty);
       expect(vm.error, isNull);
       expect(vm.selection.contains(BackupSection.servers), isTrue);
       await finish(tester);
@@ -555,7 +581,7 @@ void main() {
       vm.selectNone();
       vm.toggleSection(BackupSection.settings, enabled: true);
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tapExportWithPassphrase(tester);
       await tester.pump();
       try {
         expect(find.text('Preparing backup…'), findsOneWidget);
@@ -597,7 +623,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tapExportWithPassphrase(tester);
       await tester.pumpAndSettle();
 
       expect(surfaces.order, ['permission', 'picker']);
@@ -618,7 +644,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tapExportWithPassphrase(tester);
       await tester.pumpAndSettle();
 
       expect(vm.error, isNull, reason: 'the user chose this; it is not a failure');
@@ -639,12 +665,12 @@ void main() {
       await tester.pumpAndSettle();
 
       files.saveResult = const BackupSaveResult(BackupSaveOutcome.saved, location: 'somewhere');
-      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tapExportWithPassphrase(tester);
       await tester.pumpAndSettle();
       expect(vm.status, contains('somewhere'));
 
       files.saveResult = const BackupSaveResult(BackupSaveOutcome.cancelled);
-      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tapExportWithPassphrase(tester);
       await tester.pumpAndSettle();
 
       expect(
@@ -700,7 +726,7 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('backup.section.wolTargets')));
       await tester.pumpAndSettle();
 
-      await tester.tap(find.byKey(const ValueKey('backup.export')));
+      await tapExportWithPassphrase(tester);
       await tester.pumpAndSettle();
 
       expect(find.textContaining('permission denied'), findsOneWidget);

@@ -84,7 +84,7 @@ class OmniAppBar extends StatelessWidget implements PreferredSizeWidget {
                         style: TextStyle(
                           color: scheme.onSurface,
                           fontFamily: OmniFonts.display,
-                          fontWeight: FontWeight.bold,
+                          fontWeight: OmniFonts.displayWeight,
                           fontSize: 18,
                           letterSpacing: 2,
                         ),

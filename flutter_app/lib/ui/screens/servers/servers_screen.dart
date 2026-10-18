@@ -1109,7 +1109,7 @@ class _HealthRing extends StatelessWidget {
               style: TextStyle(
                 color: color,
                 fontFamily: OmniFonts.display,
-                fontWeight: FontWeight.bold,
+                fontWeight: OmniFonts.displayWeight,
                 fontSize: 11,
               ),
             ),

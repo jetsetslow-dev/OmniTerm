@@ -147,26 +147,10 @@ class BackupSelection {
     return BackupSelection(_selected.difference(removed));
   }
 
-  /// True when the backup would contain credentials or anything that identifies a host.
-  ///
-  /// Drives the requirement to encrypt: hosts carry passwords, keys carry private material, and
-  /// even scripts and alert rules name machines and paths. Settings alone are the only selection
-  /// with nothing worth protecting — and the UI still offers encryption there.
-  bool get hasSensitiveData => _selected.any(
-    (section) => switch (section) {
-      BackupSection.servers ||
-      BackupSection.sshKeys ||
-      BackupSection.credentialProfiles ||
-      BackupSection.scripts ||
-      BackupSection.alertRules ||
-      BackupSection.activeAlerts ||
-      BackupSection.alertHistory ||
-      BackupSection.networkShares ||
-      BackupSection.portForwards => true,
-      BackupSection.crashLogs => true,
-      BackupSection.wolTargets || BackupSection.settings => false,
-    },
-  );
+  /// True when the backup must be encrypted — which, as in Kotlin's `hasSensitiveData`, is any
+  /// non-empty selection. Settings and wake targets name hosts, paths and network layout too, and
+  /// Kotlin never writes a plain backup for them.
+  bool get hasSensitiveData => _selected.isNotEmpty;
 
   @override
   bool operator ==(Object other) =>

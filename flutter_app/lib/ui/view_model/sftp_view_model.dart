@@ -446,7 +446,7 @@ class SftpViewModel extends ChangeNotifier {
     // user asked to see their files every time the app restarts is a setting that does not exist.
     // Fire-and-forget, matching Kotlin's `viewModelScope.launch` — the sort is already applied, and
     // the write must not make the list wait.
-    unawaited(_app.repository.insertSetting('sftp_sort', value.name));
+    unawaited(_app.repository.insertSetting('sftp_sort', value.storedName));
     // Re-sorting is local; refetching to reorder a listing already in hand would be a round trip
     // the user can feel.
     notifyListeners();

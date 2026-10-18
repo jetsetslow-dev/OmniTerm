@@ -480,7 +480,7 @@ class _LandscapeNav extends StatelessWidget {
                     style: TextStyle(
                       color: activeColor,
                       fontFamily: OmniFonts.display,
-                      fontWeight: FontWeight.bold,
+                      fontWeight: OmniFonts.displayWeight,
                       letterSpacing: 1.5,
                     ),
                   ),

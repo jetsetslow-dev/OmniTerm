@@ -2,6 +2,7 @@ import 'package:drift/drift.dart' show Value;
 
 import '../../domain/backup_selection.dart';
 import '../app_database.dart';
+import '../alert_presets.dart';
 import '../app_repository.dart';
 import '../script_presets.dart';
 import 'backup_document.dart';
@@ -77,6 +78,25 @@ class BackupPayload {
 
     final document = <String, dynamic>{'v': version};
 
+    // Kotlin's buildBackupJson scopes host-bound rows to the hosts on this device and exports only
+    // rules the user created or changed, plus any default a selected firing alert points at.
+    final exportedServerIds = {for (final server in servers) server.id};
+    bool inScope(int serverId) => serverId == 0 || exportedServerIds.contains(serverId);
+    final ruleIds = <int>{};
+    if (closed.contains(BackupSection.alertRules)) {
+      ruleIds.addAll(rules.where((rule) => !_isPristineRule(rule)).map((rule) => rule.id));
+      if (closed.contains(BackupSection.activeAlerts)) {
+        ruleIds.addAll(
+          activeAlerts.where((alert) => inScope(alert.serverId)).map((alert) => alert.ruleId),
+        );
+      }
+    }
+    final exportedRules = [
+      for (final rule in rules)
+        if (ruleIds.contains(rule.id) && inScope(rule.serverId)) rule,
+    ];
+    final exportedRuleIds = {for (final rule in exportedRules) rule.id};
+
     // Pinned host keys travel with the hosts, as they do in Compose (`ui/AppViewModel.kt:11646`).
     // Without them a restore silently downgrades every host from "verified against a pinned key" to
     // trust-on-first-use: the next connection is accepted as new rather than flagged as *changed*,
@@ -113,7 +133,7 @@ class BackupPayload {
             'proxyPort': server.proxyPort,
             'proxyUser': server.proxyUser,
             'proxyPassword': server.proxyPassword,
-            'proxyKeyAlias': server.proxyKeyAlias,
+            'proxyKeyAlias': server.proxyKeyAlias ?? '',
           },
       ];
     }
@@ -154,7 +174,7 @@ class BackupPayload {
 
     if (closed.contains(BackupSection.scripts)) {
       document['scripts'] = [
-        for (final script in scripts.where((s) => !_isPristinePreset(s)))
+        for (final script in scripts.where((s) => !_isPristineScript(s)))
           {
             'emoji': script.emoji,
             'name': script.name,
@@ -177,7 +197,7 @@ class BackupPayload {
 
     if (closed.contains(BackupSection.alertRules)) {
       document['alertRules'] = [
-        for (final rule in rules)
+        for (final rule in exportedRules)
           {
             // The rule's own id travels because a firing alert points at it — the same reason hosts
             // and profiles carry theirs. Restore maps it to the new row rather than trusting it.
@@ -198,53 +218,58 @@ class BackupPayload {
     if (closed.contains(BackupSection.portForwards)) {
       document['portForwards'] = [
         for (final pf in portForwards)
-          {
-            'serverId': pf.serverId,
-            'name': pf.name,
-            'kind': pf.kind,
-            'bindHost': pf.bindHost,
-            'bindPort': pf.bindPort,
-            'destHost': pf.destHost,
-            'destPort': pf.destPort,
-            'autoStart': pf.autoStart,
-          },
+          if (exportedServerIds.contains(pf.serverId))
+            {
+              'id': pf.id,
+              'serverId': pf.serverId,
+              'name': pf.name,
+              'kind': pf.kind,
+              'bindHost': pf.bindHost,
+              'bindPort': pf.bindPort,
+              'destHost': pf.destHost,
+              'destPort': pf.destPort,
+              'autoStart': pf.autoStart,
+            },
       ];
     }
 
     if (closed.contains(BackupSection.activeAlerts)) {
       document['activeAlerts'] = [
         for (final alert in activeAlerts)
-          {
-            'ruleId': alert.ruleId,
-            'serverId': alert.serverId,
-            'metricName': alert.metricName,
-            'currentValue': alert.currentValue,
-            'thresholdValue': alert.thresholdValue,
-            'severity': alert.severity,
-            'triggeredTime': alert.triggeredTime,
-            'acknowledged': alert.acknowledged,
-            'mutedUntil': alert.mutedUntil,
-          },
+          if (exportedRuleIds.contains(alert.ruleId) && inScope(alert.serverId))
+            {
+              'id': alert.id,
+              'ruleId': alert.ruleId,
+              'serverId': alert.serverId,
+              'metricName': alert.metricName,
+              'currentValue': alert.currentValue,
+              'thresholdValue': alert.thresholdValue,
+              'severity': alert.severity,
+              'triggeredTime': alert.triggeredTime,
+              'acknowledged': alert.acknowledged,
+              'mutedUntil': alert.mutedUntil,
+            },
       ];
     }
 
     if (closed.contains(BackupSection.alertHistory)) {
       document['alertHistory'] = [
         for (final row in alertHistory)
-          {
-            'activeAlertId': row.activeAlertId,
-            'serverId': row.serverId,
-            // The host's name is stored on the row, not looked up: an incident is a record of what
-            // was true then, and a host renamed since must not rewrite its own history.
-            'serverName': row.serverName,
-            'metricName': row.metricName,
-            'currentValue': row.currentValue,
-            'thresholdValue': row.thresholdValue,
-            'severity': row.severity,
-            'triggeredTime': row.triggeredTime,
-            'historyTime': row.historyTime,
-            'status': row.status,
-          },
+          if (inScope(row.serverId))
+            {
+              'activeAlertId': row.activeAlertId,
+              'serverId': row.serverId,
+              // The host's name is stored on the row, not looked up: an incident is a record of what
+              // was true then, and a host renamed since must not rewrite its own history.
+              'serverName': row.serverName,
+              'metricName': row.metricName,
+              'currentValue': row.currentValue,
+              'thresholdValue': row.thresholdValue,
+              'severity': row.severity,
+              'triggeredTime': row.triggeredTime,
+              'historyTime': row.historyTime,
+              'status': row.status,
+            },
       ];
     }
 
@@ -305,12 +330,41 @@ class BackupPayload {
     return writeBackupDocument(document);
   }
 
-  static bool _isPristinePreset(QuickScript script) {
+  /// Kotlin's `isPristinePresetScript`: the whole row, apart from its id, still equals the seeded
+  /// preset. Any edit — notes, targets, ordering — makes the row the user's and keeps it.
+  static bool _isPristineScript(QuickScript script) {
     final key = script.presetKey;
     if (key == null) return false;
     final preset = kAllScriptPresets.where((p) => p.presetKey == key).firstOrNull;
     if (preset == null) return false;
-    return isPristinePreset(preset, script.name, script.command);
+    return script.emoji == preset.emoji &&
+        script.name == preset.name &&
+        script.command == preset.command &&
+        script.color == preset.color &&
+        !script.longRunning &&
+        script.category == preset.category &&
+        script.sortOrder == preset.sortOrder &&
+        script.availableForQuick == preset.availableForQuick &&
+        script.availableForFleet == preset.availableForFleet &&
+        script.targetOs == 'Any' &&
+        script.targetSystem == 'Any' &&
+        script.notes.isEmpty;
+  }
+
+  /// Kotlin's `isPristinePresetRule`: every field, including window, enabled state and notes.
+  static bool _isPristineRule(AlertRule rule) {
+    final key = rule.presetKey;
+    if (key == null) return false;
+    final preset = kAlertPresets.where((p) => p.presetKey == key).firstOrNull;
+    if (preset == null) return false;
+    return rule.serverId == 0 &&
+        rule.metricName == preset.metricName &&
+        rule.mountPoint == '/' &&
+        rule.thresholdValue == preset.thresholdValue &&
+        rule.severity == preset.severity &&
+        rule.triggerWindow == '5m' &&
+        rule.enabled &&
+        rule.notes.isEmpty;
   }
 
   /// Restores [json] into the database.

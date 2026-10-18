@@ -26,6 +26,7 @@ import 'package:provider/provider.dart';
 import 'support/fake_secure_storage.dart';
 import 'support/fake_session_service.dart';
 import 'support/fake_shell_transport.dart';
+import 'support/material_fonts.dart';
 import 'support/terminal_options_contract.dart';
 
 void main() {
@@ -34,6 +35,9 @@ void main() {
   late AppState app;
   late FakeShellTransport transport;
   late ShellViewModel vm;
+
+  // Text-scale layout guards must measure device-like glyphs, not the one-em test font.
+  setUpAll(loadMaterialRoboto);
 
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
@@ -215,6 +219,20 @@ void main() {
           // Opening the menu must expose its actions before any scrolling gesture.
           for (final key in ['paste', 'visible', 'full', 'clear', 'cancel']) {
             expect(find.byKey(ValueKey('terminalOptions.$key')).hitTestable(), findsOneWidget);
+          }
+          // A section heading stays with the controls it names instead of scrolling away.
+          expect(find.text('Copy terminal text').hitTestable(), findsOneWidget);
+          if (size.width < size.height && scale == 1.0) {
+            // Default text has room for every option without a scroll gesture.
+            for (final key in ['swipe', 'awake']) {
+              expect(find.byKey(ValueKey('terminalOptions.$key')).hitTestable(), findsOneWidget);
+            }
+          }
+          if (size.width > size.height) {
+            // Landscape matches Kotlin's two columns: copy actions beside input/session options.
+            final paste = tester.getRect(find.byKey(const ValueKey('terminalOptions.paste')));
+            final copy = tester.getRect(find.text('Copy terminal text'));
+            expect(copy.left, greaterThan(paste.right));
           }
           expect(tester.takeException(), isNull);
           await tester.tap(find.byKey(const ValueKey('terminalOptions.cancel')));

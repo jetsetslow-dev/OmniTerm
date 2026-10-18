@@ -164,28 +164,33 @@ class FleetViewModel extends ChangeNotifier {
   int get totalCount => servers.length;
   int get onlineCount => onlineServers.length;
 
-  /// Online hosts scoring below 50 — the ones worth looking at first.
-  int get criticalCount => servers
-      .where(
-        (s) =>
-            s.status == 'online' &&
-            s.healthScore >= 0 &&
-            s.healthScore < 50 &&
-            poller?.metricsForServer(s.id) != null,
-      )
-      .length;
+  /// Kotlin's `currentHealthScore`: the stored score only while verified metrics are current,
+  /// otherwise -1 (unknown) rather than a stale number.
+  int currentHealthScore(Server server) =>
+      poller?.metricsForServer(server.id) == null ? -1 : server.healthScore;
 
-  int get averageScore {
-    final measured = servers
-        .where(
-          (s) =>
-              s.status == 'online' && s.healthScore >= 0 && poller?.metricsForServer(s.id) != null,
-        )
-        .toList();
-    if (measured.isEmpty) return -1;
-    final total = measured.fold<int>(0, (sum, s) => sum + s.healthScore);
-    return (total / measured.length).round();
+  /// Online hosts in [hosts] scoring 0–49 — the ones worth looking at first.
+  int criticalCountOf(List<Server> hosts) => hosts.where((s) {
+    final score = currentHealthScore(s);
+    return s.status == 'online' && score >= 0 && score < 50;
+  }).length;
+
+  /// The mean known score of [hosts], truncated as Kotlin's `average().toInt()` does; -1 if none.
+  int averageScoreOf(List<Server> hosts) {
+    final scores = hosts.map(currentHealthScore).where((score) => score >= 0).toList();
+    if (scores.isEmpty) return -1;
+    return scores.reduce((a, b) => a + b) ~/ scores.length;
   }
+
+  int get criticalCount => criticalCountOf(servers);
+
+  int get averageScore => averageScoreOf(servers);
+
+  /// The host's reported kernel uptime, or 0 when nothing current has been sampled.
+  int uptimeSecondsFor(int serverId) => poller?.metricsForServer(serverId)?.uptimeSeconds ?? 0;
+
+  /// The poller's cycle length, for the summary bar's countdown ring.
+  Duration get refreshInterval => poller?.effectiveInterval ?? const Duration(seconds: 15);
 
   // ── tabs ────────────────────────────────────────────────────────────────────
 
@@ -227,10 +232,17 @@ class FleetViewModel extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// "All Online" in Servers mode, "All Groups" in Groups mode — as Kotlin's picker does.
   void selectAllTargets() {
-    _targetServerIds
-      ..clear()
-      ..addAll(onlineServers.map((s) => s.id));
+    if (_targetMode == FleetTargetMode.servers) {
+      _targetServerIds
+        ..clear()
+        ..addAll(onlineServers.map((s) => s.id));
+    } else {
+      _targetGroups
+        ..clear()
+        ..addAll(groups);
+    }
     notifyListeners();
   }
 
@@ -471,6 +483,18 @@ class FleetViewModel extends ChangeNotifier {
   set logLevelFilter(String value) {
     if (_logLevelFilter == value) return;
     _logLevelFilter = value;
+    notifyListeners();
+  }
+
+  void selectAllLogServers() {
+    _logServerIds
+      ..clear()
+      ..addAll(onlineServers.map((s) => s.id));
+    notifyListeners();
+  }
+
+  void clearLogServers() {
+    _logServerIds.clear();
     notifyListeners();
   }
 

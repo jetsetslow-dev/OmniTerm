@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'android_json.dart';
 import 'backup_envelope.dart';
 
 /// Kotlin's published document schema. This is independent of the encrypted envelope's `v`.
@@ -100,14 +101,31 @@ void _validateValues(Object? value) {
   }
 }
 
-/// Export the schema the shipping Kotlin app already understands.
+/// Export the document exactly as Kotlin's `buildBackupJson` writes it.
+///
+/// Every section is present, in Kotlin's order, even when it was not selected (an empty array, or
+/// an empty object for `knownHosts` and `settings`). Output goes through [encodeAndroidJson] so
+/// escaping, number formatting and omitted nulls match `org.json` byte for byte.
 String writeBackupDocument(Map<String, dynamic> document) {
-  final root = Map<String, dynamic>.from(document)..remove('v');
-  root['format'] = 'omniterm-backup';
-  root['schema'] = backupSchemaVersion;
-  if (root.containsKey('scripts')) root['quickScripts'] = root.remove('scripts');
-  if (root['settings'] case final List settings) {
-    root['settings'] = {for (final row in settings) (row as Map)['key'] as String: row['value']};
-  }
-  return jsonEncode(root);
+  final settings = document['settings'];
+  final root = <String, dynamic>{
+    'format': 'omniterm-backup',
+    'schema': backupSchemaVersion,
+    'knownHosts': document['knownHosts'] ?? const <String, String>{},
+    'servers': document['servers'] ?? const [],
+    'sshKeys': document['sshKeys'] ?? const [],
+    'credentialProfiles': document['credentialProfiles'] ?? const [],
+    'quickScripts': document['scripts'] ?? const [],
+    'alertRules': document['alertRules'] ?? const [],
+    'activeAlerts': document['activeAlerts'] ?? const [],
+    'alertHistory': document['alertHistory'] ?? const [],
+    'wolTargets': document['wolTargets'] ?? const [],
+    'networkShares': document['networkShares'] ?? const [],
+    'portForwards': document['portForwards'] ?? const [],
+    'settings': settings is List
+        ? {for (final row in settings) (row as Map)['key'] as String: row['value']}
+        : const <String, String>{},
+    'crashLogs': document['crashLogs'] ?? const [],
+  };
+  return encodeAndroidJson(root);
 }

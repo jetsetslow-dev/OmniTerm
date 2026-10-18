@@ -15,6 +15,10 @@ enum SftpSortOption {
 
   final String label;
 
+  /// The value Kotlin stores and matches exactly (`NameAsc`), so a setting written here survives
+  /// a backup restored into the Android app.
+  String get storedName => '${name[0].toUpperCase()}${name.substring(1)}';
+
   /// Reads a persisted sort order, falling back to [nameAsc].
   ///
   /// **Matched case-insensitively on purpose.** Kotlin stored `option.name`, which its enum spells

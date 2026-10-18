@@ -46,10 +46,8 @@ void main() {
     await $(const ValueKey('tools.backup')).tap();
   }
 
-  /// Selects only Settings.
-  ///
-  /// Deliberately the one section that is *not* sensitive: everything else demands a passphrase
-  /// first, and this flow is about the picker, not the passphrase dialog.
+  /// Selects only Settings, the smallest export. Like Kotlin, every non-empty backup is encrypted,
+  /// so export flows answer the passphrase dialog with [enterPassphrase] before the picker opens.
   Future<void> selectSettingsOnly(PatrolIntegrationTester $) async {
     await $(const ValueKey('backup.selectNone')).tap();
     await $(const ValueKey('backup.section.settings')).scrollTo().tap();
@@ -57,7 +55,12 @@ void main() {
     final vm = context.read<BackupViewModel>();
     expect(vm.selection.sections, {BackupSection.settings});
     expect(vm.canExport, isTrue, reason: 'Settings must remain selected before export');
-    expect(vm.requiresPassphrase, isFalse);
+    expect(vm.requiresPassphrase, isTrue);
+  }
+
+  Future<void> enterPassphrase(PatrolIntegrationTester $) async {
+    await $(const ValueKey('backup.passphrase.field')).enterText('a-long-enough-passphrase');
+    await $(const ValueKey('backup.passphrase.confirm')).tap();
   }
 
   /// Answers the notification-permission prompt, which a first backup raises before the picker.
@@ -207,8 +210,8 @@ void main() {
 
     expect(
       $(const ValueKey('backup.sensitiveNote')).exists,
-      false,
-      reason: 'Settings alone carries no credentials, so no passphrase should be demanded',
+      true,
+      reason: 'Kotlin encrypts every backup, settings included, so the passphrase is explained',
     );
 
     // Scrolled to, like `backup.import` below. The Backup screen is a `ListView`, so a control past
@@ -216,6 +219,7 @@ void main() {
     // widgets rather than an invisible one. Both of these failed exactly there the first time these
     // tests were ever executed.
     await $(const ValueKey('backup.export')).scrollTo().tap();
+    await enterPassphrase($);
 
     // Settle permission and require the actual platform picker within one unchanged budget.
     await waitForSavePicker($);
@@ -263,6 +267,7 @@ void main() {
     await openBackup($);
     await selectSettingsOnly($);
     await $(const ValueKey('backup.export')).scrollTo().tap();
+    await enterPassphrase($);
 
     await waitForSavePicker($);
 
@@ -281,8 +286,9 @@ void main() {
     final views = await $.platformAutomator.android.getNativeViews(filename);
     expect(
       views.roots.single.text,
-      matches(RegExp(r'^omniterm-\d{8}-\d{4}\.omnibak$')),
-      reason: 'the picker must receive OmniTerm\'s dated .omnibak filename, not a generic default',
+      matches(RegExp(r'^omniterm_backup_\d{10}\.json$')),
+      reason:
+          'the picker must receive Kotlin\'s omniterm_backup_<seconds>.json name, not a default',
     );
 
     await cancelPicker($);

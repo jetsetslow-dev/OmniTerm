@@ -3,12 +3,14 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 
+import '../../data/app_database.dart' show AppSetting;
 import '../../data/ssh/secure_host_key_store.dart';
 import '../../data/ssh/ssh_host_key_trust.dart';
 import '../../data/backup/backup_envelope.dart';
 import '../../data/backup/backup_document.dart';
 import '../../data/backup/backup_payload.dart';
 import '../../domain/backup_selection.dart';
+import '../../domain/sftp_sort.dart';
 import 'app_state.dart';
 import '../../platform/crash_log.dart';
 import '../../platform/long_operation_notifications.dart';
@@ -54,8 +56,15 @@ class BackupViewModel extends ChangeNotifier {
     CrashLog? crashLog,
     SshHostKeyTrust? hostKeyTrust,
     this.operationNotifications,
+    Future<String> Function(String json, String passphrase)? encrypt,
   }) : crashLog = crashLog ?? CrashLog.instance,
-       hostKeyTrust = hostKeyTrust ?? SshHostKeyTrust(SecureHostKeyStore());
+       hostKeyTrust = hostKeyTrust ?? SshHostKeyTrust(SecureHostKeyStore()),
+       _encrypt =
+           encrypt ?? ((json, passphrase) => compute(_encryptInBackground, (json, passphrase)));
+
+  /// Encrypts on a worker isolate. Injectable only so widget tests need not run 600,000 PBKDF2
+  /// rounds on a fake clock; production always uses [encryptBackup].
+  final Future<String> Function(String json, String passphrase) _encrypt;
 
   final AppState _app;
   final LongOperationNotifications? operationNotifications;
@@ -322,7 +331,7 @@ class BackupViewModel extends ChangeNotifier {
         rules: await repository.getAllRules(),
         wolTargets: await repository.getAllWolTargets(),
         portForwards: await repository.getAllPortForwards(),
-        settings: await repository.getAllSettings(),
+        settings: await _settingsSnapshot(),
         activeAlerts: await repository.getActiveAlerts(),
         alertHistory: await repository.getAlertHistory(),
         networkShares: await repository.getAllNetworkShares(),
@@ -338,9 +347,7 @@ class BackupViewModel extends ChangeNotifier {
       // No status here on purpose. The export is only half the job now that the file dialog
       // follows it, and "Backup ready." left standing after a cancelled save would claim a file
       // that was never written. The save reports the real outcome.
-      final output = passphrase.isEmpty
-          ? json
-          : await compute(_encryptInBackground, (json, passphrase));
+      final output = passphrase.isEmpty ? json : await _encrypt(json, passphrase);
       succeeded = true;
       return output;
     } on BackupException catch (e) {
@@ -356,13 +363,56 @@ class BackupViewModel extends ChangeNotifier {
     }
   }
 
-  /// A default file name, dated so successive backups do not overwrite each other.
-  String suggestedFileName() {
-    final now = DateTime.now();
-    String two(int value) => value.toString().padLeft(2, '0');
-    return 'omniterm-${now.year}${two(now.month)}${two(now.day)}-'
-        '${two(now.hour)}${two(now.minute)}.omnibak';
+  /// Kotlin's `backupSettingsSnapshot`: the stored rows overlaid with the effective value of every
+  /// setting the Android app exports, so defaults the user never changed still travel and a
+  /// restore on either platform lands on the same configuration. Sorted by key, as Kotlin does.
+  Future<List<AppSetting>> _settingsSnapshot() async {
+    final merged = {for (final row in await _app.repository.getAllSettings()) row.key: row.value};
+    final prefs = _app.preferences.encode();
+    for (final key in const [
+      'alert_history_limit',
+      'terminal_font_size',
+      'terminal_theme',
+      'terminal_scrollback_limit',
+      'terminal_smart_swipe',
+      'terminal_link_detection',
+      'link_open_in_app',
+      'tmux_control_mode',
+      'text_scale',
+      'accessibility',
+      'amoled',
+      'editor_highlight_limit',
+      'telemetry_interval',
+      'metrics_retention',
+      'keep_screen_on',
+      'dark_mode',
+      'background_keep_alive',
+      'battery_saver_enabled',
+      'battery_saver_threshold',
+      'sftp_large_batch_file_threshold',
+      'sftp_large_batch_bytes_threshold',
+    ]) {
+      merged[key] = prefs[key]!;
+    }
+    merged['alerts_enabled'] = '${_app.alertsEnabled}';
+    merged['alert_presets'] = '${_app.alertPresetsEnabled}';
+    merged['homelab_presets'] = '${_app.homelabPresetsEnabled}';
+    merged['fleet_presets'] = '${_app.fleetPresetsEnabled}';
+    merged['backup_export_selection'] = _selection.encode();
+    merged['sftp_sort'] = SftpSortOption.fromStored(merged['sftp_sort']).storedName;
+    merged['health_scoring'] = _app.healthScoring.encode();
+    final storedExport = int.tryParse(merged['backup_last_export_time'] ?? '') ?? 0;
+    final knownExport = _lastExportTime?.millisecondsSinceEpoch ?? 0;
+    merged['backup_last_export_time'] =
+        '${knownExport > storedExport ? knownExport : storedExport}';
+    return [
+      for (final key in merged.keys.toList()..sort()) AppSetting(key: key, value: merged[key]!),
+    ];
   }
+
+  /// Kotlin's default file name (`ToolsScreen.kt`): `omniterm_backup_<epoch seconds>.json`.
+  String suggestedFileName() =>
+      'omniterm_backup_${DateTime.now().millisecondsSinceEpoch ~/ 1000}.json';
 
   /// When a backup was last written, or null if never.
   ///

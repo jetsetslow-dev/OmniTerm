@@ -103,13 +103,14 @@ void main() {
       }
     });
 
-    test('settings alone are not sensitive', () {
-      expect(
-        const BackupSelection.none()
-            .toggled(BackupSection.settings, enabled: true)
-            .hasSensitiveData,
-        isFalse,
-      );
+    test('settings and wake targets are encrypted too, as Kotlin requires', () {
+      for (final section in [BackupSection.settings, BackupSection.wolTargets]) {
+        expect(
+          const BackupSelection.none().toggled(section, enabled: true).hasSensitiveData,
+          isTrue,
+          reason: section.name,
+        );
+      }
     });
 
     test('an empty selection is not sensitive', () {

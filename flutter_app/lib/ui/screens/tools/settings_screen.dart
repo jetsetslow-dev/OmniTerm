@@ -118,7 +118,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
                       fontFamily: OmniFonts.display,
                       fontSize: 18,
                       height: 24 / 18,
-                      fontWeight: FontWeight.normal,
+                      fontWeight: OmniFonts.displayWeight,
                     ),
                   ),
                 ),

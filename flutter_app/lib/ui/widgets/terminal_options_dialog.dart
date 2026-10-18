@@ -180,186 +180,218 @@ class _TerminalOptionsState extends State<_TerminalOptions> {
     if (_scroll.hasClients) _scroll.jumpTo(0);
   }
 
+  Widget _heading(String text) =>
+      Text(text, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold));
+
+  /// Paste is the primary action, so it stays above any scrolling region.
+  List<Widget> _pasteAction(ShellSession session, bool writable) => [
+    _heading('Terminal input'),
+    FilledButton.icon(
+      key: const ValueKey('terminalOptions.paste'),
+      onPressed: writable && !_pasting ? _paste : null,
+      icon: const Icon(Icons.content_paste, size: 18),
+      label: Text(
+        session.readOnly ? 'Paste unavailable in read-only mode' : 'Paste from clipboard',
+      ),
+    ),
+    if (_pasting) const LinearProgressIndicator(key: ValueKey('terminalOptions.progress')),
+    if (widget.shell.isSettingKeepScreenOn) ...[
+      const LinearProgressIndicator(key: ValueKey('terminalOptions.awake.progress')),
+      const Text(
+        'Updating Keep screen on…',
+        style: TextStyle(fontSize: 12),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
+    ],
+  ];
+
+  /// Explanations and session switches scroll; every action outside this region stays visible.
+  Widget _sessionOptions(BuildContext context) {
+    final vm = widget.vm;
+    final shell = widget.shell;
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    return Flexible(
+      child: ScrollConfiguration(
+        behavior: const PopupScrollBehavior(),
+        child: SingleChildScrollView(
+          key: const ValueKey('terminalOptions.scroll'),
+          controller: _scroll,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              if (_pasting) const Text('Reading clipboard and preparing paste…'),
+              if (_pasteResult != null)
+                Text(_pasteResult!, key: const ValueKey('terminalOptions.result')),
+              Text(
+                'Use this when an incognito keyboard does not expose clipboard history.',
+                style: TextStyle(fontSize: 12, color: muted),
+              ),
+              const Divider(),
+              _heading('This session'),
+              SwitchListTile(
+                key: const ValueKey('terminalOptions.swipe'),
+                contentPadding: EdgeInsets.zero,
+                title: const Text(
+                  'Swipe-typing',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+                ),
+                subtitle: Text(
+                  vm.smartSwipeInput
+                      ? 'On — text streams as you swipe/autocorrect'
+                      : 'Off — each keystroke is sent immediately',
+                  style: TextStyle(fontSize: 12, color: muted),
+                ),
+                value: vm.smartSwipeInput,
+                onChanged: vm.setSmartSwipeRuntime,
+              ),
+              SwitchListTile(
+                key: const ValueKey('terminalOptions.awake'),
+                contentPadding: EdgeInsets.zero,
+                title: const Text(
+                  'Keep screen on',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
+                ),
+                subtitle: Text(
+                  shell.isKeepScreenOnEnabled
+                      ? 'On — screen stays awake in this session'
+                      : 'Off — screen may sleep normally',
+                  style: TextStyle(fontSize: 12, color: muted),
+                ),
+                value: shell.isKeepScreenOnEnabled,
+                onChanged: shell.isSettingKeepScreenOn
+                    ? null
+                    : (value) => unawaited(shell.setKeepScreenOnDirect(value)),
+              ),
+              KeepScreenOnFeedback(shell: shell),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// The copy heading is pinned with its range and scrollback actions so a section title is
+  /// never separated from the controls it describes.
+  List<Widget> _copyActions(BuildContext context, {required bool withDescription}) => [
+    _heading('Copy terminal text'),
+    if (withDescription)
+      Text(
+        'Choose the terminal text range to copy.',
+        style: TextStyle(fontSize: 14, color: Theme.of(context).colorScheme.onSurfaceVariant),
+      ),
+    Row(
+      children: [
+        Expanded(
+          child: FilledButton(
+            key: const ValueKey('terminalOptions.visible'),
+            onPressed: _pasting
+                ? null
+                : () => Navigator.pop(context, TranscriptRange.visibleScreen),
+            child: const Text('Visible screen', textAlign: TextAlign.center),
+          ),
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: OutlinedButton(
+            key: const ValueKey('terminalOptions.full'),
+            onPressed: _pasting ? null : () => Navigator.pop(context, TranscriptRange.fullBuffer),
+            child: const Text('Full buffer', textAlign: TextAlign.center),
+          ),
+        ),
+      ],
+    ),
+    Row(
+      children: [
+        Expanded(
+          child: OutlinedButton(
+            key: const ValueKey('terminalOptions.clear'),
+            onPressed: _pasting ? null : _clear,
+            child: const Text('Clear scrollback', textAlign: TextAlign.center),
+          ),
+        ),
+        const SizedBox(width: 6),
+        TextButton(
+          key: const ValueKey('terminalOptions.cancel'),
+          onPressed: _pasting ? null : () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+      ],
+    ),
+  ];
+
+  static List<Widget> _spaced(List<Widget> children) => [
+    for (var i = 0; i < children.length; i++) ...[
+      if (i > 0) const SizedBox(height: 6),
+      children[i],
+    ],
+  ];
+
   @override
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: Listenable.merge([widget.vm, widget.session, widget.shell]),
     builder: (context, _) {
       final session = widget.session;
       final vm = widget.vm;
-      final shell = widget.shell;
-      final fontScale = (MediaQuery.textScalerOf(context).scale(14) / 14)
-          .clamp(1.0, double.infinity)
-          .toDouble();
       final writable =
           identical(vm.current, session) &&
           session.isOpen &&
           !session.readOnly &&
           session.isInputPaneReady;
+      final size = MediaQuery.sizeOf(context);
+      // Landscape has the width for two columns; stacking everything there would squeeze the
+      // session options behind the copy actions. Matches Kotlin's terminal options layout.
+      final wide = size.width > size.height;
+      final Widget body;
+      if (wide) {
+        body = Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: _spaced([..._pasteAction(session, writable), _sessionOptions(context)]),
+              ),
+            ),
+            const SizedBox(width: 20),
+            Expanded(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: _spaced(_copyActions(context, withDescription: false)),
+              ),
+            ),
+          ],
+        );
+      } else {
+        body = Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: _spaced([
+            ..._pasteAction(session, writable),
+            _sessionOptions(context),
+            const Divider(height: 1),
+            ..._copyActions(context, withDescription: true),
+          ]),
+        );
+      }
       return PopScope(
         canPop: !_pasting,
         child: Dialog(
           key: const ValueKey('terminalOptions.dialog'),
-          insetPadding: const EdgeInsets.all(18),
+          // No fixed height cap: the card may use the whole padded window so every option fits
+          // without scrolling on ordinary phones.
+          insetPadding: EdgeInsets.symmetric(horizontal: 18, vertical: wide ? 8 : 18),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: 360 * fontScale),
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const Text(
-                    'Terminal input',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                  FilledButton.icon(
-                    key: const ValueKey('terminalOptions.paste'),
-                    onPressed: writable && !_pasting ? _paste : null,
-                    icon: const Icon(Icons.content_paste, size: 18),
-                    label: Text(
-                      session.readOnly
-                          ? 'Paste unavailable in read-only mode'
-                          : 'Paste from clipboard',
-                    ),
-                  ),
-                  if (_pasting)
-                    const LinearProgressIndicator(key: ValueKey('terminalOptions.progress')),
-                  if (shell.isSettingKeepScreenOn) ...[
-                    const LinearProgressIndicator(key: ValueKey('terminalOptions.awake.progress')),
-                    const Text(
-                      'Updating Keep screen on…',
-                      style: TextStyle(fontSize: 12),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                  Expanded(
-                    child: ScrollConfiguration(
-                      behavior: const PopupScrollBehavior(),
-                      child: SingleChildScrollView(
-                        key: const ValueKey('terminalOptions.scroll'),
-                        controller: _scroll,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            if (_pasting) const Text('Reading clipboard and preparing paste…'),
-                            if (_pasteResult != null)
-                              Text(_pasteResult!, key: const ValueKey('terminalOptions.result')),
-                            Text(
-                              'Use this when an incognito keyboard does not expose clipboard history.',
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                            const Divider(),
-                            const Text(
-                              'This session',
-                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                            ),
-                            SwitchListTile(
-                              key: const ValueKey('terminalOptions.swipe'),
-                              contentPadding: EdgeInsets.zero,
-                              title: const Text(
-                                'Swipe-typing',
-                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
-                              ),
-                              subtitle: Text(
-                                vm.smartSwipeInput
-                                    ? 'On — text streams as you swipe/autocorrect'
-                                    : 'Off — each keystroke is sent immediately',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                              value: vm.smartSwipeInput,
-                              onChanged: vm.setSmartSwipeRuntime,
-                            ),
-                            SwitchListTile(
-                              key: const ValueKey('terminalOptions.awake'),
-                              contentPadding: EdgeInsets.zero,
-                              title: const Text(
-                                'Keep screen on',
-                                style: TextStyle(fontSize: 15, fontWeight: FontWeight.w500),
-                              ),
-                              subtitle: Text(
-                                shell.isKeepScreenOnEnabled
-                                    ? 'On — screen stays awake in this session'
-                                    : 'Off — screen may sleep normally',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                                ),
-                              ),
-                              value: shell.isKeepScreenOnEnabled,
-                              onChanged: shell.isSettingKeepScreenOn
-                                  ? null
-                                  : (value) => unawaited(shell.setKeepScreenOnDirect(value)),
-                            ),
-                            KeepScreenOnFeedback(shell: shell),
-                            const Text(
-                              'Copy terminal text',
-                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                            ),
-                            Text(
-                              'Choose the terminal text range to copy.',
-                              style: TextStyle(
-                                fontSize: 14,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                  const Divider(),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton(
-                          key: const ValueKey('terminalOptions.visible'),
-                          onPressed: _pasting
-                              ? null
-                              : () => Navigator.pop(context, TranscriptRange.visibleScreen),
-                          child: const Text('Visible screen'),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: OutlinedButton(
-                          key: const ValueKey('terminalOptions.full'),
-                          onPressed: _pasting
-                              ? null
-                              : () => Navigator.pop(context, TranscriptRange.fullBuffer),
-                          child: const Text('Full buffer'),
-                        ),
-                      ),
-                    ],
-                  ),
-                  OverflowBar(
-                    alignment: MainAxisAlignment.spaceBetween,
-                    overflowAlignment: OverflowBarAlignment.end,
-                    spacing: 6,
-                    overflowSpacing: 6,
-                    children: [
-                      OutlinedButton(
-                        key: const ValueKey('terminalOptions.clear'),
-                        onPressed: _pasting ? null : _clear,
-                        child: const Text('Clear scrollback'),
-                      ),
-                      TextButton(
-                        key: const ValueKey('terminalOptions.cancel'),
-                        onPressed: _pasting ? null : () => Navigator.pop(context),
-                        child: const Text('Cancel'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: wide
+                ? Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [Flexible(child: body)],
+                  )
+                : body,
           ),
         ),
       );

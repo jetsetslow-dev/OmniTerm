@@ -29,11 +29,9 @@ class BackupSaveResult {
 class BackupFileStore {
   const BackupFileStore();
 
-  /// The MIME type the picker filters on.
-  ///
-  /// `application/octet-stream` rather than a JSON type: an encrypted backup is not JSON, and
-  /// claiming otherwise invites other apps to try to parse it.
-  static const mimeType = 'application/octet-stream';
+  /// The type Kotlin creates backups with (`CreateDocument("application/json")`). The encrypted
+  /// envelope is itself a JSON object, so the type is accurate for both forms.
+  static const mimeType = 'application/json';
 
   Future<BackupSaveResult> save(String fileName, String contents) async {
     try {
@@ -64,8 +62,9 @@ class BackupFileStore {
     try {
       path = await FlutterFileDialog.pickFile(
         params: const OpenFileDialogParams(
-          mimeTypesFilter: [mimeType],
-          fileExtensionsFilter: ['omnibak', 'json', 'txt'],
+          // Kotlin opens `application/json` and `*/*`: a backup renamed or re-typed by a cloud
+          // drive must still be selectable.
+          mimeTypesFilter: [mimeType, '*/*'],
           // Copied into the app's cache so the read cannot fail on a URI the picker granted only
           // for the length of the dialog.
           copyFileToCacheDir: true,
